@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UI Navigator</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#0f1117;--surface:#161922;--surface2:#1a1d2e;--border:#1e2130;
+      --border2:#2d3148;--blue:#2563eb;--blue-h:#1d4ed8;--text:#e8eaf0;
+      --muted:#9ca3af;--dim:#4b5563;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;
+    }
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+    /* ── Header ── */
+    header{display:flex;align-items:center;gap:10px;padding:14px 20px;
+      border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+    header h1{font-size:17px;font-weight:600;color:#fff}
+    .badge{font-size:11px;padding:2px 8px;border-radius:999px;
+      background:#2563eb22;color:#60a5fa;border:1px solid #2563eb44}
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-left:auto;transition:background .3s}
+    .dot.busy{background:var(--amber);animation:pulse 1s infinite}
+    .dot.err{background:var(--red)}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+    /* ── Layout ── */
+    .main{display:grid;grid-template-columns:400px 1fr;flex:1;overflow:hidden;min-height:0}
+
+    /* ── Left panel ── */
+    .left{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;background:var(--surface)}
+
+    /* Input area */
+    .input-area{padding:16px;border-bottom:1px solid var(--border);flex-shrink:0}
+
+    .input-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+
+    /* Voice + text input row */
+    .prompt-box{position:relative;background:var(--surface2);border:1px solid var(--border2);
+      border-radius:10px;transition:border-color .15s}
+    .prompt-box:focus-within{border-color:var(--blue)}
+    .prompt-box.listening{border-color:#a855f7;box-shadow:0 0 0 3px #a855f720}
+
+    textarea#taskInput{
+      width:100%;background:transparent;border:none;color:var(--text);
+      font-size:14px;padding:12px 48px 12px 14px;resize:none;outline:none;
+      min-height:80px;max-height:200px;line-height:1.5;
+      font-family:inherit;overflow-y:auto}
+    textarea#taskInput::placeholder{color:var(--dim)}
+
+    /* Mic button inside textarea */
+    .mic-btn{position:absolute;right:10px;top:10px;width:32px;height:32px;
+      border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;
+      background:var(--surface);border:1px solid var(--border2);color:var(--muted);
+      transition:all .15s;flex-shrink:0}
+    .mic-btn:hover{background:var(--border2);color:var(--text)}
+    .mic-btn.active{background:#7c3aed;border-color:#7c3aed;color:#fff;animation:micpulse 1s infinite}
+    @keyframes micpulse{0%,100%{box-shadow:0 0 0 0 #7c3aed44}50%{box-shadow:0 0 0 8px transparent}}
+
+    /* Live transcript */
+    #transcript{font-size:12px;color:#a78bfa;padding:0 14px 10px;min-height:0;
+      display:none;font-style:italic;line-height:1.4}
+
+    /* Char counter */
+    .char-count{font-size:11px;color:var(--dim);text-align:right;padding:0 12px 8px}
+    .char-count.warn{color:var(--amber)}
+
+    /* Auto-submit toggle */
+    .voice-opts{display:flex;align-items:center;gap:8px;padding:0 2px 10px;font-size:12px;color:var(--muted)}
+    .toggle{position:relative;width:32px;height:18px;flex-shrink:0}
+    .toggle input{opacity:0;width:0;height:0}
+    .slider{position:absolute;inset:0;background:var(--border2);border-radius:18px;cursor:pointer;transition:.2s}
+    .slider:before{content:"";position:absolute;width:14px;height:14px;left:2px;top:2px;
+      background:#fff;border-radius:50%;transition:.2s}
+    .toggle input:checked+.slider{background:var(--blue)}
+    .toggle input:checked+.slider:before{transform:translateX(14px)}
+
+    /* Extra fields */
+    .extra{display:flex;gap:8px;margin-top:10px}
+    .field{flex:1}
+    .field label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px}
+    .field input{width:100%;background:var(--surface2);border:1px solid var(--border2);
+      border-radius:6px;color:var(--text);font-size:13px;padding:7px 10px;outline:none;transition:border-color .15s}
+    .field input:focus{border-color:var(--blue)}
+    .field input::placeholder{color:var(--dim)}
+    .field.narrow{flex:0 0 80px}
+
+    /* Action buttons */
+    .btn-row{display:flex;gap:8px;margin-top:12px}
+    #runBtn{flex:1;padding:10px;border-radius:8px;background:var(--blue);color:#fff;
+      font-size:14px;font-weight:600;border:none;cursor:pointer;transition:background .15s}
+    #runBtn:hover{background:var(--blue-h)}
+    #runBtn:disabled{background:#374151;color:#6b7280;cursor:not-allowed}
+    #stopBtn{padding:10px 16px;border-radius:8px;background:transparent;color:var(--muted);
+      font-size:14px;border:1px solid var(--border2);cursor:pointer;transition:all .15s;display:none}
+    #stopBtn:hover{border-color:var(--red);color:var(--red)}
+
+    /* ── Clarification panel ── */
+    .clarify-panel{background:#0f1f3d;border:1px solid #1e3a5f;border-radius:10px;
+      padding:14px;margin-top:12px;display:none;animation:fadeIn .2s ease}
+    .clarify-panel.show{display:block}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+    .clarify-title{font-size:12px;font-weight:600;color:#60a5fa;margin-bottom:10px;
+      display:flex;align-items:center;gap:6px}
+    .clarify-q{margin-bottom:10px}
+    .clarify-q label{display:block;font-size:12px;color:#93c5fd;margin-bottom:4px}
+    .clarify-q input{width:100%;background:#1a2d4a;border:1px solid #1e3a5f;border-radius:6px;
+      color:var(--text);font-size:13px;padding:7px 10px;outline:none;transition:border-color .15s}
+    .clarify-q input:focus{border-color:#3b82f6}
+    .clarify-q input::placeholder{color:#374151}
+    .clarify-actions{display:flex;gap:8px;margin-top:12px}
+    .btn-confirm{flex:1;padding:9px;border-radius:7px;background:#2563eb;color:#fff;
+      font-size:13px;font-weight:600;border:none;cursor:pointer;transition:background .15s}
+    .btn-confirm:hover{background:#1d4ed8}
+    .btn-skip{padding:9px 14px;border-radius:7px;background:transparent;color:var(--muted);
+      font-size:13px;border:1px solid var(--border2);cursor:pointer;transition:all .15s}
+    .btn-skip:hover{border-color:var(--muted);color:var(--text)}
+
+    /* Quick prompts */
+    .quick-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;
+      letter-spacing:.06em;padding:12px 16px 8px}
+    .quick-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px;border-bottom:1px solid var(--border)}
+    .chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--border2);
+      color:var(--muted);cursor:pointer;background:var(--surface2);transition:all .15s;white-space:nowrap}
+    .chip:hover{border-color:var(--blue);color:#60a5fa;background:#2563eb11}
+
+    /* Step log */
+    .steps-header{padding:12px 16px 6px;font-size:11px;font-weight:600;color:var(--dim);
+      text-transform:uppercase;letter-spacing:.06em;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+    .steps-header button{font-size:11px;color:var(--dim);background:none;border:none;cursor:pointer;padding:2px 6px}
+    .steps-header button:hover{color:var(--muted)}
+
+    .step-list{flex:1;overflow-y:auto;padding:0 10px 10px}
+    .step-list::-webkit-scrollbar{width:4px}
+    .step-list::-webkit-scrollbar-track{background:transparent}
+    .step-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+    .step-card{background:var(--surface2);border:1px solid var(--border2);border-radius:8px;
+      padding:9px 12px;margin-bottom:6px;cursor:pointer;transition:border-color .15s}
+    .step-card:hover,.step-card.active{border-color:var(--blue)}
+    .step-num{font-size:11px;color:var(--dim);margin-bottom:3px}
+    .step-action{font-size:13px;color:#c4c9e2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .step-obs{font-size:12px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+    .result-card{border-radius:8px;padding:12px 14px;margin-bottom:6px}
+    .result-card.success{background:#052e16;border:1px solid #166534}
+    .result-card.fail{background:#1c0a0a;border:1px solid #7f1d1d}
+    .result-title{font-size:12px;font-weight:600;margin-bottom:5px}
+    .result-card.success .result-title{color:#4ade80}
+    .result-card.fail .result-title{color:#f87171}
+    .result-body{font-size:13px;line-height:1.5}
+    .result-card.success .result-body{color:#bbf7d0}
+    .result-card.fail .result-body{color:#fca5a5}
+
+    .empty-state{padding:24px 16px;color:var(--dim);font-size:13px;text-align:center;line-height:1.6}
+
+    /* ── Right panel ── */
+    .right{display:flex;flex-direction:column;overflow:hidden;background:#0c0e18}
+
+    .screenshot-wrap{flex:1;display:flex;align-items:center;justify-content:center;
+      overflow:hidden;position:relative;min-height:0}
+
+    .placeholder{text-align:center;color:#2d3148}
+    .placeholder svg{width:56px;height:56px;margin-bottom:14px;opacity:.4}
+    .placeholder p{font-size:15px;color:#374151}
+    .placeholder small{font-size:12px;color:#1f2937}
+
+    #screenshot{max-width:100%;max-height:100%;object-fit:contain;display:none;
+      border-radius:3px;box-shadow:0 0 60px #00000099}
+
+    .step-badge{position:absolute;top:12px;left:12px;background:#00000099;
+      padding:4px 10px;border-radius:6px;font-size:12px;color:var(--muted);display:none}
+
+    /* Thinking indicator */
+    .thinking{position:absolute;top:12px;right:12px;display:none;
+      background:#00000099;padding:6px 12px;border-radius:6px;font-size:12px;
+      color:#a78bfa;align-items:center;gap:6px}
+    .thinking.show{display:flex}
+    .dots span{display:inline-block;width:4px;height:4px;border-radius:50%;
+      background:#a78bfa;margin:0 1px;animation:dot 1.2s infinite}
+    .dots span:nth-child(2){animation-delay:.2s}
+    .dots span:nth-child(3){animation-delay:.4s}
+    @keyframes dot{0%,80%,100%{transform:scale(0)}40%{transform:scale(1)}}
+
+    .obs-bar{padding:10px 18px;border-top:1px solid var(--border);font-size:13px;
+      color:var(--muted);background:#111420;min-height:42px;flex-shrink:0;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .obs-bar em{color:var(--dim);font-style:normal}
+
+    /* Speech not supported */
+    .no-speech{font-size:11px;color:var(--red);margin-top:6px;display:none}
+
+    /* Scrollbar global */
+    *::-webkit-scrollbar{width:4px;height:4px}
+    *::-webkit-scrollbar-track{background:transparent}
+    *::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2">
+    <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+  </svg>
+  <h1>UI Navigator</h1>
+  <span class="badge">AI Agent</span>
+  <div class="dot" id="dot"></div>
+</header>
+
+<div class="main">
+
+  <!-- ── Left panel ── -->
+  <div class="left">
+    <div class="input-area">
+
+      <div class="input-label">Task</div>
+
+      <!-- Text + voice input -->
+      <div class="prompt-box" id="promptBox">
+        <textarea id="taskInput" rows="3"
+          placeholder="Describe what you want the agent to do…&#10;&#10;Tip: Press Ctrl+Enter to run, or use the mic 🎤"></textarea>
+        <button class="mic-btn" id="micBtn" title="Hold to speak">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
+        <div id="transcript"></div>
+      </div>
+      <p class="no-speech" id="noSpeech">Speech recognition is not supported in this browser. Use Chrome or Edge.</p>
+
+      <div class="char-count" id="charCount">0 / 2000</div>
+
+      <div class="voice-opts">
+        <label class="toggle">
+          <input type="checkbox" id="autoSubmit" />
+          <span class="slider"></span>
+        </label>
+        <span>Auto-run when voice stops</span>
+      </div>
+
+      <div class="extra">
+        <div class="field">
+          <label>Start URL <span style="color:var(--dim)">(optional)</span></label>
+          <input type="text" id="startUrl" placeholder="https://..." />
+        </div>
+        <div class="field narrow">
+          <label>Max steps</label>
+          <input type="number" id="maxSteps" value="20" min="1" max="50" />
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button id="runBtn" onclick="startTask()">▶ Run Agent</button>
+        <button id="stopBtn" onclick="stopTask()">■ Stop</button>
+      </div>
+
+      <!-- Clarification panel (shown when agent needs more info) -->
+      <div class="clarify-panel" id="clarifyPanel">
+        <div class="clarify-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          A few quick questions to get this right:
+        </div>
+        <div id="clarifyQuestions"></div>
+        <div class="clarify-actions">
+          <button class="btn-confirm" onclick="confirmAnswers()">▶ Run with answers</button>
+          <button class="btn-skip" onclick="runWithoutAnswers()">Skip →</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Quick prompts -->
+    <div class="quick-label">Quick tasks</div>
+    <div class="quick-chips" id="quickChips"></div>
+
+    <!-- Step log -->
+    <div class="steps-header">
+      Steps
+      <button onclick="clearLog()">clear</button>
+    </div>
+    <div class="step-list" id="stepList">
+      <div class="empty-state">Submit a task or speak to get started.</div>
+    </div>
+  </div>
+
+  <!-- ── Right panel ── -->
+  <div class="right">
+    <div class="screenshot-wrap">
+      <div class="placeholder" id="placeholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <path d="M8 21h8M12 17v4"/>
+          <circle cx="12" cy="10" r="3"/>
+        </svg>
+        <p>Waiting for agent</p>
+        <small>Live screenshots will appear here</small>
+      </div>
+      <span class="step-badge" id="stepBadge"></span>
+      <div class="thinking" id="thinking">
+        <div class="dots"><span></span><span></span><span></span></div>
+        Thinking…
+      </div>
+      <img id="screenshot" alt="Browser screenshot" />
+    </div>
+    <div class="obs-bar" id="obsBar"><em>Observation will appear here…</em></div>
+  </div>
+
+</div>
+
+<script>
+// ── Quick prompts ──
+const QUICK = [
+  "Search for best apple pie recipe",
+  "Book flights to Paris",
+  "Find the latest tech news on Hacker News",
+  "Check weather in New York",
+  "Look up Python tutorials on YouTube",
+  "Find hotels in Tokyo under $150",
+  "What's trending on Reddit?",
+];
+const chips = document.getElementById('quickChips');
+QUICK.forEach(q => {
+  const c = document.createElement('div');
+  c.className = 'chip';
+  c.textContent = q;
+  c.onclick = () => { document.getElementById('taskInput').value = q; updateCount(); };
+  chips.appendChild(c);
+});
+
+// ── Char counter ──
+const taskInput = document.getElementById('taskInput');
+const charCount = document.getElementById('charCount');
+function updateCount() {
+  const n = taskInput.value.length;
+  charCount.textContent = `${n} / 2000`;
+  charCount.className = 'char-count' + (n > 1800 ? ' warn' : '');
+  autoResize();
+}
+function autoResize() {
+  taskInput.style.height = 'auto';
+  taskInput.style.height = Math.min(taskInput.scrollHeight, 200) + 'px';
+}
+taskInput.addEventListener('input', updateCount);
+taskInput.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') startTask();
+});
+
+// ── Voice input ──
+let recognition = null;
+let isListening = false;
+const micBtn = document.getElementById('micBtn');
+const promptBox = document.getElementById('promptBox');
+const transcriptEl = document.getElementById('transcript');
+const noSpeech = document.getElementById('noSpeech');
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SpeechRecognition) {
+  micBtn.disabled = true;
+  micBtn.style.opacity = '.35';
+  noSpeech.style.display = 'block';
+} else {
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  let finalTranscript = '';
+
+  recognition.onstart = () => {
+    isListening = true;
+    micBtn.classList.add('active');
+    promptBox.classList.add('listening');
+    transcriptEl.style.display = 'block';
+    transcriptEl.textContent = '🎤 Listening…';
+    finalTranscript = taskInput.value;
+  };
+
+  recognition.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalTranscript += (finalTranscript ? ' ' : '') + t.trim();
+      else interim = t;
+    }
+    taskInput.value = finalTranscript + (interim ? ' ' + interim : '');
+    transcriptEl.textContent = interim ? `Hearing: "${interim}"` : '🎤 Listening…';
+    updateCount();
+  };
+
+  recognition.onend = () => {
+    isListening = false;
+    micBtn.classList.remove('active');
+    promptBox.classList.remove('listening');
+    transcriptEl.style.display = 'none';
+    if (document.getElementById('autoSubmit').checked && taskInput.value.trim()) {
+      startTask();
+    }
+  };
+
+  recognition.onerror = (e) => {
+    if (e.error !== 'aborted') {
+      transcriptEl.textContent = `Error: ${e.error}`;
+      setTimeout(() => { transcriptEl.style.display = 'none'; }, 2000);
+    }
+    isListening = false;
+    micBtn.classList.remove('active');
+    promptBox.classList.remove('listening');
+  };
+
+  micBtn.addEventListener('click', () => {
+    if (isListening) {
+      recognition.stop();
+    } else {
+      finalTranscript = taskInput.value.trim();
+      recognition.start();
+    }
+  });
+}
+
+// ── Agent state ──
+let ws = null;
+let currentTaskId = null;
+const stepData = {};
+
+function setStatus(s) {
+  document.getElementById('dot').className = 'dot' + (s === 'busy' ? ' busy' : s === 'err' ? ' err' : '');
+}
+
+function setRunning(yes) {
+  document.getElementById('runBtn').disabled = yes;
+  document.getElementById('runBtn').textContent = yes ? '⏳ Running…' : '▶ Run Agent';
+  document.getElementById('stopBtn').style.display = yes ? 'block' : 'none';
+  document.getElementById('thinking').className = 'thinking' + (yes ? ' show' : '');
+  setStatus(yes ? 'busy' : 'idle');
+}
+
+function showScreenshot(b64, step, obs) {
+  const img = document.getElementById('screenshot');
+  const ph = document.getElementById('placeholder');
+  const badge = document.getElementById('stepBadge');
+  if (b64) {
+    img.src = b64.startsWith('data:') ? b64 : 'data:image/png;base64,' + b64;
+    img.style.display = 'block';
+    ph.style.display = 'none';
+    badge.style.display = 'block';
+    badge.textContent = step != null ? `Step ${step}` : 'Result';
+  }
+  if (obs) document.getElementById('obsBar').textContent = obs;
+}
+
+function addStep(step, action, obs, screenshot) {
+  stepData[step] = { screenshot, observation: obs, action };
+  const list = document.getElementById('stepList');
+  if (list.querySelector('.empty-state')) list.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'step-card';
+  card.id = `step-${step}`;
+  card.innerHTML = `
+    <div class="step-num">Step ${step}</div>
+    <div class="step-action">${esc(action || '—')}</div>
+    <div class="step-obs">${esc(obs || '')}</div>`;
+  card.onclick = () => selectStep(step);
+  list.appendChild(card);
+  list.scrollTop = list.scrollHeight;
+  selectStep(step);
+}
+
+function selectStep(step) {
+  document.querySelectorAll('.step-card').forEach(c => c.classList.remove('active'));
+  const c = document.getElementById(`step-${step}`);
+  if (c) c.classList.add('active');
+  const d = stepData[step];
+  if (d) showScreenshot(d.screenshot, step, d.observation);
+}
+
+function addResult(success, result, steps, error) {
+  const list = document.getElementById('stepList');
+  const card = document.createElement('div');
+  card.className = 'result-card ' + (success ? 'success' : 'fail');
+  card.innerHTML = `
+    <div class="result-title">${success ? '✅' : '❌'} ${success ? `Done in ${steps} step${steps!==1?'s':''}` : `Failed after ${steps} step${steps!==1?'s':''}`}</div>
+    <div class="result-body">${esc(result || error || (success ? 'Task completed.' : 'Unknown error'))}</div>`;
+  list.appendChild(card);
+  list.scrollTop = list.scrollHeight;
+  document.getElementById('obsBar').textContent = result || error || (success ? 'Done.' : 'Failed.');
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function clearLog() {
+  document.getElementById('stepList').innerHTML = '<div class="empty-state">Submit a task or speak to get started.</div>';
+  const img = document.getElementById('screenshot');
+  img.style.display = 'none';
+  document.getElementById('placeholder').style.display = 'flex';
+  document.getElementById('stepBadge').style.display = 'none';
+  document.getElementById('obsBar').innerHTML = '<em>Observation will appear here…</em>';
+  Object.keys(stepData).forEach(k => delete stepData[k]);
+}
+
+// ── Clarification flow ──
+let _pendingTask = '';
+
+async function startTask() {
+  const task = taskInput.value.trim();
+  if (!task) { taskInput.focus(); return; }
+
+  // Hide any previous clarification panel
+  hideClarify();
+
+  // Ask Gemini if the task needs clarification
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('runBtn').textContent = '🔍 Checking…';
+  setStatus('busy');
+
+  try {
+    const r = await fetch('/clarify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task }),
+    });
+    if (r.ok) {
+      const { questions } = await r.json();
+      if (questions && questions.length > 0) {
+        // Show clarification form
+        document.getElementById('runBtn').disabled = false;
+        document.getElementById('runBtn').textContent = '▶ Run Agent';
+        setStatus('idle');
+        _pendingTask = task;
+        showClarify(questions);
+        return;
+      }
+    }
+  } catch(_) {
+    // Clarification failed — just run directly
+  }
+
+  // No questions needed — run immediately
+  await _executeTask(task);
+}
+
+function showClarify(questions) {
+  const panel = document.getElementById('clarifyPanel');
+  const container = document.getElementById('clarifyQuestions');
+  container.innerHTML = '';
+  questions.forEach((q, i) => {
+    const div = document.createElement('div');
+    div.className = 'clarify-q';
+    div.innerHTML = `
+      <label for="cq${i}">${esc(q)}</label>
+      <input id="cq${i}" type="text" placeholder="Your answer…" />`;
+    container.appendChild(div);
+  });
+  panel.classList.add('show');
+  // Focus first input
+  const first = container.querySelector('input');
+  if (first) setTimeout(() => first.focus(), 50);
+}
+
+function hideClarify() {
+  document.getElementById('clarifyPanel').classList.remove('show');
+  _pendingTask = '';
+}
+
+async function confirmAnswers() {
+  const inputs = document.querySelectorAll('#clarifyQuestions .clarify-q');
+  const parts = [_pendingTask];
+  const questions = document.querySelectorAll('#clarifyQuestions label');
+  inputs.forEach((div, i) => {
+    const answer = div.querySelector('input').value.trim();
+    if (answer) parts.push(`${questions[i].textContent} ${answer}`);
+  });
+  hideClarify();
+  await _executeTask(parts.join(' | '));
+}
+
+async function runWithoutAnswers() {
+  const task = _pendingTask;
+  hideClarify();
+  await _executeTask(task);
+}
+
+async function _executeTask(task) {
+  if (ws) ws.close();
+  clearLog();
+  setRunning(true);
+
+  const body = { task, max_steps: parseInt(document.getElementById('maxSteps').value) || 10 };
+  const url = document.getElementById('startUrl').value.trim();
+  if (url) body.start_url = url;
+
+  let taskId;
+  try {
+    const r = await fetch('/navigate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({ detail: r.statusText }));
+      addResult(false, null, 0, e.detail || r.statusText);
+      setRunning(false); setStatus('err'); return;
+    }
+    taskId = (await r.json()).task_id;
+    currentTaskId = taskId;
+  } catch(e) {
+    addResult(false, null, 0, 'Network error: ' + e.message);
+    setRunning(false); setStatus('err'); return;
+  }
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/${taskId}`);
+
+  ws.onmessage = ({ data }) => {
+    const ev = JSON.parse(data);
+    if (ev.type === 'step') {
+      addStep(ev.step, ev.action, ev.observation, ev.screenshot);
+    } else if (ev.type === 'done') {
+      addResult(ev.success, ev.result, ev.steps_taken, ev.error);
+      setRunning(false);
+      setStatus(ev.success ? 'idle' : 'err');
+      ws.close(); ws = null;
+    } else if (ev.type === 'error') {
+      addResult(false, null, 0, ev.message);
+      setRunning(false); setStatus('err');
+      ws.close(); ws = null;
+    }
+  };
+
+  ws.onerror = () => {
+    addResult(false, null, 0, 'WebSocket error.');
+    setRunning(false); setStatus('err');
+  };
+}
+
+function stopTask() {
+  if (ws) { ws.close(); ws = null; }
+  addResult(false, null, 0, 'Task stopped by user.');
+  setRunning(false);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  ui-navigator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - DISPLAY=${DISPLAY:-:99}
+      - BROWSER_HEADLESS=true
+      - BROWSER_WIDTH=1280
+      - BROWSER_HEIGHT=800
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-5}
+    restart: unless-stopped
+    # Chromium needs a reasonable amount of shared memory.
+    shm_size: "1gb"
+    # Optional: mount logs directory for persistence
+    # volumes:
+    #   - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

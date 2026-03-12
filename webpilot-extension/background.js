@@ -167,11 +167,6 @@ function sendWS(payload) {
 // ---------------------------------------------------------------------------
 
 async function handleServerMessage(msg) {
-  // Clear interrupt watchdog — server responded.
-  if (_interruptWatchdog) {
-    clearTimeout(_interruptWatchdog);
-    _interruptWatchdog = null;
-  }
   switch (msg.type) {
     case "thinking":
       broadcastToSidebar({ type: "WP_MSG", payload: msg });
@@ -188,6 +183,18 @@ async function handleServerMessage(msg) {
         text: msg.text,
       });
       broadcastToSidebar({ type: "WP_MSG", payload: { ...msg, _step: step } });
+
+      // Start action watchdog — navigate gets longer timeout due to page load.
+      // Cleared when screenshot is sent back (in executeAction).
+      clearTimeout(_interruptWatchdog);
+      const watchdogMs = (msg.action === "navigate") ? 20000 : INTERRUPT_WATCHDOG_MS;
+      _interruptWatchdog = setTimeout(() => {
+        log("warn", `Action watchdog fired (${watchdogMs}ms) — no screenshot sent, forcing stop`);
+        sendWS({ type: "stop" });
+        broadcastToSidebar({ type: "WP_MSG", payload: { type: "stopped", narration: "Action timed out." } });
+        _stepCounter = 0;
+        _consecutiveFailures = 0;
+      }, watchdogMs);
 
       // Hard stop if too many steps — prevent infinite loops.
       if (_stepCounter > MAX_STEPS) {
@@ -228,6 +235,7 @@ async function handleServerMessage(msg) {
 
     case "done":
     case "stopped":
+      if (_interruptWatchdog) { clearTimeout(_interruptWatchdog); _interruptWatchdog = null; }
       broadcastToSidebar({ type: "WP_MSG", payload: msg });
       log("log", `Task ${msg.type} — ${_stepCounter} steps executed`);
       _stepCounter = 0;
@@ -301,6 +309,11 @@ async function executeAction(action) {
     if (screenshot) {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       sendWS({ type: "screenshot", screenshot, current_url: tab?.url || "" });
+      // Clear action watchdog — screenshot sent successfully.
+      if (_interruptWatchdog) {
+        clearTimeout(_interruptWatchdog);
+        _interruptWatchdog = null;
+      }
       return true;
     } else {
       log("error", "Screenshot capture failed — cannot continue loop");
@@ -365,15 +378,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       // Reset step counter so client and server count from the same baseline.
       _stepCounter = 0;
       _consecutiveFailures = 0;
-      // Start watchdog — if server doesn't respond within 10s, force idle.
-      clearTimeout(_interruptWatchdog);
-      _interruptWatchdog = setTimeout(() => {
-        log("warn", "Interrupt watchdog fired — no server response in 10s, forcing stop");
-        sendWS({ type: "stop" });
-        broadcastToSidebar({ type: "WP_MSG", payload: { type: "stopped", narration: "Interrupt timed out." } });
-        _stepCounter = 0;
-        _consecutiveFailures = 0;
-      }, INTERRUPT_WATCHDOG_MS);
+      // Watchdog is started later in handleServerMessage when the replanned
+      // action arrives — timeout depends on action type (navigate=20s, other=10s).
       sendResponse({ ok: true });
     });
     return true;

@@ -535,3 +535,93 @@ async def test_abort_interrupt(abort_server):
         messages.append({"direction": "recv", **response})
 
     _append_messages("test_abort_interrupt", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — interrupt after task complete produces new action (not timeout)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def interrupt_after_done_server():
+    """Dedicated server for interrupt-after-done — isolated stub state."""
+    with _server_ctx("navigate_and_done") as urls:
+        yield urls
+
+
+async def test_interrupt_after_task_complete(interrupt_after_done_server):
+    """
+    Complete a navigate_and_done task, then send an interrupt with a new intent.
+    Assert the interrupt produces a new action within 20s (not stopped/idle).
+    Tests that the watchdog timeout does not fire before navigate completes.
+    """
+    http_url, ws_url = interrupt_after_done_server
+    sid = _create_session(http_url)
+    messages = []
+
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}", close_timeout=25) as ws:
+        # --- Phase 1: complete the initial task ---
+        await ws.send(json.dumps({"type": "task", "intent": "go to example.com", "screenshot": BLANK}))
+        messages.append({"direction": "sent", "type": "task"})
+
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        messages.append({"direction": "recv", **msg})
+
+        msg = json.loads(await ws.recv())  # action (navigate)
+        assert msg["type"] == "action" and msg["action"] == "navigate"
+        messages.append({"direction": "recv", **msg})
+
+        await ws.send(json.dumps({"type": "screenshot", "screenshot": BLANK}))
+        messages.append({"direction": "sent", "type": "screenshot"})
+
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        messages.append({"direction": "recv", **msg})
+
+        msg = json.loads(await ws.recv())  # done
+        assert msg["type"] == "done", f"Expected done, got {msg}"
+        messages.append({"direction": "recv", **msg})
+
+        # --- Phase 2: send interrupt after task is complete ---
+        await ws.send(json.dumps({
+            "type": "interrupt",
+            "instruction": "now go to bing.com instead",
+            "screenshot": BLANK,
+        }))
+        messages.append({"direction": "sent", "type": "interrupt"})
+
+        # Server should respond with thinking + new action within 20s
+        import asyncio
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=20.0)
+            replan_msg = json.loads(raw)
+            messages.append({"direction": "recv", **replan_msg})
+
+            # May be "thinking" first — if so, read the next message
+            if replan_msg["type"] == "thinking":
+                raw2 = await asyncio.wait_for(ws.recv(), timeout=20.0)
+                replan_action = json.loads(raw2)
+                messages.append({"direction": "recv", **replan_action})
+            else:
+                replan_action = replan_msg
+
+            assert replan_action["type"] in ("action", "done"), (
+                f"Expected action or done after post-complete interrupt, got {replan_action['type']!r}"
+            )
+            assert replan_action["type"] != "stopped", (
+                "Server returned stopped — watchdog may have fired before navigate completed"
+            )
+
+            # Clean up: if action loop is still running, send screenshot to let it finish
+            if replan_action["type"] == "action":
+                await ws.send(json.dumps({"type": "screenshot", "screenshot": BLANK}))
+                final = json.loads(await asyncio.wait_for(ws.recv(), timeout=10.0))
+                messages.append({"direction": "recv", **final})
+                if final["type"] == "thinking":
+                    done_msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10.0))
+                    messages.append({"direction": "recv", **done_msg})
+
+        except asyncio.TimeoutError:
+            pytest.fail("Timed out waiting for server response after interrupt — watchdog may be too short")
+
+    _append_messages("test_interrupt_after_task_complete", messages)

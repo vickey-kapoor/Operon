@@ -197,6 +197,7 @@ class WebPilotStubHandler:
         stuck: bool = False,
         viewport_width: int = 1280,   # noqa: ARG002
         viewport_height: int = 800,   # noqa: ARG002
+        current_url: str = "",        # noqa: ARG002
     ) -> WebPilotAction:
         action = self._script[self._index]
         self.call_log.append(

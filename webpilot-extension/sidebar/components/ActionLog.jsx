@@ -26,7 +26,7 @@ export default function ActionLog({ log, status }) {
       )}
 
       {log.map((item, i) => (
-        <div key={i} style={styles.item} title={item.narration || ""}>
+        <div key={item._step || i} style={styles.item} title={item.narration || ""}>
           <span style={styles.icon}>{ACTION_ICONS[item.action] || "🔧"}</span>
           <div style={styles.body}>
             <span style={styles.label}>

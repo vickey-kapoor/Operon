@@ -11,13 +11,15 @@ import { useVoiceOutput } from "./hooks/useVoiceOutput.js";
 // ---------------------------------------------------------------------------
 
 const initialState = {
-  status: "idle",       // idle | thinking | running | confirming | done | error
+  status: "idle",       // idle | thinking | running | confirming | paused | done | error
   wsConnected: false,
   actionLog: [],
   currentTask: "",
   pendingAction: null,
   errorMessage: "",
   completionMessage: "",
+  pauseReason: "",      // "captcha" | "login"
+  pauseMessage: "",
 };
 
 function reducer(state, action) {
@@ -52,6 +54,13 @@ function reducer(state, action) {
           { action: "done", narration: action.payload.narration || "Task complete." },
         ],
       };
+    case "PAUSED":
+      return {
+        ...state,
+        status: "paused",
+        pauseReason: action.reason || "",
+        pauseMessage: action.narration || (action.reason === "captcha" ? "CAPTCHA detected — please solve it, then click Resume." : "Login required — please sign in, then click Resume."),
+      };
     case "STOPPED":
       return { ...state, status: "idle", pendingAction: null };
     case "ERROR":
@@ -72,7 +81,7 @@ function reducer(state, action) {
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const { speak } = useVoiceOutput();
-  const { sendTask, sendInterrupt, sendConfirm, sendStop } = useWebSocket(dispatch);
+  const { sendTask, sendInterrupt, sendConfirm, sendStop, sendResume } = useWebSocket(dispatch);
   const prevStatusRef = useRef(state.status);
   const prevLogLenRef = useRef(0);
 
@@ -116,6 +125,11 @@ export default function App() {
     dispatch({ type: "STOPPED" });
   }, [sendStop]);
 
+  const handleResume = useCallback(() => {
+    sendResume();
+    dispatch({ type: "THINKING" });
+  }, [sendResume]);
+
   // Voice narration: only fire when a NEW entry is added to the log, not on STEP_RESULT updates.
   useEffect(() => {
     if (state.actionLog.length <= prevLogLenRef.current) return;
@@ -140,6 +154,13 @@ export default function App() {
     }
   }, [state.status, state.pendingAction, speak]);
 
+  // Narrate pause (CAPTCHA/login detected).
+  useEffect(() => {
+    if (state.status === "paused" && state.pauseMessage) {
+      speak(state.pauseMessage);
+    }
+  }, [state.status, state.pauseMessage, speak]);
+
   // Narrate stop: detect transition from running/thinking → idle (user-initiated stop).
   useEffect(() => {
     const prev = prevStatusRef.current;
@@ -157,6 +178,7 @@ export default function App() {
       <div style={styles.header}>
         <span style={styles.title}>WebPilot</span>
         <StatusIndicator connected={state.wsConnected} status={state.status} />
+        <button onClick={() => window.close()} style={styles.closeBtn}>✕</button>
       </div>
 
       {/* Action log */}
@@ -175,6 +197,17 @@ export default function App() {
       {/* Error banner */}
       {state.status === "error" && (
         <div style={styles.errorBanner}>{state.errorMessage || "An error occurred."}</div>
+      )}
+
+      {/* Pause banner (CAPTCHA / login) */}
+      {state.status === "paused" && (
+        <div style={styles.pauseBanner}>
+          <div style={styles.pauseText}>{state.pauseMessage}</div>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button onClick={handleResume} style={styles.resumeBtn}>Resume</button>
+            <button onClick={handleStop} style={styles.pauseStopBtn}>Stop</button>
+          </div>
+        </div>
       )}
 
       {/* Confirmation card */}
@@ -254,10 +287,49 @@ const styles = {
     fontSize: 13,
     flexShrink: 0,
   },
+  pauseBanner: {
+    background: "#2d2a1a",
+    borderTop: "1px solid #6b5b2f",
+    padding: "10px 16px",
+    flexShrink: 0,
+  },
+  pauseText: {
+    color: "#ecc94b",
+    fontSize: 13,
+    fontWeight: 600,
+  },
+  resumeBtn: {
+    background: "#2f6b2f",
+    color: "#68d391",
+    border: "none",
+    borderRadius: 6,
+    padding: "6px 16px",
+    fontSize: 13,
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+  pauseStopBtn: {
+    background: "#742a2a",
+    color: "#fc8181",
+    border: "none",
+    borderRadius: 6,
+    padding: "6px 16px",
+    fontSize: 13,
+    cursor: "pointer",
+  },
   inputArea: {
     borderTop: "1px solid #2d3748",
     padding: "12px 16px",
     flexShrink: 0,
+  },
+  closeBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#a0aec0",
+    fontSize: 16,
+    cursor: "pointer",
+    padding: "4px 8px",
+    lineHeight: 1,
   },
   stopBtn: {
     marginBottom: 8,

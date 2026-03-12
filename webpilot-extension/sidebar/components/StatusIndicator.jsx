@@ -14,7 +14,7 @@ export default function StatusIndicator({ connected, status }) {
   const effectiveStatus = connected ? status : "disconnected";
   const color = STATUS_COLORS[effectiveStatus] || "#718096";
   const label = connected
-    ? status.charAt(0).toUpperCase() + status.slice(1)
+    ? (status || "idle").charAt(0).toUpperCase() + (status || "idle").slice(1)
     : "Disconnected";
 
   return (

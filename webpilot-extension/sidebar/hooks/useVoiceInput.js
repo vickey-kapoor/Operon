@@ -8,6 +8,7 @@ export function useVoiceInput(onTranscript) {
   const recognitionRef = useRef(null);
   const isListeningRef = useRef(false);
   const restartCountRef = useRef(0);
+  const onTranscriptRef = useRef(onTranscript);
 
   const SpeechRecognition =
     typeof window !== "undefined" &&
@@ -36,7 +37,7 @@ export function useVoiceInput(onTranscript) {
       const transcript = event.results[0][0].transcript;
       const confidence = (event.results[0][0].confidence * 100).toFixed(0);
       console.log(`[WebPilot] Voice: "${transcript}" (${confidence}%)`);
-      onTranscript(transcript);
+      onTranscriptRef.current(transcript);
     };
 
     r.onerror = (event) => {

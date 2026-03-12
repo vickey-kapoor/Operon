@@ -5,7 +5,18 @@
  * and performs the requested action in the page context.
  */
 
+// Re-injection guard: prevent duplicate listeners when content script is re-injected.
+if (\!window.__webpilot_content_loaded) {
+window.__webpilot_content_loaded = true;
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "WAIT_STABLE") {
+    waitForPageStable(msg.timeout || 5000)
+      .then(() => sendResponse({ stable: true }))
+      .catch(() => sendResponse({ stable: false }));
+    return true;
+  }
+
   if (msg.type !== "EXECUTE_ACTION") return false;
 
   const { action } = msg;
@@ -15,6 +26,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   return true; // async response
 });
+
+} // end re-injection guard
 
 async function executeAction(action) {
   const type = action.action;
@@ -30,23 +43,43 @@ async function executeAction(action) {
   } else if (type === "type") {
     const x = action.x ?? action.target_x;
     const y = action.y ?? action.target_y;
-    const el = deepElementFromPoint(x, y) || document.activeElement;
-    if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
-      setNativeValue(el, action.text || action.value || "");
+    let el = (x \!= null && y \!= null) ? deepElementFromPoint(x, y) : null;
+    if (\!el) el = document.activeElement;
+    if (el && el \!== document.body) {
+      // Focus the element first so keystrokes land in the right place.
+      el.focus();
+      dispatchMouseEvents(el, x || 0, y || 0);
+      if (el.isContentEditable) {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, action.text || action.value || "");
+      } else if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+        setNativeValue(el, action.text || action.value || "");
+      }
     }
 
   } else if (type === "scroll") {
     const direction = action.direction || "down";
     const amount = action.amount || 400;
-    window.scrollBy(0, direction === "down" ? amount : -amount);
+    if (direction === "down") window.scrollBy(0, amount);
+    else if (direction === "up") window.scrollBy(0, -amount);
+    else if (direction === "right") window.scrollBy(amount, 0);
+    else if (direction === "left") window.scrollBy(-amount, 0);
 
   } else if (type === "wait") {
     await sleep(action.duration_ms || 1000);
 
   } else if (type === "key") {
     const el = document.activeElement || document.body;
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: action.key, bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent("keyup", { key: action.key, bubbles: true }));
+    const modifiers = {
+      key: action.key,
+      bubbles: true,
+      ctrlKey: \!\!action.ctrlKey,
+      shiftKey: \!\!action.shiftKey,
+      altKey: \!\!action.altKey,
+      metaKey: \!\!action.metaKey,
+    };
+    el.dispatchEvent(new KeyboardEvent("keydown", modifiers));
+    el.dispatchEvent(new KeyboardEvent("keyup", modifiers));
   }
 }
 
@@ -105,4 +138,42 @@ function setNativeValue(el, value) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wait until the DOM stops mutating for 500ms (quiet period), or until
+ * a hard cap (default 5s) is reached — whichever comes first.
+ */
+function waitForPageStable(hardCapMs = 5000) {
+  const QUIET_PERIOD_MS = 500;
+  return new Promise((resolve) => {
+    let timer = null;
+    const hardCap = setTimeout(() => {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+      resolve();
+    }, hardCapMs);
+
+    const observer = new MutationObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        observer.disconnect();
+        clearTimeout(hardCap);
+        resolve();
+      }, QUIET_PERIOD_MS);
+    });
+
+    observer.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+
+    // If no mutations happen at all, resolve after the quiet period
+    timer = setTimeout(() => {
+      observer.disconnect();
+      clearTimeout(hardCap);
+      resolve();
+    }, QUIET_PERIOD_MS);
+  });
 }

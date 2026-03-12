@@ -1,6 +1,12 @@
-import React from "react";
+import React, { useState } from "react";
 
 export default function ConfirmCard({ action, onConfirm }) {
+  const [clicked, setClicked] = useState(false);
+  const handleConfirm = (val) => {
+    if (clicked) return;
+    setClicked(true);
+    onConfirm(val);
+  };
   return (
     <div style={styles.card}>
       <p style={styles.title}>Confirm action</p>
@@ -8,10 +14,10 @@ export default function ConfirmCard({ action, onConfirm }) {
         {action.narration || action.action_label || action.action}
       </p>
       <div style={styles.buttons}>
-        <button onClick={() => onConfirm(true)} style={styles.proceed}>
+        <button onClick={() => handleConfirm(true)} disabled={clicked} style={styles.proceed}>
           ✅ Proceed
         </button>
-        <button onClick={() => onConfirm(false)} style={styles.cancel}>
+        <button onClick={() => handleConfirm(false)} disabled={clicked} style={styles.cancel}>
           ⛔ Cancel
         </button>
       </div>

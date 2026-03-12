@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Dict
@@ -17,35 +18,57 @@ from src.api.webpilot_models import (
     ConfirmMessage,
     InterruptMessage,
     InterruptionType,
+    ResumeMessage,
     StopMessage,
     TaskMessage,
     TTSRequest,
     WebPilotSession,
     ScreenshotMessage,
 )
-from src.agent.webpilot_handler import WebPilotHandler
+from src.agent.webpilot_handler import WebPilotHandler, LegacyWebPilotHandler
+
+_MAX_SESSION_DURATION = int(os.environ.get("MAX_SESSION_DURATION", "1800"))
+_MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
+
+# Flag: True if Live API is available (google-genai client was set up during lifespan).
+_live_api_client = None
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webpilot", tags=["webpilot"])
 
 _sessions: Dict[str, WebPilotSession] = {}
-_handler: WebPilotHandler = None  # initialized in lifespan via init_handler()
+# Shared handler — either LegacyWebPilotHandler or stub. Used for TTS and as fallback.
+_handler = None
 
 
-def init_handler(handler: WebPilotHandler) -> None:
-    """Inject the shared WebPilotHandler instance. Called from the server lifespan."""
-    global _handler
+def init_handler(handler, live_client=None) -> None:
+    """Inject the shared handler instance. Called from the server lifespan.
+
+    Parameters
+    ----------
+    handler:
+        The shared LegacyWebPilotHandler (or stub) — used for TTS and as fallback.
+    live_client:
+        Optional google.genai Client for creating per-session Live API handlers.
+    """
+    global _handler, _live_api_client
     _handler = handler
+    _live_api_client = live_client
 
 
 async def cleanup_sessions() -> None:
     """Remove sessions inactive for more than 30 minutes. Run as a background task."""
     while True:
         await asyncio.sleep(300)  # check every 5 minutes
-        cutoff = time.time() - 1800  # 30 minutes
+        cutoff = time.time() - _MAX_SESSION_DURATION
         stale = [sid for sid, s in list(_sessions.items()) if s.last_active < cutoff]
         for sid in stale:
-            del _sessions[sid]
+            session = _sessions.pop(sid)
+            if session.handler:
+                try:
+                    await session.handler.close()
+                except Exception:
+                    pass
             logger.info("Cleaned up stale webpilot session", extra={"session_id": sid})
 
 
@@ -57,6 +80,9 @@ async def cleanup_sessions() -> None:
 @router.post("/sessions")
 async def create_session() -> dict:
     """Create a new WebPilot session. Returns session_id."""
+    _MAX_SESSIONS = 1000
+    if len(_sessions) >= _MAX_SESSIONS:
+        raise HTTPException(status_code=503, detail="Maximum session limit reached")
     session_id = str(uuid.uuid4())
     _sessions[session_id] = WebPilotSession(session_id=session_id)
     logger.info("Created webpilot session", extra={"session_id": session_id})
@@ -82,6 +108,15 @@ async def tts_narration(body: TTSRequest) -> dict:
         return {"audio": base64.b64encode(audio_bytes).decode(), "mime_type": "audio/wav"}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/debug/stub_calls")
+async def debug_stub_calls() -> dict:
+    """Return stub call log. Only available when WEBPILOT_STUB env var is set."""
+    from src.agent.webpilot_stub import WebPilotStubHandler
+    if not isinstance(_handler, WebPilotStubHandler):
+        raise HTTPException(status_code=404, detail="Not in stub mode")
+    return {"calls": _handler.call_log}
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +161,15 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     try:
         while True:
             raw = await websocket.receive_text()
-            data = json.loads(raw)
+            # Reject oversized messages (> 15 MB).
+            if len(raw) > 15 * 1024 * 1024:
+                await websocket.send_json({"type": "error", "message": "Message too large"})
+                continue
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
+                continue
             msg_type = data.get("type")
             session.last_active = time.time()
 
@@ -137,23 +180,21 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     session.history = []
                     session.status = "running"
                     session.abort_event.clear()
+                    # Try per-session Live handler; falls back to shared Legacy handler.
+                    session.handler = await _create_live_handler(msg.intent)
                     await _run_action_loop(websocket, session, msg.screenshot)
 
                 elif msg_type == "interrupt":
                     msg = InterruptMessage(**data)
-                    session.confirm_event.clear()
-                    session.confirm_result = None
                     session.status = "running"
                     await _handle_interrupt(websocket, session, msg.screenshot, msg.instruction)
-
-                elif msg_type == "confirm":
-                    msg = ConfirmMessage(**data)
-                    session.confirm_result = msg.confirmed
-                    session.confirm_event.set()
 
                 elif msg_type == "stop":
                     session.abort_event.set()
                     session.status = "idle"
+                    if session.handler:
+                        await session.handler.close()
+                        session.handler = None
                     await websocket.send_json({"type": "stopped"})
 
             except (ValidationError, KeyError) as exc:
@@ -163,6 +204,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         logger.info("WebSocket disconnected", extra={"session_id": session_id})
     except Exception:
         logger.exception("WebSocket error", extra={"session_id": session_id})
+    finally:
+        # Close per-session Live handler on disconnect to free resources.
+        if session.handler:
+            try:
+                await session.handler.close()
+            except Exception:
+                pass
+            session.handler = None
         try:
             await websocket.send_json({"type": "error", "message": "Internal server error"})
         except Exception:
@@ -170,14 +219,42 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-session Live handler factory
+# ---------------------------------------------------------------------------
+
+
+async def _create_live_handler(intent: str) -> WebPilotHandler | None:
+    """Create a per-session Live API handler and open its streaming session.
+
+    Returns a connected ``WebPilotHandler`` on success, or ``None`` if the
+    Live API is unavailable or connection fails (caller falls back to the
+    shared Legacy handler).
+    """
+    if _live_api_client is None:
+        return None
+    handler = WebPilotHandler(client=_live_api_client)
+    try:
+        await handler.connect(intent)
+        return handler
+    except Exception as exc:
+        logger.warning("Live API handler creation failed, using legacy fallback: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Action loop helpers
 # ---------------------------------------------------------------------------
+
+
+_ACTION_LOOP_TIMEOUT = int(os.environ.get("ACTION_LOOP_TIMEOUT", "120"))
+_MAX_LOOP_STEPS = int(os.environ.get("MAX_LOOP_STEPS", "30"))
 
 
 async def _run_action_loop(
     websocket: WebSocket,
     session: WebPilotSession,
     first_screenshot: str,
+    steps_remaining: int | None = None,
 ) -> None:
     """
     Core action loop: ask Gemini for the next action, emit it, wait for a screenshot.
@@ -186,26 +263,79 @@ async def _run_action_loop(
       - action="done" is returned
       - session.abort_event is set
       - the client sends {"type": "stop"}
+      - steps_remaining is exhausted
+      - hard timeout fires (ACTION_LOOP_TIMEOUT seconds)
       - an error occurs
 
     Auto-retry: tracks MD5 hashes of consecutive screenshots. After 3 identical
     screenshots, injects a "stuck" hint into the Gemini prompt to encourage a new approach.
     """
+    try:
+        await asyncio.wait_for(
+            _run_action_loop_inner(websocket, session, first_screenshot, steps_remaining),
+            timeout=_ACTION_LOOP_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Action loop hard timeout (%ds) — forcing stop",
+            _ACTION_LOOP_TIMEOUT,
+            extra={"session_id": session.session_id},
+        )
+        session.status = "idle"
+        await websocket.send_json(
+            {"type": "stopped", "narration": f"Task timed out after {_ACTION_LOOP_TIMEOUT} seconds."}
+        )
+
+
+async def _run_action_loop_inner(
+    websocket: WebSocket,
+    session: WebPilotSession,
+    first_screenshot: str,
+    steps_remaining: int | None = None,
+) -> None:
+    """Inner implementation of the action loop (wrapped by timeout in _run_action_loop)."""
+    if steps_remaining is None:
+        steps_remaining = _MAX_LOOP_STEPS
     screenshot = first_screenshot
+    current_url = ""
     _prev_hash = hashlib.md5(base64.b64decode(first_screenshot)).digest()
     retry_count = 0
+    verification_attempts = 0
+    step_count = 0
 
     while not session.abort_event.is_set():
+        if step_count >= steps_remaining:
+            logger.info(
+                "Step budget exhausted (%d steps)", steps_remaining,
+                extra={"session_id": session.session_id},
+            )
+            session.status = "idle"
+            await websocket.send_json(
+                {"type": "stopped", "narration": "Reached maximum number of steps."}
+            )
+            return
+        step_count += 1
+
         await websocket.send_json({"type": "thinking"})
 
-        stuck = retry_count >= 3
+        stuck = retry_count >= _MAX_RETRIES
         if stuck:
             retry_count = 0
+            _prev_hash = b""  # force fresh baseline so next screenshot isn't flagged stuck
 
         try:
-            action = await _handler.get_next_action(
-                screenshot, session.intent, session.history, stuck=stuck
-            )
+            if session.handler is not None:
+                # Live API — persistent session, no manual history management
+                action = await session.handler.send_screenshot_and_get_action(
+                    screenshot, session.intent, stuck=stuck,
+                    current_url=current_url,
+                )
+            else:
+                # Legacy — per-call generate_content with explicit history
+                action = await _handler.get_next_action(
+                    screenshot, session.intent, session.history, stuck=stuck,
+                    current_url=current_url,
+                )
         except Exception as exc:
             logger.exception(
                 "WebPilot handler error", extra={"session_id": session.session_id}
@@ -217,9 +347,49 @@ async def _run_action_loop(
         action_dict = action.model_dump()
 
         if action.action == "done":
+            # --- Gap 2: Completion verification ---
+            if verification_attempts < 2:
+                verified = await _verify_completion(
+                    websocket, session, screenshot, action
+                )
+                if not verified:
+                    verification_attempts += 1
+                    continue
             await websocket.send_json({"type": "done", **action_dict})
             session.status = "done"
             return
+
+        # Reset verification attempts on non-done actions
+        verification_attempts = 0
+
+        # --- Gap 3+4: CAPTCHA / login pause ---
+        if action.action in ("captcha_detected", "login_required"):
+            reason = "captcha" if action.action == "captcha_detected" else "login"
+            session.status = "paused"
+            await websocket.send_json({
+                "type": "paused",
+                "reason": reason,
+                "narration": action.narration,
+                "action_label": action.action_label,
+            })
+            # Inline read — same pattern as confirmation flow
+            raw_pause = await websocket.receive_text()
+            pause_data = json.loads(raw_pause)
+            if pause_data.get("type") == "resume":
+                screenshot = pause_data["screenshot"]
+                session.status = "running"
+                continue
+            elif pause_data.get("type") == "stop":
+                session.abort_event.set()
+                session.status = "idle"
+                await websocket.send_json({"type": "stopped"})
+                return
+            else:
+                await websocket.send_json(
+                    {"type": "error", "message": f"Expected 'resume' or 'stop', got '{pause_data.get('type')}'"}
+                )
+                session.status = "idle"
+                return
 
         if action.is_irreversible or action.action == "confirm_required":
             session.status = "awaiting_confirm"
@@ -269,6 +439,7 @@ async def _run_action_loop(
             return
         elif msg_type == "screenshot":
             screenshot = data["screenshot"]
+            current_url = data.get("current_url", "")
             new_hash = hashlib.md5(base64.b64decode(screenshot)).digest()
             if new_hash == _prev_hash:
                 retry_count += 1
@@ -283,6 +454,38 @@ async def _run_action_loop(
                 }
             )
             return
+
+
+async def _verify_completion(
+    websocket: WebSocket,
+    session: WebPilotSession,
+    screenshot: str,
+    action,
+) -> bool:
+    """
+    Ask the handler to verify that the task was actually completed.
+    Returns True if verified (or on error), False if not yet done.
+    """
+    try:
+        handler = session.handler if session.handler is not None else _handler
+        verified = await handler.verify_completion(screenshot, session.intent)
+        if not verified:
+            logger.info(
+                "Completion not verified — retrying",
+                extra={"session_id": session.session_id},
+            )
+            await websocket.send_json({
+                "type": "thinking",
+                "detail": "Verifying completion...",
+            })
+        return verified
+    except Exception as exc:
+        logger.warning(
+            "Completion verification error, accepting done: %s",
+            exc,
+            extra={"session_id": session.session_id},
+        )
+        return True
 
 
 async def _handle_interrupt(
@@ -316,9 +519,17 @@ async def _handle_interrupt(
     await websocket.send_json({"type": "thinking"})
 
     try:
-        action = await _handler.get_interruption_replan(
-            screenshot, original_intent, instruction, session.history, interrupt_type
-        )
+        if session.handler is not None:
+            # Live API — send interruption context, then get next action
+            await session.handler.send_interruption(instruction)
+            action = await session.handler.send_screenshot_and_get_action(
+                screenshot, session.intent
+            )
+        else:
+            # Legacy — single replan call
+            action = await _handler.get_interruption_replan(
+                screenshot, original_intent, instruction, session.history, interrupt_type
+            )
     except Exception as exc:
         logger.exception(
             "WebPilot interruption replan error", extra={"session_id": session.session_id}
@@ -352,7 +563,16 @@ async def _handle_interrupt(
         return
     data = json.loads(raw)
     if data.get("type") == "screenshot":
-        await _run_action_loop(websocket, session, data["screenshot"])
+        # Inherit remaining step budget (half of max) so recursive call can't run forever.
+        await _run_action_loop(
+            websocket, session, data["screenshot"],
+            steps_remaining=max(1, _MAX_LOOP_STEPS // 2),
+        )
+        # Ensure a terminal message was sent — if the loop returned without
+        # setting done/idle, force a stopped so the sidebar never hangs.
+        if session.status not in ("done", "idle"):
+            session.status = "idle"
+            await websocket.send_json({"type": "stopped"})
     elif data.get("type") == "stop":
         session.abort_event.set()
         session.status = "idle"

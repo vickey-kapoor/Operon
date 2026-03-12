@@ -6,9 +6,23 @@
  * script (via chrome.tabs.sendMessage).
  */
 
-const BACKEND_URL = "http://localhost:8080";
-const WS_BASE_URL = "ws://localhost:8080";
+const DEFAULT_BACKEND = "http://localhost:8080";
+let BACKEND_URL = DEFAULT_BACKEND;
+let WS_BASE_URL = DEFAULT_BACKEND.replace("http", "ws");
+
+// Load persisted backend URL from sync storage on startup.
+// Override via DevTools console: chrome.storage.sync.set({backendUrl: "http://your-host:8080"})
+chrome.storage.sync.get("backendUrl", (res) => {
+  if (res.backendUrl) {
+    BACKEND_URL = res.backendUrl;
+    WS_BASE_URL = res.backendUrl.replace(/^http/, "ws");
+    log("log", "Using custom backend URL:", BACKEND_URL);
+  }
+});
+
 const RECONNECT_DELAY_MS = 2000;
+const MAX_RECONNECT_DELAY_MS = 30000;
+let _reconnectDelay = RECONNECT_DELAY_MS;
 const ACTION_SETTLE_DELAY_MS = 1200;
 const NAVIGATE_SETTLE_DELAY_MS = 2500; // kept as fallback only
 
@@ -21,6 +35,8 @@ let _messageQueue = Promise.resolve(); // serialises handleServerMessage calls
 
 const MAX_STEPS = 15;
 const MAX_CONSECUTIVE_FAILURES = 3;
+const INTERRUPT_WATCHDOG_MS = 10000; // 10s watchdog after interrupt
+let _interruptWatchdog = null;
 
 // ---------------------------------------------------------------------------
 // Logging — all logs tagged [WebPilot] with a step counter where relevant
@@ -95,6 +111,7 @@ async function connectWebSocket() {
   _ws.onopen = () => {
     log("log", "WebSocket connected ✓");
     _reconnecting = false;
+    _reconnectDelay = RECONNECT_DELAY_MS;  // reset backoff on success
     broadcastToSidebar({ type: "WS_STATUS", connected: true });
   };
 
@@ -109,7 +126,10 @@ async function connectWebSocket() {
     log("log", "← Server:", msg.type, msg);
     // Serialise: wait for the previous message to finish before handling the next.
     // This prevents concurrent executeAction calls from racing each other.
-    _messageQueue = _messageQueue.then(() => handleServerMessage(msg));
+    // The .catch ensures a crashed handler doesn't poison the entire queue.
+    _messageQueue = _messageQueue
+      .then(() => handleServerMessage(msg))
+      .catch(err => log("error", "Message handler crashed:", err));
   };
 
   _ws.onclose = (event) => {
@@ -147,6 +167,11 @@ function sendWS(payload) {
 // ---------------------------------------------------------------------------
 
 async function handleServerMessage(msg) {
+  // Clear interrupt watchdog — server responded.
+  if (_interruptWatchdog) {
+    clearTimeout(_interruptWatchdog);
+    _interruptWatchdog = null;
+  }
   switch (msg.type) {
     case "thinking":
       broadcastToSidebar({ type: "WP_MSG", payload: msg });
@@ -194,6 +219,10 @@ async function handleServerMessage(msg) {
     }
 
     case "confirmation_required":
+      broadcastToSidebar({ type: "WP_MSG", payload: msg });
+      break;
+
+    case "paused":
       broadcastToSidebar({ type: "WP_MSG", payload: msg });
       break;
 
@@ -259,13 +288,19 @@ async function executeAction(action) {
       } catch (err) {
         log("warn", "Content script error:", err.message);
       }
-      await sleep(ACTION_SETTLE_DELAY_MS);
+      // Wait for DOM to stabilise — fall back to fixed delay if content script unreachable
+      try {
+        await chrome.tabs.sendMessage(tab.id, { type: "WAIT_STABLE", timeout: 5000 });
+      } catch {
+        await sleep(ACTION_SETTLE_DELAY_MS);
+      }
     }
 
-    // Capture screenshot and send back.
+    // Capture screenshot and send back (include current URL for Gemini context).
     const screenshot = await captureScreenshot();
     if (screenshot) {
-      sendWS({ type: "screenshot", screenshot });
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      sendWS({ type: "screenshot", screenshot, current_url: tab?.url || "" });
       return true;
     } else {
       log("error", "Screenshot capture failed — cannot continue loop");
@@ -327,6 +362,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     log("log", `Interrupt: "${msg.instruction}"`);
     captureScreenshot().then((screenshot) => {
       sendWS({ type: "interrupt", instruction: msg.instruction, screenshot });
+      // Reset step counter so client and server count from the same baseline.
+      _stepCounter = 0;
+      _consecutiveFailures = 0;
+      // Start watchdog — if server doesn't respond within 10s, force idle.
+      clearTimeout(_interruptWatchdog);
+      _interruptWatchdog = setTimeout(() => {
+        log("warn", "Interrupt watchdog fired — no server response in 10s, forcing stop");
+        sendWS({ type: "stop" });
+        broadcastToSidebar({ type: "WP_MSG", payload: { type: "stopped", narration: "Interrupt timed out." } });
+        _stepCounter = 0;
+        _consecutiveFailures = 0;
+      }, INTERRUPT_WATCHDOG_MS);
       sendResponse({ ok: true });
     });
     return true;
@@ -336,6 +383,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     log("log", `Confirm: ${msg.confirmed}`);
     sendWS({ type: "confirm", confirmed: msg.confirmed });
     sendResponse({ ok: true });
+  }
+
+  if (msg.type === "RESUME") {
+    log("log", "Resume requested (after CAPTCHA/login)");
+    captureScreenshot().then((screenshot) => {
+      if (!screenshot) {
+        log("warn", "Could not capture screenshot for resume");
+        sendResponse({ ok: false });
+        return;
+      }
+      sendWS({ type: "resume", screenshot });
+      sendResponse({ ok: true });
+    });
+    return true;
   }
 
   if (msg.type === "STOP") {

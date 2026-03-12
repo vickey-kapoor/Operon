@@ -33,6 +33,9 @@ export function useWebSocket(dispatch) {
         case "done":
           dispatch({ type: "DONE", payload });
           break;
+        case "paused":
+          dispatch({ type: "PAUSED", reason: payload.reason, narration: payload.narration });
+          break;
         case "stopped":
           dispatch({ type: "STOPPED" });
           break;
@@ -49,20 +52,44 @@ export function useWebSocket(dispatch) {
   }, [dispatch]);
 
   const sendTask = useCallback((intent) => {
-    chrome.runtime.sendMessage({ type: "TASK", intent });
+    chrome.runtime.sendMessage({ type: "TASK", intent }, (resp) => {
+      if (chrome.runtime.lastError) {
+        dispatch({ type: "ERROR", message: "Failed to send task: " + chrome.runtime.lastError.message });
+      }
+    });
   }, []);
 
   const sendInterrupt = useCallback((instruction) => {
-    chrome.runtime.sendMessage({ type: "INTERRUPT", instruction });
+    chrome.runtime.sendMessage({ type: "INTERRUPT", instruction }, (resp) => {
+      if (chrome.runtime.lastError) {
+        dispatch({ type: "ERROR", message: "Failed to send interrupt: " + chrome.runtime.lastError.message });
+      }
+    });
   }, []);
 
   const sendConfirm = useCallback((confirmed) => {
-    chrome.runtime.sendMessage({ type: "CONFIRM", confirmed });
+    chrome.runtime.sendMessage({ type: "CONFIRM", confirmed }, (resp) => {
+      if (chrome.runtime.lastError) {
+        dispatch({ type: "ERROR", message: "Failed to send confirm: " + chrome.runtime.lastError.message });
+      }
+    });
   }, []);
 
   const sendStop = useCallback(() => {
-    chrome.runtime.sendMessage({ type: "STOP" });
+    chrome.runtime.sendMessage({ type: "STOP" }, (resp) => {
+      if (chrome.runtime.lastError) {
+        dispatch({ type: "ERROR", message: "Failed to send stop: " + chrome.runtime.lastError.message });
+      }
+    });
   }, []);
 
-  return { sendTask, sendInterrupt, sendConfirm, sendStop };
+  const sendResume = useCallback(() => {
+    chrome.runtime.sendMessage({ type: "RESUME" }, (resp) => {
+      if (chrome.runtime.lastError) {
+        dispatch({ type: "ERROR", message: "Failed to send resume: " + chrome.runtime.lastError.message });
+      }
+    });
+  }, []);
+
+  return { sendTask, sendInterrupt, sendConfirm, sendStop, sendResume };
 }

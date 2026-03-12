@@ -699,7 +699,7 @@ def slow_navigate_server():
         yield urls
 
 
-async def test_interrupt_lost_if_watchdog_fires_early(slow_navigate_server):
+async def test_navigate_survives_slow_tab_load(slow_navigate_server):
     """
     Start a task that returns a navigate action. Simulate a slow page load by
     delaying the screenshot response by 11 seconds. The server's action loop
@@ -744,7 +744,7 @@ async def test_interrupt_lost_if_watchdog_fires_early(slow_navigate_server):
         )
         messages.append({"direction": "recv", **msg})
 
-    _append_messages("test_interrupt_lost_if_watchdog_fires_early", messages)
+    _append_messages("test_navigate_survives_slow_tab_load", messages)
 
 
 # ---------------------------------------------------------------------------

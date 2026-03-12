@@ -60,6 +60,7 @@ export default function TaskInput({ onSubmit, disabled, isRunning, placeholder }
       <button
         onClick={submit}
         disabled={disabled || !text.trim()}
+        title={isRunning ? "Send to interrupt current task" : "Start a new task"}
         style={{
           ...styles.sendBtn,
           background: isRunning ? "#744210" : "#2b6cb0",

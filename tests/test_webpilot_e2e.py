@@ -625,3 +625,153 @@ async def test_interrupt_after_task_complete(interrupt_after_done_server):
             pytest.fail("Timed out waiting for server response after interrupt — watchdog may be too short")
 
     _append_messages("test_interrupt_after_task_complete", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 10 — Send button starts fresh task after done
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def send_after_done_server():
+    """Dedicated server for send-after-done — isolated stub state."""
+    with _server_ctx("navigate_and_done") as urls:
+        yield urls
+
+
+async def test_send_button_starts_new_task_after_done(send_after_done_server):
+    """
+    Complete a task (done received), then submit a brand-new task via the Send
+    path (type="task"). Assert the new task starts fresh — server accepts it,
+    returns thinking + action (not an error or stale state from the prior task).
+    """
+    http_url, ws_url = send_after_done_server
+    sid = _create_session(http_url)
+    messages = []
+
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}", close_timeout=15) as ws:
+        # --- Phase 1: complete initial task ---
+        await ws.send(json.dumps({"type": "task", "intent": "go to example.com", "screenshot": BLANK}))
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # action (navigate)
+        assert msg["type"] == "action" and msg["action"] == "navigate"
+        await ws.send(json.dumps({"type": "screenshot", "screenshot": BLANK}))
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # done
+        assert msg["type"] == "done"
+        messages.append({"phase": "task_1_done"})
+
+        # --- Phase 2: start a brand-new task (Send path, not Interrupt) ---
+        await ws.send(json.dumps({
+            "type": "task",
+            "intent": "now go to bing.com",
+            "screenshot": BLANK,
+        }))
+        messages.append({"direction": "sent", "type": "task", "intent": "now go to bing.com"})
+
+        # Server must accept it cleanly — thinking then action
+        msg = json.loads(await ws.recv())
+        assert msg["type"] == "thinking", f"Expected thinking on new task, got {msg['type']}"
+        messages.append({"direction": "recv", **msg})
+
+        msg = json.loads(await ws.recv())
+        assert msg["type"] == "action", f"Expected action on new task, got {msg['type']}"
+        assert msg["action"] == "navigate", "New task should start with navigate"
+        messages.append({"direction": "recv", **msg})
+
+        # Clean up — stop instead of completing the second task
+        await ws.send(json.dumps({"type": "stop"}))
+        stopped = json.loads(await ws.recv())
+        assert stopped["type"] == "stopped"
+
+    _append_messages("test_send_button_starts_new_task_after_done", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 11 — Navigate action completes even with slow page load (no early timeout)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def slow_navigate_server():
+    """Dedicated server for slow-navigate test — isolated stub state."""
+    with _server_ctx("navigate_and_done") as urls:
+        yield urls
+
+
+async def test_interrupt_lost_if_watchdog_fires_early(slow_navigate_server):
+    """
+    Start a task that returns a navigate action. Simulate a slow page load by
+    delaying the screenshot response by 11 seconds. The server's action loop
+    timeout (120s) should NOT fire. Assert done is received — not stopped.
+
+    This reproduces the exact failure from the live scenario: the client
+    watchdog firing at 10s during a navigate that takes >10s to load.
+    The server-side equivalent is that the action loop must tolerate
+    long gaps between screenshot messages without timing out.
+    """
+    import asyncio
+
+    http_url, ws_url = slow_navigate_server
+    sid = _create_session(http_url)
+    messages = []
+
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}", close_timeout=25) as ws:
+        await ws.send(json.dumps({"type": "task", "intent": "go to example.com", "screenshot": BLANK}))
+
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+
+        msg = json.loads(await ws.recv())  # action (navigate)
+        assert msg["type"] == "action" and msg["action"] == "navigate"
+        messages.append({"direction": "recv", **msg})
+
+        # Simulate slow page load — 11 seconds before screenshot
+        await asyncio.sleep(11)
+
+        await ws.send(json.dumps({"type": "screenshot", "screenshot": BLANK}))
+        messages.append({"direction": "sent", "type": "screenshot", "delay_seconds": 11})
+
+        # Server should still be alive — thinking then done
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=15.0))
+        assert msg["type"] == "thinking", f"Expected thinking after delayed screenshot, got {msg['type']}"
+        messages.append({"direction": "recv", **msg})
+
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=15.0))
+        assert msg["type"] == "done", (
+            f"Expected done after delayed screenshot, got {msg['type']}. "
+            "If 'stopped', the action loop timed out before the screenshot arrived."
+        )
+        messages.append({"direction": "recv", **msg})
+
+    _append_messages("test_interrupt_lost_if_watchdog_fires_early", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 12 — Tooltip text on TaskInput send button
+# ---------------------------------------------------------------------------
+
+def test_tooltip_text_on_send_button():
+    """
+    Verify the TaskInput component renders correct tooltip text by inspecting
+    the source. When idle (isRunning=false): 'Start a new task'. When running
+    (isRunning=true): 'Send to interrupt current task'.
+
+    This is a source-level assertion — React component rendering is verified
+    visually in the extension, but we confirm the strings are wired correctly.
+    """
+    from pathlib import Path
+
+    component_path = Path(__file__).resolve().parent.parent / "webpilot-extension" / "sidebar" / "components" / "TaskInput.jsx"
+    source = component_path.read_text()
+
+    # Tooltip for idle state
+    assert 'title={isRunning ? "Send to interrupt current task" : "Start a new task"}' in source, (
+        "TaskInput.jsx missing tooltip: expected isRunning ternary with "
+        "'Start a new task' / 'Send to interrupt current task'"
+    )
+
+    # Button label switches correctly
+    assert '{isRunning ? "Interrupt" : "Send"}' in source, (
+        "TaskInput.jsx missing button label: expected isRunning ternary with 'Interrupt' / 'Send'"
+    )

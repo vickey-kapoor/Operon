@@ -31,6 +31,7 @@ class Action(BaseModel):
     text: Optional[str] = Field(
         None,
         description="Text to type (for TYPE action)",
+        max_length=10000,
     )
     key: Optional[str] = Field(
         None,
@@ -54,7 +55,7 @@ class Action(BaseModel):
         None,
         description="Duration to wait in milliseconds (for WAIT action)",
         ge=0,
-        le=30000,
+        le=5000,
     )
     description: str = Field(
         "",

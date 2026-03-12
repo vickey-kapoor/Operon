@@ -51,11 +51,19 @@ def create_store() -> TaskStore:
     ``TASK_STORE=memory``    → :class:`MemoryTaskStore` (default)
     ``TASK_STORE=firestore`` → :class:`FirestoreTaskStore`
     """
+    import logging
+    _logger = logging.getLogger(__name__)
+
     store_type = os.environ.get("TASK_STORE", "memory").lower()
     if store_type == "firestore":
         from src.api.store_firestore import FirestoreTaskStore
 
         return FirestoreTaskStore()
+    if store_type != "memory":
+        _logger.warning(
+            "Unknown TASK_STORE=%r — falling back to in-memory store",
+            store_type,
+        )
     from src.api.store_memory import MemoryTaskStore
 
     return MemoryTaskStore()

@@ -61,7 +61,10 @@ class _JSONFormatter(logging.Formatter):
 
 def configure_logging() -> None:
     """Configure the root logger to emit structured JSON to stdout."""
+    _VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    if log_level not in _VALID_LEVELS:
+        log_level = "INFO"
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_JSONFormatter())

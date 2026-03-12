@@ -1,5 +1,6 @@
 """Google ADK-based agent for the Chrome Extension session flow."""
 
+import asyncio
 import base64, io, json, logging, os
 from typing import Optional
 
@@ -22,19 +23,29 @@ _MODEL = "gemini-2.5-flash"
 # ADK agent definition
 # ---------------------------------------------------------------------------
 
-_agent = Agent(
-    name="ui_navigator",
-    model=_MODEL,
-    instruction=SYSTEM_PROMPT,
-)
+# Lazy-initialized singletons — created on first use to avoid import-time
+# failures when ADK or the API key are not available (e.g. in tests).
+_agent = None
+_session_service = None
+_runner = None
 
-_session_service = InMemorySessionService()
 
-_runner = Runner(
-    agent=_agent,
-    app_name=_APP_NAME,
-    session_service=_session_service,
-)
+def _ensure_initialized():
+    """Initialize ADK singletons on first use."""
+    global _agent, _session_service, _runner
+    if _runner is not None:
+        return
+    _agent = Agent(
+        name="ui_navigator",
+        model=_MODEL,
+        instruction=SYSTEM_PROMPT,
+    )
+    _session_service = InMemorySessionService()
+    _runner = Runner(
+        agent=_agent,
+        app_name=_APP_NAME,
+        session_service=_session_service,
+    )
 
 # ---------------------------------------------------------------------------
 # Session lifecycle
@@ -43,6 +54,7 @@ _runner = Runner(
 
 async def create_session(user_id: str = "extension") -> str:
     """Create a new ADK session and return its session_id."""
+    _ensure_initialized()
     session = await _session_service.create_session(
         app_name=_APP_NAME, user_id=user_id
     )
@@ -53,17 +65,20 @@ async def create_session(user_id: str = "extension") -> str:
 
 async def delete_session(session_id: str, user_id: str = "extension") -> bool:
     """Delete an ADK session. Returns True if it existed."""
+    _ensure_initialized()
     try:
         await _session_service.delete_session(
             app_name=_APP_NAME, user_id=user_id, session_id=session_id
         )
         logger.info("adk_session_deleted", extra={"session_id": session_id})
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to delete ADK session %s: %s", session_id, exc)
         return False
 
 
 async def session_exists(session_id: str, user_id: str = "extension") -> bool:
+    _ensure_initialized()
     s = await _session_service.get_session(
         app_name=_APP_NAME, user_id=user_id, session_id=session_id
     )
@@ -77,6 +92,7 @@ async def session_exists(session_id: str, user_id: str = "extension") -> bool:
 
 async def step(session_id: str, image_b64: str, task: str) -> ActionPlan:
     """Run one agent step via ADK Runner and return a parsed ActionPlan."""
+    _ensure_initialized()
     import time
     t0 = time.time()
 

@@ -151,20 +151,42 @@ async def lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(_cleanup_loop())
 
     # Initialise the WebPilot handler and start its session cleanup task.
-    if os.environ.get("GOOGLE_API_KEY"):
+    _stub_scenario = os.environ.get("WEBPILOT_STUB")
+    if _stub_scenario:
+        from src.agent.webpilot_stub import WebPilotStubHandler
+        _wp_handler = WebPilotStubHandler(scenario=_stub_scenario)
+        _webpilot_init_handler(_wp_handler)
+        logger.info("WebPilot running in STUB mode (scenario=%r)", _stub_scenario)
+    elif os.environ.get("GOOGLE_API_KEY"):
         from src.agent.vision import GeminiVisionClient
         from src.agent.planner import ActionPlanner
-        from src.agent.webpilot_handler import WebPilotHandler
+        from src.agent.webpilot_handler import LegacyWebPilotHandler
         _wp_vision = GeminiVisionClient()
         _wp_planner = ActionPlanner(vision_client=_wp_vision)
-        _wp_handler = WebPilotHandler(vision_client=_wp_vision, planner=_wp_planner)
-        _webpilot_init_handler(_wp_handler)
+        # Use legacy handler as the shared TTS/narration provider.
+        # Live API handlers are created per-session in webpilot_routes.
+        _wp_handler = LegacyWebPilotHandler(vision_client=_wp_vision, planner=_wp_planner)
+        # Pass the genai client so webpilot_routes can create per-session Live handlers.
+        _webpilot_init_handler(_wp_handler, live_client=_wp_vision._client)
     webpilot_cleanup_task = asyncio.create_task(_webpilot_cleanup_sessions())
 
     logger.info(
         "UI Navigator server starting up",
         extra={"version": _VERSION, "max_concurrent": _MAX_CONCURRENT},
     )
+    if not _get_api_keys():
+        logger.warning(
+            "API_KEYS is not set — authentication is DISABLED. Set API_KEYS in production."
+        )
+    if "*" in _cors_origins:
+        logger.warning(
+            "CORS_ORIGINS contains '*' — all origins are allowed. Restrict in production."
+        )
+    elif not _cors_raw:
+        logger.warning(
+            "CORS_ORIGINS is not set — defaulting to chrome-extension://* only. "
+            "Set CORS_ORIGINS if other origins need access."
+        )
     yield
     # Graceful shutdown: cancel in-flight agent tasks.
     if _running_tasks:
@@ -300,9 +322,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         window_start = now - 60.0
 
         async with _rate_lock:
-            window = _rate_windows[api_key]
+            had_entry = api_key in _rate_windows
+            window = _rate_windows[api_key]  # defaultdict creates empty deque if new
             while window and window[0] < window_start:
                 window.popleft()
+            if had_entry and not window:
+                # Key existed but all timestamps expired → evict stale entry and
+                # start fresh so the dict doesn't grow without bound.
+                del _rate_windows[api_key]
+                _rate_windows[api_key].append(now)
+                return await call_next(request)
 
             if len(window) >= _RATE_LIMIT_RPM:
                 retry_after = max(1, int(window[0] - window_start) + 1)
@@ -326,15 +355,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 # CORS origin allowlist — set CORS_ORIGINS as comma-separated list in production.
-# Defaults to wildcard for local development; chrome-extension:// is always included.
+# Defaults to chrome-extension://* only (restrictive); wildcard is NOT the default.
 _cors_raw = os.environ.get("CORS_ORIGINS", "").strip()
 _cors_origins: List[str] = (
     [o.strip() for o in _cors_raw.split(",") if o.strip()]
     if _cors_raw
-    else ["*"]
+    else ["chrome-extension://*"]
 )
-# Always allow the Chrome extension origin pattern.
-if "chrome-extension://*" not in _cors_origins and "*" not in _cors_origins:
+# Always include the Chrome extension origin pattern when using a custom list.
+if "chrome-extension://*" not in _cors_origins:
     _cors_origins.append("chrome-extension://*")
 
 # Register middleware — added last = runs first on incoming request
@@ -399,6 +428,8 @@ async def _run_agent_task(task_id: str) -> None:
                 agent = UINavigatorAgent(
                     mode="browser",
                     api_key=api_key,
+                    model=record.model if hasattr(record, "model") else None,
+                    system_prompt=record.system_prompt if hasattr(record, "system_prompt") else None,
                 )
                 agent.task_id = task_id
 
@@ -463,7 +494,7 @@ async def _run_agent_task(task_id: str) -> None:
 
             except Exception as exc:
                 logger.exception(
-                    "Background task raised", exc, extra={"task_id": task_id}
+                    "Background task raised: %s", exc, extra={"task_id": task_id}
                 )
                 record.status = TaskStatus.ERROR
                 await _store.upsert(record)
@@ -480,6 +511,12 @@ async def _run_agent_task(task_id: str) -> None:
 
 async def _broadcast(task_id: str, event: dict) -> None:
     """Send an event to all WebSocket clients subscribed to task_id."""
+    # Cap stored events: strip screenshots from older entries to bound memory.
+    record = _live_records.get(task_id)
+    if record and len(record.events) > 5:
+        for old_event in record.events[:-5]:
+            old_event.pop("screenshot", None)
+
     clients = _ws_clients.get(task_id, [])
     dead: List[WebSocket] = []
     for ws in clients:
@@ -726,12 +763,13 @@ async def analyze_screenshot(
         }
 
     # Navigate to URL (or blank) and capture.
-    agent = UINavigatorAgent(mode="browser", api_key=api_key)
-    result = await agent.take_and_analyze_screenshot(
-        task=effective_task,
-        start_url=url,
-    )
-    return result
+    async with _semaphore:
+        agent = UINavigatorAgent(mode="browser", api_key=api_key)
+        result = await agent.take_and_analyze_screenshot(
+            task=effective_task,
+            start_url=url,
+        )
+        return result
 
 
 @app.get("/health")
@@ -762,4 +800,7 @@ async def root() -> dict:
 # Mount static files last so API routes take priority.
 import pathlib as _pathlib
 _static_dir = _pathlib.Path(__file__).parent / "static"
-app.mount("/ui", StaticFiles(directory=str(_static_dir), html=True), name="ui")
+if _static_dir.is_dir():
+    app.mount("/ui", StaticFiles(directory=str(_static_dir), html=True), name="ui")
+else:
+    logger.debug("Static directory %s not found — /ui mount skipped", _static_dir)

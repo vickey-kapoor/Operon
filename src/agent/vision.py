@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import concurrent.futures
 import io
 import json
 import logging
@@ -15,6 +16,11 @@ from PIL import Image
 from src import metrics, tracing
 
 logger = logging.getLogger(__name__)
+
+# Dedicated thread pool for Gemini blocking calls — sized to MAX_CONCURRENT_TASKS
+# so the default asyncio pool isn't exhausted during retry backoff sleeps.
+_MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_TASKS", "5"))
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_CONCURRENT)
 
 
 class VisionUnavailableError(Exception):
@@ -85,7 +91,7 @@ class GeminiVisionClient:
     Wraps the Google Generative AI SDK to provide multimodal screenshot analysis.
 
     The client accepts PIL Images (or base64 strings), sends them to
-    ``gemini-2.0-flash``, and returns the model's structured JSON response
+    ``gemini-2.5-flash``, and returns the model's structured JSON response
     as a plain string (further parsing is handled by ActionPlanner).
     """
 
@@ -93,7 +99,12 @@ class GeminiVisionClient:
     MAX_RETRIES = 3
     RETRY_BACKOFF = 2.0  # seconds; doubled on each retry
 
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+    ) -> None:
         resolved_key = api_key or os.environ.get("GOOGLE_API_KEY")
         if not resolved_key:
             raise ValueError(
@@ -102,9 +113,10 @@ class GeminiVisionClient:
             )
         self._client = genai.Client(api_key=resolved_key)
         self.model_name = model or self.MODEL_NAME
+        self._last_user_turn: Optional[types.Content] = None  # set by analyze_screen
 
         self._generation_config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=system_prompt or SYSTEM_PROMPT,
             temperature=0.2,          # Low temperature for deterministic action plans
             top_p=0.95,
             max_output_tokens=2048,
@@ -142,10 +154,12 @@ class GeminiVisionClient:
         """
         pil_image = self._ensure_pil_image(image)
         user_turn = self._build_user_turn(pil_image, task)
+        self._last_user_turn = user_turn  # expose for history tracking in core.py
 
-        # Run blocking SDK call in a thread so we don't block the event loop.
+        # Run blocking SDK call in the dedicated executor so retry backoff sleeps
+        # don't exhaust the default asyncio thread pool.
         return await asyncio.get_running_loop().run_in_executor(
-            None,
+            _executor,
             self._call_with_retry,
             user_turn,
             history,
@@ -232,7 +246,13 @@ class GeminiVisionClient:
                 return text
 
             except Exception as exc:
-                if attempt > self.MAX_RETRIES:
+                # Permanent errors should not be retried.
+                exc_str = str(exc).lower()
+                is_permanent = any(kw in exc_str for kw in (
+                    "invalid api key", "permission denied", "api_key_invalid",
+                    "invalid argument", "not found", "403", "401",
+                ))
+                if is_permanent or attempt > self.MAX_RETRIES:
                     logger.error(
                         "Gemini API call failed after %d attempts: %s",
                         attempt,
@@ -240,7 +260,7 @@ class GeminiVisionClient:
                         extra={"model": self.model_name},
                     )
                     raise VisionUnavailableError(
-                        f"Gemini API unavailable after {self.MAX_RETRIES} retries: {exc}"
+                        f"Gemini API unavailable after {attempt} attempt(s): {exc}"
                     ) from exc
 
                 logger.warning(

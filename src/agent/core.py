@@ -106,17 +106,9 @@ class UINavigatorAgent:
         self._browser_width = int(os.environ.get("BROWSER_WIDTH", browser_width))
         self._browser_height = int(os.environ.get("BROWSER_HEIGHT", browser_height))
 
-        self._vision = GeminiVisionClient(api_key=api_key, model=model)
-        if system_prompt:
-            from .vision import SYSTEM_PROMPT
-            from google.genai import types
-            self._vision._generation_config = types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=self._vision._generation_config.temperature,
-                top_p=self._vision._generation_config.top_p,
-                max_output_tokens=self._vision._generation_config.max_output_tokens,
-                response_mime_type=self._vision._generation_config.response_mime_type,
-            )
+        self._vision = GeminiVisionClient(
+            api_key=api_key, model=model, system_prompt=system_prompt
+        )
         self._planner = ActionPlanner(vision_client=self._vision)
         self._executor: Optional[PlaywrightBrowserExecutor] = None
 
@@ -162,12 +154,11 @@ class UINavigatorAgent:
         log_ctx = {"task_id": self.task_id}
 
         try:
-            metrics.emit("tasks_started")
             await executor.start()
 
             if start_url:
                 logger.info("Navigating to start URL: %s", start_url, extra=log_ctx)
-                await executor._navigate(start_url)
+                await executor.navigate(start_url)
 
             for step in range(1, max_steps + 1):
                 steps_taken = step
@@ -178,6 +169,9 @@ class UINavigatorAgent:
                 img = await executor.screenshot()
                 screenshot_b64 = self._image_to_base64(img)
                 screenshots.append(screenshot_b64)
+                # Cap screenshots to prevent unbounded memory growth.
+                if len(screenshots) > 10:
+                    screenshots = screenshots[-10:]
 
                 # 2. Plan next actions via Gemini + execute, wrapped in a trace span.
                 t_step = time.time()
@@ -273,7 +267,10 @@ class UINavigatorAgent:
                         )
 
                 # 5. Update conversation history for Gemini context.
-                history = self._update_history(history, plan, screenshot_b64)
+                # Include the user turn (screenshot + task) so Gemini sees proper
+                # user → model → user → model alternation.
+                user_turn = self._vision._last_user_turn
+                history = self._update_history(history, plan, user_turn)
 
                 # 6. Check termination.
                 if plan.done:
@@ -339,7 +336,7 @@ class UINavigatorAgent:
         try:
             await executor.start()
             if start_url:
-                await executor._navigate(start_url)
+                await executor.navigate(start_url)
 
             img = await executor.screenshot()
             plan: ActionPlan = await self._planner.plan(image=img, task=task)
@@ -366,10 +363,13 @@ class UINavigatorAgent:
     def _update_history(
         history: list,
         plan: ActionPlan,
-        screenshot_b64: str,
+        user_turn=None,
     ) -> list:
         """
-        Append the latest model response to the conversation history.
+        Append the latest user + model turns to the conversation history.
+
+        Gemini requires strict user → model → user → model alternation.
+        We store both turns so context carries correctly across steps.
 
         We keep history bounded to the last 10 turns to avoid exceeding the
         Gemini context window for long tasks.
@@ -379,6 +379,8 @@ class UINavigatorAgent:
         MAX_HISTORY_TURNS = 10
 
         history = list(history)
+        if user_turn is not None:
+            history.append(user_turn)
         history.append(
             genai_types.Content(
                 role="model",

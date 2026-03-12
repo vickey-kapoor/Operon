@@ -95,6 +95,9 @@ class TaskRecord(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+_ALLOWED_MODELS = frozenset({"gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"})
+
+
 class NavigateRequest(BaseModel):
     task: str = Field(
         ...,
@@ -112,6 +115,13 @@ class NavigateRequest(BaseModel):
         if v is None:
             return v
         return _validate_start_url(str(v))
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _ALLOWED_MODELS:
+            raise ValueError(f"Model '{v}' is not allowed. Permitted models: {sorted(_ALLOWED_MODELS)}")
+        return v
 
 
 class NavigateResponse(BaseModel):

@@ -96,23 +96,36 @@ class PlaywrightBrowserExecutor:
             return
 
         logger.info("Stopping browser")
+        # Each cleanup step is independent -- one failure should not block the rest.
         try:
             if self._page and not self._page.is_closed():
                 await self._page.close()
+        except Exception as exc:
+            logger.debug("Error closing page: %s", exc)
+
+        try:
             if self._context:
                 await self._context.close()
+        except Exception as exc:
+            logger.debug("Error closing context: %s", exc)
+
+        try:
             if self._browser:
                 await self._browser.close()
+        except Exception as exc:
+            logger.debug("Error closing browser: %s", exc)
+
+        try:
             if self._playwright:
                 await self._playwright.stop()
         except Exception as exc:
-            logger.error("Error while stopping browser: %s", exc)
-        finally:
-            self._page = None
-            self._context = None
-            self._browser = None
-            self._playwright = None
-            self._started = False
+            logger.debug("Error stopping playwright: %s", exc)
+
+        self._page = None
+        self._context = None
+        self._browser = None
+        self._playwright = None
+        self._started = False
         logger.info("Browser stopped")
 
     def _ensure_started(self) -> Page:
@@ -123,18 +136,21 @@ class PlaywrightBrowserExecutor:
             )
         return self._page
 
+    async def _screenshot_raw(self) -> bytes:
+        """Capture a raw PNG screenshot of the current viewport."""
+        page = self._ensure_started()
+        return await page.screenshot(type="png", full_page=False)
+
     async def screenshot(self) -> Image.Image:
         """Capture a full-page screenshot and return it as a PIL Image."""
-        page = self._ensure_started()
-        raw: bytes = await page.screenshot(type="png", full_page=False)
+        raw = await self._screenshot_raw()
         img = Image.open(io.BytesIO(raw)).convert("RGB")
         logger.debug("Screenshot captured (%dx%d)", img.width, img.height)
         return img
 
     async def screenshot_base64(self) -> str:
         """Capture a screenshot and return it as a base64-encoded PNG string."""
-        page = self._ensure_started()
-        raw: bytes = await page.screenshot(type="png", full_page=False)
+        raw = await self._screenshot_raw()
         return base64.b64encode(raw).decode("utf-8")
 
     # ------------------------------------------------------------------
@@ -185,12 +201,15 @@ class PlaywrightBrowserExecutor:
         logger.debug(
             "Scroll at (%d, %d) direction=%s amount=%d", x, y, direction, amount
         )
+        # Move mouse to the scroll target first so the scroll hits the right element.
+        await page.mouse.move(x, y)
         await page.mouse.wheel(delta_x, delta_y)
         await asyncio.sleep(0.2)
 
-    async def _navigate(self, url: str) -> None:
+    async def navigate(self, url: str) -> None:
+        """Navigate to a URL. Only http(s) and about: schemes are allowed."""
         page = self._ensure_started()
-        if not url.startswith(("http://", "https://", "about:", "file://")):
+        if not url.startswith(("http://", "https://", "about:")):
             url = "https://" + url
         logger.info("Navigating to %s", url)
         try:
@@ -278,7 +297,7 @@ class PlaywrightBrowserExecutor:
                         error="NAVIGATE action requires 'url'",
                         action_type=action.type,
                     )
-                await self._navigate(action.url)
+                await self.navigate(action.url)
                 screenshot_b64 = await self.screenshot_base64()
                 return ActionResult(
                     success=True,

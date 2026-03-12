@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class InterruptionType(str, Enum):
@@ -17,9 +17,9 @@ class InterruptionType(str, Enum):
 
 
 class WebPilotAction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     observation: Optional[str] = None
-    action: Literal["click", "type", "scroll", "wait", "navigate", "done", "confirm_required"]
+    action: Literal["click", "type", "scroll", "wait", "navigate", "key", "done", "confirm_required", "captcha_detected", "login_required"]
     x: Optional[int] = None
     y: Optional[int] = None
     text: Optional[str] = None
@@ -38,9 +38,12 @@ class WebPilotSession:
     history: List = field(default_factory=list)
     status: str = "idle"
     abort_event: asyncio.Event = field(default_factory=asyncio.Event)
-    confirm_event: asyncio.Event = field(default_factory=asyncio.Event)
-    confirm_result: Optional[bool] = None
+    # Note: confirm flow is handled inline in _run_action_loop via direct
+    # websocket.receive_text() — the outer loop is blocked while waiting,
+    # so confirm_event/confirm_result were dead code and have been removed.
     last_active: float = field(default_factory=time.time)
+    # Per-session Live API handler (WebPilotHandler). None = use shared Legacy handler.
+    handler: Optional[object] = None
 
 
 # WS incoming message schemas
@@ -75,5 +78,11 @@ class StopMessage(BaseModel):
     type: Literal["stop"]
 
 
+class ResumeMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["resume"]
+    screenshot: str  # base64
+
+
 class TTSRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=5000)

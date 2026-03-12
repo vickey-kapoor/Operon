@@ -52,6 +52,8 @@ async def session_step(session_id: str, body: StepRequest) -> dict:
 
 @router.post("/{session_id}/events", status_code=204)
 async def session_event(session_id: str, body: SessionEventRequest) -> Response:
+    if not await adk_agent.session_exists(session_id):
+        raise HTTPException(404, f"Session {session_id!r} not found")
     metrics.emit("ext_client_event", labels={"event": body.event})
     logger.info(
         "ext_client_event",

@@ -95,9 +95,16 @@ class FirestoreTaskStore(TaskStore):
                 filter=FieldFilter("created_at", "<", cutoff)
             )
             count = 0
+            batch = self._db.batch()
             async for doc in query.stream():
-                await doc.reference.delete()
+                batch.delete(doc.reference)
                 count += 1
+                # Firestore batches limited to 500 ops.
+                if count % 500 == 0:
+                    await batch.commit()
+                    batch = self._db.batch()
+            if count % 500 != 0:
+                await batch.commit()
             logger.info("Deleted %d expired Firestore task records", count)
             return count
         except Exception as exc:

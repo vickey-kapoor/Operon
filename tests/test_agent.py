@@ -8,6 +8,9 @@ from io import BytesIO
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Set BROWSER_HEADLESS=false to watch tests run in a visible browser window.
+_HEADLESS = os.environ.get("BROWSER_HEADLESS", "true").lower() != "false"
+
 import pytest
 import pytest_asyncio
 from PIL import Image
@@ -204,7 +207,7 @@ class TestPlaywrightBrowserExecutor:
     async def test_start_and_stop(self):
         from src.executor.browser import PlaywrightBrowserExecutor
 
-        executor = PlaywrightBrowserExecutor(headless=True)
+        executor = PlaywrightBrowserExecutor(headless=_HEADLESS)
         await executor.start()
         assert executor._started is True
         await executor.stop()
@@ -213,7 +216,7 @@ class TestPlaywrightBrowserExecutor:
     async def test_screenshot_returns_pil_image(self):
         from src.executor.browser import PlaywrightBrowserExecutor
 
-        executor = PlaywrightBrowserExecutor(headless=True)
+        executor = PlaywrightBrowserExecutor(headless=_HEADLESS)
         await executor.start()
         try:
             img = await executor.screenshot()
@@ -227,7 +230,7 @@ class TestPlaywrightBrowserExecutor:
         from src.executor.actions import Action, ActionType
         from src.executor.browser import PlaywrightBrowserExecutor
 
-        executor = PlaywrightBrowserExecutor(headless=True)
+        executor = PlaywrightBrowserExecutor(headless=_HEADLESS)
         await executor.start()
         try:
             action = Action(
@@ -248,10 +251,10 @@ class TestPlaywrightBrowserExecutor:
         from src.executor.actions import Action, ActionType
         from src.executor.browser import PlaywrightBrowserExecutor
 
-        executor = PlaywrightBrowserExecutor(headless=True)
+        executor = PlaywrightBrowserExecutor(headless=_HEADLESS)
         await executor.start()
         try:
-            await executor._navigate("https://example.com")
+            await executor.navigate("https://example.com")
             action = Action(
                 type=ActionType.SCROLL,
                 coordinate=[640, 400],
@@ -268,7 +271,7 @@ class TestPlaywrightBrowserExecutor:
         from src.executor.actions import Action, ActionType
         from src.executor.browser import PlaywrightBrowserExecutor
 
-        executor = PlaywrightBrowserExecutor(headless=True)
+        executor = PlaywrightBrowserExecutor(headless=_HEADLESS)
         await executor.start()
         try:
             action = Action(
@@ -340,7 +343,7 @@ class TestUINavigatorAgent:
             agent = UINavigatorAgent(
                 mode="browser",
                 api_key="fake-api-key",
-                headless=True,
+                headless=_HEADLESS,
             )
             result = await agent.run(
                 task="Navigate to https://example.com and tell me the page title.",
@@ -374,7 +377,7 @@ class TestUINavigatorAgent:
             agent = UINavigatorAgent(
                 mode="browser",
                 api_key="fake-api-key",
-                headless=True,
+                headless=_HEADLESS,
             )
             result = await agent.run(task="This task never ends.", max_steps=2)
 

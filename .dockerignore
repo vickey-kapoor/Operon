@@ -1,0 +1,30 @@
+# Version control
+.git
+.github
+
+# Python caches
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.coverage
+htmlcov/
+*.egg-info
+dist/
+build/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Test and dev files
+tests/
+monitoring/
+*.md
+
+# Extension node_modules
+webpilot-extension/sidebar/node_modules/
+
+# Claude config
+.claude/

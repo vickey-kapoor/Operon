@@ -6,8 +6,6 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
 from src.agent.planner import ActionPlan
@@ -32,19 +30,7 @@ def _make_plan(done: bool = False) -> ActionPlan:
     )
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest_asyncio.fixture
-async def client():
-    from src.api.server import app
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as c:
-        yield c
+# Fixtures (client, api_key, gemini_key) come from conftest.py.
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +108,11 @@ async def test_step_task_too_long_returns_422(client):
 
 async def test_events_returns_204(client):
     """POST /sessions/{id}/events with a valid body must return 204."""
+    # Create a real session first (session_event now validates existence)
+    create_resp = await client.post("/sessions")
+    session_id = create_resp.json()["session_id"]
     resp = await client.post(
-        "/sessions/sess-abc/events",
+        f"/sessions/{session_id}/events",
         json={"event": "click", "data": {"x": 100, "y": 200}},
     )
     assert resp.status_code == 204
@@ -163,4 +152,47 @@ async def test_delete_unknown_session_returns_404(client):
     """DELETE /sessions/{id} for unknown session_id must return 404."""
     with patch("src.api.session_routes.adk_agent.delete_session", new=AsyncMock(return_value=False)):
         resp = await client.delete("/sessions/nonexistent")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Additional session tests
+# ---------------------------------------------------------------------------
+
+
+async def test_step_done_plan(client):
+    """POST /sessions/{id}/step with done=True returns result field."""
+    plan = _make_plan(done=True)
+    with (
+        patch('src.api.session_routes.adk_agent.session_exists', new=AsyncMock(return_value=True)),
+        patch('src.api.session_routes.adk_agent.step', new=AsyncMock(return_value=plan)),
+    ):
+        resp = await client.post(
+            '/sessions/sess-abc/step',
+            json={'image_b64': _make_valid_image_b64(), 'task': 'test'},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data['done'] is True
+    assert data['result'] == 'done!'
+
+
+async def test_step_image_too_large_returns_413(client):
+    """POST /sessions/{id}/step with image_b64 > 10 MB returns 413."""
+    huge_b64 = 'A' * (11 * 1024 * 1024)  # > 10 MB
+    with patch('src.api.session_routes.adk_agent.session_exists', new=AsyncMock(return_value=True)):
+        resp = await client.post(
+            '/sessions/sess-abc/step',
+            json={'image_b64': huge_b64, 'task': 'test'},
+        )
+    assert resp.status_code == 413
+
+
+async def test_events_nonexistent_session_returns_404(client):
+    """POST /sessions/{id}/events for non-existent session returns 404."""
+    with patch('src.api.session_routes.adk_agent.session_exists', new=AsyncMock(return_value=False)):
+        resp = await client.post(
+            '/sessions/nonexistent/events',
+            json={'event': 'click', 'data': {'x': 1}},
+        )
     assert resp.status_code == 404

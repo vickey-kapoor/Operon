@@ -89,8 +89,42 @@ class BurstUser(HttpUser):
             "task": "Take a screenshot and describe the page.",
             "max_steps": 1,
         }
-        self.client.post(
+        with self.client.post(
             "/navigate",
             json=payload,
             headers=_HEADERS,
-        )
+            catch_response=True,
+        ) as resp:
+            if resp.status_code != 202:
+                resp.failure(f"POST /navigate returned {resp.status_code}")
+
+
+class ScreenshotUser(HttpUser):
+    """
+    Screenshot analysis scenario.
+
+    POST /screenshot with a small PNG file.
+    """
+
+    wait_time = between(5, 15)
+
+    def _make_small_png(self) -> bytes:
+        import io
+        from PIL import Image
+        img = Image.new("RGB", (1, 1), color=(255, 0, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    @task
+    def analyze_screenshot(self):
+        png = self._make_small_png()
+        with self.client.post(
+            "/screenshot",
+            files={"file": ("test.png", png, "image/png")},
+            data={"task": "Describe visible UI elements."},
+            headers=_HEADERS,
+            catch_response=True,
+        ) as resp:
+            if resp.status_code not in (200, 503):
+                resp.failure(f"POST /screenshot returned {resp.status_code}")

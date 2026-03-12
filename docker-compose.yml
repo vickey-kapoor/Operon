@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   ui-navigator:
     build:
@@ -10,7 +8,6 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - DISPLAY=${DISPLAY:-:99}
       - BROWSER_HEADLESS=true
       - BROWSER_WIDTH=1280

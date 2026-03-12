@@ -8,58 +8,16 @@ import io
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from PIL import Image
 
 from src.agent.core import AgentResult
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest_asyncio.fixture
-async def client():
-    """AsyncClient wired directly to the FastAPI app (no live server)."""
-    from src.api.server import app
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as c:
-        yield c
-
-
-@pytest.fixture
-def api_key(monkeypatch):
-    """Configure a known API key for auth tests."""
-    monkeypatch.setenv("API_KEYS", "valid-key-123")
-    return "valid-key-123"
-
-
-@pytest.fixture
-def gemini_key(monkeypatch):
-    """Provide a dummy Gemini key so GeminiVisionClient init doesn't fail."""
-    monkeypatch.setenv("GOOGLE_API_KEY", "fake-gemini-key")
-
-
-def _small_png() -> bytes:
-    """Return a minimal valid PNG (1x1 red pixel)."""
-    img = Image.new("RGB", (1, 1), color=(255, 0, 0))
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
-def _large_png() -> bytes:
-    """Return a PNG that exceeds the 5 MB upload limit."""
-    # 6 MB of zeros — won't compress to < 5 MB
-    return b"\x89PNG\r\n\x1a\n" + b"\x00" * (6 * 1024 * 1024)
+# Fixtures (client, api_key, gemini_key) and helpers come from conftest.py.
+from tests.conftest import small_png as _small_png, large_png as _large_png
 
 
 # ---------------------------------------------------------------------------
 # Health
+
 # ---------------------------------------------------------------------------
 
 

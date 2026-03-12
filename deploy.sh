@@ -154,9 +154,9 @@ step "Ensuring GCS screenshot bucket exists"
 
 GCS_BUCKET="${GCS_BUCKET:-${PROJECT_ID}-ui-navigator-screenshots}"
 
-if ! gsutil ls -b "gs://${GCS_BUCKET}" >/dev/null 2>&1; then
+if ! gcloud storage buckets describe "gs://${GCS_BUCKET}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
   info "Creating bucket gs://${GCS_BUCKET} in ${REGION}…"
-  gsutil mb -p "${PROJECT_ID}" -l "${REGION}" "gs://${GCS_BUCKET}"
+  gcloud storage buckets create "gs://${GCS_BUCKET}" --project="${PROJECT_ID}" --location="${REGION}" --quiet
   info "Bucket created."
 else
   info "Bucket gs://${GCS_BUCKET} already exists."
@@ -190,7 +190,7 @@ for ROLE in roles/datastore.user roles/monitoring.metricWriter roles/cloudtrace.
 done
 
 # Grant storage.objectAdmin on the screenshots bucket only
-gsutil iam ch "serviceAccount:${SA_EMAIL}:roles/storage.objectAdmin" "gs://${GCS_BUCKET}"
+gcloud storage buckets add-iam-policy-binding "gs://${GCS_BUCKET}" --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectAdmin" --quiet >/dev/null
 
 info "IAM bindings configured."
 

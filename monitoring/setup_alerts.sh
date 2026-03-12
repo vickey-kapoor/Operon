@@ -31,7 +31,7 @@ create_policy() {
   local json="$3"
 
   info "Creating alert policy: ${display}"
-  echo "${json}" | gcloud alpha monitoring policies create \
+  echo "${json}" | gcloud beta monitoring policies create \
     --policy-from-file=- \
     --project="${PROJECT_ID}" \
     --quiet 2>/dev/null || info "(already exists — skipping)"

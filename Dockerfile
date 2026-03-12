@@ -83,6 +83,8 @@ RUN useradd --no-create-home --shell /bin/bash appuser && \
     chown -R appuser:appuser /ms-playwright
 USER appuser
 
+LABEL maintainer="UI Navigator" version="1.4.0"
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s \

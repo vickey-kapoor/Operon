@@ -25,6 +25,8 @@ the SINGLE NEXT ACTION to take. Return ONE action at a time as a JSON object.
 RESPONSE FORMAT (always return exactly this JSON structure, no markdown fences, no prose):
 {
   "observation": "<one sentence: describe exactly what you currently see on screen>",
+  "plan": ["<step 1>", "<step 2>", ...],
+  "steps_completed": <integer: how many plan steps are done so far>,
   "action": "<action_type>",
   "x": <integer pixel x coordinate, or null if not applicable>,
   "y": <integer pixel y coordinate, or null if not applicable>,
@@ -68,16 +70,37 @@ IRREVERSIBILITY RULES:
 - When is_irreversible=true, also set action="confirm_required" so the user can approve first.
 - Form fills, navigation, clicks on non-destructive UI elements are reversible (is_irreversible=false).
 
-COMPLETION:
-- When the user's task is fully accomplished, return action="done".
-- Include a clear narration explaining what was achieved.
-- After a "navigate" action lands on the correct page, return action="done" immediately
-  if there is nothing else the user explicitly asked to do on that page.
-- If the last action was 'navigate' and the URL matches the user's intent,
-  you MUST return action='done'. Do not take a screenshot to verify.
-- Trust that navigation succeeded. Do not loop after navigate unless
-  the user explicitly asked to do something on that page after arriving.
-- Do NOT take extra actions (scroll, click, etc.) unless the user's intent requires them.
+PLANNING (Phase 1 — first call only, when no actions have been taken yet):
+- Before taking any action, generate a "plan" field: a list of concrete steps needed
+  to fully complete the user's goal. Be specific and actionable.
+  Example for "find a flight from Austin to Tokyo":
+    ["navigate to google flights", "enter Austin as origin", "enter Tokyo as destination",
+     "set travel date", "click search", "read flight results"]
+  Example for "go to Gmail":
+    ["navigate to gmail.com"]
+- The plan defines your completion criteria. You are done ONLY when all steps are complete.
+
+PROGRESS CHECK (Phase 2 — every call including the first):
+- On every response, set "steps_completed" to the number of plan steps fully finished so far.
+- Carry forward the same "plan" array from your first response on every subsequent response.
+- After a navigate action, trust that navigation succeeded — do NOT take an extra
+  screenshot to verify the page loaded. But if the plan has more steps after navigation,
+  continue with the next step.
+- Do NOT take extra actions (scroll, click, etc.) unless the plan requires them.
+
+CRITICAL: You may ONLY return action="done" when steps_completed equals the TOTAL number
+of steps in your plan. If steps_completed < total plan steps, you MUST continue taking
+actions. Never return done mid-plan.
+
+Example:
+- plan has 7 steps
+- steps_completed = 1  → MUST continue, do NOT return done
+- steps_completed = 7  → MAY return done
+
+Current progress check before every response:
+  remaining = len(plan) - steps_completed
+  if remaining > 0: continue taking actions
+  if remaining == 0: return done
 
 IMPORTANT:
 - Respond ONLY with the JSON object — no markdown fences, no extra prose.
@@ -91,6 +114,8 @@ _BROWSER_ACTION_SCHEMA = {
     "type": "OBJECT",
     "properties": {
         "observation": {"type": "STRING", "description": "One sentence describing what you currently see on screen."},
+        "plan": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Ordered list of concrete steps to complete the goal. Set on first call, carry forward on subsequent calls."},
+        "steps_completed": {"type": "INTEGER", "description": "Number of plan steps fully completed so far."},
         "action": {
             "type": "STRING",
             "enum": ["click", "type", "scroll", "wait", "navigate", "key", "done",
@@ -107,7 +132,7 @@ _BROWSER_ACTION_SCHEMA = {
         "action_label": {"type": "STRING", "description": "Very short action label, e.g. 'Click Search'."},
         "is_irreversible": {"type": "BOOLEAN", "description": "True if action cannot be undone."},
     },
-    "required": ["observation", "action", "narration", "action_label", "is_irreversible"],
+    "required": ["observation", "plan", "steps_completed", "action", "narration", "action_label", "is_irreversible"],
 }
 
 BROWSER_ACTION_TOOL = types.FunctionDeclaration(
@@ -224,6 +249,12 @@ class WebPilotHandler:
                     if fc.name == "browser_action":
                         try:
                             action = WebPilotAction(**fc.args)
+                            logger.info(
+                                "Live action=%s plan_len=%d steps_completed=%d",
+                                action.action,
+                                len(action.plan) if action.plan else 0,
+                                action.steps_completed or 0,
+                            )
                             # Send tool response to acknowledge
                             await self._session.send_tool_response(
                                 function_responses=[types.FunctionResponse(
@@ -445,9 +476,9 @@ class LegacyWebPilotHandler:
                 temperature=0.2,
                 top_p=0.95,
                 max_output_tokens=1024,
-                # Reasoning budget for spatial vision tasks — 512 avoids over-caution
-                # on simple completion decisions while still allowing planning.
-                thinking_config=types.ThinkingConfig(thinking_budget=512),
+                # Reasoning budget — 1024 gives Gemini enough room to generate a plan
+                # and reason about progress against it on each step.
+                thinking_config=types.ThinkingConfig(thinking_budget=1024),
             ),
             contents=contents,
         )
@@ -457,6 +488,12 @@ class LegacyWebPilotHandler:
             raise ValueError("Gemini returned an empty response")
 
         action = self._parse_action(raw_text)
+        logger.info(
+            "Legacy action=%s plan_len=%d steps_completed=%d",
+            action.action,
+            len(action.plan) if action.plan else 0,
+            action.steps_completed or 0,
+        )
 
         # Append this turn to history (mutates the caller's list via append).
         history.append(user_content)
@@ -554,6 +591,12 @@ class LegacyWebPilotHandler:
             raise ValueError("Gemini returned an empty response for interruption replan")
 
         action = self._parse_action(raw_text)
+        logger.info(
+            "Replan action=%s plan_len=%d steps_completed=%d",
+            action.action,
+            len(action.plan) if action.plan else 0,
+            action.steps_completed or 0,
+        )
 
         history.append(user_content)
         history.append(

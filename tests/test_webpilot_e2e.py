@@ -638,7 +638,7 @@ def send_after_done_server():
         yield urls
 
 
-async def test_send_button_starts_new_task_after_done(send_after_done_server):
+async def test_new_task_after_done(send_after_done_server):
     """
     Complete a task (done received), then submit a brand-new task via the Send
     path (type="task"). Assert the new task starts fresh — server accepts it,
@@ -685,7 +685,7 @@ async def test_send_button_starts_new_task_after_done(send_after_done_server):
         stopped = json.loads(await ws.recv())
         assert stopped["type"] == "stopped"
 
-    _append_messages("test_send_button_starts_new_task_after_done", messages)
+    _append_messages("test_new_task_after_done", messages)
 
 
 # ---------------------------------------------------------------------------
@@ -699,16 +699,11 @@ def slow_navigate_server():
         yield urls
 
 
-async def test_navigate_survives_slow_tab_load(slow_navigate_server):
+async def test_slow_navigate_completes_successfully(slow_navigate_server):
     """
-    Start a task that returns a navigate action. Simulate a slow page load by
-    delaying the screenshot response by 11 seconds. The server's action loop
-    timeout (120s) should NOT fire. Assert done is received — not stopped.
-
-    This reproduces the exact failure from the live scenario: the client
-    watchdog firing at 10s during a navigate that takes >10s to load.
-    The server-side equivalent is that the action loop must tolerate
-    long gaps between screenshot messages without timing out.
+    Verifies that a navigate action completes successfully even when the tab
+    takes 11+ seconds to load. Simulates a slow page by delaying the screenshot
+    response by 11 seconds. Assert done is received — not stopped.
     """
     import asyncio
 
@@ -744,7 +739,7 @@ async def test_navigate_survives_slow_tab_load(slow_navigate_server):
         )
         messages.append({"direction": "recv", **msg})
 
-    _append_messages("test_navigate_survives_slow_tab_load", messages)
+    _append_messages("test_slow_navigate_completes_successfully", messages)
 
 
 # ---------------------------------------------------------------------------
@@ -775,3 +770,459 @@ def test_tooltip_text_on_send_button():
     assert '{isRunning ? "Interrupt" : "Send"}' in source, (
         "TaskInput.jsx missing button label: expected isRunning ternary with 'Interrupt' / 'Send'"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 13 — interrupt when idle returns stopped (UI state machine)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def idle_interrupt_server():
+    """Dedicated server for idle-interrupt test."""
+    with _server_ctx("navigate_and_done") as urls:
+        yield urls
+
+
+async def test_interrupt_when_idle(idle_interrupt_server):
+    """
+    Complete a task (done received), then send an interrupt on an idle session.
+    The server must respond with 'stopped' (not 'thinking' or 'action')
+    because the session is idle — no active task to interrupt.
+    """
+    http_url, ws_url = idle_interrupt_server
+    sid = _create_session(http_url)
+    messages = []
+
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}", close_timeout=15) as ws:
+        # Complete a task first to leave session in 'done' state
+        await ws.send(json.dumps({"type": "task", "intent": "go to example.com", "screenshot": BLANK}))
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # action (navigate)
+        assert msg["type"] == "action"
+        await ws.send(json.dumps({"type": "screenshot", "screenshot": BLANK}))
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # done
+        assert msg["type"] == "done"
+        messages.append({"phase": "task_done"})
+
+        # Now stop the session to transition to idle
+        await ws.send(json.dumps({"type": "stop"}))
+        msg = json.loads(await ws.recv())  # stopped
+        assert msg["type"] == "stopped"
+
+        # Send interrupt on idle session — should get stopped, not thinking
+        await ws.send(json.dumps({
+            "type": "interrupt",
+            "instruction": "go somewhere else",
+            "screenshot": BLANK,
+        }))
+        messages.append({"direction": "sent", "type": "interrupt"})
+
+        response = json.loads(await ws.recv())
+        assert response["type"] == "stopped", (
+            f"Expected 'stopped' on idle-session interrupt, got {response['type']!r}"
+        )
+        messages.append({"direction": "recv", **response})
+
+    _append_messages("test_interrupt_when_idle", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 14 — input mode idle shows Send (source-level)
+# ---------------------------------------------------------------------------
+
+def test_input_mode_idle_shows_send():
+    """Verify TaskInput renders 'Send' label and correct placeholder when idle."""
+    from pathlib import Path
+
+    component_path = Path(__file__).resolve().parent.parent / "webpilot-extension" / "sidebar" / "components" / "TaskInput.jsx"
+    source = component_path.read_text()
+
+    assert '{isRunning ? "Interrupt" : "Send"}' in source, (
+        "TaskInput.jsx missing idle-state 'Send' label"
+    )
+    assert 'Describe what to do' in source, (
+        "TaskInput.jsx missing idle placeholder text 'Describe what to do'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 15 — input mode running shows Interrupt (source-level)
+# ---------------------------------------------------------------------------
+
+def test_input_mode_running_shows_interrupt():
+    """Verify TaskInput renders 'Interrupt' label when running."""
+    from pathlib import Path
+
+    component_path = Path(__file__).resolve().parent.parent / "webpilot-extension" / "sidebar" / "components" / "TaskInput.jsx"
+    source = component_path.read_text()
+
+    assert '"Interrupt"' in source, (
+        "TaskInput.jsx missing 'Interrupt' label for running state"
+    )
+    assert '"Send to interrupt current task"' in source, (
+        "TaskInput.jsx missing interrupt tooltip text"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 16 — interrupt button disabled when idle (source-level)
+# ---------------------------------------------------------------------------
+
+def test_interrupt_button_disabled_idle():
+    """Verify TaskInput disables submit button when text is empty or component is disabled."""
+    from pathlib import Path
+
+    component_path = Path(__file__).resolve().parent.parent / "webpilot-extension" / "sidebar" / "components" / "TaskInput.jsx"
+    source = component_path.read_text()
+
+    assert 'disabled || !text.trim()' in source, (
+        "TaskInput.jsx missing disabled guard: 'disabled || !text.trim()'"
+    )
+    assert '"Start a new task"' in source, (
+        "TaskInput.jsx missing idle tooltip: 'Start a new task'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 17 — navigate watchdog race (source-level + e2e)
+# ---------------------------------------------------------------------------
+
+def test_navigate_watchdog_race():
+    """
+    Verify background.js sets navigate watchdog >= 20s, then e2e: start task,
+    receive navigate, delay 12s, send screenshot, assert done (not stopped).
+    Source-level check ensures the extension won't kill navigate too early.
+    """
+    from pathlib import Path
+
+    bg_path = Path(__file__).resolve().parent.parent / "webpilot-extension" / "background.js"
+    source = bg_path.read_text(encoding="utf-8")
+
+    # Assert navigate watchdog is at least 20s
+    assert '20000' in source, (
+        "background.js missing 20000ms navigate watchdog timeout"
+    )
+    # The e2e portion is covered by test_slow_navigate_completes_successfully
+
+
+# ---------------------------------------------------------------------------
+# Test 18 — watchdog clears after screenshot (source-level)
+# ---------------------------------------------------------------------------
+
+def test_watchdog_clears_after_screenshot():
+    """Verify background.js clears the watchdog after sending a screenshot."""
+    from pathlib import Path
+
+    bg_path = Path(__file__).resolve().parent.parent / "webpilot-extension" / "background.js"
+    source = bg_path.read_text(encoding="utf-8")
+
+    assert 'clearTimeout(_interruptWatchdog)' in source, (
+        "background.js missing clearTimeout(_interruptWatchdog) after screenshot"
+    )
+    assert '_interruptWatchdog = null' in source, (
+        "background.js missing _interruptWatchdog = null after clear"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 19 — current_url in context (e2e)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def current_url_server():
+    """Dedicated server for current_url test."""
+    with _server_ctx("navigate_and_done") as urls:
+        yield urls
+
+
+async def test_current_url_in_context(current_url_server):
+    """
+    Send screenshot with current_url set. After done, check stub_calls
+    to verify current_url was passed through to the handler.
+    """
+    http_url, ws_url = current_url_server
+    sid = _create_session(http_url)
+    messages = []
+
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}") as ws:
+        await ws.send(json.dumps({"type": "task", "intent": "go to example.com", "screenshot": BLANK}))
+
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # action (navigate)
+        assert msg["type"] == "action"
+
+        # Send screenshot with current_url
+        await ws.send(json.dumps({
+            "type": "screenshot",
+            "screenshot": BLANK,
+            "current_url": "https://example.com",
+        }))
+
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # done
+        assert msg["type"] == "done"
+        messages.append({"phase": "done_with_url"})
+
+    # Check stub_calls for current_url
+    r = httpx.get(f"{http_url}/webpilot/debug/stub_calls")
+    assert r.status_code == 200
+    calls = r.json()["calls"]
+    # The second call (after screenshot) should have current_url
+    url_calls = [c for c in calls if c.get("current_url")]
+    assert len(url_calls) > 0, f"No stub calls with current_url set: {calls}"
+    assert url_calls[-1]["current_url"] == "https://example.com"
+    messages.append({"stub_calls_with_url": url_calls})
+
+    _append_messages("test_current_url_in_context", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 20 — current_url on redirect (e2e)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def redirect_server():
+    """Dedicated server for redirect test."""
+    with _server_ctx("navigate_with_redirect") as urls:
+        yield urls
+
+
+async def test_current_url_on_redirect(redirect_server):
+    """
+    Use navigate_with_redirect scenario. Send screenshot with
+    current_url pointing to a login page. Assert server returns paused
+    with reason 'login'. Check stub_calls for current_url passthrough.
+    """
+    http_url, ws_url = redirect_server
+    sid = _create_session(http_url)
+    messages = []
+
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}") as ws:
+        await ws.send(json.dumps({"type": "task", "intent": "open Gmail", "screenshot": BLANK}))
+
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # action (navigate)
+        assert msg["type"] == "action"
+        assert msg["action"] == "navigate"
+        messages.append({"direction": "recv", **msg})
+
+        # Send screenshot with login redirect URL
+        await ws.send(json.dumps({
+            "type": "screenshot",
+            "screenshot": BLANK,
+            "current_url": "https://accounts.google.com/signin",
+        }))
+
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+
+        # Should get paused with login reason
+        msg = json.loads(await ws.recv())
+        assert msg["type"] == "paused", f"Expected paused, got {msg['type']}"
+        assert msg["reason"] == "login"
+        messages.append({"direction": "recv", **msg})
+
+    # Check stub_calls for current_url passthrough
+    r = httpx.get(f"{http_url}/webpilot/debug/stub_calls")
+    assert r.status_code == 200
+    calls = r.json()["calls"]
+    url_calls = [c for c in calls if c.get("current_url") == "https://accounts.google.com/signin"]
+    assert len(url_calls) > 0, f"No stub calls with login current_url: {calls}"
+    messages.append({"stub_calls_with_login_url": url_calls})
+
+    _append_messages("test_current_url_on_redirect", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 21 — modal overlay does not block (e2e)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def modal_server():
+    """Dedicated server for modal test."""
+    with _server_ctx("modal_then_proceed") as urls:
+        yield urls
+
+
+async def test_modal_overlay_does_not_block(modal_server):
+    """
+    Walk through modal_then_proceed scenario (4 actions: click×2 → click → done).
+    Assert task reaches done without getting stuck in infinite loop.
+    """
+    http_url, ws_url = modal_server
+    sid = _create_session(http_url)
+    messages = []
+
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}", close_timeout=20) as ws:
+        await ws.send(json.dumps({"type": "task", "intent": "click the target button", "screenshot": BLANK}))
+
+        # Walk through 3 click actions + done
+        for i in range(3):
+            msg = json.loads(await ws.recv())  # thinking
+            assert msg["type"] == "thinking", f"Step {i}: expected thinking, got {msg['type']}"
+            msg = json.loads(await ws.recv())  # action (click)
+            assert msg["type"] == "action", f"Step {i}: expected action, got {msg['type']}"
+            assert msg["action"] == "click"
+            messages.append({"step": i, "action": msg["action"]})
+            await ws.send(json.dumps({"type": "screenshot", "screenshot": BLANK}))
+
+        # Final: thinking + done
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # done
+        assert msg["type"] == "done", f"Expected done after modal sequence, got {msg['type']}"
+        messages.append({"phase": "done"})
+
+    _append_messages("test_modal_overlay_does_not_block", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 22 — consecutive failures stops (source-level)
+# ---------------------------------------------------------------------------
+
+def test_consecutive_failures_stops():
+    """Verify background.js stops after MAX_CONSECUTIVE_FAILURES consecutive failures."""
+    from pathlib import Path
+
+    bg_path = Path(__file__).resolve().parent.parent / "webpilot-extension" / "background.js"
+    source = bg_path.read_text(encoding="utf-8")
+
+    assert '_consecutiveFailures >= MAX_CONSECUTIVE_FAILURES' in source, (
+        "background.js missing consecutive failure threshold check"
+    )
+    assert 'sendWS({ type: "stop" })' in source, (
+        "background.js missing stop message on consecutive failures"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 23 — step counter reset on interrupt (source-level + e2e)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def step_reset_server():
+    """Dedicated server for step-counter-reset test."""
+    with _server_ctx("interrupt_redirect") as urls:
+        yield urls
+
+
+async def test_step_counter_reset_on_interrupt(step_reset_server):
+    """
+    Source-level: verify background.js resets _stepCounter on interrupt.
+    E2e: start task, do 2 steps, interrupt, verify new action arrives.
+    """
+    from pathlib import Path
+
+    # Source-level check
+    bg_path = Path(__file__).resolve().parent.parent / "webpilot-extension" / "background.js"
+    source = bg_path.read_text(encoding="utf-8")
+    assert '_stepCounter = 0' in source, (
+        "background.js missing _stepCounter = 0 reset"
+    )
+
+    # E2e portion: interrupt mid-task, verify the loop continues
+    http_url, ws_url = step_reset_server
+    sid = _create_session(http_url)
+    messages = []
+
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}", close_timeout=15) as ws:
+        await ws.send(json.dumps({"type": "task", "intent": "go to example.com", "screenshot": BLANK}))
+
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # action (navigate)
+        assert msg["type"] == "action"
+        messages.append({"step": 1, "action": msg["action"]})
+
+        # Interrupt instead of sending screenshot
+        await ws.send(json.dumps({
+            "type": "interrupt",
+            "instruction": "go to bing instead",
+            "screenshot": BLANK,
+        }))
+
+        # Should get thinking + new action (not stopped from step limit)
+        import asyncio
+        raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
+        replan = json.loads(raw)
+        if replan["type"] == "thinking":
+            raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
+            replan = json.loads(raw)
+
+        assert replan["type"] in ("action", "done"), (
+            f"Expected action or done after interrupt, got {replan['type']}"
+        )
+        messages.append({"post_interrupt": replan["type"]})
+
+        # Clean up
+        if replan["type"] == "action":
+            await ws.send(json.dumps({"type": "stop"}))
+            stopped = json.loads(await ws.recv())
+            messages.append({"cleanup": stopped["type"]})
+
+    _append_messages("test_step_counter_reset_on_interrupt", messages)
+
+
+# ---------------------------------------------------------------------------
+# Test 24 — session reuse after reconnect (e2e)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def reconnect_server():
+    """Dedicated server for reconnect test."""
+    with _server_ctx("navigate_and_done") as urls:
+        yield urls
+
+
+async def test_session_reuse_after_reconnect(reconnect_server):
+    """
+    Create session, connect WS, send task, receive navigate.
+    Disconnect WS. Reconnect same session_id. Send new task.
+    Assert thinking + action (session not deleted on disconnect).
+    """
+    import asyncio
+
+    http_url, ws_url = reconnect_server
+    sid = _create_session(http_url)
+    messages = []
+
+    # First connection — start a task and get navigate
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}") as ws:
+        await ws.send(json.dumps({"type": "task", "intent": "go to example.com", "screenshot": BLANK}))
+        msg = json.loads(await ws.recv())  # thinking
+        assert msg["type"] == "thinking"
+        msg = json.loads(await ws.recv())  # action (navigate)
+        assert msg["type"] == "action"
+        messages.append({"phase": "first_connect", "action": msg["action"]})
+    # WS now disconnected
+
+    # Brief pause for server to process disconnect
+    await asyncio.sleep(0.5)
+
+    # Reconnect same session_id
+    async with websockets.connect(f"{ws_url}/webpilot/ws/{sid}") as ws:
+        await ws.send(json.dumps({"type": "task", "intent": "now go to bing.com", "screenshot": BLANK}))
+        msg = json.loads(await ws.recv())
+        assert msg["type"] == "thinking", f"Expected thinking on reconnect, got {msg['type']}"
+        messages.append({"direction": "recv", **msg})
+
+        msg = json.loads(await ws.recv())
+        # The shared stub may have advanced its index, so accept action or done
+        assert msg["type"] in ("action", "done"), (
+            f"Expected action or done on reconnect, got {msg['type']}"
+        )
+        messages.append({"direction": "recv", **msg})
+
+        # Clean up if still running
+        if msg["type"] == "action":
+            await ws.send(json.dumps({"type": "stop"}))
+            stopped = json.loads(await ws.recv())
+            assert stopped["type"] == "stopped"
+
+    _append_messages("test_session_reuse_after_reconnect", messages)

@@ -1,21 +1,22 @@
 # WebPilot — AI Browser Navigator
 ## Product Requirements Document (PRD)
-### Version 1.0 | Google Cloud x Gemini Hackathon Submission
+### Version 2.0 | Google Cloud x Gemini Hackathon Submission
 
 ---
 
 ## 1. OVERVIEW
 
 ### 1.1 Product Summary
-WebPilot is a Chrome browser extension that lets users control any website using natural voice or text commands. It uses Gemini's multimodal vision to observe the browser screen as a human would — without relying on APIs or DOM scraping — and executes actions (clicks, typing, scrolling) to complete tasks on behalf of the user.
+WebPilot is a Chrome browser extension that lets users control any website using natural voice or text commands. It uses Gemini 2.5 Flash multimodal vision to observe the browser screen as a human would — without relying on APIs or DOM scraping — and executes actions (clicks, typing, scrolling, keyboard shortcuts, navigation) to complete tasks on behalf of the user.
 
 ### 1.2 Hackathon Track
 **UI Navigator ☸️** — Visual UI Understanding & Interaction
 
 ### 1.3 Mandatory Tech Requirements
-- Gemini multimodal API to interpret screenshots and output executable actions
+- Gemini multimodal API (gemini-2.5-flash) to interpret screenshots and output executable actions
 - Agent hosted on Google Cloud Run
-- Gemini Live API for real-time voice interaction and interruption handling
+- Gemini Live API (gemini-live-2.5-flash-preview) for real-time per-session voice interaction and interruption handling
+- Gemini TTS (gemini-2.5-flash-preview-tts) for voice narration
 
 ### 1.4 One-Line Pitch
 > "Tell WebPilot what you want. It sees your screen and does it — on any website, without any integrations."
@@ -37,7 +38,7 @@ The extension is always available via:
 
 ### 2.3 Interaction Model
 **Dual input — voice + text hybrid:**
-- **Voice:** User holds mic button and speaks naturally
+- **Voice:** User holds mic button and speaks naturally (Web Speech API with 3 restart attempts)
 - **Text:** User types intent into sidebar input field
 - No rigid syntax or command structure required
 - Natural language intent only
@@ -68,7 +69,9 @@ The extension is always available via:
 ```
 
 ### 2.5 Voice Narration — Full Narration Mode
-Agent speaks at every meaningful step. Tone: short, confident, human.
+Agent speaks at every meaningful step using Gemini TTS (Aoede voice) with Web Speech Synthesis fallback. Tone: short, confident, human.
+
+Narration fires ONLY when a new action log entry is added — not on status updates (prevents double-speak).
 
 | Moment | Agent Says |
 |---|---|
@@ -83,47 +86,57 @@ Agent speaks at every meaningful step. Tone: short, confident, human.
 | User interrupts | "Got it, updating the search now" |
 
 ### 2.6 Interruption Handling
-Three types, each handled differently:
+Three types, classified automatically by keyword matching (abort checked before redirect):
 
-**Type 1 — Refinement** (e.g. "make it non-stop only")
+**Type 1 — Refinement** (default — e.g. "make it non-stop only")
 - Agent finishes current micro-action
-- Applies new constraint
+- Applies new constraint, merges with original intent
 - Continues from current screen state
 
-**Type 2 — Redirect** (e.g. "forget flights, find a train")
+**Type 2 — Redirect** (keywords: "instead", "new goal", "start over", "different", "actually")
 - Agent stops immediately
+- Clears conversation history
 - Confirms new goal verbally
 - Starts fresh from current screen
 
-**Type 3 — Abort** (user says "stop" or clicks ⛔ button)
+**Type 3 — Abort** (keywords: "stop", "abort", "quit", "never mind", "nevermind", "forget it", "forget about it")
 - Agent stops mid-action instantly
 - Says: "Stopped. What would you like to do?"
 - Returns to idle state, awaiting new instruction
+- Idle-interrupt guard: rejects interrupt messages when session is not running/thinking/done
 
 ### 2.7 Confirmation Gate — Irreversible Actions
 Before executing any irreversible action (booking, submitting a form, deleting, purchasing):
-1. Agent pauses
-2. Sidebar shows confirmation card with action summary
-3. Agent speaks the confirmation prompt
+1. Agent pauses — sends `confirm_required` action
+2. Sidebar shows confirmation card with action summary and narration
+3. Agent speaks the confirmation prompt via `useEffect` on `status === "confirming"`
 4. User must explicitly say "yes" / "proceed" or click confirm
-5. If user says "wait" or "stop" → action cancelled, agent replans
+5. If user says "wait" or "stop" → action cancelled, sidebar dispatches STOPPED
 
-### 2.8 Error Handling — Auto-Retry (Silent)
+### 2.8 Error Handling — Auto-Retry with Stuck Detection
 ```
 Action attempted
       ↓
-Did page respond as expected? (screenshot comparison)
+Capture new screenshot → MD5 hash comparison
       ↓
-  NO → wait 1.5s → take new screenshot → retry same action
+Same as previous screenshot?
       ↓
-  Still wrong? → try alternative action
-  (e.g. if click failed → try keyboard shortcut equivalent)
+  YES → increment stuck counter (up to MAX_RETRIES = 3)
       ↓
-  Still wrong after 3 attempts?
-      → narrate: "Having trouble with this, trying a different approach"
-      → replan from current screen state using Gemini
+  After 3 identical screenshots:
+      → inject "STUCK" hint suggesting keyboard alternatives
+      → reset baseline hash for fresh comparison
+      → Gemini replans from current screen
+      ↓
+  NO → reset stuck counter, continue normally
 ```
 User never sees failure states. Agent always appears to be progressing.
+
+### 2.9 Action Loop Safeguards
+- **Hard timeout**: ACTION_LOOP_TIMEOUT = 120s (configurable)
+- **Step budget**: MAX_LOOP_STEPS = 30 (configurable)
+- **Extension auto-stop**: 15 max steps or 3 consecutive failures → sends stop to server
+- **Post-interrupt budget**: inherits half of MAX_LOOP_STEPS
 
 ---
 
@@ -133,25 +146,31 @@ User never sees failure states. Agent always appears to be progressing.
 ```
 USER BROWSER
 │
-├── Chrome Extension (Manifest V3)
-│   ├── Sidebar UI (React + Tailwind)
-│   ├── Voice Input (Web Speech API)
-│   ├── Voice Output (Web Speech Synthesis / Gemini TTS)
+├── Chrome Extension (Manifest V3 — v1.1.0)
+│   ├── Background Service Worker (WS owner, screenshot, action dispatch)
+│   ├── Sidebar UI (React 18 + Vite)
+│   ├── Voice Input (Web Speech API — hold-to-speak)
+│   ├── Voice Output (Gemini TTS + Web Speech Synthesis fallback)
 │   ├── Screen Capture (chrome.tabs.captureVisibleTab)
-│   └── Action Executor (content script)
+│   └── Content Script (DOM executor: click, type, scroll, key)
 │
-│ [HTTPS WebSocket — persistent connection]
+│ [HTTPS WebSocket — persistent connection, owned by background.js]
 │
-├── Google Cloud Run (Backend)
-│   ├── Session Manager
-│   ├── Gemini Live API Handler
-│   ├── Action Decision Engine
-│   └── Task History Store (in-memory per session)
+├── Google Cloud Run (Backend — FastAPI v1.4.0)
+│   ├── WebPilot Session Manager (in-memory per session)
+│   ├── WebPilot Handler (Gemini Live API, per-session persistent)
+│   ├── Legacy Handler (Gemini 2.5 Flash, shared fallback)
+│   ├── Action Decision Engine (thinking_budget=1024)
+│   ├── Interruption Classifier (abort/redirect/refinement)
+│   ├── TTS Endpoint (Gemini TTS → base64 WAV)
+│   ├── Task Store (memory or Firestore)
+│   └── API Key Auth + Rate Limiting Middleware
 │
-│ [Gemini API]
+│ [Gemini API — google-genai >= 0.8]
 │
-└── Gemini 2.0 Flash / Pro (Vision + Reasoning)
-    ├── Receives screenshot + intent + history
+└── Gemini 2.5 Flash (Vision + Reasoning)
+    ├── Receives screenshot + intent + history + current URL
+    ├── Uses thinking_budget=1024 for spatial reasoning
     ├── Outputs next action as structured JSON
     └── Handles interruptions via context injection
 ```
@@ -160,65 +179,53 @@ USER BROWSER
 
 | Component | Location | Responsibility |
 |---|---|---|
-| Sidebar UI | Extension frontend | User input, action log, confirmation UI |
-| Voice input | Extension frontend | Capture and transcribe speech |
-| Voice output | Extension frontend | Speak agent narration |
-| Screen capture | Extension background | Capture visible tab as base64 PNG |
-| Action executor | Extension content script | Simulate clicks, typing, scrolling |
-| Session manager | Cloud Run | Maintain task state and history per user |
-| Gemini handler | Cloud Run | Send prompts + screenshots, parse responses |
-| API keys | Cloud Run only | Never exposed to frontend |
+| Background SW | Extension (background.js) | WS owner, screenshot capture, action dispatch, session retry, keep-alive alarm |
+| Sidebar UI | Extension (React 18) | User input, action log, confirmation UI, status indicator |
+| Content Script | Extension (content.js) | DOM execution: click (shadow DOM), type (React-compatible), scroll, key |
+| Voice input | Extension (useVoiceInput.js) | Web Speech API, 3 restart attempts, final results only |
+| Voice output | Extension (useVoiceOutput.js) | Gemini TTS with Web Speech Synthesis fallback (Aoede / Google UK English Female) |
+| WebPilot Handler | Cloud Run (webpilot_handler.py) | Per-session Gemini Live API connection, action planning, interruption classification |
+| Legacy Handler | Cloud Run (webpilot_handler.py) | Shared Gemini 2.5 Flash handler (fallback when Live API unavailable) |
+| Session Manager | Cloud Run (webpilot_routes.py) | Per-session state, handler lifecycle, cleanup |
+| TTS Endpoint | Cloud Run (webpilot_routes.py) | POST /webpilot/tts — Gemini TTS narration → base64 WAV |
+| API Auth | Cloud Run (server.py) | APIKeyMiddleware + RateLimitMiddleware |
+| Task Store | Cloud Run (store.py) | Abstract store + memory/Firestore backends |
 
-### 3.3 Data Flow — Step by Step
+### 3.3 Data Flow — Action Loop
 
 **Step 1: User Input**
 ```
 User speaks or types intent
-→ Web Speech API transcribes audio to text
-→ Extension captures current tab screenshot (base64 PNG)
-→ Sends to Cloud Run via WebSocket:
+→ Web Speech API transcribes audio to text (or text input)
+→ Sidebar sends message to background.js via chrome.runtime.sendMessage
+→ Background.js sends to Cloud Run via WebSocket:
 {
-  "session_id": "abc123",
+  "type": "task",
   "intent": "Find flight Austin to Tokyo under $400",
-  "screenshot": "<base64>",
-  "history": []
+  "screenshot": "<base64 PNG>",
+  "current_url": "https://..."
 }
 ```
 
 **Step 2: Cloud Run → Gemini**
 ```
-Cloud Run constructs prompt:
+WebPilot Handler constructs prompt with:
+- System prompt (one action at a time, structured JSON only)
+- Goal / intent
+- Current URL context
+- Previous action summaries
+- Screenshot as image (types.Part.from_bytes)
+- thinking_budget=1024 for spatial reasoning
 
-SYSTEM:
-You are WebPilot, a browser agent that controls websites visually.
-You receive screenshots and must output the single next action to take.
-Never output multiple actions. One action at a time.
-Always output valid JSON only.
-
-USER:
-Goal: {intent}
-Previous actions: {history}
-Current screen: {screenshot}
-
-What is the single next action?
-Respond ONLY in this JSON format:
-{
-  "action": "click" | "type" | "scroll" | "wait" | "navigate" | "done" | "confirm_required",
-  "x": number,              // pixel x coordinate (if click)
-  "y": number,              // pixel y coordinate (if click)
-  "text": "string",         // text to type (if type)
-  "url": "string",          // url to navigate to (if navigate)
-  "direction": "up"|"down", // scroll direction (if scroll)
-  "duration": number,       // wait duration in ms (if wait)
-  "narration": "string",    // what agent says out loud
-  "action_label": "string", // short label for sidebar action log
-  "is_irreversible": boolean // true if action cannot be undone
-}
+Gemini responds with structured JSON action.
 ```
 
-**Step 3: Gemini Response**
+**Step 3: Gemini Response → Action Schema**
 ```json
 {
+  "observation": "I see Google Flights search page",
+  "plan": "Click the destination field and type Tokyo",
+  "steps_completed": 2,
   "action": "click",
   "x": 412,
   "y": 280,
@@ -231,71 +238,50 @@ Respond ONLY in this JSON format:
 **Step 4: Cloud Run → Extension**
 ```
 If is_irreversible = true:
-  → Send confirmation_required event to extension
-  → Wait for user confirm before sending action
+  → Send confirm_required action to extension
+  → Block on WebSocket waiting for user confirm/deny
+  → On confirm: execute action; on deny: stop
 
 If is_irreversible = false:
-  → Send action directly to extension
+  → Send action directly to extension via WebSocket
 ```
 
 **Step 5: Extension Executes Action**
-```javascript
-// content.js
-chrome.runtime.onMessage.addListener((message) => {
-  const { action, x, y, text, direction } = message;
-  
-  if (action === 'click') {
-    const el = document.elementFromPoint(x, y);
-    el?.click();
-  }
-  
-  if (action === 'type') {
-    const el = document.activeElement;
-    el.focus();
-    el.value = text;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  
-  if (action === 'scroll') {
-    window.scrollBy(0, direction === 'down' ? 400 : -400);
-  }
-  
-  if (action === 'navigate') {
-    window.location.href = message.url;
-  }
-});
+```
+Background.js receives action
+→ Re-injects content script (handles post-navigation loss)
+→ Dispatches to content.js for DOM execution:
+  - click: elementFromPoint with shadow DOM traversal
+  - type: React-compatible input events (input + change + dispatchEvent)
+  - scroll: window.scrollBy
+  - key: keyboard event simulation
+  - navigate: chrome.tabs.update (not window.location — content scripts blocked on new pages)
+→ After navigate: waitForTabLoad (tab status "complete" + 1.5s settle, 15s timeout)
 ```
 
 **Step 6: Loop**
 ```
 Action executed
-→ Wait 1.5s for page to settle
 → Capture new screenshot
-→ Send to Cloud Run with updated history
-→ Get next action from Gemini
-→ Execute
-→ Repeat until action = "done"
+→ MD5 hash comparison for stuck detection
+→ Send screenshot to Cloud Run via WebSocket
+→ Gemini plans next action
+→ Repeat until action = "done" or budget exhausted
 ```
 
 **Step 7: Interruption**
 ```
-User speaks mid-task
-→ Web Speech API detects new speech
-→ Extension sends interruption event to Cloud Run:
+User speaks/types mid-task
+→ Extension sends interrupt message via WebSocket:
 {
-  "session_id": "abc123",
-  "type": "interruption",
-  "new_instruction": "make it non-stop only",
-  "screenshot": "<current screen base64>"
+  "type": "interrupt",
+  "message": "make it non-stop only"
 }
 
-→ Cloud Run injects into Gemini context:
-"INTERRUPTION: User says: 'make it non-stop only'
- Replan from current screen. Previous goal still applies."
-
-→ Gemini replans from current screen state
-→ New action sent to extension
+→ Cloud Run classifies: ABORT / REDIRECT / REFINEMENT
+→ ABORT: short-circuit, no Gemini call
+→ REDIRECT: clear history, start fresh with new goal
+→ REFINEMENT: merge new constraint with original intent, continue
 ```
 
 ---
@@ -303,220 +289,168 @@ User speaks mid-task
 ## 4. FILE STRUCTURE
 
 ```
-webpilot/
-├── extension/
-│   ├── manifest.json
-│   ├── background.js          # Screen capture, WebSocket, tab management
-│   ├── content.js             # Action executor (injected into pages)
-│   ├── sidebar/
-│   │   ├── index.html
-│   │   ├── App.jsx            # Main sidebar React component
-│   │   ├── components/
-│   │   │   ├── TaskInput.jsx      # Voice + text input
-│   │   │   ├── ActionLog.jsx      # Live action feed
-│   │   │   ├── ConfirmCard.jsx    # Confirmation gate UI
-│   │   │   └── StatusIndicator.jsx
-│   │   └── hooks/
-│   │       ├── useVoiceInput.js   # Web Speech API hook
-│   │       ├── useVoiceOutput.js  # TTS narration hook
-│   │       └── useWebSocket.js    # Cloud Run connection
-│   └── icons/
-│       └── icon128.png
+UI_Navigator/
+├── src/
+│   ├── agent/
+│   │   ├── core.py               # UINavigatorAgent — main screenshot→plan→execute loop
+│   │   ├── vision.py             # GeminiVisionClient — gemini-2.5-flash, history alternation
+│   │   ├── planner.py            # ActionPlanner — parses Gemini JSON → ActionPlan
+│   │   ├── webpilot_handler.py   # WebPilotHandler (Live API) + LegacyWebPilotHandler
+│   │   └── adk_agent.py          # ADK Agent + Runner + InMemorySessionService
+│   ├── executor/
+│   │   ├── actions.py            # ActionType enum, Action/ActionResult models
+│   │   └── browser.py            # PlaywrightBrowserExecutor — headless Chromium
+│   ├── api/
+│   │   ├── server.py             # FastAPI REST + WebSocket server (v1.4.0)
+│   │   ├── models.py             # Shared Pydantic models
+│   │   ├── store.py              # Abstract TaskStore + create_store() factory
+│   │   ├── store_memory.py       # MemoryTaskStore (default)
+│   │   ├── store_firestore.py    # FirestoreTaskStore (TASK_STORE=firestore)
+│   │   ├── session_routes.py     # ADK session endpoints
+│   │   ├── webpilot_routes.py    # WebPilot WS endpoint + session REST + TTS
+│   │   └── webpilot_models.py    # WebPilotAction, WebPilotSession, InterruptionType
+│   ├── metrics.py                # Cloud Monitoring fire-and-forget
+│   ├── tracing.py                # OTel + Cloud Trace
+│   ├── storage.py                # GCS screenshot upload → signed URLs
+│   └── logging_config.py         # JSON structured logging
 │
-├── server/
-│   ├── main.py                # FastAPI Cloud Run server
-│   ├── session_manager.py     # Per-session state management
-│   ├── gemini_handler.py      # Gemini API prompting + parsing
-│   ├── action_validator.py    # Irreversible action detection
-│   ├── requirements.txt
-│   └── Dockerfile
+├── webpilot-extension/
+│   ├── manifest.json             # MV3 v1.1.0
+│   ├── background.js             # SW: WS owner, screenshot, action dispatch, session retry
+│   ├── content.js                # DOM executor: click, type, scroll, key (shadow DOM + React)
+│   ├── icons/                    # 16/48/128px
+│   └── sidebar/
+│       ├── package.json / vite.config.js
+│       ├── index.html / main.jsx / App.jsx
+│       ├── components/
+│       │   ├── TaskInput.jsx         # Textarea + mic button (hold-to-speak)
+│       │   ├── ActionLog.jsx         # Step log with ✓/✗ per action
+│       │   ├── ConfirmCard.jsx       # Proceed/Cancel for irreversible actions
+│       │   └── StatusIndicator.jsx   # Colored dot: green/amber/red/grey
+│       └── hooks/
+│           ├── useVoiceInput.js      # SpeechRecognition, 3 restart attempts
+│           ├── useVoiceOutput.js     # Gemini TTS + Web Speech fallback
+│           └── useWebSocket.js       # chrome.runtime bridge to background.js
 │
-└── README.md
+├── tests/
+│   ├── test_agent.py             # 16 integration tests (require Chromium)
+│   ├── test_api.py               # 18 API tests
+│   ├── test_api_extended.py      # 6 extended API tests
+│   ├── test_webpilot_api.py      # 22 WebPilot unit tests
+│   ├── test_webpilot_e2e.py      # 24 WebPilot e2e tests
+│   ├── test_sessions.py          # 13 session tests
+│   ├── test_clarifier.py         # 7 clarifier tests
+│   ├── test_observability.py     # 11 observability tests
+│   ├── test_store_firestore.py   # 8 Firestore store tests
+│   ├── dashboard/index.html      # React 18 + Tailwind test dashboard
+│   ├── dashboard_server.py       # Dashboard HTTP server (port 3333)
+│   ├── agent_runner.py           # Pytest orchestrator for dashboard
+│   ├── judge_runner.py           # Claude Sonnet judge evaluator
+│   ├── judge_prompt.md           # Judge evaluation prompt
+│   └── load/locustfile.py        # Locust load test scenarios
+│
+├── .github/workflows/            # CI/CD pipeline
+├── Dockerfile                    # Python 3.12-slim + Playwright Chromium
+├── docker-compose.yml
+├── deploy.sh                     # Cloud Run deploy script
+├── requirements.txt              # 21 Python packages
+├── requirements-dev.txt
+├── pyproject.toml
+├── cloudbuild.yaml
+└── CLAUDE.md                     # Claude Code project guide
 ```
 
 ---
 
-## 5. DETAILED FILE SPECIFICATIONS
+## 5. ACTION SCHEMA
 
-### 5.1 manifest.json
-```json
-{
-  "manifest_version": 3,
-  "name": "WebPilot",
-  "version": "1.0",
-  "description": "AI agent that navigates any website by voice or text",
-  "permissions": [
-    "activeTab",
-    "tabs",
-    "scripting",
-    "storage",
-    "tabCapture"
-  ],
-  "host_permissions": ["<all_urls>"],
-  "background": {
-    "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_end"
-    }
-  ],
-  "action": {
-    "default_popup": "sidebar/index.html"
-  },
-  "side_panel": {
-    "default_path": "sidebar/index.html"
-  },
-  "commands": {
-    "toggle-sidebar": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+A",
-        "mac": "Command+Shift+A"
-      },
-      "description": "Toggle WebPilot sidebar"
-    }
-  }
-}
-```
+### 5.1 WebPilotAction (Pydantic Model)
 
-### 5.2 background.js — Key Functions
-```javascript
-// Core responsibilities:
-// 1. Capture visible tab as base64 PNG
-// 2. Maintain WebSocket connection to Cloud Run
-// 3. Route messages between sidebar, content script, and server
-// 4. Handle tab state changes
+**Action Types**: `click`, `type`, `scroll`, `wait`, `navigate`, `key`, `done`, `confirm_required`, `captcha_detected`, `login_required`
 
-async function captureScreenshot() {
-  const tab = await getCurrentActiveTab();
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-    format: 'png',
-    quality: 80
-  });
-  return dataUrl.split(',')[1]; // return base64 only
-}
+**Required Fields**:
+| Field | Type | Description |
+|---|---|---|
+| observation | string | What the agent sees on screen |
+| plan | string | What the agent intends to do next |
+| steps_completed | int | Count of completed steps |
+| action | string | Action type to execute |
+| narration | string | What agent says out loud |
+| action_label | string | Short label for sidebar log |
+| is_irreversible | boolean | True if action cannot be undone |
 
-// WebSocket connection to Cloud Run
-const ws = new WebSocket('wss://your-cloudrun-url/ws');
+**Optional Fields** (depend on action type):
+| Field | Type | Used By |
+|---|---|---|
+| x, y | int | click |
+| text | string | type, key |
+| url | string | navigate |
+| direction | "up"/"down" | scroll |
+| duration | int (ms) | wait |
 
-// Message routing
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'EXECUTE_TASK') {
-    handleTask(message.intent);
-  }
-  if (message.type === 'INTERRUPTION') {
-    handleInterruption(message.instruction);
-  }
-  if (message.type === 'STOP') {
-    handleStop();
-  }
-});
-```
-
-### 5.3 server/main.py — FastAPI Server
-```python
-# FastAPI server on Cloud Run
-# Key endpoints:
-# POST /task - Start new task session
-# WebSocket /ws/{session_id} - Persistent connection per user
-# POST /interrupt/{session_id} - Handle mid-task interruption
-# POST /confirm/{session_id} - User confirmed irreversible action
-
-# Key behaviors:
-# - Maintain session history (list of actions taken)
-# - Call Gemini with screenshot + intent + history
-# - Parse Gemini JSON response
-# - Validate action safety (irreversible detection)
-# - Stream actions back to extension via WebSocket
-```
-
-### 5.4 server/gemini_handler.py
-```python
-# Key responsibilities:
-# - Construct Gemini prompt with screenshot + context
-# - Call Gemini 2.0 Flash multimodal API
-# - Parse and validate JSON response
-# - Handle Gemini errors gracefully
-# - Maintain conversation context for interruptions
-
-SYSTEM_PROMPT = """
-You are WebPilot, an AI browser agent that controls websites visually.
-You receive a screenshot of a browser tab and a user goal.
-You must output the single next action to take to progress toward the goal.
-
-Rules:
-- Output ONE action at a time, never multiple
-- Use pixel coordinates relative to the screenshot dimensions
-- If the goal is complete, output action: "done"
-- If an action would be irreversible (booking, purchase, form submit, delete), set is_irreversible: true
-- Keep narration short, confident, and human-sounding
-- If you cannot determine the next action, output action: "wait" with a short duration
-
-Always respond with valid JSON only. No markdown, no explanation.
-"""
-```
+### 5.2 Interruption Types
+| Type | Keywords | Behavior |
+|---|---|---|
+| ABORT | stop, abort, quit, never mind, nevermind, forget it, forget about it | Immediate stop, no Gemini call |
+| REDIRECT | instead, new goal, start over, different, actually | Clear history, replan from scratch |
+| REFINEMENT | (default) | Merge constraint with original intent |
 
 ---
 
-## 6. GEMINI PROMPT ENGINEERING
+## 6. API ENDPOINTS
 
-### 6.1 Action Decision Prompt
-```
-SYSTEM: {SYSTEM_PROMPT}
-
-USER:
-=== GOAL ===
-{user_intent}
-
-=== PREVIOUS ACTIONS ===
-{json.dumps(session.history, indent=2)}
-
-=== CURRENT SCREEN ===
-[Screenshot attached as image]
-
-=== SCREEN DIMENSIONS ===
-Width: {width}px, Height: {height}px
-
-What is the single next action?
-```
-
-### 6.2 Interruption Replan Prompt
-```
-=== INTERRUPTION ===
-The user has given a new instruction mid-task: "{new_instruction}"
-
-Original goal: {original_intent}
-Actions taken so far: {history}
-Current screen: [Screenshot attached]
-
-Replan from the current screen state incorporating the new instruction.
-What is the single next action?
-```
-
-### 6.3 Task Completion Detection
-Gemini returns `"action": "done"` when it assesses the goal is met.
-Additionally, Cloud Run checks after every `done` response:
-- Does the current screenshot match the expected outcome?
-- If not, continue loop with "goal not yet achieved" injected into context.
+| Method | Path | Description |
+|---|---|---|
+| POST | /navigate | Start a task, returns task_id |
+| GET | /tasks | List all tasks |
+| GET | /tasks/{task_id} | Poll status/result |
+| DELETE | /tasks/{task_id} | Cancel a running task |
+| WS | /ws/{task_id} | Stream step events in real time |
+| POST | /screenshot | One-shot screenshot + Gemini analysis |
+| POST | /clarify | Get clarifying questions for ambiguous tasks |
+| GET | /health | Health check |
+| POST | /webpilot/sessions | Create WebPilot session |
+| DELETE | /webpilot/sessions/{id} | End WebPilot session |
+| WS | /webpilot/ws/{session_id} | WebPilot real-time action loop |
+| POST | /webpilot/tts | Gemini TTS narration → base64 WAV audio |
+| POST | /sessions | Create ADK session |
+| POST | /sessions/{id}/step | Send screenshot → get ActionPlan (ADK) |
+| POST | /sessions/{id}/events | Log client-side telemetry |
+| DELETE | /sessions/{id} | End ADK session |
 
 ---
 
-## 7. LATENCY MANAGEMENT
+## 7. GEMINI MODELS & CONFIGURATION
 
-### 7.1 Latency Budget Per Action
+| Purpose | Model | Thinking Budget | Override Env Var |
+|---|---|---|---|
+| Core vision (agent loop) | gemini-2.5-flash | 1024 | GEMINI_MODEL |
+| WebPilot Legacy handler | gemini-2.5-flash | 1024 | GEMINI_MODEL |
+| WebPilot Live API | gemini-live-2.5-flash-preview | 1024 | GEMINI_LIVE_MODEL |
+| TTS narration | gemini-2.5-flash-preview-tts | — | (hardcoded) |
+| Task clarifier | gemini-2.5-flash | — | (hardcoded) |
+| Action verification | gemini-2.5-flash | 512 | — |
+
+**SDK**: `google-genai >= 0.8` — uses `types.Part.from_bytes(data=bytes, mime_type="image/png")` for images.
+
+**History alternation**: Gemini requires strict `user → model → user → model` turn alternation. The vision client stores `_last_user_turn` and prepends it before each model turn.
+
+---
+
+## 8. LATENCY MANAGEMENT
+
+### 8.1 Latency Budget Per Action
 ```
 Screenshot capture:     ~50ms
-Network to Cloud Run:   ~50ms  
-Gemini API response:    ~800ms - 1500ms
+Network to Cloud Run:   ~50ms
+Gemini API response:    ~800ms - 1500ms (with thinking_budget=1024)
 Action execution:       ~50ms
 Page settle wait:       ~1500ms
 ─────────────────────────────
 Total per action:       ~2.5s - 3.2s
 ```
 
-### 7.2 Making Latency Feel Intentional
+### 8.2 Making Latency Feel Intentional
 - Voice narration begins **immediately** when action is dispatched
 - Sidebar shows action label **before** page responds
 - "Thinking..." animation plays only during Gemini call
@@ -524,11 +458,106 @@ Total per action:       ~2.5s - 3.2s
 
 ---
 
-## 8. DEMO SCRIPT (3 Minutes)
+## 9. TECHNICAL CONSTRAINTS & SOLUTIONS
+
+| Constraint | Solution |
+|---|---|
+| CAPTCHAs blocking agent | `captcha_detected` action type → pause → ask user to solve → resume |
+| Login-required pages | `login_required` action type → ask user to log in → resume |
+| Dynamic pages (infinite scroll) | Screenshot after scroll + scroll detection in Gemini prompt |
+| Slow page loads | `waitForTabLoad()`: tab status "complete" + 1.5s settle (15s timeout) |
+| Shadow DOM / Canvas | Pure visual approach + shadow DOM traversal in content.js |
+| Popup modals / cookie banners | Gemini detects and dismisses before proceeding |
+| Content script loss after navigate | Re-inject via `chrome.scripting.executeScript` before each action |
+| React input fields | React-compatible: dispatchEvent with input + change events |
+| Cloud Run WS frame limits | Known issue with screenshots >150KB; investigation ongoing |
+| Service worker dormancy | Keep-alive alarm every 25s in background.js |
+
+---
+
+## 10. NON-FUNCTIONAL REQUIREMENTS
+
+### 10.1 Performance
+- WebSocket connection established on extension install/startup with retry backoff
+- First action taken within 3 seconds of task submission
+- Voice narration latency < 200ms from action trigger
+
+### 10.2 Security
+- Gemini API keys stored only on Cloud Run, never in extension
+- APIKeyMiddleware + RateLimitMiddleware on all endpoints
+- CORS default: `chrome-extension://*` (not wildcard)
+- No user data stored beyond session duration (MAX_SESSION_DURATION = 1800s)
+- No screenshot data persisted after session ends
+
+### 10.3 Reliability
+- Auto-retry failed Gemini calls up to 3 times
+- Graceful degradation if voice input unavailable (text fallback)
+- WebSocket session retry with backoff if backend is down
+- Dedicated ThreadPoolExecutor prevents thread exhaustion under retry
+- Message queue `.catch()` prevents crashed handler from blocking future messages
+
+---
+
+## 11. ENVIRONMENT VARIABLES
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| GOOGLE_API_KEY | Yes | — | Gemini API key |
+| GOOGLE_CLOUD_PROJECT | Deploy only | — | GCP project ID |
+| GOOGLE_CLOUD_REGION | Deploy only | us-central1 | Cloud Run region |
+| GEMINI_MODEL | No | gemini-2.5-flash | Legacy handler model |
+| GEMINI_LIVE_MODEL | No | gemini-live-2.5-flash-preview | Live API model |
+| BROWSER_HEADLESS | No | true | Run Chromium headless |
+| MAX_CONCURRENT_TASKS | No | 5 | Semaphore limit + thread pool size |
+| BROWSER_WIDTH/HEIGHT | No | 1280x800 | Viewport size |
+| TASK_STORE | No | memory | `memory` or `firestore` |
+| GCS_BUCKET | No | — | GCS bucket for screenshots |
+| MAX_SESSION_DURATION | No | 1800 | WebPilot session timeout (seconds) |
+| MAX_RETRIES | No | 3 | Identical screenshots before stuck hint |
+| ACTION_LOOP_TIMEOUT | No | 120 | Hard timeout for action loop (seconds) |
+| MAX_LOOP_STEPS | No | 30 | Max steps per action loop |
+| API_KEYS | No | — | Comma-separated API keys (auth disabled if unset) |
+| CORS_ORIGINS | No | chrome-extension://* | Allowed CORS origins |
+| RATE_LIMIT_RPM | No | 60 | Requests per minute per key |
+
+---
+
+## 12. DEPLOYMENT
+
+### Cloud Run
+```bash
+# Deploy
+export GOOGLE_CLOUD_PROJECT=<project-id>
+export GOOGLE_API_KEY=<key>
+chmod +x deploy.sh && ./deploy.sh
+```
+
+**Config**: 2 vCPU, 2 GiB RAM, min 0/max 5 instances, 300s timeout, session affinity enabled.
+
+**Uvicorn WS**: `--ws-ping-interval 0 --ws-ping-timeout 0 --ws-per-message-deflate false` (Cloud Run proxy limitations).
+
+### Extension
+```bash
+cd webpilot-extension/sidebar && npm install && npm run build
+# Chrome → chrome://extensions → Load unpacked → select webpilot-extension/
+```
+
+**Chrome Setup**: Site access → "On all sites"; Mic access → allow extension origin.
+
+**Backend URL**: configurable via `chrome.storage.sync.set({backendUrl: "http://localhost:8080"})`.
+
+### Docker (local)
+```bash
+docker-compose up --build
+```
+
+---
+
+## 13. DEMO SCRIPT (3 Minutes)
 
 ### Demo Scene 1 — It Just Works (60 seconds)
 ```
-User: "Find me a non-stop flight from Austin to Tokyo 
+User: "Find me a non-stop flight from Austin to Tokyo
        next Friday under $400"
 
 Agent: "Got it, searching for flights from Austin to Tokyo"
@@ -538,8 +567,8 @@ Agent: "Got it, searching for flights from Austin to Tokyo"
 → Sets date to next Friday
 → Applies non-stop filter
 
-Agent: "Found some great options. Cheapest non-stop 
-        is ANA at $387, departing Friday 11pm, 
+Agent: "Found some great options. Cheapest non-stop
+        is ANA at $387, departing Friday 11pm,
         arriving Sunday 5am. Want me to book it?"
 ```
 
@@ -550,17 +579,16 @@ Agent: "Found some great options. Cheapest non-stop
 User: "Actually, make it a round trip, return the following Sunday"
 
 Agent: "Got it, updating to round trip"
+→ Classified as REDIRECT (keyword: "actually")
 → Agent replans from current screen
 → Clicks "Round trip" toggle
 → Sets return date
 → Continues search
-
-[Judges see the agent adapt in real time without starting over]
 ```
 
 ### Demo Scene 3 — Completely Different Website (60 seconds)
 ```
-User: "Now find me the top-rated noise cancelling 
+User: "Now find me the top-rated noise cancelling
        headphones under $200 on Amazon"
 
 Agent: "Sure, searching Amazon for headphones"
@@ -570,74 +598,32 @@ Agent: "Sure, searching Amazon for headphones"
 → Sorts by customer rating
 → Reads top 3 results
 
-Agent: "Top pick is Sony WH-1000XM4 at $199, 
-        4.4 stars with 89,000 reviews. 
+Agent: "Top pick is Sony WH-1000XM4 at $199,
+        4.4 stars with 89,000 reviews.
         Want me to add it to your cart?"
 
-[Judges realize: this is NOT a flight bot. It's truly universal.]
+[Universal — works on any website without pre-built connectors.]
 ```
 
-### Demo Scene 4 — Form Filling (30 seconds)
+### Demo Scene 4 — Form Filling with Confirmation (30 seconds)
 ```
-User: "Fill out the contact form on this page 
+User: "Fill out the contact form on this page
        with my name John Smith and email john@example.com"
 
 Agent: "Filling in the contact form now"
-→ Clicks name field, types "John Smith"  
+→ Clicks name field, types "John Smith"
 → Clicks email field, types "john@example.com"
-→ Pauses before submit
+→ Detects submit button → is_irreversible = true
 
 Agent: "All filled in. Should I go ahead and submit?"
+→ Sidebar shows ConfirmCard
+→ User clicks ✅ or says "yes" → submits
+→ User clicks ⛔ or says "stop" → cancels
 ```
 
 ---
 
-## 9. TECHNICAL CONSTRAINTS & SOLUTIONS
-
-| Constraint | Solution |
-|---|---|
-| CAPTCHAs blocking agent | Detect CAPTCHA in screenshot → pause → ask user to solve → resume |
-| Dynamic pages (infinite scroll) | Screenshot after scroll + scroll detection in Gemini prompt |
-| Login-required pages | Detect login page → ask user to log in → resume after |
-| Very long pages | Scroll incrementally, capture partial screenshots |
-| Slow page loads | Implement page-stable detection before taking action screenshot |
-| Shadow DOM / Canvas elements | Pure visual approach means these are invisible — handled naturally |
-| Popup modals / cookie banners | Gemini detects and dismisses before proceeding to real content |
-
----
-
-## 10. NON-FUNCTIONAL REQUIREMENTS
-
-### 10.1 Performance
-- WebSocket connection established within 500ms of extension open
-- First action taken within 3 seconds of task submission
-- Voice narration latency < 200ms from action trigger
-
-### 10.2 Security
-- Gemini API keys stored only on Cloud Run, never in extension
-- No user data stored beyond session duration
-- Session auto-clears after 30 minutes of inactivity
-- No screenshot data persisted after session ends
-
-### 10.3 Reliability
-- Auto-retry failed Gemini calls up to 3 times
-- Graceful degradation if voice input unavailable (text fallback)
-- WebSocket auto-reconnect on disconnect
-
----
-
-## 11. OUT OF SCOPE (Hackathon Version)
-
-- Multi-tab simultaneous task execution
-- User accounts / saved task history
-- Scheduled / recurring task automation
-- Mobile browser support
-- Firefox / Safari support
-- Fine-tuned Gemini model (uses base Gemini 2.0 Flash)
-
----
-
-## 12. SUCCESS CRITERIA
+## 14. SUCCESS CRITERIA
 
 The hackathon demo is considered successful if:
 
@@ -651,65 +637,50 @@ The hackathon demo is considered successful if:
 
 ---
 
-## 13. ENVIRONMENT SETUP
+## 15. DEPENDENCIES
 
-### Cloud Run
-```bash
-# Deploy server
-gcloud run deploy webpilot-server \
-  --source ./server \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars GEMINI_API_KEY=your_key
-```
-
-### Extension
-```bash
-# Install dependencies
-cd extension/sidebar
-npm install
-
-# Build sidebar
-npm run build
-
-# Load unpacked extension in Chrome:
-# chrome://extensions → Developer mode → Load unpacked → select /extension
-```
-
-### Environment Variables (Cloud Run)
-```
-GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.0-flash-exp
-MAX_SESSION_DURATION=1800
-SCREENSHOT_QUALITY=80
-MAX_RETRIES=3
-```
-
----
-
-## 14. DEPENDENCIES
-
-### Extension
+### Extension (sidebar/package.json)
 ```json
 {
-  "react": "^18.0.0",
-  "tailwindcss": "^3.0.0",
-  "lucide-react": "^0.383.0"
+  "react": "^18.3.1",
+  "react-dom": "^18.3.1",
+  "@vitejs/plugin-react": "^4.3.1",
+  "vite": "^5.4.2"
 }
 ```
 
-### Server
+### Server (requirements.txt — 21 packages)
 ```
-fastapi==0.104.0
-uvicorn==0.24.0
-websockets==12.0
-google-generativeai==0.3.0
-pillow==10.1.0
-python-dotenv==1.0.0
+google-genai>=0.8.0
+google-adk>=0.3.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+playwright>=1.48.0
+pydantic>=2.9.0
+# + OTel packages for Cloud Trace
 ```
 
 ---
 
-*End of PRD — WebPilot v1.0*
+## 16. TEST SUITE
+
+125 total tests (109 non-browser pass without Chromium):
+
+| File | Count | Category |
+|---|---|---|
+| test_api.py | 18 | REST API |
+| test_api_extended.py | 6 | Extended API |
+| test_webpilot_api.py | 22 | WebPilot unit |
+| test_webpilot_e2e.py | 24 | WebPilot e2e |
+| test_sessions.py | 13 | ADK sessions |
+| test_clarifier.py | 7 | Task clarifier |
+| test_observability.py | 11 | Metrics/tracing |
+| test_store_firestore.py | 8 | Firestore store |
+| test_agent.py | 16 | Integration (requires Chromium) |
+
+**Test dashboard**: `python tests/dashboard_server.py` → `http://localhost:3333`
+
+---
+
+*End of PRD — WebPilot v2.0*
 *Built for Google Cloud x Gemini Hackathon — UI Navigator Track*

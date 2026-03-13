@@ -54,6 +54,7 @@ _RUNNER_TIMEOUT = 180  # seconds before watchdog kills a stuck runner
 # ---------------------------------------------------------------------------
 _runner_proc: subprocess.Popen | None = None
 _judge_proc: subprocess.Popen | None = None
+_fix_loop_proc: subprocess.Popen | None = None
 _last_run: str | None = None  # ISO timestamp of last /run call
 
 
@@ -97,6 +98,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._run_tests()
         elif path == "/run_judge":
             self._run_judge()
+        elif path == "/run_fix_loop":
+            self._run_fix_loop()
         elif path == "/status":
             self._get_status()
         else:
@@ -165,10 +168,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
         )
         self._json(200, {"status": "started"})
 
+    def _run_fix_loop(self) -> None:
+        """Run agent_runner then judge_runner as a chained subprocess."""
+        global _fix_loop_proc
+        if _is_running(_fix_loop_proc):
+            self._json(200, {"status": "already_running"})
+            return
+        # Chain: run tests, then run judge
+        if sys.platform == "win32":
+            cmd = f'"{sys.executable}" tests/agent_runner.py --scenario all && "{sys.executable}" tests/judge_runner.py'
+            shell = True
+        else:
+            cmd = f'{sys.executable} tests/agent_runner.py --scenario all && {sys.executable} tests/judge_runner.py'
+            shell = True
+        log_fh = open(_RUNNER_LOG, "w")
+        _fix_loop_proc = subprocess.Popen(
+            cmd,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            cwd=str(_REPO_ROOT),
+            shell=shell,
+        )
+        self._json(200, {"status": "started"})
+
     def _get_status(self) -> None:
         self._json(200, {
             "runner_running": _is_running(_runner_proc),
             "judge_running": _is_running(_judge_proc),
+            "fix_loop_running": _is_running(_fix_loop_proc),
             "last_run": _last_run,
         })
 
@@ -184,7 +211,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 def _shutdown(signum, frame) -> None:  # noqa: ANN001
     print("\nShutting down — terminating child processes…")
-    for proc in (_runner_proc, _judge_proc):
+    for proc in (_runner_proc, _judge_proc, _fix_loop_proc):
         if _is_running(proc):
             proc.terminate()
     sys.exit(0)

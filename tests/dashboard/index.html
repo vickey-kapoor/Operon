@@ -345,7 +345,7 @@ function JudgePanel({ judge, polling }) {
 
 // ── TOOLBAR ───────────────────────────────────────────────────────────────────
 
-function Toolbar({ status, onRun, onRunJudge, connected }) {
+function Toolbar({ status, onRun, onRunJudge, onRunFixLoop, connected }) {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-700 px-6 py-3 flex items-center justify-between z-10">
       <div className="flex gap-3">
@@ -374,6 +374,19 @@ function Toolbar({ status, onRun, onRunJudge, connected }) {
         >
           {status?.judge_running && <Spinner size={4} />}
           {status?.judge_running ? 'Analysing…' : 'Run Judge'}
+        </button>
+        <button
+          onClick={onRunFixLoop}
+          disabled={status?.fix_loop_running}
+          className={cx(
+            'flex items-center gap-2 px-4 py-2 rounded text-sm font-medium fade',
+            status?.fix_loop_running
+              ? 'bg-orange-900 text-orange-400 cursor-not-allowed'
+              : 'bg-orange-600 hover:bg-orange-500 text-white'
+          )}
+        >
+          {status?.fix_loop_running && <Spinner size={4} />}
+          {status?.fix_loop_running ? 'Fix Loop Running…' : 'Run Fix Loop'}
         </button>
       </div>
       <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -427,6 +440,11 @@ function App() {
   const handleRunJudge = async () => {
     await fetch('/run_judge');
     setStatus(s => ({ ...s, judge_running: true }));
+  };
+
+  const handleRunFixLoop = async () => {
+    await fetch('/run_fix_loop');
+    setStatus(s => ({ ...s, fix_loop_running: true }));
   };
 
   return (
@@ -483,6 +501,7 @@ function App() {
         status={status}
         onRun={handleRun}
         onRunJudge={handleRunJudge}
+        onRunFixLoop={handleRunFixLoop}
         connected={connected}
       />
     </div>

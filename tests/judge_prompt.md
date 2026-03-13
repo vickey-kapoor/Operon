@@ -65,12 +65,14 @@ Also check for these untested code paths in `webpilot_routes.py`:
 
 For each **failed or errored** test, classify the failure as one of:
 
-| Classification    | Meaning |
-|-------------------|---------|
-| `real_bug`        | The backend has a bug; reference the file and line |
-| `flaky_assertion` | The assertion is timing-dependent or order-dependent |
-| `test_setup_error`| The test fixture or server setup is wrong |
-| `stub_mismatch`   | The stub scenario does not match what the test expects |
+| Classification      | Meaning |
+|---------------------|---------|
+| `real_bug`          | The backend has a bug; reference the file and line |
+| `flaky_assertion`   | The assertion is timing-dependent or order-dependent |
+| `test_setup_error`  | The test fixture or server setup is wrong |
+| `stub_mismatch`     | The stub scenario does not match what the test expects |
+| `ui_state_violation`| The UI/session entered an invalid state (e.g., interrupt on idle) |
+| `timing_race`       | A watchdog or timeout fired before an action could complete |
 
 For `real_bug`: include the file path and approximate line number from the codebase.
 For `stub_mismatch`: describe exactly what the stub scenario needs to change
@@ -101,8 +103,11 @@ Respond with a single JSON object. Do not include prose outside the JSON.
   "failure_diagnoses": [
     {
       "test": "test_name",
-      "classification": "real_bug|flaky_assertion|test_setup_error|stub_mismatch",
-      "detail": "specific file/line or stub change needed"
+      "classification": "real_bug|flaky_assertion|test_setup_error|stub_mismatch|ui_state_violation|timing_race",
+      "detail": "specific file/line or stub change needed",
+      "fix_prompt": "optional — actionable fix instruction referencing file+line, ending with 'Run the failing test'",
+      "auto_fixable": true,
+      "requires_human_review": false
     }
   ],
   "next_tests": [
@@ -116,3 +121,19 @@ Respond with a single JSON object. Do not include prose outside the JSON.
 ```
 
 If there are no issues in a category, return an empty array for that key.
+
+---
+
+## 5. Fix Prompts
+
+For each failure diagnosis that is NOT classified as `real_bug`, generate a `fix_prompt` field
+with an actionable instruction that Claude Code can execute to fix the issue automatically.
+
+Rules for fix prompts:
+- Only generate for non-`real_bug` classifications (real bugs require human judgement)
+- Must reference the specific file and approximate line number
+- Must describe the exact change needed (not vague guidance)
+- Must end with: "Run the failing test to verify the fix."
+- Set `auto_fixable: true` if the fix is mechanical (e.g., stub mismatch, assertion order)
+- Set `requires_human_review: true` if the fix might have side effects or touches shared code
+- If no fix prompt is appropriate, omit the field or set it to `null`

@@ -19,6 +19,8 @@ class InterruptionType(str, Enum):
 class WebPilotAction(BaseModel):
     model_config = ConfigDict(extra="ignore")
     observation: Optional[str] = None
+    plan: Optional[List[str]] = None
+    steps_completed: Optional[int] = None
     action: Literal["click", "type", "scroll", "wait", "navigate", "key", "done", "confirm_required", "captcha_detected", "login_required"]
     x: Optional[int] = None
     y: Optional[int] = None

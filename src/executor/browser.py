@@ -7,7 +7,7 @@ import logging
 from typing import Optional
 
 from PIL import Image
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError
 
 from .actions import Action, ActionResult, ActionType
 
@@ -139,7 +139,16 @@ class PlaywrightBrowserExecutor:
     async def _screenshot_raw(self) -> bytes:
         """Capture a raw PNG screenshot of the current viewport."""
         page = self._ensure_started()
-        return await page.screenshot(type="png", full_page=False)
+        try:
+            return await page.screenshot(
+                type="png", full_page=False, timeout=60000
+            )
+        except PlaywrightTimeoutError:
+            # Wait for page to settle and retry once
+            await page.wait_for_load_state("networkidle", timeout=10000)
+            return await page.screenshot(
+                type="png", full_page=False, timeout=60000
+            )
 
     async def screenshot(self) -> Image.Image:
         """Capture a full-page screenshot and return it as a PIL Image."""
@@ -213,10 +222,10 @@ class PlaywrightBrowserExecutor:
             url = "https://" + url
         logger.info("Navigating to %s", url)
         try:
-            await page.goto(url, wait_until="load", timeout=30_000)
+            await page.goto(url, wait_until="load", timeout=60_000)
         except Exception:
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=15_000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
             except Exception as exc:
                 logger.warning("Navigation fallback failed: %s", exc)
         # Wait briefly for JS-rendered content to paint.

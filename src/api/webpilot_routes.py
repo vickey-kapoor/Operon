@@ -185,6 +185,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     await _run_action_loop(websocket, session, msg.screenshot)
 
                 elif msg_type == "interrupt":
+                    if session.status not in ("running", "thinking", "done"):
+                        await websocket.send_json({"type": "stopped", "narration": "No active task to interrupt."})
+                        continue
                     msg = InterruptMessage(**data)
                     session.status = "running"
                     await _handle_interrupt(websocket, session, msg.screenshot, msg.instruction)
@@ -315,6 +318,11 @@ async def _run_action_loop_inner(
             )
             return
         step_count += 1
+        logger.info(
+            "Action loop step %d/%d starting",
+            step_count, steps_remaining,
+            extra={"session_id": session.session_id},
+        )
 
         await websocket.send_json({"type": "thinking"})
 
@@ -424,9 +432,23 @@ async def _run_action_loop_inner(
             session.history = session.history[-18:]
 
         # Wait for the next screenshot (or a control message).
+        logger.info(
+            "Waiting for next message from client",
+            extra={"session_id": session.session_id},
+        )
         raw = await websocket.receive_text()
+        logger.info(
+            "Received message type=%s size=%d",
+            "?", len(raw),
+            extra={"session_id": session.session_id},
+        )
         data = json.loads(raw)
         msg_type = data.get("type")
+        logger.info(
+            "Parsed message type=%s",
+            msg_type,
+            extra={"session_id": session.session_id},
+        )
 
         if msg_type == "stop":
             session.abort_event.set()
@@ -440,6 +462,11 @@ async def _run_action_loop_inner(
         elif msg_type == "screenshot":
             screenshot = data["screenshot"]
             current_url = data.get("current_url", "")
+            logger.info(
+                "Screenshot received, b64_len=%d current_url=%s",
+                len(screenshot), current_url,
+                extra={"session_id": session.session_id},
+            )
             new_hash = hashlib.md5(base64.b64decode(screenshot)).digest()
             if new_hash == _prev_hash:
                 retry_count += 1

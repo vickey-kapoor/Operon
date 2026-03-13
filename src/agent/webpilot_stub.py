@@ -6,14 +6,18 @@ in order, looping back to the start when the script is exhausted.
 
 Supported named scenarios
 --------------------------
-search              — navigate to bing, type query, click search, done
-navigate_and_done   — navigate to a URL, immediately done
-confirm_flow        — navigate, then confirm_required, then done
-interrupt_redirect  — navigate, wait (simulates mid-task pause), done
-stuck_loop          — three identical wait actions (simulates stuck state)
+search                — navigate to bing, type query, click search, done
+navigate_and_done     — navigate to a URL, immediately done
+confirm_flow          — navigate, then confirm_required, then done
+interrupt_redirect    — navigate, wait (simulates mid-task pause), done
+navigate_with_redirect — navigate → login_required (simulates redirect to login)
+slow_navigate         — navigate (delay_ms=12000) → done (simulates heavy page)
+modal_then_proceed    — click × 2 (close modals) → click (target) → done
+stuck_loop            — three identical wait actions (simulates stuck state)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Dict, List, Optional
 
@@ -127,6 +131,77 @@ _SCENARIOS: Dict[str, List[dict]] = {
             "observation": "Final page loaded.",
         },
     ],
+    "navigate_with_redirect": [
+        {
+            "action": "navigate",
+            "url": "https://mail.google.com",
+            "narration": "Navigating to Gmail.",
+            "action_label": "Navigate to Gmail",
+            "is_irreversible": False,
+            "observation": "Starting navigation.",
+        },
+        {
+            "action": "login_required",
+            "narration": "Login screen detected — please sign in.",
+            "action_label": "Login required",
+            "is_irreversible": False,
+            "observation": "Redirected to login page.",
+        },
+    ],
+    "slow_navigate": [
+        {
+            "action": "navigate",
+            "url": "https://heavy-page.example.com",
+            "narration": "Navigating to a heavy page.",
+            "action_label": "Navigate",
+            "is_irreversible": False,
+            "observation": "Starting navigation.",
+            "delay_ms": 12000,
+        },
+        {
+            "action": "done",
+            "narration": "Page loaded successfully.",
+            "action_label": "Done",
+            "is_irreversible": False,
+            "observation": "Heavy page loaded.",
+        },
+    ],
+    "modal_then_proceed": [
+        {
+            "action": "click",
+            "x": 900,
+            "y": 50,
+            "narration": "Closing the cookie consent modal.",
+            "action_label": "Close modal",
+            "is_irreversible": False,
+            "observation": "Modal overlay is visible.",
+        },
+        {
+            "action": "click",
+            "x": 900,
+            "y": 50,
+            "narration": "Dismissing the newsletter popup.",
+            "action_label": "Dismiss popup",
+            "is_irreversible": False,
+            "observation": "Newsletter popup appeared.",
+        },
+        {
+            "action": "click",
+            "x": 640,
+            "y": 400,
+            "narration": "Clicking the target button.",
+            "action_label": "Click target",
+            "is_irreversible": False,
+            "observation": "Overlays dismissed, target visible.",
+        },
+        {
+            "action": "done",
+            "narration": "Task completed after dismissing modals.",
+            "action_label": "Done",
+            "is_irreversible": False,
+            "observation": "Target action executed.",
+        },
+    ],
     "stuck_loop": [
         {
             "action": "wait",
@@ -172,12 +247,15 @@ class WebPilotStubHandler:
                     f"Unknown stub scenario {scenario!r}. "
                     f"Available: {sorted(_SCENARIOS)}"
                 )
+            raw = _SCENARIOS[scenario]
             self._script: List[WebPilotAction] = [
-                WebPilotAction(**d) for d in _SCENARIOS[scenario]
+                WebPilotAction(**{k: v for k, v in d.items() if k != "delay_ms"}) for d in raw
             ]
+            self._raw_script: List[dict] = list(raw)
             logger.info("WebPilotStubHandler initialised with scenario=%r", scenario)
         else:
-            self._script = [WebPilotAction(**d) for d in scenario]
+            self._script = [WebPilotAction(**{k: v for k, v in d.items() if k != "delay_ms"}) for d in scenario]
+            self._raw_script = list(scenario)
             logger.info(
                 "WebPilotStubHandler initialised with custom script (%d steps)",
                 len(self._script),
@@ -200,8 +278,9 @@ class WebPilotStubHandler:
         current_url: str = "",        # noqa: ARG002
     ) -> WebPilotAction:
         action = self._script[self._index]
+        delay_ms = self._raw_script[self._index].get("delay_ms", 0)
         self.call_log.append(
-            {"call_number": len(self.call_log), "stuck": stuck, "returned_action": action.action}
+            {"call_number": len(self.call_log), "stuck": stuck, "returned_action": action.action, "current_url": current_url}
         )
         logger.debug(
             "WebPilotStubHandler step %d/%d stuck=%s → action=%r",
@@ -211,6 +290,8 @@ class WebPilotStubHandler:
             action.action,
         )
         self._index = (self._index + 1) % len(self._script)
+        if delay_ms:
+            await asyncio.sleep(delay_ms / 1000)
         return action
 
     async def get_interruption_replan(

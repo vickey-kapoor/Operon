@@ -6,7 +6,7 @@
  * script (via chrome.tabs.sendMessage).
  */
 
-const DEFAULT_BACKEND = "http://localhost:8080";
+const DEFAULT_BACKEND = "https://ui-navigator-749384771196.us-central1.run.app";
 let BACKEND_URL = DEFAULT_BACKEND;
 let WS_BASE_URL = DEFAULT_BACKEND.replace("http", "ws");
 

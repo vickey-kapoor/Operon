@@ -90,4 +90,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s \
     CMD curl -f http://localhost:8080/health || exit 1
 
-CMD ["uvicorn", "src.api.server:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+CMD ["uvicorn", "src.api.server:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--ws-ping-interval", "0", "--ws-ping-timeout", "0", "--ws-per-message-deflate", "false"]

@@ -426,3 +426,75 @@ def test_navigate_with_redirect(mock_handler):
         assert msg4["type"] != "done", "Agent should not return done on a login redirect"
         assert msg4["type"] == "paused"
         assert msg4["reason"] == "login"
+
+
+# ---------------------------------------------------------------------------
+# Test — max steps sends stopped
+# ---------------------------------------------------------------------------
+
+def test_max_steps_sends_stopped(mock_handler):
+    """Mock handler returns CLICK_ACTION indefinitely. Monkeypatch _MAX_LOOP_STEPS=3.
+    After 3 screenshots the server must stop with 'Reached maximum number of steps.'"""
+    mock_handler.get_next_action = AsyncMock(return_value=CLICK_ACTION)
+    original_max = routes_module._MAX_LOOP_STEPS
+    routes_module._MAX_LOOP_STEPS = 3
+    try:
+        client = TestClient(app)
+        r = client.post("/webpilot/sessions")
+        sid = r.json()["session_id"]
+        with client.websocket_connect(f"/webpilot/ws/{sid}") as ws:
+            ws.send_json({"type": "task", "intent": "Do many steps", "screenshot": DUMMY_SCREENSHOT})
+            for _ in range(3):
+                ws.receive_json()  # thinking
+                ws.receive_json()  # action (click)
+                ws.send_json({"type": "screenshot", "screenshot": DUMMY_SCREENSHOT})
+            # After 3 steps, should get stopped
+            msg = ws.receive_json()
+            assert msg["type"] == "stopped", f"Expected stopped after max steps, got {msg['type']}"
+            assert "maximum number of steps" in msg.get("narration", "").lower(), (
+                f"Expected max-steps narration, got: {msg.get('narration')}"
+            )
+    finally:
+        routes_module._MAX_LOOP_STEPS = original_max
+
+
+# ---------------------------------------------------------------------------
+# Test — interrupt step budget inherited (half of max)
+# ---------------------------------------------------------------------------
+
+def test_interrupt_step_budget_inherited(mock_handler):
+    """After interrupt, the remaining step budget is half of _MAX_LOOP_STEPS.
+    Monkeypatch _MAX_LOOP_STEPS=4 → interrupt budget = 2. After 2 post-interrupt
+    screenshots, server must stop."""
+    mock_handler.get_next_action = AsyncMock(return_value=CLICK_ACTION)
+    mock_handler.get_interruption_replan = AsyncMock(return_value=CLICK_ACTION)
+    original_max = routes_module._MAX_LOOP_STEPS
+    routes_module._MAX_LOOP_STEPS = 4
+    try:
+        client = TestClient(app)
+        r = client.post("/webpilot/sessions")
+        sid = r.json()["session_id"]
+        with client.websocket_connect(f"/webpilot/ws/{sid}") as ws:
+            ws.send_json({"type": "task", "intent": "Do something", "screenshot": DUMMY_SCREENSHOT})
+            ws.receive_json()  # thinking
+            ws.receive_json()  # action (click)
+
+            # Send interrupt instead of screenshot
+            ws.send_json({"type": "interrupt", "instruction": "change course", "screenshot": DUMMY_SCREENSHOT})
+            ws.receive_json()  # thinking (replan)
+            replan_action = ws.receive_json()  # action (replanned click)
+            assert replan_action["type"] == "action"
+
+            # Send screenshot — starts the post-interrupt action loop (budget = 2)
+            ws.send_json({"type": "screenshot", "screenshot": DUMMY_SCREENSHOT})
+
+            # Budget = 2: two iterations then stopped
+            for _ in range(2):
+                ws.receive_json()  # thinking
+                ws.receive_json()  # action (click)
+                ws.send_json({"type": "screenshot", "screenshot": DUMMY_SCREENSHOT})
+
+            msg = ws.receive_json()
+            assert msg["type"] == "stopped", f"Expected stopped after budget exhausted, got {msg['type']}"
+    finally:
+        routes_module._MAX_LOOP_STEPS = original_max

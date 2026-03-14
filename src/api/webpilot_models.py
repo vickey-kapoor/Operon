@@ -44,8 +44,6 @@ class WebPilotSession:
     # websocket.receive_text() — the outer loop is blocked while waiting,
     # so confirm_event/confirm_result were dead code and have been removed.
     last_active: float = field(default_factory=time.time)
-    # Per-session Live API handler (WebPilotHandler). None = use shared Legacy handler.
-    handler: Optional[object] = None
 
 
 # WS incoming message schemas

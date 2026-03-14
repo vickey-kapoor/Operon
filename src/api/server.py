@@ -160,14 +160,11 @@ async def lifespan(app: FastAPI):
     elif os.environ.get("GOOGLE_API_KEY"):
         from src.agent.vision import GeminiVisionClient
         from src.agent.planner import ActionPlanner
-        from src.agent.webpilot_handler import LegacyWebPilotHandler
+        from src.agent.webpilot_handler import WebPilotHandler
         _wp_vision = GeminiVisionClient()
         _wp_planner = ActionPlanner(vision_client=_wp_vision)
-        # Use legacy handler as the shared TTS/narration provider.
-        # Live API handlers are created per-session in webpilot_routes.
-        _wp_handler = LegacyWebPilotHandler(vision_client=_wp_vision, planner=_wp_planner)
-        # Pass the genai client so webpilot_routes can create per-session Live handlers.
-        _webpilot_init_handler(_wp_handler, live_client=_wp_vision._client)
+        _wp_handler = WebPilotHandler(vision_client=_wp_vision, planner=_wp_planner)
+        _webpilot_init_handler(_wp_handler)
     webpilot_cleanup_task = asyncio.create_task(_webpilot_cleanup_sessions())
 
     logger.info(

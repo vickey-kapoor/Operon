@@ -25,35 +25,23 @@ from src.api.webpilot_models import (
     WebPilotSession,
     ScreenshotMessage,
 )
-from src.agent.webpilot_handler import WebPilotHandler, LegacyWebPilotHandler
+from src.agent.webpilot_handler import WebPilotHandler
 
 _MAX_SESSION_DURATION = int(os.environ.get("MAX_SESSION_DURATION", "1800"))
 _MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
-
-# Flag: True if Live API is available (google-genai client was set up during lifespan).
-_live_api_client = None
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webpilot", tags=["webpilot"])
 
 _sessions: Dict[str, WebPilotSession] = {}
-# Shared handler — either LegacyWebPilotHandler or stub. Used for TTS and as fallback.
+# Shared handler — either WebPilotHandler or stub. Used for TTS and action loop.
 _handler = None
 
 
-def init_handler(handler, live_client=None) -> None:
-    """Inject the shared handler instance. Called from the server lifespan.
-
-    Parameters
-    ----------
-    handler:
-        The shared LegacyWebPilotHandler (or stub) — used for TTS and as fallback.
-    live_client:
-        Optional google.genai Client for creating per-session Live API handlers.
-    """
-    global _handler, _live_api_client
+def init_handler(handler) -> None:
+    """Inject the shared handler instance. Called from the server lifespan."""
+    global _handler
     _handler = handler
-    _live_api_client = live_client
 
 
 async def cleanup_sessions() -> None:
@@ -63,12 +51,7 @@ async def cleanup_sessions() -> None:
         cutoff = time.time() - _MAX_SESSION_DURATION
         stale = [sid for sid, s in list(_sessions.items()) if s.last_active < cutoff]
         for sid in stale:
-            session = _sessions.pop(sid)
-            if session.handler:
-                try:
-                    await session.handler.close()
-                except Exception:
-                    pass
+            _sessions.pop(sid)
             logger.info("Cleaned up stale webpilot session", extra={"session_id": sid})
 
 
@@ -158,6 +141,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
     logger.info("WebSocket connected", extra={"session_id": session_id})
 
+    had_internal_error = False
     try:
         while True:
             raw = await websocket.receive_text()
@@ -180,8 +164,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     session.history = []
                     session.status = "running"
                     session.abort_event.clear()
-                    # Try per-session Live handler; falls back to shared Legacy handler.
-                    session.handler = await _create_live_handler(msg.intent)
                     await _run_action_loop(websocket, session, msg.screenshot)
 
                 elif msg_type == "interrupt":
@@ -195,9 +177,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                 elif msg_type == "stop":
                     session.abort_event.set()
                     session.status = "idle"
-                    if session.handler:
-                        await session.handler.close()
-                        session.handler = None
                     await websocket.send_json({"type": "stopped"})
 
             except (ValidationError, KeyError) as exc:
@@ -206,42 +185,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected", extra={"session_id": session_id})
     except Exception:
+        had_internal_error = True
         logger.exception("WebSocket error", extra={"session_id": session_id})
     finally:
-        # Close per-session Live handler on disconnect to free resources.
-        if session.handler:
+        if had_internal_error:
             try:
-                await session.handler.close()
+                await websocket.send_json({"type": "error", "message": "Internal server error"})
             except Exception:
                 pass
-            session.handler = None
-        try:
-            await websocket.send_json({"type": "error", "message": "Internal server error"})
-        except Exception:
-            pass
-
-
-# ---------------------------------------------------------------------------
-# Per-session Live handler factory
-# ---------------------------------------------------------------------------
-
-
-async def _create_live_handler(intent: str) -> WebPilotHandler | None:
-    """Create a per-session Live API handler and open its streaming session.
-
-    Returns a connected ``WebPilotHandler`` on success, or ``None`` if the
-    Live API is unavailable or connection fails (caller falls back to the
-    shared Legacy handler).
-    """
-    if _live_api_client is None:
-        return None
-    handler = WebPilotHandler(client=_live_api_client)
-    try:
-        await handler.connect(intent)
-        return handler
-    except Exception as exc:
-        logger.warning("Live API handler creation failed, using legacy fallback: %s", exc)
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -332,18 +283,10 @@ async def _run_action_loop_inner(
             _prev_hash = b""  # force fresh baseline so next screenshot isn't flagged stuck
 
         try:
-            if session.handler is not None:
-                # Live API — persistent session, no manual history management
-                action = await session.handler.send_screenshot_and_get_action(
-                    screenshot, session.intent, stuck=stuck,
-                    current_url=current_url,
-                )
-            else:
-                # Legacy — per-call generate_content with explicit history
-                action = await _handler.get_next_action(
-                    screenshot, session.intent, session.history, stuck=stuck,
-                    current_url=current_url,
-                )
+            action = await _handler.get_next_action(
+                screenshot, session.intent, session.history, stuck=stuck,
+                current_url=current_url,
+            )
         except Exception as exc:
             logger.exception(
                 "WebPilot handler error", extra={"session_id": session.session_id}
@@ -380,24 +323,37 @@ async def _run_action_loop_inner(
                 "narration": action.narration,
                 "action_label": action.action_label,
             })
-            # Inline read — same pattern as confirmation flow
-            raw_pause = await websocket.receive_text()
-            pause_data = json.loads(raw_pause)
-            if pause_data.get("type") == "resume":
-                screenshot = pause_data["screenshot"]
-                session.status = "running"
-                continue
-            elif pause_data.get("type") == "stop":
-                session.abort_event.set()
-                session.status = "idle"
-                await websocket.send_json({"type": "stopped"})
-                return
-            else:
-                await websocket.send_json(
-                    {"type": "error", "message": f"Expected 'resume' or 'stop', got '{pause_data.get('type')}'"}
-                )
-                session.status = "idle"
-                return
+            # Inline read loop — retry on malformed messages so client can fix.
+            while True:
+                raw_pause = await websocket.receive_text()
+                try:
+                    pause_data = json.loads(raw_pause)
+                except json.JSONDecodeError:
+                    await websocket.send_json(
+                        {"type": "error", "message": "Invalid JSON in pause response"}
+                    )
+                    continue  # stay in pause read loop
+                if pause_data.get("type") == "resume":
+                    resume_screenshot = pause_data.get("screenshot")
+                    if not resume_screenshot:
+                        await websocket.send_json(
+                            {"type": "error", "message": "Resume message must include a screenshot"}
+                        )
+                        continue  # stay in pause read loop
+                    screenshot = resume_screenshot
+                    session.status = "running"
+                    break  # exit pause loop, continue action loop
+                elif pause_data.get("type") == "stop":
+                    session.abort_event.set()
+                    session.status = "idle"
+                    await websocket.send_json({"type": "stopped"})
+                    return
+                else:
+                    await websocket.send_json(
+                        {"type": "error", "message": f"Expected 'resume' or 'stop', got '{pause_data.get('type')}'"}
+                    )
+                    session.status = "idle"
+                    return
 
         if action.is_irreversible or action.action == "confirm_required":
             session.status = "awaiting_confirm"
@@ -411,11 +367,11 @@ async def _run_action_loop_inner(
             # Read the confirm response directly — the outer loop is blocked here
             # and cannot process messages, so we must receive the confirm inline.
             raw_confirm = await websocket.receive_text()
-            confirm_data = json.loads(raw_confirm)
             try:
+                confirm_data = json.loads(raw_confirm)
                 confirm_msg = ConfirmMessage(**confirm_data)
                 confirmed = confirm_msg.confirmed
-            except (ValidationError, KeyError):
+            except (json.JSONDecodeError, ValidationError, KeyError):
                 confirmed = False
             if not confirmed:
                 await websocket.send_json(
@@ -442,7 +398,12 @@ async def _run_action_loop_inner(
             "?", len(raw),
             extra={"session_id": session.session_id},
         )
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            await websocket.send_json({"type": "error", "message": "Invalid JSON"})
+            session.status = "idle"
+            return
         msg_type = data.get("type")
         logger.info(
             "Parsed message type=%s",
@@ -480,6 +441,7 @@ async def _run_action_loop_inner(
                     "message": f"Unexpected message type: {msg_type}",
                 }
             )
+            session.status = "idle"
             return
 
 
@@ -494,8 +456,7 @@ async def _verify_completion(
     Returns True if verified (or on error), False if not yet done.
     """
     try:
-        handler = session.handler if session.handler is not None else _handler
-        verified = await handler.verify_completion(screenshot, session.intent)
+        verified = await _handler.verify_completion(screenshot, session.intent)
         if not verified:
             logger.info(
                 "Completion not verified — retrying",
@@ -546,17 +507,9 @@ async def _handle_interrupt(
     await websocket.send_json({"type": "thinking"})
 
     try:
-        if session.handler is not None:
-            # Live API — send interruption context, then get next action
-            await session.handler.send_interruption(instruction)
-            action = await session.handler.send_screenshot_and_get_action(
-                screenshot, session.intent
-            )
-        else:
-            # Legacy — single replan call
-            action = await _handler.get_interruption_replan(
-                screenshot, original_intent, instruction, session.history, interrupt_type
-            )
+        action = await _handler.get_interruption_replan(
+            screenshot, original_intent, instruction, session.history, interrupt_type
+        )
     except Exception as exc:
         logger.exception(
             "WebPilot interruption replan error", extra={"session_id": session.session_id}
@@ -588,7 +541,12 @@ async def _handle_interrupt(
         )
         session.status = "idle"
         return
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        await websocket.send_json({"type": "error", "message": "Invalid JSON after interrupt"})
+        session.status = "idle"
+        return
     if data.get("type") == "screenshot":
         # Inherit remaining step budget (half of max) so recursive call can't run forever.
         await _run_action_loop(

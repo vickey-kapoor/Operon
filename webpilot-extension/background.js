@@ -32,6 +32,7 @@ let _reconnecting = false;
 let _stepCounter = 0;
 let _consecutiveFailures = 0;
 let _messageQueue = Promise.resolve(); // serialises handleServerMessage calls
+let _pendingOutbound = [];
 
 const MAX_STEPS = 15;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -113,6 +114,7 @@ async function connectWebSocket() {
     _reconnecting = false;
     _reconnectDelay = RECONNECT_DELAY_MS;  // reset backoff on success
     broadcastToSidebar({ type: "WS_STATUS", connected: true });
+    flushPendingOutbound();
   };
 
   _ws.onmessage = (event) => {
@@ -134,6 +136,7 @@ async function connectWebSocket() {
 
   _ws.onclose = (event) => {
     log("warn", "WebSocket closed", { code: event.code, reason: event.reason });
+    _ws = null;
     broadcastToSidebar({ type: "WS_STATUS", connected: false });
 
     if (event.code === 4404) {
@@ -144,7 +147,9 @@ async function connectWebSocket() {
 
     if (!_reconnecting) {
       _reconnecting = true;
-      setTimeout(connectWebSocket, RECONNECT_DELAY_MS);
+      const delay = _reconnectDelay;
+      _reconnectDelay = Math.min(_reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+      setTimeout(connectWebSocket, delay);
     }
   };
 
@@ -158,7 +163,25 @@ function sendWS(payload) {
     log("log", "→ Server:", payload.type, payload);
     _ws.send(JSON.stringify(payload));
   } else {
-    log("warn", "WS not open — dropping message:", payload.type);
+    log("warn", "WS not open — queueing message:", payload.type);
+    _pendingOutbound.push(payload);
+    if (_pendingOutbound.length > 20) {
+      _pendingOutbound = _pendingOutbound.slice(-20);
+    }
+    connectWebSocket();
+  }
+}
+
+function flushPendingOutbound() {
+  if (!_ws || _ws.readyState !== WebSocket.OPEN || _pendingOutbound.length === 0) {
+    return;
+  }
+
+  const queued = _pendingOutbound;
+  _pendingOutbound = [];
+  for (const payload of queued) {
+    log("log", "→ Server (flushed):", payload.type, payload);
+    _ws.send(JSON.stringify(payload));
   }
 }
 

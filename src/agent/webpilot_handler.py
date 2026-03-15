@@ -5,12 +5,15 @@ import base64
 import json
 import logging
 import os
-from typing import List, Optional
+from typing import TYPE_CHECKING, Optional
 
 from google.genai import types
 
-from src.agent.vision import GeminiVisionClient
+if TYPE_CHECKING:
+    from src.api.desktop_models import DesktopAction
+
 from src.agent.planner import _extract_json_from_text
+from src.agent.vision import GeminiVisionClient
 from src.api.webpilot_models import InterruptionType, WebPilotAction
 
 logger = logging.getLogger(__name__)

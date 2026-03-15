@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import tempfile
 import textwrap
 from io import BytesIO
 from pathlib import Path
@@ -35,10 +34,9 @@ _REPO_ROOT = _TESTS_DIR.parent
 sys.path.insert(0, str(_TESTS_DIR))
 sys.path.insert(0, str(_REPO_ROOT))
 
-import agent_runner as ar
-import judge_runner as jr
-import dashboard_server as ds
-
+import agent_runner as ar  # noqa: E402
+import dashboard_server as ds  # noqa: E402
+import judge_runner as jr  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Shared test fixtures
@@ -334,7 +332,7 @@ class TestRunScenarioTimeout:
 
         with patch("agent_runner._read_ws_message_log", return_value=[]):
             with patch("agent_runner._clear_ws_message_log"):
-                with patch("agent_runner.subprocess.run") as mock_taskkill:
+                with patch("agent_runner.subprocess.run") as _mock_taskkill:  # noqa: F841
                     with patch("agent_runner.sys") as mock_sys:
                         mock_sys.platform = "linux"
                         mock_sys.executable = sys.executable

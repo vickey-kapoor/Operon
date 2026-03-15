@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -63,8 +64,6 @@ _SCENARIO_STUB: dict[str, str] = {
 
 _MSG_LOG_PATH = Path(tempfile.gettempdir()) / "wp_test_messages.json"
 
-
-import re
 
 # Regex to extract per-test duration from pytest -v output
 # Matches patterns like "PASSED (0.42s)" or "FAILED (1.23s)"

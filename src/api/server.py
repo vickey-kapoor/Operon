@@ -9,10 +9,9 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import (
-    BackgroundTasks,
     FastAPI,
     File,
     Form,
@@ -29,12 +28,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.agent.core import AgentResult, StepEvent, UINavigatorAgent
+from src import metrics, tracing
 from src.agent.clarifier import TaskClarifier
-from src.api import session_routes
-from src.api import webpilot_routes
-from src.api import desktop_routes
-from src.api.webpilot_routes import cleanup_sessions as _webpilot_cleanup_sessions, init_handler as _webpilot_init_handler
+from src.agent.core import AgentResult, StepEvent, UINavigatorAgent
+from src.api import desktop_routes, session_routes, webpilot_routes
 from src.api.models import (
     NavigateRequest,
     NavigateResponse,
@@ -44,7 +41,8 @@ from src.api.models import (
     TaskStatusResponse,
 )
 from src.api.store import TaskStore, create_store
-from src import metrics, tracing
+from src.api.webpilot_routes import cleanup_sessions as _webpilot_cleanup_sessions
+from src.api.webpilot_routes import init_handler as _webpilot_init_handler
 from src.logging_config import configure_logging, request_id_var
 
 # ---------------------------------------------------------------------------
@@ -159,8 +157,8 @@ async def lifespan(app: FastAPI):
         _webpilot_init_handler(_wp_handler)
         logger.info("WebPilot running in STUB mode (scenario=%r)", _stub_scenario)
     elif os.environ.get("GOOGLE_API_KEY"):
-        from src.agent.vision import GeminiVisionClient
         from src.agent.planner import ActionPlanner
+        from src.agent.vision import GeminiVisionClient
         from src.agent.webpilot_handler import WebPilotHandler
         _wp_vision = GeminiVisionClient()
         _wp_planner = ActionPlanner(vision_client=_wp_vision)
@@ -173,9 +171,12 @@ async def lifespan(app: FastAPI):
     desktop_cleanup_task = None
     if os.environ.get("DESKTOP_MODE_ENABLED", "").lower() in ("1", "true", "yes"):
         try:
-            from src.executor.desktop import DesktopExecutor
             from src.agent.desktop_system_prompt import DESKTOP_SYSTEM_PROMPT
-            from src.api.desktop_routes import init_desktop_handler, cleanup_desktop_sessions
+            from src.api.desktop_routes import (
+                cleanup_desktop_sessions,
+                init_desktop_handler,
+            )
+            from src.executor.desktop import DesktopExecutor
 
             _desktop_executor = DesktopExecutor()
             await _desktop_executor.start()
@@ -183,8 +184,8 @@ async def lifespan(app: FastAPI):
             # Construct a second WebPilotHandler configured with the desktop prompt.
             # Reuses the same GeminiVisionClient and ActionPlanner instances.
             if os.environ.get("GOOGLE_API_KEY"):
-                from src.agent.vision import GeminiVisionClient as _DVision
                 from src.agent.planner import ActionPlanner as _DPlanner
+                from src.agent.vision import GeminiVisionClient as _DVision
                 from src.agent.webpilot_handler import WebPilotHandler as _DHandler
                 _d_vision = _DVision()
                 _d_planner = _DPlanner(vision_client=_d_vision)
@@ -781,8 +782,8 @@ async def analyze_screenshot(
 
         img = Image.open(io.BytesIO(raw)).convert("RGB")
 
-        from src.agent.vision import GeminiVisionClient
         from src.agent.planner import ActionPlanner
+        from src.agent.vision import GeminiVisionClient
 
         vision = GeminiVisionClient(api_key=api_key)
         planner = ActionPlanner(vision_client=vision)
@@ -837,7 +838,8 @@ async def root() -> dict:
 
 
 # Mount static files last so API routes take priority.
-import pathlib as _pathlib
+import pathlib as _pathlib  # noqa: E402
+
 _static_dir = _pathlib.Path(__file__).parent / "static"
 if _static_dir.is_dir():
     app.mount("/ui", StaticFiles(directory=str(_static_dir), html=True), name="ui")

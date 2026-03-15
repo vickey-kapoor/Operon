@@ -17,7 +17,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path

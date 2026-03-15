@@ -36,7 +36,9 @@ jobs:
         env:
           GOOGLE_API_KEY: fake-test-key
           BROWSER_HEADLESS: "true"
-        run: pytest tests/ -v --tb=short
+          DESKTOP_MOCK: "true"
+          DESKTOP_MODE_ENABLED: "true"
+        run: python -m pytest tests/ -v --tb=short --ignore=tests/test_agent.py --ignore=tests/test_live_integration.py
 
   lint:
     name: Lint

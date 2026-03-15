@@ -1,19 +1,17 @@
 """Tests for WebPilot API endpoints."""
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
 
+import src.api.webpilot_routes as routes_module
 from src.api.server import app
 from src.api.webpilot_models import WebPilotAction
-import src.api.webpilot_routes as routes_module
 
 
 def make_dummy_screenshot():
@@ -98,7 +96,7 @@ def test_create_and_delete_session():
 def test_session_not_found_ws(mock_handler):
     client = TestClient(app)
     try:
-        with client.websocket_connect("/webpilot/ws/nonexistent-id") as ws:
+        with client.websocket_connect("/webpilot/ws/nonexistent-id") as _ws:
             pass  # Should close immediately with 4404
         # If we get here, the connection was accepted and closed cleanly
     except Exception:

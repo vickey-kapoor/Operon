@@ -5,7 +5,6 @@ Run:
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import os
 
@@ -14,9 +13,8 @@ import pytest
 # Ensure mock mode is set before import
 os.environ["DESKTOP_MOCK"] = "true"
 
-from src.executor.desktop import DesktopExecutor  # noqa: E402
 from src.api.desktop_models import DesktopAction  # noqa: E402
-from src.executor.actions import ActionResult  # noqa: E402
+from src.executor.desktop import DesktopExecutor  # noqa: E402
 
 
 @pytest.fixture
@@ -233,7 +231,7 @@ def test_key_alias_mapping():
     }
     # Import the actual executor and check that its _key_sync method
     # would use these aliases by checking the method source logic
-    ex = DesktopExecutor()
+    _ex = DesktopExecutor()  # noqa: F841
     # The aliases are defined inside _key_sync — verify expected mapping
     for alias, expected in aliases.items():
         # Normalize: the method does key_combo.strip().lower()

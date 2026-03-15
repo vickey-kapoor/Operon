@@ -14,7 +14,10 @@ import concurrent.futures
 import io
 import logging
 import os
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
+
+if TYPE_CHECKING:
+    from src.executor.actions import ActionResult
 
 from PIL import Image
 
@@ -228,8 +231,9 @@ class DesktopExecutor:
         pyautogui.moveTo(sx, sy, duration=0.1)
 
     def _type_sync(self, text: str) -> None:
-        import pyautogui
         import subprocess
+
+        import pyautogui
         # Clipboard paste is more reliable than typewrite() for Windows
         # Search, UWP apps, and non-ASCII text.
         if os.name == "nt":

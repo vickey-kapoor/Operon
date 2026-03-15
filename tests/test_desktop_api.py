@@ -8,7 +8,6 @@ Run:
 from __future__ import annotations
 
 import base64
-import json
 import os
 import struct
 import zlib
@@ -21,10 +20,9 @@ from fastapi.testclient import TestClient
 os.environ["DESKTOP_MOCK"] = "true"
 os.environ["DESKTOP_MODE_ENABLED"] = "true"
 
-from src.api.server import app  # noqa: E402
-from src.api.desktop_models import DesktopAction  # noqa: E402
 import src.api.desktop_routes as desktop_routes  # noqa: E402
-
+from src.api.desktop_models import DesktopAction  # noqa: E402
+from src.api.server import app  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -165,7 +163,7 @@ def test_get_session_404(mock_handler):
 def test_ws_invalid_session_closes_4404(mock_handler):
     client = TestClient(app)
     try:
-        with client.websocket_connect("/desktop/ws/nonexistent-id") as ws:
+        with client.websocket_connect("/desktop/ws/nonexistent-id") as _ws:
             pass
     except Exception:
         pass  # Expected: starlette raises on non-1000 close code
@@ -423,7 +421,7 @@ def test_ws_handler_not_initialized_closes_4503():
         r = client.post("/desktop/sessions")
         sid = r.json()["session_id"]
         try:
-            with client.websocket_connect(f"/desktop/ws/{sid}") as ws:
+            with client.websocket_connect(f"/desktop/ws/{sid}") as _ws:
                 pass
         except Exception:
             pass  # Expected: close with 4503

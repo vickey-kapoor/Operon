@@ -1,19 +1,17 @@
 """Tests for UI Navigator agent components."""
 
-import asyncio
 import base64
 import json
 import os
 from io import BytesIO
 from typing import List
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 # Set BROWSER_HEADLESS=false to watch tests run in a visible browser window.
 _HEADLESS = os.environ.get("BROWSER_HEADLESS", "true").lower() != "false"
 
-import pytest
-import pytest_asyncio
-from PIL import Image
+import pytest  # noqa: E402
+from PIL import Image  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers

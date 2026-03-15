@@ -185,6 +185,8 @@ function TestList({ report, selectedTest, onSelect, polling }) {
         {tests.map(t => {
           const dot = t.status === 'passed' ? 'bg-green-500' : t.status === 'failed' ? 'bg-red-500' : 'bg-orange-500';
           const isSelected = selectedTest === t.name;
+          const wsLog = report?.ws_message_log || [];
+          const hasWs = wsLog.some(e => e.test === t.name);
           return (
             <button
               key={t.name}
@@ -196,6 +198,7 @@ function TestList({ report, selectedTest, onSelect, polling }) {
             >
               <span className={cx('w-2.5 h-2.5 rounded-full flex-shrink-0', dot)} />
               <span className="text-sm font-medium flex-1 truncate">{t.name}</span>
+              {!hasWs && <span className="text-[10px] text-slate-500 flex-shrink-0">unit</span>}
             </button>
           );
         })}
@@ -216,15 +219,24 @@ function Timeline({ report, selectedTest }) {
     );
   }
 
-  const entry = report?.ws_message_log?.find(e => e.test === selectedTest);
+  const wsLog = report?.ws_message_log || [];
+  const entry = wsLog.find(e => e.test === selectedTest);
+  const isNonWsTest = !entry;
   const msgs = entry?.messages || [];
 
   return (
     <div>
       <h3 className="text-sm font-semibold text-slate-300 mb-4 truncate">{selectedTest}</h3>
-      {msgs.length === 0
-        ? <p className="text-xs text-slate-500">No messages recorded for this test.</p>
-        : msgs.map((m, i) => <MsgChip key={i} msg={m} />)
+      {isNonWsTest
+        ? (
+          <div className="flex items-center gap-2 px-3 py-2 rounded bg-slate-800 border border-slate-700">
+            <span className="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded-full font-medium">Unit Test</span>
+            <span className="text-xs text-slate-500">This test does not use WebSocket — no message timeline.</span>
+          </div>
+        )
+        : msgs.length === 0
+          ? <p className="text-xs text-slate-500">No messages recorded for this test.</p>
+          : msgs.map((m, i) => <MsgChip key={i} msg={m} />)
       }
     </div>
   );
@@ -428,8 +440,21 @@ function App() {
 
   useEffect(() => {
     fetchAll();
-    const id = setInterval(fetchAll, 3000);
-    return () => clearInterval(id);
+    let id = setInterval(fetchAll, 3000);
+    const onVisibility = () => {
+      if (document.hidden) {
+        clearInterval(id);
+        id = null;
+      } else {
+        fetchAll();
+        id = setInterval(fetchAll, 3000);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [fetchAll]);
 
   const handleRun = async () => {

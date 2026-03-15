@@ -55,11 +55,22 @@ _RUNNER_TIMEOUT = 180  # seconds before watchdog kills a stuck runner
 _runner_proc: subprocess.Popen | None = None
 _judge_proc: subprocess.Popen | None = None
 _fix_loop_proc: subprocess.Popen | None = None
+_runner_log_fh = None  # file handle for runner log
+_fix_loop_log_fh = None  # file handle for fix-loop log
 _last_run: str | None = None  # ISO timestamp of last /run call
 
 
 def _is_running(proc: subprocess.Popen | None) -> bool:
     return proc is not None and proc.poll() is None
+
+
+def _close_fh(fh) -> None:  # noqa: ANN001
+    """Close a file handle if it's open, ignoring errors."""
+    if fh is not None:
+        try:
+            fh.close()
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -137,14 +148,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json(500, {"error": str(exc)})
 
     def _run_tests(self) -> None:
-        global _runner_proc, _last_run
+        global _runner_proc, _runner_log_fh, _last_run
         if _is_running(_runner_proc):
             self._json(200, {"status": "already_running"})
             return
-        log_fh = open(_RUNNER_LOG, "w")
+        _close_fh(_runner_log_fh)
+        _runner_log_fh = open(_RUNNER_LOG, "w")
         _runner_proc = subprocess.Popen(
             [sys.executable, "tests/agent_runner.py", "--scenario", "all"],
-            stdout=log_fh,
+            stdout=_runner_log_fh,
             stderr=subprocess.STDOUT,
             cwd=str(_REPO_ROOT),
         )
@@ -153,6 +165,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _run_judge(self) -> None:
         global _judge_proc
+        if _is_running(_runner_proc):
+            self._json(409, {"status": "runner_in_progress",
+                             "error": "Wait for the test run to finish before judging"})
+            return
         if not _REPORT_PATH.exists():
             self._json(200, {"status": "no_report_to_judge"})
             return
@@ -170,7 +186,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _run_fix_loop(self) -> None:
         """Run agent_runner then judge_runner as a chained subprocess."""
-        global _fix_loop_proc
+        global _fix_loop_proc, _fix_loop_log_fh, _last_run
         if _is_running(_fix_loop_proc):
             self._json(200, {"status": "already_running"})
             return
@@ -181,21 +197,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
         else:
             cmd = f'{sys.executable} tests/agent_runner.py --scenario all && {sys.executable} tests/judge_runner.py'
             shell = True
-        log_fh = open(_RUNNER_LOG, "w")
+        _close_fh(_fix_loop_log_fh)
+        _fix_loop_log_fh = open(_RUNNER_LOG, "w")
         _fix_loop_proc = subprocess.Popen(
             cmd,
-            stdout=log_fh,
+            stdout=_fix_loop_log_fh,
             stderr=subprocess.STDOUT,
             cwd=str(_REPO_ROOT),
             shell=shell,
         )
+        _last_run = datetime.now(timezone.utc).isoformat()
         self._json(200, {"status": "started"})
 
     def _get_status(self) -> None:
+        global _runner_log_fh, _fix_loop_log_fh
+
+        def _exit_code(proc: subprocess.Popen | None) -> int | None:
+            if proc is None:
+                return None  # never started
+            rc = proc.poll()
+            return rc  # None while running, int when finished
+
+        # Close log file handles once the owning process has finished
+        if not _is_running(_runner_proc) and _runner_log_fh is not None:
+            _close_fh(_runner_log_fh)
+            _runner_log_fh = None
+        if not _is_running(_fix_loop_proc) and _fix_loop_log_fh is not None:
+            _close_fh(_fix_loop_log_fh)
+            _fix_loop_log_fh = None
+
         self._json(200, {
             "runner_running": _is_running(_runner_proc),
+            "runner_exit_code": _exit_code(_runner_proc),
             "judge_running": _is_running(_judge_proc),
+            "judge_exit_code": _exit_code(_judge_proc),
             "fix_loop_running": _is_running(_fix_loop_proc),
+            "fix_loop_exit_code": _exit_code(_fix_loop_proc),
             "last_run": _last_run,
         })
 
@@ -214,6 +251,8 @@ def _shutdown(signum, frame) -> None:  # noqa: ANN001
     for proc in (_runner_proc, _judge_proc, _fix_loop_proc):
         if _is_running(proc):
             proc.terminate()
+    _close_fh(_runner_log_fh)
+    _close_fh(_fix_loop_log_fh)
     sys.exit(0)
 
 
@@ -226,8 +265,9 @@ def main() -> None:
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, _shutdown)
-    # SIGTERM for clean container/process-manager shutdown
-    signal.signal(signal.SIGTERM, _shutdown)
+    # SIGTERM for clean container/process-manager shutdown (not available on Windows)
+    if hasattr(signal, 'SIGTERM') and sys.platform != 'win32':
+        signal.signal(signal.SIGTERM, _shutdown)
 
     server = HTTPServer(("0.0.0.0", args.port), DashboardHandler)
     print(f"Dashboard running at http://localhost:{args.port}")

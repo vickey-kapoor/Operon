@@ -68,6 +68,10 @@ def _parse_pytest_output(stdout: str, stderr: str) -> list[dict]:
     results = []
     for line in stdout.splitlines():
         line = line.strip()
+        # Only match actual test result lines (contain "::" path separator),
+        # skip summary lines like "= 5 passed, 2 failed =" or "FAILED tests/..."
+        if "::" not in line:
+            continue
         for status_token, status_value in [("PASSED", "passed"), ("FAILED", "failed"), ("ERROR", "error")]:
             if status_token in line:
                 # Extract test name from line like "tests/test_webpilot_e2e.py::test_foo PASSED"
@@ -75,16 +79,19 @@ def _parse_pytest_output(stdout: str, stderr: str) -> list[dict]:
                 test_name = parts[-1].split()[0] if len(parts) >= 2 else line
                 message = ""
                 if status_value in ("failed", "error"):
-                    # Include context lines from stderr for error messages
-                    message = _extract_failure_message(stderr, test_name)
+                    # pytest writes tracebacks to stdout (with capture_output=True),
+                    # so search both stdout and stderr for failure details.
+                    message = _extract_failure_message(stdout, test_name)
+                    if not message:
+                        message = _extract_failure_message(stderr, test_name)
                 results.append({"name": test_name, "status": status_value, "message": message})
                 break
     return results
 
 
-def _extract_failure_message(stderr: str, test_name: str) -> str:
-    """Extract the failure message from pytest stderr for a given test."""
-    lines = stderr.splitlines()
+def _extract_failure_message(output: str, test_name: str) -> str:
+    """Extract the failure message for a given test from pytest output."""
+    lines = output.splitlines()
     capture = False
     captured: list[str] = []
     for line in lines:
@@ -143,18 +150,47 @@ def run_scenario(scenario: str) -> dict:
         "-k", k_filter,
     ]
 
-    result = subprocess.run(
+    proc = subprocess.Popen(
         cmd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         cwd=str(repo_root),
         env=env,
-        timeout=120,
     )
+    try:
+        stdout_data, stderr_data = proc.communicate(timeout=120)
+    except subprocess.TimeoutExpired:
+        # Kill the process tree — proc.kill() only kills the root on Windows
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                proc.kill()
+        except Exception:
+            pass
+        stdout_data, stderr_data = proc.communicate()
+        ws_log = _read_ws_message_log()
+        tests = _parse_pytest_output(stdout_data, stderr_data)
+        tests.append({
+            "name": scenario,
+            "status": "error",
+            "message": "pytest timed out after 120s",
+        })
+        return {
+            "scenario": scenario,
+            "passed": False,
+            "tests": tests,
+            "ws_message_log": ws_log,
+            "suggestions": [],
+        }
 
-    tests = _parse_pytest_output(result.stdout, result.stderr)
+    tests = _parse_pytest_output(stdout_data, stderr_data)
     ws_log = _read_ws_message_log()
-    passed = result.returncode == 0
+    passed = proc.returncode == 0
 
     return {
         "scenario": scenario,

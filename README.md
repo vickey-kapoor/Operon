@@ -1,66 +1,53 @@
 # UI Navigator
 
-An AI agent that controls web browsers by analysing screenshots with **Gemini 2.0 Flash** and executing actions through **Playwright**.  Exposed as a **FastAPI** REST + WebSocket service and deployable to **Google Cloud Run**.
+AI agent that controls browsers and desktops by analysing screenshots with **Gemini 2.5 Flash** and executing actions through **Playwright** (browser), **pyautogui** (desktop), or a **Chrome Extension** (real tabs). Exposed as a **FastAPI** REST + WebSocket service, deployable to **Google Cloud Run**.
+
+**Version:** 1.4.0
+
+---
+
+## Three Execution Modes
+
+| Mode | How it works | Endpoint |
+|---|---|---|
+| **Browser Mode** | Headless Chromium via Playwright | `POST /navigate`, `WS /ws/{task_id}` |
+| **WebPilot Extension** | Chrome sidebar controls real browser tabs | `WS /webpilot/ws/{session_id}` |
+| **Desktop Mode** | Full-screen control via mss + pyautogui | `WS /desktop/ws/{session_id}`, `POST /desktop/start` |
+
+All three share the same core loop: **screenshot → Gemini 2.5 Flash → action plan → execute → repeat**
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        Client / User                         │
-│  POST /navigate   GET /tasks/{id}   WS /ws/{id}             │
-└──────────────┬───────────────────────────────────────────────┘
-               │ HTTP / WebSocket
-┌──────────────▼───────────────────────────────────────────────┐
-│              FastAPI Server  (src/api/server.py)             │
-│  • Task queue (in-memory dict)                               │
-│  • Background asyncio tasks                                  │
-│  • WebSocket broadcast for real-time events                  │
-└──────────────┬───────────────────────────────────────────────┘
-               │ async
-┌──────────────▼───────────────────────────────────────────────┐
-│         UINavigatorAgent  (src/agent/core.py)                │
-│                                                              │
-│  ┌──────────────────┐      ┌─────────────────────────────┐  │
-│  │  Screenshot loop │      │  Conversation history       │  │
-│  │  (max_steps)     │      │  (last 10 turns)            │  │
-│  └────────┬─────────┘      └─────────────────────────────┘  │
-│           │                                                  │
-│  ┌────────▼─────────┐      ┌─────────────────────────────┐  │
-│  │  ActionPlanner   │─────▶│  GeminiVisionClient         │  │
-│  │  (planner.py)    │      │  (vision.py)                │  │
-│  │  • JSON parsing  │      │  • gemini-2.0-flash         │  │
-│  │  • retry logic   │      │  • multimodal (image+text)  │  │
-│  └────────┬─────────┘      │  • JSON response mode       │  │
-│           │                └─────────────────────────────┘  │
-│  ┌────────▼──────────────────────────────────────────────┐  │
-│  │  PlaywrightBrowserExecutor  (executor/browser.py)     │  │
-│  │  • click / type / key / scroll / navigate / wait      │  │
-│  │  • headless Chromium  1280×800                        │  │
-│  └───────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     Clients                                      │
+│  REST API   │  WebSocket   │  Chrome Extension  │  Desktop UI    │
+└──────┬──────┴──────┬───────┴────────┬───────────┴───────┬───────┘
+       │             │                │                   │
+┌──────▼─────────────▼────────────────▼───────────────────▼───────┐
+│              FastAPI Server  (src/api/server.py)                  │
+│  ├── REST endpoints (navigate, tasks, sessions, health)          │
+│  ├── WebSocket endpoints (browser, webpilot, desktop)            │
+│  └── Static dashboards (/ui/*)                                   │
+└──────┬──────────────┬───────────────┬───────────────────────────┘
+       │              │               │
+┌──────▼──────┐ ┌─────▼──────┐ ┌─────▼──────────┐
+│ Browser     │ │ WebPilot   │ │ Desktop        │
+│ Executor    │ │ Handler    │ │ Executor       │
+│ (Playwright)│ │ (Gemini)   │ │ (mss+pyautogui)│
+└─────────────┘ └────────────┘ └────────────────┘
 ```
 
 ---
 
-## Prerequisites
+## Quick Start
 
-| Requirement | Version |
-|---|---|
-| Python | 3.12+ |
-| Playwright / Chromium | installed via `playwright install chromium` |
-| GCP account | for Cloud Run deployment |
-| Gemini API key | [Google AI Studio](https://aistudio.google.com/) |
-
----
-
-## Local Development Setup
-
-### 1. Clone and install dependencies
+### 1. Install
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/<redacted>y-kapoor/UI_Navigator.git
 cd UI_Navigator
 
 python -m venv .venv
@@ -70,265 +57,171 @@ pip install -r requirements.txt
 playwright install chromium --with-deps
 ```
 
-### 2. Configure environment
+### 2. Configure
 
 ```bash
 cp .env.example .env
-# Edit .env and set GOOGLE_API_KEY=<your key>
+# Edit .env — set GOOGLE_API_KEY to your Gemini key
 ```
 
-### 3. Run the server
+### 3. Run
 
 ```bash
-uvicorn src.api.server:app --reload --host 0.0.0.0 --port 8080
+# Load env and start server
+export $(grep -v '^#' .env | xargs) && python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8080
 ```
 
-The API is now available at `http://localhost:8080`.
-Interactive docs: `http://localhost:8080/docs`.
+API docs: `http://localhost:8080/docs`
 
 ---
 
-## Docker Usage
+## API Endpoints
 
-### Build and run
+### Browser Mode
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/navigate` | Start a browser task, returns `task_id` |
+| `GET` | `/tasks` | List all tasks |
+| `GET` | `/tasks/{task_id}` | Poll task status/result |
+| `DELETE` | `/tasks/{task_id}` | Cancel a running task |
+| `WS` | `/ws/{task_id}` | Stream step events in real time |
+| `POST` | `/screenshot` | One-shot screenshot + Gemini analysis |
+| `POST` | `/clarify` | Get clarifying questions for ambiguous tasks |
+
+### WebPilot Extension
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/webpilot/sessions` | Create WebPilot session |
+| `DELETE` | `/webpilot/sessions/{id}` | End WebPilot session |
+| `WS` | `/webpilot/ws/{session_id}` | Real-time action loop |
+| `POST` | `/webpilot/tts` | Gemini TTS narration (base64 WAV) |
+
+### Desktop Mode
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/desktop/sessions` | Create Desktop session |
+| `DELETE` | `/desktop/sessions/{id}` | End Desktop session |
+| `GET` | `/desktop/sessions/{id}` | Poll Desktop session status |
+| `POST` | `/desktop/start` | Start autonomous desktop task |
+| `WS` | `/desktop/ws/{session_id}` | Interactive Desktop action loop |
+
+### Other
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `POST` | `/sessions` | Create ADK session |
+| `POST` | `/sessions/{id}/step` | Send screenshot, get ActionPlan |
+
+---
+
+## Web Dashboards
+
+| URL | Purpose |
+|---|---|
+| `/ui/desktop.html` | DesktopPilot — start autonomous desktop tasks, live polling |
+| `/ui/visual-tests.html` | 10 WS scenarios with live message log (stub mode) |
+| `/ui/e2e-tests.html` | 13 E2E test scenarios with live screenshots |
+
+---
+
+## WebPilot Chrome Extension
+
+Controls real browser tabs via a sidebar UI.
 
 ```bash
-# Copy and fill in your API key
-cp .env.example .env
+# Build the sidebar
+cd webpilot-extension/sidebar && npm install && npm run build && cd ../..
 
+# Load in Chrome:
+# 1. chrome://extensions → Developer mode → Load unpacked
+# 2. Select the webpilot-extension/ folder
+# 3. Click the sidebar icon to open
+```
+
+---
+
+## Desktop Mode
+
+Full-screen OS control via mss (screenshots) + pyautogui (input). Requires `DESKTOP_MODE_ENABLED=true`.
+
+Two execution paths:
+- **Interactive** (WS): Client captures screenshots, sends to server for AI thinking, executes actions locally
+- **Autonomous** (`POST /desktop/start`): Server captures + thinks + executes everything
+
+```bash
+# Start with Desktop Mode enabled
+DESKTOP_MODE_ENABLED=true uvicorn src.api.server:app --host 0.0.0.0 --port 8080
+
+# Open the dashboard
+# http://localhost:8080/ui/desktop.html
+```
+
+---
+
+## Docker
+
+```bash
+cp .env.example .env
 docker compose up --build
 ```
 
-### Build manually
-
-```bash
-docker build -t ui-navigator .
-docker run -p 8080:8080 --env-file .env ui-navigator
-```
-
 ---
 
-## GCP Deployment
-
-### Prerequisites
-
-- `gcloud` CLI installed and authenticated
-- Project with billing enabled
-- Gemini API key stored in Secret Manager (the script creates it if missing)
-
-### One-command deploy
+## Cloud Run Deployment
 
 ```bash
 export GOOGLE_CLOUD_PROJECT=your-project-id
-export GOOGLE_CLOUD_REGION=us-central1   # optional, default
-
-chmod +x deploy.sh
-./deploy.sh
-```
-
-The script will:
-1. Enable required GCP APIs
-2. Create an Artifact Registry repository
-3. Build and push the Docker image
-4. Deploy to Cloud Run (2 GB RAM, 2 CPU, 0–5 instances)
-5. Print the live service URL
-
-### Automated CI/CD with Cloud Build
-
-```bash
-gcloud builds submit --config cloudbuild.yaml \
-  --substitutions _REGION=us-central1,_SERVICE_NAME=ui-navigator .
-```
-
-Or connect a GitHub trigger in the Cloud Build console to auto-deploy on push.
-
----
-
-## API Documentation
-
-### `POST /navigate`
-
-Start a navigation task.  Returns immediately with a `task_id`.
-
-```bash
-curl -X POST http://localhost:8080/navigate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": "Go to https://news.ycombinator.com and list the top 3 story titles",
-    "max_steps": 10
-  }'
-```
-
-**Response:**
-```json
-{"task_id": "c4f2a1b3-...", "status": "started"}
-```
-
-**Body parameters:**
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `task` | string | required | Natural language instruction |
-| `start_url` | string | null | Optional URL to open before starting |
-| `max_steps` | int | 20 | Max Gemini→action cycles (1–50) |
-
----
-
-### `GET /tasks/{task_id}`
-
-Poll the status and result of a task.
-
-```bash
-curl http://localhost:8080/tasks/c4f2a1b3-...
-```
-
-**Response:**
-```json
-{
-  "task_id": "c4f2a1b3-...",
-  "status": "done",
-  "task": "Go to HN and list top 3 stories",
-  "start_url": null,
-  "max_steps": 10,
-  "result": {
-    "success": true,
-    "result": "Top 3 stories: 1. ...",
-    "steps_taken": 4,
-    "screenshots": ["<base64>", "..."],
-    "error": null
-  }
-}
-```
-
-`status` values: `pending` | `running` | `done` | `error`
-
----
-
-### `WebSocket /ws/{task_id}`
-
-Stream real-time progress events for a running task.
-
-```javascript
-const ws = new WebSocket("ws://localhost:8080/ws/c4f2a1b3-...");
-ws.onmessage = (e) => console.log(JSON.parse(e.data));
-```
-
-**Event types:**
-
-```jsonc
-// Step progress
-{"type": "step", "step": 1, "observation": "...", "action": "navigate: Open example.com", "screenshot": "<base64>"}
-
-// Task complete
-{"type": "done", "success": true, "result": "Task completed successfully.", "steps_taken": 3, "error": null}
-
-// Error
-{"type": "error", "message": "Browser crashed: ..."}
-
-// Keep-alive
-{"type": "ping"}
+export GOOGLE_API_KEY=your-key
+chmod +x deploy.sh && ./deploy.sh
 ```
 
 ---
 
-### `POST /screenshot`
-
-Analyse a URL or uploaded screenshot with Gemini.
-
-**Option A — Upload an image:**
-```bash
-curl -X POST http://localhost:8080/screenshot \
-  -F "file=@screen.png" \
-  -F "task=List all clickable buttons"
-```
-
-**Option B — Capture from URL:**
-```bash
-curl -X POST http://localhost:8080/screenshot \
-  -F "url=https://example.com" \
-  -F "task=Describe the page layout"
-```
-
-**Response:**
-```json
-{
-  "screenshot": "<base64 PNG>",
-  "analysis": {
-    "observation": "...",
-    "reasoning": "...",
-    "actions": [...],
-    "done": false,
-    "result": null
-  }
-}
-```
-
----
-
-### `GET /health`
+## Testing
 
 ```bash
-curl http://localhost:8080/health
-# {"status": "ok", "active_tasks": 0, "total_tasks": 5}
+# All non-browser tests (155 tests, no Chromium needed)
+DESKTOP_MOCK=true DESKTOP_MODE_ENABLED=true python -m pytest tests/ -v \
+  --ignore=tests/test_agent.py --ignore=tests/test_live_integration.py
+
+# Browser tests (requires Chromium)
+python -m pytest tests/test_agent.py -v
+
+# Single file
+python -m pytest tests/test_webpilot_e2e.py -v
 ```
 
----
+### Test Files
 
-## Configuration Reference
-
-| Variable | Default | Description |
+| File | Tests | What |
 |---|---|---|
-| `GOOGLE_API_KEY` | — | **Required.** Gemini API key |
-| `GOOGLE_CLOUD_PROJECT` | — | GCP project ID (for deployment) |
-| `GOOGLE_CLOUD_REGION` | `us-central1` | GCP region |
-| `PORT` | `8080` | Server port |
-| `LOG_LEVEL` | `INFO` | Python log level |
-| `MAX_CONCURRENT_TASKS` | `5` | Max simultaneous browser sessions |
-| `BROWSER_HEADLESS` | `true` | Run Chromium headlessly |
-| `BROWSER_WIDTH` | `1280` | Viewport width in pixels |
-| `BROWSER_HEIGHT` | `800` | Viewport height in pixels |
+| `test_api.py` | 18 | REST API endpoints |
+| `test_webpilot_api.py` | 22 | WebPilot unit tests |
+| `test_webpilot_e2e.py` | 24 | WebPilot e2e (real server + WS) |
+| `test_sessions.py` | 13 | ADK sessions |
+| `test_clarifier.py` | 7 | Clarify endpoint |
+| `test_gap_coverage.py` | 17 | Architecture review gaps |
+| `test_user_failures.py` | 8 | User-testing regressions |
+| `test_desktop_executor.py` | 25 | DesktopExecutor unit tests |
+| `test_desktop_api.py` | 21 | Desktop Mode API integration |
+| `test_dashboard.py` | 83 | Dashboard system tests |
 
 ---
 
-## Running Tests
+## Environment Variables
 
-```bash
-pip install pytest pytest-asyncio
-pytest tests/ -v
-```
-
-Tests include:
-- **Unit tests** — ActionPlanner JSON parsing (valid, malformed, markdown-wrapped)
-- **Integration tests** — real headless Chromium (navigate, scroll, screenshot)
-- **Full agent loop** — mocked Gemini API, complete navigate-and-report cycle
-
----
-
-## How It Works
-
-1. **User submits a task** via `POST /navigate`.
-2. **Agent opens a browser** (headless Chromium, 1280×800).
-3. **Loop begins** (up to `max_steps` iterations):
-   a. **Screenshot** — capture the current viewport as a PNG.
-   b. **Gemini analysis** — send the screenshot + task to `gemini-2.0-flash` with a carefully crafted system prompt.  The model returns a structured JSON `ActionPlan` describing what it sees, why it is taking certain actions, and the list of actions to execute.
-   c. **Action execution** — Playwright executes each action (click, type, navigate, scroll, etc.).
-   d. **History update** — the plan is appended to conversation history so the next call has context.
-   e. If `done: true` is returned, the loop exits and the result is returned.
-4. **Progress events** are broadcast via WebSocket in real time.
-5. **Result** is stored and accessible via `GET /tasks/{task_id}`.
-
-### Supported actions
-
-| Action | Description |
-|---|---|
-| `navigate` | Open a URL |
-| `click` | Click at pixel coordinates |
-| `type` | Type text into the focused element |
-| `key` | Press a named key (Enter, Tab, Escape, …) |
-| `scroll` | Scroll in a direction by N units |
-| `wait` | Pause for N milliseconds |
-| `screenshot` | Re-capture the viewport (observe-only) |
-| `done` | Signal task completion |
+| Variable | Required | Description |
+|---|---|---|
+| `GOOGLE_API_KEY` | Yes | Gemini API key |
+| `DESKTOP_MODE_ENABLED` | No | Set `true` to enable Desktop Mode |
+| `DESKTOP_MOCK` | No | Set `true` for CI (stubs all desktop actions) |
+| `BROWSER_HEADLESS` | No | Headless Chromium (default: `true`) |
+| `MAX_CONCURRENT_TASKS` | No | Concurrent task limit (default: `5`) |
+| `BROWSER_WIDTH` / `HEIGHT` | No | Viewport size (default: `1280x800`) |
+| `GEMINI_MODEL` | No | Gemini model (default: `gemini-2.5-flash`) |
+| `ACTION_LOOP_TIMEOUT` | No | Hard timeout per action loop (default: `120s`) |
+| `MAX_LOOP_STEPS` | No | Max steps per loop (default: `30`) |
+| `TASK_STORE` | No | `memory` (default) or `firestore` |
 
 ---
 
@@ -338,20 +231,30 @@ Tests include:
 UI_Navigator/
 ├── src/
 │   ├── agent/
-│   │   ├── core.py       # UINavigatorAgent — main loop
-│   │   ├── vision.py     # GeminiVisionClient — multimodal API calls
-│   │   └── planner.py    # ActionPlanner — JSON parsing & validation
+│   │   ├── core.py                  # UINavigatorAgent — main browser loop
+│   │   ├── vision.py                # GeminiVisionClient — Gemini API
+│   │   ├── planner.py               # ActionPlanner — JSON parsing
+│   │   ├── webpilot_handler.py      # WebPilot/Desktop Gemini handler
+│   │   └── desktop_system_prompt.py # Desktop Mode system prompt
 │   ├── executor/
-│   │   ├── browser.py    # PlaywrightBrowserExecutor
-│   │   └── actions.py    # Action / ActionResult Pydantic models
+│   │   ├── base.py                  # AbstractExecutor interface
+│   │   ├── browser.py               # PlaywrightBrowserExecutor
+│   │   ├── desktop.py               # DesktopExecutor (mss + pyautogui)
+│   │   └── actions.py               # Action/ActionResult models
 │   └── api/
-│       └── server.py     # FastAPI app — REST + WebSocket
-├── tests/
-│   └── test_agent.py
+│       ├── server.py                # FastAPI app + lifespan
+│       ├── webpilot_routes.py       # WebPilot WS + REST
+│       ├── desktop_routes.py        # Desktop Mode WS + REST
+│       ├── models.py                # Shared Pydantic models
+│       ├── webpilot_models.py       # WebPilot models
+│       ├── desktop_models.py        # Desktop models
+│       ├── store.py                 # TaskStore abstraction
+│       └── static/                  # Web dashboards
+├── webpilot-extension/              # Chrome Extension
+├── tests/                           # 238 tests
+├── docs/                            # PRDs
 ├── Dockerfile
 ├── docker-compose.yml
-├── cloudbuild.yaml
 ├── deploy.sh
-├── requirements.txt
-└── .env.example
+└── requirements.txt
 ```

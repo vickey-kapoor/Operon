@@ -15,6 +15,13 @@ from src.api.webpilot_models import InterruptionType, WebPilotAction
 
 logger = logging.getLogger(__name__)
 
+
+def _image_mime_type(img_bytes: bytes) -> str:
+    """Detect image MIME type from magic bytes. Defaults to image/png."""
+    if img_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    return "image/png"
+
 # FIX 3: Removed hardcoded 1280x800 — dimensions are now injected per-call dynamically.
 WEBPILOT_SYSTEM_PROMPT = """\
 You are WebPilot, an AI agent that controls web browsers by analyzing screenshots.
@@ -118,9 +125,10 @@ class WebPilotHandler:
 
     MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
-    def __init__(self, vision_client: GeminiVisionClient, planner) -> None:
+    def __init__(self, vision_client: GeminiVisionClient, planner, system_prompt_override: Optional[str] = None) -> None:
         self._client = vision_client._client
         self._planner = planner
+        self._system_prompt = system_prompt_override or WEBPILOT_SYSTEM_PROMPT
 
     # ------------------------------------------------------------------
     # Public API
@@ -169,7 +177,7 @@ class WebPilotHandler:
         response = await self._client.aio.models.generate_content(
             model=self.MODEL_NAME,
             config=types.GenerateContentConfig(
-                system_instruction=WEBPILOT_SYSTEM_PROMPT,
+                system_instruction=self._system_prompt,
                 temperature=0.2,
                 top_p=0.95,
                 max_output_tokens=1024,
@@ -240,7 +248,7 @@ class WebPilotHandler:
             A validated single action based on the new instruction.
         """
         img_bytes = base64.b64decode(image_b64)
-        image_part = types.Part.from_bytes(data=img_bytes, mime_type="image/png")
+        image_part = types.Part.from_bytes(data=img_bytes, mime_type=_image_mime_type(img_bytes))
 
         if interrupt_type == InterruptionType.REDIRECT:
             instruction_text = (
@@ -273,7 +281,7 @@ class WebPilotHandler:
         response = await self._client.aio.models.generate_content(
             model=self.MODEL_NAME,
             config=types.GenerateContentConfig(
-                system_instruction=WEBPILOT_SYSTEM_PROMPT,
+                system_instruction=self._system_prompt,
                 temperature=0.2,
                 top_p=0.95,
                 max_output_tokens=1024,
@@ -319,7 +327,7 @@ class WebPilotHandler:
         returns True to avoid blocking on verification errors.
         """
         img_bytes = base64.b64decode(image_b64)
-        image_part = types.Part.from_bytes(data=img_bytes, mime_type="image/png")
+        image_part = types.Part.from_bytes(data=img_bytes, mime_type=_image_mime_type(img_bytes))
         text_part = types.Part.from_text(
             text=(
                 f"Viewport dimensions: {viewport_width}x{viewport_height}px\n"
@@ -399,6 +407,45 @@ class WebPilotHandler:
             return InterruptionType.REDIRECT
         return InterruptionType.REFINEMENT
 
+    async def get_next_action_desktop(
+        self,
+        image_b64: str,
+        intent: str,
+        history: list,
+        stuck: bool = False,
+        screen_width: int = 1920,
+        screen_height: int = 1080,
+    ) -> "DesktopAction":
+        """
+        Wrapper around get_next_action() for Desktop Mode.
+
+        Returns a DesktopAction (superset of WebPilotAction) parsed from
+        the Gemini response. Uses the desktop system prompt.
+        """
+        from src.api.desktop_models import DesktopAction
+        # get_next_action calls self._system_prompt which is already set to
+        # DESKTOP_SYSTEM_PROMPT when this handler was constructed for desktop.
+        wp_action = await self.get_next_action(
+            image_b64=image_b64,
+            intent=intent,
+            history=history,
+            stuck=stuck,
+            viewport_width=screen_width,
+            viewport_height=screen_height,
+            current_url="",
+        )
+        # Reparse raw action into DesktopAction (which has right_click, double_click, move)
+        data = wp_action.model_dump()
+        try:
+            return DesktopAction(**data)
+        except Exception:
+            # Fallback: if action type not in DesktopAction, treat as done
+            return DesktopAction(
+                action="done",
+                narration="Action type not supported on desktop",
+                action_label="Done",
+            )
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -416,7 +463,7 @@ class WebPilotHandler:
         """Construct a user Content turn with screenshot, intent, action history summary,
         and viewport dimensions."""
         img_bytes = base64.b64decode(image_b64)
-        image_part = types.Part.from_bytes(data=img_bytes, mime_type="image/png")
+        image_part = types.Part.from_bytes(data=img_bytes, mime_type=_image_mime_type(img_bytes))
 
         # FIX 2: Summarize prior actions from history so Gemini knows what it already
         # tried — previously this was just a useless step count number.

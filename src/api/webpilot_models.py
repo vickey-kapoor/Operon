@@ -21,7 +21,7 @@ class WebPilotAction(BaseModel):
     observation: Optional[str] = None
     plan: Optional[List[str]] = None
     steps_completed: Optional[int] = None
-    action: Literal["click", "type", "scroll", "wait", "navigate", "key", "done", "confirm_required", "captcha_detected", "login_required"]
+    action: Literal["click", "right_click", "double_click", "move", "type", "scroll", "wait", "navigate", "key", "done", "confirm_required", "captcha_detected", "login_required"]
     x: Optional[int] = None
     y: Optional[int] = None
     text: Optional[str] = None

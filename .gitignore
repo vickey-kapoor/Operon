@@ -62,6 +62,15 @@ extension/sidepanel/dist/
 # Cloud Run / GCP build artefacts
 .gcloudignore
 
+# Playwright MCP temp artifacts
+.playwright-mcp/
+
+# Demo screenshots
+demo-*.png
+
+# VSCode workspace files
+*.code-workspace
+
 # Misc
 *.tmp
 *.bak

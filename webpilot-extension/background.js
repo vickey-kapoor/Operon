@@ -6,17 +6,37 @@
  * script (via chrome.tabs.sendMessage).
  */
 
-const DEFAULT_BACKEND = "https://ui-navigator-749384771196.us-central1.run.app";
+const DEFAULT_BACKEND = "http://localhost:8080";
 let BACKEND_URL = DEFAULT_BACKEND;
 let WS_BASE_URL = DEFAULT_BACKEND.replace("http", "ws");
 
-// Load persisted backend URL from sync storage on startup.
-// Override via DevTools console: chrome.storage.sync.set({backendUrl: "http://your-host:8080"})
-chrome.storage.sync.get("backendUrl", (res) => {
-  if (res.backendUrl) {
-    BACKEND_URL = res.backendUrl;
-    WS_BASE_URL = res.backendUrl.replace(/^http/, "ws");
-    log("log", "Using custom backend URL:", BACKEND_URL);
+// Promise that resolves once the backend URL is loaded from storage.
+// All connection attempts wait on this before using BACKEND_URL / WS_BASE_URL.
+const _backendReady = new Promise((resolve) => {
+  chrome.storage.sync.get("backendUrl", (res) => {
+    if (res.backendUrl) {
+      BACKEND_URL = res.backendUrl;
+      WS_BASE_URL = res.backendUrl.replace(/^http/, "ws");
+      log("log", "Using custom backend URL:", BACKEND_URL);
+    }
+    resolve();
+  });
+});
+
+// Live-update backend URL when changed via DevTools or options page.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && changes.backendUrl) {
+    const newUrl = changes.backendUrl.newValue;
+    if (newUrl) {
+      BACKEND_URL = newUrl;
+      WS_BASE_URL = newUrl.replace(/^http/, "ws");
+      log("log", "Backend URL updated (live):", BACKEND_URL);
+      // Force reconnect to new backend.
+      if (_ws) { _ws.close(); _ws = null; }
+      _sessionId = null;
+      chrome.storage.session.remove("sessionId");
+      connectWebSocket();
+    }
   }
 });
 
@@ -63,6 +83,7 @@ function logStep(label, data = {}) {
 // ---------------------------------------------------------------------------
 
 async function getOrCreateSession() {
+  await _backendReady;
   const stored = await chrome.storage.session.get("sessionId");
   if (stored.sessionId) {
     _sessionId = stored.sessionId;
@@ -98,6 +119,7 @@ async function getOrCreateSession() {
 // ---------------------------------------------------------------------------
 
 async function connectWebSocket() {
+  await _backendReady;
   if (_ws && (_ws.readyState === WebSocket.OPEN || _ws.readyState === WebSocket.CONNECTING)) {
     return;
   }
@@ -357,7 +379,7 @@ async function captureScreenshot() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) { log("warn", "captureScreenshot: no active tab"); return null; }
     log("log", `Capturing tab ${tab.id} (${tab.url})`);
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 70 });
     const b64 = dataUrl.split(",")[1];
     log("log", `Screenshot captured — ${Math.round(b64.length / 1024)} KB`);
     return b64;

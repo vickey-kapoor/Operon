@@ -102,12 +102,20 @@ class NavigateRequest(BaseModel):
     task: str = Field(
         ...,
         description="High-level user intent",
+        min_length=1,
         max_length=_MAX_TASK_CHARS,
     )
     start_url: Optional[str] = Field(None, description="Optional URL to open first")
     max_steps: int = Field(20, ge=1, le=50, description="Max agent steps")
     model: Optional[str] = Field(None, description="Gemini model override")
     system_prompt: Optional[str] = Field(None, description="Custom system prompt override")
+
+    @field_validator("task")
+    @classmethod
+    def validate_task_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Task must not be empty")
+        return v
 
     @field_validator("start_url", mode="before")
     @classmethod

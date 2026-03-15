@@ -33,6 +33,7 @@ from src.agent.core import AgentResult, StepEvent, UINavigatorAgent
 from src.agent.clarifier import TaskClarifier
 from src.api import session_routes
 from src.api import webpilot_routes
+from src.api import desktop_routes
 from src.api.webpilot_routes import cleanup_sessions as _webpilot_cleanup_sessions, init_handler as _webpilot_init_handler
 from src.api.models import (
     NavigateRequest,
@@ -167,6 +168,38 @@ async def lifespan(app: FastAPI):
         _webpilot_init_handler(_wp_handler)
     webpilot_cleanup_task = asyncio.create_task(_webpilot_cleanup_sessions())
 
+    # Desktop Mode initialization (non-fatal if it fails)
+    _desktop_executor = None
+    desktop_cleanup_task = None
+    if os.environ.get("DESKTOP_MODE_ENABLED", "").lower() in ("1", "true", "yes"):
+        try:
+            from src.executor.desktop import DesktopExecutor
+            from src.agent.desktop_system_prompt import DESKTOP_SYSTEM_PROMPT
+            from src.api.desktop_routes import init_desktop_handler, cleanup_desktop_sessions
+
+            _desktop_executor = DesktopExecutor()
+            await _desktop_executor.start()
+
+            # Construct a second WebPilotHandler configured with the desktop prompt.
+            # Reuses the same GeminiVisionClient and ActionPlanner instances.
+            if os.environ.get("GOOGLE_API_KEY"):
+                from src.agent.vision import GeminiVisionClient as _DVision
+                from src.agent.planner import ActionPlanner as _DPlanner
+                from src.agent.webpilot_handler import WebPilotHandler as _DHandler
+                _d_vision = _DVision()
+                _d_planner = _DPlanner(vision_client=_d_vision)
+                _desktop_wp_handler = _DHandler(
+                    vision_client=_d_vision,
+                    planner=_d_planner,
+                    system_prompt_override=DESKTOP_SYSTEM_PROMPT,
+                )
+                init_desktop_handler(_desktop_wp_handler, _desktop_executor)
+            logger.info("Desktop Mode enabled — DesktopExecutor started")
+            desktop_cleanup_task = asyncio.create_task(cleanup_desktop_sessions())
+        except Exception as exc:
+            logger.error("Failed to initialize Desktop Mode: %s", exc)
+            # Non-fatal: server continues without desktop mode
+
     logger.info(
         "UI Navigator server starting up",
         extra={"version": _VERSION, "max_concurrent": _MAX_CONCURRENT},
@@ -196,6 +229,10 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(*tasks, return_exceptions=True)
     cleanup_task.cancel()
     webpilot_cleanup_task.cancel()
+    if desktop_cleanup_task is not None:
+        desktop_cleanup_task.cancel()
+    if _desktop_executor is not None:
+        await _desktop_executor.stop()
     logger.info("UI Navigator server shutting down")
 
 
@@ -216,6 +253,7 @@ app = FastAPI(
 # Include routers
 app.include_router(session_routes.router)
 app.include_router(webpilot_routes.router)
+app.include_router(desktop_routes.router)
 
 # ---------------------------------------------------------------------------
 # Middleware — order matters: last app.add_middleware() runs first on request
@@ -773,12 +811,16 @@ async def analyze_screenshot(
 async def health_check() -> dict:
     """Simple health check endpoint — no authentication required."""
     counts = await _store.count_by_status()
+    from src.api.desktop_routes import _sessions as _desktop_sessions
     return {
         "status": "ok",
         "version": _VERSION,
         "active_tasks": counts.get("running", 0),
         "total_tasks": sum(counts.values()),
         "task_counts": counts,
+        "desktop_sessions_active": sum(
+            1 for s in _desktop_sessions.values() if s.status == "running"
+        ),
     }
 
 

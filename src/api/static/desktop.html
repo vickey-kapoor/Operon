@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DesktopPilot</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=IBM+Plex+Mono:wght@300;400;500&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary: #0a0c10;
+      --bg-secondary: #11141b;
+      --bg-card: #171b25;
+      --bg-card-hover: #1c2130;
+      --bg-input: #0e1118;
+      --text-primary: #dde1ec;
+      --text-secondary: #868fa4;
+      --text-dim: #4f5870;
+      --accent-blue: #4a90ff;
+      --accent-blue-soft: rgba(74,144,255,0.09);
+      --accent-blue-glow: rgba(74,144,255,0.18);
+      --accent-green: #34d399;
+      --accent-green-soft: rgba(52,211,153,0.08);
+      --accent-amber: #fbbf24;
+      --accent-amber-soft: rgba(251,191,36,0.08);
+      --accent-red: #f87171;
+      --accent-red-soft: rgba(248,113,113,0.08);
+      --border: #1d2233;
+      --border-focus: rgba(74,144,255,0.4);
+      --radius: 10px;
+      --radius-sm: 6px;
+      --sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+      --mono: 'IBM Plex Mono', 'Fira Code', monospace;
+      --topbar-h: 54px;
+      --bottombar-h: 38px;
+    }
+
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: var(--sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* noise texture */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      opacity: 0.022;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 256px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ═══════════════════════════════════════
+       TOP BAR
+       ═══════════════════════════════════════ */
+    .topbar {
+      position: relative; z-index: 10;
+      height: var(--topbar-h);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-secondary);
+      flex-shrink: 0;
+    }
+
+    .topbar-brand {
+      display: flex; align-items: center; gap: 9px;
+      font-weight: 600; font-size: 14.5px; letter-spacing: -0.01em;
+    }
+    .topbar-brand .ico { font-size: 17px; }
+
+    /* Status badge */
+    .sbadge {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 4px 13px; border-radius: 100px;
+      font-size: 12px; font-weight: 500; letter-spacing: 0.01em;
+      border: 1px solid transparent;
+      transition: all 0.3s ease;
+    }
+    .sdot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+      transition: background 0.3s;
+    }
+
+    .sbadge[data-s="idle"]    { background: #22252f; color: var(--text-dim); }
+    .sbadge[data-s="idle"] .sdot { background: var(--text-dim); }
+
+    .sbadge[data-s="started"] { background: var(--accent-blue-soft); color: var(--accent-blue); border-color: rgba(74,144,255,0.14); }
+    .sbadge[data-s="started"] .sdot { background: var(--accent-blue); animation: dot-pulse 1.6s ease-in-out infinite; }
+
+    .sbadge[data-s="running"] { background: var(--accent-amber-soft); color: var(--accent-amber); border-color: rgba(251,191,36,0.12); }
+    .sbadge[data-s="running"] .sdot { background: var(--accent-amber); animation: dot-pulse 1.2s ease-in-out infinite; }
+
+    .sbadge[data-s="done"]    { background: var(--accent-green-soft); color: var(--accent-green); border-color: rgba(52,211,153,0.14); }
+    .sbadge[data-s="done"] .sdot { background: var(--accent-green); }
+
+    .sbadge[data-s="error"]   { background: var(--accent-red-soft); color: var(--accent-red); border-color: rgba(248,113,113,0.14); }
+    .sbadge[data-s="error"] .sdot { background: var(--accent-red); }
+
+    @keyframes dot-pulse {
+      0%,100% { transform: scale(1); opacity: 1; }
+      50%     { transform: scale(1.5); opacity: 0.4; }
+    }
+
+    .topbar-meta {
+      font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+      display: flex; align-items: center; gap: 14px;
+    }
+    .topbar-meta span { opacity: 0; transition: opacity 0.35s ease; }
+    .topbar-meta.on span { opacity: 1; }
+
+    /* ═══════════════════════════════════════
+       MAIN
+       ═══════════════════════════════════════ */
+    .main {
+      position: relative; z-index: 1;
+      flex: 1; overflow-y: auto;
+      padding: 26px 22px;
+    }
+    .main::-webkit-scrollbar { width: 5px; }
+    .main::-webkit-scrollbar-track { background: transparent; }
+    .main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+
+    .cols {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 22px;
+      max-width: 1080px;
+      margin: 0 auto;
+    }
+
+    /* LEFT */
+    .col-l { display: flex; flex-direction: column; gap: 18px; }
+
+    .flabel {
+      display: block; font-size: 11px; font-weight: 500;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 7px;
+    }
+
+    textarea.tinput {
+      width: 100%; min-height: 108px;
+      padding: 13px 15px;
+      background: var(--bg-input);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text-primary);
+      font-family: var(--sans); font-size: 13.5px; line-height: 1.55;
+      resize: vertical; outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    textarea.tinput::placeholder { color: var(--text-dim); }
+    textarea.tinput:focus { border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--accent-blue-soft); }
+
+    .ierror { font-size: 12px; color: var(--accent-red); margin-top: 4px; min-height: 16px; }
+
+    .ctrls { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; }
+
+    button { font-family: var(--sans); cursor: pointer; border: none; outline: none; transition: all 0.15s ease; }
+
+    .bp {
+      padding: 9px 20px; border-radius: var(--radius-sm);
+      background: var(--accent-blue); color: #fff;
+      font-size: 13px; font-weight: 600;
+    }
+    .bp:hover:not(:disabled) { background: #3c80e8; }
+    .bp:active:not(:disabled) { transform: scale(0.97); }
+    .bp:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .bd {
+      padding: 9px 20px; border-radius: var(--radius-sm);
+      background: var(--accent-red); color: #fff;
+      font-size: 13px; font-weight: 600;
+      display: none;
+    }
+    .bd:hover { background: #e05858; }
+    .bd:active { transform: scale(0.97); }
+    .bd.on { display: inline-flex; }
+
+    .mstep { display: flex; align-items: center; gap: 7px; }
+    .mstep label { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+
+    input.sinput {
+      width: 54px; padding: 7px 6px; text-align: center;
+      background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-primary); font-family: var(--mono); font-size: 13px; outline: none;
+    }
+    input.sinput:focus { border-color: var(--border-focus); box-shadow: 0 0 0 2px var(--accent-blue-soft); }
+
+    /* Presets */
+    .psec { margin-top: 2px; }
+    .pscroll {
+      display: flex; gap: 7px; overflow-x: auto; padding-bottom: 3px;
+      scrollbar-width: none;
+    }
+    .pscroll::-webkit-scrollbar { display: none; }
+
+    .ppill {
+      flex-shrink: 0; padding: 6px 13px;
+      border: 1px solid var(--border); border-radius: 100px;
+      background: transparent; color: var(--text-secondary);
+      font-size: 12px; font-weight: 500; white-space: nowrap;
+      transition: all 0.18s ease;
+    }
+    .ppill:hover:not(:disabled) { background: var(--bg-card-hover); border-color: var(--text-dim); color: var(--text-primary); transform: scale(1.03); }
+    .ppill:active:not(:disabled) { transform: scale(0.97); }
+    .ppill:disabled { opacity: 0.25; cursor: not-allowed; transform: none; }
+
+    /* RIGHT */
+    .col-r { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+
+    .slog {
+      flex: 1; min-height: 260px;
+      max-height: calc(100vh - var(--topbar-h) - var(--bottombar-h) - 130px);
+      overflow-y: auto;
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--bg-card); padding: 3px;
+    }
+    .slog::-webkit-scrollbar { width: 4px; }
+    .slog::-webkit-scrollbar-track { background: transparent; }
+    .slog::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+
+    .slog-empty {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; min-height: 180px;
+      color: var(--text-dim); font-size: 12.5px; font-style: italic;
+    }
+
+    .sentry {
+      display: flex; align-items: flex-start; gap: 9px;
+      padding: 9px 11px;
+      border-bottom: 1px solid #181c28;
+      animation: slideUp 0.22s ease-out;
+    }
+    .sentry:last-child { border-bottom: none; }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(5px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .sbdg {
+      flex-shrink: 0; width: 24px; height: 24px; border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+      background: var(--accent-blue-soft); color: var(--accent-blue);
+      border: 1px solid rgba(74,144,255,0.12);
+    }
+    .sentry[data-k="error"] .sbdg { background: var(--accent-red-soft); color: var(--accent-red); border-color: rgba(248,113,113,0.12); }
+    .sentry[data-k="info"]  .sbdg { background: #22252f; color: var(--text-dim); border-color: transparent; }
+
+    .scont { flex: 1; min-width: 0; }
+    .stxt { font-size: 12.5px; line-height: 1.45; color: var(--text-primary); word-break: break-word; }
+    .smeta { font-family: var(--mono); font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+
+    /* Result card */
+    .rcard {
+      display: none; padding: 14px; border-radius: var(--radius);
+      animation: fadeIn 0.35s ease-out;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .rcard.on { display: block; }
+
+    .rcard.ok  { background: var(--accent-green-soft); border: 1px solid rgba(52,211,153,0.15); }
+    .rcard.ok  .rlabel { color: var(--accent-green); }
+    .rcard.err { background: var(--accent-red-soft); border: 1px solid rgba(248,113,113,0.15); }
+    .rcard.err .rlabel { color: var(--accent-red); }
+
+    .rlabel { font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 5px; }
+    .rtxt { font-size: 13px; line-height: 1.55; color: var(--text-primary); }
+    .rmeta { font-family: var(--mono); font-size: 10.5px; color: var(--text-secondary); margin-top: 8px; display: flex; gap: 14px; }
+
+    /* ═══════════════════════════════════════
+       BOTTOM BAR
+       ═══════════════════════════════════════ */
+    .bottombar {
+      position: relative; z-index: 10;
+      height: var(--bottombar-h);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 22px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-secondary);
+      flex-shrink: 0;
+    }
+
+    .conn { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
+    .cdot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); transition: background 0.3s; }
+    .conn.ok .cdot  { background: var(--accent-green); }
+    .conn.ok        { color: var(--text-secondary); }
+    .conn.no .cdot  { background: var(--accent-red); }
+    .conn.no        { color: var(--accent-red); }
+
+    .ntlink {
+      font-size: 11.5px; color: var(--text-dim); background: none; border: none;
+      text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 3px 0;
+    }
+    .ntlink:hover { color: var(--text-secondary); }
+
+    /* Disabled overlay */
+    .doverlay {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(10,12,16,0.88);
+      align-items: center; justify-content: center; flex-direction: column;
+      gap: 10px; text-align: center;
+    }
+    .doverlay.on { display: flex; }
+    .doverlay .dtitle { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+    .doverlay .dsub { font-size: 12.5px; color: var(--text-secondary); max-width: 380px; line-height: 1.5; }
+    .doverlay code {
+      display: inline-block; margin-top: 3px; padding: 3px 9px;
+      background: var(--bg-card); border-radius: var(--radius-sm);
+      font-family: var(--mono); font-size: 11.5px; color: var(--accent-amber);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .cols { grid-template-columns: 1fr; }
+      .topbar-meta { display: none; }
+      textarea.tinput { min-height: 80px; }
+      .pscroll { flex-wrap: wrap; }
+      .slog { min-height: 180px; max-height: 50vh; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="ico" role="img" aria-label="Desktop">&#128421;&#65039;</span>
+      <span>DesktopPilot</span>
+    </div>
+    <div class="sbadge" id="sBadge" data-s="idle">
+      <span class="sdot"></span>
+      <span id="sLabel">Ready</span>
+    </div>
+    <div class="topbar-meta" id="tMeta">
+      <span id="mSid"></span>
+      <span id="mDim"></span>
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="cols">
+
+      <!-- LEFT -->
+      <div class="col-l">
+        <div>
+          <label class="flabel" for="tIn">Task</label>
+          <textarea class="tinput" id="tIn" placeholder="What should I do on your desktop?" aria-label="Task description" rows="4"></textarea>
+          <div class="ierror" id="iErr"></div>
+        </div>
+        <div class="ctrls">
+          <button class="bp" id="bStart" aria-label="Start task">Start Task</button>
+          <button class="bd" id="bStop" aria-label="Stop task">Stop</button>
+          <div class="mstep">
+            <label for="mxS">Max steps</label>
+            <input class="sinput" id="mxS" type="number" value="20" min="1" max="50" aria-label="Maximum steps" />
+          </div>
+        </div>
+        <div class="psec">
+          <label class="flabel">Quick Tasks</label>
+          <div class="pscroll" id="pList"></div>
+        </div>
+      </div>
+
+      <!-- RIGHT -->
+      <div class="col-r">
+        <label class="flabel">Step Log</label>
+        <div class="slog" id="sLog">
+          <div class="slog-empty" id="sEmpty">Steps will appear here</div>
+        </div>
+        <div class="rcard" id="rCard">
+          <div class="rlabel" id="rLbl"></div>
+          <div class="rtxt" id="rTxt"></div>
+          <div class="rmeta" id="rMeta"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- BOTTOM BAR -->
+  <footer class="bottombar">
+    <div class="conn" id="cStat">
+      <span class="cdot"></span>
+      <span id="cTxt">Checking server...</span>
+    </div>
+    <button class="ntlink" id="bNew" aria-label="Start a new task">New Task</button>
+  </footer>
+
+  <!-- OVERLAY -->
+  <div class="doverlay" id="dOvr">
+    <div class="dtitle">Desktop Mode Not Enabled</div>
+    <div class="dsub">
+      The server is running but Desktop Mode is not active.<br />
+      Restart the server with:
+      <code>DESKTOP_MODE_ENABLED=true</code>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    /* ── refs ── */
+    var g = function (id) { return document.getElementById(id); };
+    var tIn = g('tIn'), iErr = g('iErr'), bStart = g('bStart'), bStop = g('bStop');
+    var mxS = g('mxS'), pList = g('pList');
+    var sLog = g('sLog'), sEmpty = g('sEmpty');
+    var rCard = g('rCard'), rLbl = g('rLbl'), rTxt = g('rTxt'), rMeta = g('rMeta');
+    var sBadge = g('sBadge'), sLabel = g('sLabel');
+    var tMeta = g('tMeta'), mSid = g('mSid'), mDim = g('mDim');
+    var cStat = g('cStat'), cTxt = g('cTxt');
+    var bNew = g('bNew'), dOvr = g('dOvr');
+
+    /* ── state ── */
+    var st = 'idle', sid = null, scrW = 0, scrH = 0;
+    var pollTmr = null, pollFails = 0;
+    var lastStep = 0, t0 = 0;
+    var srvOk = false, deskOn = false;
+
+    /* ── presets ── */
+    var PRESETS = [
+      ['\uD83D\uDCDD Notepad',       "Open Notepad and type 'Hello from DesktopPilot!'"],
+      ['\uD83E\uDDEE Calculator',     'Open Calculator and compute 1337 times 42'],
+      ['\uD83D\uDCC1 File Explorer',  'Open File Explorer and navigate to Documents folder'],
+      ['\u2699\uFE0F Screen Info',     'Open Settings, navigate to Display, and tell me the current screen resolution'],
+      ['\uD83D\uDCBB VS Code',        'Open VS Code, create a new file called demo.py, write a Python hello world program, and save it']
+    ];
+    PRESETS.forEach(function (p) {
+      var b = document.createElement('button');
+      b.className = 'ppill';
+      b.textContent = p[0];
+      b.setAttribute('aria-label', 'Quick task: ' + p[0]);
+      b.addEventListener('click', function () {
+        if (st === 'running' || st === 'started') return;
+        tIn.value = p[1];
+        doStart();
+      });
+      pList.appendChild(b);
+    });
+
+    /* ── helpers ── */
+    function dur(ms) { return (ms / 1000).toFixed(1) + 's'; }
+
+    function setUiState(s, extra) {
+      st = s;
+      sBadge.setAttribute('data-s', s);
+      var m = { idle: 'Ready', started: 'Starting...', running: 'Running', done: 'Complete', error: 'Error' };
+      var txt = m[s] || s;
+      if (s === 'running' && extra && extra.step) txt = 'Running \u2014 Step ' + extra.step;
+      sLabel.textContent = txt;
+
+      var busy = s === 'running' || s === 'started';
+      bStart.disabled = busy || !srvOk || !deskOn;
+      bStop.classList.toggle('on', busy);
+      mxS.disabled = busy;
+      var pills = pList.querySelectorAll('.ppill');
+      for (var i = 0; i < pills.length; i++) pills[i].disabled = busy;
+    }
+
+    function showMeta() {
+      if (sid) {
+        mSid.textContent = sid.substring(0, 8);
+        mDim.textContent = scrW + '\u00D7' + scrH;
+        tMeta.classList.add('on');
+      } else {
+        tMeta.classList.remove('on');
+      }
+    }
+
+    function clearLog() {
+      var es = sLog.querySelectorAll('.sentry');
+      for (var i = 0; i < es.length; i++) sLog.removeChild(es[i]);
+      sEmpty.style.display = 'flex';
+    }
+
+    function addLog(step, text, kind) {
+      sEmpty.style.display = 'none';
+      var e = document.createElement('div');
+      e.className = 'sentry'; e.setAttribute('data-k', kind || 'step');
+
+      var bdg = document.createElement('div');
+      bdg.className = 'sbdg';
+      bdg.textContent = kind === 'error' ? '!' : kind === 'info' ? '\u2014' : step;
+
+      var cnt = document.createElement('div');
+      cnt.className = 'scont';
+      var tx = document.createElement('div');
+      tx.className = 'stxt'; tx.textContent = text;
+      var mt = document.createElement('div');
+      mt.className = 'smeta'; mt.textContent = dur(Date.now() - t0);
+      cnt.appendChild(tx); cnt.appendChild(mt);
+
+      e.appendChild(bdg); e.appendChild(cnt);
+      sLog.appendChild(e);
+      sLog.scrollTop = sLog.scrollHeight;
+    }
+
+    function showResult(ok, text, steps, ms) {
+      rCard.className = 'rcard on ' + (ok ? 'ok' : 'err');
+      rLbl.textContent = ok ? 'Task Complete' : 'Error';
+      rTxt.textContent = text || (ok ? 'Done.' : 'Unknown error');
+      rMeta.innerHTML = '';
+      if (steps != null) { var s = document.createElement('span'); s.textContent = steps + ' step' + (steps !== 1 ? 's' : ''); rMeta.appendChild(s); }
+      if (ms != null) { var d = document.createElement('span'); d.textContent = dur(ms); rMeta.appendChild(d); }
+    }
+
+    function hideResult() { rCard.className = 'rcard'; }
+
+    function setConn(ok, msg) {
+      srvOk = ok;
+      cStat.className = 'conn ' + (ok ? 'ok' : 'no');
+      cTxt.textContent = msg;
+      bStart.disabled = !ok || !deskOn || st === 'running' || st === 'started';
+    }
+
+    /* ── health ── */
+    function checkHealth() {
+      fetch('/health').then(function (r) { return r.json(); }).then(function (d) {
+        if (d.status === 'ok') {
+          setConn(true, 'Connected to localhost:8080');
+          dOvr.classList.remove('on');
+          if ('desktop_sessions_active' in d) {
+            deskOn = true;
+          } else {
+            deskOn = false;
+            dOvr.classList.add('on');
+          }
+          bStart.disabled = !deskOn || st === 'running' || st === 'started';
+        }
+      }).catch(function () {
+        setConn(false, 'Server unreachable');
+        deskOn = false;
+        dOvr.classList.remove('on');
+      });
+    }
+    checkHealth();
+    setInterval(checkHealth, 5000);
+
+    /* ── start ── */
+    function doStart() {
+      iErr.textContent = '';
+      var intent = tIn.value.trim();
+      if (!intent) { iErr.textContent = 'Please enter a task'; tIn.focus(); return; }
+      var steps = parseInt(mxS.value, 10);
+      if (isNaN(steps) || steps < 1) steps = 20;
+      if (steps > 50) steps = 50;
+
+      setUiState('started'); hideResult(); clearLog();
+      t0 = Date.now(); lastStep = 0; pollFails = 0;
+      addLog('-', 'Starting task...', 'info');
+
+      fetch('/desktop/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent: intent, max_steps: steps })
+      }).then(function (r) {
+        if (r.status === 503) {
+          setUiState('error');
+          addLog('!', 'Desktop Mode not enabled. Start server with DESKTOP_MODE_ENABLED=true', 'error');
+          return null;
+        }
+        if (!r.ok) return r.json().then(function (d) { throw new Error(d.detail || 'Server error ' + r.status); });
+        return r.json();
+      }).then(function (d) {
+        if (!d) return;
+        sid = d.session_id; scrW = d.screen_width; scrH = d.screen_height;
+        showMeta();
+        setUiState('running', { step: 0 });
+        addLog(0, 'Task accepted \u2014 agent is running', 'info');
+        startPoll();
+      }).catch(function () {
+        setUiState('error');
+        addLog('!', 'Cannot reach server. Is it running on localhost:8080?', 'error');
+      });
+    }
+
+    bStart.addEventListener('click', doStart);
+
+    /* ── poll ── */
+    function startPoll() { if (pollTmr) clearInterval(pollTmr); pollTmr = setInterval(doPoll, 1000); }
+    function stopPoll()  { if (pollTmr) { clearInterval(pollTmr); pollTmr = null; } }
+
+    function doPoll() {
+      if (!sid) return;
+      fetch('/desktop/sessions/' + sid).then(function (r) {
+        if (r.status === 404) { stopPoll(); addLog('-', 'Session expired or not found', 'info'); setUiState('idle'); sid = null; showMeta(); return null; }
+        return r.json();
+      }).then(function (d) {
+        if (!d) return;
+        pollFails = 0;
+        var s = d.steps_taken || 0;
+        if (s > lastStep) {
+          for (var i = lastStep + 1; i <= s; i++) {
+            addLog(i, 'Step ' + i + (d.status === 'running' ? ' \u2014 processing' : ''), 'step');
+          }
+          lastStep = s;
+        }
+        if (d.status === 'running') {
+          setUiState('running', { step: s });
+        } else if (d.status === 'done') {
+          stopPoll(); setUiState('done');
+          showResult(true, d.result || 'Task completed', s, Date.now() - t0);
+        } else if (d.status === 'error') {
+          stopPoll(); setUiState('error');
+          showResult(false, d.error || 'Unknown error', s, Date.now() - t0);
+          addLog('!', d.error || 'Task failed', 'error');
+        }
+      }).catch(function () {
+        pollFails++;
+        if (pollFails >= 3) { stopPoll(); addLog('!', 'Lost connection to server', 'error'); setUiState('error'); }
+      });
+    }
+
+    /* ── stop ── */
+    bStop.addEventListener('click', function () {
+      if (!sid) return;
+      stopPoll();
+      fetch('/desktop/sessions/' + sid, { method: 'DELETE' }).catch(function () {});
+      addLog('-', 'Task stopped by user', 'info');
+      setUiState('idle'); sid = null; showMeta();
+    });
+
+    /* ── new task ── */
+    bNew.addEventListener('click', function () {
+      if (st === 'running' || st === 'started') {
+        if (sid) fetch('/desktop/sessions/' + sid, { method: 'DELETE' }).catch(function () {});
+        stopPoll();
+      }
+      tIn.value = ''; iErr.textContent = ''; sid = null; lastStep = 0;
+      clearLog(); hideResult(); showMeta(); setUiState('idle'); tIn.focus();
+    });
+
+    /* ── ctrl+enter ── */
+    tIn.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (!bStart.disabled) doStart(); }
+    });
+
+    setUiState('idle');
+  })();
+  </script>
+</body>
+</html>

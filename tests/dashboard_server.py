@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Load .env from repo root into os.environ (stdlib only, no python-dotenv)
@@ -56,8 +60,11 @@ _runner_proc: subprocess.Popen | None = None
 _judge_proc: subprocess.Popen | None = None
 _fix_loop_proc: subprocess.Popen | None = None
 _runner_log_fh = None  # file handle for runner log
+_judge_log_fh = None  # file handle for judge log
 _fix_loop_log_fh = None  # file handle for fix-loop log
 _last_run: str | None = None  # ISO timestamp of last /run call
+_run_started_at: float | None = None  # monotonic time of last run start
+_run_finished_at: float | None = None  # monotonic time of last run finish
 
 
 def _is_running(proc: subprocess.Popen | None) -> bool:
@@ -113,6 +120,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._run_fix_loop()
         elif path == "/status":
             self._get_status()
+        elif path == "/logs":
+            self._get_logs()
         else:
             self._json(404, {"error": "not found"})
 
@@ -148,7 +157,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json(500, {"error": str(exc)})
 
     def _run_tests(self) -> None:
-        global _runner_proc, _runner_log_fh, _last_run
+        global _runner_proc, _runner_log_fh, _last_run, _run_started_at, _run_finished_at
         if _is_running(_runner_proc):
             self._json(200, {"status": "already_running"})
             return
@@ -161,10 +170,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             cwd=str(_REPO_ROOT),
         )
         _last_run = datetime.now(timezone.utc).isoformat()
+        _run_started_at = time.monotonic()
+        _run_finished_at = None
         self._json(200, {"status": "started"})
 
     def _run_judge(self) -> None:
-        global _judge_proc
+        global _judge_proc, _judge_log_fh
         if _is_running(_runner_proc):
             self._json(409, {"status": "runner_in_progress",
                              "error": "Wait for the test run to finish before judging"})
@@ -175,18 +186,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if _is_running(_judge_proc):
             self._json(200, {"status": "already_running"})
             return
+        _close_fh(_judge_log_fh)
+        _judge_log_fh = open(_JUDGE_LOG, "w")
         _judge_proc = subprocess.Popen(
             [sys.executable, "tests/judge_runner.py",
              "--report", str(_REPORT_PATH)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=_judge_log_fh,
+            stderr=subprocess.STDOUT,
             cwd=str(_REPO_ROOT),
         )
         self._json(200, {"status": "started"})
 
     def _run_fix_loop(self) -> None:
         """Run agent_runner then judge_runner as a chained subprocess."""
-        global _fix_loop_proc, _fix_loop_log_fh, _last_run
+        global _fix_loop_proc, _fix_loop_log_fh, _last_run, _run_started_at, _run_finished_at
         if _is_running(_fix_loop_proc):
             self._json(200, {"status": "already_running"})
             return
@@ -207,10 +220,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             shell=shell,
         )
         _last_run = datetime.now(timezone.utc).isoformat()
+        _run_started_at = time.monotonic()
+        _run_finished_at = None
         self._json(200, {"status": "started"})
 
     def _get_status(self) -> None:
-        global _runner_log_fh, _fix_loop_log_fh
+        global _runner_log_fh, _judge_log_fh, _fix_loop_log_fh, _run_finished_at
 
         def _exit_code(proc: subprocess.Popen | None) -> int | None:
             if proc is None:
@@ -222,9 +237,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not _is_running(_runner_proc) and _runner_log_fh is not None:
             _close_fh(_runner_log_fh)
             _runner_log_fh = None
+        if not _is_running(_judge_proc) and _judge_log_fh is not None:
+            _close_fh(_judge_log_fh)
+            _judge_log_fh = None
         if not _is_running(_fix_loop_proc) and _fix_loop_log_fh is not None:
             _close_fh(_fix_loop_log_fh)
             _fix_loop_log_fh = None
+
+        # Track when the run finished for duration calculation
+        any_running = _is_running(_runner_proc) or _is_running(_fix_loop_proc)
+        if not any_running and _run_started_at is not None and _run_finished_at is None:
+            _run_finished_at = time.monotonic()
+
+        # Compute duration
+        duration_s = None
+        if _run_started_at is not None:
+            end = _run_finished_at if _run_finished_at else time.monotonic()
+            duration_s = round(end - _run_started_at, 1)
 
         self._json(200, {
             "runner_running": _is_running(_runner_proc),
@@ -234,13 +263,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "fix_loop_running": _is_running(_fix_loop_proc),
             "fix_loop_exit_code": _exit_code(_fix_loop_proc),
             "last_run": _last_run,
+            "duration_s": duration_s,
+        })
+
+    def _get_logs(self) -> None:
+        """Serve runner and judge log contents for debugging."""
+        def _read_log(path: Path) -> str:
+            if not path.exists():
+                return ""
+            try:
+                return path.read_text(errors="replace")[-50_000:]  # last 50KB
+            except OSError:
+                return ""
+
+        self._json(200, {
+            "runner_log": _read_log(_RUNNER_LOG),
+            "judge_log": _read_log(_JUDGE_LOG),
         })
 
     # ------------------------------------------------------------------
-    # Silence default request logging to keep output clean
+    # Request logging
     # ------------------------------------------------------------------
     def log_message(self, fmt: str, *args) -> None:  # noqa: ANN001
-        pass
+        logger.info("%s %s", self.address_string(), fmt % args)
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +297,7 @@ def _shutdown(signum, frame) -> None:  # noqa: ANN001
         if _is_running(proc):
             proc.terminate()
     _close_fh(_runner_log_fh)
+    _close_fh(_judge_log_fh)
     _close_fh(_fix_loop_log_fh)
     sys.exit(0)
 
@@ -260,6 +306,12 @@ def _shutdown(signum, frame) -> None:  # noqa: ANN001
 # Entry point
 # ---------------------------------------------------------------------------
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     parser = argparse.ArgumentParser(description="UI Navigator test dashboard server")
     parser.add_argument("--port", type=int, default=3333)
     args = parser.parse_args()

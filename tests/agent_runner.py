@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -63,8 +64,15 @@ _SCENARIO_STUB: dict[str, str] = {
 _MSG_LOG_PATH = Path(tempfile.gettempdir()) / "wp_test_messages.json"
 
 
+import re
+
+# Regex to extract per-test duration from pytest -v output
+# Matches patterns like "PASSED (0.42s)" or "FAILED (1.23s)"
+_DURATION_RE = re.compile(r"\b(?:PASSED|FAILED|ERROR)\s*\((\d+(?:\.\d+)?)s\)")
+
+
 def _parse_pytest_output(stdout: str, stderr: str) -> list[dict]:
-    """Parse pytest -v output into a list of {name, status, message} dicts."""
+    """Parse pytest -v output into a list of {name, status, message, duration_s} dicts."""
     results = []
     for line in stdout.splitlines():
         line = line.strip()
@@ -84,7 +92,17 @@ def _parse_pytest_output(stdout: str, stderr: str) -> list[dict]:
                     message = _extract_failure_message(stdout, test_name)
                     if not message:
                         message = _extract_failure_message(stderr, test_name)
-                results.append({"name": test_name, "status": status_value, "message": message})
+                # Extract per-test duration if present (e.g. "PASSED (0.42s)")
+                duration_s = None
+                dur_match = _DURATION_RE.search(line)
+                if dur_match:
+                    duration_s = float(dur_match.group(1))
+                results.append({
+                    "name": test_name,
+                    "status": status_value,
+                    "message": message,
+                    "duration_s": duration_s,
+                })
                 break
     return results
 
@@ -131,6 +149,7 @@ def run_scenario(scenario: str) -> dict:
         }
 
     _clear_ws_message_log()
+    started_at = time.time()
 
     k_filter = _SCENARIO_FILTERS[scenario]
     stub = _SCENARIO_STUB[scenario]
@@ -173,12 +192,14 @@ def run_scenario(scenario: str) -> dict:
         except Exception:
             pass
         stdout_data, stderr_data = proc.communicate()
+        finished_at = time.time()
         ws_log = _read_ws_message_log()
         tests = _parse_pytest_output(stdout_data, stderr_data)
         tests.append({
             "name": scenario,
             "status": "error",
             "message": "pytest timed out after 120s",
+            "duration_s": None,
         })
         return {
             "scenario": scenario,
@@ -186,8 +207,12 @@ def run_scenario(scenario: str) -> dict:
             "tests": tests,
             "ws_message_log": ws_log,
             "suggestions": [],
+            "started_at": datetime.fromtimestamp(started_at, tz=timezone.utc).isoformat(),
+            "finished_at": datetime.fromtimestamp(finished_at, tz=timezone.utc).isoformat(),
+            "duration_s": round(finished_at - started_at, 1),
         }
 
+    finished_at = time.time()
     tests = _parse_pytest_output(stdout_data, stderr_data)
     ws_log = _read_ws_message_log()
     passed = proc.returncode == 0
@@ -198,6 +223,9 @@ def run_scenario(scenario: str) -> dict:
         "tests": tests,
         "ws_message_log": ws_log,
         "suggestions": [],  # filled by the judge agent
+        "started_at": datetime.fromtimestamp(started_at, tz=timezone.utc).isoformat(),
+        "finished_at": datetime.fromtimestamp(finished_at, tz=timezone.utc).isoformat(),
+        "duration_s": round(finished_at - started_at, 1),
     }
 
 

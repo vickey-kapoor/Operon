@@ -10,11 +10,11 @@ from typing import Callable, List, Optional
 
 from pydantic import BaseModel
 
-from src.executor.actions import ActionType
-from src.executor.browser import PlaywrightBrowserExecutor
 from src import metrics, tracing
-from .vision import GeminiVisionClient, VisionUnavailableError
+from src.executor.browser import PlaywrightBrowserExecutor
+
 from .planner import ActionPlan, ActionPlanner
+from .vision import GeminiVisionClient, VisionUnavailableError
 
 logger = logging.getLogger(__name__)
 

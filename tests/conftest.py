@@ -1,17 +1,14 @@
 """Shared pytest fixtures and helpers for UI Navigator tests."""
 
-import asyncio
 import base64
 import io
 import struct
 import zlib
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

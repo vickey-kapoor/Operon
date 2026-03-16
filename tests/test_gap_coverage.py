@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import collections
 import importlib
 import json
 import os
@@ -30,9 +29,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 import websockets
-
-from src.api.webpilot_models import WebPilotAction
-
 
 # ---------------------------------------------------------------------------
 # Helpers (shared with test_webpilot_e2e.py pattern)
@@ -69,6 +65,7 @@ def _server_ctx(scenario: str) -> Generator[tuple[str, str], None, None]:
     Yields (http_base_url, ws_base_url).
     """
     import uvicorn
+
     from src.api.server import app
 
     old_val = os.environ.get("WEBPILOT_STUB")

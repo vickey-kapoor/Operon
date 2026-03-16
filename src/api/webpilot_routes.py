@@ -14,18 +14,15 @@ from typing import Dict
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from src.agent.webpilot_handler import WebPilotHandler
 from src.api.webpilot_models import (
     ConfirmMessage,
-    InterruptMessage,
     InterruptionType,
-    ResumeMessage,
-    StopMessage,
+    InterruptMessage,
     TaskMessage,
     TTSRequest,
     WebPilotSession,
-    ScreenshotMessage,
 )
-from src.agent.webpilot_handler import WebPilotHandler
 
 _MAX_SESSION_DURATION = int(os.environ.get("MAX_SESSION_DURATION", "1800"))
 _MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))

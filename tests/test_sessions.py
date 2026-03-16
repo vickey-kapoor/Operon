@@ -2,10 +2,8 @@
 
 import base64
 import io
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import pytest
 from PIL import Image
 
 from src.agent.planner import ActionPlan

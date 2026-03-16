@@ -1,7 +1,7 @@
 """Executor module - Playwright browser automation and action execution."""
 
+from .actions import Action, ActionResult, ActionType
 from .browser import PlaywrightBrowserExecutor
-from .actions import ActionType, Action, ActionResult
 
 __all__ = [
     "PlaywrightBrowserExecutor",

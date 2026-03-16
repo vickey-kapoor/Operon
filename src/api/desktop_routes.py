@@ -15,14 +15,12 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from src.api.desktop_models import (
-    DesktopAction,
     DesktopConfirmMessage,
     DesktopInterruptMessage,
-    DesktopScreenshotMessage,
     DesktopSession,
+    DesktopSessionStatusResponse,
     DesktopStartRequest,
     DesktopStartResponse,
-    DesktopSessionStatusResponse,
     DesktopTaskMessage,
 )
 

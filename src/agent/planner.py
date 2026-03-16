@@ -6,7 +6,6 @@ import re
 from typing import List, Optional
 
 from google.genai import types as genai_types
-
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.executor.actions import Action, ActionType

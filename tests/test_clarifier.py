@@ -66,6 +66,7 @@ class TestTaskClarifier:
     def test_requires_api_key(self):
         """TaskClarifier raises ValueError when no API key is available."""
         import os
+
         from src.agent.clarifier import TaskClarifier
 
         # Ensure GOOGLE_API_KEY is absent/empty in the patched env.

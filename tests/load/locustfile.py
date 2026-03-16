@@ -110,6 +110,7 @@ class ScreenshotUser(HttpUser):
 
     def _make_small_png(self) -> bytes:
         import io
+
         from PIL import Image
         img = Image.new("RGB", (1, 1), color=(255, 0, 0))
         buf = io.BytesIO()

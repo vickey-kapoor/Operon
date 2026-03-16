@@ -8,7 +8,6 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ---------------------------------------------------------------------------
 # Action model — extends WebPilotAction with desktop-specific actions
 # ---------------------------------------------------------------------------

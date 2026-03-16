@@ -1,13 +1,20 @@
-import asyncio, base64, io, json, logging, os, time, uuid
+import asyncio
+import base64
+import io
+import json
+import logging
+import os
+import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from google.genai import types
 from PIL import Image
 
-from src.agent.vision import GeminiVisionClient
-from src.agent.planner import ActionPlan, ActionPlanner
 from src import metrics
+from src.agent.planner import ActionPlan, ActionPlanner
+from src.agent.vision import GeminiVisionClient
 
 logger = logging.getLogger(__name__)
 _SESSION_IDLE_SECONDS = 3600

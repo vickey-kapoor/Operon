@@ -1,8 +1,8 @@
 """Agent module - Gemini-powered vision and planning components."""
 
-from .core import UINavigatorAgent, AgentResult
+from .core import AgentResult, UINavigatorAgent
+from .planner import Action, ActionPlan, ActionPlanner, ActionType
 from .vision import GeminiVisionClient
-from .planner import ActionPlanner, ActionPlan, Action, ActionType
 
 __all__ = [
     "UINavigatorAgent",

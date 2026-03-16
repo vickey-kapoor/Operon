@@ -4,7 +4,6 @@ import asyncio
 import base64
 import concurrent.futures
 import io
-import json
 import logging
 import os
 import time
@@ -13,6 +12,7 @@ from typing import List, Optional, Union
 from google import genai
 from google.genai import types
 from PIL import Image
+
 from src import metrics, tracing
 
 logger = logging.getLogger(__name__)

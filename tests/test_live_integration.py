@@ -79,6 +79,7 @@ def _free_port() -> int:
 def _real_server_ctx() -> Generator[tuple[str, str], None, None]:
     """Start a real server WITHOUT WEBPILOT_STUB — uses actual Gemini API."""
     import uvicorn
+
     from src.api.server import app
 
     # Ensure WEBPILOT_STUB is NOT set
@@ -127,10 +128,10 @@ def _create_session(http_url: str) -> str:
 
 async def test_handler_get_next_action():
     """WebPilotHandler: single generate_content call returns a valid WebPilotAction."""
-    from src.api.server import app  # noqa: F401
-    from src.agent.vision import GeminiVisionClient
     from src.agent.planner import ActionPlanner
+    from src.agent.vision import GeminiVisionClient
     from src.agent.webpilot_handler import WebPilotHandler
+    from src.api.server import app  # noqa: F401
 
     vision = GeminiVisionClient()
     planner = ActionPlanner(vision_client=vision)
@@ -150,10 +151,10 @@ async def test_handler_get_next_action():
 
 async def test_tts_narration_returns_audio_bytes():
     """TTS: get_narration_audio returns non-empty bytes (WAV audio)."""
-    from src.api.server import app  # noqa: F401
-    from src.agent.vision import GeminiVisionClient
     from src.agent.planner import ActionPlanner
+    from src.agent.vision import GeminiVisionClient
     from src.agent.webpilot_handler import WebPilotHandler
+    from src.api.server import app  # noqa: F401
 
     vision = GeminiVisionClient()
     planner = ActionPlanner(vision_client=vision)

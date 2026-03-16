@@ -1,6 +1,5 @@
 """GCS screenshot upload -- returns a 7-day signed URL or None."""
 
-import asyncio
 import logging
 import os
 import re

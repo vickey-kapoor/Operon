@@ -7,7 +7,14 @@ import logging
 from typing import Optional
 
 from PIL import Image
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+    async_playwright,
+)
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from .actions import Action, ActionResult, ActionType
 

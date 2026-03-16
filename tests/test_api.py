@@ -4,16 +4,12 @@ Tests use httpx.AsyncClient pointed at the ASGI app directly — no server neede
 """
 
 import asyncio
-import io
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, patch
 
 from src.agent.core import AgentResult
+from tests.conftest import large_png as _large_png
 
 # Fixtures (client, api_key, gemini_key) and helpers come from conftest.py.
-from tests.conftest import small_png as _small_png, large_png as _large_png
-
 
 # ---------------------------------------------------------------------------
 # Health
@@ -302,6 +298,7 @@ async def test_health_includes_version(client):
 def test_websocket_unknown_task_closes():
     """Connecting to /ws/<unknown-id> should be rejected immediately."""
     from starlette.testclient import TestClient
+
     from src.api.server import app
 
     with TestClient(app) as tc:

@@ -1,8 +1,8 @@
 """Google ADK-based agent for the Chrome Extension session flow."""
 
-import asyncio
-import base64, io, json, logging, os
-from typing import Optional
+import base64
+import io
+import logging
 
 from google.adk.agents import Agent
 from google.adk.runners import Runner
@@ -10,9 +10,9 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from PIL import Image
 
+from src import metrics
 from src.agent.planner import ActionPlan, ActionPlanner
 from src.agent.vision import SYSTEM_PROMPT
-from src import metrics
 
 logger = logging.getLogger(__name__)
 

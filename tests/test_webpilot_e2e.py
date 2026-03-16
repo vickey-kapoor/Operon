@@ -77,6 +77,7 @@ def _server_ctx(scenario: str) -> Generator[tuple[str, str], None, None]:
     Yields (http_base_url, ws_base_url).
     """
     import uvicorn
+
     from src.api.server import app
 
     old_val = os.environ.get("WEBPILOT_STUB")

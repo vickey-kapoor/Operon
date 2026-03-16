@@ -43,7 +43,6 @@ import httpx
 import pytest
 import websockets
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -74,6 +73,7 @@ def _free_port() -> int:
 @contextmanager
 def _server_ctx(scenario: str) -> Generator[tuple[str, str], None, None]:
     import uvicorn
+
     from src.api.server import app
 
     old_val = os.environ.get("WEBPILOT_STUB")

@@ -1,6 +1,19 @@
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-filterwarnings = [
-    "ignore::DeprecationWarning:google.genai",
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ui-navigator-mvp"
+version = "0.1.0"
+description = "Browser-only Gmail draft MVP scaffold."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0,<1.0.0",
+    "pydantic>=2.9.0,<3.0.0",
+    "playwright>=1.48.0,<2.0.0",
+    "uvicorn[standard]>=0.32.0,<1.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

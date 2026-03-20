@@ -1,364 +1,333 @@
-"""Playwright browser executor for UI navigation actions."""
+"""Browser executor interface for browser-only execution."""
+
+from __future__ import annotations
 
 import asyncio
-import base64
-import io
-import logging
-from typing import Optional
+import os
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
+from uuid import uuid4
 
-from PIL import Image
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Page,
-    Playwright,
-    async_playwright,
-)
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Browser, BrowserContext, ElementHandle, Locator, Page, Playwright, async_playwright
 
-from .actions import Action, ActionResult, ActionType
-
-logger = logging.getLogger(__name__)
+from src.models.capture import CaptureFrame
+from src.models.common import FailureCategory, LoopStage
+from src.models.execution import ExecutedAction
+from src.models.policy import ActionType, AgentAction
 
 
-class PlaywrightBrowserExecutor:
-    """Manages a Playwright Chromium browser and executes UI actions."""
+@dataclass(frozen=True)
+class BrowserDebugConfig:
+    """Environment-driven Playwright launch options for local debugging."""
+
+    headless: bool
+    slow_mo_ms: int
+    devtools: bool
+
+
+class BrowserExecutor(ABC):
+    @abstractmethod
+    async def capture(self) -> CaptureFrame:
+        """Capture a browser frame for the current run."""
+
+    @abstractmethod
+    async def execute(self, action: AgentAction) -> ExecutedAction:
+        """Execute a typed browser action."""
+
+
+def _read_browser_debug_config() -> BrowserDebugConfig:
+    """Read local Playwright debug settings from the environment."""
+
+    return BrowserDebugConfig(
+        headless=_get_env_bool("BROWSER_HEADLESS", default=True),
+        slow_mo_ms=_get_env_int("BROWSER_SLOW_MO_MS", default=0),
+        devtools=_get_env_bool("BROWSER_DEVTOOLS", default=False),
+    )
+
+
+def _get_env_bool(name: str, *, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _get_env_int(name: str, *, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return max(0, int(raw_value.strip()))
+    except ValueError:
+        return default
+
+
+class PlaywrightBrowserExecutor(BrowserExecutor):
+    """Minimal Playwright-backed browser executor for the Gmail draft MVP."""
 
     def __init__(
         self,
-        headless: bool = True,
-        width: int = 1280,
-        height: int = 800,
+        *,
+        headless: bool | None = None,
+        slow_mo_ms: int | None = None,
+        devtools: bool | None = None,
+        viewport_width: int = 1280,
+        viewport_height: int = 800,
+        artifact_root: str | Path = ".browser-artifacts",
     ) -> None:
-        self.headless = headless
-        self.width = width
-        self.height = height
-
-        self._playwright: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
-        self._context: Optional[BrowserContext] = None
-        self._page: Optional[Page] = None
-        self._started = False
+        debug_config = _read_browser_debug_config()
+        self.headless = debug_config.headless if headless is None else headless
+        self.slow_mo_ms = debug_config.slow_mo_ms if slow_mo_ms is None else max(0, slow_mo_ms)
+        self.devtools = debug_config.devtools if devtools is None else devtools
+        self.viewport_width = viewport_width
+        self.viewport_height = viewport_height
+        self.artifact_root = Path(artifact_root)
+        self.artifact_root.mkdir(parents=True, exist_ok=True)
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
 
     async def start(self) -> None:
-        """Launch the browser and create a new page."""
-        if self._started:
-            logger.warning("Browser already started, skipping re-initialisation")
+        if self._page is not None:
             return
 
-        logger.info("Starting Playwright Chromium browser (headless=%s)", self.headless)
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=self.headless,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-accelerated-2d-canvas",
-                "--no-first-run",
-                "--no-zygote",
-                # Anti-bot-detection: hide automation signals
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process",
-                "--flag-switches-begin",
-                "--disable-site-isolation-trials",
-                "--flag-switches-end",
-            ],
-        )
+        launch_kwargs = {
+            "headless": self.headless,
+            "slow_mo": self.slow_mo_ms,
+        }
+        if self.devtools:
+            launch_kwargs["args"] = ["--auto-open-devtools-for-tabs"]
+        self._browser = await self._playwright.chromium.launch(**launch_kwargs)
         self._context = await self._browser.new_context(
-            viewport={"width": self.width, "height": self.height},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            ),
-            locale="en-US",
-            timezone_id="America/New_York",
-            permissions=["geolocation"],
-            java_script_enabled=True,
-            bypass_csp=False,
-            extra_http_headers={
-                "Accept-Language": "en-US,en;q=0.9",
-            },
+            viewport={"width": self.viewport_width, "height": self.viewport_height}
+        )
+        self._page = await self._context.new_page()
+        await self._page.goto("about:blank")
+
+    async def close(self) -> None:
+        if self._page is not None:
+            await self._page.close()
+            self._page = None
+        if self._context is not None:
+            await self._context.close()
+            self._context = None
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
+
+    async def capture(self) -> CaptureFrame:
+        page = await self._require_page()
+        artifact_path = self._next_artifact_path("capture")
+        await page.screenshot(path=str(artifact_path), type="png")
+        return CaptureFrame(
+            artifact_path=str(artifact_path),
+            width=self.viewport_width,
+            height=self.viewport_height,
+            mime_type="image/png",
         )
 
-        # Mask navigator.webdriver and other automation fingerprints.
-        await self._context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-            window.chrome = { runtime: {} };
-        """)
-
-        self._page = await self._context.new_page()
-
-        # Navigate to a blank page to ensure the page is usable immediately.
-        await self._page.goto("about:blank")
-        self._started = True
-        logger.info("Browser started successfully")
-
-    async def stop(self) -> None:
-        """Close the browser and clean up all resources."""
-        if not self._started:
-            return
-
-        logger.info("Stopping browser")
-        # Each cleanup step is independent -- one failure should not block the rest.
-        try:
-            if self._page and not self._page.is_closed():
-                await self._page.close()
-        except Exception as exc:
-            logger.debug("Error closing page: %s", exc)
+    async def execute(self, action: AgentAction) -> ExecutedAction:
+        page = await self._require_page()
+        detail = f"Executed {action.action_type.value}"
+        success = True
+        failure_category = None
+        failure_stage = None
 
         try:
-            if self._context:
-                await self._context.close()
+            if action.action_type is ActionType.CLICK:
+                await self._execute_click(page, action)
+                detail = "Clicked target."
+            elif action.action_type is ActionType.TYPE:
+                await self._execute_type(page, action)
+                detail = "Typed text."
+            elif action.action_type is ActionType.PRESS_KEY:
+                await page.keyboard.press(action.key or "")
+                detail = f"Pressed key {action.key}."
+            elif action.action_type is ActionType.NAVIGATE:
+                await page.goto(action.url or "about:blank", wait_until="domcontentloaded")
+                detail = f"Navigated to {action.url}."
+            elif action.action_type is ActionType.WAIT:
+                await asyncio.sleep((action.wait_ms or 0) / 1000)
+                detail = f"Waited {action.wait_ms}ms."
+            elif action.action_type is ActionType.STOP:
+                detail = "Stop action acknowledged."
         except Exception as exc:
-            logger.debug("Error closing context: %s", exc)
+            success = False
+            detail = f"Execution failed: {exc}"
+            failure_category = self._classify_execution_failure(exc)
+            failure_stage = LoopStage.EXECUTE
 
+        artifact_path = None
         try:
-            if self._browser:
-                await self._browser.close()
-        except Exception as exc:
-            logger.debug("Error closing browser: %s", exc)
+            artifact_path = str(self._next_artifact_path("after"))
+            await page.screenshot(path=artifact_path, type="png")
+        except Exception:
+            artifact_path = None
 
-        try:
-            if self._playwright:
-                await self._playwright.stop()
-        except Exception as exc:
-            logger.debug("Error stopping playwright: %s", exc)
+        return ExecutedAction(
+            action=action,
+            success=success,
+            detail=detail,
+            artifact_path=artifact_path,
+            failure_category=failure_category,
+            failure_stage=failure_stage,
+        )
 
-        self._page = None
-        self._context = None
-        self._browser = None
-        self._playwright = None
-        self._started = False
-        logger.info("Browser stopped")
-
-    def _ensure_started(self) -> Page:
-        """Return the active page, raising if the browser has not been started."""
-        if not self._started or self._page is None:
-            raise RuntimeError(
-                "Browser has not been started. Call await executor.start() first."
-            )
+    async def _require_page(self) -> Page:
+        await self.start()
+        if self._page is None:
+            raise RuntimeError("Playwright page did not initialize.")
         return self._page
 
-    async def _screenshot_raw(self) -> bytes:
-        """Capture a raw PNG screenshot of the current viewport."""
-        page = self._ensure_started()
-        try:
-            return await page.screenshot(
-                type="png", full_page=False, timeout=60000
-            )
-        except PlaywrightTimeoutError:
-            # Wait for page to settle and retry once
-            await page.wait_for_load_state("networkidle", timeout=10000)
-            return await page.screenshot(
-                type="png", full_page=False, timeout=60000
-            )
+    def _next_artifact_path(self, prefix: str) -> Path:
+        return self.artifact_root / f"{prefix}_{uuid4().hex}.png"
 
-    async def screenshot(self) -> Image.Image:
-        """Capture a full-page screenshot and return it as a PIL Image."""
-        raw = await self._screenshot_raw()
-        img = Image.open(io.BytesIO(raw)).convert("RGB")
-        logger.debug("Screenshot captured (%dx%d)", img.width, img.height)
-        return img
+    async def _execute_click(self, page: Page, action: AgentAction) -> None:
+        locator = await self._resolve_locator(page, action)
+        if locator is not None:
+            await locator.click()
+            return
 
-    async def screenshot_base64(self) -> str:
-        """Capture a screenshot and return it as a base64-encoded PNG string."""
-        raw = await self._screenshot_raw()
-        return base64.b64encode(raw).decode("utf-8")
+        handle = await self._resolve_element_handle(page, action)
+        if handle is not None:
+            await handle.click()
+            return
 
-    # ------------------------------------------------------------------
-    # Individual action helpers
-    # ------------------------------------------------------------------
+        if action.x is not None and action.y is not None:
+            await page.mouse.click(action.x, action.y)
+            return
 
-    async def _click(self, x: int, y: int) -> None:
-        page = self._ensure_started()
-        logger.debug("Click at (%d, %d)", x, y)
-        await page.mouse.click(x, y)
-        # Brief wait for any triggered navigation or animation.
-        await asyncio.sleep(0.3)
+        raise RuntimeError("Unable to resolve click target.")
 
-    async def _type(self, text: str) -> None:
-        page = self._ensure_started()
-        logger.debug("Typing %d characters", len(text))
-        await page.keyboard.type(text, delay=30)
+    async def _execute_type(self, page: Page, action: AgentAction) -> None:
+        locator = await self._resolve_locator(page, action)
+        if locator is not None:
+            if await self._locator_is_fillable(locator):
+                await locator.click()
+                await locator.fill(action.text or "")
+                return
+            if await self._locator_can_focus_editable(page, locator):
+                await page.keyboard.press("Control+A")
+                await page.keyboard.type(action.text or "")
+                return
+            raise RuntimeError("Resolved type target is not editable.")
 
-    async def _key(self, key: str) -> None:
-        page = self._ensure_started()
-        logger.debug("Key press: %s", key)
-        await page.keyboard.press(key)
-        await asyncio.sleep(0.2)
+        handle = await self._resolve_element_handle(page, action)
+        if handle is not None:
+            if await self._handle_is_fillable(handle):
+                await handle.click()
+                await handle.fill(action.text or "")
+                return
+            if await self._handle_can_focus_editable(page, handle):
+                await page.keyboard.press("Control+A")
+                await page.keyboard.type(action.text or "")
+                return
+            raise RuntimeError("Resolved type target is not editable.")
 
-    async def _scroll(
-        self,
-        x: int,
-        y: int,
-        direction: str,
-        amount: int,
-    ) -> None:
-        page = self._ensure_started()
-        pixels = amount * 100  # 100px per scroll unit
-        delta_x = 0
-        delta_y = 0
+        raise RuntimeError("Unable to resolve type target.")
 
-        if direction == "down":
-            delta_y = pixels
-        elif direction == "up":
-            delta_y = -pixels
-        elif direction == "right":
-            delta_x = pixels
-        elif direction == "left":
-            delta_x = -pixels
-        else:
-            raise ValueError(f"Unknown scroll direction: {direction!r}")
+    async def _resolve_locator(self, page: Page, action: AgentAction) -> Locator | None:
+        for selector in self._candidate_selectors(action):
+            locator = page.locator(selector).first
+            if await locator.count() > 0:
+                return locator
+        return None
 
-        logger.debug(
-            "Scroll at (%d, %d) direction=%s amount=%d", x, y, direction, amount
+    async def _resolve_element_handle(self, page: Page, action: AgentAction) -> ElementHandle | None:
+        if action.x is None or action.y is None:
+            return None
+
+        handle = await page.evaluate_handle(
+            """
+            ({ x, y }) => document.elementFromPoint(x, y)
+            """,
+            {"x": action.x, "y": action.y},
         )
-        # Move mouse to the scroll target first so the scroll hits the right element.
-        await page.mouse.move(x, y)
-        await page.mouse.wheel(delta_x, delta_y)
-        await asyncio.sleep(0.2)
+        return handle.as_element()
 
-    async def navigate(self, url: str) -> None:
-        """Navigate to a URL. Only http(s) and about: schemes are allowed."""
-        page = self._ensure_started()
-        if not url.startswith(("http://", "https://", "about:")):
-            url = "https://" + url
-        logger.info("Navigating to %s", url)
-        try:
-            await page.goto(url, wait_until="load", timeout=60_000)
-        except Exception:
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            except Exception as exc:
-                logger.warning("Navigation fallback failed: %s", exc)
-        # Wait briefly for JS-rendered content to paint.
-        await asyncio.sleep(1.5)
-        # Extra wait if the body appears empty (SPA still rendering).
-        try:
-            await page.wait_for_function(
-                "document.body && document.body.innerText.trim().length > 50",
-                timeout=5_000,
-            )
-        except Exception:
-            pass  # best-effort — take the screenshot regardless
+    async def _locator_is_fillable(self, locator: Locator) -> bool:
+        return await locator.evaluate(
+            "element => ['input', 'textarea'].includes(element.tagName.toLowerCase())"
+        )
 
-    async def _wait(self, duration_ms: int) -> None:
-        logger.debug("Waiting %d ms", duration_ms)
-        await asyncio.sleep(duration_ms / 1000.0)
+    async def _locator_can_focus_editable(self, page: Page, locator: Locator) -> bool:
+        await locator.click()
+        return await self._active_element_is_editable(page)
 
-    # ------------------------------------------------------------------
-    # Main execute method
-    # ------------------------------------------------------------------
+    async def _handle_is_fillable(self, handle: ElementHandle) -> bool:
+        return await handle.evaluate(
+            "element => ['input', 'textarea'].includes(element.tagName.toLowerCase())"
+        )
 
-    async def execute(self, action: Action) -> ActionResult:
-        """Execute a single action and return the result."""
-        action_type = ActionType(action.type)
+    async def _handle_can_focus_editable(self, page: Page, handle: ElementHandle) -> bool:
+        await handle.click()
+        return await self._active_element_is_editable(page)
 
-        try:
-            if action_type == ActionType.CLICK:
-                if not action.coordinate or len(action.coordinate) < 2:
-                    return ActionResult(
-                        success=False,
-                        error="CLICK action requires 'coordinate' [x, y]",
-                        action_type=action.type,
-                    )
-                await self._click(action.coordinate[0], action.coordinate[1])
-                screenshot_b64 = await self.screenshot_base64()
-                return ActionResult(
-                    success=True,
-                    screenshot=screenshot_b64,
-                    action_type=action.type,
-                )
+    async def _active_element_is_editable(self, page: Page) -> bool:
+        return await page.evaluate(
+            """
+            () => {
+              const active = document.activeElement;
+              if (!active) return false;
+              const tag = active.tagName.toLowerCase();
+              return active.isContentEditable || tag === 'input' || tag === 'textarea';
+            }
+            """
+        )
 
-            elif action_type == ActionType.TYPE:
-                if action.text is None:
-                    return ActionResult(
-                        success=False,
-                        error="TYPE action requires 'text'",
-                        action_type=action.type,
-                    )
-                await self._type(action.text)
-                return ActionResult(success=True, action_type=action.type)
+    def _candidate_selectors(self, action: AgentAction) -> list[str]:
+        selectors: list[str] = []
+        if action.selector is not None:
+            selectors.append(action.selector)
 
-            elif action_type == ActionType.KEY:
-                if not action.key:
-                    return ActionResult(
-                        success=False,
-                        error="KEY action requires 'key'",
-                        action_type=action.type,
-                    )
-                await self._key(action.key)
-                screenshot_b64 = await self.screenshot_base64()
-                return ActionResult(
-                    success=True,
-                    screenshot=screenshot_b64,
-                    action_type=action.type,
-                )
+        target = action.target_element_id
+        if target is None:
+            return selectors
 
-            elif action_type == ActionType.SCROLL:
-                coord = action.coordinate or [self.width // 2, self.height // 2]
-                direction = action.scroll_direction or "down"
-                amount = action.scroll_amount or 3
-                await self._scroll(coord[0], coord[1], direction, amount)
-                return ActionResult(success=True, action_type=action.type)
+        selectors.extend(self._derived_selector_candidates(target))
+        selectors.extend(
+            [
+                f"[aria-label='{self._escape_attr_value(target)}']",
+                f"[name='{self._escape_attr_value(target)}']",
+                f"[data-testid='{self._escape_attr_value(target)}']",
+            ]
+        )
+        return selectors
 
-            elif action_type == ActionType.NAVIGATE:
-                if not action.url:
-                    return ActionResult(
-                        success=False,
-                        error="NAVIGATE action requires 'url'",
-                        action_type=action.type,
-                    )
-                await self.navigate(action.url)
-                screenshot_b64 = await self.screenshot_base64()
-                return ActionResult(
-                    success=True,
-                    screenshot=screenshot_b64,
-                    action_type=action.type,
-                )
+    def _derived_selector_candidates(self, target: str) -> list[str]:
+        escaped = self._escape_attr_value(target)
+        candidates = [f"[id='{escaped}']"]
+        if self._is_css_identifier(target):
+            candidates.insert(0, f"#{target}")
+        return candidates
 
-            elif action_type == ActionType.WAIT:
-                duration = action.duration_ms or 1000
-                await self._wait(duration)
-                return ActionResult(success=True, action_type=action.type)
+    @staticmethod
+    def _escape_attr_value(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
 
-            elif action_type == ActionType.SCREENSHOT:
-                screenshot_b64 = await self.screenshot_base64()
-                return ActionResult(
-                    success=True,
-                    screenshot=screenshot_b64,
-                    action_type=action.type,
-                )
+    @staticmethod
+    def _is_css_identifier(value: str) -> bool:
+        if not value:
+            return False
+        allowed = set("-_:")
+        return all(character.isalnum() or character in allowed for character in value)
 
-            elif action_type == ActionType.DONE:
-                logger.info("DONE action received — task signalled as complete")
-                return ActionResult(success=True, action_type=action.type)
-
-            else:
-                return ActionResult(
-                    success=False,
-                    error=f"Unknown action type: {action.type!r}",
-                    action_type=action.type,
-                )
-
-        except Exception as exc:
-            logger.exception("Error executing action %s: %s", action.type, exc)
-            return ActionResult(
-                success=False,
-                error=str(exc),
-                action_type=action.type,
-            )
-
-    async def current_url(self) -> str:
-        """Return the current page URL."""
-        page = self._ensure_started()
-        return page.url
-
-    async def page_title(self) -> str:
-        """Return the current page title."""
-        page = self._ensure_started()
-        return await page.title()
+    @staticmethod
+    def _classify_execution_failure(exc: Exception) -> FailureCategory:
+        message = str(exc)
+        if "not editable" in message:
+            return FailureCategory.EXECUTION_TARGET_NOT_EDITABLE
+        if "Unable to resolve" in message:
+            return FailureCategory.EXECUTION_TARGET_NOT_FOUND
+        return FailureCategory.EXECUTION_ERROR

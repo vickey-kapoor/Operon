@@ -1,0 +1,161 @@
+"""Policy service interface for next-action selection."""
+
+from __future__ import annotations
+
+import json
+from abc import ABC, abstractmethod
+from pathlib import Path
+
+from pydantic import ValidationError
+
+from src.clients.gemini import GeminiClient, GeminiClientError
+from src.models.logs import ModelDebugArtifacts
+from src.models.perception import ScreenPerception, UIElementType
+from src.models.policy import ActionType, AgentAction, PolicyDecision
+from src.models.state import AgentState
+
+
+class PolicyError(RuntimeError):
+    """Raised when Gemini policy output cannot be parsed into strict schemas."""
+
+
+class PolicyService(ABC):
+    @abstractmethod
+    async def choose_action(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision:
+        """Choose the next action from current state and perception."""
+
+
+class GeminiPolicyService(PolicyService):
+    """Gemini-backed policy implementation for one-step next-action selection."""
+
+    def __init__(
+        self,
+        gemini_client: GeminiClient,
+        prompt_path: Path | None = None,
+    ) -> None:
+        self.gemini_client = gemini_client
+        self.prompt_path = prompt_path or Path(__file__).resolve().parents[2] / "prompts" / "policy_prompt.txt"
+        self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
+        self._last_debug_artifacts: ModelDebugArtifacts | None = None
+
+    async def choose_action(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision:
+        prompt = self._render_prompt(state, perception)
+        step_dir = Path(perception.capture_artifact_path).resolve().parent
+        debug_artifacts = self._artifact_paths(step_dir)
+        debug_artifacts.prompt_artifact_path.write_text(prompt, encoding="utf-8")
+        try:
+            raw_output = await self.gemini_client.generate_policy(prompt)
+        except GeminiClientError:
+            raise
+        debug_artifacts.raw_response_artifact_path.write_text(raw_output, encoding="utf-8")
+        decision = parse_policy_output(raw_output)
+        decision = self._apply_focus_first_guardrail(state, perception, decision)
+        debug_artifacts.parsed_artifact_path.write_text(decision.model_dump_json(indent=2), encoding="utf-8")
+        self._last_debug_artifacts = ModelDebugArtifacts(
+            prompt_artifact_path=str(debug_artifacts.prompt_artifact_path),
+            raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
+            parsed_artifact_path=str(debug_artifacts.parsed_artifact_path),
+        )
+        return decision
+
+    def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
+        return self._last_debug_artifacts
+
+    def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
+        return self._prompt_template.format(
+            intent=state.intent,
+            current_subgoal=state.current_subgoal or "not set",
+            step_count=state.step_count,
+            retry_counts=json.dumps(state.retry_counts, sort_keys=True),
+            perception_json=perception.model_dump_json(indent=2),
+        )
+
+    def _apply_focus_first_guardrail(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision:
+        action = decision.action
+        if action.action_type is not ActionType.TYPE:
+            return decision
+        if action.selector is not None:
+            return decision
+
+        target_id = action.target_element_id
+        if target_id is None:
+            return decision
+
+        target = next((element for element in perception.visible_elements if element.element_id == target_id), None)
+        if target is None or target.element_type is not UIElementType.INPUT or not target.is_interactable:
+            return decision
+
+        if perception.focused_element_id == target_id:
+            return decision
+
+        click_action = AgentAction(
+            action_type=ActionType.CLICK,
+            target_element_id=target_id,
+            x=target.x + max(1, target.width // 2),
+            y=target.y + max(1, target.height // 2),
+        )
+        return PolicyDecision(
+            action=click_action,
+            rationale=f"Focus {target.label} before typing.",
+            confidence=min(decision.confidence, 0.8),
+            active_subgoal=f"focus {target_id}",
+        )
+
+    @staticmethod
+    def _artifact_paths(step_dir: Path) -> "_StageArtifactPaths":
+        step_dir.mkdir(parents=True, exist_ok=True)
+        return _StageArtifactPaths(
+            prompt_artifact_path=step_dir / "policy_prompt.txt",
+            raw_response_artifact_path=step_dir / "policy_raw.txt",
+            parsed_artifact_path=step_dir / "policy_decision.json",
+        )
+
+
+class _StageArtifactPaths:
+    def __init__(self, prompt_artifact_path: Path, raw_response_artifact_path: Path, parsed_artifact_path: Path) -> None:
+        self.prompt_artifact_path = prompt_artifact_path
+        self.raw_response_artifact_path = raw_response_artifact_path
+        self.parsed_artifact_path = parsed_artifact_path
+
+
+def parse_policy_output(raw_output: str) -> PolicyDecision:
+    cleaned = _strip_json_fence(raw_output)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise PolicyError("Gemini policy output was not valid JSON.") from exc
+
+    if not isinstance(parsed, dict):
+        raise PolicyError("Gemini policy output must be a JSON object.")
+
+    try:
+        return PolicyDecision.model_validate(parsed)
+    except ValidationError as exc:
+        raise PolicyError("Gemini policy output did not match the strict schema.") from exc
+
+
+
+def _strip_json_fence(raw_output: str) -> str:
+    cleaned = raw_output.strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+
+    lines = cleaned.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()

@@ -1,1 +1,1 @@
-"""Tests for UI Navigator."""
+"""Test package for the MVP scaffold."""

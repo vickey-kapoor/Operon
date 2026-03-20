@@ -22,15 +22,16 @@ share/python-wheels/
 
 # Virtual environments
 .venv/
+.venv*/
 venv/
 env/
 ENV/
-.env.local
 
 # Environment — never commit real secrets
 .env
+.env.local
 
-# Testing
+# Testing and local artifacts
 .pytest_cache/
 .coverage
 .coverage.*
@@ -39,38 +40,33 @@ htmlcov/
 *.log
 nosetests.xml
 test-results/
+runs/
+.browser-artifacts/
+.test-artifacts/
+.tmp/
 
-# IDEs
+# Playwright browser binaries
+.ms-playwright/
+.playwright-mcp/
+
+# IDEs and local tool state
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.claude/settings.local.json
+.agents/
+.codex/
 
 # OS
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Node (extension sidepanel)
-extension/sidepanel/node_modules/
-extension/sidepanel/dist/
-
-# Playwright browser binaries (installed separately by CI)
-/ms-playwright/
-
-# Cloud Run / GCP build artefacts
-.gcloudignore
-
-# Playwright MCP temp artifacts
-.playwright-mcp/
-
-# Demo screenshots
-demo-*.png
-
-# VSCode workspace files
-*.code-workspace
-
 # Misc
 *.tmp
 *.bak
+*.code-workspace
+demo-*.png
+.gcloudignore

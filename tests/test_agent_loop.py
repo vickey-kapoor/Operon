@@ -1,8 +1,8 @@
 """Agent loop orchestration tests using async mocks."""
 
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -36,6 +36,7 @@ async def test_agent_loop_calls_stages_in_required_order() -> None:
     frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
     perception = ScreenPerception(
         summary="Inbox visible",
+        page_hint="gmail_inbox",
         capture_artifact_path=frame.artifact_path,
         visible_elements=[],
     )
@@ -125,6 +126,7 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
     frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
     perception = ScreenPerception(
         summary="Compose button visible",
+        page_hint="gmail_inbox",
         capture_artifact_path=frame.artifact_path,
         visible_elements=[],
     )

@@ -7,8 +7,7 @@ from abc import ABC, abstractmethod
 from src.clients.gemini import GeminiClient
 from src.models.common import FailureCategory, LoopStage
 from src.models.execution import ExecutedAction
-from src.models.policy import ActionType
-from src.models.policy import PolicyDecision
+from src.models.policy import ActionType, PolicyDecision
 from src.models.state import AgentState
 from src.models.verification import (
     VerificationFailureType,

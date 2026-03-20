@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
-import shutil
 
 from src.executor.browser import BrowserExecutor
 from src.models.capture import CaptureFrame

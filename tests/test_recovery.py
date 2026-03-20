@@ -8,7 +8,11 @@ from src.models.execution import ExecutedAction
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryStrategy
 from src.models.state import AgentState
-from src.models.verification import VerificationFailureType, VerificationResult, VerificationStatus
+from src.models.verification import (
+    VerificationFailureType,
+    VerificationResult,
+    VerificationStatus,
+)
 
 
 def _decision() -> PolicyDecision:

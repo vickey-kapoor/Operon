@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 from src.models.execution import ExecutedAction
 from src.models.logs import ModelDebugArtifacts, StepLog
@@ -11,8 +11,8 @@ from src.models.perception import ScreenPerception
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.verification import VerificationResult, VerificationStatus
-from src.store.run_logger import append_step_log
 from src.store.replay import load_run_replay, render_run_replay
+from src.store.run_logger import append_step_log
 
 
 def _local_test_dir(name: str) -> Path:
@@ -51,6 +51,7 @@ def test_replay_loader_reads_step_logs() -> None:
     recovery = RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="retry", retry_after_ms=1000)
     perception = ScreenPerception(
         summary="Inbox visible",
+        page_hint="gmail_inbox",
         capture_artifact_path=str(step_dir / "before.png"),
         visible_elements=[],
     )
@@ -97,6 +98,7 @@ def test_replay_renderer_lists_artifact_refs_and_outcomes() -> None:
     recovery = RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="continue")
     perception = ScreenPerception(
         summary="Compose button visible",
+        page_hint="gmail_inbox",
         capture_artifact_path=str(step_dir / "before.png"),
         visible_elements=[],
     )

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 from src.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from src.models.execution import ExecutedAction
@@ -68,7 +68,7 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
             after_artifact_path=str(success_step / "after.png"),
             perception_debug=_debug("perception", success_step),
             policy_debug=_debug("policy", success_step),
-            perception=ScreenPerception(summary="Draft ready", capture_artifact_path=str(success_step / "before.png"), visible_elements=[]),
+            perception=ScreenPerception(summary="Draft ready", page_hint="gmail_compose", capture_artifact_path=str(success_step / "before.png"), visible_elements=[]),
             policy_decision=PolicyDecision(action=success_action, rationale="Stop before send.", confidence=1.0, active_subgoal="stop before send"),
             executed_action=ExecutedAction(action=success_action, success=True, detail="stopped"),
             verification_result=VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=True, reason="stop boundary reached"),
@@ -100,7 +100,7 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
             after_artifact_path=str(retry_step / "after.png"),
             perception_debug=_debug("perception", retry_step),
             policy_debug=_debug("policy", retry_step),
-            perception=ScreenPerception(summary="Inbox visible", capture_artifact_path=str(retry_step / "before.png"), visible_elements=[]),
+            perception=ScreenPerception(summary="Inbox visible", page_hint="gmail_inbox", capture_artifact_path=str(retry_step / "before.png"), visible_elements=[]),
             policy_decision=PolicyDecision(action=retry_action, rationale="Open compose.", confidence=0.7, active_subgoal="open compose"),
             executed_action=ExecutedAction(action=retry_action, success=False, detail="Execution failed", failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND, failure_stage=LoopStage.EXECUTE),
             verification_result=VerificationResult(status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="action failed", failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND, failure_stage=LoopStage.EXECUTE),

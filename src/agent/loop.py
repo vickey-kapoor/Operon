@@ -1,7 +1,7 @@
 """Agent loop orchestrator for the Gmail draft MVP workflow."""
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 from src.agent.capture import CaptureService
 from src.agent.perception import PerceptionService
@@ -9,11 +9,17 @@ from src.agent.policy import PolicyService
 from src.agent.recovery import RecoveryManager
 from src.agent.verifier import VerifierService
 from src.executor.browser import BrowserExecutor
-from src.models.common import FailureCategory, LoopStage, RunResponse, RunStatus, RunTaskRequest, StepRequest, StopReason
+from src.models.common import (
+    LoopStage,
+    RunResponse,
+    RunStatus,
+    RunTaskRequest,
+    StepRequest,
+    StopReason,
+)
 from src.models.logs import FailureRecord, ModelDebugArtifacts, StepLog
 from src.models.policy import ActionType, AgentAction
-from src.models.recovery import RecoveryDecision
-from src.models.recovery import RecoveryStrategy
+from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.verification import VerificationStatus
 from src.store.run_logger import append_step_log
 from src.store.run_store import RunStore

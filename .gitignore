@@ -55,7 +55,7 @@ runs/
 *.swp
 *.swo
 *~
-.claude/settings.local.json
+.claude/
 .agents/
 .codex/
 

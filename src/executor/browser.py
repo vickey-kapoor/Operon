@@ -9,7 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from playwright.async_api import Browser, BrowserContext, ElementHandle, Locator, Page, Playwright, async_playwright
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    ElementHandle,
+    Locator,
+    Page,
+    Playwright,
+    async_playwright,
+)
 
 from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, LoopStage

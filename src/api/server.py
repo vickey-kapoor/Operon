@@ -1,7 +1,7 @@
 """FastAPI application bootstrap for the MVP browser-only agent."""
 
-from fastapi import FastAPI
 from dotenv import find_dotenv, load_dotenv
+from fastapi import FastAPI
 
 
 def create_app() -> FastAPI:

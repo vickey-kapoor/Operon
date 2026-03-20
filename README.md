@@ -18,9 +18,14 @@ The control loop is the center of the system:
 
 Use Python `3.11` for this repo.
 
-Recommended local virtual environment:
+Create a local virtual environment and install the project:
 
-- [`.venv311sys`](./.venv311sys)
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -e .
+```
 
 Gemini credentials must be provided through environment variables or a local `.env` file. The benchmark path and FastAPI app both load `.env` before creating `GeminiHttpClient`.
 
@@ -29,21 +34,23 @@ Gemini credentials must be provided through environment variables or a local `.e
 Use repo-local temp and browser cache paths when running Playwright:
 
 ```powershell
-$env:TEMP=".\.tmp"
-$env:TMP=".\.tmp"
-$env:PLAYWRIGHT_BROWSERS_PATH=".\.ms-playwright"
+$env:TEMP = (Join-Path $PWD ".tmp")
+$env:TMP = (Join-Path $PWD ".tmp")
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path $PWD ".ms-playwright")
+New-Item -ItemType Directory -Force $env:TEMP | Out-Null
+New-Item -ItemType Directory -Force $env:PLAYWRIGHT_BROWSERS_PATH | Out-Null
 ```
 
 Install Chromium for the repo-local Playwright environment:
 
 ```powershell
-.\.venv311sys\Scripts\python.exe -m playwright install chromium
+python -m playwright install chromium
 ```
 
 Quick browser launch check:
 
 ```powershell
-.\.venv311sys\Scripts\python.exe -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(); page=b.new_page(); page.goto('https://example.com'); print(page.title()); b.close(); p.stop()"
+python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(); page=b.new_page(); page.goto('https://example.com'); print(page.title()); b.close(); p.stop()"
 ```
 
 Expected output:
@@ -54,10 +61,10 @@ Example Domain
 
 ## Run The API
 
-Start the FastAPI app served from [server.py](./src/api/server.py):
+Start the FastAPI app from `src/api/server.py`:
 
 ```powershell
-.\.venv311sys\Scripts\python.exe -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
+python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
 ```
 
 Available routes:
@@ -78,13 +85,13 @@ Invoke-RestMethod -Method Post `
 
 ## Run The Benchmark
 
-Run the local Gmail benchmark entry point from [benchmark.py](./src/agent/benchmark.py):
+Run the local Gmail benchmark entry point from `src/agent/benchmark.py`:
 
 ```powershell
-$env:TEMP=".\.tmp"
-$env:TMP=".\.tmp"
-$env:PLAYWRIGHT_BROWSERS_PATH=".\.ms-playwright"
-.\.venv311sys\Scripts\python.exe -m src.agent.benchmark
+$env:TEMP = (Join-Path $PWD ".tmp")
+$env:TMP = (Join-Path $PWD ".tmp")
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path $PWD ".ms-playwright")
+python -m src.agent.benchmark
 ```
 
 This runs until one terminal condition is reached:
@@ -95,20 +102,20 @@ This runs until one terminal condition is reached:
 
 ## Inspect Stored Runs
 
-Replay one run from [replay.py](./src/store/replay.py):
+Replay one run from `src/store/replay.py`:
 
 ```powershell
-.\.venv311sys\Scripts\python.exe -m src.store.replay <run_id>
+python -m src.store.replay <run_id>
 ```
 
-Summarize one run or a directory of runs from [summary.py](./src/store/summary.py):
+Summarize one run or a directory of runs from `src/store/summary.py`:
 
 ```powershell
-.\.venv311sys\Scripts\python.exe -m src.store.summary <run_id>
+python -m src.store.summary <run_id>
 ```
 
 ```powershell
-.\.venv311sys\Scripts\python.exe -m src.store.summary runs
+python -m src.store.summary runs
 ```
 
 Run data is stored locally under `runs/<run_id>/` and includes:
@@ -121,7 +128,7 @@ Run data is stored locally under `runs/<run_id>/` and includes:
 
 ## Browser Debug Mode
 
-The Playwright executor in [browser.py](./src/executor/browser.py) supports environment-controlled debug launch settings.
+The Playwright executor in `src/executor/browser.py` supports environment-controlled debug launch settings.
 
 Defaults preserve current behavior:
 
@@ -132,9 +139,9 @@ Defaults preserve current behavior:
 Enable visible debug mode:
 
 ```powershell
-$env:BROWSER_HEADLESS="false"
-$env:BROWSER_SLOW_MO_MS="250"
-$env:BROWSER_DEVTOOLS="true"
+$env:BROWSER_HEADLESS = "false"
+$env:BROWSER_SLOW_MO_MS = "250"
+$env:BROWSER_DEVTOOLS = "true"
 ```
 
 `BROWSER_DEVTOOLS=true` opens Chromium devtools using the launch arg `--auto-open-devtools-for-tabs` because the installed Playwright version does not accept a `devtools=` launch kwarg.
@@ -144,10 +151,11 @@ $env:BROWSER_DEVTOOLS="true"
 Run the browser executor tests:
 
 ```powershell
-$env:TEMP=".\.tmp"
-$env:TMP=".\.tmp"
-$env:PLAYWRIGHT_BROWSERS_PATH=".\.ms-playwright"
-.\.venv311sys\Scripts\python.exe -m pytest tests\test_browser_executor.py -q
+$env:TEMP = (Join-Path $PWD ".tmp")
+$env:TMP = (Join-Path $PWD ".tmp")
+$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path $PWD ".ms-playwright")
+$env:GEMINI_API_KEY = "fake-test-key"
+python -m pytest tests\test_browser_executor.py -q
 ```
 
 Run the full MVP test suite you are working on as needed with the same Playwright env variables.

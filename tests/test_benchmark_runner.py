@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.agent.loop import AgentLoop
-from src.models.common import RunStatus, RunResponse
+from src.models.common import RunResponse, RunStatus
 from src.models.policy import ActionType
 from src.models.state import AgentState
 

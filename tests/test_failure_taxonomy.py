@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -15,13 +15,23 @@ from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import PlaceholderGeminiClient
 from src.models.capture import CaptureFrame
-from src.models.common import FailureCategory, LoopStage, RunStatus, StepRequest, StopReason
+from src.models.common import (
+    FailureCategory,
+    LoopStage,
+    RunStatus,
+    StepRequest,
+    StopReason,
+)
 from src.models.execution import ExecutedAction
 from src.models.logs import ModelDebugArtifacts, StepLog
 from src.models.perception import ScreenPerception
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.state import AgentState
-from src.models.verification import VerificationFailureType, VerificationResult, VerificationStatus
+from src.models.verification import (
+    VerificationFailureType,
+    VerificationResult,
+    VerificationStatus,
+)
 
 
 def _local_test_dir(name: str) -> Path:
@@ -95,7 +105,7 @@ async def test_recovery_marks_retry_limit_as_terminal_failure() -> None:
 async def test_step_log_records_failure_taxonomy_for_failed_step() -> None:
     state = AgentState(run_id="run-3", intent="Create draft", status=RunStatus.PENDING)
     frame = CaptureFrame(artifact_path="runs/run-3/step_1/before.png", width=1280, height=800, mime_type="image/png")
-    perception = ScreenPerception(summary="Inbox visible", capture_artifact_path=frame.artifact_path, visible_elements=[])
+    perception = ScreenPerception(summary="Inbox visible", page_hint="gmail_inbox", capture_artifact_path=frame.artifact_path, visible_elements=[])
     action = AgentAction(action_type=ActionType.CLICK, target_element_id="missing")
     decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.8, active_subgoal="open compose")
     executed = ExecutedAction(

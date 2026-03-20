@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -44,6 +44,7 @@ async def test_file_backed_run_store_persists_and_reloads_state() -> None:
 
     perception = ScreenPerception(
         summary="Inbox visible",
+        page_hint="gmail_inbox",
         capture_artifact_path=store.before_artifact_path(created.run_id, 1),
         visible_elements=[],
     )
@@ -76,6 +77,7 @@ def test_jsonl_logging_appends_complete_step_entries() -> None:
     recovery = RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="retry", retry_after_ms=1000)
     perception = ScreenPerception(
         summary="Inbox visible",
+        page_hint="gmail_inbox",
         capture_artifact_path="runs/run-1/step_1/before.png",
         visible_elements=[],
     )
@@ -115,6 +117,7 @@ async def test_log_and_state_consistency_for_artifact_paths() -> None:
     after_path = store.after_artifact_path(state.run_id, 1)
     perception = ScreenPerception(
         summary="Inbox visible",
+        page_hint="gmail_inbox",
         capture_artifact_path=before_path,
         visible_elements=[],
     )

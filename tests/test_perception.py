@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.perception import GeminiPerceptionService, PerceptionError, parse_perception_output
+from src.agent.perception import (
+    GeminiPerceptionService,
+    PerceptionError,
+    parse_perception_output,
+)
 from src.models.capture import CaptureFrame
 from src.models.common import RunStatus
 from src.models.perception import PageHint

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
 import pytest
 
 from src.agent.capture import BrowserCaptureService
-from src.executor.browser import PlaywrightBrowserExecutor, _read_browser_debug_config
+from src.executor.browser import (
+    PlaywrightBrowserExecutor,
+    _ensure_windows_process_env,
+    _read_browser_debug_config,
+)
 from src.models.common import FailureCategory, RunStatus
 from src.models.policy import ActionType, AgentAction
 from src.models.state import AgentState
@@ -55,6 +60,17 @@ def test_browser_debug_config_reads_env_flags(monkeypatch: pytest.MonkeyPatch) -
     assert executor.headless is False
     assert executor.slow_mo_ms == 250
     assert executor.devtools is True
+
+
+def test_windows_process_env_restores_system_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SystemRoot", raising=False)
+    monkeypatch.delenv("WINDIR", raising=False)
+    monkeypatch.setenv("TEMP", "C:\\Temp")
+
+    _ensure_windows_process_env()
+
+    assert os.environ.get("SystemRoot") == "C:\\Windows"
+    assert os.environ.get("WINDIR") == "C:\\Windows"
 
 
 @pytest.mark.asyncio

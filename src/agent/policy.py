@@ -41,6 +41,7 @@ class GeminiPolicyService(PolicyService):
         self.prompt_path = prompt_path or Path(__file__).resolve().parents[2] / "prompts" / "policy_prompt.txt"
         self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
+        self._advisory_hints: list[str] = []
 
     async def choose_action(
         self,
@@ -69,14 +70,21 @@ class GeminiPolicyService(PolicyService):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
+    def set_advisory_hints(self, hints: list[str]) -> None:
+        self._advisory_hints = [hint for hint in hints if hint]
+
     def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
-        return self._prompt_template.format(
+        prompt = self._prompt_template.format(
             intent=state.intent,
             current_subgoal=state.current_subgoal or "not set",
             step_count=state.step_count,
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             perception_json=perception.model_dump_json(indent=2),
         )
+        if self._advisory_hints:
+            prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {hint}" for hint in self._advisory_hints)
+        self._advisory_hints = []
+        return prompt
 
     def _apply_focus_first_guardrail(
         self,
@@ -95,7 +103,7 @@ class GeminiPolicyService(PolicyService):
             return decision
 
         target = next((element for element in perception.visible_elements if element.element_id == target_id), None)
-        if target is None or target.element_type is not UIElementType.INPUT or not target.is_interactable:
+        if target is None or target.element_type is not UIElementType.INPUT or not target.usable_for_targeting:
             return decision
 
         if perception.focused_element_id == target_id:
@@ -109,7 +117,7 @@ class GeminiPolicyService(PolicyService):
         )
         return PolicyDecision(
             action=click_action,
-            rationale=f"Focus {target.label} before typing.",
+            rationale=f"Focus {target.primary_name} before typing.",
             confidence=min(decision.confidence, 0.8),
             active_subgoal=f"focus {target_id}",
         )

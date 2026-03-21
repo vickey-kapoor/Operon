@@ -1,4 +1,4 @@
-"""UI Navigator - AI-powered browser automation using Gemini multimodal."""
+"""Operon - vision-driven computer-use engine for UI-native automation."""
 
 __version__ = "1.4.0"
-__author__ = "UI Navigator"
+__author__ = "Operon"

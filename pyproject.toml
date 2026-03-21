@@ -3,17 +3,29 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ui-navigator-mvp"
+name = "operon"
 version = "0.1.0"
-description = "Browser-only Gmail draft MVP scaffold."
+description = "Vision-driven computer-use engine for UI-native automation."
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0,<1.0.0",
     "pydantic>=2.9.0,<3.0.0",
     "playwright>=1.48.0,<2.0.0",
+    "python-dotenv>=1.0.1,<2.0.0",
     "uvicorn[standard]>=0.32.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0,<9.0.0",
+    "pytest-asyncio>=0.24.0,<1.0.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "asyncio: mark a test as using asyncio",
+]

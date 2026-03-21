@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Operon Observer</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101419; --panel:#18212b; --muted:#7f94aa; --text:#e7eef6; --border:#2a3948; --accent:#7de2d1; --warn:#ffcf66; --bad:#ff7d7d; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:linear-gradient(180deg,#0f1419,#111b24); color:var(--text); }
+    .layout { display:grid; grid-template-columns: 280px 1fr; min-height:100vh; }
+    .sidebar, .content { padding:16px; box-sizing:border-box; }
+    .sidebar { border-right:1px solid var(--border); background:#0f151c; }
+    .content { display:grid; gap:16px; grid-template-rows:auto auto 1fr; }
+    .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; }
+    h1,h2,h3 { margin:0 0 8px 0; font-size:14px; letter-spacing:.02em; }
+    .run-list { display:grid; gap:8px; }
+    .run-btn { width:100%; text-align:left; background:#111922; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:10px; cursor:pointer; }
+    .run-btn.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+    .top { display:grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap:12px; }
+    .metric { font-size:12px; color:var(--muted); }
+    .metric strong { display:block; color:var(--text); font-size:14px; margin-top:4px; }
+    .main-grid { display:grid; grid-template-columns: 1.25fr 1fr; gap:16px; align-items:start; }
+    .image-wrap { position:relative; width:100%; background:#0b1015; border-radius:10px; overflow:hidden; min-height:240px; }
+    .image-wrap img { width:100%; display:block; }
+    .overlay-box { position:absolute; border:2px solid #7f94aa; box-sizing:border-box; pointer-events:none; }
+    .overlay-box.candidate { border-color: var(--warn); }
+    .overlay-box.selected { border-color: var(--accent); }
+    .overlay-box.execution { border-color: var(--bad); }
+    .overlay-label { position:absolute; top:-18px; left:0; background:rgba(0,0,0,.75); padding:1px 4px; font-size:10px; white-space:nowrap; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th, td { padding:6px; border-bottom:1px solid var(--border); vertical-align:top; text-align:left; }
+    .scroll { max-height:280px; overflow:auto; }
+    pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:12px; color:#d8e2ec; }
+    .steps { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+    .step-chip { border:1px solid var(--border); background:#101822; color:var(--text); border-radius:999px; padding:6px 10px; cursor:pointer; }
+    .muted { color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>Operon Observer</h1>
+      <div class="muted" style="margin-bottom:12px;">Live local run inspector</div>
+      <div id="runList" class="run-list"></div>
+    </aside>
+    <main class="content">
+      <section id="summary" class="top"></section>
+      <section class="main-grid">
+        <div class="panel">
+          <h2>Current Screenshot</h2>
+          <div class="steps" id="steps"></div>
+          <div id="imageWrap" class="image-wrap"><div class="muted" style="padding:16px;">No step selected</div></div>
+        </div>
+        <div class="grid2">
+          <div class="panel"><h2>Perception</h2><div id="perceptionPanel"></div></div>
+          <div class="panel"><h2>Selector</h2><div id="selectorPanel"></div></div>
+          <div class="panel"><h2>Execution</h2><div id="executionPanel"></div></div>
+          <div class="panel"><h2>Progress</h2><div id="progressPanel"></div></div>
+        </div>
+      </section>
+      <section class="grid2">
+        <div class="panel">
+          <h2>Elements</h2>
+          <div id="elementsTable" class="scroll"></div>
+        </div>
+        <div class="panel">
+          <h2>Event Feed</h2>
+          <div id="eventFeed" class="scroll"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script>
+    let selectedRunId = null;
+    let selectedStepIndex = null;
+
+    async function fetchJson(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    }
+
+    function fmt(v) { return v ?? 'none'; }
+
+    async function loadRuns() {
+      const data = await fetchJson('/observer/api/runs');
+      const list = document.getElementById('runList');
+      list.innerHTML = '';
+      for (const run of data.runs) {
+        const btn = document.createElement('button');
+        btn.className = 'run-btn' + (run.run_id === selectedRunId ? ' active' : '');
+        btn.innerHTML = `<strong>${run.run_id}</strong><div class="muted">${run.intent}</div><div class="muted">status=${run.status} step=${run.step_count}</div>`;
+        btn.onclick = () => { selectedRunId = run.run_id; selectedStepIndex = null; refreshRun(); };
+        list.appendChild(btn);
+      }
+      if (!selectedRunId && data.runs.length) {
+        selectedRunId = data.runs[0].run_id;
+      }
+    }
+
+    function renderSummary(run) {
+      const items = [
+        ['Run ID', run.run_id],
+        ['Task ID', run.current_task_id],
+        ['Step', run.step_count],
+        ['Phase', run.current_phase],
+        ['Status', run.status + (run.stop_reason ? ` / ${run.stop_reason}` : '')],
+      ];
+      document.getElementById('summary').innerHTML = items.map(([k,v]) => `<div class="panel metric">${k}<strong>${v}</strong></div>`).join('');
+    }
+
+    function renderSteps(snapshot) {
+      const container = document.getElementById('steps');
+      const steps = snapshot.steps || [];
+      if (selectedStepIndex == null && steps.length) selectedStepIndex = steps[steps.length - 1].step_index;
+      container.innerHTML = steps.map(step => `<button class="step-chip" data-step="${step.step_index}">Step ${step.step_index}</button>`).join('');
+      for (const btn of container.querySelectorAll('.step-chip')) {
+        if (Number(btn.dataset.step) === selectedStepIndex) btn.style.borderColor = 'var(--accent)';
+        btn.onclick = () => { selectedStepIndex = Number(btn.dataset.step); renderSnapshot(snapshot); };
+      }
+    }
+
+    function currentStep(snapshot) {
+      if (selectedStepIndex == null) return snapshot.current_step;
+      return (snapshot.steps || []).find(step => step.step_index === selectedStepIndex) || snapshot.current_step;
+    }
+
+    function renderImage(step) {
+      const wrap = document.getElementById('imageWrap');
+      if (!step || !step.before_artifact_path) { wrap.innerHTML = '<div class="muted" style="padding:16px;">No screenshot</div>'; return; }
+      const dims = step.before_dimensions || { width: 1280, height: 800 };
+      const selector = step.selector?.trace;
+      const candidateIds = new Set((selector?.top_candidates || []).map(c => c.element_id));
+      const selectedId = selector?.selected_candidate;
+      const executionId = step.execution?.action?.target_element_id || null;
+      wrap.innerHTML = `<img id="shot" src="/observer/api/artifact?path=${encodeURIComponent(step.before_artifact_path)}" alt="step screenshot" />`;
+      const img = wrap.querySelector('#shot');
+      const elements = step.perception?.elements || [];
+      img.onload = () => {
+        const scaleX = img.clientWidth / dims.width;
+        const scaleY = img.clientHeight / dims.height;
+        for (const el of elements) {
+          const box = document.createElement('div');
+          box.className = 'overlay-box';
+          if (candidateIds.has(el.element_id)) box.classList.add('candidate');
+          if (selectedId === el.element_id) box.classList.add('selected');
+          if (executionId === el.element_id) box.classList.add('execution');
+          box.style.left = `${el.x * scaleX}px`;
+          box.style.top = `${el.y * scaleY}px`;
+          box.style.width = `${el.width * scaleX}px`;
+          box.style.height = `${el.height * scaleY}px`;
+          const label = document.createElement('div');
+          label.className = 'overlay-label';
+          label.textContent = el.primary_name || el.element_id;
+          box.appendChild(label);
+          wrap.appendChild(box);
+        }
+      };
+    }
+
+    function renderPerception(step) {
+      const p = step?.perception;
+      if (!p) return document.getElementById('perceptionPanel').innerHTML = '<div class="muted">No perception yet</div>';
+      const m = p.metrics || {};
+      const diagnostics = p.diagnostics || {};
+      document.getElementById('perceptionPanel').innerHTML = `
+        <div class="metric">page_hint<strong>${fmt(m.page_hint)}</strong></div>
+        <div class="metric">total / labeled / unlabeled / usable<strong>${fmt(m.total_elements)} / ${fmt(m.labeled_elements)} / ${fmt(m.unlabeled_elements)} / ${fmt(m.usable_elements)}</strong></div>
+        <div class="metric">interactive / text / candidates<strong>${fmt(m.interactive_count)} / ${fmt(m.text_count)} / ${fmt(m.candidate_count)}</strong></div>
+        <div class="metric">labeled interactive / unlabeled interactive<strong>${fmt(m.labeled_interactive_count)} / ${fmt(m.unlabeled_interactive_count)}</strong></div>
+        <div class="metric">retry / salvage<strong>${fmt(m.perception_retry_occurred)} / ${fmt(m.salvage_mode_triggered)}</strong></div>
+        <div class="metric">quality gate<strong>${fmt(m.quality_gate_failure_reason)}</strong></div>
+        <div class="metric">final decision<strong>${fmt(m.final_decision || diagnostics.final_decision)}</strong></div>
+        <div class="metric">raw response<strong>${m.raw_response_artifact_path ? `<a href="/observer/api/artifact?path=${encodeURIComponent(m.raw_response_artifact_path)}" target="_blank">${m.raw_response_artifact_path.split(/[\\\\/]/).pop()}</a>` : 'none'}</strong></div>
+        <pre>${p.retry_log || 'no retry log'}</pre>
+      `;
+    }
+
+    function renderSelector(step) {
+      const s = step?.selector?.trace;
+      if (!s) return document.getElementById('selectorPanel').innerHTML = '<div class="muted">No selector trace</div>';
+      document.getElementById('selectorPanel').innerHTML = `
+        <div class="metric">intent<strong>${fmt(s.intent?.target_text || s.intent?.action)}</strong></div>
+        <div class="metric">selected / margin<strong>${fmt(s.selected_candidate)} / ${fmt(s.score_margin)}</strong></div>
+        <div class="metric">recovery<strong>${fmt(s.recovery_attempted)} / ${fmt(s.recovery_strategy_used)}</strong></div>
+        <div class="metric">decision / failure<strong>${fmt(s.final_decision)} / ${fmt(s.failure_reason)}</strong></div>
+        <pre>${JSON.stringify(s.top_candidates || [], null, 2)}</pre>
+      `;
+    }
+
+    function renderExecution(step) {
+      const e = step?.execution;
+      if (!e) return document.getElementById('executionPanel').innerHTML = '<div class="muted">No execution yet</div>';
+      document.getElementById('executionPanel').innerHTML = `
+        <div class="metric">action<strong>${fmt(e.action?.action_type)}</strong></div>
+        <div class="metric">target<strong>${fmt(e.action?.target_element_id)}</strong></div>
+        <div class="metric">failure<strong>${fmt(e.failure_category)}</strong></div>
+        <pre>${JSON.stringify(e.trace || {}, null, 2)}</pre>
+      `;
+    }
+
+    function renderProgress(snapshot, step) {
+      const p = step?.progress?.state || snapshot.progress_state;
+      const t = step?.progress?.trace || {};
+      if (!p) return document.getElementById('progressPanel').innerHTML = '<div class="muted">No progress state</div>';
+      document.getElementById('progressPanel').innerHTML = `
+        <div class="metric">completed targets<strong>${(p.completed_targets || []).join(', ') || 'none'}</strong></div>
+        <div class="metric">completed subgoals<strong>${(p.completed_subgoals || []).join(', ') || 'none'}</strong></div>
+        <div class="metric">no_progress_streak / loop_detected<strong>${fmt(p.no_progress_streak)} / ${fmt(p.loop_detected)}</strong></div>
+        <div class="metric">recent actions<strong>${(p.recent_actions || []).slice(-4).join(' | ') || 'none'}</strong></div>
+        <div class="metric">recent failures<strong>${(p.recent_failures || []).slice(-4).join(' | ') || 'none'}</strong></div>
+        <div class="metric">blocked / pattern<strong>${fmt(t.blocked_as_redundant)} / ${fmt(t.loop_pattern_detected)}</strong></div>
+      `;
+    }
+
+    function renderElements(step) {
+      const elements = step?.perception?.elements || [];
+      if (!elements.length) return document.getElementById('elementsTable').innerHTML = '<div class="muted">No elements</div>';
+      document.getElementById('elementsTable').innerHTML = `
+        <table>
+          <thead><tr><th>id</th><th>type</th><th>name</th><th>source</th><th>unlabeled</th><th>usable</th></tr></thead>
+          <tbody>${elements.map(el => `<tr><td>${el.element_id}</td><td>${el.element_type}</td><td>${el.primary_name}</td><td>${el.name_source}</td><td>${el.is_unlabeled}</td><td>${el.usable_for_targeting}</td></tr>`).join('')}</tbody>
+        </table>
+      `;
+    }
+
+    function renderEvents(snapshot) {
+      const events = snapshot.event_log || [];
+      document.getElementById('eventFeed').innerHTML = events.map(evt => `<div style="padding:6px 0; border-bottom:1px solid var(--border);"><strong>step ${evt.step_index}</strong> ${evt.event}<div class="muted">${evt.detail || ''}</div></div>`).join('') || '<div class="muted">No events</div>';
+    }
+
+    function renderSnapshot(snapshot) {
+      renderSummary(snapshot.run);
+      renderSteps(snapshot);
+      const step = currentStep(snapshot);
+      renderImage(step);
+      renderPerception(step);
+      renderSelector(step);
+      renderExecution(step);
+      renderProgress(snapshot, step);
+      renderElements(step);
+      renderEvents(snapshot);
+    }
+
+    async function refreshRun() {
+      await loadRuns();
+      if (!selectedRunId) return;
+      const snapshot = await fetchJson(`/observer/api/run/${selectedRunId}`);
+      renderSnapshot(snapshot);
+      await loadRuns();
+    }
+
+    async function boot() {
+      await refreshRun();
+      setInterval(refreshRun, 1500);
+    }
+    boot();
+  </script>
+</body>
+</html>

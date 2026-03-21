@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from uuid import uuid4
 
 from src.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from src.models.execution import ExecutedAction
-from src.models.logs import FailureRecord, ModelDebugArtifacts, StepLog
+from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
 from src.models.perception import ScreenPerception
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
@@ -18,9 +19,7 @@ from src.store.summary import summarize_runs
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / name
-    if path.exists():
-        shutil.rmtree(path)
+    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -50,11 +49,11 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
     success_step.mkdir(parents=True, exist_ok=True)
     success_state = AgentState(
         run_id="run-success",
-        intent="Create a Gmail draft",
+        intent="Complete the auth-free form and submit it successfully.",
         status=RunStatus.SUCCEEDED,
         step_count=1,
         retry_counts={},
-        stop_reason=StopReason.STOP_BEFORE_SEND,
+        stop_reason=StopReason.FORM_SUBMITTED_SUCCESS,
     )
     _write_state(success_run, success_state)
     success_action = AgentAction(action_type=ActionType.STOP)
@@ -68,11 +67,11 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
             after_artifact_path=str(success_step / "after.png"),
             perception_debug=_debug("perception", success_step),
             policy_debug=_debug("policy", success_step),
-            perception=ScreenPerception(summary="Draft ready", page_hint="gmail_compose", capture_artifact_path=str(success_step / "before.png"), visible_elements=[]),
-            policy_decision=PolicyDecision(action=success_action, rationale="Stop before send.", confidence=1.0, active_subgoal="stop before send"),
+            perception=ScreenPerception(summary="Form submitted successfully", page_hint="form_success", capture_artifact_path=str(success_step / "before.png"), visible_elements=[]),
+            policy_decision=PolicyDecision(action=success_action, rationale="Form success visible.", confidence=1.0, active_subgoal="verify_success"),
             executed_action=ExecutedAction(action=success_action, success=True, detail="stopped"),
-            verification_result=VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=True, reason="stop boundary reached"),
-            recovery_decision=RecoveryDecision(strategy=RecoveryStrategy.STOP, message="stop", terminal=True, recoverable=False, stop_reason=StopReason.STOP_BEFORE_SEND),
+            verification_result=VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=True, reason="form success reached", stop_reason=StopReason.FORM_SUBMITTED_SUCCESS),
+            recovery_decision=RecoveryDecision(strategy=RecoveryStrategy.STOP, message="stop", terminal=True, recoverable=False, stop_reason=StopReason.FORM_SUBMITTED_SUCCESS),
             failure=None,
         ),
     )
@@ -114,26 +113,64 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
         max_run,
         AgentState(
             run_id="run-max",
-            intent="Create a Gmail draft",
+            intent="Complete the auth-free form and submit it successfully.",
             status=RunStatus.FAILED,
             step_count=12,
-            retry_counts={"compose:uncertain": 2},
+            retry_counts={"submit_form:uncertain": 2},
             stop_reason=StopReason.MAX_STEP_LIMIT_REACHED,
+        ),
+    )
+
+    precondition_run = root_dir / "run-precondition"
+    precondition_step = precondition_run / "step_1"
+    precondition_step.mkdir(parents=True, exist_ok=True)
+    _write_state(
+        precondition_run,
+        AgentState(
+            run_id="run-precondition",
+            intent="Create a Gmail draft",
+            status=RunStatus.FAILED,
+            step_count=1,
+            retry_counts={},
+            stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED,
+        ),
+    )
+    precondition_action = AgentAction(action_type=ActionType.STOP)
+    append_step_log(
+        precondition_run / "run.jsonl",
+        StepLog(
+            run_id="run-precondition",
+            step_id="step_1",
+            step_index=1,
+            before_artifact_path=str(precondition_step / "before.png"),
+            after_artifact_path=str(precondition_step / "after.png"),
+            perception_debug=_debug("perception", precondition_step),
+            policy_debug=_debug("policy", precondition_step),
+            perception=ScreenPerception(summary="Sign-in page", page_hint="google_sign_in", capture_artifact_path=str(precondition_step / "before.png"), visible_elements=[]),
+            policy_decision=PolicyDecision(action=precondition_action, rationale="Authenticated start required.", confidence=1.0, active_subgoal="stop for benchmark setup"),
+            executed_action=ExecutedAction(action=precondition_action, success=True, detail="stopped"),
+            verification_result=VerificationResult(status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=True, reason="benchmark precondition failed", stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED),
+            recovery_decision=RecoveryDecision(strategy=RecoveryStrategy.STOP, message="stop benchmark", failure_category=FailureCategory.BENCHMARK_PRECONDITION_FAILED, failure_stage=LoopStage.CHOOSE_ACTION, terminal=True, recoverable=False, stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED),
+            failure=FailureRecord(category=FailureCategory.BENCHMARK_PRECONDITION_FAILED, stage=LoopStage.CHOOSE_ACTION, retry_count=0, terminal=True, recoverable=False, reason="authenticated start required", stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED),
         ),
     )
 
     output = summarize_runs(str(root_dir), root_dir=root_dir)
 
-    assert "total_runs: 3" in output
+    assert "total_runs: 4" in output
     assert "success_count: 1" in output
-    assert "failure_count: 2" in output
-    assert "success_rate: 33.33%" in output
-    assert "average_steps_per_run: 5.00" in output
-    assert "average_retries_per_run: 1.67" in output
-    assert "stop_before_send: 1" in output
+    assert "failure_count: 3" in output
+    assert "success_rate: 25.00%" in output
+    assert "average_steps_per_run: 4.00" in output
+    assert "average_retries_per_run: 1.25" in output
+    assert "form_submitted_success: 1" in output
+    assert "benchmark_precondition_failed: 1" in output
     assert "retry_limit_reached: 1" in output
     assert "max_step_limit_reached: 1" in output
+    assert "successful_stop_reasons:" in output
+    assert "failed_stop_reasons:" in output
     assert "retry_limit_reached: 1" in output
+    assert "choose_action: 1" in output
     assert "recover: 1" in output
     assert "orchestrate: 1" in output
 
@@ -146,10 +183,10 @@ def test_benchmark_summary_accepts_single_run_id() -> None:
         run_dir,
         AgentState(
             run_id="run-single",
-            intent="Create a Gmail draft",
+            intent="Complete the auth-free form and submit it successfully.",
             status=RunStatus.SUCCEEDED,
             step_count=1,
-            stop_reason=StopReason.STOP_BEFORE_SEND,
+            stop_reason=StopReason.FORM_SUBMITTED_SUCCESS,
         ),
     )
 
@@ -157,3 +194,101 @@ def test_benchmark_summary_accepts_single_run_id() -> None:
 
     assert "total_runs: 1" in output
     assert "success_count: 1" in output
+
+
+def test_benchmark_summary_skips_invalid_legacy_run_states() -> None:
+    root_dir = _local_test_dir("test-benchmark-summary-invalid-legacy") / "runs"
+
+    valid_run = root_dir / "run-valid"
+    _write_state(
+        valid_run,
+        AgentState(
+            run_id="run-valid",
+            intent="Complete the auth-free form and submit it successfully.",
+            status=RunStatus.SUCCEEDED,
+            step_count=1,
+            stop_reason=StopReason.FORM_SUBMITTED_SUCCESS,
+        ),
+    )
+
+    invalid_run = root_dir / "run-invalid"
+    invalid_run.mkdir(parents=True, exist_ok=True)
+    (invalid_run / "state.json").write_text(
+        """
+        {
+          "run_id": "run-invalid",
+          "intent": "legacy run",
+          "status": "failed",
+          "step_count": 1,
+          "observation_history": [
+            {
+              "summary": "legacy invalid page hint",
+              "page_hint": null,
+              "focused_element_id": null,
+              "capture_artifact_path": "runs/run-invalid/step_1/before.png",
+              "visible_elements": [],
+              "confidence": 0.0
+            }
+          ],
+          "action_history": [],
+          "verification_history": [],
+          "retry_counts": {},
+          "target_failure_counts": {},
+          "artifact_paths": [],
+          "stop_reason": null
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    output = summarize_runs(str(root_dir), root_dir=root_dir)
+
+    assert "total_runs: 1" in output
+    assert "invalid_run_state_files_skipped: 1" in output
+
+
+def test_benchmark_summary_counts_pre_step_perception_failure_records() -> None:
+    root_dir = _local_test_dir("test-benchmark-summary-pre-step-failure") / "runs"
+    run_dir = root_dir / "run-pre-step-failure"
+    step_dir = run_dir / "step_1"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    _write_state(
+        run_dir,
+        AgentState(
+            run_id="run-pre-step-failure",
+            intent="Complete the auth-free form and submit it successfully.",
+            status=RunStatus.FAILED,
+            step_count=0,
+            stop_reason=StopReason.PRE_STEP_PERCEPTION_FAILED,
+        ),
+    )
+    append_step_log(
+        run_dir / "run.jsonl",
+        PreStepFailureLog(
+            run_id="run-pre-step-failure",
+            step_id="step_1",
+            step_index=1,
+            before_artifact_path=str(step_dir / "before.png"),
+            perception_debug=_debug("perception", step_dir),
+            failure=FailureRecord(
+                category=FailureCategory.PRE_STEP_PERCEPTION_FAILED,
+                stage=LoopStage.PERCEIVE,
+                retry_count=0,
+                terminal=True,
+                recoverable=False,
+                reason="Gemini perception output did not match the strict schema.",
+                stop_reason=StopReason.PRE_STEP_PERCEPTION_FAILED,
+            ),
+            error_message="Gemini perception output did not match the strict schema.",
+        ),
+    )
+
+    output = summarize_runs("run-pre-step-failure", root_dir=root_dir)
+
+    assert "total_runs: 1" in output
+    assert "failure_count: 1" in output
+    assert "average_steps_per_run: 0.00" in output
+    assert "pre_step_perception_failed: 1" in output
+    assert "perceive: 1" in output
+    assert "failed_stop_reasons:" in output
+    assert "pre_step_perception_failed: 1" in output

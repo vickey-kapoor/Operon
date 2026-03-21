@@ -1,16 +1,34 @@
-# UI Navigator MVP
+# Operon
 
-UI Navigator is a browser-only, reliability-first computer-use agent focused on one benchmark workflow:
+![Operon loop mark](assets/operon-loop-mark.svg)
 
-- Gmail draft creation only
-- Stop before send
+**Operate any interface.**
+
+Operon is a vision-driven computer-use engine that interacts with software the way a human does: by observing the screen, deciding the next action, executing it, and verifying the outcome.
+
+License: Apache-2.0
+
+## What It Is
+
+Operon is not a chatbot and not a traditional browser automation script.
+
+It is a closed-loop interaction system built for UI-native automation:
+
+- Auth-free form completion by default
+- Gmail draft creation kept as an optional secondary benchmark
+- original 4-segment loop mark
+- perception from pixels
+- structured action selection
+- real execution
+- verification and recovery
+- replayable runs and persistent learning signals
 - Local-only persistence
 - No dashboard
 - No desktop mode
 - No extension runtime
 - No cloud storage
 
-The control loop is the center of the system:
+## Core Loop
 
 `capture -> perceive -> update state -> choose action -> execute -> verify -> recover`
 
@@ -59,6 +77,22 @@ Expected output:
 Example Domain
 ```
 
+## Windows Shell Troubleshooting
+
+If Python or other external processes fail to launch from PowerShell with a COM+ registry/process startup error, the shell environment may be missing `COMSPEC` or may have a corrupted `PATHEXT`.
+
+Repair the current PowerShell session with:
+
+```powershell
+. .\scripts\repair-process-env.ps1 -PersistForSession
+```
+
+Then retry Python from the repo environment, for example:
+
+```powershell
+.\.venv311\Scripts\python.exe -V
+```
+
 ## Run The API
 
 Start the FastAPI app from `src/api/server.py`:
@@ -80,25 +114,33 @@ Example:
 Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8080/run-task `
   -ContentType "application/json" `
-  -Body '{"intent":"Create a Gmail draft and stop before send."}'
+  -Body '{"intent":"Complete the auth-free form and submit it successfully."}'
 ```
 
 ## Run The Benchmark
 
-Run the local Gmail benchmark entry point from `src/agent/benchmark.py`:
+Run the default auth-free form benchmark entry point from `src/agent/benchmark.py`:
 
 ```powershell
 $env:TEMP = (Join-Path $PWD ".tmp")
 $env:TMP = (Join-Path $PWD ".tmp")
 $env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path $PWD ".ms-playwright")
+$env:FORM_BENCHMARK_URL = "https://practice-automation.com/form-fields/"
 python -m src.agent.benchmark
 ```
 
 This runs until one terminal condition is reached:
 
-- stop-before-send
+- form_submitted_success
 - retry limit reached
 - max step limit reached
+
+Optional Gmail benchmark:
+
+```powershell
+$env:GMAIL_BENCHMARK_URL = "https://mail.google.com/"
+python -c "import asyncio; from src.agent.benchmark import run_gmail_draft_benchmark; print(asyncio.run(run_gmail_draft_benchmark()).model_dump_json(indent=2))"
+```
 
 ## Inspect Stored Runs
 

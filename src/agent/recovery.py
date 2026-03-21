@@ -45,10 +45,12 @@ class RuleBasedRecoveryManager(RecoveryManager):
             state.retry_counts[retry_key] = retries
             return RecoveryDecision(
                 strategy=RecoveryStrategy.STOP,
-                message="Verifier signaled the stop-before-send boundary.",
+                message="Verifier signaled a terminal stop condition.",
+                failure_category=verification.failure_category,
+                failure_stage=verification.failure_stage,
                 terminal=True,
-                recoverable=False,
-                stop_reason=StopReason.STOP_BEFORE_SEND,
+                recoverable=verification.stop_reason is StopReason.STOP_BEFORE_SEND,
+                stop_reason=verification.stop_reason or StopReason.STOP_BEFORE_SEND,
             )
 
         if verification.status is VerificationStatus.SUCCESS and verification.expected_outcome_met:

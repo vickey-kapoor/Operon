@@ -31,13 +31,13 @@ class StubGeminiClient:
 
 def _perception() -> ScreenPerception:
     return ScreenPerception(
-        summary="Gmail inbox is visible with a Compose button.",
-        page_hint="gmail_inbox",
+        summary="Auth-free form is visible with Name, Email, Message, and Submit controls.",
+        page_hint="form_page",
         visible_elements=[
             UIElement(
-                element_id="compose-button",
+                element_id="submit-button",
                 element_type=UIElementType.BUTTON,
-                label="Compose",
+                label="Submit",
                 x=24,
                 y=116,
                 width=108,
@@ -46,9 +46,9 @@ def _perception() -> ScreenPerception:
                 confidence=0.97,
             ),
             UIElement(
-                element_id="subject-input",
+                element_id="name-input",
                 element_type=UIElementType.INPUT,
-                label="Subject",
+                label="Name",
                 x=320,
                 y=180,
                 width=300,
@@ -67,11 +67,11 @@ def test_parse_policy_output_accepts_valid_json() -> None:
     {
       "action": {
         "action_type": "click",
-        "target_element_id": "compose-button"
+        "target_element_id": "submit-button"
       },
-      "rationale": "Open the Gmail compose dialog.",
+      "rationale": "Submit the form.",
       "confidence": 0.91,
-      "active_subgoal": "open compose"
+      "active_subgoal": "submit_form"
     }
     """
 
@@ -79,8 +79,8 @@ def test_parse_policy_output_accepts_valid_json() -> None:
 
     assert isinstance(decision, PolicyDecision)
     assert decision.action.action_type is ActionType.CLICK
-    assert decision.action.target_element_id == "compose-button"
-    assert decision.rationale == "Open the Gmail compose dialog."
+    assert decision.action.target_element_id == "submit-button"
+    assert decision.rationale == "Submit the form."
     assert decision.confidence == pytest.approx(0.91)
 
 
@@ -95,9 +95,9 @@ def test_parse_policy_output_rejects_schema_invalid_action() -> None:
       "action": {
         "action_type": "type"
       },
-      "rationale": "Fill the subject line",
+      "rationale": "Fill the name field",
       "confidence": 0.75,
-      "active_subgoal": "fill subject"
+      "active_subgoal": "fill_name"
     }
     """
 
@@ -111,11 +111,11 @@ def test_policy_decision_schema_rejects_invalid_action_payload() -> None:
             {
                 "action": {
                     "action_type": "stop",
-                    "target_element_id": "send-button",
+                    "target_element_id": "submit-button",
                 },
-                "rationale": "Stop before send.",
+                "rationale": "Stop on success.",
                 "confidence": 1.0,
-                "active_subgoal": "stop before send",
+                "active_subgoal": "verify_success",
             }
         )
 
@@ -128,14 +128,14 @@ async def test_policy_converts_unsafe_type_to_focus_click(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     client = StubGeminiClient(
-        response='''{"action":{"action_type":"type","target_element_id":"subject-input","text":"Hello"},"rationale":"Fill subject.","confidence":0.9,"active_subgoal":"fill subject"}'''
+        response='''{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.9,"active_subgoal":"fill_name"}'''
     )
     service = GeminiPolicyService(gemini_client=client, prompt_path=prompt_path)
     state = AgentState(
         run_id="run-1",
-        intent="Create a Gmail draft and stop before send.",
+        intent="Complete the auth-free form and submit it successfully.",
         status=RunStatus.RUNNING,
-        current_subgoal="fill subject",
+        current_subgoal="fill_name",
         step_count=1,
     )
     perception = _perception().model_copy(update={"capture_artifact_path": str(tmp_path / "run-1" / "step_1" / "before.png")})
@@ -144,8 +144,8 @@ async def test_policy_converts_unsafe_type_to_focus_click(tmp_path: Path) -> Non
     decision = await service.choose_action(state, perception)
 
     assert decision.action.action_type is ActionType.CLICK
-    assert decision.action.target_element_id == "subject-input"
-    assert decision.active_subgoal == "focus subject-input"
+    assert decision.action.target_element_id == "name-input"
+    assert decision.active_subgoal == "focus name-input"
 
 
 @pytest.mark.asyncio
@@ -156,20 +156,20 @@ async def test_policy_allows_type_when_input_is_focused(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     client = StubGeminiClient(
-        response='''{"action":{"action_type":"type","target_element_id":"subject-input","text":"Hello"},"rationale":"Fill subject.","confidence":0.9,"active_subgoal":"fill subject"}'''
+        response='''{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.9,"active_subgoal":"fill_name"}'''
     )
     service = GeminiPolicyService(gemini_client=client, prompt_path=prompt_path)
     state = AgentState(
         run_id="run-1",
-        intent="Create a Gmail draft and stop before send.",
+        intent="Complete the auth-free form and submit it successfully.",
         status=RunStatus.RUNNING,
-        current_subgoal="fill subject",
+        current_subgoal="fill_name",
         step_count=2,
     )
     perception = _perception().model_copy(
         update={
             "capture_artifact_path": str(tmp_path / "run-1" / "step_2" / "before.png"),
-            "focused_element_id": "subject-input",
+            "focused_element_id": "name-input",
         }
     )
     Path(perception.capture_artifact_path).parent.mkdir(parents=True, exist_ok=True)
@@ -177,7 +177,7 @@ async def test_policy_allows_type_when_input_is_focused(tmp_path: Path) -> None:
     decision = await service.choose_action(state, perception)
 
     assert decision.action.action_type is ActionType.TYPE
-    assert decision.action.text == "Hello"
+    assert decision.action.text == "Alice"
 
 
 @pytest.mark.asyncio
@@ -188,16 +188,16 @@ async def test_gemini_policy_service_writes_debug_artifacts(tmp_path: Path) -> N
         encoding="utf-8",
     )
     client = StubGeminiClient(
-        response='''```json\n{"action":{"action_type":"click","target_element_id":"compose-button"},"rationale":"Open the compose dialog.","confidence":0.89,"active_subgoal":"open compose"}\n```'''
+        response='''```json\n{"action":{"action_type":"click","target_element_id":"submit-button"},"rationale":"Submit the form.","confidence":0.89,"active_subgoal":"submit_form"}\n```'''
     )
     service = GeminiPolicyService(gemini_client=client, prompt_path=prompt_path)
     state = AgentState(
         run_id="run-1",
-        intent="Create a Gmail draft and stop before send.",
+        intent="Complete the auth-free form and submit it successfully.",
         status=RunStatus.RUNNING,
-        current_subgoal="open compose",
+        current_subgoal="submit_form",
         step_count=1,
-        retry_counts={"open compose:failure": 1},
+        retry_counts={"submit_form:failure": 1},
     )
     perception = _perception().model_copy(update={"capture_artifact_path": str(tmp_path / "run-1" / "step_1" / "before.png")})
     Path(perception.capture_artifact_path).parent.mkdir(parents=True, exist_ok=True)
@@ -206,12 +206,12 @@ async def test_gemini_policy_service_writes_debug_artifacts(tmp_path: Path) -> N
     debug = service.latest_debug_artifacts()
 
     assert client.last_prompt is not None
-    assert "Create a Gmail draft and stop before send." in client.last_prompt
-    assert "compose-button" in client.last_prompt
-    assert "open compose:failure" in client.last_prompt
+    assert "Complete the auth-free form and submit it successfully." in client.last_prompt
+    assert "submit-button" in client.last_prompt
+    assert "submit_form:failure" in client.last_prompt
     assert decision.action.action_type is ActionType.CLICK
-    assert decision.rationale == "Open the compose dialog."
-    assert decision.active_subgoal == "open compose"
+    assert decision.rationale == "Submit the form."
+    assert decision.active_subgoal == "submit_form"
     assert debug is not None
     assert Path(debug.prompt_artifact_path).exists()
     assert Path(debug.raw_response_artifact_path).exists()

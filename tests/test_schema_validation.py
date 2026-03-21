@@ -7,7 +7,7 @@ from src.models.capture import CaptureFrame
 from src.models.common import RunStatus
 from src.models.execution import ExecutedAction
 from src.models.logs import ModelDebugArtifacts, StepLog
-from src.models.perception import ScreenPerception, UIElement, UIElementType
+from src.models.perception import ScreenPerception, UIElement, UIElementNameSource, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.state import AgentState
@@ -112,6 +112,8 @@ def test_screen_perception_and_agent_state_validate_nested_models() -> None:
         observation_history=[perception],
     )
     assert state.observation_history[0].summary == "Gmail inbox is visible."
+    assert state.observation_history[0].visible_elements[0].primary_name == "Compose"
+    assert state.observation_history[0].visible_elements[0].name_source is UIElementNameSource.LABEL
 
 
 

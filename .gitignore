@@ -58,6 +58,8 @@ runs/
 .claude/
 .agents/
 .codex/
+${APPDATA}/
+%SystemDrive%/
 
 # OS
 .DS_Store

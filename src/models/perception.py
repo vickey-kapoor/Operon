@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from src.models.common import StrictModel
 
 
 class UIElementType(StrEnum):
-    """Visible browser element types relevant to the Gmail draft workflow."""
+    """Visible browser element types relevant to the active browser benchmark."""
 
     BUTTON = "button"
     INPUT = "input"
@@ -22,8 +23,10 @@ class UIElementType(StrEnum):
 
 
 class PageHint(StrEnum):
-    """Supported high-level page classifications for the Gmail benchmark."""
+    """Supported high-level page classifications for the form and Gmail benchmarks."""
 
+    FORM_PAGE = "form_page"
+    FORM_SUCCESS = "form_success"
     GOOGLE_SIGN_IN = "google_sign_in"
     GMAIL_INBOX = "gmail_inbox"
     GMAIL_COMPOSE = "gmail_compose"
@@ -31,12 +34,74 @@ class PageHint(StrEnum):
     UNKNOWN = "unknown"
 
 
-class UIElement(StrictModel):
-    """A typed visible element extracted from the current browser frame."""
+class UIElementNameSource(StrEnum):
+    """Ordered semantic name sources used during canonicalization."""
+
+    LABEL = "label"
+    TEXT = "text"
+    PLACEHOLDER = "placeholder"
+    NAME = "name"
+    ROLE = "role"
+    SYNTHETIC = "synthetic"
+
+
+def _normalize_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value  # let strict validation reject non-string values later
+    normalized = value.strip()
+    return normalized or None
+
+
+def _canonical_name_fields(payload: dict[str, Any]) -> tuple[str, UIElementNameSource]:
+    candidates = (
+        ("label", UIElementNameSource.LABEL),
+        ("text", UIElementNameSource.TEXT),
+        ("placeholder", UIElementNameSource.PLACEHOLDER),
+        ("name", UIElementNameSource.NAME),
+        ("role", UIElementNameSource.ROLE),
+    )
+    for field_name, source in candidates:
+        value = payload.get(field_name)
+        if isinstance(value, str) and value:
+            return value, source
+
+    element_type = payload.get("element_type")
+    if isinstance(element_type, str) and element_type:
+        return f"unlabeled_{element_type}", UIElementNameSource.SYNTHETIC
+
+    if isinstance(element_type, UIElementType):
+        return f"unlabeled_{element_type.value}", UIElementNameSource.SYNTHETIC
+
+    element_id = payload.get("element_id")
+    if isinstance(element_id, str) and element_id:
+        return f"unlabeled_{element_id}", UIElementNameSource.SYNTHETIC
+
+    return "unlabeled_unknown", UIElementNameSource.SYNTHETIC
+
+
+def _usable_for_targeting(payload: dict[str, Any], source: UIElementNameSource) -> bool:
+    if payload.get("is_interactable") is not True:
+        return False
+    return source in {
+        UIElementNameSource.LABEL,
+        UIElementNameSource.TEXT,
+        UIElementNameSource.PLACEHOLDER,
+        UIElementNameSource.NAME,
+    }
+
+
+class RawUIElement(StrictModel):
+    """Strict model-facing element schema with tolerant weak semantic fields."""
 
     element_id: str = Field(min_length=1)
     element_type: UIElementType
-    label: str = Field(min_length=1)
+    label: str | None = None
+    text: str | None = None
+    placeholder: str | None = None
+    name: str | None = None
+    role: str | None = None
     x: int = Field(ge=0)
     y: int = Field(ge=0)
     width: int = Field(gt=0)
@@ -44,9 +109,64 @@ class UIElement(StrictModel):
     is_interactable: bool
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
+    @field_validator("label", "text", "placeholder", "name", "role", mode="before")
+    @classmethod
+    def _normalize_weak_semantic_fields(cls, value: object) -> object:
+        return _normalize_optional_text(value)
+
+
+class UIElement(StrictModel):
+    """Canonical internal element state used after perception normalization."""
+
+    element_id: str = Field(min_length=1)
+    element_type: UIElementType
+    label: str | None = None
+    text: str | None = None
+    placeholder: str | None = None
+    name: str | None = None
+    role: str | None = None
+    primary_name: str = Field(min_length=1)
+    name_source: UIElementNameSource
+    is_unlabeled: bool
+    usable_for_targeting: bool
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    is_interactable: bool
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _populate_canonical_fields(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        for field_name in ("label", "text", "placeholder", "name", "role"):
+            normalized[field_name] = _normalize_optional_text(normalized.get(field_name))
+
+        primary_name, name_source = _canonical_name_fields(normalized)
+        normalized["primary_name"] = primary_name
+        normalized["name_source"] = name_source
+        normalized["is_unlabeled"] = name_source is UIElementNameSource.SYNTHETIC
+        normalized["usable_for_targeting"] = _usable_for_targeting(normalized, name_source)
+        return normalized
+
+
+class RawScreenPerception(StrictModel):
+    """Strict model-facing screen perception with tolerant weak semantic fields."""
+
+    summary: str = Field(min_length=1)
+    page_hint: PageHint
+    visible_elements: list[RawUIElement] = Field(default_factory=list)
+    focused_element_id: str | None = Field(default=None, min_length=1)
+    capture_artifact_path: str = Field(min_length=1)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
 
 class ScreenPerception(StrictModel):
-    """Typed understanding of the current screen state."""
+    """Canonical typed understanding of the current screen state."""
 
     summary: str = Field(min_length=1)
     page_hint: PageHint

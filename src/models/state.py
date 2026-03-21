@@ -11,7 +11,7 @@ from src.models.verification import VerificationResult
 
 
 class AgentState(StrictModel):
-    """Local typed state stored for a single Gmail draft run."""
+    """Local typed state stored for a single benchmark run."""
 
     run_id: str = Field(min_length=1)
     intent: str = Field(min_length=1)
@@ -22,5 +22,6 @@ class AgentState(StrictModel):
     action_history: list[ExecutedAction] = Field(default_factory=list)
     verification_history: list[VerificationResult] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
+    target_failure_counts: dict[str, int] = Field(default_factory=dict)
     artifact_paths: list[str] = Field(default_factory=list)
     stop_reason: StopReason | None = None

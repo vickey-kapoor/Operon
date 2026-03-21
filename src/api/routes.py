@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from src.agent.capture import BrowserCaptureService
 from src.agent.loop import AgentLoop
+from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.perception import GeminiPerceptionService
 from src.agent.policy import GeminiPolicyService
 from src.agent.recovery import RuleBasedRecoveryManager
@@ -13,6 +14,7 @@ from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import GeminiHttpClient
 from src.executor.browser import PlaywrightBrowserExecutor
 from src.models.common import HealthResponse, RunResponse, RunTaskRequest, StepRequest
+from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
 
 router = APIRouter()
@@ -26,14 +28,19 @@ def get_agent_loop() -> AgentLoop:
         gemini_client = GeminiHttpClient()
         browser_executor = PlaywrightBrowserExecutor()
         run_store = FileBackedRunStore()
+        memory_store = FileBackedMemoryStore()
         _agent_loop = AgentLoop(
             capture_service=BrowserCaptureService(browser_executor=browser_executor),
             perception_service=GeminiPerceptionService(gemini_client=gemini_client),
             run_store=run_store,
-            policy_service=GeminiPolicyService(gemini_client=gemini_client),
+            policy_service=PolicyCoordinator(
+                delegate=GeminiPolicyService(gemini_client=gemini_client),
+                memory_store=memory_store,
+            ),
             browser_executor=browser_executor,
             verifier_service=DeterministicVerifierService(gemini_client=gemini_client),
             recovery_manager=RuleBasedRecoveryManager(),
+            memory_store=memory_store,
         )
     return _agent_loop
 

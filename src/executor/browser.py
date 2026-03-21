@@ -76,6 +76,24 @@ def _get_env_int(name: str, *, default: int) -> int:
         return default
 
 
+def _ensure_windows_process_env() -> None:
+    """Restore Windows process env vars Playwright's Node driver expects."""
+
+    if os.name != "nt":
+        return
+
+    drive = (
+        os.getenv("SystemDrive")
+        or Path(os.getenv("TEMP") or "").drive
+        or Path.cwd().drive
+        or "C:"
+    )
+    windows_dir = f"{drive}\\Windows"
+    if os.path.isdir(windows_dir):
+        os.environ.setdefault("SystemRoot", windows_dir)
+        os.environ.setdefault("WINDIR", windows_dir)
+
+
 class PlaywrightBrowserExecutor(BrowserExecutor):
     """Minimal Playwright-backed browser executor for the Gmail draft MVP."""
 
@@ -106,6 +124,7 @@ class PlaywrightBrowserExecutor(BrowserExecutor):
         if self._page is not None:
             return
 
+        _ensure_windows_process_env()
         self._playwright = await async_playwright().start()
         launch_kwargs = {
             "headless": self.headless,
@@ -118,7 +137,6 @@ class PlaywrightBrowserExecutor(BrowserExecutor):
             viewport={"width": self.viewport_width, "height": self.viewport_height}
         )
         self._page = await self._context.new_page()
-        await self._page.goto("about:blank")
 
     async def close(self) -> None:
         if self._page is not None:

@@ -1,0 +1,147 @@
+"""Thin coordinator that runs explicit rules before LLM-backed policy."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from src.agent.policy import PolicyService
+from src.agent.policy_rules import PolicyRuleEngine
+from src.models.common import FailureCategory
+from src.models.logs import ModelDebugArtifacts
+from src.models.memory import MemoryHint
+from src.models.perception import ScreenPerception
+from src.models.policy import PolicyDecision
+from src.models.selector import SelectorTrace
+from src.models.state import AgentState
+from src.store.memory import MemoryStore, benchmark_name_for_intent
+
+
+class PolicyCoordinator(PolicyService):
+    """Run explicit rules first, then fall back to the existing policy service."""
+
+    def __init__(
+        self,
+        *,
+        delegate: PolicyService,
+        memory_store: MemoryStore,
+        rule_engine: PolicyRuleEngine | None = None,
+    ) -> None:
+        self.delegate = delegate
+        self.memory_store = memory_store
+        self.rule_engine = rule_engine or PolicyRuleEngine()
+        self._last_debug_artifacts: ModelDebugArtifacts | None = None
+
+    async def choose_action(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision:
+        memory_hints = self.memory_store.get_hints(
+            benchmark=benchmark_name_for_intent(state.intent),
+            page_hint=perception.page_hint,
+            subgoal=state.current_subgoal,
+            recent_failure_category=self._recent_failure_category(state),
+        )
+
+        decision = self.rule_engine.choose_action(state, perception, memory_hints)
+        selector_traces = self.rule_engine.latest_selector_traces()
+        if decision is not None:
+            self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision, selector_traces)
+            return decision
+
+        if hasattr(self.delegate, "set_advisory_hints"):
+            self.delegate.set_advisory_hints([hint.hint for hint in memory_hints])
+
+        decision = await self.delegate.choose_action(state, perception)
+        if hasattr(self.delegate, "latest_debug_artifacts"):
+            self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
+        self._last_debug_artifacts = self._attach_selector_trace(perception, self._last_debug_artifacts, selector_traces)
+        return decision
+
+    def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
+        return self._last_debug_artifacts
+
+    @staticmethod
+    def _recent_failure_category(state: AgentState) -> FailureCategory | None:
+        if state.verification_history:
+            failure = state.verification_history[-1].failure_category
+            if failure is not None:
+                return failure
+        if state.action_history:
+            return state.action_history[-1].failure_category
+        return None
+
+    def _write_rule_debug_artifacts(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        memory_hints: list[MemoryHint],
+        decision: PolicyDecision,
+        selector_traces: list[SelectorTrace],
+    ) -> ModelDebugArtifacts:
+        step_dir = Path(perception.capture_artifact_path).resolve().parent
+        step_dir.mkdir(parents=True, exist_ok=True)
+        prompt_path = step_dir / "policy_prompt.txt"
+        raw_path = step_dir / "policy_raw.txt"
+        parsed_path = step_dir / "policy_decision.json"
+        selector_trace_path = self._write_selector_trace(step_dir, selector_traces)
+        prompt_path.write_text(self._render_rule_context(state, perception, memory_hints), encoding="utf-8")
+        raw_path.write_text(
+            json.dumps(
+                {
+                    "source": "rule",
+                    "decision_rationale": decision.rationale,
+                    "subgoal": decision.active_subgoal,
+                }
+            ),
+            encoding="utf-8",
+        )
+        parsed_path.write_text(decision.model_dump_json(indent=2), encoding="utf-8")
+        return ModelDebugArtifacts(
+            prompt_artifact_path=str(prompt_path),
+            raw_response_artifact_path=str(raw_path),
+            parsed_artifact_path=str(parsed_path),
+            selector_trace_artifact_path=str(selector_trace_path) if selector_trace_path is not None else None,
+        )
+
+    @staticmethod
+    def _render_rule_context(
+        state: AgentState,
+        perception: ScreenPerception,
+        memory_hints: list[MemoryHint],
+    ) -> str:
+        lines = [
+            "Policy coordinator selected a rule-based action.",
+            f"intent: {state.intent}",
+            f"subgoal: {state.current_subgoal or 'not set'}",
+            f"page_hint: {perception.page_hint.value}",
+            "memory_hints:",
+        ]
+        if not memory_hints:
+            lines.append("- none")
+        else:
+            lines.extend(f"- {hint.key}: {hint.hint}" for hint in memory_hints)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _write_selector_trace(step_dir: Path, selector_traces: list[SelectorTrace]) -> Path | None:
+        if not selector_traces:
+            return None
+        path = step_dir / "selector_trace.json"
+        payload = [trace.model_dump(mode="json") for trace in selector_traces]
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
+
+    def _attach_selector_trace(
+        self,
+        perception: ScreenPerception,
+        debug_artifacts: ModelDebugArtifacts | None,
+        selector_traces: list[SelectorTrace],
+    ) -> ModelDebugArtifacts | None:
+        if debug_artifacts is None:
+            return None
+        selector_trace_path = self._write_selector_trace(Path(perception.capture_artifact_path).resolve().parent, selector_traces)
+        if selector_trace_path is None:
+            return debug_artifacts
+        return debug_artifacts.model_copy(update={"selector_trace_artifact_path": str(selector_trace_path)})

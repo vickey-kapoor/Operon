@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.agent.loop import AgentLoop
-from src.models.common import RunResponse, RunStatus
+from src.models.common import RunResponse, RunStatus, StopReason
 from src.models.policy import ActionType
 from src.models.state import AgentState
 
@@ -36,7 +36,7 @@ class StubRunStore:
 
 
 @pytest.mark.asyncio
-async def test_live_runner_stops_on_stop_before_send() -> None:
+async def test_live_runner_stops_on_form_success() -> None:
     run_store = StubRunStore()
     browser_executor = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(success=True)))
     loop = AgentLoop(
@@ -53,6 +53,7 @@ async def test_live_runner_stops_on_stop_before_send() -> None:
         assert run_store.state is not None
         run_store.state.step_count = 1
         run_store.state.status = RunStatus.SUCCEEDED
+        run_store.state.stop_reason = StopReason.FORM_SUBMITTED_SUCCESS
         return RunResponse(
             run_id=run_store.state.run_id,
             status=run_store.state.status,
@@ -165,14 +166,19 @@ async def test_benchmark_startup_loads_gemini_api_key_from_dotenv(tmp_path, monk
         def __init__(self, **kwargs) -> None:
             self.kwargs = kwargs
 
-        async def run_live_benchmark(self, max_steps: int = 12):
+        async def run_live_benchmark(self, intent: str, benchmark_url: str, max_steps: int = 12):
+            captured["intent"] = intent
+            captured["benchmark_url"] = benchmark_url
             return SimpleNamespace(model_dump_json=lambda indent=2: "{}")
 
     monkeypatch.setattr(benchmark, "GeminiHttpClient", FakeGeminiClient)
     monkeypatch.setattr(benchmark, "PlaywrightBrowserExecutor", FakeBrowserExecutor)
     monkeypatch.setattr(benchmark, "FileBackedRunStore", lambda: FakeRunStore())
     monkeypatch.setattr(benchmark, "AgentLoop", FakeLoop)
+    monkeypatch.setenv("FORM_BENCHMARK_URL", "https://example.test/form")
 
-    await benchmark.run_gmail_draft_benchmark(max_steps=1)
+    await benchmark.run_form_benchmark(max_steps=1)
 
     assert captured["api_key"] == "test-benchmark-key"
+    assert captured["benchmark_url"] == "https://example.test/form"
+    assert captured["intent"] == benchmark.DEFAULT_FORM_BENCHMARK_INTENT

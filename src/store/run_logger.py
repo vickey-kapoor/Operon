@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.models.logs import StepLog
+from src.models.logs import RunLogEntry
 
 
-def append_step_log(log_path: str | Path, entry: StepLog) -> None:
-    """Append one strict `StepLog` entry to a run JSONL file."""
+def append_step_log(log_path: str | Path, entry: RunLogEntry) -> None:
+    """Append one strict run-log entry to a run JSONL file."""
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:

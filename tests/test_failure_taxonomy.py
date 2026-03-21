@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
@@ -35,9 +35,7 @@ from src.models.verification import (
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / name
-    if path.exists():
-        shutil.rmtree(path)
+    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

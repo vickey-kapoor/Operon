@@ -5,12 +5,14 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import pytest
 
 from src.agent.loop import AgentLoop
+from src.agent.perception import PerceptionError, PerceptionLowQualityError
 from src.models.capture import CaptureFrame
-from src.models.common import RunStatus, RunTaskRequest, StepRequest
+from src.models.common import FailureCategory, RunStatus, RunTaskRequest, StepRequest, StopReason
 from src.models.execution import ExecutedAction
 from src.models.logs import ModelDebugArtifacts
 from src.models.perception import ScreenPerception
@@ -18,12 +20,11 @@ from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.state import AgentState
 from src.models.verification import VerificationResult, VerificationStatus
+from src.store.run_store import FileBackedRunStore
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / name
-    if path.exists():
-        shutil.rmtree(path)
+    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -138,6 +139,7 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
         expected_outcome_met=True,
         stop_condition_met=True,
         reason="Draft ready",
+        stop_reason=StopReason.STOP_BEFORE_SEND,
     )
     recovery = RecoveryDecision(strategy=RecoveryStrategy.STOP, message="unused")
     final_state = updated_state.model_copy(update={"status": RunStatus.SUCCEEDED})
@@ -223,3 +225,201 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
     run_store.create_run.assert_called_once()
     assert response.run_id == "run-3"
     assert response.status is RunStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_marks_benchmark_precondition_stop_as_failed() -> None:
+    initial_state = AgentState(run_id="run-setup", intent="Create draft", status=RunStatus.PENDING)
+    updated_state = initial_state.model_copy(update={"step_count": 1, "status": RunStatus.RUNNING})
+    failed_state = updated_state.model_copy(update={"status": RunStatus.FAILED})
+    frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
+    perception = ScreenPerception(
+        summary="Google sign in visible",
+        page_hint="google_sign_in",
+        capture_artifact_path=frame.artifact_path,
+        visible_elements=[],
+    )
+    action = AgentAction(action_type=ActionType.STOP)
+    decision = PolicyDecision(
+        action=action,
+        rationale="Benchmark requires an authenticated Gmail start state; login/auth screens are out of scope.",
+        confidence=1.0,
+        active_subgoal="stop for benchmark setup",
+    )
+    executed = ExecutedAction(action=action, success=True, detail="stop acknowledged")
+    verification = VerificationResult(
+        status=VerificationStatus.FAILURE,
+        expected_outcome_met=False,
+        stop_condition_met=True,
+        reason="Benchmark precondition failed: authenticated Gmail start state was required.",
+        stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED,
+    )
+    recovery = RecoveryDecision(
+        strategy=RecoveryStrategy.STOP,
+        message="Benchmark precondition failed.",
+        terminal=True,
+        recoverable=False,
+        stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED,
+    )
+
+    capture_service = Mock()
+    capture_service.capture = AsyncMock(return_value=frame)
+    perception_service = Mock()
+    perception_service.perceive = AsyncMock(return_value=perception)
+    perception_service.latest_debug_artifacts = Mock(
+        return_value=ModelDebugArtifacts(
+            prompt_artifact_path="runs/run-setup/step_1/perception_prompt.txt",
+            raw_response_artifact_path="runs/run-setup/step_1/perception_raw.txt",
+            parsed_artifact_path="runs/run-setup/step_1/perception_parsed.json",
+        )
+    )
+    run_store = Mock()
+    run_store.get_run = AsyncMock(return_value=initial_state)
+    run_store.set_status = AsyncMock(return_value=failed_state)
+    run_store.update_state = AsyncMock(return_value=updated_state)
+    policy_service = Mock()
+    policy_service.choose_action = AsyncMock(return_value=decision)
+    policy_service.latest_debug_artifacts = Mock(
+        return_value=ModelDebugArtifacts(
+            prompt_artifact_path="runs/run-setup/step_1/policy_prompt.txt",
+            raw_response_artifact_path="runs/run-setup/step_1/policy_raw.txt",
+            parsed_artifact_path="runs/run-setup/step_1/policy_decision.json",
+        )
+    )
+    browser_executor = Mock()
+    browser_executor.execute = AsyncMock(return_value=executed)
+    verifier_service = Mock()
+    verifier_service.verify = AsyncMock(return_value=verification)
+    recovery_manager = Mock()
+    recovery_manager.recover = AsyncMock(return_value=recovery)
+    run_root = _local_test_dir("test-runs-precondition-stop")
+    run_store.before_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "before.png")
+    run_store.after_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "after.png")
+    run_store.run_log_path = lambda run_id: str(run_root / run_id / "run.jsonl")
+
+    loop = AgentLoop(
+        capture_service=capture_service,
+        perception_service=perception_service,
+        run_store=run_store,
+        policy_service=policy_service,
+        browser_executor=browser_executor,
+        verifier_service=verifier_service,
+        recovery_manager=recovery_manager,
+    )
+
+    response = await loop.step_run(StepRequest(run_id="run-setup"))
+
+    assert response.status is RunStatus.FAILED
+    assert run_store.set_status.await_args.args == ("run-setup", RunStatus.FAILED)
+    payload = json.loads((run_root / "run-setup" / "run.jsonl").read_text(encoding="utf-8").strip())
+    assert payload["recovery_decision"]["stop_reason"] == StopReason.BENCHMARK_PRECONDITION_FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_logs_pre_step_perception_failure_for_observability() -> None:
+    run_root = _local_test_dir("test-runs-pre-step-perception-failure")
+    run_store = FileBackedRunStore(root_dir=run_root)
+    created = run_store.create_run("Complete the auth-free form and submit it successfully.")
+    frame = CaptureFrame(
+        artifact_path=str(run_root / created.run_id / "step_1" / "before.png"),
+        width=1280,
+        height=800,
+        mime_type="image/png",
+    )
+
+    capture_service = SimpleNamespace(capture=AsyncMock(return_value=frame))
+    perception_service = SimpleNamespace(
+        perceive=AsyncMock(side_effect=PerceptionError("Gemini perception output did not match the strict schema.")),
+        latest_debug_artifacts=lambda: ModelDebugArtifacts(
+            prompt_artifact_path=str(run_root / created.run_id / "step_1" / "perception_prompt.txt"),
+            raw_response_artifact_path=str(run_root / created.run_id / "step_1" / "perception_raw.txt"),
+            parsed_artifact_path=str(run_root / created.run_id / "step_1" / "perception_parsed.json"),
+        ),
+    )
+    policy_service = Mock()
+    policy_service.choose_action = AsyncMock()
+    browser_executor = Mock()
+    browser_executor.execute = AsyncMock()
+    verifier_service = Mock()
+    verifier_service.verify = AsyncMock()
+    recovery_manager = Mock()
+    recovery_manager.recover = AsyncMock()
+
+    loop = AgentLoop(
+        capture_service=capture_service,
+        perception_service=perception_service,
+        run_store=run_store,
+        policy_service=policy_service,
+        browser_executor=browser_executor,
+        verifier_service=verifier_service,
+        recovery_manager=recovery_manager,
+    )
+
+    response = await loop.step_run(StepRequest(run_id=created.run_id))
+
+    assert response.status is RunStatus.FAILED
+    state = await run_store.get_run(created.run_id)
+    assert state is not None
+    assert state.status is RunStatus.FAILED
+    assert state.step_count == 0
+    payload = json.loads((run_root / created.run_id / "run.jsonl").read_text(encoding="utf-8").strip())
+    assert payload["record_type"] == "pre_step_failure"
+    assert payload["run_id"] == created.run_id
+    assert payload["step_id"] == "step_1"
+    assert payload["failure"]["stage"] == "perceive"
+    assert payload["failure"]["category"] == FailureCategory.PRE_STEP_PERCEPTION_FAILED.value
+    assert payload["failure"]["stop_reason"] == StopReason.PRE_STEP_PERCEPTION_FAILED.value
+    assert "strict schema" in payload["error_message"]
+    assert payload["perception_debug"]["raw_response_artifact_path"].endswith("perception_raw.txt")
+    assert state.stop_reason is StopReason.PRE_STEP_PERCEPTION_FAILED
+    policy_service.choose_action.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_logs_pre_step_low_quality_perception_failure() -> None:
+    run_root = _local_test_dir("test-runs-pre-step-low-quality")
+    run_store = FileBackedRunStore(root_dir=run_root)
+    created = run_store.create_run("Complete the auth-free form and submit it successfully.")
+    frame = CaptureFrame(
+        artifact_path=str(run_root / created.run_id / "step_1" / "before.png"),
+        width=1280,
+        height=800,
+        mime_type="image/png",
+    )
+
+    capture_service = SimpleNamespace(capture=AsyncMock(return_value=frame))
+    perception_service = SimpleNamespace(
+        perceive=AsyncMock(side_effect=PerceptionLowQualityError("Gemini perception output was low quality: zero usable_for_targeting elements")),
+        latest_debug_artifacts=lambda: ModelDebugArtifacts(
+            prompt_artifact_path=str(run_root / created.run_id / "step_1" / "perception_prompt.txt"),
+            raw_response_artifact_path=str(run_root / created.run_id / "step_1" / "perception_raw.txt"),
+            parsed_artifact_path=str(run_root / created.run_id / "step_1" / "perception_parsed.json"),
+            retry_log_artifact_path=str(run_root / created.run_id / "step_1" / "perception_retry_log.txt"),
+        ),
+    )
+    Path(perception_service.latest_debug_artifacts().retry_log_artifact_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(perception_service.latest_debug_artifacts().retry_log_artifact_path).write_text(
+        "attempt=1 reason=zero usable_for_targeting elements\nattempt=2 reason=zero usable_for_targeting elements",
+        encoding="utf-8",
+    )
+
+    loop = AgentLoop(
+        capture_service=capture_service,
+        perception_service=perception_service,
+        run_store=run_store,
+        policy_service=Mock(),
+        browser_executor=Mock(),
+        verifier_service=Mock(),
+        recovery_manager=Mock(),
+    )
+
+    response = await loop.step_run(StepRequest(run_id=created.run_id))
+
+    assert response.status is RunStatus.FAILED
+    state = await run_store.get_run(created.run_id)
+    assert state is not None
+    assert state.stop_reason is StopReason.PERCEPTION_LOW_QUALITY
+    payload = json.loads((run_root / created.run_id / "run.jsonl").read_text(encoding="utf-8").strip())
+    assert payload["failure"]["category"] == FailureCategory.PERCEPTION_LOW_QUALITY.value
+    assert payload["failure"]["stop_reason"] == StopReason.PERCEPTION_LOW_QUALITY.value
+    assert payload["perception_debug"]["retry_log_artifact_path"].endswith("perception_retry_log.txt")

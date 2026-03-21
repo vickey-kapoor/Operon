@@ -11,9 +11,9 @@ def create_app() -> FastAPI:
     from src.api.routes import router
 
     app = FastAPI(
-        title="UI Navigator MVP",
+        title="Operon",
         version="0.1.0",
-        description="Browser-only Gmail draft agent scaffold.",
+        description="Operate any interface with a vision-driven computer-use engine.",
     )
     app.include_router(router)
     return app

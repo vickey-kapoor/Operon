@@ -6,14 +6,17 @@ import argparse
 from collections import Counter
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from src.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from src.models.state import AgentState
+from src.models.logs import PreStepFailureLog, StepLog
 from src.store.replay import load_run_replay
 
 
 def summarize_runs(target: str, root_dir: str | Path = "runs") -> str:
     """Summarize one run id or a directory of local runs."""
-    states = _load_states(target, root_dir=root_dir)
+    states, invalid_state_paths = _load_states(target, root_dir=root_dir)
     total_runs = len(states)
     success_count = sum(1 for state in states if state.status is RunStatus.SUCCEEDED)
     failure_count = sum(1 for state in states if state.status is RunStatus.FAILED)
@@ -41,9 +44,18 @@ def summarize_runs(target: str, root_dir: str | Path = "runs") -> str:
         f"success_rate: {success_rate:.2f}%",
         f"average_steps_per_run: {average_steps:.2f}",
         f"average_retries_per_run: {average_retries:.2f}",
+        f"invalid_run_state_files_skipped: {len(invalid_state_paths)}",
         "stop_reason_counts:",
     ]
     lines.extend(_format_counter(stop_reasons))
+    lines.append("successful_stop_reasons:")
+    lines.extend(
+        _format_counter(Counter(state.stop_reason.value for state in states if state.status is RunStatus.SUCCEEDED and state.stop_reason is not None))
+    )
+    lines.append("failed_stop_reasons:")
+    lines.extend(
+        _format_counter(Counter(state.stop_reason.value for state in states if state.status is RunStatus.FAILED and state.stop_reason is not None))
+    )
     lines.append("most_common_failure_categories:")
     lines.extend(_format_counter(failure_categories))
     lines.append("most_common_failing_stages:")
@@ -52,17 +64,30 @@ def summarize_runs(target: str, root_dir: str | Path = "runs") -> str:
 
 
 
-def _load_states(target: str, root_dir: str | Path) -> list[AgentState]:
+def _load_states(target: str, root_dir: str | Path) -> tuple[list[AgentState], list[Path]]:
     root = Path(root_dir)
     target_path = Path(target)
     if target_path.exists() and target_path.is_dir():
         run_dirs = sorted(path for path in target_path.iterdir() if path.is_dir())
-        return [_load_state_from_path(run_dir / "state.json") for run_dir in run_dirs if (run_dir / "state.json").exists()]
+        states: list[AgentState] = []
+        invalid_paths: list[Path] = []
+        for run_dir in run_dirs:
+            state_path = run_dir / "state.json"
+            if not state_path.exists():
+                continue
+            try:
+                states.append(_load_state_from_path(state_path))
+            except ValidationError:
+                invalid_paths.append(state_path)
+        return states, invalid_paths
 
     state_path = root / target / "state.json"
     if not state_path.exists():
         raise FileNotFoundError(f"Run state not found: {state_path}")
-    return [_load_state_from_path(state_path)]
+    try:
+        return [_load_state_from_path(state_path)], []
+    except ValidationError as exc:
+        raise ValueError(f"Run state is invalid and could not be summarized: {state_path}") from exc
 
 
 

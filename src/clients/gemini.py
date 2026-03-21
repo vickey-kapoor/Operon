@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
+import socket
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 from urllib import error, request
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiClientError(RuntimeError):
@@ -37,6 +42,8 @@ class GeminiHttpClient(GeminiClient):
         model: str | None = None,
         api_base_url: str | None = None,
         timeout_seconds: float = 30.0,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 0.5,
     ) -> None:
         self.api_key = api_key
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -45,6 +52,8 @@ class GeminiHttpClient(GeminiClient):
             "https://generativelanguage.googleapis.com/v1beta/models",
         )
         self.timeout_seconds = timeout_seconds
+        self.max_retries = max(0, max_retries)
+        self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
 
     async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
         """Send the screenshot and prompt to Gemini and return raw JSON text."""
@@ -69,27 +78,72 @@ class GeminiHttpClient(GeminiClient):
             raise GeminiClientError("GEMINI_API_KEY is not configured.")
 
         url = f"{self.api_base_url}/{self.model}:generateContent?key={api_key}"
-        http_request = request.Request(
-            url=url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        attempts = self.max_retries + 1
+        last_error: GeminiClientError | None = None
 
-        try:
-            with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
-                response_body = response.read().decode("utf-8")
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise GeminiClientError(f"Gemini HTTP error {exc.code}: {detail}") from exc
-        except error.URLError as exc:
-            raise GeminiClientError(f"Gemini request failed: {exc.reason}") from exc
+        for attempt in range(1, attempts + 1):
+            http_request = request.Request(
+                url=url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            try:
+                with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
+                    response_body = response.read().decode("utf-8")
+                break
+            except error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                retryable = self._is_retryable_http_error(exc.code)
+                last_error = GeminiClientError(f"Gemini HTTP error {exc.code}: {detail}")
+                if not retryable or attempt >= attempts:
+                    raise last_error from exc
+                self._log_retry(attempt, attempts, f"http {exc.code}")
+            except error.URLError as exc:
+                retryable = self._is_retryable_url_error(exc.reason)
+                last_error = GeminiClientError(f"Gemini request failed: {exc.reason}")
+                if not retryable or attempt >= attempts:
+                    raise last_error from exc
+                self._log_retry(attempt, attempts, f"network error: {exc.reason}")
+            except TimeoutError as exc:
+                last_error = GeminiClientError(f"Gemini request timed out after {self.timeout_seconds} seconds.")
+                if attempt >= attempts:
+                    raise last_error from exc
+                self._log_retry(attempt, attempts, f"timeout after {self.timeout_seconds} seconds")
+
+            self._sleep_before_retry(attempt)
+        else:
+            if last_error is not None:
+                raise last_error
+            raise GeminiClientError("Gemini request failed before receiving a response.")
 
         try:
             response_payload = json.loads(response_body)
         except json.JSONDecodeError as exc:
             raise GeminiClientError("Gemini response was not valid JSON.") from exc
         return self.extract_text(response_payload)
+
+    @staticmethod
+    def _is_retryable_http_error(status_code: int) -> bool:
+        return status_code == 408 or status_code == 429 or 500 <= status_code < 600
+
+    @staticmethod
+    def _is_retryable_url_error(reason: object) -> bool:
+        return isinstance(reason, (TimeoutError, socket.timeout))
+
+    def _sleep_before_retry(self, attempt: int) -> None:
+        if self.retry_backoff_seconds <= 0:
+            return
+        time.sleep(self.retry_backoff_seconds * attempt)
+
+    def _log_retry(self, attempt: int, attempts: int, reason: str) -> None:
+        logger.warning(
+            "Retrying Gemini request after %s (%s/%s).",
+            reason,
+            attempt,
+            attempts,
+        )
 
     @staticmethod
     def _build_perception_payload(prompt: str, image_bytes: bytes) -> dict[str, Any]:

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
+from uuid import uuid4
 
+from src.models.common import FailureCategory, LoopStage, StopReason
 from src.models.execution import ExecutedAction
-from src.models.logs import ModelDebugArtifacts, StepLog
+from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
 from src.models.perception import ScreenPerception
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
@@ -16,9 +17,7 @@ from src.store.run_logger import append_step_log
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / name
-    if path.exists():
-        shutil.rmtree(path)
+    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -30,6 +29,7 @@ def _debug(stage: str, step_dir: Path) -> ModelDebugArtifacts:
         prompt_artifact_path=str(step_dir / f"{stage}_prompt.txt"),
         raw_response_artifact_path=str(step_dir / f"{stage}_raw.txt"),
         parsed_artifact_path=str(step_dir / parsed_name),
+        selector_trace_artifact_path=str(step_dir / f"{stage}_selector_trace.json"),
     )
 
 
@@ -126,6 +126,94 @@ def test_replay_renderer_lists_artifact_refs_and_outcomes() -> None:
     assert "after.png" in output
     assert "perception_prompt.txt" in output
     assert "policy_decision.json" in output
+    assert "policy_selector_trace:" in output
     assert "action: click" in output
     assert "verification: success | compose opened" in output
     assert "recovery: advance | continue" in output
+
+
+def test_replay_renderer_shows_precondition_stop_reasons() -> None:
+    root_dir = _local_test_dir("test-replay-renderer-stop-reasons") / "runs"
+    run_id = "run-setup"
+    step_dir = root_dir / run_id / "step_1"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    action = AgentAction(action_type=ActionType.STOP)
+    append_step_log(
+        root_dir / run_id / "run.jsonl",
+        StepLog(
+            run_id=run_id,
+            step_id="step_1",
+            step_index=1,
+            before_artifact_path=str(step_dir / "before.png"),
+            after_artifact_path=str(step_dir / "after.png"),
+            perception_debug=_debug("perception", step_dir),
+            policy_debug=_debug("policy", step_dir),
+            perception=ScreenPerception(
+                summary="Login page visible",
+                page_hint="google_sign_in",
+                capture_artifact_path=str(step_dir / "before.png"),
+                visible_elements=[],
+            ),
+            policy_decision=PolicyDecision(
+                action=action,
+                rationale="Benchmark requires authenticated start.",
+                confidence=1.0,
+                active_subgoal="stop for benchmark setup",
+            ),
+            executed_action=ExecutedAction(action=action, success=True, detail="stopped"),
+            verification_result=VerificationResult(
+                status=VerificationStatus.FAILURE,
+                expected_outcome_met=False,
+                stop_condition_met=True,
+                reason="Benchmark precondition failed.",
+                stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED,
+            ),
+            recovery_decision=RecoveryDecision(
+                strategy=RecoveryStrategy.STOP,
+                message="Stop benchmark run.",
+                terminal=True,
+                recoverable=False,
+                stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED,
+            ),
+        ),
+    )
+
+    output = render_run_replay(run_id, root_dir=root_dir)
+
+    assert "verification_stop_reason: benchmark_precondition_failed" in output
+    assert "recovery_stop_reason: benchmark_precondition_failed" in output
+
+
+def test_replay_renderer_surfaces_pre_step_perception_failures() -> None:
+    root_dir = _local_test_dir("test-replay-renderer-pre-step-failure") / "runs"
+    run_id = "run-pre-step-failure"
+    step_dir = root_dir / run_id / "step_1"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    append_step_log(
+        root_dir / run_id / "run.jsonl",
+        PreStepFailureLog(
+            run_id=run_id,
+            step_id="step_1",
+            step_index=1,
+            before_artifact_path=str(step_dir / "before.png"),
+            perception_debug=_debug("perception", step_dir),
+            failure=FailureRecord(
+                category=FailureCategory.PRE_STEP_PERCEPTION_FAILED,
+                stage=LoopStage.PERCEIVE,
+                retry_count=0,
+                terminal=True,
+                recoverable=False,
+                reason="Gemini perception output did not match the strict schema.",
+                stop_reason=StopReason.PRE_STEP_PERCEPTION_FAILED,
+            ),
+            error_message="Gemini perception output did not match the strict schema.",
+        ),
+    )
+
+    output = render_run_replay(run_id, root_dir=root_dir)
+
+    assert "Steps: 0" in output
+    assert "Pre-step failures: 1" in output
+    assert "failure_stage: perceive" in output
+    assert "failure_category: pre_step_perception_failed" in output
+    assert "failure_stop_reason: pre_step_perception_failed" in output

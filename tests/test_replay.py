@@ -7,7 +7,12 @@ from uuid import uuid4
 
 from src.models.common import FailureCategory, LoopStage, StopReason
 from src.models.execution import ExecutedAction
-from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
+from src.models.logs import (
+    FailureRecord,
+    ModelDebugArtifacts,
+    PreStepFailureLog,
+    StepLog,
+)
 from src.models.perception import ScreenPerception
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.progress import ProgressState

@@ -10,8 +10,18 @@ from fastapi.testclient import TestClient
 from src.api.server import app
 from src.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
-from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
-from src.models.perception import ScreenPerception, UIElement, UIElementNameSource, UIElementType
+from src.models.logs import (
+    FailureRecord,
+    ModelDebugArtifacts,
+    PreStepFailureLog,
+    StepLog,
+)
+from src.models.perception import (
+    ScreenPerception,
+    UIElement,
+    UIElementNameSource,
+    UIElementType,
+)
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.progress import ProgressState
 from src.models.recovery import RecoveryDecision, RecoveryStrategy

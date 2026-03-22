@@ -8,7 +8,12 @@ from src.models.capture import CaptureFrame
 from src.models.common import RunStatus
 from src.models.execution import ExecutedAction
 from src.models.logs import ModelDebugArtifacts, StepLog
-from src.models.perception import ScreenPerception, UIElement, UIElementNameSource, UIElementType
+from src.models.perception import (
+    ScreenPerception,
+    UIElement,
+    UIElementNameSource,
+    UIElementType,
+)
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.state import AgentState

@@ -5,7 +5,13 @@ from __future__ import annotations
 from src.agent.selector import DeterministicTargetSelector
 from src.models.common import FailureCategory, StopReason
 from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.selector import SelectorFinalDecision, SelectorMode, SelectorRecoveryStrategy, TargetIntent, TargetIntentAction
+from src.models.selector import (
+    SelectorFinalDecision,
+    SelectorMode,
+    SelectorRecoveryStrategy,
+    TargetIntent,
+    TargetIntentAction,
+)
 
 
 def _perception(*elements: UIElement) -> ScreenPerception:

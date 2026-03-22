@@ -1,7 +1,6 @@
 """Agent loop orchestration tests using async mocks."""
 
 import json
-import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -12,7 +11,13 @@ import pytest
 from src.agent.loop import AgentLoop
 from src.agent.perception import PerceptionError, PerceptionLowQualityError
 from src.models.capture import CaptureFrame
-from src.models.common import FailureCategory, RunStatus, RunTaskRequest, StepRequest, StopReason
+from src.models.common import (
+    FailureCategory,
+    RunStatus,
+    RunTaskRequest,
+    StepRequest,
+    StopReason,
+)
 from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
 from src.models.logs import ModelDebugArtifacts
 from src.models.perception import ScreenPerception, UIElement, UIElementType

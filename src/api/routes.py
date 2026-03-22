@@ -7,17 +7,23 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, HTMLResponse
 
-from src.api.observer import artifact_path_for_request, list_runs, load_run_snapshot
 from src.agent.capture import BrowserCaptureService
 from src.agent.loop import AgentLoop
-from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.perception import GeminiPerceptionService
 from src.agent.policy import GeminiPolicyService
+from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
+from src.api.observer import artifact_path_for_request, list_runs, load_run_snapshot
 from src.clients.gemini import GeminiHttpClient
 from src.executor.browser import PlaywrightBrowserExecutor
-from src.models.common import HealthResponse, ResumeRequest, RunResponse, RunTaskRequest, StepRequest
+from src.models.common import (
+    HealthResponse,
+    ResumeRequest,
+    RunResponse,
+    RunTaskRequest,
+    StepRequest,
+)
 from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
 

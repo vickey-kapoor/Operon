@@ -1,6 +1,5 @@
 """Agent loop orchestrator for the active browser benchmark workflow."""
 
-import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,15 +21,20 @@ from src.models.common import (
     StopReason,
 )
 from src.models.execution import ExecutedAction, ExecutionReresolutionTrace
-from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
+from src.models.logs import (
+    FailureRecord,
+    ModelDebugArtifacts,
+    PreStepFailureLog,
+    StepLog,
+)
+from src.models.perception import PageHint, UIElement
 from src.models.policy import ActionType, AgentAction
-from src.models.selector import TargetIntent, TargetIntentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.perception import PageHint, UIElement
+from src.models.selector import TargetIntent, TargetIntentAction
 from src.models.verification import VerificationStatus
-from src.store.run_logger import append_step_log
 from src.store.memory import MemoryStore
+from src.store.run_logger import append_step_log
 from src.store.run_store import RunStore
 
 

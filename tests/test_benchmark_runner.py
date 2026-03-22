@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.agent.loop import AgentLoop
-from src.models.benchmark import BenchmarkSuiteSpec, BenchmarkTaskSpec, BenchmarkTaskType
+from src.models.benchmark import (
+    BenchmarkSuiteSpec,
+    BenchmarkTaskSpec,
+    BenchmarkTaskType,
+)
 from src.models.common import FailureCategory, RunResponse, RunStatus, StopReason
 from src.models.policy import ActionType
 from src.models.state import AgentState

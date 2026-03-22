@@ -9,7 +9,12 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from src.models.benchmark import BenchmarkSuiteSummary, BenchmarkTaskSpec, BenchmarkTaskType, RunMetrics
+from src.models.benchmark import (
+    BenchmarkSuiteSummary,
+    BenchmarkTaskSpec,
+    BenchmarkTaskType,
+    RunMetrics,
+)
 from src.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from src.models.logs import PreStepFailureLog, StepLog
 from src.models.selector import SelectorTrace

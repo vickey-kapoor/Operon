@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from src.models.logs import PreStepFailureLog, StepLog
-from src.models.perception import UIElementType
 from src.store.replay import load_run_replay
 from src.store.summary import _load_state_from_path
 

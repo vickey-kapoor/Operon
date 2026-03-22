@@ -15,7 +15,12 @@ from src.agent.geometry import (
     same_row,
 )
 from src.models.common import FailureCategory, StopReason
-from src.models.perception import ScreenPerception, UIElement, UIElementNameSource, UIElementType
+from src.models.perception import (
+    ScreenPerception,
+    UIElement,
+    UIElementNameSource,
+    UIElementType,
+)
 from src.models.selector import (
     OriginalTargetSignature,
     SelectorConfidenceBand,

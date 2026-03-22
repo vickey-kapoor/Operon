@@ -3,22 +3,35 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from uuid import uuid4
 
 from src.models.benchmark import BenchmarkTaskSpec, BenchmarkTaskType
 from src.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
-from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
-from src.models.perception import ScreenPerception, UIElement, UIElementNameSource, UIElementType
+from src.models.logs import (
+    FailureRecord,
+    ModelDebugArtifacts,
+    PreStepFailureLog,
+    StepLog,
+)
+from src.models.perception import (
+    ScreenPerception,
+    UIElement,
+    UIElementNameSource,
+    UIElementType,
+)
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.progress import ProgressState
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.state import AgentState
 from src.models.verification import VerificationResult, VerificationStatus
 from src.store.run_logger import append_step_log
-from src.store.summary import generate_run_metrics, generate_suite_summary, summarize_runs
+from src.store.summary import (
+    generate_run_metrics,
+    generate_suite_summary,
+    summarize_runs,
+)
 
 
 def _local_test_dir(name: str) -> Path:

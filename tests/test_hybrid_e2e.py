@@ -19,7 +19,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-
 from playwright.async_api import Page
 
 from src.agent.capture import BrowserCaptureService
@@ -31,10 +30,9 @@ from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import GeminiHttpClient
 from src.executor.browser import PlaywrightBrowserExecutor
-from src.models.common import RunStatus, RunTaskRequest
+from src.models.common import RunStatus
 from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
-
 
 # ---------------------------------------------------------------------------
 # Helpers

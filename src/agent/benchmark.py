@@ -10,17 +10,28 @@ from dotenv import find_dotenv, load_dotenv
 
 from src.agent.capture import BrowserCaptureService
 from src.agent.loop import AgentLoop
-from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.perception import GeminiPerceptionService
 from src.agent.policy import GeminiPolicyService
+from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import GeminiHttpClient
 from src.executor.browser import PlaywrightBrowserExecutor
-from src.models.benchmark import BenchmarkSuiteSpec, BenchmarkSuiteSummary, BenchmarkTaskSpec, BenchmarkTaskType, RunMetrics
+from src.models.benchmark import (
+    BenchmarkSuiteSpec,
+    BenchmarkSuiteSummary,
+    BenchmarkTaskSpec,
+    BenchmarkTaskType,
+    RunMetrics,
+)
 from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
-from src.store.summary import generate_run_metrics, generate_suite_summary, write_run_metrics, write_suite_summary
+from src.store.summary import (
+    generate_run_metrics,
+    generate_suite_summary,
+    write_run_metrics,
+    write_suite_summary,
+)
 
 DEFAULT_FORM_BENCHMARK_INTENT = "Complete the auth-free form and submit it successfully."
 DEFAULT_FORM_BENCHMARK_URL = "https://practice-automation.com/form-fields/"

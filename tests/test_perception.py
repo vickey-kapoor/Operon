@@ -9,13 +9,13 @@ import pytest
 
 from src.agent.perception import (
     GeminiPerceptionService,
-    PerceptionLowQualityError,
     PerceptionError,
+    PerceptionLowQualityError,
     parse_perception_output,
 )
 from src.agent.selector import DeterministicTargetSelector
 from src.models.capture import CaptureFrame
-from src.models.common import FailureCategory, RunStatus, StopReason
+from src.models.common import RunStatus
 from src.models.perception import PageHint, UIElementNameSource, UIElementType
 from src.models.selector import TargetIntent, TargetIntentAction
 from src.models.state import AgentState

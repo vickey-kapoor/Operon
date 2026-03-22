@@ -23,7 +23,7 @@ class UIElementType(StrEnum):
 
 
 class PageHint(StrEnum):
-    """Supported high-level page classifications for the form and Gmail benchmarks."""
+    """Common page classifications. Accepts arbitrary snake_case values from the LLM."""
 
     FORM_PAGE = "form_page"
     FORM_SUCCESS = "form_success"
@@ -32,6 +32,15 @@ class PageHint(StrEnum):
     GMAIL_COMPOSE = "gmail_compose"
     GMAIL_MESSAGE_VIEW = "gmail_message_view"
     UNKNOWN = "unknown"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "PageHint":
+        if not isinstance(value, str):
+            return None  # type: ignore[return-value]
+        obj = str.__new__(cls, value)
+        obj._name_ = value
+        obj._value_ = value
+        return obj
 
 
 class UIElementNameSource(StrEnum):

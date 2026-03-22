@@ -48,6 +48,23 @@ class FailureCategory(StrEnum):
     TARGET_ACTION_INCOMPATIBLE = "target_action_incompatible"
     SELECTOR_RECOVERY_USED = "selector_recovery_used"
     SELECTOR_RECOVERY_FAILED = "selector_recovery_failed"
+    TARGET_RERESOLUTION_FAILED = "target_reresolution_failed"
+    TARGET_RERESOLUTION_AMBIGUOUS = "target_reresolution_ambiguous"
+    STALE_TARGET_BEFORE_ACTION = "stale_target_before_action"
+    TARGET_SHIFTED_BEFORE_ACTION = "target_shifted_before_action"
+    TARGET_LOST_BEFORE_ACTION = "target_lost_before_action"
+    FOCUS_VERIFICATION_FAILED = "focus_verification_failed"
+    CLICK_BEFORE_TYPE_FAILED = "click_before_type_failed"
+    TYPE_VERIFICATION_FAILED = "type_verification_failed"
+    CLICK_NO_EFFECT = "click_no_effect"
+    CHECKBOX_VERIFICATION_FAILED = "checkbox_verification_failed"
+    SELECT_VERIFICATION_FAILED = "select_verification_failed"
+    EXECUTION_NO_PROGRESS = "execution_no_progress"
+    REPEATED_ACTION_WITHOUT_PROGRESS = "repeated_action_without_progress"
+    REPEATED_TARGET_WITHOUT_PROGRESS = "repeated_target_without_progress"
+    REPEATED_FAILURE_LOOP = "repeated_failure_loop"
+    NO_MEANINGFUL_PROGRESS_ACROSS_STEPS = "no_meaningful_progress_across_steps"
+    SUBGOAL_ALREADY_COMPLETED = "subgoal_already_completed"
     EXECUTION_TARGET_NOT_FOUND = "execution_target_not_found"
     EXECUTION_TARGET_NOT_EDITABLE = "execution_target_not_editable"
     EXECUTION_ERROR = "execution_error"
@@ -62,6 +79,7 @@ class StopReason(StrEnum):
 
     STOP_BEFORE_SEND = "stop_before_send"
     FORM_SUBMITTED_SUCCESS = "form_submitted_success"
+    TASK_COMPLETED = "task_completed"
     BENCHMARK_PRECONDITION_FAILED = "benchmark_precondition_failed"
     PRE_STEP_PERCEPTION_FAILED = "pre_step_perception_failed"
     PERCEPTION_LOW_QUALITY = "perception_low_quality"
@@ -72,12 +90,30 @@ class StopReason(StrEnum):
     TARGET_ACTION_INCOMPATIBLE = "target_action_incompatible"
     SELECTOR_RECOVERY_USED = "selector_recovery_used"
     SELECTOR_RECOVERY_FAILED = "selector_recovery_failed"
+    TARGET_RERESOLUTION_FAILED = "target_reresolution_failed"
+    TARGET_RERESOLUTION_AMBIGUOUS = "target_reresolution_ambiguous"
+    STALE_TARGET_BEFORE_ACTION = "stale_target_before_action"
+    TARGET_SHIFTED_BEFORE_ACTION = "target_shifted_before_action"
+    TARGET_LOST_BEFORE_ACTION = "target_lost_before_action"
+    FOCUS_VERIFICATION_FAILED = "focus_verification_failed"
+    CLICK_BEFORE_TYPE_FAILED = "click_before_type_failed"
+    TYPE_VERIFICATION_FAILED = "type_verification_failed"
+    CLICK_NO_EFFECT = "click_no_effect"
+    CHECKBOX_VERIFICATION_FAILED = "checkbox_verification_failed"
+    SELECT_VERIFICATION_FAILED = "select_verification_failed"
+    EXECUTION_NO_PROGRESS = "execution_no_progress"
+    REPEATED_ACTION_WITHOUT_PROGRESS = "repeated_action_without_progress"
+    REPEATED_TARGET_WITHOUT_PROGRESS = "repeated_target_without_progress"
+    REPEATED_FAILURE_LOOP = "repeated_failure_loop"
+    NO_MEANINGFUL_PROGRESS_ACROSS_STEPS = "no_meaningful_progress_across_steps"
+    SUBGOAL_ALREADY_COMPLETED = "subgoal_already_completed"
     RETRY_LIMIT_REACHED = "retry_limit_reached"
     MAX_STEP_LIMIT_REACHED = "max_step_limit_reached"
 
 
 class RunTaskRequest(StrictModel):
     intent: str = Field(min_length=1, max_length=500)
+    start_url: str | None = Field(default=None, min_length=1)
 
 
 class StepRequest(StrictModel):

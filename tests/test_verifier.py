@@ -58,7 +58,7 @@ async def test_verifier_stop_before_send_boundary() -> None:
     assert result.expected_outcome_met is True
     assert result.stop_condition_met is True
     assert result.failure_type is VerificationFailureType.STOP_BOUNDARY_REACHED
-    assert result.stop_reason is StopReason.STOP_BEFORE_SEND
+    assert result.stop_reason is StopReason.TASK_COMPLETED
 
 
 @pytest.mark.asyncio

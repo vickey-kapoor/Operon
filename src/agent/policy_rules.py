@@ -1,4 +1,4 @@
-"""Explicit rule-first policy checks for deterministic benchmark cases."""
+"""Explicit rule-first policy checks for deterministic agent cases."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ class PolicyRuleEngine:
         self._latest_selector_traces = []
         return (
             self._login_page_guardrail(state, perception, memory_hints)
-            or self._form_success_stop_rule(perception)
+            or self._task_success_stop_rule(perception)
             or self._avoid_identical_type_retry(state, perception, memory_hints)
             or self._compose_already_visible_rule(state, perception)
             or self._submit_form_when_ready_rule(state, perception)
@@ -108,12 +108,12 @@ class PolicyRuleEngine:
             active_subgoal=f"re-assess {last_action.target_element_id or 'input'}",
         )
 
-    def _form_success_stop_rule(self, perception: ScreenPerception) -> PolicyDecision | None:
+    def _task_success_stop_rule(self, perception: ScreenPerception) -> PolicyDecision | None:
         if perception.page_hint is not PageHint.FORM_SUCCESS and not self._has_success_signal(perception):
             return None
         return PolicyDecision(
             action=AgentAction(action_type=ActionType.STOP),
-            rationale="Form success state is already visible.",
+            rationale="Task success state is already visible.",
             confidence=1.0,
             active_subgoal="verify_success",
         )
@@ -349,7 +349,7 @@ class PolicyRuleEngine:
 
     def _input_target_intent(self, subgoal: str | None, target_element_id: str | None) -> TargetIntent:
         lowered_subgoal = (subgoal or "").lower()
-        expected_section = "form"
+        expected_section: str | None = None
         target_text = None
 
         subgoal_map = (
@@ -372,6 +372,8 @@ class PolicyRuleEngine:
 
         if "compose" in lowered_subgoal or "gmail" in lowered_subgoal:
             expected_section = "compose"
+        elif "form" in lowered_subgoal or "submit" in lowered_subgoal:
+            expected_section = "form"
 
         return TargetIntent(
             action=TargetIntentAction.CLICK,

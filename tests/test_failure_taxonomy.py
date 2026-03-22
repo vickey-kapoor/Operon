@@ -151,7 +151,7 @@ async def test_step_log_records_failure_taxonomy_for_failed_step() -> None:
             parsed_artifact_path="runs/run-3/step_1/policy_decision.json",
         ),
     )
-    browser_executor = SimpleNamespace(execute=AsyncMock(return_value=executed))
+    executor = SimpleNamespace(execute=AsyncMock(return_value=executed))
     verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verification))
     recovery_manager = RuleBasedRecoveryManager()
 
@@ -160,7 +160,7 @@ async def test_step_log_records_failure_taxonomy_for_failed_step() -> None:
         perception_service=perception_service,
         run_store=run_store,
         policy_service=policy_service,
-        browser_executor=browser_executor,
+        executor=executor,
         verifier_service=verifier_service,
         recovery_manager=recovery_manager,
     )

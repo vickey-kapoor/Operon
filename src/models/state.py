@@ -7,14 +7,16 @@ from pydantic import Field
 from src.models.common import RunStatus, StopReason, StrictModel
 from src.models.execution import ExecutedAction
 from src.models.perception import ScreenPerception
+from src.models.progress import ProgressState
 from src.models.verification import VerificationResult
 
 
 class AgentState(StrictModel):
-    """Local typed state stored for a single benchmark run."""
+    """Local typed state stored for a single agent run."""
 
     run_id: str = Field(min_length=1)
     intent: str = Field(min_length=1)
+    start_url: str | None = Field(default=None, min_length=1)
     status: RunStatus
     current_subgoal: str | None = Field(default=None, min_length=1)
     step_count: int = Field(default=0, ge=0)
@@ -23,5 +25,6 @@ class AgentState(StrictModel):
     verification_history: list[VerificationResult] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
     target_failure_counts: dict[str, int] = Field(default_factory=dict)
+    progress_state: ProgressState = Field(default_factory=ProgressState)
     artifact_paths: list[str] = Field(default_factory=list)
     stop_reason: StopReason | None = None

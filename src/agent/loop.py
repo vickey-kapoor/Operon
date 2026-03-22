@@ -2,12 +2,14 @@
 
 import json
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.agent.capture import CaptureService
 from src.agent.perception import PerceptionLowQualityError, PerceptionService
 from src.agent.policy import PolicyService
 from src.agent.recovery import RecoveryManager
+from src.agent.selector import DeterministicTargetSelector
 from src.agent.verifier import VerifierService
 from src.executor.browser import BrowserExecutor
 from src.models.common import (
@@ -19,15 +21,23 @@ from src.models.common import (
     StepRequest,
     StopReason,
 )
-from src.models.execution import ExecutedAction
+from src.models.execution import ExecutedAction, ExecutionReresolutionTrace
 from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
 from src.models.policy import ActionType, AgentAction
+from src.models.selector import TargetIntent, TargetIntentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
+from src.models.perception import PageHint, UIElement
 from src.models.verification import VerificationStatus
 from src.store.run_logger import append_step_log
 from src.store.memory import MemoryStore
 from src.store.run_store import RunStore
+
+
+@dataclass(slots=True)
+class _RetryResolution:
+    action: AgentAction | None
+    trace: ExecutionReresolutionTrace | None
 
 
 class AgentLoop:
@@ -42,6 +52,7 @@ class AgentLoop:
     SUCCESS_STOP_REASONS = {
         StopReason.STOP_BEFORE_SEND,
         StopReason.FORM_SUBMITTED_SUCCESS,
+        StopReason.TASK_COMPLETED,
     }
 
     def __init__(
@@ -50,7 +61,7 @@ class AgentLoop:
         perception_service: PerceptionService,
         run_store: RunStore,
         policy_service: PolicyService,
-        browser_executor: BrowserExecutor,
+        executor: BrowserExecutor,
         verifier_service: VerifierService,
         recovery_manager: RecoveryManager,
         memory_store: MemoryStore | None = None,
@@ -59,13 +70,18 @@ class AgentLoop:
         self.perception_service = perception_service
         self.run_store = run_store
         self.policy_service = policy_service
-        self.browser_executor = browser_executor
+        self.executor = executor
         self.verifier_service = verifier_service
         self.recovery_manager = recovery_manager
         self.memory_store = memory_store
+        self.target_selector = DeterministicTargetSelector()
 
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
-        record = self.run_store.create_run(intent=request.intent)
+        record = self.run_store.create_run(intent=request.intent, start_url=request.start_url)
+        if request.start_url:
+            await self.executor.execute(
+                AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
+            )
         return RunResponse(
             run_id=record.run_id,
             status=record.status,
@@ -80,13 +96,7 @@ class AgentLoop:
         benchmark_url: str = "https://practice-automation.com/form-fields/",
         max_steps: int = 12,
     ) -> RunResponse:
-        response = await self.start_run(RunTaskRequest(intent=intent))
-        await self.browser_executor.execute(
-            AgentAction(
-                action_type=ActionType.NAVIGATE,
-                url=benchmark_url,
-            )
-        )
+        response = await self.start_run(RunTaskRequest(intent=intent, start_url=benchmark_url))
 
         while True:
             state = await self.run_store.get_run(response.run_id)
@@ -129,6 +139,7 @@ class AgentLoop:
         state = await self.run_store.update_state(record.run_id, perception)
         self._sync_progress_state_with_perception(state, perception)
         decision = await self.policy_service.choose_action(state, perception)
+        decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
         blocked_action = self._block_redundant_action(state, decision.action, step_index)
@@ -357,7 +368,7 @@ class AgentLoop:
         decision_action,
         step_index: int,
     ):
-        executed_action = await self.browser_executor.execute(decision_action)
+        executed_action = await self.executor.execute(decision_action)
         executed_action = self._apply_no_progress_detection(state, executed_action)
 
         if not self._should_retry_execution(executed_action):
@@ -370,17 +381,27 @@ class AgentLoop:
             frame = await self.capture_service.capture(record)
             refreshed_perception = await self.perception_service.perceive(frame, record)
             retry_state = await self.run_store.update_state(record.run_id, refreshed_perception)
-            retry_action = self._reresolve_action(decision_action, refreshed_perception)
-            target_reresolved = retry_action != decision_action
+            resolution = self._resolve_retry_action(
+                action=decision_action,
+                perception=refreshed_perception,
+                retry_reason=executed_action.failure_category,
+            )
+            retry_action = resolution.action
+            target_reresolved = resolution.trace is not None and resolution.trace.succeeded
         except Exception:
             return state, self._persist_execution_trace(record.run_id, step_index, executed_action)
 
-        retry_executed = await self.browser_executor.execute(retry_action)
+        if retry_action is None:
+            failed = self._apply_reresolution_failure(executed_action, resolution.trace)
+            return retry_state, self._persist_execution_trace(record.run_id, step_index, failed)
+
+        retry_executed = await self.executor.execute(retry_action)
         retry_executed = self._merge_execution_retry(
             original=executed_action,
             retried=retry_executed,
             retry_reason=executed_action.failure_category,
             target_reresolved=target_reresolved,
+            reresolution_trace=resolution.trace,
         )
         retry_executed = self._apply_no_progress_detection(state, retry_executed)
         return retry_state, self._persist_execution_trace(record.run_id, step_index, retry_executed)
@@ -398,8 +419,17 @@ class AgentLoop:
             FailureCategory.SELECT_VERIFICATION_FAILED,
         }
 
+    def _resolve_retry_action(self, *, action, perception, retry_reason: FailureCategory | None) -> _RetryResolution:
+        if retry_reason in {
+            FailureCategory.STALE_TARGET_BEFORE_ACTION,
+            FailureCategory.TARGET_SHIFTED_BEFORE_ACTION,
+            FailureCategory.TARGET_LOST_BEFORE_ACTION,
+        }:
+            return self._intent_reresolve_action(action, perception, retry_reason)
+        return _RetryResolution(action=self._refresh_action_coordinates(action, perception), trace=None)
+
     @staticmethod
-    def _reresolve_action(action, perception):
+    def _refresh_action_coordinates(action, perception):
         target_id = action.target_element_id
         if target_id is None:
             return action
@@ -414,7 +444,7 @@ class AgentLoop:
         )
 
     @staticmethod
-    def _merge_execution_retry(*, original, retried, retry_reason, target_reresolved):
+    def _merge_execution_retry(*, original, retried, retry_reason, target_reresolved, reresolution_trace):
         original_trace = original.execution_trace
         retried_trace = retried.execution_trace
         if original_trace is None or retried_trace is None:
@@ -425,11 +455,146 @@ class AgentLoop:
                 "target_reresolved": target_reresolved,
                 "retry_attempted": True,
                 "retry_reason": retry_reason,
+                "reresolution_trace": reresolution_trace,
                 "final_outcome": retried_trace.final_outcome,
                 "final_failure_category": retried_trace.final_failure_category,
             }
         )
         return retried.model_copy(update={"execution_trace": merged_trace})
+
+    def _attach_target_context(self, action: AgentAction, perception) -> AgentAction:
+        if action.target_context is not None:
+            return action
+        target = self._resolve_action_target(action, perception)
+        intent = self._infer_target_intent(action, target, perception)
+        if target is None or intent is None:
+            return action
+        context = self.target_selector.build_selection_context(
+            perception,
+            intent,
+            target,
+            page_signature=self._page_signature(perception),
+        )
+        return action.model_copy(update={"target_context": context})
+
+    def _intent_reresolve_action(
+        self,
+        action: AgentAction,
+        perception,
+        retry_reason: FailureCategory,
+    ) -> _RetryResolution:
+        if action.target_context is None:
+            return _RetryResolution(action=self._refresh_action_coordinates(action, perception), trace=None)
+
+        result = self.target_selector.reresolve(perception, action.target_context)
+        selected = result.selected
+        trace = ExecutionReresolutionTrace(
+            trigger_reason=retry_reason,
+            original_target_element_id=action.target_context.original_target.element_id,
+            original_intent=action.target_context.intent,
+            original_target_signature=action.target_context.original_target,
+            original_page_signature=action.target_context.original_page_signature,
+            selector_trace=result.trace,
+            reused_original_element_id=(
+                selected is not None and selected.element_id == action.target_context.original_target.element_id
+            ),
+            final_target_element_id=selected.element_id if selected is not None else None,
+            succeeded=selected is not None,
+            detail=(
+                f"Re-resolved target to {selected.element_id} from original intent."
+                if selected is not None
+                else "Intent-based target re-resolution did not find a safe deterministic match."
+            ),
+        )
+        if selected is None:
+            return _RetryResolution(action=None, trace=trace)
+
+        return _RetryResolution(
+            action=action.model_copy(
+                update={
+                    "target_element_id": selected.element_id,
+                    "x": selected.x + max(1, selected.width // 2),
+                    "y": selected.y + max(1, selected.height // 2),
+                }
+            ),
+            trace=trace,
+        )
+
+    @staticmethod
+    def _apply_reresolution_failure(original, reresolution_trace: ExecutionReresolutionTrace | None):
+        trace = original.execution_trace
+        if trace is None or reresolution_trace is None:
+            return original
+        failure_category = (
+            FailureCategory.TARGET_RERESOLUTION_AMBIGUOUS
+            if reresolution_trace.selector_trace.rejection_reason is FailureCategory.AMBIGUOUS_TARGET_CANDIDATES
+            else FailureCategory.TARGET_RERESOLUTION_FAILED
+        )
+        merged_trace = trace.model_copy(
+            update={
+                "retry_attempted": True,
+                "retry_reason": reresolution_trace.trigger_reason,
+                "reresolution_trace": reresolution_trace,
+                "final_outcome": "failure",
+                "final_failure_category": failure_category,
+            }
+        )
+        return original.model_copy(
+            update={
+                "success": False,
+                "detail": f"Execution failed: {failure_category.value.replace('_', ' ')}.",
+                "failure_category": failure_category,
+                "failure_stage": LoopStage.EXECUTE,
+                "execution_trace": merged_trace,
+            }
+        )
+
+    @staticmethod
+    def _resolve_action_target(action: AgentAction, perception) -> UIElement | None:
+        if action.target_element_id is not None:
+            target = next((element for element in perception.visible_elements if element.element_id == action.target_element_id), None)
+            if target is not None:
+                return target
+        if action.x is None or action.y is None:
+            return None
+        containing = [
+            element
+            for element in perception.visible_elements
+            if element.is_interactable
+            and element.x <= action.x <= element.x + element.width
+            and element.y <= action.y <= element.y + element.height
+        ]
+        if containing:
+            return sorted(containing, key=lambda element: (element.y, element.x, element.element_id))[0]
+        return None
+
+    def _infer_target_intent(self, action: AgentAction, target: UIElement | None, perception) -> TargetIntent | None:
+        if target is None:
+            return None
+        if action.action_type is ActionType.CLICK:
+            intent_action = TargetIntentAction.CLICK
+        elif action.action_type is ActionType.TYPE:
+            intent_action = TargetIntentAction.TYPE
+        elif action.action_type is ActionType.SELECT:
+            intent_action = TargetIntentAction.SELECT
+        else:
+            return None
+        return TargetIntent(
+            action=intent_action,
+            target_text=target.primary_name if not target.is_unlabeled else None,
+            target_role=target.role,
+            expected_element_types=[target.element_type],
+            value_to_type=action.text if action.action_type in {ActionType.TYPE, ActionType.SELECT} else None,
+            expected_section=self._expected_section(perception.page_hint),
+        )
+
+    @staticmethod
+    def _expected_section(page_hint: PageHint) -> str | None:
+        if page_hint in {PageHint.FORM_PAGE, PageHint.FORM_SUCCESS}:
+            return "form"
+        if page_hint in {PageHint.GMAIL_COMPOSE, PageHint.GMAIL_INBOX, PageHint.GMAIL_MESSAGE_VIEW}:
+            return "compose"
+        return None
 
     def _persist_execution_trace(self, run_id: str, step_index: int, executed_action):
         if executed_action.execution_trace is None:

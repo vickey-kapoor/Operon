@@ -230,6 +230,10 @@ def _fallback_page_hint_from_summary(summary: object) -> PageHint:
         return PageHint.GMAIL_INBOX
     if "message" in lowered or "conversation" in lowered:
         return PageHint.GMAIL_MESSAGE_VIEW
+    if "wikipedia" in lowered or "article" in lowered or "wiki" in lowered:
+        return PageHint("article_page")
+    if "search" in lowered:
+        return PageHint("search_results")
     return PageHint.UNKNOWN
 
 

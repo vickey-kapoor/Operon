@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from pathlib import Path
 
+from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import FileResponse, HTMLResponse
+
+from src.api.observer import artifact_path_for_request, list_runs, load_run_snapshot
 from src.agent.capture import BrowserCaptureService
 from src.agent.loop import AgentLoop
 from src.agent.policy_coordinator import PolicyCoordinator
@@ -19,6 +23,7 @@ from src.store.run_store import FileBackedRunStore
 
 router = APIRouter()
 _agent_loop: AgentLoop | None = None
+_OBSERVER_HTML_PATH = Path(__file__).resolve().parent / "static" / "observer.html"
 
 
 def get_agent_loop() -> AgentLoop:
@@ -26,18 +31,18 @@ def get_agent_loop() -> AgentLoop:
     global _agent_loop
     if _agent_loop is None:
         gemini_client = GeminiHttpClient()
-        browser_executor = PlaywrightBrowserExecutor()
+        executor = PlaywrightBrowserExecutor()
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
         _agent_loop = AgentLoop(
-            capture_service=BrowserCaptureService(browser_executor=browser_executor),
+            capture_service=BrowserCaptureService(executor=executor),
             perception_service=GeminiPerceptionService(gemini_client=gemini_client),
             run_store=run_store,
             policy_service=PolicyCoordinator(
                 delegate=GeminiPolicyService(gemini_client=gemini_client),
                 memory_store=memory_store,
             ),
-            browser_executor=browser_executor,
+            executor=executor,
             verifier_service=DeterministicVerifierService(gemini_client=gemini_client),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
@@ -79,3 +84,36 @@ async def get_run(run_id: str) -> RunResponse:
 async def health() -> HealthResponse:
     """Return a minimal in-process health response."""
     return HealthResponse(status="ok")
+
+
+@router.get("/observer", response_class=HTMLResponse)
+async def observer_ui() -> str:
+    """Serve the lightweight local debug observer UI."""
+    return _OBSERVER_HTML_PATH.read_text(encoding="utf-8")
+
+
+@router.get("/observer/api/runs")
+async def observer_runs(limit: int = Query(default=20, ge=1, le=100)) -> dict:
+    """Return recent local runs for the observer sidebar."""
+    return {"runs": list_runs(limit=limit)}
+
+
+@router.get("/observer/api/run/{run_id}")
+async def observer_run(run_id: str) -> dict:
+    """Return the current observer snapshot for one run."""
+    try:
+        return load_run_snapshot(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/observer/api/artifact")
+async def observer_artifact(path: str = Query(..., min_length=1)) -> FileResponse:
+    """Serve a local artifact from the runs directory."""
+    try:
+        artifact_path = artifact_path_for_request(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return FileResponse(artifact_path)

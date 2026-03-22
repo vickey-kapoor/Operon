@@ -22,13 +22,13 @@ class CaptureService(ABC):
 class BrowserCaptureService(CaptureService):
     """Placeholder capture implementation backed by the browser executor."""
 
-    def __init__(self, browser_executor: BrowserExecutor, root_dir: str | Path = "runs") -> None:
-        self.browser_executor = browser_executor
+    def __init__(self, executor: BrowserExecutor, root_dir: str | Path = "runs") -> None:
+        self.executor = executor
         self.root_dir = Path(root_dir)
 
     async def capture(self, state: AgentState) -> CaptureFrame:
         """Capture a real browser screenshot into the planned run artifact path."""
-        frame = await self.browser_executor.capture()
+        frame = await self.executor.capture()
         step_index = state.step_count + 1
         planned_path = self.root_dir / state.run_id / f"step_{step_index}" / "before.png"
         planned_path.parent.mkdir(parents=True, exist_ok=True)

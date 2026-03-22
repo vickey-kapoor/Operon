@@ -1,4 +1,4 @@
-"""Local file-backed advisory memory for benchmark policy hints."""
+"""Local file-backed advisory memory for agent policy hints."""
 
 from __future__ import annotations
 
@@ -16,16 +16,19 @@ from src.models.verification import VerificationResult, VerificationStatus
 
 FORM_BENCHMARK = "auth_free_form"
 GMAIL_BENCHMARK = "gmail_draft_authenticated"
+GENERIC_TASK = "generic_task"
 DEFAULT_BENCHMARK = FORM_BENCHMARK
 
 
 def benchmark_name_for_intent(intent: str) -> str:
-    """Map the current MVP intents to the active benchmark keys."""
+    """Map an intent string to a task category key for memory scoping."""
 
     lowered = intent.lower()
     if "gmail" in lowered:
         return GMAIL_BENCHMARK
-    return FORM_BENCHMARK
+    if "form" in lowered and ("submit" in lowered or "fill" in lowered or "complete" in lowered):
+        return FORM_BENCHMARK
+    return GENERIC_TASK
 
 
 class MemoryStore(ABC):
@@ -195,6 +198,22 @@ class FileBackedMemoryStore(MemoryStore):
                 hint="Login pages are out of scope for this benchmark; use an authenticated Gmail start state.",
                 outcome=MemoryOutcome.GUARDRAIL,
                 page_hint=PageHint.GOOGLE_SIGN_IN,
+                stage=LoopStage.CHOOSE_ACTION,
+                success=False,
+            ),
+            MemoryRecord(
+                key="click_before_type",
+                benchmark=GENERIC_TASK,
+                hint="When input focus is uncertain, click the input before typing.",
+                outcome=MemoryOutcome.GUARDRAIL,
+                stage=LoopStage.CHOOSE_ACTION,
+                success=False,
+            ),
+            MemoryRecord(
+                key="avoid_identical_type_retry",
+                benchmark=GENERIC_TASK,
+                hint="Do not repeat the same type action after a focus or target failure; re-establish focus first.",
+                outcome=MemoryOutcome.GUARDRAIL,
                 stage=LoopStage.CHOOSE_ACTION,
                 success=False,
             ),

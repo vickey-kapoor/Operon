@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Vision-driven computer-use engine. It operates a Playwright-controlled browser by running a closed loop: **capture → perceive → update state → choose action → execute → verify → recover**.
 
-The primary benchmark target is an auth-free form at `https://practice-automation.com/form-fields/`. Gmail draft creation is an optional secondary benchmark.
+General-purpose: accepts any `intent` + `start_url` via `RunTaskRequest`. Two built-in benchmarks exist (auth-free form, Gmail draft) but the engine is not limited to them. `PageHint` accepts arbitrary snake_case strings from the LLM. The executor abstraction is named `executor` (not browser-specific) to prepare for future desktop expansion.
 
 ## Environment Setup
 
@@ -94,7 +94,7 @@ $env:BROWSER_DEVTOOLS = "true"
 2. **Perceive** — `GeminiPerceptionService` sends the screenshot to Gemini and returns a typed `ScreenPerception` (visible elements, page hint, focused element)
 3. **Choose action** — `PolicyCoordinator` first tries `PolicyRuleEngine` (deterministic rules + memory hints), then falls back to `GeminiPolicyService` (LLM prompt)
 4. **Block redundancy** — `AgentLoop._block_redundant_action` prevents repeated actions without progress using `ProgressState` counters
-5. **Execute** — `PlaywrightBrowserExecutor` performs the action, with one automatic retry on stale-element failures
+5. **Execute** — `PlaywrightBrowserExecutor` performs the action. `AgentLoop._execute_with_hardening()` owns one bounded retry: on `stale_target_before_action`, `target_shifted_before_action`, or `target_lost_before_action`, it captures fresh perception and re-runs the deterministic selector against the original `TargetIntent` plus lightweight target context instead of relying only on the old `target_element_id`
 6. **Verify** — `DeterministicVerifierService` checks whether the outcome matches what was expected
 7. **Recover** — `RuleBasedRecoveryManager` decides whether to continue, retry, or stop the run
 8. **Log** — `StepLog` is appended to `runs/<run_id>/run.jsonl`; every artifact (screenshots, prompt/raw/parsed files, traces) goes under `runs/<run_id>/step_N/`
@@ -108,6 +108,14 @@ Terminal conditions: `FORM_SUBMITTED_SUCCESS`, `STOP_BEFORE_SEND` (success); ret
 - `PolicyRuleEngine` runs 6 deterministic rules in priority order (selector-based matching via `src/agent/selector.py` and `geometry.py`)
 - Memory hints from `FileBackedMemoryStore` are injected into both the rule engine and the LLM prompt
 - If no rule fires, the LLM prompt in `prompts/policy_prompt.txt` is rendered and sent to Gemini
+
+### Intent-Based Re-resolution (`src/agent/loop.py`, `src/agent/selector.py`)
+
+- Targetable `AgentAction`s now carry serializable `target_context` with normalized `TargetIntent`, original target signature, top candidate evidence, and original matched signals
+- Retry-time re-resolution is deterministic only and reuses `DeterministicTargetSelector.reresolve()` rather than ad hoc DOM/id rematching
+- Re-resolution keeps current semantic and spatial evidence primary; prior element id, prior name, prior screen region, and signal continuity are only weak tie-break signals
+- Failures are explicit: `target_reresolution_failed` or `target_reresolution_ambiguous`
+- Traceability is recorded inside `execution_trace.json` via `reresolution_trace` with trigger reason, original intent, candidates considered, whether the old id was reused, and the final outcome
 
 **Rule classification — not yet separated in code, but conceptually distinct:**
 

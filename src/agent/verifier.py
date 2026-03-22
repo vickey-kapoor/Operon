@@ -31,7 +31,7 @@ class VerifierService(ABC):
 
 
 class DeterministicVerifierService(VerifierService):
-    """Minimal typed verifier for the Gmail draft MVP without model calls."""
+    """Deterministic verifier for general-purpose agent tasks."""
 
     def __init__(self, gemini_client: GeminiClient) -> None:
         self.gemini_client = gemini_client
@@ -42,16 +42,16 @@ class DeterministicVerifierService(VerifierService):
         decision: PolicyDecision,
         executed_action: ExecutedAction,
     ) -> VerificationResult:
-        """Evaluate typed inputs using deterministic Gmail-draft rules."""
+        """Evaluate typed inputs using deterministic rules."""
         action = decision.action
         latest_perception = state.observation_history[-1] if state.observation_history else None
 
-        if latest_perception is not None and self._form_success_visible(latest_perception):
+        if latest_perception is not None and self._task_success_visible(latest_perception):
             return VerificationResult(
                 status=VerificationStatus.SUCCESS,
                 expected_outcome_met=True,
                 stop_condition_met=True,
-                reason="Form success state is visible after submit.",
+                reason="Task success state is visible.",
                 failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
                 recovery_hint="stop",
                 stop_reason=StopReason.FORM_SUBMITTED_SUCCESS,
@@ -119,10 +119,12 @@ class DeterministicVerifierService(VerifierService):
             latest_perception is not None and latest_perception.page_hint is PageHint.FORM_SUCCESS
         ):
             return StopReason.FORM_SUBMITTED_SUCCESS
-        return StopReason.STOP_BEFORE_SEND
+        if decision.active_subgoal == "stop for benchmark setup":
+            return StopReason.BENCHMARK_PRECONDITION_FAILED
+        return StopReason.TASK_COMPLETED
 
     @staticmethod
-    def _form_success_visible(perception) -> bool:
+    def _task_success_visible(perception) -> bool:
         if perception.page_hint is PageHint.FORM_SUCCESS:
             return True
         success_tokens = ("thank you", "success", "submitted")

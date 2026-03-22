@@ -58,4 +58,4 @@ jobs:
           pip install ruff
 
       - name: Run ruff
-        run: ruff check src tests --select E,F,W,I --ignore E501
+        run: ruff check src tests

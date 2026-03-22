@@ -29,3 +29,10 @@ asyncio_mode = "auto"
 markers = [
     "asyncio: mark a test as using asyncio",
 ]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

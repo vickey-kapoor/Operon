@@ -5,7 +5,7 @@ from __future__ import annotations
 from src.agent.selector import DeterministicTargetSelector
 from src.models.common import FailureCategory, StopReason
 from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.selector import SelectorFinalDecision, SelectorRecoveryStrategy, TargetIntent, TargetIntentAction
+from src.models.selector import SelectorFinalDecision, SelectorMode, SelectorRecoveryStrategy, TargetIntent, TargetIntentAction
 
 
 def _perception(*elements: UIElement) -> ScreenPerception:
@@ -376,3 +376,82 @@ def test_selector_trace_includes_recovery_metadata() -> None:
     assert result.trace.recovery_strategy_used is SelectorRecoveryStrategy.THRESHOLD_RELAXATION
     assert result.trace.adjusted_acceptance_threshold == 70.0
     assert result.trace.final_decision is SelectorFinalDecision.SUCCESS
+
+
+def test_reresolution_rematches_same_intent_after_element_id_changes() -> None:
+    selector = DeterministicTargetSelector()
+    original_perception = _perception(_element("email-input", label="Email", x=100, y=108))
+    refreshed_perception = _perception(_element("email-input-r2", label="Email", x=110, y=112))
+    intent = _intent("Email")
+    context = selector.build_selection_context(original_perception, intent, original_perception.visible_elements[0], page_signature="form_page|email")
+
+    result = selector.reresolve(refreshed_perception, context)
+
+    assert result.selected is not None
+    assert result.selected.element_id == "email-input-r2"
+    assert result.trace.selector_mode is SelectorMode.RERESOLUTION
+    assert "reresolution_exact_prior_primary_name" in result.trace.top_candidates[0].matched_signals
+
+
+def test_reresolution_prefers_current_intent_over_prior_id_alone() -> None:
+    selector = DeterministicTargetSelector()
+    original_perception = _perception(_element("email-input", label="Email", x=100, y=108))
+    refreshed_perception = _perception(
+        _element("email-input", label="Secondary Contact", x=100, y=108),
+        _element("primary-email", label="Email", x=360, y=108),
+    )
+    intent = _intent("Email")
+    context = selector.build_selection_context(original_perception, intent, original_perception.visible_elements[0], page_signature="form_page|email")
+
+    result = selector.reresolve(refreshed_perception, context)
+
+    assert result.selected is not None
+    assert result.selected.element_id == "primary-email"
+    assert "reresolution_exact_prior_element_id" in result.trace.top_candidates[1].matched_signals
+
+
+def test_reresolution_ambiguous_candidates_fail_explicitly() -> None:
+    selector = DeterministicTargetSelector()
+    original_perception = _perception(_element("message-input", label="Message", x=230, y=108))
+    refreshed_perception = _perception(
+        _element("field-a", label="Message", x=100, y=108),
+        _element("field-b", label="Message", x=360, y=108),
+    )
+    intent = _intent("Message")
+    context = selector.build_selection_context(original_perception, intent, original_perception.visible_elements[0], page_signature="form_page|message")
+
+    result = selector.reresolve(refreshed_perception, context)
+
+    assert result.selected is None
+    assert result.trace.selector_mode is SelectorMode.RERESOLUTION
+    assert result.trace.rejection_reason is FailureCategory.AMBIGUOUS_TARGET_CANDIDATES
+
+
+def test_prior_id_mismatch_does_not_block_correct_reresolution() -> None:
+    selector = DeterministicTargetSelector()
+    original_perception = _perception(_element("field-42", label="Name", x=100, y=108))
+    refreshed_perception = _perception(_element("customer-name", label="Name", x=112, y=110))
+    intent = _intent("Name")
+    context = selector.build_selection_context(original_perception, intent, original_perception.visible_elements[0], page_signature="form_page|name")
+
+    result = selector.reresolve(refreshed_perception, context)
+
+    assert result.selected is not None
+    assert result.selected.element_id == "customer-name"
+    assert "reresolution_exact_prior_element_id" not in result.trace.top_candidates[0].matched_signals
+
+
+def test_unsafe_weak_reresolution_is_rejected() -> None:
+    selector = DeterministicTargetSelector()
+    original_perception = _perception(_element("email-input", label="Email", x=100, y=108))
+    refreshed_perception = _perception(
+        _element("sidebar-search", label="Search", x=110, y=112),
+        _element("chat-filter", label="Filter", x=130, y=156),
+    )
+    intent = _intent("Email")
+    context = selector.build_selection_context(original_perception, intent, original_perception.visible_elements[0], page_signature="form_page|email")
+
+    result = selector.reresolve(refreshed_perception, context)
+
+    assert result.selected is None
+    assert result.trace.rejection_reason is FailureCategory.SELECTOR_SCORE_BELOW_THRESHOLD

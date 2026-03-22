@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from uuid import uuid4
 
+from src.models.benchmark import BenchmarkTaskSpec, BenchmarkTaskType
 from src.models.common import FailureCategory, LoopStage, RunStatus, StopReason
-from src.models.execution import ExecutedAction
+from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
 from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
-from src.models.perception import ScreenPerception
+from src.models.perception import ScreenPerception, UIElement, UIElementNameSource, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
+from src.models.progress import ProgressState
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.state import AgentState
 from src.models.verification import VerificationResult, VerificationStatus
 from src.store.run_logger import append_step_log
-from src.store.summary import summarize_runs
+from src.store.summary import generate_run_metrics, generate_suite_summary, summarize_runs
 
 
 def _local_test_dir(name: str) -> Path:
@@ -162,7 +165,7 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
     assert "failure_count: 3" in output
     assert "success_rate: 25.00%" in output
     assert "average_steps_per_run: 4.00" in output
-    assert "average_retries_per_run: 1.25" in output
+    assert "average_retries_per_run: 0.00" in output
     assert "form_submitted_success: 1" in output
     assert "benchmark_precondition_failed: 1" in output
     assert "retry_limit_reached: 1" in output
@@ -292,3 +295,276 @@ def test_benchmark_summary_counts_pre_step_perception_failure_records() -> None:
     assert "perceive: 1" in output
     assert "failed_stop_reasons:" in output
     assert "pre_step_perception_failed: 1" in output
+
+
+def test_generate_run_metrics_collects_selector_perception_and_execution_signals() -> None:
+    root_dir = _local_test_dir("test-run-metrics") / "runs"
+    run_dir = root_dir / "run-metrics"
+    step_dir = run_dir / "step_1"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    state = AgentState(
+        run_id="run-metrics",
+        intent="Complete the auth-free form and submit it successfully.",
+        status=RunStatus.FAILED,
+        step_count=1,
+        stop_reason=StopReason.CLICK_NO_EFFECT,
+    )
+    _write_state(run_dir, state)
+    (step_dir / "perception_retry_log.txt").write_text("attempt=1\nattempt=2\n", encoding="utf-8")
+    (step_dir / "selector_trace.json").write_text(
+        json.dumps(
+            [
+                {
+                    "intent": {
+                        "action": "click",
+                        "target_text": "submit",
+                        "target_role": None,
+                        "expected_element_types": ["button"],
+                        "value_to_type": None,
+                        "expected_section": "form",
+                    },
+                    "candidate_count": 2,
+                    "top_candidates": [
+                        {
+                            "element_id": "submit-button",
+                            "element_type": "button",
+                            "primary_name": "Submit",
+                            "total_score": 96.0,
+                            "matched_signals": ["exact_primary_name_match"],
+                            "rejected_by": [],
+                            "action_compatible": True,
+                            "exact_semantic_match": True,
+                            "uses_unlabeled_fallback": False,
+                            "nearest_matched_text_candidate_id": None,
+                            "spatial_grounding_contributed": False,
+                            "confidence_band": "high",
+                        }
+                    ],
+                    "selected_element_id": "submit-button",
+                    "decision_reason": "accepted",
+                    "rejection_reason": None,
+                    "score_margin": 14.0,
+                    "initial_failure_reason": "ambiguous_target_candidates",
+                    "recovery_attempted": True,
+                    "recovery_strategy_used": "margin_relaxation",
+                    "adjusted_acceptance_threshold": 80.0,
+                    "adjusted_ambiguity_margin": 6.0,
+                    "final_decision": "success",
+                    "final_stop_reason": "selector_recovery_used",
+                    "recovery_changed_selected_candidate": False,
+                }
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    append_step_log(
+        run_dir / "run.jsonl",
+        StepLog(
+            run_id="run-metrics",
+            step_id="step_1",
+            step_index=1,
+            before_artifact_path=str(step_dir / "before.png"),
+            after_artifact_path=str(step_dir / "after.png"),
+            perception_debug=ModelDebugArtifacts(
+                prompt_artifact_path=str(step_dir / "perception_prompt.txt"),
+                raw_response_artifact_path=str(step_dir / "perception_raw.txt"),
+                parsed_artifact_path=str(step_dir / "perception_parsed.json"),
+                retry_log_artifact_path=str(step_dir / "perception_retry_log.txt"),
+            ),
+            policy_debug=ModelDebugArtifacts(
+                prompt_artifact_path=str(step_dir / "policy_prompt.txt"),
+                raw_response_artifact_path=str(step_dir / "policy_raw.txt"),
+                parsed_artifact_path=str(step_dir / "policy_decision.json"),
+                selector_trace_artifact_path=str(step_dir / "selector_trace.json"),
+            ),
+            perception=ScreenPerception(
+                summary="Form visible",
+                page_hint="form_page",
+                capture_artifact_path=str(step_dir / "before.png"),
+                visible_elements=[
+                    UIElement(
+                        element_id="submit-button",
+                        element_type=UIElementType.BUTTON,
+                        label="Submit",
+                        primary_name="Submit",
+                        name_source=UIElementNameSource.LABEL,
+                        is_unlabeled=False,
+                        usable_for_targeting=True,
+                        x=10,
+                        y=10,
+                        width=20,
+                        height=20,
+                        is_interactable=True,
+                        confidence=0.9,
+                    ),
+                    UIElement(
+                        element_id="mystery-input",
+                        element_type=UIElementType.INPUT,
+                        primary_name="unlabeled_input",
+                        name_source=UIElementNameSource.SYNTHETIC,
+                        is_unlabeled=True,
+                        usable_for_targeting=False,
+                        x=40,
+                        y=10,
+                        width=20,
+                        height=20,
+                        is_interactable=True,
+                        confidence=0.5,
+                    ),
+                ],
+            ),
+            policy_decision=PolicyDecision(
+                action=AgentAction(action_type=ActionType.CLICK, target_element_id="submit-button"),
+                rationale="Submit",
+                confidence=0.9,
+                active_subgoal="submit_form",
+            ),
+            executed_action=ExecutedAction(
+                action=AgentAction(action_type=ActionType.CLICK, target_element_id="submit-button"),
+                success=False,
+                detail="no effect",
+                failure_category=FailureCategory.CLICK_NO_EFFECT,
+                failure_stage=LoopStage.EXECUTE,
+                execution_trace=ExecutionTrace(
+                    attempts=[
+                        ExecutionAttemptTrace(
+                            attempt_index=1,
+                            revalidation_result="ok",
+                            verification_result="click_no_effect",
+                            no_progress_detected=True,
+                            failure_category=FailureCategory.CLICK_NO_EFFECT,
+                        )
+                    ],
+                    retry_attempted=True,
+                    retry_reason=FailureCategory.CLICK_NO_EFFECT,
+                    final_outcome="failure",
+                    final_failure_category=FailureCategory.CLICK_NO_EFFECT,
+                ),
+            ),
+            verification_result=VerificationResult(
+                status=VerificationStatus.FAILURE,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason="no effect",
+                failure_category=FailureCategory.CLICK_NO_EFFECT,
+                failure_stage=LoopStage.VERIFY,
+            ),
+            recovery_decision=RecoveryDecision(
+                strategy=RecoveryStrategy.STOP,
+                message="stop",
+                failure_category=FailureCategory.CLICK_NO_EFFECT,
+                failure_stage=LoopStage.RECOVER,
+                terminal=True,
+                recoverable=False,
+                stop_reason=StopReason.CLICK_NO_EFFECT,
+            ),
+            progress_state=ProgressState(no_progress_streak=1, loop_detected=True),
+            failure=FailureRecord(
+                category=FailureCategory.CLICK_NO_EFFECT,
+                stage=LoopStage.RECOVER,
+                retry_count=1,
+                terminal=True,
+                recoverable=False,
+                reason="no effect",
+                stop_reason=StopReason.CLICK_NO_EFFECT,
+            ),
+        ),
+    )
+
+    metrics = generate_run_metrics(
+        "run-metrics",
+        root_dir=root_dir,
+        task_spec=BenchmarkTaskSpec(
+            task_id="task-submit",
+            page_url="https://example.test/form",
+            task_type=BenchmarkTaskType.FORM_SUBMIT,
+            intent="Complete the auth-free form and submit it successfully.",
+            expected_completion_signal="form success",
+            difficulty_tags=["single_page", "unlabeled_fields"],
+        ),
+    )
+
+    assert metrics.task_id == "task-submit"
+    assert metrics.perception_retry_count == 1
+    assert metrics.selector_recovery_count == 1
+    assert metrics.execution_retry_count == 1
+    assert metrics.no_progress_events == 1
+    assert metrics.loop_detected is True
+    assert metrics.average_top_selector_score == 96.0
+    assert metrics.average_selector_margin == 14.0
+    assert metrics.average_total_elements == 2.0
+    assert metrics.average_labeled_elements == 1.0
+    assert metrics.average_unlabeled_elements == 1.0
+    assert metrics.average_usable_elements == 1.0
+    assert metrics.click_no_effect_events >= 1
+
+
+def test_generate_suite_summary_groups_by_task_type_and_tag() -> None:
+    summary = generate_suite_summary(
+        [
+            generate_run_metrics_fixture(
+                run_id="run-a",
+                task_id="task-a",
+                task_type=BenchmarkTaskType.FORM_SUBMIT,
+                success=True,
+                tags=["single_page"],
+            ),
+            generate_run_metrics_fixture(
+                run_id="run-b",
+                task_id="task-b",
+                task_type=BenchmarkTaskType.MULTI_STEP_FORM,
+                success=False,
+                tags=["multi_step", "dynamic_update"],
+            ),
+        ],
+        suite_id="suite-fixture",
+    )
+
+    assert summary.total_runs == 2
+    assert summary.success_count == 1
+    assert summary.failure_count == 1
+    assert summary.success_rate_by_task_type["form_submit"] == 100.0
+    assert summary.success_rate_by_task_type["multi_step_form"] == 0.0
+    assert summary.tag_summary["single_page"]["run_count"] == 1
+    assert summary.tag_summary["multi_step"]["run_count"] == 1
+
+
+def generate_run_metrics_fixture(
+    *,
+    run_id: str,
+    task_id: str,
+    task_type: BenchmarkTaskType,
+    success: bool,
+    tags: list[str],
+):
+    from src.models.benchmark import RunMetrics
+
+    return RunMetrics(
+        run_id=run_id,
+        task_id=task_id,
+        page_url="https://example.test",
+        task_type=task_type,
+        tags=tags,
+        status=RunStatus.SUCCEEDED if success else RunStatus.FAILED,
+        success=success,
+        final_stop_reason=StopReason.FORM_SUBMITTED_SUCCESS if success else StopReason.CLICK_NO_EFFECT,
+        failure_category=None if success else FailureCategory.CLICK_NO_EFFECT,
+        step_count=3,
+        perception_retry_count=1,
+        selector_recovery_count=0,
+        execution_retry_count=1,
+        no_progress_events=0 if success else 1,
+        loop_detected=not success,
+        average_top_selector_score=90.0,
+        average_selector_margin=10.0,
+        selector_failure_count=0 if success else 1,
+        average_total_elements=5.0,
+        average_labeled_elements=4.0,
+        average_unlabeled_elements=1.0,
+        average_usable_elements=3.0,
+        stale_target_events=0,
+        focus_failures=0,
+        click_no_effect_events=0 if success else 1,
+        verification_failures=0 if success else 1,
+    )

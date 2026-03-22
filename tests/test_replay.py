@@ -10,6 +10,7 @@ from src.models.execution import ExecutedAction
 from src.models.logs import FailureRecord, ModelDebugArtifacts, PreStepFailureLog, StepLog
 from src.models.perception import ScreenPerception
 from src.models.policy import ActionType, AgentAction, PolicyDecision
+from src.models.progress import ProgressState
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.verification import VerificationResult, VerificationStatus
 from src.store.replay import load_run_replay, render_run_replay
@@ -70,6 +71,8 @@ def test_replay_loader_reads_step_logs() -> None:
             executed_action=executed,
             verification_result=verification,
             recovery_decision=recovery,
+            progress_state=ProgressState(no_progress_streak=0, loop_detected=False),
+            progress_trace_artifact_path=str(step_dir / "progress_trace.json"),
         ),
     )
 
@@ -89,6 +92,7 @@ def test_replay_renderer_lists_artifact_refs_and_outcomes() -> None:
     action = AgentAction(action_type=ActionType.CLICK, target_element_id="compose")
     decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.9, active_subgoal="open compose")
     executed = ExecutedAction(action=action, success=True, detail="clicked", artifact_path=str(step_dir / "after.png"))
+    executed = executed.model_copy(update={"execution_trace_artifact_path": str(step_dir / "execution_trace.json")})
     verification = VerificationResult(
         status=VerificationStatus.SUCCESS,
         expected_outcome_met=True,
@@ -117,6 +121,8 @@ def test_replay_renderer_lists_artifact_refs_and_outcomes() -> None:
             executed_action=executed,
             verification_result=verification,
             recovery_decision=recovery,
+            progress_state=ProgressState(no_progress_streak=0, loop_detected=False),
+            progress_trace_artifact_path=str(step_dir / "progress_trace.json"),
         ),
     )
 
@@ -127,6 +133,9 @@ def test_replay_renderer_lists_artifact_refs_and_outcomes() -> None:
     assert "perception_prompt.txt" in output
     assert "policy_decision.json" in output
     assert "policy_selector_trace:" in output
+    assert "execution_trace:" in output
+    assert "progress_trace:" in output
+    assert "progress_no_progress_streak: 0" in output
     assert "action: click" in output
     assert "verification: success | compose opened" in output
     assert "recovery: advance | continue" in output

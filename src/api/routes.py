@@ -17,13 +17,14 @@ from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import GeminiHttpClient
 from src.executor.browser import PlaywrightBrowserExecutor
-from src.models.common import HealthResponse, RunResponse, RunTaskRequest, StepRequest
+from src.models.common import HealthResponse, ResumeRequest, RunResponse, RunTaskRequest, StepRequest
 from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
 
 router = APIRouter()
 _agent_loop: AgentLoop | None = None
 _OBSERVER_HTML_PATH = Path(__file__).resolve().parent / "static" / "observer.html"
+_COMMAND_CENTER_HTML_PATH = Path(__file__).resolve().parent / "static" / "command_center.html"
 
 
 def get_agent_loop() -> AgentLoop:
@@ -65,6 +66,15 @@ async def step_run(request: StepRequest) -> RunResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.post("/resume", response_model=RunResponse)
+async def resume_run(request: ResumeRequest) -> RunResponse:
+    """Resume a run that is paused waiting for user input."""
+    try:
+        return await get_agent_loop().resume_run(request.run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.get("/run/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str) -> RunResponse:
     """Return the current state for a stored run."""
@@ -90,6 +100,12 @@ async def health() -> HealthResponse:
 async def observer_ui() -> str:
     """Serve the lightweight local debug observer UI."""
     return _OBSERVER_HTML_PATH.read_text(encoding="utf-8")
+
+
+@router.get("/command-center", response_class=HTMLResponse)
+async def command_center_ui() -> str:
+    """Serve the Operon Command Center UI."""
+    return _COMMAND_CENTER_HTML_PATH.read_text(encoding="utf-8")
 
 
 @router.get("/observer/api/runs")

@@ -53,6 +53,18 @@ class RuleBasedRecoveryManager(RecoveryManager):
                 stop_reason=verification.stop_reason or StopReason.STOP_BEFORE_SEND,
             )
 
+        if verification.failure_category is FailureCategory.EXECUTION_NO_PROGRESS:
+            state.retry_counts[retry_key] = retries + 1
+            return RecoveryDecision(
+                strategy=RecoveryStrategy.STOP,
+                message="Repeated no-progress execution detected; stop instead of looping indefinitely.",
+                failure_category=FailureCategory.EXECUTION_NO_PROGRESS,
+                failure_stage=verification.failure_stage or LoopStage.EXECUTE,
+                terminal=True,
+                recoverable=False,
+                stop_reason=StopReason.EXECUTION_NO_PROGRESS,
+            )
+
         if verification.status is VerificationStatus.SUCCESS and verification.expected_outcome_met:
             state.retry_counts[retry_key] = 0
             return RecoveryDecision(

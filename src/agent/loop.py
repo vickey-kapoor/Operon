@@ -102,7 +102,7 @@ class AgentLoop:
             state = await self.run_store.get_run(response.run_id)
             if state is None:
                 raise ValueError(f"Run {response.run_id!r} not found")
-            if state.status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
+            if state.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.WAITING_FOR_USER}:
                 return response
             if state.step_count >= max_steps:
                 state.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
@@ -114,6 +114,22 @@ class AgentLoop:
                     step_count=updated.step_count,
                 )
             response = await self.step_run(StepRequest(run_id=response.run_id))
+
+    async def resume_run(self, run_id: str) -> RunResponse:
+        """Resume a run that was paused waiting for user input."""
+        record = await self.run_store.get_run(run_id)
+        if record is None:
+            raise ValueError(f"Run {run_id!r} not found")
+        if record.status is not RunStatus.WAITING_FOR_USER:
+            raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        record.stop_reason = None
+        updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
+        return RunResponse(
+            run_id=updated.run_id,
+            status=updated.status,
+            intent=updated.intent,
+            step_count=updated.step_count,
+        )
 
     async def step_run(self, request: StepRequest) -> RunResponse:
         record = await self.run_store.get_run(request.run_id)
@@ -142,6 +158,21 @@ class AgentLoop:
         decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
+
+        # Human-in-the-loop: pause the run and wait for user input
+        if decision.action.action_type is ActionType.WAIT_FOR_USER:
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=decision,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+            )
+
         blocked_action = self._block_redundant_action(state, decision.action, step_index)
         if blocked_action is None:
             state, executed_action = await self._execute_with_hardening(
@@ -245,6 +276,61 @@ class AgentLoop:
             state.stop_reason = None
 
         updated = await self.run_store.set_status(record.run_id, final_status)
+        return RunResponse(
+            run_id=updated.run_id,
+            status=updated.status,
+            intent=updated.intent,
+            step_count=updated.step_count,
+        )
+
+    async def _pause_for_user(
+        self,
+        *,
+        record,
+        state,
+        perception,
+        decision,
+        perception_debug,
+        policy_debug,
+        step_index: int,
+        before_artifact_path: str,
+        after_artifact_path: str,
+    ) -> RunResponse:
+        """Pause the run and set status to WAITING_FOR_USER."""
+        executed_action = ExecutedAction(
+            action=decision.action,
+            success=True,
+            detail=f"Paused for user: {decision.action.text}",
+        )
+        verification = await self.verifier_service.verify(state, decision, executed_action)
+        recovery = RecoveryDecision(
+            strategy=RecoveryStrategy.STOP,
+            message=f"Waiting for user: {decision.action.text}",
+            terminal=False,
+            recoverable=True,
+            stop_reason=StopReason.WAITING_FOR_USER,
+        )
+        append_step_log(
+            self._run_log_path(record.run_id),
+            StepLog(
+                run_id=record.run_id,
+                step_id=f"step_{step_index}",
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                perception=perception,
+                policy_decision=decision,
+                executed_action=executed_action,
+                verification_result=verification,
+                recovery_decision=recovery,
+            ),
+        )
+        state.stop_reason = StopReason.WAITING_FOR_USER
+        state.step_count = step_index
+        await self.run_store.save_state(state)
+        updated = await self.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,

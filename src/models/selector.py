@@ -44,6 +44,13 @@ class SelectorFinalDecision(StrEnum):
     FAILURE = "failure"
 
 
+class SelectorMode(StrEnum):
+    """Whether the selector is resolving an initial target or re-resolving one."""
+
+    INITIAL = "initial"
+    RERESOLUTION = "reresolution"
+
+
 class TargetIntent(StrictModel):
     """Deterministic selector intent derived from a subgoal and action context."""
 
@@ -65,6 +72,19 @@ class TargetIntent(StrictModel):
         return normalized or None
 
 
+class OriginalTargetSignature(StrictModel):
+    """Lightweight signature of the original resolved target."""
+
+    element_id: str = Field(min_length=1)
+    element_type: UIElementType
+    primary_name: str = Field(min_length=1)
+    role: str | None = Field(default=None, min_length=1)
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
 class TargetEvidence(StrictModel):
     """Per-candidate selector reasoning for replay and debug artifacts."""
 
@@ -82,9 +102,21 @@ class TargetEvidence(StrictModel):
     confidence_band: SelectorConfidenceBand
 
 
+class TargetSelectionContext(StrictModel):
+    """Serializable context carried forward for deterministic target re-resolution."""
+
+    intent: TargetIntent
+    original_target: OriginalTargetSignature
+    selected_candidate_evidence: TargetEvidence
+    top_candidates: list[TargetEvidence] = Field(default_factory=list)
+    original_matched_signals: list[str] = Field(default_factory=list)
+    original_page_signature: str | None = Field(default=None, min_length=1)
+
+
 class SelectorTrace(StrictModel):
     """Compact decision trace for one selector attempt."""
 
+    selector_mode: SelectorMode = SelectorMode.INITIAL
     intent: TargetIntent
     candidate_count: int = Field(ge=0)
     top_candidates: list[TargetEvidence] = Field(default_factory=list)

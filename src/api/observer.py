@@ -174,7 +174,7 @@ def _pre_step_payload(entry: PreStepFailureLog) -> dict[str, Any]:
             "diagnostics": diagnostics or None,
         },
         "selector": {"trace": None},
-        "execution": None,
+        "execution": {"trace": None},
         "progress": {"state": None, "trace": None},
         "is_partial": False,
     }
@@ -280,9 +280,9 @@ def _partial_perception_payload(step_dir: Path, before_artifact_path: str) -> di
     }
 
 
-def _partial_execution_payload(execution_trace: Any) -> dict[str, Any] | None:
+def _partial_execution_payload(execution_trace: Any) -> dict[str, Any]:
     if execution_trace is None:
-        return None
+        return {"action": None, "detail": None, "failure_category": None, "trace": None}
     action = execution_trace.get("action") if isinstance(execution_trace, dict) else None
     failure_category = execution_trace.get("failure_category") if isinstance(execution_trace, dict) else None
     return {

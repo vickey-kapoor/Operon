@@ -17,13 +17,16 @@ from src.agent.geometry import (
 from src.models.common import FailureCategory, StopReason
 from src.models.perception import ScreenPerception, UIElement, UIElementNameSource, UIElementType
 from src.models.selector import (
+    OriginalTargetSignature,
     SelectorConfidenceBand,
     SelectorFinalDecision,
+    SelectorMode,
     SelectorRecoveryStrategy,
     SelectorTrace,
     TargetEvidence,
     TargetIntent,
     TargetIntentAction,
+    TargetSelectionContext,
 )
 
 _ACCEPTANCE_THRESHOLD = 80.0
@@ -34,6 +37,13 @@ _RECOVERY_RATIO_THRESHOLD = 1.5
 _TOP_CANDIDATE_COUNT = 3
 _DEFAULT_SPATIAL_CAP = 22.0
 _RECOVERY_SPATIAL_CAP = 36.0
+_RERESOLUTION_PRIOR_ID_EXACT_WEIGHT = 6.0
+_RERESOLUTION_PRIOR_ID_TOKEN_WEIGHT = 3.0
+_RERESOLUTION_PRIOR_NAME_EXACT_WEIGHT = 7.0
+_RERESOLUTION_PRIOR_NAME_TOKEN_WEIGHT = 4.0
+_RERESOLUTION_REGION_NEAR_WEIGHT = 6.0
+_RERESOLUTION_REGION_MID_WEIGHT = 3.0
+_RERESOLUTION_SIGNAL_CONTINUITY_CAP = 5.0
 _ACTION_COMPATIBILITY: dict[TargetIntentAction, set[UIElementType]] = {
     TargetIntentAction.CLICK: {UIElementType.BUTTON, UIElementType.LINK, UIElementType.INPUT},
     TargetIntentAction.TYPE: {UIElementType.INPUT},
@@ -86,6 +96,8 @@ class _SelectorConfig:
     recovery_mode: bool = False
     strategy: SelectorRecoveryStrategy | None = None
     allow_ratio_override: bool = False
+    selector_mode: SelectorMode = SelectorMode.INITIAL
+    selection_context: TargetSelectionContext | None = None
 
 
 @dataclass(slots=True)
@@ -104,6 +116,47 @@ class _AttemptResult:
 class DeterministicTargetSelector:
     """Score candidates with transparent signals and deterministic acceptance rules."""
 
+    def build_selection_context(
+        self,
+        perception: ScreenPerception,
+        intent: TargetIntent,
+        target: UIElement,
+        *,
+        page_signature: str | None = None,
+    ) -> TargetSelectionContext:
+        text_candidates = self._label_like_text_candidates(perception)
+        visual_groups = self._visual_groups(perception)
+        evidence = self._score_candidate(
+            perception,
+            target,
+            intent,
+            text_candidates,
+            visual_groups,
+            config=_SelectorConfig(
+                acceptance_threshold=_ACCEPTANCE_THRESHOLD,
+                ambiguity_margin=_AMBIGUITY_MARGIN,
+                spatial_cap=_DEFAULT_SPATIAL_CAP,
+            ),
+        )
+        trace = self.select(perception, intent).trace
+        return TargetSelectionContext(
+            intent=intent,
+            original_target=OriginalTargetSignature(
+                element_id=target.element_id,
+                element_type=target.element_type,
+                primary_name=target.primary_name,
+                role=target.role,
+                x=target.x,
+                y=target.y,
+                width=target.width,
+                height=target.height,
+            ),
+            selected_candidate_evidence=evidence,
+            top_candidates=trace.top_candidates,
+            original_matched_signals=list(evidence.matched_signals),
+            original_page_signature=page_signature,
+        )
+
     def select(self, perception: ScreenPerception, intent: TargetIntent) -> SelectorResult:
         initial = self._run_attempt(
             perception,
@@ -117,7 +170,14 @@ class DeterministicTargetSelector:
         if initial.selected is not None:
             return SelectorResult(selected=initial.selected, trace=self._build_trace(intent, initial))
 
-        recovery_config = self._recovery_config(initial)
+        recovery_config = self._recovery_config(
+            initial,
+            config=_SelectorConfig(
+                acceptance_threshold=_ACCEPTANCE_THRESHOLD,
+                ambiguity_margin=_AMBIGUITY_MARGIN,
+                spatial_cap=_DEFAULT_SPATIAL_CAP,
+            ),
+        )
         if recovery_config is None:
             return SelectorResult(selected=None, trace=self._build_trace(intent, initial))
 
@@ -125,6 +185,34 @@ class DeterministicTargetSelector:
         return SelectorResult(
             selected=recovery.selected,
             trace=self._build_trace(intent, recovery, initial=initial, recovery_config=recovery_config),
+        )
+
+    def reresolve(self, perception: ScreenPerception, selection_context: TargetSelectionContext) -> SelectorResult:
+        initial_config = _SelectorConfig(
+            acceptance_threshold=_ACCEPTANCE_THRESHOLD,
+            ambiguity_margin=_AMBIGUITY_MARGIN,
+            spatial_cap=_DEFAULT_SPATIAL_CAP,
+            selector_mode=SelectorMode.RERESOLUTION,
+            selection_context=selection_context,
+        )
+        initial = self._run_attempt(perception, selection_context.intent, initial_config)
+        if initial.selected is not None:
+            return SelectorResult(selected=initial.selected, trace=self._build_trace(selection_context.intent, initial, config=initial_config))
+
+        recovery_config = self._recovery_config(initial, config=initial_config)
+        if recovery_config is None:
+            return SelectorResult(selected=None, trace=self._build_trace(selection_context.intent, initial, config=initial_config))
+
+        recovery = self._run_attempt(perception, selection_context.intent, recovery_config)
+        return SelectorResult(
+            selected=recovery.selected,
+            trace=self._build_trace(
+                selection_context.intent,
+                recovery,
+                initial=initial,
+                recovery_config=recovery_config,
+                config=initial_config,
+            ),
         )
 
     def _run_attempt(self, perception: ScreenPerception, intent: TargetIntent, config: _SelectorConfig) -> _AttemptResult:
@@ -236,7 +324,7 @@ class DeterministicTargetSelector:
             ranked=ranked,
         )
 
-    def _recovery_config(self, initial: _AttemptResult) -> _SelectorConfig | None:
+    def _recovery_config(self, initial: _AttemptResult, *, config: _SelectorConfig) -> _SelectorConfig | None:
         if initial.failure_reason is FailureCategory.SELECTOR_SCORE_BELOW_THRESHOLD:
             if initial.top_candidates and initial.top_candidates[0].spatial_grounding_contributed:
                 return _SelectorConfig(
@@ -245,6 +333,8 @@ class DeterministicTargetSelector:
                     spatial_cap=_RECOVERY_SPATIAL_CAP,
                     recovery_mode=True,
                     strategy=SelectorRecoveryStrategy.CONTEXTUAL_BOOST,
+                    selector_mode=config.selector_mode,
+                    selection_context=config.selection_context,
                 )
             if initial.top_candidates and initial.top_candidates[0].total_score >= _RECOVERY_ACCEPTANCE_THRESHOLD:
                 return _SelectorConfig(
@@ -253,6 +343,8 @@ class DeterministicTargetSelector:
                     spatial_cap=_DEFAULT_SPATIAL_CAP,
                     recovery_mode=True,
                     strategy=SelectorRecoveryStrategy.THRESHOLD_RELAXATION,
+                    selector_mode=config.selector_mode,
+                    selection_context=config.selection_context,
                 )
             return None
 
@@ -267,6 +359,8 @@ class DeterministicTargetSelector:
                         recovery_mode=True,
                         strategy=SelectorRecoveryStrategy.FALLBACK_BEST_CANDIDATE,
                         allow_ratio_override=True,
+                        selector_mode=config.selector_mode,
+                        selection_context=config.selection_context,
                     )
             if initial.top_candidates and initial.top_candidates[0].total_score >= _ACCEPTANCE_THRESHOLD:
                 return _SelectorConfig(
@@ -275,6 +369,8 @@ class DeterministicTargetSelector:
                     spatial_cap=_DEFAULT_SPATIAL_CAP,
                     recovery_mode=True,
                     strategy=SelectorRecoveryStrategy.MARGIN_RELAXATION,
+                    selector_mode=config.selector_mode,
+                    selection_context=config.selection_context,
                 )
             return None
 
@@ -288,6 +384,8 @@ class DeterministicTargetSelector:
                 spatial_cap=_RECOVERY_SPATIAL_CAP,
                 recovery_mode=True,
                 strategy=SelectorRecoveryStrategy.CONTEXTUAL_BOOST,
+                selector_mode=config.selector_mode,
+                selection_context=config.selection_context,
             )
 
         return None
@@ -299,10 +397,18 @@ class DeterministicTargetSelector:
         *,
         initial: _AttemptResult | None = None,
         recovery_config: _SelectorConfig | None = None,
+        config: _SelectorConfig | None = None,
     ) -> SelectorTrace:
         recovery_attempted = initial is not None
         final_success = attempt.selected is not None
         return SelectorTrace(
+            selector_mode=(
+                recovery_config.selector_mode
+                if recovery_config is not None
+                else config.selector_mode
+                if config is not None
+                else SelectorMode.INITIAL
+            ),
             intent=intent,
             candidate_count=attempt.candidate_count,
             top_candidates=attempt.top_candidates,
@@ -467,6 +573,9 @@ class DeterministicTargetSelector:
             score -= 28.0
             matched_signals.append("synthetic_name_penalty")
 
+        if config.selection_context is not None:
+            score += self._reresolution_support_score(element, matched_signals, config.selection_context)
+
         confidence_band = self._confidence_band(score)
         return TargetEvidence(
             element_id=element.element_id,
@@ -482,6 +591,54 @@ class DeterministicTargetSelector:
             spatial_grounding_contributed=spatial_match is not None,
             confidence_band=confidence_band,
         )
+
+    def _reresolution_support_score(
+        self,
+        element: UIElement,
+        matched_signals: list[str],
+        selection_context: TargetSelectionContext,
+    ) -> float:
+        score = 0.0
+        original = selection_context.original_target
+
+        if element.element_id == original.element_id:
+            score += _RERESOLUTION_PRIOR_ID_EXACT_WEIGHT
+            matched_signals.append("reresolution_exact_prior_element_id")
+        else:
+            id_overlap = self._token_overlap(self._tokenize(original.element_id), self._tokenize(element.element_id))
+            if id_overlap >= 0.5:
+                score += _RERESOLUTION_PRIOR_ID_TOKEN_WEIGHT
+                matched_signals.append("reresolution_prior_element_id_tokens")
+
+        if self._normalize_text(element.primary_name) == self._normalize_text(original.primary_name):
+            score += _RERESOLUTION_PRIOR_NAME_EXACT_WEIGHT
+            matched_signals.append("reresolution_exact_prior_primary_name")
+        else:
+            name_overlap = self._token_overlap(self._tokenize(original.primary_name), self._tokenize(element.primary_name))
+            if name_overlap >= 0.67:
+                score += _RERESOLUTION_PRIOR_NAME_TOKEN_WEIGHT
+                matched_signals.append("reresolution_prior_primary_name_tokens")
+
+        original_center_x = original.x + (original.width / 2.0)
+        original_center_y = original.y + (original.height / 2.0)
+        candidate_center_x = element.x + (element.width / 2.0)
+        candidate_center_y = element.y + (element.height / 2.0)
+        distance = ((candidate_center_x - original_center_x) ** 2 + (candidate_center_y - original_center_y) ** 2) ** 0.5
+        if distance <= 120.0:
+            score += _RERESOLUTION_REGION_NEAR_WEIGHT
+            matched_signals.append("reresolution_prior_region_near")
+        elif distance <= 240.0:
+            score += _RERESOLUTION_REGION_MID_WEIGHT
+            matched_signals.append("reresolution_prior_region_mid")
+
+        continuity_signals = set(selection_context.original_matched_signals) & set(matched_signals)
+        continuity_signals.discard("action_compatible")
+        continuity_score = min(len(continuity_signals) * 1.5, _RERESOLUTION_SIGNAL_CONTINUITY_CAP)
+        if continuity_score > 0:
+            score += continuity_score
+            matched_signals.append("reresolution_signal_continuity")
+
+        return score
 
     def _best_spatial_match(
         self,

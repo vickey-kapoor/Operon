@@ -52,13 +52,22 @@ class PolicyRuleEngine:
     ) -> PolicyDecision | None:
         if perception.page_hint is not PageHint.GOOGLE_SIGN_IN:
             return None
-        if not self._has_hint(memory_hints, "authenticated_start_required"):
-            return None
+        if self._has_hint(memory_hints, "authenticated_start_required"):
+            return PolicyDecision(
+                action=AgentAction(action_type=ActionType.STOP),
+                rationale="Benchmark requires an authenticated Gmail start state; login/auth screens are out of scope.",
+                confidence=1.0,
+                active_subgoal="stop for benchmark setup",
+            )
+        # General-purpose run: pause and ask the user to handle authentication
         return PolicyDecision(
-            action=AgentAction(action_type=ActionType.STOP),
-            rationale="Benchmark requires an authenticated Gmail start state; login/auth screens are out of scope.",
+            action=AgentAction(
+                action_type=ActionType.WAIT_FOR_USER,
+                text="Login page detected. Please sign in using the browser window, then click Resume.",
+            ),
+            rationale="Login/auth page detected — requires user credentials that Operon cannot provide autonomously.",
             confidence=1.0,
-            active_subgoal="stop for benchmark setup",
+            active_subgoal="wait for user authentication",
         )
 
     def _avoid_identical_type_retry(

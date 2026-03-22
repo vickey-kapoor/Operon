@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from src.agent.policy import parse_policy_output
 from src.models.capture import CaptureFrame
 from src.models.common import RunStatus
 from src.models.execution import ExecutedAction
@@ -74,6 +75,14 @@ def test_policy_decision_confidence_bounds() -> None:
     )
     with pytest.raises(ValidationError):
         PolicyDecision(action=action, rationale="wait", confidence=1.5, active_subgoal="wait for inbox")
+
+
+def test_parse_policy_output_normalizes_zero_wait_ms() -> None:
+    decision = parse_policy_output(
+        '{"action":{"action_type":"wait","wait_ms":0},"rationale":"Wait for the page to settle.","confidence":0.2,"active_subgoal":"wait"}'
+    )
+    assert decision.action.action_type is ActionType.WAIT
+    assert decision.action.wait_ms == 1
 
 
 

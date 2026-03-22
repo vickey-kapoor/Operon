@@ -31,6 +31,10 @@ class RunStore(ABC):
     async def set_status(self, run_id: str, status: RunStatus) -> AgentState:
         """Update run status and return the updated state."""
 
+    @abstractmethod
+    async def save_state(self, state: AgentState) -> None:
+        """Persist the current state snapshot to disk."""
+
 
 class FileBackedRunStore(RunStore):
     """Local file-backed run store using one directory per run."""
@@ -78,6 +82,11 @@ class FileBackedRunStore(RunStore):
         record.status = status
         self._write_state(record)
         return record
+
+    async def save_state(self, state: AgentState) -> None:
+        """Persist the current state snapshot to disk."""
+        self._runs[state.run_id] = state
+        self._write_state(state)
 
     def run_log_path(self, run_id: str) -> Path:
         """Return the JSONL path for the run log."""

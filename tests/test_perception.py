@@ -379,7 +379,7 @@ async def test_gemini_perception_service_retries_low_quality_once_and_recovers(t
     assert debug is not None
     assert debug.retry_log_artifact_path is not None
     assert Path(debug.retry_log_artifact_path).exists()
-    assert "more than 50% of visible elements are unlabeled" in Path(debug.retry_log_artifact_path).read_text(encoding="utf-8")
+    assert "zero usable candidates after salvage" in Path(debug.retry_log_artifact_path).read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -413,7 +413,7 @@ async def test_gemini_perception_service_salvages_unlabeled_heavy_output_after_r
     assert debug.diagnostics_artifact_path is not None
     retry_log = Path(debug.retry_log_artifact_path).read_text(encoding="utf-8")
     diagnostics = json.loads(Path(debug.diagnostics_artifact_path).read_text(encoding="utf-8"))
-    assert retry_log.count("attempt=") == 2
+    assert retry_log.count("attempt=") == 3
     assert "salvage_mode=true" in retry_log
     assert diagnostics["final_decision"] == "salvaged"
     assert diagnostics["salvage_attempted"] is True
@@ -455,7 +455,7 @@ async def test_gemini_perception_service_raises_low_quality_after_salvage_when_n
     diagnostics = json.loads(Path(debug.diagnostics_artifact_path).read_text(encoding="utf-8"))
     assert diagnostics["final_decision"] == "aborted_low_quality"
     assert diagnostics["salvage_attempted"] is True
-    assert diagnostics["salvage_reason"] == "zero usable candidates after salvage"
+    assert diagnostics["salvage_reason"] == "zero usable_for_targeting elements"
 
 
 def test_unlabeled_heavy_perception_is_salvaged_into_selector_candidates() -> None:
@@ -557,7 +557,7 @@ def test_form_page_with_nearby_text_and_unlabeled_inputs_is_minimally_viable() -
           "label": " ",
           "x": 280,
           "y": 180,
-          "width": 280,
+          "width": 160,
           "height": 28,
           "is_interactable": true,
           "confidence": 0.9
@@ -579,7 +579,7 @@ def test_form_page_with_nearby_text_and_unlabeled_inputs_is_minimally_viable() -
           "label": "",
           "x": 280,
           "y": 250,
-          "width": 280,
+          "width": 160,
           "height": 28,
           "is_interactable": true,
           "confidence": 0.9

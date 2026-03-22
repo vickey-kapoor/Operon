@@ -149,6 +149,8 @@ def parse_policy_output(raw_output: str) -> PolicyDecision:
     if not isinstance(parsed, dict):
         raise PolicyError("Gemini policy output must be a JSON object.")
 
+    parsed = _normalize_policy_payload(parsed)
+
     try:
         return PolicyDecision.model_validate(parsed)
     except ValidationError as exc:
@@ -167,3 +169,27 @@ def _strip_json_fence(raw_output: str) -> str:
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
     return "\n".join(lines).strip()
+
+
+def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
+    action = parsed.get("action")
+    if not isinstance(action, dict):
+        return parsed
+
+    normalized_action = dict(action)
+    action_type = normalized_action.get("action_type")
+
+    wait_ms = normalized_action.get("wait_ms")
+    if action_type == ActionType.WAIT.value:
+        if isinstance(wait_ms, int) and wait_ms <= 0:
+            normalized_action["wait_ms"] = 1
+    else:
+        # Gemini sometimes emits wait_ms on non-wait actions — strip it
+        if wait_ms is not None:
+            normalized_action.pop("wait_ms", None)
+
+    if normalized_action != action:
+        normalized_payload = dict(parsed)
+        normalized_payload["action"] = normalized_action
+        return normalized_payload
+    return parsed

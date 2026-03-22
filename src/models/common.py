@@ -18,6 +18,7 @@ class RunStatus(StrEnum):
 
     PENDING = "pending"
     RUNNING = "running"
+    WAITING_FOR_USER = "waiting_for_user"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
@@ -109,6 +110,12 @@ class StopReason(StrEnum):
     SUBGOAL_ALREADY_COMPLETED = "subgoal_already_completed"
     RETRY_LIMIT_REACHED = "retry_limit_reached"
     MAX_STEP_LIMIT_REACHED = "max_step_limit_reached"
+    WAITING_FOR_USER = "waiting_for_user"
+
+
+class ResumeRequest(StrictModel):
+    """Resume a run that is paused waiting for user input."""
+    run_id: str = Field(min_length=1)
 
 
 class RunTaskRequest(StrictModel):

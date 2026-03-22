@@ -71,7 +71,6 @@ def test_browser_debug_config_reads_env_flags(monkeypatch: pytest.MonkeyPatch) -
     assert executor.devtools is True
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows-only process env repair")
 def test_windows_process_env_restores_system_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SystemRoot", raising=False)
     monkeypatch.delenv("WINDIR", raising=False)

@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operon Pilot</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #1a1d27; --border: #2a2d3a;
+    --text: #e4e4e7; --muted: #71717a;
+    --accent: #6366f1; --accent-dim: rgba(99,102,241,0.15);
+    --success: #22c55e; --danger: #ef4444; --warning: #f59e0b;
+    --blue: #3b82f6; --purple: #a855f7; --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── Header ── */
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 20px; }
+  .title { font-size: 17px; font-weight: 700; letter-spacing: -0.5px; }
+  .status-badge { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .status-idle { background: var(--accent-dim); color: var(--accent); }
+  .status-running { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .status-succeeded { background: rgba(34,197,94,0.15); color: var(--success); }
+  .status-failed { background: rgba(239,68,68,0.15); color: var(--danger); }
+  .pulse { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .status-running .pulse { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* ── Main Layout ── */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Left Panel ── */
+  .left-panel { width: 360px; min-width: 360px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--panel); }
+  .task-section { padding: 16px; border-bottom: 1px solid var(--border); }
+  .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
+  .task-input { width: 100%; height: 70px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); padding: 10px; font-size: 13px; font-family: inherit; resize: none; outline: none; transition: border-color 0.2s; }
+  .task-input:focus { border-color: var(--accent); }
+  .task-input::placeholder { color: var(--muted); }
+  .controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .btn { padding: 7px 18px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-start { background: var(--accent); color: white; }
+  .btn-stop { background: var(--danger); color: white; }
+  .max-steps-group { display: flex; align-items: center; gap: 5px; margin-left: auto; font-size: 12px; color: var(--muted); }
+  .max-steps-input { width: 46px; padding: 5px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; text-align: center; outline: none; }
+
+  /* ── Quick Tasks ── */
+  .quick-section { padding: 10px 16px; border-bottom: 1px solid var(--border); overflow-y: auto; flex: 1; min-height: 120px; }
+  .quick-category { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent); margin: 7px 0 5px 0; }
+  .quick-category:first-child { margin-top: 0; }
+  .quick-grid { display: flex; flex-wrap: wrap; gap: 5px; }
+  .quick-btn { padding: 4px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: 11px; cursor: pointer; transition: border-color 0.2s, background 0.2s; display: flex; align-items: center; gap: 4px; }
+  .quick-btn:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .quick-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .quick-icon { font-size: 12px; }
+
+  /* ── Run History ── */
+  .history-section { padding: 10px 16px; border-bottom: 1px solid var(--border); max-height: 120px; overflow-y: auto; }
+  .run-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg); border-radius: 7px; font-size: 11px; cursor: pointer; margin-bottom: 4px; border: 1px solid transparent; transition: border-color 0.2s; }
+  .run-item:hover { border-color: var(--border); }
+  .run-item.active { border-color: var(--accent); background: var(--accent-dim); }
+  .run-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .run-dot.succeeded { background: var(--success); }
+  .run-dot.failed { background: var(--danger); }
+  .run-dot.running { background: var(--blue); }
+  .run-dot.pending { background: var(--muted); }
+  .run-intent { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .run-steps { color: var(--muted); flex-shrink: 0; }
+
+  /* ── Step Log ── */
+  .log-section { flex: 1; padding: 10px 16px; overflow-y: auto; display: flex; flex-direction: column; }
+  .log-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .log-entry { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg); border-radius: 7px; font-size: 12px; border-left: 3px solid var(--border); }
+  .log-entry.running { border-left-color: var(--blue); }
+  .log-entry.succeeded { border-left-color: var(--success); }
+  .log-entry.failed { border-left-color: var(--danger); }
+  .log-entry.info { border-left-color: var(--muted); }
+  .log-step-num { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+  .log-entry.info .log-step-num { background: rgba(113,113,122,0.2); color: var(--muted); }
+  .log-entry.running .log-step-num { background: rgba(59,130,246,0.2); color: var(--blue); }
+  .log-entry.succeeded .log-step-num { background: rgba(34,197,94,0.2); color: var(--success); }
+  .log-entry.failed .log-step-num { background: rgba(239,68,68,0.2); color: var(--danger); }
+  .log-text { flex: 1; color: var(--text); }
+  .log-time { font-size: 10px; color: var(--muted); flex-shrink: 0; }
+
+  /* ── Right Panel ── */
+  .right-panel { flex: 1; display: flex; flex-direction: column; overflow: auto; background: var(--bg); }
+  .screenshot-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .screenshot-container { position: relative; max-width: 100%; max-height: 100%; }
+  .screenshot-container img { max-width: 100%; max-height: calc(100vh - 200px); border-radius: var(--radius); border: 1px solid var(--border); }
+  .placeholder-text { color: var(--muted); font-size: 14px; text-align: center; }
+
+  /* ── Detail Bar ── */
+  .detail-bar { border-top: 1px solid var(--border); background: var(--panel); padding: 12px 20px; max-height: 200px; overflow-y: auto; display: none; }
+  .detail-bar.visible { display: block; }
+  .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .detail-card { background: var(--bg); border-radius: 8px; padding: 10px; }
+  .detail-card-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent); margin-bottom: 6px; }
+  .detail-row { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .detail-row span { color: var(--text); }
+
+  /* ── Footer ── */
+  .footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 20px; border-top: 1px solid var(--border); background: var(--panel); font-size: 11px; color: var(--muted); }
+  .connection-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); display: inline-block; margin-right: 5px; }
+  .connection-dot.disconnected { background: var(--danger); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <span class="logo">&#x1F3AF;</span>
+    <span class="title">Operon Pilot</span>
+  </div>
+  <div id="statusBadge" class="status-badge status-idle">
+    <span class="pulse"></span>
+    <span id="statusText">Idle</span>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <!-- Left Panel -->
+  <div class="left-panel">
+    <div class="task-section">
+      <div class="section-label">Task</div>
+      <textarea id="taskInput" class="task-input" placeholder="Describe what you want to do on the computer..."></textarea>
+      <div class="controls">
+        <button id="btnStart" class="btn btn-start" onclick="startTask()">Start</button>
+        <button id="btnStop" class="btn btn-stop" onclick="stopTask()" disabled>Stop</button>
+        <div class="max-steps-group">
+          Steps <input id="maxSteps" type="number" class="max-steps-input" value="10" min="1" max="50">
+        </div>
+      </div>
+    </div>
+
+    <div class="quick-section" id="quickSection">
+      <div class="section-label">Quick Tasks</div>
+        <div class="quick-category">Launch Apps</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Open Notepad')"><span class="quick-icon">&#x1F4C4;</span> Notepad</button>
+          <button class="quick-btn" onclick="quickTask('Open Calculator')"><span class="quick-icon">&#x1F5A9;</span> Calculator</button>
+          <button class="quick-btn" onclick="quickTask('Open File Explorer')"><span class="quick-icon">&#x1F4C1;</span> Explorer</button>
+          <button class="quick-btn" onclick="quickTask('Open Visual Studio Code')"><span class="quick-icon">&#x1F4BB;</span> VS Code</button>
+          <button class="quick-btn" onclick="quickTask('Open Paint')"><span class="quick-icon">&#x1F3A8;</span> Paint</button>
+          <button class="quick-btn" onclick="quickTask('Open Windows Settings')"><span class="quick-icon">&#x2699;</span> Settings</button>
+        </div>
+        <div class="quick-category">Mouse Actions</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Right-click on an empty area of the desktop to open the context menu')"><span class="quick-icon">&#x1F5B1;</span> Right-Click Desktop</button>
+          <button class="quick-btn" onclick="quickTask('Double-click on the Recycle Bin icon on the desktop')"><span class="quick-icon">&#x1F5D1;</span> Double-Click Recycle Bin</button>
+          <button class="quick-btn" onclick="quickTask('Hover over the Start button on the taskbar and describe what appears')"><span class="quick-icon">&#x1F4A8;</span> Hover Start</button>
+          <button class="quick-btn" onclick="quickTask('Open File Explorer and scroll down in the file list')"><span class="quick-icon">&#x1F503;</span> Scroll Files</button>
+          <button class="quick-btn" onclick="quickTask('Right-click on the taskbar clock and select Adjust date and time')"><span class="quick-icon">&#x1F552;</span> Right-Click Clock</button>
+        </div>
+        <div class="quick-category">Typing &amp; Keyboard</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Open Notepad and type: The quick brown fox jumps over the lazy dog')"><span class="quick-icon">&#x2328;</span> Type Sentence</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad, type Hello World, then press Enter and type a second line: This is Operon')"><span class="quick-icon">&#x1F4DD;</span> Multi-Line Type</button>
+          <button class="quick-btn" onclick="quickTask('Press Win+R to open the Run dialog, type calc, and press Enter')"><span class="quick-icon">&#x2318;</span> Win+R Launch</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad, type some text, then use Ctrl+A to select all and Delete to clear it')"><span class="quick-icon">&#x232B;</span> Select &amp; Delete</button>
+          <button class="quick-btn" onclick="quickTask('Press Win+D to show the desktop')"><span class="quick-icon">&#x1F4BB;</span> Show Desktop</button>
+        </div>
+        <div class="quick-category">Drag &amp; Drop</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Open Notepad and drag its window to the right half of the screen')"><span class="quick-icon">&#x2194;</span> Drag Window Right</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad and drag its title bar to the top of the screen to maximize it')"><span class="quick-icon">&#x2195;</span> Drag to Maximize</button>
+        </div>
+        <div class="quick-category">Clipboard</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Open Notepad, type Hello World, select all text with Ctrl+A, then copy it with Ctrl+C')"><span class="quick-icon">&#x1F4CB;</span> Type &amp; Copy</button>
+          <button class="quick-btn" onclick="quickTask('Read what is currently on the clipboard')"><span class="quick-icon">&#x1F4C3;</span> Read Clipboard</button>
+          <button class="quick-btn" onclick="quickTask('Write the text Operon Test to the clipboard, then open Notepad and paste it with Ctrl+V')"><span class="quick-icon">&#x1F4E5;</span> Write &amp; Paste</button>
+        </div>
+        <div class="quick-category">File Management</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Open File Explorer, navigate to the Documents folder')"><span class="quick-icon">&#x1F4C2;</span> Open Documents</button>
+          <button class="quick-btn" onclick="quickTask('Open File Explorer, right-click in an empty area, and create a new folder called TestFolder')"><span class="quick-icon">&#x1F4C1;</span> Create Folder</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad, type Test Content, then save the file as test.txt on the Desktop using Ctrl+S')"><span class="quick-icon">&#x1F4BE;</span> Save File</button>
+        </div>
+        <div class="quick-category">Window Management</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Open Notepad and Calculator side by side using Win+Left and Win+Right')"><span class="quick-icon">&#x25A3;</span> Side by Side</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad, then minimize it using the minimize button, then restore it from the taskbar')"><span class="quick-icon">&#x1F5D5;</span> Minimize &amp; Restore</button>
+          <button class="quick-btn" onclick="quickTask('Close the currently focused window using Alt+F4')"><span class="quick-icon">&#x274C;</span> Close Window</button>
+          <button class="quick-btn" onclick="quickTask('Switch to the next open window using Alt+Tab')"><span class="quick-icon">&#x1F500;</span> Alt+Tab Switch</button>
+        </div>
+        <div class="quick-category">Screen Analysis</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Describe what is currently visible on the desktop')"><span class="quick-icon">&#x1F441;</span> Screen Info</button>
+          <button class="quick-btn" onclick="quickTask('Capture a screenshot of the Windows taskbar at the bottom of the screen')"><span class="quick-icon">&#x1F4F7;</span> Capture Taskbar</button>
+          <button class="quick-btn" onclick="quickTask('List all applications currently visible in the taskbar')"><span class="quick-icon">&#x1F4CA;</span> List Open Apps</button>
+          <button class="quick-btn" onclick="quickTask('Read the current time and date from the system tray')"><span class="quick-icon">&#x1F552;</span> Read Clock</button>
+        </div>
+        <div class="quick-category">Web Browsing</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Open Chrome, navigate to en.wikipedia.org, search for Markov chain, and navigate to the article')"><span class="quick-icon">&#x1F310;</span> Wiki Search</button>
+          <button class="quick-btn" onclick="quickTask('Open Chrome, go to practice-automation.com/form-fields/ and fill out the contact form with test data and submit it')"><span class="quick-icon">&#x1F4DD;</span> Fill Web Form</button>
+          <button class="quick-btn" onclick="quickTask('Open Chrome and navigate to example.com, then describe what is visible on the page')"><span class="quick-icon">&#x1F517;</span> Visit Example.com</button>
+          <button class="quick-btn" onclick="quickTask('Open Chrome, go to google.com, search for weather today, and describe the results')"><span class="quick-icon">&#x1F50D;</span> Google Search</button>
+        </div>
+        <div class="quick-category">Multi-Step Workflows</div>
+        <div class="quick-grid">
+          <button class="quick-btn" onclick="quickTask('Open Calculator, compute 42 times 17 by clicking the buttons, and report the result')"><span class="quick-icon">&#x1F522;</span> Calculate 42x17</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad, type todays meeting notes as a title, press Enter twice, then type Item 1 and Item 2 on separate lines')"><span class="quick-icon">&#x1F5D2;</span> Write Notes</button>
+          <button class="quick-btn" onclick="quickTask('Open File Explorer, navigate to Downloads folder, and describe what files are there')"><span class="quick-icon">&#x1F50E;</span> Browse Downloads</button>
+          <button class="quick-btn" onclick="quickTask('Open Windows Settings and navigate to the Display settings page')"><span class="quick-icon">&#x1F5A5;</span> Display Settings</button>
+          <button class="quick-btn" onclick="quickTask('Open Paint, select the pencil tool, and draw a small shape on the canvas')"><span class="quick-icon">&#x270F;</span> Draw in Paint</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="history-section">
+      <div class="section-label">Run History</div>
+      <div id="runList"></div>
+    </div>
+
+    <div class="log-section">
+      <div class="section-label">Step Log</div>
+      <div id="logList" class="log-list"></div>
+    </div>
+  </div>
+
+  <!-- Right Panel -->
+  <div class="right-panel">
+    <div class="screenshot-area">
+      <div id="screenshotContainer" class="screenshot-container">
+        <p class="placeholder-text">Screenshot will appear here once a task is running.</p>
+      </div>
+    </div>
+    <div class="detail-bar" id="detailBar">
+      <div class="detail-grid" id="detailGrid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  <div>
+    <span id="connectionDot" class="connection-dot"></span>
+    <span id="connectionText">Connected</span>
+  </div>
+  <div>Computer Use</div>
+</div>
+
+<script>
+let running = false;
+let currentRunId = null;
+
+async function fetchJson(url, opts) {
+  const resp = await fetch(url, opts);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+  return resp.json();
+}
+
+// ── Logging ──
+function addLog(text, type, stepNum) {
+  const list = document.getElementById('logList');
+  const entry = document.createElement('div');
+  entry.className = `log-entry ${type}`;
+  const num = document.createElement('div');
+  num.className = 'log-step-num';
+  num.textContent = stepNum != null ? stepNum : '--';
+  const txt = document.createElement('div');
+  txt.className = 'log-text';
+  txt.textContent = text;
+  const time = document.createElement('div');
+  time.className = 'log-time';
+  time.textContent = new Date().toLocaleTimeString();
+  entry.append(num, txt, time);
+  list.appendChild(entry);
+  list.scrollTop = list.scrollHeight;
+}
+
+function setStatus(status, step) {
+  const badge = document.getElementById('statusBadge');
+  const text = document.getElementById('statusText');
+  badge.className = 'status-badge';
+  if (status === 'running') { badge.classList.add('status-running'); text.textContent = `Running \u2014 Step ${step}`; }
+  else if (status === 'succeeded') { badge.classList.add('status-succeeded'); text.textContent = 'Succeeded'; }
+  else if (status === 'failed') { badge.classList.add('status-failed'); text.textContent = 'Failed'; }
+  else { badge.classList.add('status-idle'); text.textContent = 'Idle'; }
+}
+
+function setButtons(isRunning) {
+  document.getElementById('btnStart').disabled = isRunning;
+  document.getElementById('btnStop').disabled = !isRunning;
+  document.getElementById('taskInput').disabled = isRunning;
+  document.querySelectorAll('.quick-btn').forEach(b => b.disabled = isRunning);
+}
+
+// ── Screenshots & Detail ──
+async function loadScreenshot(runId) {
+  try {
+    const data = await fetchJson(`/observer/api/run/${runId}`);
+    const step = data.current_step || (data.steps && data.steps.length > 0 ? data.steps[data.steps.length - 1] : null);
+    if (!step) return;
+    const artPath = step.after_artifact_path || step.before_artifact_path;
+    if (!artPath) return;
+    const container = document.getElementById('screenshotContainer');
+    container.innerHTML = `<img src="/observer/api/artifact?path=${encodeURIComponent(artPath)}" alt="Screenshot" />`;
+    renderDetail(step);
+  } catch (e) { /* best-effort */ }
+}
+
+function renderDetail(step) {
+  const bar = document.getElementById('detailBar');
+  const grid = document.getElementById('detailGrid');
+  if (!step) { bar.classList.remove('visible'); return; }
+
+  const p = step.perception || {};
+  const e = step.execution || {};
+  const action = e.action || {};
+
+  grid.innerHTML = `
+    <div class="detail-card">
+      <div class="detail-card-title">Perception</div>
+      <div class="detail-row">Page: <span>${p.page_hint || '-'}</span></div>
+      <div class="detail-row">Elements: <span>${p.element_count ?? '-'}</span></div>
+      <div class="detail-row">Summary: <span>${(p.summary || '-').substring(0, 80)}</span></div>
+    </div>
+    <div class="detail-card">
+      <div class="detail-card-title">Action</div>
+      <div class="detail-row">Type: <span>${action.action_type || '-'}</span></div>
+      <div class="detail-row">Target: <span>${action.target_element_id || '-'}</span></div>
+      <div class="detail-row">Text: <span>${action.text || action.key || '-'}</span></div>
+    </div>
+    <div class="detail-card">
+      <div class="detail-card-title">Execution</div>
+      <div class="detail-row">Success: <span>${e.success != null ? e.success : '-'}</span></div>
+      <div class="detail-row">Detail: <span>${(e.detail || '-').substring(0, 80)}</span></div>
+      <div class="detail-row">Failure: <span>${e.failure_category || '-'}</span></div>
+    </div>
+  `;
+  bar.classList.add('visible');
+}
+
+// ── Run History ──
+async function loadRuns() {
+  try {
+    const data = await fetchJson('/observer/api/runs?limit=15');
+    const list = document.getElementById('runList');
+    if (!data.runs || data.runs.length === 0) { list.innerHTML = '<div style="font-size:11px;color:var(--muted);">No runs yet</div>'; return; }
+    list.innerHTML = data.runs.map(r => `
+      <div class="run-item ${r.run_id === currentRunId ? 'active' : ''}" onclick="viewRun('${r.run_id}')">
+        <span class="run-dot ${r.status}"></span>
+        <span class="run-intent">${r.intent}</span>
+        <span class="run-steps">${r.step_count}s</span>
+      </div>
+    `).join('');
+  } catch (e) { /* best-effort */ }
+}
+
+async function viewRun(runId) {
+  currentRunId = runId;
+  loadRuns();
+  await loadScreenshot(runId);
+}
+
+// ── Task Launch ──
+async function startTask() {
+  const intent = document.getElementById('taskInput').value.trim();
+  if (!intent) return;
+  const maxSteps = parseInt(document.getElementById('maxSteps').value) || 10;
+
+  document.getElementById('logList').innerHTML = '';
+  setButtons(true);
+  running = true;
+  addLog('Starting task...', 'info', '--');
+  setStatus('running', 0);
+
+  try {
+    const resp = await fetchJson('/desktop/run-task', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent }),
+    });
+    currentRunId = resp.run_id;
+    addLog('Task accepted', 'info', '--');
+    loadRuns();
+    await stepLoop(resp.run_id, maxSteps);
+  } catch (e) {
+    addLog(`Error: ${e.message}`, 'failed', '--');
+    setStatus('failed', 0);
+    running = false;
+    setButtons(false);
+  }
+}
+
+async function stepLoop(runId, maxSteps) {
+  let stepCount = 0;
+  while (running && stepCount < maxSteps) {
+    const stepStart = Date.now();
+    try {
+      addLog(`Step ${stepCount + 1} \u2014 processing`, 'running', stepCount + 1);
+      setStatus('running', stepCount + 1);
+
+      const resp = await fetchJson('/desktop/step', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: runId }),
+      });
+      stepCount = resp.step_count;
+      const elapsed = ((Date.now() - stepStart) / 1000).toFixed(1);
+      const entries = document.querySelectorAll('.log-entry');
+      const last = entries[entries.length - 1];
+      if (last) { const t = last.querySelector('.log-time'); if (t) t.textContent = `${elapsed}s`; }
+
+      await loadScreenshot(runId);
+
+      if (resp.status === 'succeeded') {
+        if (last) last.className = 'log-entry succeeded';
+        addLog('Task completed successfully', 'succeeded', '--');
+        setStatus('succeeded', stepCount);
+        running = false; setButtons(false); loadRuns(); return;
+      }
+      if (resp.status === 'failed') {
+        if (last) last.className = 'log-entry failed';
+        addLog('Task failed', 'failed', '--');
+        setStatus('failed', stepCount);
+        running = false; setButtons(false); loadRuns(); return;
+      }
+      if (resp.status === 'waiting_for_user') {
+        if (last) last.className = 'log-entry info';
+        addLog('Waiting for user input', 'info', '--');
+        setStatus('idle', stepCount);
+        running = false; setButtons(false); loadRuns(); return;
+      }
+      if (last) last.className = 'log-entry succeeded';
+    } catch (e) {
+      addLog(`Step error: ${e.message}`, 'failed', stepCount + 1);
+      setStatus('failed', stepCount);
+      running = false; setButtons(false); loadRuns(); return;
+    }
+  }
+  if (stepCount >= maxSteps) addLog(`Max steps (${maxSteps}) reached`, 'info', '--');
+  running = false; setButtons(false); loadRuns();
+}
+
+function stopTask() {
+  running = false;
+  addLog('Task stopped by user', 'info', '--');
+  setStatus('idle', 0);
+  setButtons(false);
+}
+
+function quickTask(intent) {
+  document.getElementById('taskInput').value = intent;
+  startTask();
+}
+
+// ── Health Check ──
+async function checkConnection() {
+  try {
+    await fetchJson('/health');
+    document.getElementById('connectionDot').className = 'connection-dot';
+    document.getElementById('connectionText').textContent = 'Connected';
+  } catch {
+    document.getElementById('connectionDot').className = 'connection-dot disconnected';
+    document.getElementById('connectionText').textContent = 'Disconnected';
+  }
+}
+setInterval(checkConnection, 5000);
+checkConnection();
+setInterval(loadRuns, 10000);
+loadRuns();
+</script>
+</body>
+</html>

@@ -11,7 +11,7 @@ from src.models.common import StrictModel
 
 
 class UIElementType(StrEnum):
-    """Visible browser element types relevant to the active browser benchmark."""
+    """Visible element types for browser and desktop automation."""
 
     BUTTON = "button"
     INPUT = "input"
@@ -19,7 +19,17 @@ class UIElementType(StrEnum):
     TEXT = "text"
     DIALOG = "dialog"
     ICON = "icon"
+    WINDOW = "window"
     UNKNOWN = "unknown"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "UIElementType":
+        if not isinstance(value, str):
+            return None  # type: ignore[return-value]
+        obj = str.__new__(cls, value)
+        obj._name_ = value
+        obj._value_ = value
+        return obj
 
 
 class PageHint(StrEnum):

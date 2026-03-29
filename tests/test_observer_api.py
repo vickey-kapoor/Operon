@@ -191,9 +191,9 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
     client = TestClient(app)
 
-    page = client.get("/observer")
+    page = client.get("/desktop-pilot")
     assert page.status_code == 200
-    assert "Operon Observer" in page.text
+    assert "Operon Pilot" in page.text
 
     runs = client.get("/observer/api/runs")
     assert runs.status_code == 200

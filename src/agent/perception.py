@@ -17,6 +17,7 @@ from src.models.logs import ModelDebugArtifacts
 from src.models.perception import (
     PageHint,
     RawScreenPerception,
+    RawUIElement,
     ScreenPerception,
     UIElement,
     UIElementNameSource,
@@ -192,6 +193,29 @@ class _StageArtifactPaths:
 
 
 
+_ELEMENT_FIELDS = frozenset(RawUIElement.model_fields.keys())
+
+
+def _normalize_visible_elements(parsed: dict[str, Any]) -> None:
+    """Fix common Gemini output quirks in visible_elements before validation."""
+    elements = parsed.get("visible_elements")
+    if not isinstance(elements, list):
+        return
+    for element in elements:
+        if not isinstance(element, dict):
+            continue
+        # Fix: Gemini sometimes emits "element_N": "element_N" instead of "element_id"
+        if "element_id" not in element:
+            for key in list(element.keys()):
+                if key.startswith("element_") and key not in _ELEMENT_FIELDS:
+                    element["element_id"] = element.pop(key)
+                    break
+        # Drop any extra keys not in the schema to tolerate minor hallucinations
+        extra_keys = [k for k in element if k not in _ELEMENT_FIELDS]
+        for key in extra_keys:
+            del element[key]
+
+
 def parse_perception_output(raw_output: str, screenshot_path: str) -> ScreenPerception:
     cleaned = _strip_json_fence(raw_output)
     try:
@@ -206,6 +230,7 @@ def parse_perception_output(raw_output: str, screenshot_path: str) -> ScreenPerc
     if page_hint is None and "page_hint" not in parsed:
         parsed["page_hint"] = _fallback_page_hint_from_summary(parsed.get("summary"))
     parsed["capture_artifact_path"] = screenshot_path
+    _normalize_visible_elements(parsed)
     try:
         raw_perception = RawScreenPerception.model_validate(parsed)
     except ValidationError as exc:

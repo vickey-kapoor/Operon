@@ -159,8 +159,8 @@ FastAPI app at `src/api/server.py`. Routes in `src/api/routes.py`:
 - `POST /step` — advance a run one step
 - `GET /run/{id}` — read run state
 - `GET /health`
-- `GET /observer` — local debug UI (served from `src/api/static/observer.html`)
-- `GET /observer/api/runs`, `GET /observer/api/run/{id}`, `GET /observer/api/artifact` — observer data endpoints
+- `GET /` or `GET /desktop-pilot` — Operon Pilot UI (unified desktop + browser)
+- `GET /observer/api/runs`, `GET /observer/api/run/{id}`, `GET /observer/api/artifact` — run data endpoints
 
 The `AgentLoop` singleton is built lazily on first request via `get_agent_loop()`.
 

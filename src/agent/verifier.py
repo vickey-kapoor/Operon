@@ -153,6 +153,14 @@ class DeterministicVerifierService(VerifierService):
             return True
         if action.action_type is ActionType.WRITE_CLIPBOARD and ("clipboard" in intent or "copy" in intent):
             return True
+        # Hotkey that matches the last phrase of the intent (e.g. "copy it with Ctrl+C")
+        if action.action_type is ActionType.HOTKEY and action.key:
+            key_lower = action.key.lower().replace("+", "")
+            if key_lower in intent.replace("+", "").replace("-", ""):
+                # Only if this is the LAST action in the intent
+                last_phrase = intent.split(",")[-1].strip().lower() if "," in intent else intent
+                if key_lower in last_phrase.replace("+", "").replace("-", ""):
+                    return True
         return False
 
     @staticmethod

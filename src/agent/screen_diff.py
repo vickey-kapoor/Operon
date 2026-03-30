@@ -10,10 +10,11 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 # Minimum fraction of pixels that must change to count as meaningful screen change.
-SCREEN_CHANGE_THRESHOLD = 0.005  # 0.5%
+# Set low enough to detect text appearing in Notepad and keyboard shortcut effects.
+SCREEN_CHANGE_THRESHOLD = 0.002  # 0.2%
 
 # Below this, treat as cursor blink or compression artifact — no real change.
-CURSOR_ONLY_THRESHOLD = 0.001  # 0.1%
+CURSOR_ONLY_THRESHOLD = 0.0005  # 0.05%
 
 # Internal comparison resolution (fast, sufficient for change detection).
 _COMPARE_WIDTH = 480

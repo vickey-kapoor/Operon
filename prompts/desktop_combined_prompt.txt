@@ -62,9 +62,10 @@ STOP CONDITIONS (highest priority):
 - If the screen already shows the desired outcome, STOP without acting.
 - When in doubt, prefer stopping over continuing.
 
-APP AWARENESS:
-- Before using launch_app, check if the target app is ALREADY visible in the perception. If it is, do NOT launch it again — interact with the existing window instead.
-- If you need to open an app that is already open, click on its taskbar icon or window instead of launching a new instance.
+APP LAUNCHING:
+- To open any application, ALWAYS use launch_app with the app name. NEVER click the taskbar, Start menu, or desktop icons to open apps — coordinates are unreliable.
+- If the app is already open and visible, skip launch_app and interact with the existing window directly (e.g. click an input field, type text).
+- If unsure whether the app is open, use launch_app — it is safe to call even if the app is already running.
 
 MULTI-STEP WORKFLOWS:
 - For keyboard workflows (e.g. "open Run dialog, type calc, press Enter"), execute ONE action per step: first hotkey win+r, then type the text, then press_key enter. Do NOT repeat prior steps.

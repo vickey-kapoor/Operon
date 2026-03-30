@@ -137,10 +137,14 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
 
     def _render_prompt(self, state: AgentState, *, semantic_retry: bool = False) -> str:
         previous_summary = state.observation_history[-1].summary if state.observation_history else "none"
+        # Build action history so the model knows what already happened
+        action_log = self._format_action_history(state)
         hints_text = ""
         if self._advisory_hints:
             hints_text = "Advisory memory hints:\n" + "\n".join(f"- {hint}" for hint in self._advisory_hints)
             self._advisory_hints = []
+        if action_log:
+            hints_text = f"Actions already completed this run:\n{action_log}\n\n{hints_text}"
         prompt = self._prompt_template.format(
             intent=state.intent,
             current_subgoal=state.current_subgoal or "not set",
@@ -156,6 +160,20 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
                 "and include precise bounding box coordinates."
             )
         return prompt
+
+    @staticmethod
+    def _format_action_history(state: AgentState) -> str:
+        """Format recent action history so the model knows what already succeeded."""
+        if not state.action_history:
+            return ""
+        lines = []
+        for i, action in enumerate(state.action_history[-6:], start=max(1, len(state.action_history) - 5)):
+            a = action.action
+            detail = action.detail or ""
+            text = a.text or a.key or a.url or ""
+            ok = "OK" if action.success else "FAILED"
+            lines.append(f"  Step {i}: {a.action_type.value}({text}) -> {ok}: {detail[:80]}")
+        return "\n".join(lines)
 
     @staticmethod
     def _parse_combined_output(raw_output: str, screenshot_path: str) -> tuple[ScreenPerception, PolicyDecision]:

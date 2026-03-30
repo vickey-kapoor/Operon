@@ -161,7 +161,7 @@ async def test_benchmark_startup_loads_gemini_api_key_from_dotenv(tmp_path, monk
 
             captured["api_key"] = os.getenv("GEMINI_API_KEY")
 
-    class FakeBrowserExecutor:
+    class FakeExecutor:
         async def close(self) -> None:
             return None
 
@@ -178,7 +178,7 @@ async def test_benchmark_startup_loads_gemini_api_key_from_dotenv(tmp_path, monk
             return SimpleNamespace(run_id="fake-run", model_dump_json=lambda indent=2: "{}")
 
     monkeypatch.setattr(benchmark, "GeminiHttpClient", FakeGeminiClient)
-    monkeypatch.setattr(benchmark, "PlaywrightBrowserExecutor", FakeBrowserExecutor)
+    monkeypatch.setattr(benchmark, "DesktopExecutor", FakeExecutor)
     monkeypatch.setattr(benchmark, "FileBackedRunStore", lambda **_kw: FakeRunStore())
     monkeypatch.setattr(benchmark, "FileBackedMemoryStore", lambda **_kw: type("FakeMem", (), {"get_hints": lambda *a, **k: [], "record_step": lambda *a, **k: []})())
     monkeypatch.setattr(benchmark, "AgentLoop", FakeLoop)
@@ -230,12 +230,12 @@ async def test_benchmark_suite_runs_multiple_tasks_and_writes_metrics(tmp_path, 
                 step_count=2,
             )
 
-    class FakeBrowserExecutor:
+    class FakeExecutor:
         async def close(self) -> None:
             return None
 
     def fake_build_loop(*, root_dir="runs"):
-        return FakeLoop(), FakeBrowserExecutor()
+        return FakeLoop(), FakeExecutor()
 
     def fake_generate_run_metrics(run_id, *, root_dir="runs", task_spec=None):
         from src.models.benchmark import RunMetrics

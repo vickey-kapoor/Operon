@@ -143,7 +143,7 @@ class DeterministicTargetSelector:
                 spatial_cap=_DEFAULT_SPATIAL_CAP,
             ),
         )
-        trace = self.select(perception, intent).trace
+        trace = self.select(perception, intent, _cached_intermediates=(text_candidates, visual_groups)).trace
         return TargetSelectionContext(
             intent=intent,
             original_target=OriginalTargetSignature(
@@ -162,7 +162,19 @@ class DeterministicTargetSelector:
             original_page_signature=page_signature,
         )
 
-    def select(self, perception: ScreenPerception, intent: TargetIntent) -> SelectorResult:
+    def select(
+        self,
+        perception: ScreenPerception,
+        intent: TargetIntent,
+        _cached_intermediates: tuple[list[UIElement], list[list[UIElement]]] | None = None,
+    ) -> SelectorResult:
+        # Precompute intermediates once for both initial + recovery attempts
+        if _cached_intermediates is not None:
+            text_cands, vis_groups = _cached_intermediates
+        else:
+            text_cands = self._label_like_text_candidates(perception)
+            vis_groups = self._visual_groups(perception)
+
         initial = self._run_attempt(
             perception,
             intent,
@@ -171,6 +183,8 @@ class DeterministicTargetSelector:
                 ambiguity_margin=_AMBIGUITY_MARGIN,
                 spatial_cap=_DEFAULT_SPATIAL_CAP,
             ),
+            text_candidates=text_cands,
+            visual_groups=vis_groups,
         )
         if initial.selected is not None:
             return SelectorResult(selected=initial.selected, trace=self._build_trace(intent, initial))
@@ -186,7 +200,7 @@ class DeterministicTargetSelector:
         if recovery_config is None:
             return SelectorResult(selected=None, trace=self._build_trace(intent, initial))
 
-        recovery = self._run_attempt(perception, intent, recovery_config)
+        recovery = self._run_attempt(perception, intent, recovery_config, text_candidates=text_cands, visual_groups=vis_groups)
         return SelectorResult(
             selected=recovery.selected,
             trace=self._build_trace(intent, recovery, initial=initial, recovery_config=recovery_config),
@@ -220,13 +234,23 @@ class DeterministicTargetSelector:
             ),
         )
 
-    def _run_attempt(self, perception: ScreenPerception, intent: TargetIntent, config: _SelectorConfig) -> _AttemptResult:
+    def _run_attempt(
+        self,
+        perception: ScreenPerception,
+        intent: TargetIntent,
+        config: _SelectorConfig,
+        *,
+        text_candidates: list[UIElement] | None = None,
+        visual_groups: list[list[UIElement]] | None = None,
+    ) -> _AttemptResult:
         filtered_candidates: list[UIElement] = []
         evidences: list[TargetEvidence] = []
         incompatible_found = False
         unlabeled_rejected = False
-        text_candidates = self._label_like_text_candidates(perception)
-        visual_groups = self._visual_groups(perception)
+        if text_candidates is None:
+            text_candidates = self._label_like_text_candidates(perception)
+        if visual_groups is None:
+            visual_groups = self._visual_groups(perception)
         candidates_before_filtering = 0
 
         for element in perception.visible_elements:

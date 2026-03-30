@@ -1,4 +1,4 @@
-"""Agent loop orchestrator for the active browser benchmark workflow."""
+"""Agent loop orchestrator for the vision-driven automation workflow."""
 
 import shutil
 from dataclasses import dataclass
@@ -8,9 +8,10 @@ from src.agent.capture import CaptureService
 from src.agent.perception import PerceptionLowQualityError, PerceptionService
 from src.agent.policy import PolicyService
 from src.agent.recovery import RecoveryManager
+from src.agent.reflector import PostRunReflector
 from src.agent.selector import DeterministicTargetSelector
 from src.agent.verifier import VerifierService
-from src.executor.browser import BrowserExecutor
+from src.executor.browser import Executor
 from src.models.common import (
     FailureCategory,
     LoopStage,
@@ -33,6 +34,7 @@ from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.selector import TargetIntent, TargetIntentAction
 from src.models.verification import VerificationStatus
+from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log
 from src.store.run_store import RunStore
@@ -65,7 +67,7 @@ class AgentLoop:
         perception_service: PerceptionService,
         run_store: RunStore,
         policy_service: PolicyService,
-        executor: BrowserExecutor,
+        executor: Executor,
         verifier_service: VerifierService,
         recovery_manager: RecoveryManager,
         memory_store: MemoryStore | None = None,
@@ -79,6 +81,9 @@ class AgentLoop:
         self.recovery_manager = recovery_manager
         self.memory_store = memory_store
         self.target_selector = DeterministicTargetSelector()
+        self.reflector: PostRunReflector | None = (
+            PostRunReflector(memory_store) if memory_store is not None else None
+        )
 
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
         record = self.run_store.create_run(intent=request.intent, start_url=request.start_url)
@@ -146,6 +151,11 @@ class AgentLoop:
         self._prepare_step_artifacts(record.run_id, step_index, before_artifact_path, after_artifact_path)
 
         frame = await self.capture_service.capture(record)
+        # Inject memory hints before perceive() so combined mode includes them
+        if hasattr(self.policy_service, "prepare_hints"):
+            self.policy_service.prepare_hints(record, None)
+        # Inject stagnation hint if subgoal hasn't changed for 3+ steps
+        self._inject_stagnation_hint(record)
         try:
             perception = await self.perception_service.perceive(frame, record)
         except Exception as exc:
@@ -177,6 +187,10 @@ class AgentLoop:
                 after_artifact_path=after_artifact_path,
             )
 
+        # Set run context on the executor so launched processes are tracked per run
+        if hasattr(self.executor, "set_current_run_id"):
+            self.executor.set_current_run_id(record.run_id)
+
         blocked_action = self._block_redundant_action(state, decision.action, step_index)
         if blocked_action is None:
             state, executed_action = await self._execute_with_hardening(
@@ -203,6 +217,7 @@ class AgentLoop:
             verification=verification,
             recovery=recovery,
             step_index=step_index,
+            before_artifact_path=before_artifact_path,
         )
         recovery = self._apply_progress_stop_guard(recovery, progress_trace)
         progress_trace = progress_trace.model_copy(
@@ -230,7 +245,7 @@ class AgentLoop:
             executed_action=executed_action,
             verification_result=verification,
             recovery_decision=recovery,
-            progress_state=state.progress_state.model_copy(deep=True),
+            progress_state=state.progress_state.model_copy(),
             progress_trace_artifact_path=progress_trace_artifact_path,
             failure=failure,
         )
@@ -280,6 +295,14 @@ class AgentLoop:
             state.stop_reason = None
 
         updated = await self.run_store.set_status(record.run_id, final_status)
+
+        # Post-run reflection: analyze completed/failed runs and learn
+        if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED} and self.reflector is not None:
+            try:
+                self.reflector.reflect(record.run_id)
+            except Exception:
+                pass  # reflection is advisory, never block the response
+
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -469,6 +492,9 @@ class AgentLoop:
         target_reresolved = False
         try:
             frame = await self.capture_service.capture(record)
+            # In combined mode, don't overwrite the primary cached decision
+            if hasattr(self.perception_service, "set_perception_only"):
+                self.perception_service.set_perception_only(True)
             refreshed_perception = await self.perception_service.perceive(frame, record)
             retry_state = await self.run_store.update_state(record.run_id, refreshed_perception)
             resolution = self._resolve_retry_action(
@@ -480,6 +506,9 @@ class AgentLoop:
             target_reresolved = resolution.trace is not None and resolution.trace.succeeded
         except Exception:
             return state, self._persist_execution_trace(record.run_id, step_index, executed_action)
+        finally:
+            if hasattr(self.perception_service, "set_perception_only"):
+                self.perception_service.set_perception_only(False)
 
         if retry_action is None:
             failed = self._apply_reresolution_failure(executed_action, resolution.trace)
@@ -692,28 +721,44 @@ class AgentLoop:
         step_dir = Path(self._before_artifact_path(run_id, step_index)).resolve().parent
         step_dir.mkdir(parents=True, exist_ok=True)
         trace_path = step_dir / "execution_trace.json"
-        trace_path.write_text(executed_action.execution_trace.model_dump_json(indent=2), encoding="utf-8")
+        bg_writer.enqueue(trace_path, executed_action.execution_trace.model_dump_json())
         return executed_action.model_copy(update={"execution_trace_artifact_path": str(trace_path)})
 
     def _persist_progress_trace(self, run_id: str, step_index: int, progress_trace: ProgressTrace) -> str:
         step_dir = Path(self._before_artifact_path(run_id, step_index)).resolve().parent
         step_dir.mkdir(parents=True, exist_ok=True)
         trace_path = step_dir / "progress_trace.json"
-        trace_path.write_text(progress_trace.model_dump_json(indent=2), encoding="utf-8")
+        bg_writer.enqueue(trace_path, progress_trace.model_dump_json())
         return str(trace_path)
+
+    def _inject_stagnation_hint(self, state) -> None:
+        """If the same subgoal persists for 3+ steps without progress, inject a hint."""
+        ps = state.progress_state
+        if ps.no_progress_streak >= 3 and hasattr(self.perception_service, "set_advisory_hints"):
+            hint = (
+                f"WARNING: You have been on the same subgoal for {ps.no_progress_streak} steps "
+                "without visible progress. The screen has not changed. "
+                "Try a DIFFERENT action or update your subgoal. "
+                "If the task is already complete, use the stop action."
+            )
+            current = getattr(self.perception_service, "_advisory_hints", [])
+            self.perception_service.set_advisory_hints(current + [hint])
 
     def _sync_progress_state_with_perception(self, state, perception) -> None:
         page_signature = self._page_signature(perception)
         progress_state = state.progress_state
         previous_signature = progress_state.latest_page_signature
+        # Track previous for page-change detection in _meaningful_progress
+        progress_state.previous_page_signature = previous_signature
         progress_state.latest_page_signature = page_signature
         if previous_signature is None or previous_signature == page_signature:
             return
+        # Page changed — reset action/target repeat counters (but NOT no_progress_streak,
+        # which is managed by _meaningful_progress based on actual screen change detection)
         progress_state.repeated_action_count.clear()
         progress_state.repeated_target_count.clear()
         progress_state.recent_failures = []
         progress_state.loop_detected = False
-        progress_state.no_progress_streak = max(0, progress_state.no_progress_streak - 1)
 
     def _block_redundant_action(self, state, action, step_index: int):
         progress_state = state.progress_state
@@ -747,15 +792,20 @@ class AgentLoop:
             )
 
         repeated_action_count = progress_state.repeated_action_count.get(action_signature, 0)
+        _REPEATABLE_ACTIONS = {
+            ActionType.CLICK, ActionType.DOUBLE_CLICK, ActionType.RIGHT_CLICK,
+            ActionType.PRESS_KEY, ActionType.HOTKEY, ActionType.TYPE,
+            ActionType.HOVER, ActionType.SCROLL, ActionType.LAUNCH_APP,
+        }
         if (
-            action.action_type is ActionType.CLICK
+            action.action_type in _REPEATABLE_ACTIONS
             and repeated_action_count >= self.MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS
             and progress_state.no_progress_streak > 0
         ):
             return self._redundant_action_failure(
                 action=action,
                 category=FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS,
-                detail="Action blocked: repeated click without meaningful progress.",
+                detail=f"Action blocked: repeated {action.action_type.value} without meaningful progress.",
             )
 
         if (
@@ -790,13 +840,31 @@ class AgentLoop:
         verification,
         recovery,
         step_index: int,
+        before_artifact_path: str | None = None,
     ) -> ProgressTrace:
         progress_state = state.progress_state
         action_signature = self._action_signature(executed_action.action)
         target_signature = self._target_signature(executed_action.action)
         subgoal_signature = self._subgoal_signature(decision.active_subgoal)
         failure_signature = self._failure_signature(executed_action, verification, recovery, target_signature)
-        progress_made = self._meaningful_progress(executed_action, verification)
+
+        # Subgoal-based progress signal
+        previous_subgoal = progress_state.latest_subgoal_signature
+        subgoal_changed = previous_subgoal is None or subgoal_signature != previous_subgoal
+        progress_state.latest_subgoal_signature = subgoal_signature
+
+        # Pixel-level screen change signal (before vs after screenshots)
+        screen_change_ratio: float | None = None
+        after_path = executed_action.artifact_path if hasattr(executed_action, "artifact_path") else None
+        if before_artifact_path and after_path:
+            from src.agent.screen_diff import compute_screen_change_ratio
+            screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
+
+        progress_made = self._meaningful_progress(
+            executed_action, verification,
+            subgoal_changed=subgoal_changed,
+            screen_change_ratio=screen_change_ratio,
+        )
 
         progress_state.recent_actions = self._append_window(progress_state.recent_actions, action_signature)
         loop_failure_category = None
@@ -849,6 +917,7 @@ class AgentLoop:
             else None,
             loop_pattern_detected=loop_pattern,
             progress_made=progress_made,
+            screen_change_ratio=screen_change_ratio,
             no_progress_streak=progress_state.no_progress_streak,
             final_failure_category=loop_failure_category,
             final_stop_reason=self._stop_reason_for_failure(loop_failure_category),
@@ -921,8 +990,37 @@ class AgentLoop:
         progress_state.subgoal_completion_page_signatures[subgoal_signature] = page_signature
 
     @staticmethod
-    def _meaningful_progress(executed_action, verification) -> bool:
-        return executed_action.success and verification.status is VerificationStatus.SUCCESS and verification.expected_outcome_met
+    def _meaningful_progress(
+        executed_action,
+        verification,
+        *,
+        subgoal_changed: bool = True,
+        screen_change_ratio: float | None = None,
+    ) -> bool:
+        """Progress requires action success AND real evidence of change.
+
+        Uses two signals:
+        - subgoal_changed: the model reported a new subgoal (intent-level progress)
+        - screen_change_ratio: pixel diff between before/after screenshots (visual progress)
+
+        Both are needed to avoid false positives. Subgoal alone can be gamed by the
+        model repeating the same subgoal. Screen diff alone misses cursor-only changes.
+        """
+        if not executed_action.success:
+            return False
+        if verification.stop_condition_met:
+            return True
+
+        # If we have pixel-level evidence, use it as the primary signal
+        if screen_change_ratio is not None:
+            from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD
+            if screen_change_ratio >= SCREEN_CHANGE_THRESHOLD:
+                return True  # Real visual change happened
+            # No visual change — not progress even if subgoal changed
+            return False
+
+        # Fallback when no screenshot comparison available
+        return subgoal_changed
 
     @classmethod
     def _failure_signature(cls, executed_action, verification, recovery, target_signature: str | None) -> str | None:
@@ -962,7 +1060,9 @@ class AgentLoop:
         if action.selector is not None:
             return f"selector:{action.selector}"
         if action.x is not None and action.y is not None:
-            return f"xy:{action.x}:{action.y}"
+            # Bucket coordinates to 50px grid so nearby clicks are detected as repeats
+            bx, by = action.x // 50 * 50, action.y // 50 * 50
+            return f"xy:{bx}:{by}"
         return None
 
     @classmethod

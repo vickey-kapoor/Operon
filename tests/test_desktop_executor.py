@@ -376,20 +376,24 @@ async def test_right_click_without_coords_fails() -> None:
 
 @pytest.mark.asyncio
 async def test_drag_success() -> None:
-    """Drag from (x,y) to (x_end,y_end) should succeed."""
+    """Drag from (x,y) to (x_end,y_end) using mouseDown/moveTo/mouseUp."""
     executor = _make_executor()
     action = AgentAction(action_type=ActionType.DRAG, x=100, y=200, x_end=300, y_end=400)
 
     with (
         patch("src.executor.desktop.pyautogui.moveTo") as mock_move,
-        patch("src.executor.desktop.pyautogui.dragTo") as mock_drag,
+        patch("src.executor.desktop.pyautogui.mouseDown") as mock_down,
+        patch("src.executor.desktop.pyautogui.mouseUp") as mock_up,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
 
         assert result.success is True
-        mock_move.assert_called_once_with(100, 200)
-        mock_drag.assert_called_once_with(300, 400, duration=0.5)
+        assert mock_move.call_count == 2
+        mock_move.assert_any_call(100, 200)
+        mock_move.assert_any_call(300, 400, duration=0.6)
+        mock_down.assert_called_once()
+        mock_up.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -532,3 +536,124 @@ async def test_screenshot_region_invalid_bounds_fails() -> None:
     result = await executor.execute(action)
 
     assert result.success is False
+
+
+# ── safety: alt+f4 blocked ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_hotkey_blocks_alt_f4() -> None:
+    """alt+f4 hotkey should be blocked for safety."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.HOTKEY, key="alt+f4")
+
+    result = await executor.execute(action)
+
+    assert result.success is False
+    assert "blocked" in result.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_hotkey_blocks_alt_f4_uppercase() -> None:
+    """Alt+F4 (any case) should be blocked."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.HOTKEY, key="Alt+F4")
+
+    result = await executor.execute(action)
+
+    assert result.success is False
+    assert "blocked" in result.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_hotkey_allows_other_hotkeys() -> None:
+    """Non-dangerous hotkeys like ctrl+c should still work."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.HOTKEY, key="ctrl+c")
+
+    with (
+        patch("src.executor.desktop.pyautogui.hotkey"),
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+
+
+# ── process tracking and cleanup ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_launch_app_tracks_process() -> None:
+    """launch_app should track the Popen handle when run_id is set."""
+    executor = _make_executor()
+    executor.set_current_run_id("run-123")
+    action = AgentAction(action_type=ActionType.LAUNCH_APP, text="calculator")
+
+    mock_proc = MagicMock()
+    mock_proc.args = "calc.exe"
+
+    with (
+        patch("src.executor.desktop.subprocess.Popen", return_value=mock_proc) as mock_popen,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    assert "run-123" in executor._launched_processes
+    assert mock_proc in executor._launched_processes["run-123"]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_terminates_tracked_processes() -> None:
+    """cleanup_run should terminate non-protected tracked processes."""
+    executor = _make_executor()
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None  # still running
+    mock_proc.args = "calc.exe"
+    mock_proc.pid = 12345
+
+    executor._launched_processes["run-456"] = [mock_proc]
+
+    closed = executor.cleanup_run("run-456")
+
+    assert closed == 1
+    mock_proc.terminate.assert_called_once()
+    assert "run-456" not in executor._launched_processes
+
+
+@pytest.mark.asyncio
+async def test_cleanup_skips_protected_processes() -> None:
+    """cleanup_run should skip protected processes like VS Code."""
+    executor = _make_executor()
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None
+    mock_proc.args = "code.exe"
+    mock_proc.pid = 99999
+
+    executor._launched_processes["run-789"] = [mock_proc]
+
+    closed = executor.cleanup_run("run-789")
+
+    assert closed == 0
+    mock_proc.terminate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_skips_already_exited() -> None:
+    """cleanup_run should skip processes that already exited."""
+    executor = _make_executor()
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = 0  # already exited
+    mock_proc.args = "notepad.exe"
+    mock_proc.pid = 11111
+
+    executor._launched_processes["run-aaa"] = [mock_proc]
+
+    closed = executor.cleanup_run("run-aaa")
+
+    assert closed == 0
+    mock_proc.terminate.assert_not_called()

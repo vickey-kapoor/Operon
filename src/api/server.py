@@ -1,7 +1,10 @@
 """FastAPI application bootstrap for the MVP browser-only agent."""
 
+import os
+
 from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 
 def create_app() -> FastAPI:
@@ -15,6 +18,14 @@ def create_app() -> FastAPI:
         version="0.1.0",
         description="Operate any interface with a vision-driven computer-use engine.",
     )
+    origins = os.getenv("CORS_ORIGINS", "").strip()
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[o.strip() for o in origins.split(",")],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     app.include_router(router)
     return app
 

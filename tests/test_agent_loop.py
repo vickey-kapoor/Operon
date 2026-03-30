@@ -923,7 +923,7 @@ def test_page_change_reduces_no_progress_suppression() -> None:
     assert state.progress_state.repeated_action_count == {}
     assert state.progress_state.repeated_target_count == {}
     assert state.progress_state.recent_failures == []
-    assert state.progress_state.no_progress_streak == 1
+    assert state.progress_state.no_progress_streak == 2  # streak resets in _update_progress_state, not _sync
     assert state.progress_state.loop_detected is False
 
 

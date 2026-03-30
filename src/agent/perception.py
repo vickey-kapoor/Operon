@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from src.clients.gemini import GeminiClient, GeminiClientError
+from src.store.background_writer import bg_writer
 from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, StopReason
 from src.models.logs import ModelDebugArtifacts
@@ -77,14 +78,14 @@ class GeminiPerceptionService(PerceptionService):
 
         for attempt in range(self._max_semantic_retries + 1):
             prompt = self._render_prompt(state, semantic_retry=attempt > 0)
-            debug_artifacts.prompt_artifact_path.write_text(prompt, encoding="utf-8")
+            bg_writer.enqueue(debug_artifacts.prompt_artifact_path, prompt)
 
             try:
                 raw_output = await self.gemini_client.generate_perception(prompt, screenshot.artifact_path)
             except GeminiClientError:
                 raise
 
-            debug_artifacts.raw_response_artifact_path.write_text(raw_output, encoding="utf-8")
+            bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
             self._last_debug_artifacts = ModelDebugArtifacts(
                 prompt_artifact_path=str(debug_artifacts.prompt_artifact_path),
                 raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
@@ -96,7 +97,7 @@ class GeminiPerceptionService(PerceptionService):
             quality_metrics = _quality_metrics(perception)
             low_quality_reason = _low_quality_reason(perception, quality_metrics=quality_metrics)
             if low_quality_reason is None:
-                debug_artifacts.parsed_artifact_path.write_text(perception.model_dump_json(indent=2), encoding="utf-8")
+                bg_writer.enqueue(debug_artifacts.parsed_artifact_path, perception.model_dump_json())
                 _write_diagnostics_artifact(
                     debug_artifacts=debug_artifacts,
                     perception=perception,
@@ -108,11 +109,11 @@ class GeminiPerceptionService(PerceptionService):
                     final_decision="accepted",
                 )
                 if retry_log_lines:
-                    debug_artifacts.retry_log_artifact_path.write_text("\n".join(retry_log_lines), encoding="utf-8")
+                    bg_writer.enqueue(debug_artifacts.retry_log_artifact_path, "\n".join(retry_log_lines))
                 return perception
 
             retry_log_lines.append(_format_quality_log_line(attempt + 1, low_quality_reason, quality_metrics, salvage_mode=False))
-            debug_artifacts.retry_log_artifact_path.write_text("\n".join(retry_log_lines), encoding="utf-8")
+            bg_writer.enqueue(debug_artifacts.retry_log_artifact_path, "\n".join(retry_log_lines))
             logger.warning("Retrying perception after low-quality output (%s).", low_quality_reason)
             if attempt >= self._max_semantic_retries:
                 salvaged = _salvage_perception(perception)
@@ -126,8 +127,8 @@ class GeminiPerceptionService(PerceptionService):
                         salvage_mode=True,
                     )
                 )
-                debug_artifacts.retry_log_artifact_path.write_text("\n".join(retry_log_lines), encoding="utf-8")
-                debug_artifacts.parsed_artifact_path.write_text(salvaged.model_dump_json(indent=2), encoding="utf-8")
+                bg_writer.enqueue(debug_artifacts.retry_log_artifact_path, "\n".join(retry_log_lines))
+                bg_writer.enqueue(debug_artifacts.parsed_artifact_path, salvaged.model_dump_json())
                 _write_diagnostics_artifact(
                     debug_artifacts=debug_artifacts,
                     perception=perception,
@@ -492,7 +493,7 @@ def _write_diagnostics_artifact(
             "element_count": len(salvaged_perception.visible_elements),
             "quality_metrics": salvage_metrics,
         }
-    debug_artifacts.diagnostics_artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    bg_writer.enqueue(debug_artifacts.diagnostics_artifact_path, json.dumps(payload))
 
 
 def _label_text_candidates(elements: list[UIElement]) -> list[UIElement]:

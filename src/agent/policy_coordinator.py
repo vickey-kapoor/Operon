@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from src.agent.policy import PolicyService
+from src.store.background_writer import bg_writer
 from src.agent.policy_rules import PolicyRuleEngine
 from src.models.common import FailureCategory
 from src.models.logs import ModelDebugArtifacts
@@ -31,6 +32,22 @@ class PolicyCoordinator(PolicyService):
         self.memory_store = memory_store
         self.rule_engine = rule_engine or PolicyRuleEngine()
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
+
+    def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
+        """Fetch memory hints and inject them into the delegate BEFORE perceive().
+
+        In combined mode the Gemini call happens during perceive(), so hints
+        must be set before that call.  In separate mode this is a harmless no-op
+        because choose_action() will re-fetch and set hints anyway.
+        """
+        memory_hints = self.memory_store.get_hints(
+            benchmark=benchmark_name_for_intent(state.intent),
+            page_hint=perception.page_hint if perception else None,
+            subgoal=state.current_subgoal,
+            recent_failure_category=self._recent_failure_category(state),
+        )
+        if hasattr(self.delegate, "set_advisory_hints"):
+            self.delegate.set_advisory_hints([hint.hint for hint in memory_hints])
 
     async def choose_action(
         self,
@@ -86,18 +103,13 @@ class PolicyCoordinator(PolicyService):
         raw_path = step_dir / "policy_raw.txt"
         parsed_path = step_dir / "policy_decision.json"
         selector_trace_path = self._write_selector_trace(step_dir, selector_traces)
-        prompt_path.write_text(self._render_rule_context(state, perception, memory_hints), encoding="utf-8")
-        raw_path.write_text(
-            json.dumps(
-                {
-                    "source": "rule",
-                    "decision_rationale": decision.rationale,
-                    "subgoal": decision.active_subgoal,
-                }
-            ),
-            encoding="utf-8",
-        )
-        parsed_path.write_text(decision.model_dump_json(indent=2), encoding="utf-8")
+        bg_writer.enqueue(prompt_path, self._render_rule_context(state, perception, memory_hints))
+        bg_writer.enqueue(raw_path, json.dumps({
+            "source": "rule",
+            "decision_rationale": decision.rationale,
+            "subgoal": decision.active_subgoal,
+        }))
+        bg_writer.enqueue(parsed_path, decision.model_dump_json())
         return ModelDebugArtifacts(
             prompt_artifact_path=str(prompt_path),
             raw_response_artifact_path=str(raw_path),
@@ -130,7 +142,7 @@ class PolicyCoordinator(PolicyService):
             return None
         path = step_dir / "selector_trace.json"
         payload = [trace.model_dump(mode="json") for trace in selector_traces]
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        bg_writer.enqueue(path, json.dumps(payload))
         return path
 
     def _attach_selector_trace(

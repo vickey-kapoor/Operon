@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -122,6 +122,13 @@ class RunTaskRequest(StrictModel):
     intent: str = Field(min_length=1, max_length=500)
     start_url: str | None = Field(default=None, min_length=1)
 
+    @field_validator("intent", mode="before")
+    @classmethod
+    def strip_intent_whitespace(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
 
 class StepRequest(StrictModel):
     run_id: str = Field(min_length=1)
@@ -132,6 +139,18 @@ class RunResponse(StrictModel):
     status: RunStatus
     intent: str = Field(min_length=1)
     step_count: int = Field(ge=0)
+
+
+class CleanupRequest(StrictModel):
+    """Request to clean up resources from a completed desktop run."""
+    run_id: str = Field(min_length=1)
+
+
+class CleanupResponse(StrictModel):
+    """Result of a desktop run cleanup."""
+    run_id: str = Field(min_length=1)
+    closed_count: int = Field(ge=0)
+    detail: str = Field(min_length=1)
 
 
 class HealthResponse(StrictModel):

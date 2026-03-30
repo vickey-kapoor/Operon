@@ -25,9 +25,24 @@ from src.models.execution import (
 )
 from src.models.policy import ActionType, AgentAction
 
-from .browser import BrowserExecutor
+from .browser import Executor
 
 logger = logging.getLogger(__name__)
+
+# Apps that must NEVER be terminated by cleanup or blocked by safety guards.
+_PROTECTED_PROCESSES: set[str] = {
+    "code", "code.exe",           # VS Code
+    "devenv", "devenv.exe",       # Visual Studio
+    "cursor", "cursor.exe",       # Cursor IDE
+    "claude", "claude.exe",       # Claude Code
+    "windsurf", "windsurf.exe",   # Windsurf IDE
+    "explorer", "explorer.exe",   # Windows shell
+    "cmd", "cmd.exe",
+    "powershell", "powershell.exe",
+    "wt", "wt.exe",              # Windows Terminal
+    "python", "python.exe",
+    "uvicorn",                    # Our own server
+}
 
 _APP_ALIASES: dict[str, str] = {
     "notepad": "notepad.exe",
@@ -65,7 +80,7 @@ def _set_dpi_awareness() -> None:
             pass
 
 
-class DesktopExecutor(BrowserExecutor):
+class DesktopExecutor(Executor):
     """Desktop executor using pyautogui/mss for full-screen automation."""
 
     def __init__(
@@ -73,18 +88,82 @@ class DesktopExecutor(BrowserExecutor):
         *,
         artifact_dir: str | Path = ".desktop-artifacts",
         type_interval: float = 0.03,
-        post_action_delay: float = 0.3,
-        post_launch_delay: float = 1.5,
+        post_action_delay: float = 0.15,
+        post_launch_delay: float = 0.8,
     ) -> None:
         self._artifact_dir = Path(artifact_dir)
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self._type_interval = type_interval
         self._post_action_delay = post_action_delay
         self._post_launch_delay = post_launch_delay
+        self._current_run_id: str | None = None
+        self._launched_processes: dict[str, list[subprocess.Popen]] = {}
+        self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
 
         _set_dpi_awareness()
         pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 0.1
+        pyautogui.PAUSE = 0
+
+    def set_current_run_id(self, run_id: str) -> None:
+        """Set the active run ID so launched processes are tracked per run."""
+        self._current_run_id = run_id
+
+    async def reset_desktop(self) -> None:
+        """Minimize all windows (Win+D) to give each task a clean desktop."""
+        try:
+            await asyncio.to_thread(pyautogui.hotkey, "win", "d")
+            await asyncio.sleep(1.0)
+        except Exception:
+            logger.debug("reset_desktop: Win+D failed, continuing anyway", exc_info=True)
+            await asyncio.sleep(0.5)
+
+    def cleanup_run(self, run_id: str) -> int:
+        """Terminate all non-protected processes launched during *run_id*.
+
+        Returns the count of processes successfully terminated.
+        Uses taskkill as a fallback for apps where the launcher process
+        exited immediately (e.g. Chrome, Settings via ms-* URIs).
+        """
+        procs = self._launched_processes.pop(run_id, [])
+        app_names = self._launched_app_names.pop(run_id, [])
+        closed = 0
+
+        # Phase 1: terminate tracked Popen processes
+        for proc in procs:
+            try:
+                if proc.poll() is not None:
+                    continue  # already exited
+                exe_name = Path(proc.args if isinstance(proc.args, str) else proc.args[0]).name.lower()
+                if exe_name in _PROTECTED_PROCESSES:
+                    logger.info("cleanup: skipping protected process %s (pid %d)", exe_name, proc.pid)
+                    continue
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                closed += 1
+                logger.info("cleanup: terminated %s (pid %d)", exe_name, proc.pid)
+            except Exception:
+                logger.debug("cleanup: failed to terminate pid %d", proc.pid, exc_info=True)
+
+        # Phase 2: taskkill fallback for apps where launcher exited immediately
+        # (Chrome, Edge, etc. spawn child processes and the parent exits)
+        for app_exe in app_names:
+            if app_exe in _PROTECTED_PROCESSES:
+                continue
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/IM", app_exe, "/F"],
+                    capture_output=True, timeout=5,
+                )
+                if result.returncode == 0:
+                    closed += 1
+                    logger.info("cleanup: taskkill terminated %s", app_exe)
+            except Exception:
+                logger.debug("cleanup: taskkill failed for %s", app_exe, exc_info=True)
+
+        return closed
 
     async def capture(self) -> CaptureFrame:
         """Take a full-screen screenshot using mss."""
@@ -193,6 +272,14 @@ class DesktopExecutor(BrowserExecutor):
     async def _exec_hotkey(self, action: AgentAction) -> ExecutedAction:
         if action.key is None:
             return self._fail(action, "hotkey requires key", FailureCategory.EXECUTION_ERROR)
+        normalised = action.key.lower().replace(" ", "")
+        # Block alt+f4 — it can close VS Code, the browser, or any focused app
+        if normalised in ("alt+f4", "alt+fn+f4"):
+            return self._fail(
+                action,
+                "alt+f4 is blocked for safety — use the stop action instead of closing windows",
+                FailureCategory.EXECUTION_ERROR,
+            )
         try:
             keys = [k.strip() for k in action.key.split("+")]
             await asyncio.to_thread(pyautogui.hotkey, *keys)
@@ -211,13 +298,23 @@ class DesktopExecutor(BrowserExecutor):
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
             else:
-                await asyncio.to_thread(
+                proc = await asyncio.to_thread(
                     subprocess.Popen,
                     command,
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
+                # Track process for cleanup
+                if self._current_run_id is not None:
+                    self._launched_processes.setdefault(self._current_run_id, []).append(proc)
+            # Also track the exe name for taskkill fallback (handles Chrome, etc.
+            # where the launcher process exits but the app keeps running)
+            if self._current_run_id is not None:
+                exe_name = Path(command.split()[0]).name.lower()
+                if not exe_name.endswith(".exe"):
+                    exe_name += ".exe"
+                self._launched_app_names.setdefault(self._current_run_id, []).append(exe_name)
             await asyncio.sleep(self._post_launch_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Launched '{command}'", after_path)
@@ -228,10 +325,16 @@ class DesktopExecutor(BrowserExecutor):
         if action.x is None or action.y is None or action.x_end is None or action.y_end is None:
             return self._fail(action, "drag requires x, y, x_end, y_end", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
         try:
+            # Use explicit mouseDown/moveTo/mouseUp for reliable drags on Windows.
+            # pyautogui.dragTo can fail when DPI scaling or focus issues occur.
             await asyncio.to_thread(pyautogui.moveTo, action.x, action.y)
+            await asyncio.sleep(0.15)
+            await asyncio.to_thread(pyautogui.mouseDown)
             await asyncio.sleep(0.1)
-            await asyncio.to_thread(pyautogui.dragTo, action.x_end, action.y_end, duration=0.5)
-            await asyncio.sleep(self._post_action_delay)
+            await asyncio.to_thread(pyautogui.moveTo, action.x_end, action.y_end, duration=0.6)
+            await asyncio.sleep(0.1)
+            await asyncio.to_thread(pyautogui.mouseUp)
+            await asyncio.sleep(0.3)
             after_path = await self._capture_after()
             return self._ok(
                 action,
@@ -239,6 +342,11 @@ class DesktopExecutor(BrowserExecutor):
                 after_path,
             )
         except Exception as exc:
+            # Ensure mouse is released on failure
+            try:
+                await asyncio.to_thread(pyautogui.mouseUp)
+            except Exception:
+                pass
             return self._fail(action, f"Drag failed: {exc}", FailureCategory.EXECUTION_ERROR)
 
     async def _exec_scroll(self, action: AgentAction) -> ExecutedAction:

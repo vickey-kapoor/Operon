@@ -5,121 +5,398 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Operon Pilot</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
   :root {
-    --bg: #0f1117; --panel: #1a1d27; --border: #2a2d3a;
-    --text: #e4e4e7; --muted: #71717a;
-    --accent: #6366f1; --accent-dim: rgba(99,102,241,0.15);
-    --success: #22c55e; --danger: #ef4444; --warning: #f59e0b;
-    --blue: #3b82f6; --purple: #a855f7; --radius: 10px;
+    --bg: #0a0e17; --bg-elevated: #0f1320;
+    --panel: #111827; --panel-hover: #151c2e;
+    --card: #1a2236; --card-hover: #1e2840;
+    --border: #1e293b; --border-light: #2a3a52;
+    --text: #f1f5f9; --text-secondary: #94a3b8; --muted: #64748b;
+    --accent: #6366f1; --accent-hover: #818cf8; --accent-glow: rgba(99,102,241,0.25);
+    --accent-dim: rgba(99,102,241,0.10); --accent-surface: rgba(99,102,241,0.06);
+    --success: #34d399; --success-dim: rgba(52,211,153,0.12);
+    --danger: #f87171; --danger-dim: rgba(248,113,113,0.10);
+    --warning: #fbbf24; --warning-dim: rgba(251,191,36,0.10);
+    --blue: #60a5fa; --blue-dim: rgba(96,165,250,0.10);
+    --radius: 8px; --radius-lg: 12px; --radius-xl: 16px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+    --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
 
   /* ── Header ── */
-  .header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; height: 56px; min-height: 56px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    position: relative; z-index: 10;
+  }
+  .header::after {
+    content: ''; position: absolute; bottom: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-glow), transparent);
+  }
   .header-left { display: flex; align-items: center; gap: 12px; }
-  .logo { font-size: 20px; }
-  .title { font-size: 17px; font-weight: 700; letter-spacing: -0.5px; }
-  .status-badge { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .logo {
+    width: 32px; height: 32px; border-radius: var(--radius);
+    background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 800; color: white;
+    box-shadow: 0 2px 8px var(--accent-glow);
+  }
+  .title-group { display: flex; flex-direction: column; }
+  .title { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; color: var(--text); line-height: 1.2; }
+  .title-sub { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; font-weight: 500; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 14px; border-radius: 20px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+    transition: all var(--transition);
+  }
   .status-idle { background: var(--accent-dim); color: var(--accent); }
-  .status-running { background: rgba(59,130,246,0.15); color: var(--blue); }
-  .status-succeeded { background: rgba(34,197,94,0.15); color: var(--success); }
-  .status-failed { background: rgba(239,68,68,0.15); color: var(--danger); }
-  .pulse { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-  .status-running .pulse { animation: pulse 1.5s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .status-running { background: var(--blue-dim); color: var(--blue); }
+  .status-succeeded { background: var(--success-dim); color: var(--success); }
+  .status-failed { background: var(--danger-dim); color: var(--danger); }
+  .pulse { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  .status-running .pulse { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.15; } }
 
-  /* ── Main Layout ── */
+  /* ── Main ── */
   .main { display: flex; flex: 1; overflow: hidden; }
 
   /* ── Left Panel ── */
-  .left-panel { width: 360px; min-width: 360px; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--panel); }
-  .task-section { padding: 16px; border-bottom: 1px solid var(--border); }
-  .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
-  .task-input { width: 100%; height: 70px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); padding: 10px; font-size: 13px; font-family: inherit; resize: none; outline: none; transition: border-color 0.2s; }
-  .task-input:focus { border-color: var(--accent); }
+  .left-panel {
+    width: 400px; min-width: 400px;
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; background: var(--panel);
+  }
+
+  /* Task Input */
+  .task-section { padding: 20px 20px 16px; }
+  .section-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.2px; color: var(--muted); margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .section-label-icon { font-size: 12px; opacity: 0.7; }
+  .task-input-wrap {
+    position: relative;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    transition: border-color var(--transition), box-shadow var(--transition);
+  }
+  .task-input-wrap:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+  .task-input {
+    width: 100%; height: 72px;
+    background: transparent; border: none; border-radius: var(--radius-lg);
+    color: var(--text); padding: 12px 14px; font-size: 13px; font-family: inherit;
+    resize: none; outline: none; line-height: 1.6;
+  }
   .task-input::placeholder { color: var(--muted); }
-  .controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-  .btn { padding: 7px 18px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
-  .btn:hover { opacity: 0.85; }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-start { background: var(--accent); color: white; }
-  .btn-stop { background: var(--danger); color: white; }
-  .max-steps-group { display: flex; align-items: center; gap: 5px; margin-left: auto; font-size: 12px; color: var(--muted); }
-  .max-steps-input { width: 46px; padding: 5px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; text-align: center; outline: none; }
+  .controls { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .btn {
+    padding: 8px 22px; border: none; border-radius: var(--radius);
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    transition: all var(--transition); letter-spacing: 0.2px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover:not(:disabled) { transform: translateY(-1px); }
+  .btn:active:not(:disabled) { transform: translateY(0); }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .btn-start {
+    background: linear-gradient(135deg, var(--accent) 0%, #7c3aed 100%);
+    color: white; box-shadow: 0 2px 8px var(--accent-glow);
+  }
+  .btn-start:hover:not(:disabled) { box-shadow: 0 4px 16px var(--accent-glow); }
+  .btn-stop { background: var(--danger-dim); color: var(--danger); border: 1px solid rgba(248,113,113,0.2); }
+  .btn-stop:hover:not(:disabled) { background: rgba(248,113,113,0.18); }
+  .step-config {
+    display: flex; align-items: center; gap: 6px;
+    margin-left: auto; font-size: 11px; color: var(--muted);
+  }
+  .step-config label { cursor: pointer; }
+  .step-config input {
+    width: 48px; padding: 5px 6px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); font-size: 11px; text-align: center; outline: none;
+    transition: border-color var(--transition);
+  }
+  .step-config input:focus { border-color: var(--accent); }
 
   /* ── Quick Tasks ── */
-  .quick-section { padding: 10px 16px; border-bottom: 1px solid var(--border); overflow-y: auto; flex: 1; min-height: 120px; }
-  .quick-category { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent); margin: 7px 0 5px 0; }
-  .quick-category:first-child { margin-top: 0; }
+  .quick-section {
+    border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  }
+  .quick-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; cursor: pointer; user-select: none;
+    transition: background var(--transition);
+  }
+  .quick-header:hover { background: var(--panel-hover); }
+  .quick-header:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px;
+  }
+  .quick-chevron {
+    font-size: 10px; color: var(--muted);
+    transition: transform 0.25s ease;
+    display: inline-block;
+  }
+  .quick-header.open .quick-chevron { transform: rotate(90deg); }
+  .quick-body {
+    max-height: 0; overflow: hidden;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+    padding: 0 20px;
+  }
+  .quick-body.open {
+    max-height: 400px; overflow-y: auto;
+    padding: 0 20px 14px;
+  }
+  .quick-body::-webkit-scrollbar { width: 4px; }
+  .quick-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .quick-cat {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--accent); margin: 12px 0 6px 0;
+  }
+  .quick-cat:first-child { margin-top: 4px; }
   .quick-grid { display: flex; flex-wrap: wrap; gap: 5px; }
-  .quick-btn { padding: 4px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: 11px; cursor: pointer; transition: border-color 0.2s, background 0.2s; display: flex; align-items: center; gap: 4px; }
-  .quick-btn:hover { border-color: var(--accent); background: var(--accent-dim); }
-  .quick-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .quick-icon { font-size: 12px; }
+  .quick-btn {
+    padding: 5px 11px; background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text-secondary); font-size: 11px;
+    cursor: pointer; transition: all var(--transition); white-space: nowrap;
+    font-family: inherit;
+  }
+  .quick-btn:hover:not(:disabled) {
+    border-color: var(--accent); color: var(--text);
+    background: var(--accent-dim); transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+  .quick-btn:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  .quick-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+  /* ── Step Log (Timeline) ── */
+  .log-section {
+    flex: 1; display: flex; flex-direction: column;
+    padding: 12px 20px; overflow: hidden; min-height: 0;
+  }
+  .log-list {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+    margin-top: 8px; padding-right: 4px;
+  }
+  .log-list::-webkit-scrollbar { width: 4px; }
+  .log-list::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
+  .log-entry {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: var(--bg-elevated); border-radius: var(--radius);
+    font-size: 12px; border-left: 3px solid var(--border);
+    flex-shrink: 0; transition: all 0.3s ease;
+    animation: slideIn 0.25s ease-out;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .log-entry.running { border-left-color: var(--blue); background: var(--blue-dim); }
+  .log-entry.succeeded { border-left-color: var(--success); }
+  .log-entry.failed { border-left-color: var(--danger); background: var(--danger-dim); }
+  .log-entry.info { border-left-color: var(--muted); }
+  .log-entry.stopped { border-left-color: var(--warning); background: var(--warning-dim); }
+  .log-num {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; flex-shrink: 0;
+  }
+  .log-entry.info .log-num { background: rgba(100,116,139,0.15); color: var(--muted); }
+  .log-entry.running .log-num { background: rgba(96,165,250,0.2); color: var(--blue); }
+  .log-entry.succeeded .log-num { background: rgba(52,211,153,0.15); color: var(--success); }
+  .log-entry.failed .log-num { background: rgba(248,113,113,0.15); color: var(--danger); }
+  .log-entry.stopped .log-num { background: rgba(251,191,36,0.15); color: var(--warning); }
+  .log-text { flex: 1; color: var(--text-secondary); line-height: 1.4; }
+  .log-time { font-size: 10px; color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .log-empty {
+    color: var(--muted); font-size: 12px; padding: 32px 0; text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+  }
+  .log-empty-icon { font-size: 20px; opacity: 0.3; }
 
   /* ── Run History ── */
-  .history-section { padding: 10px 16px; border-bottom: 1px solid var(--border); max-height: 120px; overflow-y: auto; }
-  .run-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg); border-radius: 7px; font-size: 11px; cursor: pointer; margin-bottom: 4px; border: 1px solid transparent; transition: border-color 0.2s; }
-  .run-item:hover { border-color: var(--border); }
+  .history-section {
+    border-top: 1px solid var(--border); padding: 10px 20px 12px;
+    max-height: 120px; overflow-y: auto;
+  }
+  .history-section::-webkit-scrollbar { width: 4px; }
+  .history-section::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .run-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: var(--radius);
+    font-size: 11px; cursor: pointer; margin-bottom: 3px;
+    border: 1px solid transparent; transition: all var(--transition);
+  }
+  .run-item:hover { background: var(--panel-hover); border-color: var(--border); }
+  .run-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
   .run-item.active { border-color: var(--accent); background: var(--accent-dim); }
   .run-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
   .run-dot.succeeded { background: var(--success); }
   .run-dot.failed { background: var(--danger); }
   .run-dot.running { background: var(--blue); }
   .run-dot.pending { background: var(--muted); }
-  .run-intent { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .run-steps { color: var(--muted); flex-shrink: 0; }
-
-  /* ── Step Log ── */
-  .log-section { flex: 1; padding: 10px 16px; overflow-y: auto; display: flex; flex-direction: column; }
-  .log-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-  .log-entry { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg); border-radius: 7px; font-size: 12px; border-left: 3px solid var(--border); }
-  .log-entry.running { border-left-color: var(--blue); }
-  .log-entry.succeeded { border-left-color: var(--success); }
-  .log-entry.failed { border-left-color: var(--danger); }
-  .log-entry.info { border-left-color: var(--muted); }
-  .log-step-num { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; font-size: 11px; font-weight: 700; flex-shrink: 0; }
-  .log-entry.info .log-step-num { background: rgba(113,113,122,0.2); color: var(--muted); }
-  .log-entry.running .log-step-num { background: rgba(59,130,246,0.2); color: var(--blue); }
-  .log-entry.succeeded .log-step-num { background: rgba(34,197,94,0.2); color: var(--success); }
-  .log-entry.failed .log-step-num { background: rgba(239,68,68,0.2); color: var(--danger); }
-  .log-text { flex: 1; color: var(--text); }
-  .log-time { font-size: 10px; color: var(--muted); flex-shrink: 0; }
+  .run-intent { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
+  .run-steps { color: var(--muted); flex-shrink: 0; font-size: 10px; }
 
   /* ── Right Panel ── */
-  .right-panel { flex: 1; display: flex; flex-direction: column; overflow: auto; background: var(--bg); }
-  .screenshot-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .right-panel { flex: 1; display: flex; flex-direction: column; background: var(--bg); }
+  .screenshot-area {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 24px; overflow: auto;
+  }
   .screenshot-container { position: relative; max-width: 100%; max-height: 100%; }
-  .screenshot-container img { max-width: 100%; max-height: calc(100vh - 200px); border-radius: var(--radius); border: 1px solid var(--border); }
-  .placeholder-text { color: var(--muted); font-size: 14px; text-align: center; }
+  .screenshot-container img {
+    max-width: 100%; max-height: calc(100vh - 200px);
+    border-radius: var(--radius-lg); border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    transition: opacity 0.3s ease;
+  }
+
+  /* Welcome / Placeholder */
+  .welcome {
+    display: flex; flex-direction: column; align-items: center; gap: 20px;
+    color: var(--muted); text-align: center; max-width: 420px;
+    animation: fadeIn 0.5s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .welcome-logo {
+    width: 72px; height: 72px; border-radius: 20px;
+    background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 50%, #ec4899 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; font-weight: 800; color: white;
+    box-shadow: 0 8px 32px var(--accent-glow);
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  .welcome-title { font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.5px; }
+  .welcome-desc { font-size: 13px; line-height: 1.7; color: var(--text-secondary); }
+  .welcome-hint {
+    font-size: 11px; color: var(--muted); margin-top: 4px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .welcome-kbd {
+    padding: 2px 8px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 4px; font-size: 10px; font-family: inherit;
+    color: var(--text-secondary);
+  }
 
   /* ── Detail Bar ── */
-  .detail-bar { border-top: 1px solid var(--border); background: var(--panel); padding: 12px 20px; max-height: 200px; overflow-y: auto; display: none; }
+  .detail-bar {
+    border-top: 1px solid var(--border); background: var(--panel);
+    padding: 16px 24px; display: none;
+    animation: slideUp 0.3s ease;
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
   .detail-bar.visible { display: block; }
-  .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  .detail-card { background: var(--bg); border-radius: 8px; padding: 10px; }
-  .detail-card-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent); margin-bottom: 6px; }
-  .detail-row { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
-  .detail-row span { color: var(--text); }
+  .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .detail-card {
+    background: var(--bg-elevated); border-radius: var(--radius); padding: 12px 14px;
+    border: 1px solid var(--border);
+  }
+  .detail-card-title {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--accent); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .detail-row {
+    font-size: 11px; color: var(--muted); margin-bottom: 3px; line-height: 1.5;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .detail-row span { color: var(--text-secondary); }
 
   /* ── Footer ── */
-  .footer { display: flex; align-items: center; justify-content: space-between; padding: 6px 20px; border-top: 1px solid var(--border); background: var(--panel); font-size: 11px; color: var(--muted); }
-  .connection-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); display: inline-block; margin-right: 5px; }
-  .connection-dot.disconnected { background: var(--danger); }
+  .footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; height: 30px; min-height: 30px;
+    border-top: 1px solid var(--border); background: var(--panel);
+    font-size: 10px; color: var(--muted);
+  }
+  .footer-left { display: flex; align-items: center; gap: 6px; }
+  .conn-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success); display: inline-block;
+    transition: background var(--transition);
+  }
+  .conn-dot.off { background: var(--danger); }
+
+  /* ── Toast Notifications ── */
+  .toast-container {
+    position: fixed; top: 68px; right: 20px;
+    display: flex; flex-direction: column; gap: 8px;
+    z-index: 100; pointer-events: none;
+  }
+  .toast {
+    padding: 10px 16px; border-radius: var(--radius);
+    font-size: 12px; font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    pointer-events: auto; cursor: pointer;
+    animation: toastIn 0.3s ease;
+    max-width: 360px; word-break: break-word;
+    border: 1px solid;
+  }
+  .toast.error { background: #1a0f0f; color: var(--danger); border-color: rgba(248,113,113,0.25); }
+  .toast.success { background: #0f1a14; color: var(--success); border-color: rgba(52,211,153,0.25); }
+  .toast.warning { background: #1a170f; color: var(--warning); border-color: rgba(251,191,36,0.25); }
+  .toast.info { background: #0f141a; color: var(--blue); border-color: rgba(96,165,250,0.25); }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+  .toast.removing { animation: toastOut 0.25s ease forwards; }
+  @keyframes toastOut { to { opacity: 0; transform: translateX(20px); } }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .left-panel { width: 320px; min-width: 320px; }
+    .detail-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 700px) {
+    .main { flex-direction: column; }
+    .left-panel { width: 100%; min-width: unset; max-height: 50vh; border-right: none; border-bottom: 1px solid var(--border); }
+  }
 </style>
 </head>
 <body>
 
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
 <!-- Header -->
 <div class="header">
   <div class="header-left">
-    <span class="logo">&#x1F3AF;</span>
-    <span class="title">Operon Pilot</span>
+    <div class="logo">O</div>
+    <div class="title-group">
+      <span class="title">Operon Pilot</span>
+      <span class="title-sub">Desktop Automation</span>
+    </div>
   </div>
-  <div id="statusBadge" class="status-badge status-idle">
-    <span class="pulse"></span>
-    <span id="statusText">Idle</span>
+  <div class="header-right">
+    <div id="statusBadge" class="status-badge status-idle">
+      <span class="pulse"></span>
+      <span id="statusText">Idle</span>
+    </div>
   </div>
 </div>
 
@@ -127,102 +404,109 @@
 <div class="main">
   <!-- Left Panel -->
   <div class="left-panel">
+    <!-- Task Input -->
     <div class="task-section">
-      <div class="section-label">Task</div>
-      <textarea id="taskInput" class="task-input" placeholder="Describe what you want to do on the computer..."></textarea>
+      <div class="section-label">
+        <span class="section-label-icon">&#9881;</span> Task
+      </div>
+      <div class="task-input-wrap">
+        <textarea id="taskInput" class="task-input"
+          placeholder="Describe what you want the computer to do..."
+          aria-label="Task description"></textarea>
+      </div>
       <div class="controls">
-        <button id="btnStart" class="btn btn-start" onclick="startTask()">Start</button>
-        <button id="btnStop" class="btn btn-stop" onclick="stopTask()" disabled>Stop</button>
-        <div class="max-steps-group">
-          Steps <input id="maxSteps" type="number" class="max-steps-input" value="10" min="1" max="50">
+        <button id="btnStart" class="btn btn-start" onclick="startTask()" aria-label="Start task">
+          &#9654; Start
+        </button>
+        <button id="btnStop" class="btn btn-stop" onclick="stopTask()" disabled aria-label="Stop task">
+          &#9632; Stop
+        </button>
+        <div class="step-config">
+          <label for="maxSteps">Max</label>
+          <input id="maxSteps" type="number" value="15" min="1" max="50" aria-label="Maximum steps">
         </div>
       </div>
     </div>
 
-    <div class="quick-section" id="quickSection">
-      <div class="section-label">Quick Tasks</div>
-        <div class="quick-category">Launch Apps</div>
+    <!-- Quick Tasks -->
+    <div class="quick-section">
+      <div class="quick-header" id="quickHeader" onclick="toggleQuickTasks()"
+           role="button" tabindex="0" aria-expanded="false" aria-controls="quickBody"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleQuickTasks();}">
+        <span class="section-label" style="margin:0">
+          <span class="section-label-icon">&#9889;</span> Quick Tasks
+        </span>
+        <span class="quick-chevron" id="quickChevron">&#9654;</span>
+      </div>
+      <div class="quick-body" id="quickBody" role="region" aria-labelledby="quickHeader">
+        <div class="quick-cat">Apps</div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Open Notepad')"><span class="quick-icon">&#x1F4C4;</span> Notepad</button>
-          <button class="quick-btn" onclick="quickTask('Open Calculator')"><span class="quick-icon">&#x1F5A9;</span> Calculator</button>
-          <button class="quick-btn" onclick="quickTask('Open File Explorer')"><span class="quick-icon">&#x1F4C1;</span> Explorer</button>
-          <button class="quick-btn" onclick="quickTask('Open Visual Studio Code')"><span class="quick-icon">&#x1F4BB;</span> VS Code</button>
-          <button class="quick-btn" onclick="quickTask('Open Paint')"><span class="quick-icon">&#x1F3A8;</span> Paint</button>
-          <button class="quick-btn" onclick="quickTask('Open Windows Settings')"><span class="quick-icon">&#x2699;</span> Settings</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad')">Notepad</button>
+          <button class="quick-btn" onclick="quickTask('Open Calculator')">Calculator</button>
+          <button class="quick-btn" onclick="quickTask('Open File Explorer')">Explorer</button>
+          <button class="quick-btn" onclick="quickTask('Open Paint')">Paint</button>
+          <button class="quick-btn" onclick="quickTask('Open Windows Settings')">Settings</button>
         </div>
-        <div class="quick-category">Mouse Actions</div>
+        <div class="quick-cat">Mouse</div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Right-click on an empty area of the desktop to open the context menu')"><span class="quick-icon">&#x1F5B1;</span> Right-Click Desktop</button>
-          <button class="quick-btn" onclick="quickTask('Double-click on the Recycle Bin icon on the desktop')"><span class="quick-icon">&#x1F5D1;</span> Double-Click Recycle Bin</button>
-          <button class="quick-btn" onclick="quickTask('Hover over the Start button on the taskbar and describe what appears')"><span class="quick-icon">&#x1F4A8;</span> Hover Start</button>
-          <button class="quick-btn" onclick="quickTask('Open File Explorer and scroll down in the file list')"><span class="quick-icon">&#x1F503;</span> Scroll Files</button>
-          <button class="quick-btn" onclick="quickTask('Right-click on the taskbar clock and select Adjust date and time')"><span class="quick-icon">&#x1F552;</span> Right-Click Clock</button>
+          <button class="quick-btn" onclick="quickTask('Right-click on an empty area of the desktop to open the context menu')">Right-Click Desktop</button>
+          <button class="quick-btn" onclick="quickTask('Double-click on the Recycle Bin icon on the desktop')">Recycle Bin</button>
+          <button class="quick-btn" onclick="quickTask('Hover over the Start button on the taskbar')">Hover Start</button>
         </div>
-        <div class="quick-category">Typing &amp; Keyboard</div>
+        <div class="quick-cat">Keyboard</div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Open Notepad and type: The quick brown fox jumps over the lazy dog')"><span class="quick-icon">&#x2328;</span> Type Sentence</button>
-          <button class="quick-btn" onclick="quickTask('Open Notepad, type Hello World, then press Enter and type a second line: This is Operon')"><span class="quick-icon">&#x1F4DD;</span> Multi-Line Type</button>
-          <button class="quick-btn" onclick="quickTask('Press Win+R to open the Run dialog, type calc, and press Enter')"><span class="quick-icon">&#x2318;</span> Win+R Launch</button>
-          <button class="quick-btn" onclick="quickTask('Open Notepad, type some text, then use Ctrl+A to select all and Delete to clear it')"><span class="quick-icon">&#x232B;</span> Select &amp; Delete</button>
-          <button class="quick-btn" onclick="quickTask('Press Win+D to show the desktop')"><span class="quick-icon">&#x1F4BB;</span> Show Desktop</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad and type: The quick brown fox jumps over the lazy dog')">Type Sentence</button>
+          <button class="quick-btn" onclick="quickTask('Press Win+R to open the Run dialog, type calc, and press Enter')">Win+R Launch</button>
+          <button class="quick-btn" onclick="quickTask('Press Win+D to show the desktop')">Show Desktop</button>
         </div>
-        <div class="quick-category">Drag &amp; Drop</div>
+        <div class="quick-cat">Drag &amp; Drop</div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Open Notepad and drag its window to the right half of the screen')"><span class="quick-icon">&#x2194;</span> Drag Window Right</button>
-          <button class="quick-btn" onclick="quickTask('Open Notepad and drag its title bar to the top of the screen to maximize it')"><span class="quick-icon">&#x2195;</span> Drag to Maximize</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad and drag its window to the right half of the screen')">Drag Window</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad and drag its title bar to the top of the screen to maximize it')">Drag to Maximize</button>
         </div>
-        <div class="quick-category">Clipboard</div>
+        <div class="quick-cat">Clipboard</div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Open Notepad, type Hello World, select all text with Ctrl+A, then copy it with Ctrl+C')"><span class="quick-icon">&#x1F4CB;</span> Type &amp; Copy</button>
-          <button class="quick-btn" onclick="quickTask('Read what is currently on the clipboard')"><span class="quick-icon">&#x1F4C3;</span> Read Clipboard</button>
-          <button class="quick-btn" onclick="quickTask('Write the text Operon Test to the clipboard, then open Notepad and paste it with Ctrl+V')"><span class="quick-icon">&#x1F4E5;</span> Write &amp; Paste</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad, type Hello World, select all text with Ctrl+A, then copy it with Ctrl+C')">Copy Text</button>
+          <button class="quick-btn" onclick="quickTask('Read what is currently on the clipboard')">Read Clipboard</button>
         </div>
-        <div class="quick-category">File Management</div>
+        <div class="quick-cat">Files</div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Open File Explorer, navigate to the Documents folder')"><span class="quick-icon">&#x1F4C2;</span> Open Documents</button>
-          <button class="quick-btn" onclick="quickTask('Open File Explorer, right-click in an empty area, and create a new folder called TestFolder')"><span class="quick-icon">&#x1F4C1;</span> Create Folder</button>
-          <button class="quick-btn" onclick="quickTask('Open Notepad, type Test Content, then save the file as test.txt on the Desktop using Ctrl+S')"><span class="quick-icon">&#x1F4BE;</span> Save File</button>
+          <button class="quick-btn" onclick="quickTask('Open File Explorer, navigate to the Documents folder')">Documents</button>
+          <button class="quick-btn" onclick="quickTask('Open File Explorer, navigate to Downloads folder, and describe what files are there')">Downloads</button>
         </div>
-        <div class="quick-category">Window Management</div>
+        <div class="quick-cat">Web</div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Open Notepad and Calculator side by side using Win+Left and Win+Right')"><span class="quick-icon">&#x25A3;</span> Side by Side</button>
-          <button class="quick-btn" onclick="quickTask('Open Notepad, then minimize it using the minimize button, then restore it from the taskbar')"><span class="quick-icon">&#x1F5D5;</span> Minimize &amp; Restore</button>
-          <button class="quick-btn" onclick="quickTask('Close the currently focused window using Alt+F4')"><span class="quick-icon">&#x274C;</span> Close Window</button>
-          <button class="quick-btn" onclick="quickTask('Switch to the next open window using Alt+Tab')"><span class="quick-icon">&#x1F500;</span> Alt+Tab Switch</button>
+          <button class="quick-btn" onclick="quickTask('Open Chrome, navigate to en.wikipedia.org, search for Markov chain')">Wiki Search</button>
+          <button class="quick-btn" onclick="quickTask('Open Chrome and navigate to example.com')">example.com</button>
         </div>
-        <div class="quick-category">Screen Analysis</div>
+        <div class="quick-cat">Workflows</div>
         <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Describe what is currently visible on the desktop')"><span class="quick-icon">&#x1F441;</span> Screen Info</button>
-          <button class="quick-btn" onclick="quickTask('Capture a screenshot of the Windows taskbar at the bottom of the screen')"><span class="quick-icon">&#x1F4F7;</span> Capture Taskbar</button>
-          <button class="quick-btn" onclick="quickTask('List all applications currently visible in the taskbar')"><span class="quick-icon">&#x1F4CA;</span> List Open Apps</button>
-          <button class="quick-btn" onclick="quickTask('Read the current time and date from the system tray')"><span class="quick-icon">&#x1F552;</span> Read Clock</button>
-        </div>
-        <div class="quick-category">Web Browsing</div>
-        <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Open Chrome, navigate to en.wikipedia.org, search for Markov chain, and navigate to the article')"><span class="quick-icon">&#x1F310;</span> Wiki Search</button>
-          <button class="quick-btn" onclick="quickTask('Open Chrome, go to practice-automation.com/form-fields/ and fill out the contact form with test data and submit it')"><span class="quick-icon">&#x1F4DD;</span> Fill Web Form</button>
-          <button class="quick-btn" onclick="quickTask('Open Chrome and navigate to example.com, then describe what is visible on the page')"><span class="quick-icon">&#x1F517;</span> Visit Example.com</button>
-          <button class="quick-btn" onclick="quickTask('Open Chrome, go to google.com, search for weather today, and describe the results')"><span class="quick-icon">&#x1F50D;</span> Google Search</button>
-        </div>
-        <div class="quick-category">Multi-Step Workflows</div>
-        <div class="quick-grid">
-          <button class="quick-btn" onclick="quickTask('Open Calculator, compute 42 times 17 by clicking the buttons, and report the result')"><span class="quick-icon">&#x1F522;</span> Calculate 42x17</button>
-          <button class="quick-btn" onclick="quickTask('Open Notepad, type todays meeting notes as a title, press Enter twice, then type Item 1 and Item 2 on separate lines')"><span class="quick-icon">&#x1F5D2;</span> Write Notes</button>
-          <button class="quick-btn" onclick="quickTask('Open File Explorer, navigate to Downloads folder, and describe what files are there')"><span class="quick-icon">&#x1F50E;</span> Browse Downloads</button>
-          <button class="quick-btn" onclick="quickTask('Open Windows Settings and navigate to the Display settings page')"><span class="quick-icon">&#x1F5A5;</span> Display Settings</button>
-          <button class="quick-btn" onclick="quickTask('Open Paint, select the pencil tool, and draw a small shape on the canvas')"><span class="quick-icon">&#x270F;</span> Draw in Paint</button>
+          <button class="quick-btn" onclick="quickTask('Open Calculator, compute 42 times 17 by clicking the buttons, and report the result')">Calculate 42x17</button>
+          <button class="quick-btn" onclick="quickTask('Open Notepad, type meeting notes as a title, press Enter, then type Item 1 and Item 2')">Write Notes</button>
+          <button class="quick-btn" onclick="quickTask('Describe what is currently visible on the desktop')">Screen Info</button>
         </div>
       </div>
     </div>
 
-    <div class="history-section">
-      <div class="section-label">Run History</div>
-      <div id="runList"></div>
-    </div>
-
+    <!-- Step Log -->
     <div class="log-section">
-      <div class="section-label">Step Log</div>
-      <div id="logList" class="log-list"></div>
+      <div class="section-label">
+        <span class="section-label-icon">&#9776;</span> Step Log
+      </div>
+      <div id="logList" class="log-list" role="log" aria-live="polite">
+        <div class="log-empty">
+          <span class="log-empty-icon">&#9678;</span>
+          <span>No steps yet. Enter a task above to get started.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Run History -->
+    <div class="history-section">
+      <div class="section-label">
+        <span class="section-label-icon">&#128337;</span> History
+      </div>
+      <div id="runList" role="list"><span style="font-size:11px;color:var(--muted)">No runs yet</span></div>
     </div>
   </div>
 
@@ -230,7 +514,17 @@
   <div class="right-panel">
     <div class="screenshot-area">
       <div id="screenshotContainer" class="screenshot-container">
-        <p class="placeholder-text">Screenshot will appear here once a task is running.</p>
+        <div class="welcome" id="welcomeState">
+          <div class="welcome-logo">O</div>
+          <div class="welcome-title">Welcome to Operon</div>
+          <div class="welcome-desc">
+            Describe any task in the input box and Operon will automate it on your desktop.
+            Open apps, fill forms, navigate the web, drag windows &mdash; all driven by vision.
+          </div>
+          <div class="welcome-hint">
+            Try a <span class="welcome-kbd">Quick Task</span> or type your own instruction
+          </div>
+        </div>
       </div>
     </div>
     <div class="detail-bar" id="detailBar">
@@ -241,69 +535,138 @@
 
 <!-- Footer -->
 <div class="footer">
-  <div>
-    <span id="connectionDot" class="connection-dot"></span>
-    <span id="connectionText">Connected</span>
+  <div class="footer-left">
+    <span id="connDot" class="conn-dot" role="status"></span>
+    <span id="connText">Connected</span>
   </div>
-  <div>Computer Use</div>
+  <div>Operon Desktop Automation</div>
 </div>
 
 <script>
+/* ── Globals ── */
 let running = false;
 let currentRunId = null;
+let currentStepCount = 0;
+let abortController = null;
 
+/* ── Security: HTML escaping ── */
+function esc(str) {
+  if (str == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+
+/* ── Toast notifications ── */
+function showToast(message, type, duration) {
+  duration = duration || 4000;
+  type = type || 'info';
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  toast.textContent = message;
+  toast.onclick = function() { removeToast(toast); };
+  container.appendChild(toast);
+  setTimeout(function() { removeToast(toast); }, duration);
+}
+
+function removeToast(toast) {
+  if (!toast.parentNode) return;
+  toast.classList.add('removing');
+  setTimeout(function() { toast.remove(); }, 250);
+}
+
+/* ── Fetch helper ── */
 async function fetchJson(url, opts) {
+  opts = opts || {};
   const resp = await fetch(url, opts);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+  if (!resp.ok) {
+    const status = resp.status;
+    let detail;
+    try { detail = await resp.text(); } catch(ex) { detail = 'Unknown error'; }
+    const short = detail.length > 120 ? detail.substring(0, 120) + '...' : detail;
+    throw new Error('Server error (' + status + '): ' + short);
+  }
   return resp.json();
 }
 
-// ── Logging ──
+/* ── Quick Tasks accordion ── */
+function toggleQuickTasks() {
+  const hdr = document.getElementById('quickHeader');
+  const body = document.getElementById('quickBody');
+  const open = body.classList.toggle('open');
+  hdr.classList.toggle('open', open);
+  hdr.setAttribute('aria-expanded', String(open));
+}
+
+/* ── Logging ── */
 function addLog(text, type, stepNum) {
   const list = document.getElementById('logList');
+  const empty = list.querySelector('.log-empty');
+  if (empty) empty.remove();
+
   const entry = document.createElement('div');
-  entry.className = `log-entry ${type}`;
+  entry.className = 'log-entry ' + type;
+
   const num = document.createElement('div');
-  num.className = 'log-step-num';
-  num.textContent = stepNum != null ? stepNum : '--';
+  num.className = 'log-num';
+  num.textContent = (stepNum != null && stepNum !== '--') ? stepNum : '\u2022';
+
   const txt = document.createElement('div');
   txt.className = 'log-text';
   txt.textContent = text;
+
   const time = document.createElement('div');
   time.className = 'log-time';
-  time.textContent = new Date().toLocaleTimeString();
+  time.textContent = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
   entry.append(num, txt, time);
   list.appendChild(entry);
   list.scrollTop = list.scrollHeight;
+  return entry;
 }
 
 function setStatus(status, step) {
   const badge = document.getElementById('statusBadge');
   const text = document.getElementById('statusText');
   badge.className = 'status-badge';
-  if (status === 'running') { badge.classList.add('status-running'); text.textContent = `Running \u2014 Step ${step}`; }
-  else if (status === 'succeeded') { badge.classList.add('status-succeeded'); text.textContent = 'Succeeded'; }
-  else if (status === 'failed') { badge.classList.add('status-failed'); text.textContent = 'Failed'; }
-  else { badge.classList.add('status-idle'); text.textContent = 'Idle'; }
+  if (status === 'running') {
+    badge.classList.add('status-running');
+    text.textContent = step > 0 ? 'Step ' + step : 'Starting';
+  } else if (status === 'succeeded') {
+    badge.classList.add('status-succeeded');
+    text.textContent = 'Done';
+  } else if (status === 'failed') {
+    badge.classList.add('status-failed');
+    text.textContent = 'Failed';
+  } else {
+    badge.classList.add('status-idle');
+    text.textContent = 'Idle';
+  }
 }
 
 function setButtons(isRunning) {
   document.getElementById('btnStart').disabled = isRunning;
   document.getElementById('btnStop').disabled = !isRunning;
   document.getElementById('taskInput').disabled = isRunning;
-  document.querySelectorAll('.quick-btn').forEach(b => b.disabled = isRunning);
+  document.querySelectorAll('.quick-btn').forEach(function(b) { b.disabled = isRunning; });
 }
 
-// ── Screenshots & Detail ──
+/* ── Screenshots & Detail ── */
 async function loadScreenshot(runId) {
   try {
-    const data = await fetchJson(`/observer/api/run/${runId}`);
-    const step = data.current_step || (data.steps && data.steps.length > 0 ? data.steps[data.steps.length - 1] : null);
+    const data = await fetchJson('/observer/api/run/' + runId);
+    const step = data.current_step ||
+      (data.steps && data.steps.length > 0 ? data.steps[data.steps.length - 1] : null);
     if (!step) return;
     const artPath = step.after_artifact_path || step.before_artifact_path;
     if (!artPath) return;
     const container = document.getElementById('screenshotContainer');
-    container.innerHTML = `<img src="/observer/api/artifact?path=${encodeURIComponent(artPath)}" alt="Screenshot" />`;
+    const img = document.createElement('img');
+    img.src = '/observer/api/artifact?path=' + encodeURIComponent(artPath);
+    img.alt = 'Desktop screenshot';
+    container.innerHTML = '';
+    container.appendChild(img);
     renderDetail(step);
   } catch (e) { /* best-effort */ }
 }
@@ -315,76 +678,95 @@ function renderDetail(step) {
 
   const p = step.perception || {};
   const e = step.execution || {};
-  const action = e.action || {};
+  const action = (e.action != null) ? e.action : {};
+  const metrics = p.metrics || {};
+  const elementCount = metrics.total_elements;
 
-  grid.innerHTML = `
-    <div class="detail-card">
-      <div class="detail-card-title">Perception</div>
-      <div class="detail-row">Page: <span>${p.page_hint || '-'}</span></div>
-      <div class="detail-row">Elements: <span>${p.element_count ?? '-'}</span></div>
-      <div class="detail-row">Summary: <span>${(p.summary || '-').substring(0, 80)}</span></div>
-    </div>
-    <div class="detail-card">
-      <div class="detail-card-title">Action</div>
-      <div class="detail-row">Type: <span>${action.action_type || '-'}</span></div>
-      <div class="detail-row">Target: <span>${action.target_element_id || '-'}</span></div>
-      <div class="detail-row">Text: <span>${action.text || action.key || '-'}</span></div>
-    </div>
-    <div class="detail-card">
-      <div class="detail-card-title">Execution</div>
-      <div class="detail-row">Success: <span>${e.success != null ? e.success : '-'}</span></div>
-      <div class="detail-row">Detail: <span>${(e.detail || '-').substring(0, 80)}</span></div>
-      <div class="detail-row">Failure: <span>${e.failure_category || '-'}</span></div>
-    </div>
-  `;
+  grid.innerHTML =
+    '<div class="detail-card">' +
+      '<div class="detail-card-title">Perception</div>' +
+      '<div class="detail-row">Page: <span>' + esc(metrics.page_hint || p.page_hint || '-') + '</span></div>' +
+      '<div class="detail-row">Elements: <span>' + (elementCount != null ? elementCount : '-') + '</span></div>' +
+      '<div class="detail-row">Summary: <span>' + esc((p.summary || '-').substring(0, 100)) + '</span></div>' +
+    '</div>' +
+    '<div class="detail-card">' +
+      '<div class="detail-card-title">Action</div>' +
+      '<div class="detail-row">Type: <span>' + esc(action.action_type || '-') + '</span></div>' +
+      '<div class="detail-row">Target: <span>' + esc(action.target_element_id || '-') + '</span></div>' +
+      '<div class="detail-row">Value: <span>' + esc(action.text || action.key || '-') + '</span></div>' +
+    '</div>' +
+    '<div class="detail-card">' +
+      '<div class="detail-card-title">Result</div>' +
+      '<div class="detail-row">Success: <span>' + (e.success != null ? (e.success ? 'Yes' : 'No') : '-') + '</span></div>' +
+      '<div class="detail-row">Detail: <span>' + esc((e.detail || '-').substring(0, 100)) + '</span></div>' +
+      '<div class="detail-row">Failure: <span>' + esc(e.failure_category || 'None') + '</span></div>' +
+    '</div>';
   bar.classList.add('visible');
 }
 
-// ── Run History ──
+/* ── Run History ── */
 async function loadRuns() {
   try {
-    const data = await fetchJson('/observer/api/runs?limit=15');
+    const data = await fetchJson('/observer/api/runs?limit=10');
     const list = document.getElementById('runList');
-    if (!data.runs || data.runs.length === 0) { list.innerHTML = '<div style="font-size:11px;color:var(--muted);">No runs yet</div>'; return; }
-    list.innerHTML = data.runs.map(r => `
-      <div class="run-item ${r.run_id === currentRunId ? 'active' : ''}" onclick="viewRun('${r.run_id}')">
-        <span class="run-dot ${r.status}"></span>
-        <span class="run-intent">${r.intent}</span>
-        <span class="run-steps">${r.step_count}s</span>
-      </div>
-    `).join('');
+    if (!data.runs || data.runs.length === 0) {
+      list.innerHTML = '<span style="font-size:11px;color:var(--muted)">No runs yet</span>';
+      return;
+    }
+    list.innerHTML = data.runs.map(function(r) {
+      var active = r.run_id === currentRunId ? 'active' : '';
+      var escapedIntent = esc(r.intent);
+      var safeId = esc(r.run_id);
+      var steps = r.step_count === 1 ? '1 step' : r.step_count + ' steps';
+      return '<div class="run-item ' + active + '" role="listitem" tabindex="0"' +
+        ' onclick="viewRun(\'' + safeId + '\')"' +
+        ' onkeydown="if(event.key===\'Enter\')viewRun(\'' + safeId + '\')">' +
+        '<span class="run-dot ' + esc(r.status) + '"></span>' +
+        '<span class="run-intent">' + escapedIntent + '</span>' +
+        '<span class="run-steps">' + steps + '</span>' +
+      '</div>';
+    }).join('');
   } catch (e) { /* best-effort */ }
 }
 
 async function viewRun(runId) {
   currentRunId = runId;
-  loadRuns();
+  document.querySelectorAll('.run-item').forEach(function(el) {
+    el.classList.toggle('active', el.getAttribute('onclick') && el.getAttribute('onclick').indexOf(runId) !== -1);
+  });
   await loadScreenshot(runId);
 }
 
-// ── Task Launch ──
+/* ── Task Launch ── */
 async function startTask() {
-  const intent = document.getElementById('taskInput').value.trim();
-  if (!intent) return;
-  const maxSteps = parseInt(document.getElementById('maxSteps').value) || 10;
+  var intent = document.getElementById('taskInput').value.trim();
+  if (!intent) {
+    showToast('Please enter a task description.', 'warning');
+    document.getElementById('taskInput').focus();
+    return;
+  }
+  var maxStepsVal = parseInt(document.getElementById('maxSteps').value);
+  var maxSteps = (maxStepsVal >= 1 && maxStepsVal <= 50) ? maxStepsVal : 10;
 
   document.getElementById('logList').innerHTML = '';
   setButtons(true);
   running = true;
-  addLog('Starting task...', 'info', '--');
+  currentStepCount = 0;
+  addLog('Starting task...', 'info');
   setStatus('running', 0);
 
   try {
-    const resp = await fetchJson('/desktop/run-task', {
+    var resp = await fetchJson('/desktop/run-task', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ intent }),
+      body: JSON.stringify({ intent: intent }),
     });
     currentRunId = resp.run_id;
-    addLog('Task accepted', 'info', '--');
+    addLog('Task accepted \u2014 ' + resp.run_id.substring(0, 8), 'info');
     loadRuns();
     await stepLoop(resp.run_id, maxSteps);
   } catch (e) {
-    addLog(`Error: ${e.message}`, 'failed', '--');
+    addLog('Error: ' + e.message, 'failed');
+    showToast(e.message, 'error');
     setStatus('failed', 0);
     running = false;
     setButtons(false);
@@ -392,59 +774,111 @@ async function startTask() {
 }
 
 async function stepLoop(runId, maxSteps) {
-  let stepCount = 0;
+  var stepCount = 0;
   while (running && stepCount < maxSteps) {
-    const stepStart = Date.now();
+    var t0 = Date.now();
     try {
-      addLog(`Step ${stepCount + 1} \u2014 processing`, 'running', stepCount + 1);
-      setStatus('running', stepCount + 1);
+      var stepNum = stepCount + 1;
+      var lastEntry = addLog('Processing...', 'running', stepNum);
+      setStatus('running', stepNum);
 
-      const resp = await fetchJson('/desktop/step', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      abortController = new AbortController();
+      var resp = await fetchJson('/desktop/step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ run_id: runId }),
+        signal: abortController.signal,
       });
+      abortController = null;
+
       stepCount = resp.step_count;
-      const elapsed = ((Date.now() - stepStart) / 1000).toFixed(1);
-      const entries = document.querySelectorAll('.log-entry');
-      const last = entries[entries.length - 1];
-      if (last) { const t = last.querySelector('.log-time'); if (t) t.textContent = `${elapsed}s`; }
+      currentStepCount = stepCount;
+      var elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+
+      if (lastEntry) {
+        var t = lastEntry.querySelector('.log-time');
+        if (t) t.textContent = elapsed + 's';
+      }
 
       await loadScreenshot(runId);
 
       if (resp.status === 'succeeded') {
-        if (last) last.className = 'log-entry succeeded';
-        addLog('Task completed successfully', 'succeeded', '--');
+        if (lastEntry) lastEntry.className = 'log-entry succeeded';
+        addLog('Task completed successfully', 'succeeded');
         setStatus('succeeded', stepCount);
-        running = false; setButtons(false); loadRuns(); return;
+        showToast('Task completed!', 'success');
+        running = false; setButtons(false); loadRuns();
+        await cleanupAfterRun(runId);
+        return;
       }
       if (resp.status === 'failed') {
-        if (last) last.className = 'log-entry failed';
-        addLog('Task failed', 'failed', '--');
+        if (lastEntry) lastEntry.className = 'log-entry failed';
+        addLog('Task failed', 'failed');
         setStatus('failed', stepCount);
-        running = false; setButtons(false); loadRuns(); return;
+        showToast('Task failed.', 'error');
+        running = false; setButtons(false); loadRuns();
+        await cleanupAfterRun(runId);
+        return;
       }
       if (resp.status === 'waiting_for_user') {
-        if (last) last.className = 'log-entry info';
-        addLog('Waiting for user input', 'info', '--');
+        if (lastEntry) lastEntry.className = 'log-entry info';
+        addLog('Waiting for user input', 'info');
         setStatus('idle', stepCount);
-        running = false; setButtons(false); loadRuns(); return;
+        showToast('Task is waiting for your input.', 'warning');
+        running = false; setButtons(false); loadRuns();
+        return;
       }
-      if (last) last.className = 'log-entry succeeded';
+      if (lastEntry) lastEntry.className = 'log-entry succeeded';
     } catch (e) {
-      addLog(`Step error: ${e.message}`, 'failed', stepCount + 1);
+      abortController = null;
+      if (e.name === 'AbortError') {
+        return;
+      }
+      addLog('Step error: ' + e.message, 'failed', stepCount + 1);
+      showToast('Step failed: ' + e.message, 'error');
       setStatus('failed', stepCount);
-      running = false; setButtons(false); loadRuns(); return;
+      running = false; setButtons(false); loadRuns();
+      await cleanupAfterRun(runId);
+      return;
     }
   }
-  if (stepCount >= maxSteps) addLog(`Max steps (${maxSteps}) reached`, 'info', '--');
+  if (stepCount >= maxSteps) {
+    addLog('Reached max steps (' + maxSteps + ')', 'info');
+    showToast('Reached maximum of ' + maxSteps + ' steps.', 'warning');
+  }
+  setStatus('idle', stepCount);
   running = false; setButtons(false); loadRuns();
+  await cleanupAfterRun(runId);
 }
 
+async function cleanupAfterRun(runId) {
+  try {
+    var resp = await fetchJson('/desktop/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: runId }),
+    });
+    if (resp.closed_count > 0) {
+      addLog('Cleanup: closed ' + resp.closed_count + ' app(s)', 'info');
+    }
+  } catch (e) {
+    addLog('Cleanup: could not close launched apps', 'info');
+  }
+}
+
+/* ── Stop task ── */
 function stopTask() {
   running = false;
-  addLog('Task stopped by user', 'info', '--');
-  setStatus('idle', 0);
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+  addLog('Stopped by user', 'stopped');
+  setStatus('idle', currentStepCount);
   setButtons(false);
+  showToast('Task stopped.', 'warning');
+  if (currentRunId) {
+    cleanupAfterRun(currentRunId);
+  }
 }
 
 function quickTask(intent) {
@@ -452,17 +886,30 @@ function quickTask(intent) {
   startTask();
 }
 
-// ── Health Check ──
+/* ── Health check ── */
 async function checkConnection() {
   try {
     await fetchJson('/health');
-    document.getElementById('connectionDot').className = 'connection-dot';
-    document.getElementById('connectionText').textContent = 'Connected';
-  } catch {
-    document.getElementById('connectionDot').className = 'connection-dot disconnected';
-    document.getElementById('connectionText').textContent = 'Disconnected';
+    document.getElementById('connDot').className = 'conn-dot';
+    document.getElementById('connText').textContent = 'Connected';
+  } catch (ex) {
+    document.getElementById('connDot').className = 'conn-dot off';
+    document.getElementById('connText').textContent = 'Disconnected';
   }
 }
+
+/* ── Keyboard: Enter to submit (Shift+Enter for newline) ── */
+document.addEventListener('DOMContentLoaded', function() {
+  var input = document.getElementById('taskInput');
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey && !running) {
+      e.preventDefault();
+      startTask();
+    }
+  });
+});
+
+/* ── Init ── */
 setInterval(checkConnection, 5000);
 checkConnection();
 setInterval(loadRuns, 10000);

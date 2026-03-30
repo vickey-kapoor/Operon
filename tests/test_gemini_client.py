@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from urllib import error
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from src.clients.gemini import GeminiClientError, GeminiHttpClient
@@ -38,7 +39,7 @@ def test_build_perception_payload_requests_json_output() -> None:
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
     assert payload["generationConfig"]["temperature"] == 0
     assert payload["contents"][0]["parts"][0]["text"] == "perceive"
-    assert payload["contents"][0]["parts"][1]["inline_data"]["mime_type"] == "image/png"
+    assert payload["contents"][0]["parts"][1]["inline_data"]["mime_type"] == "image/jpeg"
 
 
 def test_build_text_payload_requests_json_output() -> None:
@@ -49,7 +50,8 @@ def test_build_text_payload_requests_json_output() -> None:
     assert payload["contents"][0]["parts"] == [{"text": "choose one action"}]
 
 
-def test_post_json_payload_retries_transient_url_timeout(monkeypatch, caplog) -> None:
+@pytest.mark.asyncio
+async def test_post_json_payload_retries_transient_timeout(caplog) -> None:
     client = GeminiHttpClient(
         api_key="test-key",
         timeout_seconds=1.5,
@@ -59,33 +61,32 @@ def test_post_json_payload_retries_transient_url_timeout(monkeypatch, caplog) ->
     payload = GeminiHttpClient._build_text_payload(prompt="choose one action")
     attempts = {"count": 0}
 
-    class _Response:
-        def __enter__(self):
-            return self
+    ok_response = httpx.Response(
+        200,
+        json={"candidates": [{"content": {"parts": [{"text": "{}"}]}}]},
+    )
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self) -> bytes:
-            return b'{"candidates":[{"content":{"parts":[{"text":"{}"}]}}]}'
-
-    def fake_urlopen(http_request, timeout):
+    async def fake_post(url, *, content=None, json=None, headers=None, **kwargs):
         attempts["count"] += 1
         if attempts["count"] < 3:
-            raise error.URLError(TimeoutError("timed out"))
-        return _Response()
+            raise httpx.TimeoutException("timed out")
+        return ok_response
 
-    monkeypatch.setattr("src.clients.gemini.request.urlopen", fake_urlopen)
+    mock_client = AsyncMock()
+    mock_client.post = fake_post
+    mock_client.is_closed = False
+    client._client = mock_client
 
     with caplog.at_level("WARNING"):
-        text = client._post_json_payload(payload)
+        text = await client._post_json_payload(payload)
 
     assert text == "{}"
     assert attempts["count"] == 3
     assert "Retrying Gemini request" in caplog.text
 
 
-def test_post_json_payload_fails_cleanly_after_retry_limit(monkeypatch, caplog) -> None:
+@pytest.mark.asyncio
+async def test_post_json_payload_fails_cleanly_after_retry_limit(caplog) -> None:
     client = GeminiHttpClient(
         api_key="test-key",
         timeout_seconds=2.0,
@@ -95,21 +96,25 @@ def test_post_json_payload_fails_cleanly_after_retry_limit(monkeypatch, caplog) 
     payload = GeminiHttpClient._build_text_payload(prompt="choose one action")
     attempts = {"count": 0}
 
-    def fake_urlopen(http_request, timeout):
+    async def fake_post(url, *, content=None, json=None, headers=None, **kwargs):
         attempts["count"] += 1
-        raise error.URLError(TimeoutError("timed out"))
+        raise httpx.TimeoutException("timed out")
 
-    monkeypatch.setattr("src.clients.gemini.request.urlopen", fake_urlopen)
+    mock_client = AsyncMock()
+    mock_client.post = fake_post
+    mock_client.is_closed = False
+    client._client = mock_client
 
     with caplog.at_level("WARNING"):
-        with pytest.raises(GeminiClientError, match="Gemini request failed: timed out"):
-            client._post_json_payload(payload)
+        with pytest.raises(GeminiClientError, match="timed out"):
+            await client._post_json_payload(payload)
 
     assert attempts["count"] == 3
     assert caplog.text.count("Retrying Gemini request") == 2
 
 
-def test_post_json_payload_does_not_retry_non_retryable_http_error(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_post_json_payload_does_not_retry_non_retryable_http_error() -> None:
     client = GeminiHttpClient(
         api_key="test-key",
         max_retries=2,
@@ -118,26 +123,16 @@ def test_post_json_payload_does_not_retry_non_retryable_http_error(monkeypatch) 
     payload = GeminiHttpClient._build_text_payload(prompt="choose one action")
     attempts = {"count": 0}
 
-    class FakeHttpError(error.HTTPError):
-        def __init__(self):
-            super().__init__(
-                url="https://example.test",
-                code=400,
-                msg="Bad Request",
-                hdrs=None,
-                fp=None,
-            )
-
-        def read(self) -> bytes:
-            return b'{"error":"bad request"}'
-
-    def fake_urlopen(http_request, timeout):
+    async def fake_post(url, *, content=None, json=None, headers=None, **kwargs):
         attempts["count"] += 1
-        raise FakeHttpError()
+        return httpx.Response(400, text='{"error":"bad request"}')
 
-    monkeypatch.setattr("src.clients.gemini.request.urlopen", fake_urlopen)
+    mock_client = AsyncMock()
+    mock_client.post = fake_post
+    mock_client.is_closed = False
+    client._client = mock_client
 
     with pytest.raises(GeminiClientError, match="Gemini HTTP error 400"):
-        client._post_json_payload(payload)
+        await client._post_json_payload(payload)
 
     assert attempts["count"] == 1

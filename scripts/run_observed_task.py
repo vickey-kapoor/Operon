@@ -56,15 +56,10 @@ def configure_local_environment(root: Path) -> None:
     load_dotenv(find_dotenv(usecwd=True), override=False)
 
     temp_dir = root / ".tmp"
-    browsers_dir = root / ".ms-playwright"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    browsers_dir.mkdir(parents=True, exist_ok=True)
 
     os.environ.setdefault("TEMP", str(temp_dir))
     os.environ.setdefault("TMP", str(temp_dir))
-    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browsers_dir))
-    os.environ.setdefault("BROWSER_HEADLESS", "false")
-    os.environ.setdefault("BROWSER_DEVTOOLS", "true")
 
 
 def configure_debug_timing(slow_mo_ms: int) -> None:

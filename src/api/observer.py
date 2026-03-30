@@ -56,7 +56,10 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
         raise FileNotFoundError(f"Run state not found: {state_path}")
 
     state = _load_state_from_path(state_path)
-    entries = load_run_replay(run_id, root_dir=root)
+    try:
+        entries = load_run_replay(run_id, root_dir=root)
+    except FileNotFoundError:
+        entries = []
     run_dir = root / run_id
     completed_steps = [entry for entry in entries if isinstance(entry, StepLog)]
     pre_step_failures = [entry for entry in entries if isinstance(entry, PreStepFailureLog)]
@@ -444,7 +447,7 @@ def _build_event_log(
         events.append({"step_index": state.step_count, "event": "run_succeeded", "detail": state.stop_reason.value if state.stop_reason else "succeeded"})
     elif state.status.value == "failed":
         events.append({"step_index": state.step_count, "event": "run_aborted", "detail": state.stop_reason.value if state.stop_reason else "failed"})
-    return sorted(events, key=lambda item: (item["step_index"], item["event"]))
+    return sorted(events, key=lambda item: item["step_index"])
 
 
 def _current_phase(state, current_step: dict[str, Any] | None, pre_step_failure: PreStepFailureLog | None) -> str:

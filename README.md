@@ -4,17 +4,17 @@
 
 **Operate any interface.**
 
-Operon is a vision-driven computer-use engine that interacts with software the way a human does: by observing the screen, deciding the next action, executing it, and verifying the outcome. It supports both **browser automation** (via Playwright) and **full-screen desktop automation** (via pyautogui/mss).
+Operon is a vision-driven computer-use engine that interacts with software the way a human does: by observing the screen, deciding the next action, executing it, and verifying the outcome. It uses **full-screen desktop automation** (via pyautogui/mss) to control any application — no browser drivers, no DOM access, no accessibility APIs.
 
 License: Apache-2.0
 
 ## What It Is
 
-Operon is not a chatbot and not a traditional browser automation script. It is a closed-loop interaction system built for UI-native automation:
+Operon is not a chatbot and not a traditional automation script. It is a closed-loop interaction system built for UI-native automation:
 
 - Perception from pixels (Gemini vision)
 - Structured action selection (rule engine + LLM fallback)
-- Real execution on browser or desktop
+- Real execution on the desktop via pyautogui
 - Verification and recovery
 - Replayable runs with persistent learning signals
 - Local-only persistence
@@ -26,36 +26,29 @@ HTTP Request
     |
 +-- ROUTES (src/api/routes.py) ---------------------------+
 |                                                          |
-|  Browser:             Desktop:          UI:              |
-|  POST /run-task       POST /desktop/*   GET / (Pilot)    |
-|  POST /step                                              |
-|  POST /resume                                            |
-|  GET  /run/{id}                                          |
+|  POST /desktop/run-task   GET / (Pilot UI)               |
+|  POST /desktop/step       GET /health                    |
+|  POST /desktop/resume     GET /observer/api/*            |
+|  POST /desktop/cleanup                                   |
 +----------------------------------------------------------+
     |
 +-- AGENT LOOP (src/agent/loop.py) -----------------------+
 |                                                          |
-|  1. CAPTURE    -- screenshot (Playwright or mss)         |
+|  1. CAPTURE    -- full-screen screenshot (mss)           |
 |  2. PERCEIVE   -- Gemini vision -> ScreenPerception      |
-|  3. CHOOSE     -- PolicyRuleEngine -> GeminiPolicyService|
-|  4. EXECUTE    -- executor.execute(AgentAction)          |
+|  3. CHOOSE     -- PolicyRuleEngine -> CombinedService    |
+|  4. EXECUTE    -- DesktopExecutor (pyautogui)            |
 |  5. VERIFY     -- DeterministicVerifierService           |
 |  6. RECOVER    -- RuleBasedRecoveryManager               |
 |                                                          |
 +----------------------------------------------------------+
     |
-+-- EXECUTORS --------------------------------------------+
++-- EXECUTOR (src/executor/desktop.py) -------------------+
 |                                                          |
-|  PlaywrightBrowserExecutor    DesktopExecutor            |
-|  (web pages)                  (full screen)              |
-|                                                          |
-|  click, type, select,         click, double_click,       |
-|  press_key, navigate,         right_click, type,         |
-|  wait                         press_key, hotkey,         |
-|                               launch_app, drag, scroll,  |
-|                               hover, read_clipboard,     |
-|                               write_clipboard,           |
-|                               screenshot_region, wait    |
+|  click, double_click, right_click, type, press_key,      |
+|  hotkey, launch_app, drag, scroll, hover,                |
+|  read_clipboard, write_clipboard, screenshot_region,     |
+|  wait, wait_for_user, stop                               |
 +----------------------------------------------------------+
     |
 +-- STORAGE (src/store/) ---------------------------------+
@@ -69,41 +62,49 @@ HTTP Request
 
 | Directory | Purpose |
 |-----------|---------|
-| `src/agent/` | Core loop, perception, policy, selector, verifier, recovery |
-| `src/api/` | FastAPI routes, Operon Pilot UI (unified desktop + browser) |
-| `src/executor/` | BrowserExecutor (Playwright) and DesktopExecutor (pyautogui/mss) |
-| `src/models/` | Pydantic schemas: actions, perception, execution, state, memory |
-| `src/clients/` | GeminiHttpClient (vision + text generation) |
+| `src/agent/` | Core loop, perception, policy, combined service, selector, verifier, recovery |
+| `src/api/` | FastAPI routes, Operon Pilot UI, Observer API |
+| `src/executor/` | DesktopExecutor (pyautogui/mss) |
+| `src/models/` | Pydantic schemas: actions, perception, execution, state, progress, memory |
+| `src/clients/` | GeminiHttpClient (async httpx with HTTP/2 + connection pooling) |
 | `src/store/` | FileBackedRunStore, FileBackedMemoryStore, replay, summary |
-| `prompts/` | LLM prompt templates for perception and policy (browser + desktop) |
-| `tests/` | 22 test files, 195+ tests |
+| `prompts/` | LLM prompt templates (combined, perception, policy) |
+| `tests/` | 204+ unit tests |
 
-### Policy Layer
+### Combined Perception+Policy
 
-The `PolicyCoordinator` runs a deterministic `PolicyRuleEngine` first. If no rule fires, it falls back to `GeminiPolicyService` (LLM prompt). This minimizes Gemini calls and ensures predictable behavior for known patterns.
+The `CombinedPerceptionPolicyService` sends a single Gemini call per step that returns both screen perception AND the next action. This eliminates one full LLM round-trip (~1-3s/step). The `PolicyCoordinator` still runs deterministic rules first and can override the LLM's action choice.
 
 ### Action Types (18 total)
 
-| Action | Browser | Desktop | Description |
-|--------|:-------:|:-------:|-------------|
-| `click` | x | x | Left-click at element/coordinates |
-| `double_click` | | x | Double-click at coordinates |
-| `right_click` | | x | Right-click (context menu) |
-| `type` | x | x | Type text into a field |
-| `select` | x | | Select dropdown option |
-| `press_key` | x | x | Press a single key |
-| `hotkey` | | x | Key combination (e.g. ctrl+c) |
-| `navigate` | x | | Go to URL |
-| `launch_app` | | x | Launch desktop app by name |
-| `drag` | | x | Drag from (x,y) to (x_end,y_end) |
-| `scroll` | | x | Scroll at position |
-| `hover` | | x | Move mouse without clicking |
-| `read_clipboard` | | x | Read clipboard contents |
-| `write_clipboard` | | x | Copy text to clipboard |
-| `screenshot_region` | | x | Capture a screen region |
-| `wait` | x | x | Wait for duration |
-| `wait_for_user` | x | x | Pause for human input |
-| `stop` | x | x | Mark task complete |
+| Action | Description |
+|--------|-------------|
+| `click` | Left-click at coordinates |
+| `double_click` | Double-click at coordinates |
+| `right_click` | Right-click (context menu) |
+| `type` | Click to focus, then type text |
+| `press_key` | Press a single key (enter, tab, etc.) |
+| `hotkey` | Key combination (ctrl+c, win+r, etc.) |
+| `launch_app` | Launch desktop app by name |
+| `drag` | Drag from (x,y) to (x_end,y_end) |
+| `scroll` | Scroll at position |
+| `hover` | Move mouse without clicking |
+| `read_clipboard` | Read clipboard contents |
+| `write_clipboard` | Copy text to clipboard |
+| `screenshot_region` | Capture a screen region |
+| `wait` | Wait for duration |
+| `wait_for_user` | Pause for human input |
+| `stop` | Mark task complete |
+
+### Progress Detection
+
+The agent tracks forward progress by monitoring subgoal changes. If the model returns the same `active_subgoal` for 3+ consecutive steps, the no-progress streak increments and:
+
+- Repeated actions (same type + same target region) are blocked
+- Stagnation warnings are injected into the prompt
+- After enough stagnation, the run terminates
+
+Coordinate-based targets are bucketed to a 50px grid so nearby clicks are detected as repeats.
 
 ## Runtime
 
@@ -121,23 +122,14 @@ Gemini credentials via `.env` file or environment:
 GEMINI_API_KEY=your-key-here
 ```
 
-## Windows Playwright Setup
+### Environment Variables
 
-Set repo-local temp and browser cache paths:
-
-```powershell
-$env:TEMP = (Join-Path $PWD ".tmp")
-$env:TMP = (Join-Path $PWD ".tmp")
-$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path $PWD ".ms-playwright")
-New-Item -ItemType Directory -Force $env:TEMP | Out-Null
-New-Item -ItemType Directory -Force $env:PLAYWRIGHT_BROWSERS_PATH | Out-Null
-```
-
-Install Chromium:
-
-```powershell
-python -m playwright install chromium
-```
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GEMINI_API_KEY` | (required) | Gemini API key |
+| `GEMINI_PERCEPTION_MODEL` | `gemini-2.0-flash` | Model for perception (faster) |
+| `GEMINI_POLICY_MODEL` | `gemini-2.5-flash` | Model for policy (smarter) |
+| `CORS_ORIGINS` | (disabled) | Comma-separated allowed origins |
 
 ## Run The API
 
@@ -145,45 +137,29 @@ python -m playwright install chromium
 python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
 ```
 
+Open `http://127.0.0.1:8080/` for the Operon Pilot UI.
+
 ### Routes
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/` or `/desktop-pilot` | Operon Pilot UI |
 | GET | `/health` | Health check |
-| POST | `/run-task` | Create a browser automation run |
-| POST | `/step` | Advance a browser run one step |
-| POST | `/resume` | Resume browser run from user wait |
-| GET | `/run/{id}` | Get browser run state |
 | POST | `/desktop/run-task` | Create a desktop automation run |
-| POST | `/desktop/step` | Advance a desktop run one step |
-| POST | `/desktop/resume` | Resume desktop run from user wait |
-| GET | `/desktop/run/{id}` | Get desktop run state |
+| POST | `/desktop/step` | Advance a run one step |
+| POST | `/desktop/resume` | Resume run from user wait |
+| POST | `/desktop/cleanup` | Close apps launched during a run |
+| GET | `/desktop/run/{id}` | Get run state |
+| GET | `/observer/api/runs` | List recent runs |
+| GET | `/observer/api/run/{id}` | Run snapshot with step details |
 
-### Operon Pilot UI
-
-Open `http://127.0.0.1:8080/` for the unified automation UI. Toggle between **Desktop** and **Browser** modes. Quick tasks are organized by category:
-
-**Desktop mode:**
-- Launch Apps, Mouse Actions, Drag & Drop, Clipboard, Screen Analysis
-
-**Browser mode:**
-- Form Filling, Navigation, Interaction, Verification
-
-Example API calls:
+### Example
 
 ```powershell
-# Desktop task
 Invoke-RestMethod -Method Post `
   -Uri http://127.0.0.1:8080/desktop/run-task `
   -ContentType "application/json" `
   -Body '{"intent":"Open Notepad and type Hello World"}'
-
-# Browser task
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8080/run-task `
-  -ContentType "application/json" `
-  -Body '{"intent":"Fill out the contact form and submit it"}'
 ```
 
 ## Run The Benchmark
@@ -192,8 +168,6 @@ Invoke-RestMethod -Method Post `
 $env:FORM_BENCHMARK_URL = "https://practice-automation.com/form-fields/"
 python -m src.agent.benchmark
 ```
-
-Terminal conditions: `form_submitted_success`, retry limit, max step limit.
 
 ## Inspect Stored Runs
 
@@ -212,35 +186,17 @@ runs/<run_id>/
   step_1/
     before.png
     after.png
-    perception_prompt.txt
-    perception_raw.txt
-    perception_parsed.json
-    policy_prompt.txt
-    policy_raw.txt
-    policy_decision.json
+    combined_prompt.txt
+    combined_raw.txt
+    combined_parsed.json
     execution_trace.json
     progress_trace.json
-```
-
-## Browser Debug Mode
-
-```powershell
-$env:BROWSER_HEADLESS = "false"
-$env:BROWSER_SLOW_MO_MS = "250"
-$env:BROWSER_DEVTOOLS = "true"
 ```
 
 ## Tests
 
 ```powershell
-$env:GEMINI_API_KEY = "fake-test-key"
 python -m pytest tests\ -q
-```
-
-Single test file:
-
-```powershell
-python -m pytest tests\test_desktop_executor.py -q
 ```
 
 ## Windows Shell Troubleshooting

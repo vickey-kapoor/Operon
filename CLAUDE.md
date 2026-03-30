@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project: Operon
 
-Vision-driven computer-use engine. It operates a Playwright-controlled browser by running a closed loop: **capture → perceive → update state → choose action → execute → verify → recover**.
+Vision-driven computer-use engine. It operates by running a closed loop: **capture → perceive → update state → choose action → execute → verify → recover**.
 
-General-purpose: accepts any `intent` + `start_url` via `RunTaskRequest`. Two built-in benchmarks exist (auth-free form, Gmail draft) but the engine is not limited to them. `PageHint` accepts arbitrary snake_case strings from the LLM. The executor abstraction is named `executor` (not browser-specific) to prepare for future desktop expansion.
+General-purpose: accepts any `intent` via `RunTaskRequest`. Desktop automation uses pyautogui + mss for full-screen control. `PageHint` accepts arbitrary snake_case strings from the LLM.
 
 ## Environment Setup
 
@@ -20,20 +20,6 @@ pip install -e .
 
 Gemini credentials via `.env` file or environment — set `GEMINI_API_KEY`.
 
-Set these before running anything Playwright-related (repo-local paths avoid Windows permission issues):
-
-```powershell
-$env:TEMP = (Join-Path $PWD ".tmp")
-$env:TMP = (Join-Path $PWD ".tmp")
-$env:PLAYWRIGHT_BROWSERS_PATH = (Join-Path $PWD ".ms-playwright")
-```
-
-Install browsers once after the above:
-
-```powershell
-python -m playwright install chromium
-```
-
 If PowerShell fails to launch external processes (COM+ errors), run:
 
 ```powershell
@@ -42,7 +28,7 @@ If PowerShell fails to launch external processes (COM+ errors), run:
 
 ## Common Commands
 
-**Run tests** (set Playwright env vars first):
+**Run tests:**
 
 ```powershell
 $env:GEMINI_API_KEY = "fake-test-key"
@@ -76,25 +62,17 @@ python -m src.store.summary <run_id>
 python -m src.store.summary runs
 ```
 
-**Browser debug mode** (visible browser with devtools):
-
-```powershell
-$env:BROWSER_HEADLESS = "false"
-$env:BROWSER_SLOW_MO_MS = "250"
-$env:BROWSER_DEVTOOLS = "true"
-```
-
 ## Architecture
 
 ### Core Loop (`src/agent/loop.py`)
 
 `AgentLoop` orchestrates every run. A single step does:
 
-1. **Capture** — `BrowserCaptureService` screenshots the current browser page
+1. **Capture** — `ScreenCaptureService` screenshots the current screen
 2. **Perceive** — `GeminiPerceptionService` sends the screenshot to Gemini and returns a typed `ScreenPerception` (visible elements, page hint, focused element)
 3. **Choose action** — `PolicyCoordinator` first tries `PolicyRuleEngine` (deterministic rules + memory hints), then falls back to `GeminiPolicyService` (LLM prompt)
 4. **Block redundancy** — `AgentLoop._block_redundant_action` prevents repeated actions without progress using `ProgressState` counters
-5. **Execute** — `PlaywrightBrowserExecutor` performs the action. `AgentLoop._execute_with_hardening()` owns one bounded retry: on `stale_target_before_action`, `target_shifted_before_action`, or `target_lost_before_action`, it captures fresh perception and re-runs the deterministic selector against the original `TargetIntent` plus lightweight target context instead of relying only on the old `target_element_id`
+5. **Execute** — `DesktopExecutor` performs the action via pyautogui/mss. `AgentLoop._execute_with_hardening()` owns one bounded retry: on `stale_target_before_action`, `target_shifted_before_action`, or `target_lost_before_action`, it captures fresh perception and re-runs the deterministic selector against the original `TargetIntent` plus lightweight target context instead of relying only on the old `target_element_id`
 6. **Verify** — `DeterministicVerifierService` checks whether the outcome matches what was expected
 7. **Recover** — `RuleBasedRecoveryManager` decides whether to continue, retry, or stop the run
 8. **Log** — `StepLog` is appended to `runs/<run_id>/run.jsonl`; every artifact (screenshots, prompt/raw/parsed files, traces) goes under `runs/<run_id>/step_N/`

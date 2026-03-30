@@ -24,6 +24,7 @@ class PolicyRuleEngine:
     def __init__(self, selector: DeterministicTargetSelector | None = None) -> None:
         self.selector = selector or DeterministicTargetSelector()
         self._latest_selector_traces: list[SelectorTrace] = []
+        self._cached_intermediates: tuple[list[UIElement], list[list[UIElement]]] | None = None
 
     def choose_action(
         self,
@@ -32,6 +33,11 @@ class PolicyRuleEngine:
         memory_hints: list[MemoryHint],
     ) -> PolicyDecision | None:
         self._latest_selector_traces = []
+        # Precompute selector intermediates once for all rules in this step
+        self._cached_intermediates = (
+            self.selector._label_like_text_candidates(perception),
+            self.selector._visual_groups(perception),
+        )
         return (
             self._login_page_guardrail(state, perception, memory_hints)
             or self._task_success_stop_rule(perception)
@@ -392,6 +398,6 @@ class PolicyRuleEngine:
         )
 
     def _select_target(self, perception: ScreenPerception, intent: TargetIntent) -> UIElement | None:
-        result = self.selector.select(perception, intent)
+        result = self.selector.select(perception, intent, _cached_intermediates=self._cached_intermediates)
         self._latest_selector_traces.append(result.trace)
         return result.selected

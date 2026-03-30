@@ -41,6 +41,7 @@ def test_desktop_run_task(client: TestClient) -> None:
 
     with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(return_value=mock_response)
+        mock_loop.return_value.executor.reset_desktop = AsyncMock()
         resp = client.post(
             "/desktop/run-task",
             json={"intent": "Open Calculator"},
@@ -125,7 +126,7 @@ def test_desktop_resume(client: TestClient) -> None:
 
 
 def test_desktop_resume_not_found(client: TestClient) -> None:
-    """POST /desktop/resume with bad run_id should return 400."""
+    """POST /desktop/resume with bad run_id should return 404."""
     with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.resume_run = AsyncMock(side_effect=ValueError("invalid"))
         resp = client.post(
@@ -133,14 +134,46 @@ def test_desktop_resume_not_found(client: TestClient) -> None:
             json={"run_id": "bad-id"},
         )
 
-    assert resp.status_code == 400
+    assert resp.status_code == 404
+
+
+def test_desktop_cleanup(client: TestClient) -> None:
+    """POST /desktop/cleanup should call executor.cleanup_run."""
+    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+        mock_executor = mock_loop.return_value.executor
+        mock_executor.cleanup_run.return_value = 2
+        resp = client.post(
+            "/desktop/cleanup",
+            json={"run_id": "test-run-1"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == "test-run-1"
+    assert data["closed_count"] == 2
+    assert "2 application" in data["detail"]
+
+
+def test_desktop_cleanup_no_apps(client: TestClient) -> None:
+    """POST /desktop/cleanup with nothing to close returns 0."""
+    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+        mock_executor = mock_loop.return_value.executor
+        mock_executor.cleanup_run.return_value = 0
+        resp = client.post(
+            "/desktop/cleanup",
+            json={"run_id": "test-run-empty"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["closed_count"] == 0
 
 
 # ── desktop agent loop configuration tests ──────────────────────
 
 
-def test_desktop_agent_loop_uses_90s_timeout() -> None:
-    """get_desktop_agent_loop should configure GeminiHttpClient with 90s timeout."""
+def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
+    """get_desktop_agent_loop should use CombinedPerceptionPolicyService with 120s timeout."""
     import src.api.routes as routes_module
 
     # Reset the singleton so it gets rebuilt
@@ -153,9 +186,8 @@ def test_desktop_agent_loop_uses_90s_timeout() -> None:
             patch("src.api.routes.FileBackedRunStore"),
             patch("src.api.routes.FileBackedMemoryStore"),
             patch("src.api.routes.GeminiHttpClient") as mock_gemini,
-            patch("src.api.routes.BrowserCaptureService"),
-            patch("src.api.routes.GeminiPerceptionService"),
-            patch("src.api.routes.GeminiPolicyService"),
+            patch("src.api.routes.ScreenCaptureService"),
+            patch("src.api.routes.CombinedPerceptionPolicyService"),
             patch("src.api.routes.PolicyCoordinator"),
             patch("src.api.routes.DeterministicVerifierService"),
             patch("src.api.routes.RuleBasedRecoveryManager"),
@@ -163,8 +195,10 @@ def test_desktop_agent_loop_uses_90s_timeout() -> None:
         ):
             routes_module.get_desktop_agent_loop()
 
-            # GeminiHttpClient should have been called with timeout_seconds=90.0
-            mock_gemini.assert_called_with(timeout_seconds=90.0)
+            # Two GeminiHttpClients: combined + policy verifier, both with 120s timeout
+            assert mock_gemini.call_count == 2
+            calls = mock_gemini.call_args_list
+            assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in calls)
     finally:
         routes_module._desktop_agent_loop = original
 

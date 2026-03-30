@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.clients.gemini import GeminiClient, GeminiClientError
+from src.store.background_writer import bg_writer
 from src.models.logs import ModelDebugArtifacts
 from src.models.perception import ScreenPerception, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
@@ -51,15 +52,15 @@ class GeminiPolicyService(PolicyService):
         prompt = self._render_prompt(state, perception)
         step_dir = Path(perception.capture_artifact_path).resolve().parent
         debug_artifacts = self._artifact_paths(step_dir)
-        debug_artifacts.prompt_artifact_path.write_text(prompt, encoding="utf-8")
+        bg_writer.enqueue(debug_artifacts.prompt_artifact_path, prompt)
         try:
             raw_output = await self.gemini_client.generate_policy(prompt)
         except GeminiClientError:
             raise
-        debug_artifacts.raw_response_artifact_path.write_text(raw_output, encoding="utf-8")
+        bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
         decision = parse_policy_output(raw_output)
         decision = self._apply_focus_first_guardrail(state, perception, decision)
-        debug_artifacts.parsed_artifact_path.write_text(decision.model_dump_json(indent=2), encoding="utf-8")
+        bg_writer.enqueue(debug_artifacts.parsed_artifact_path, decision.model_dump_json())
         self._last_debug_artifacts = ModelDebugArtifacts(
             prompt_artifact_path=str(debug_artifacts.prompt_artifact_path),
             raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
@@ -79,7 +80,7 @@ class GeminiPolicyService(PolicyService):
             current_subgoal=state.current_subgoal or "not set",
             step_count=state.step_count,
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
-            perception_json=perception.model_dump_json(indent=2),
+            perception_json=perception.model_dump_json(),
         )
         if self._advisory_hints:
             prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {hint}" for hint in self._advisory_hints)

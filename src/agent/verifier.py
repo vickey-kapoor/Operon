@@ -80,6 +80,18 @@ class DeterministicVerifierService(VerifierService):
                 stop_reason=self._stop_reason_for_intentional_stop(state, decision),
             )
 
+        # Self-terminating actions: when the chosen action IS the goal
+        if executed_action.success and self._is_goal_completing_action(state, action):
+            return VerificationResult(
+                status=VerificationStatus.SUCCESS,
+                expected_outcome_met=True,
+                stop_condition_met=True,
+                reason=f"Goal-completing action {action.action_type.value} succeeded.",
+                failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
+                recovery_hint="stop",
+                stop_reason=StopReason.TASK_COMPLETED,
+            )
+
         if not executed_action.success:
             return VerificationResult(
                 status=VerificationStatus.FAILURE,
@@ -122,6 +134,26 @@ class DeterministicVerifierService(VerifierService):
         if decision.active_subgoal == "stop for benchmark setup":
             return StopReason.BENCHMARK_PRECONDITION_FAILED
         return StopReason.TASK_COMPLETED
+
+    @staticmethod
+    def _is_goal_completing_action(state: AgentState, action: AgentAction) -> bool:
+        """Check if this action type directly fulfills the task intent."""
+        intent = state.intent.lower()
+        if action.action_type is ActionType.READ_CLIPBOARD and ("clipboard" in intent or "read" in intent):
+            return True
+        if action.action_type is ActionType.HOVER and "hover" in intent:
+            return True
+        if action.action_type is ActionType.RIGHT_CLICK and ("right-click" in intent or "right click" in intent):
+            return True
+        if action.action_type is ActionType.DOUBLE_CLICK and "double-click" in intent:
+            return True
+        if action.action_type is ActionType.SCREENSHOT_REGION and ("screenshot" in intent or "capture" in intent):
+            return True
+        if action.action_type is ActionType.DRAG and "drag" in intent:
+            return True
+        if action.action_type is ActionType.WRITE_CLIPBOARD and ("clipboard" in intent or "copy" in intent):
+            return True
+        return False
 
     @staticmethod
     def _task_success_visible(perception) -> bool:

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
-from src.agent.capture import BrowserCaptureService
+from src.agent.capture import ScreenCaptureService
 from src.agent.loop import AgentLoop
 from src.agent.perception import GeminiPerceptionService
 from src.agent.policy import GeminiPolicyService
@@ -16,7 +16,7 @@ from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import GeminiHttpClient
-from src.executor.browser import PlaywrightBrowserExecutor
+from src.executor.desktop import DesktopExecutor
 from src.models.benchmark import (
     BenchmarkSuiteSpec,
     BenchmarkSuiteSummary,
@@ -78,9 +78,9 @@ class BenchmarkSuiteResult:
         self.run_metrics_paths = run_metrics_paths
 
 
-def _build_loop(*, root_dir: str | Path = "runs") -> tuple[AgentLoop, PlaywrightBrowserExecutor]:
+def _build_loop(*, root_dir: str | Path = "runs") -> tuple[AgentLoop, DesktopExecutor]:
     gemini_client = GeminiHttpClient()
-    executor = PlaywrightBrowserExecutor()
+    executor = DesktopExecutor()
     run_store = FileBackedRunStore(root_dir=root_dir)
     memory_store = FileBackedMemoryStore(root_dir=root_dir)
     policy_service = PolicyCoordinator(
@@ -88,7 +88,7 @@ def _build_loop(*, root_dir: str | Path = "runs") -> tuple[AgentLoop, Playwright
         memory_store=memory_store,
     )
     loop = AgentLoop(
-        capture_service=BrowserCaptureService(executor=executor),
+        capture_service=ScreenCaptureService(executor=executor),
         perception_service=GeminiPerceptionService(gemini_client=gemini_client),
         run_store=run_store,
         policy_service=policy_service,

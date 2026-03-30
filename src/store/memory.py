@@ -68,6 +68,8 @@ class FileBackedMemoryStore(MemoryStore):
         self.memory_dir = self.root_dir / "memory"
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_path = self.memory_dir / "memory.jsonl"
+        self._cached_records: list[MemoryRecord] | None = None
+        self._cached_mtime: float = 0.0
         self._seed_default_guardrails()
 
     def get_hints(
@@ -339,11 +341,18 @@ class FileBackedMemoryStore(MemoryStore):
     def _load_records(self) -> list[MemoryRecord]:
         if not self.memory_path.exists():
             return []
-
+        try:
+            mtime = self.memory_path.stat().st_mtime
+        except OSError:
+            return []
+        if self._cached_records is not None and mtime == self._cached_mtime:
+            return self._cached_records
         records: list[MemoryRecord] = []
         for line in self.memory_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 records.append(MemoryRecord.model_validate_json(line))
+        self._cached_records = records
+        self._cached_mtime = mtime
         return records
 
     def _append_record(self, record: MemoryRecord) -> None:
@@ -351,3 +360,10 @@ class FileBackedMemoryStore(MemoryStore):
         with self.memory_path.open("a", encoding="utf-8") as handle:
             handle.write(record.model_dump_json())
             handle.write("\n")
+        # Append to in-memory cache instead of full invalidation
+        if self._cached_records is not None:
+            self._cached_records.append(record)
+            try:
+                self._cached_mtime = self.memory_path.stat().st_mtime
+            except OSError:
+                pass

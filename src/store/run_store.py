@@ -10,6 +10,7 @@ from uuid import uuid4
 from src.models.common import RunStatus
 from src.models.perception import ScreenPerception
 from src.models.state import AgentState
+from src.store.background_writer import bg_writer
 
 
 class RunStore(ABC):
@@ -115,7 +116,4 @@ class FileBackedRunStore(RunStore):
         return self._ensure_run_dir(run_id) / "state.json"
 
     def _write_state(self, state: AgentState) -> None:
-        self._state_path(state.run_id).write_text(
-            state.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
+        bg_writer.enqueue(self._state_path(state.run_id), state.model_dump_json())

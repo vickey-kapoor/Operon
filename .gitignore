@@ -45,9 +45,8 @@ runs/
 .test-artifacts/
 .tmp/
 
-# Playwright browser binaries
+# Legacy browser binaries (no longer used)
 .ms-playwright/
-.playwright-mcp/
 
 # IDEs and local tool state
 .vscode/

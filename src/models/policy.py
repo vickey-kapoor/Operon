@@ -159,9 +159,9 @@ class AgentAction(StrictModel):
                 raise ValueError("drag requires x, y, x_end, y_end")
             if any(
                 value is not None
-                for value in (self.selector, self.target_element_id, self.text, self.key, self.url, self.wait_ms, self.scroll_amount)
+                for value in (self.selector, self.text, self.key, self.url, self.wait_ms, self.scroll_amount)
             ):
-                raise ValueError("drag cannot include selector, target, text, key, url, wait_ms, or scroll_amount")
+                raise ValueError("drag cannot include selector, text, key, url, wait_ms, or scroll_amount")
 
         elif self.action_type is ActionType.SCROLL:
             if self.scroll_amount is None:
@@ -181,9 +181,9 @@ class AgentAction(StrictModel):
                 raise ValueError("hover requires x, y coordinates")
             if any(
                 value is not None
-                for value in (self.selector, self.target_element_id, self.text, self.key, self.url, self.wait_ms, *_new_fields)
+                for value in (self.selector, self.text, self.key, self.url, self.wait_ms, *_new_fields)
             ):
-                raise ValueError("hover cannot include selector, target, text, key, url, wait_ms, or desktop fields")
+                raise ValueError("hover cannot include selector, text, key, url, wait_ms, or desktop fields")
 
         elif self.action_type is ActionType.READ_CLIPBOARD:
             if any(

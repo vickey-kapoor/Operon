@@ -21,6 +21,8 @@ class ProgressState(StrictModel):
     no_progress_streak: int = Field(default=0, ge=0)
     loop_detected: bool = False
     latest_page_signature: str | None = Field(default=None, min_length=1)
+    previous_page_signature: str | None = Field(default=None, min_length=1)
+    latest_subgoal_signature: str | None = Field(default=None, min_length=1)
     target_completion_page_signatures: dict[str, str] = Field(default_factory=dict)
     subgoal_completion_page_signatures: dict[str, str] = Field(default_factory=dict)
 
@@ -38,6 +40,7 @@ class ProgressTrace(StrictModel):
     redundancy_reason: FailureCategory | None = None
     loop_pattern_detected: str | None = Field(default=None, min_length=1)
     progress_made: bool = False
+    screen_change_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
     no_progress_streak: int = Field(default=0, ge=0)
     final_failure_category: FailureCategory | None = None
     final_stop_reason: StopReason | None = None

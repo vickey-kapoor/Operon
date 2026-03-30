@@ -860,10 +860,14 @@ class AgentLoop:
             from src.agent.screen_diff import compute_screen_change_ratio
             screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
 
+        # An action is "novel" if its signature hasn't been seen before in this run
+        is_novel_action = action_signature not in progress_state.repeated_action_count
+
         progress_made = self._meaningful_progress(
             executed_action, verification,
             subgoal_changed=subgoal_changed,
             screen_change_ratio=screen_change_ratio,
+            is_novel_action=is_novel_action,
         )
 
         progress_state.recent_actions = self._append_window(progress_state.recent_actions, action_signature)
@@ -996,31 +1000,33 @@ class AgentLoop:
         *,
         subgoal_changed: bool = True,
         screen_change_ratio: float | None = None,
+        is_novel_action: bool = True,
     ) -> bool:
-        """Progress requires action success AND real evidence of change.
+        """Progress requires visual change AND a novel action.
 
-        Uses two signals:
-        - subgoal_changed: the model reported a new subgoal (intent-level progress)
-        - screen_change_ratio: pixel diff between before/after screenshots (visual progress)
+        Signals:
+        - screen_change_ratio: did the screen actually change?
+        - is_novel_action: is this a new action signature (not seen before)?
+        - subgoal_changed: did the model advance its subgoal?
 
-        Both are needed to avoid false positives. Subgoal alone can be gamed by the
-        model repeating the same subgoal. Screen diff alone misses cursor-only changes.
+        Screen change + novel action = progress (typing text in Notepad).
+        Screen change + repeated action = NOT progress (launch_app Notepad 5x).
+        No screen change = NOT progress regardless.
+        Subgoal change always counts as progress (model advancing intentionally).
         """
         if not executed_action.success:
             return False
         if verification.stop_condition_met:
             return True
+        if subgoal_changed:
+            return True
 
-        # If we have pixel-level evidence, use it as the primary signal
         if screen_change_ratio is not None:
             from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD
-            if screen_change_ratio >= SCREEN_CHANGE_THRESHOLD:
-                return True  # Real visual change happened
-            # No visual change — not progress even if subgoal changed
-            return False
+            screen_changed = screen_change_ratio >= SCREEN_CHANGE_THRESHOLD
+            return screen_changed and is_novel_action
 
-        # Fallback when no screenshot comparison available
-        return subgoal_changed
+        return is_novel_action
 
     @classmethod
     def _failure_signature(cls, executed_action, verification, recovery, target_signature: str | None) -> str | None:

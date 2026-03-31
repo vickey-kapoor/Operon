@@ -11,6 +11,8 @@ from src.agent.recovery import RecoveryManager
 from src.agent.reflector import PostRunReflector
 from src.agent.selector import DeterministicTargetSelector
 from src.agent.verifier import VerifierService
+from src.agent.video_verifier import VideoVerifier
+from src.clients.gemini import GeminiClient
 from src.executor.browser import Executor
 from src.models.common import (
     FailureCategory,
@@ -33,7 +35,7 @@ from src.models.policy import ActionType, AgentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.selector import TargetIntent, TargetIntentAction
-from src.models.verification import VerificationStatus
+from src.models.verification import VerificationFailureType, VerificationResult, VerificationStatus
 from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log
@@ -71,6 +73,7 @@ class AgentLoop:
         verifier_service: VerifierService,
         recovery_manager: RecoveryManager,
         memory_store: MemoryStore | None = None,
+        gemini_client: GeminiClient | None = None,
     ) -> None:
         self.capture_service = capture_service
         self.perception_service = perception_service
@@ -81,11 +84,17 @@ class AgentLoop:
         self.recovery_manager = recovery_manager
         self.memory_store = memory_store
         self.target_selector = DeterministicTargetSelector()
+        self.video_verifier: VideoVerifier | None = (
+            VideoVerifier(gemini_client) if gemini_client is not None else None
+        )
         self.reflector: PostRunReflector | None = (
             PostRunReflector(memory_store) if memory_store is not None else None
         )
 
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
+        # Minimize all windows (including the Pilot UI browser) for a clean desktop
+        if hasattr(self.executor, "reset_desktop"):
+            await self.executor.reset_desktop()
         record = self.run_store.create_run(intent=request.intent, start_url=request.start_url)
         if request.start_url:
             await self.executor.execute(
@@ -204,6 +213,19 @@ class AgentLoop:
             executed_action = blocked_action
         executed_action = self._relocate_after_artifact(executed_action, after_artifact_path)
         verification = await self.verifier_service.verify(state, decision, executed_action)
+
+        # Video verification: when screen didn't change, record and ask Gemini
+        if not verification.stop_condition_met and self.video_verifier is not None:
+            video_result = await self._maybe_video_verify(
+                state=state,
+                decision=decision,
+                executed_action=executed_action,
+                before_artifact_path=before_artifact_path,
+                step_index=step_index,
+            )
+            if video_result is not None:
+                verification = video_result
+
         recovery: RecoveryDecision = await self.recovery_manager.recover(
             state,
             decision,
@@ -451,6 +473,86 @@ class AgentLoop:
         if current_path != target_path and current_path.exists():
             shutil.move(str(current_path), str(target_path))
         return executed_action.model_copy(update={"artifact_path": str(target_path)})
+
+    async def _maybe_video_verify(
+        self,
+        *,
+        state,
+        decision,
+        executed_action,
+        before_artifact_path: str,
+        step_index: int,
+    ) -> VerificationResult | None:
+        """Record a video and verify with Gemini when screen_diff shows no change."""
+        if not executed_action.success:
+            return None
+
+        after_path = executed_action.artifact_path
+        if not before_artifact_path or not after_path:
+            return None
+
+        from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD, compute_screen_change_ratio
+
+        ratio = compute_screen_change_ratio(before_artifact_path, after_path)
+        if ratio >= SCREEN_CHANGE_THRESHOLD:
+            return None  # Screen changed — no video needed
+
+        # Skip non-idempotent actions (re-execution could double-type, double-drag)
+        action = decision.action
+        if action.action_type in {ActionType.TYPE, ActionType.DRAG, ActionType.SELECT}:
+            return None
+
+        if not hasattr(self.executor, "execute_with_recording"):
+            return None
+
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "No screen change (ratio=%.4f) at step %d — recording video for verification",
+            ratio,
+            step_index,
+        )
+
+        step_dir = Path(before_artifact_path).parent
+        try:
+            replay_result, video_path = await self.executor.execute_with_recording(action, step_dir)
+        except Exception:
+            logger.debug("Video recording failed", exc_info=True)
+            return None
+
+        if video_path is None:
+            return None
+
+        # Update executed_action recording path (informational)
+        executed_action = executed_action.model_copy(update={"recording_path": str(video_path)})
+
+        video_result = await self.video_verifier.verify_action(
+            video_path=video_path, action=action, intent=state.intent,
+        )
+
+        if video_result.did_it_work:
+            return VerificationResult(
+                status=VerificationStatus.SUCCESS,
+                expected_outcome_met=True,
+                stop_condition_met=False,
+                reason=f"Video verified: {video_result.what_happened}",
+                recovery_hint="advance",
+                video_verified=True,
+                video_detail=video_result.what_happened,
+            )
+        return VerificationResult(
+            status=VerificationStatus.FAILURE,
+            expected_outcome_met=False,
+            stop_condition_met=False,
+            reason=f"Video showed no effect: {video_result.what_happened}",
+            failure_type=VerificationFailureType.ACTION_FAILED,
+            recovery_hint="retry_same_step",
+            video_verified=True,
+            video_detail=video_result.suggested_next_action,
+            failure_category=FailureCategory.EXECUTION_ERROR,
+            failure_stage=LoopStage.VERIFY,
+        )
 
     def _resolve_model_debug_artifacts(
         self,

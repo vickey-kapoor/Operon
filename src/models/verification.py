@@ -39,3 +39,5 @@ class VerificationResult(StrictModel):
     failure_category: FailureCategory | None = None
     failure_stage: LoopStage | None = None
     stop_reason: StopReason | None = None
+    video_verified: bool = False
+    video_detail: str | None = Field(default=None, min_length=1)

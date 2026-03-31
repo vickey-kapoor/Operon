@@ -39,7 +39,8 @@ HTTP Request
 |  3. CHOOSE     -- PolicyRuleEngine -> CombinedService    |
 |  4. EXECUTE    -- DesktopExecutor (pyautogui)            |
 |  5. VERIFY     -- DeterministicVerifierService           |
-|  6. RECOVER    -- RuleBasedRecoveryManager               |
+|  6. VIDEO      -- record + Gemini (when no screen change)|
+|  7. RECOVER    -- RuleBasedRecoveryManager               |
 |                                                          |
 +----------------------------------------------------------+
     |
@@ -191,6 +192,8 @@ runs/<run_id>/
     combined_parsed.json
     execution_trace.json
     progress_trace.json
+    verification_recording.mp4  (when video verification triggered)
+    reflection.json             (after run completes)
 ```
 
 ## Tests

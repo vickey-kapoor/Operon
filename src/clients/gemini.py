@@ -33,6 +33,10 @@ class GeminiClient(ABC):
     async def generate_policy(self, prompt: str) -> str:
         """Generate JSON-only policy output for the provided state and perception prompt."""
 
+    @abstractmethod
+    async def generate_video_verification(self, prompt: str, video_path: str) -> str:
+        """Send a video clip with a verification prompt and return raw JSON."""
+
 
 class GeminiHttpClient(GeminiClient):
     """Async HTTP client for Gemini with connection pooling via httpx."""
@@ -76,6 +80,14 @@ class GeminiHttpClient(GeminiClient):
     async def generate_policy(self, prompt: str) -> str:
         """Send the policy prompt to Gemini and return raw JSON text."""
         payload = self._build_text_payload(prompt=prompt)
+        return await self._post_json_payload(payload)
+
+    async def generate_video_verification(self, prompt: str, video_path: str) -> str:
+        """Send a video clip with verification prompt and return raw JSON."""
+        video_bytes = await asyncio.to_thread(Path(video_path).read_bytes)
+        payload = self._build_perception_payload(
+            prompt=prompt, image_bytes=video_bytes, mime_type="video/mp4",
+        )
         return await self._post_json_payload(payload)
 
     async def _post_json_payload(self, payload: dict[str, Any]) -> str:
@@ -238,3 +250,7 @@ class PlaceholderGeminiClient(GeminiClient):
     async def generate_policy(self, prompt: str) -> str:
         """Placeholder model interface; external API calls are intentionally disabled."""
         raise NotImplementedError("Gemini policy integration is not configured for this client.")
+
+    async def generate_video_verification(self, prompt: str, video_path: str) -> str:
+        """Placeholder model interface; external API calls are intentionally disabled."""
+        raise NotImplementedError("Gemini video verification is not configured for this client.")

@@ -74,8 +74,10 @@ python -m src.store.summary runs
 4. **Block redundancy** — `AgentLoop._block_redundant_action` prevents repeated actions without progress using `ProgressState` counters
 5. **Execute** — `DesktopExecutor` performs the action via pyautogui/mss. `AgentLoop._execute_with_hardening()` owns one bounded retry: on `stale_target_before_action`, `target_shifted_before_action`, or `target_lost_before_action`, it captures fresh perception and re-runs the deterministic selector against the original `TargetIntent` plus lightweight target context instead of relying only on the old `target_element_id`
 6. **Verify** — `DeterministicVerifierService` checks whether the outcome matches what was expected
-7. **Recover** — `RuleBasedRecoveryManager` decides whether to continue, retry, or stop the run
-8. **Log** — `StepLog` is appended to `runs/<run_id>/run.jsonl`; every artifact (screenshots, prompt/raw/parsed files, traces) goes under `runs/<run_id>/step_N/`
+7. **Video verify** (conditional) — If `screen_diff` detects no visual change, `VideoVerifier` records a 3-second video via `ScreenRecorder`, re-executes the action, and sends the clip to Gemini for temporal analysis. This only triggers for idempotent actions (click, press_key, hotkey, launch_app, scroll, hover) and adds ~5-8s to uncertain steps.
+8. **Recover** — `RuleBasedRecoveryManager` decides whether to continue, retry, or stop the run
+9. **Reflect** (on terminal) — `PostRunReflector` analyzes the completed run, extracts failure patterns, and writes `MemoryRecord` entries for future runs
+10. **Log** — `StepLog` is appended to `runs/<run_id>/run.jsonl`; every artifact (screenshots, prompt/raw/parsed files, traces, recordings) goes under `runs/<run_id>/step_N/`
 
 Terminal conditions: `FORM_SUBMITTED_SUCCESS`, `STOP_BEFORE_SEND` (success); retry limit, max step limit, repeated loop detection (failure).
 

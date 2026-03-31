@@ -80,5 +80,6 @@ class ExecutedAction(StrictModel):
     artifact_path: str | None = Field(default=None, min_length=1)
     execution_trace: ExecutionTrace | None = None
     execution_trace_artifact_path: str | None = Field(default=None, min_length=1)
+    recording_path: str | None = Field(default=None, min_length=1)
     failure_category: FailureCategory | None = None
     failure_stage: LoopStage | None = None

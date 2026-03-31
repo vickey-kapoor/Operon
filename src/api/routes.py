@@ -74,6 +74,7 @@ def get_agent_loop() -> AgentLoop:
             verifier_service=DeterministicVerifierService(gemini_client=policy_client),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
+            gemini_client=policy_client,
         )
     return _agent_loop
 
@@ -103,6 +104,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             verifier_service=DeterministicVerifierService(gemini_client=policy_client),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
+            gemini_client=policy_client,
         )
     return _desktop_agent_loop
 

@@ -1,0 +1,19 @@
+You are verifying a desktop automation action by watching a screen recording.
+
+Action performed: {action_type}
+Action details: {action_detail}
+Task intent: {intent}
+Expected: The action should produce a visible change on screen.
+
+Watch the recording frame by frame. Look for:
+1. Visual feedback from the action (click animation, menu opening, text appearing, window changing)
+2. Whether the target responded to the action
+3. Any error dialogs, blocked popups, or unresponsive UI
+
+Return JSON only. Do not wrap in markdown. Do not include commentary.
+
+{{
+  "did_it_work": true,
+  "what_happened": "describe what you observed in the recording",
+  "suggested_next_action": "what should the agent do next, or continue if the action succeeded"
+}}

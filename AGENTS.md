@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/` contains the application code. Key packages are `src/agent/` for the closed-loop orchestration (including the combined perception+policy service), `src/api/` for the FastAPI server and Operon Pilot UI, `src/executor/` for desktop automation (pyautogui/mss), `src/clients/` for the async Gemini HTTP client (httpx with HTTP/2), `src/models/` for Pydantic schemas, and `src/store/` for local run persistence, memory, and replay tools. Tests live in `tests/` and generally mirror module boundaries. Prompts are stored in `prompts/`, static assets in `assets/`, and environment repair helpers in `scripts/`.
+`src/` contains the application code. Key packages are `src/agent/` for the closed-loop orchestration (combined perception+policy service, video verification, screen diff, post-run reflector), `src/api/` for the FastAPI server and Operon Pilot UI, `src/executor/` for desktop automation (pyautogui/mss, screen recording via OpenCV), `src/clients/` for the async Gemini HTTP client (httpx with HTTP/2, supports image + video payloads), `src/models/` for Pydantic schemas, and `src/store/` for local run persistence, memory, and replay tools. Tests live in `tests/` and generally mirror module boundaries. Prompts are stored in `prompts/`, static assets in `assets/`, and environment repair helpers in `scripts/`.
 
 ## Build, Test, and Development Commands
 Use Python 3.11 locally.

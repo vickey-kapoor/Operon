@@ -228,12 +228,15 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
     run_store = Mock()
     run_store.create_run = Mock(return_value=created)
 
+    executor = Mock()
+    executor.reset_desktop = AsyncMock()
+
     loop = AgentLoop(
         capture_service=Mock(),
         perception_service=Mock(),
         run_store=run_store,
         policy_service=Mock(),
-        executor=Mock(),
+        executor=executor,
         verifier_service=Mock(),
         recovery_manager=Mock(),
     )

@@ -659,16 +659,21 @@ async function loadScreenshot(runId) {
     const step = data.current_step ||
       (data.steps && data.steps.length > 0 ? data.steps[data.steps.length - 1] : null);
     if (!step) return;
-    const artPath = step.after_artifact_path || step.before_artifact_path;
-    if (!artPath) return;
-    const container = document.getElementById('screenshotContainer');
-    const img = document.createElement('img');
-    img.src = '/observer/api/artifact?path=' + encodeURIComponent(artPath);
-    img.alt = 'Desktop screenshot';
-    container.innerHTML = '';
-    container.appendChild(img);
+
+    // Always update the detail bar with step data
     renderDetail(step);
-  } catch (e) { /* best-effort */ }
+
+    // Update screenshot if available
+    const artPath = step.after_artifact_path || step.before_artifact_path;
+    if (artPath) {
+      const container = document.getElementById('screenshotContainer');
+      const img = document.createElement('img');
+      img.src = '/observer/api/artifact?path=' + encodeURIComponent(artPath);
+      img.alt = 'Desktop screenshot';
+      container.innerHTML = '';
+      container.appendChild(img);
+    }
+  } catch (e) { console.warn('loadScreenshot error:', e); }
 }
 
 function renderDetail(step) {
@@ -783,12 +788,19 @@ async function stepLoop(runId, maxSteps) {
       setStatus('running', stepNum);
 
       abortController = new AbortController();
-      var resp = await fetchJson('/desktop/step', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run_id: runId }),
-        signal: abortController.signal,
-      });
+      // Poll observer for live updates while the step request is in-flight
+      var livePoller = setInterval(function() { loadScreenshot(runId); }, 2000);
+      var resp;
+      try {
+        resp = await fetchJson('/desktop/step', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ run_id: runId }),
+          signal: abortController.signal,
+        });
+      } finally {
+        clearInterval(livePoller);
+      }
       abortController = null;
 
       stepCount = resp.step_count;

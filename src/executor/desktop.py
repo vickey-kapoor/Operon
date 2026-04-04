@@ -9,12 +9,35 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import mss
 import mss.tools
-import pyautogui
 import pyperclip
+
+try:
+    import pyautogui
+except Exception as exc:  # pragma: no cover - exercised on headless CI
+    _PYAUTOGUI_IMPORT_ERROR = exc
+
+    def _unavailable(*_args, **_kwargs):
+        raise RuntimeError("pyautogui is unavailable in this environment") from _PYAUTOGUI_IMPORT_ERROR
+
+    pyautogui = SimpleNamespace(  # type: ignore[assignment]
+        FAILSAFE=True,
+        PAUSE=0,
+        click=_unavailable,
+        doubleClick=_unavailable,
+        rightClick=_unavailable,
+        write=_unavailable,
+        press=_unavailable,
+        hotkey=_unavailable,
+        moveTo=_unavailable,
+        mouseDown=_unavailable,
+        mouseUp=_unavailable,
+        scroll=_unavailable,
+    )
 
 from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, LoopStage

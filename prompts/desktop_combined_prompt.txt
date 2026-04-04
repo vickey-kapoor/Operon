@@ -76,7 +76,7 @@ MULTI-STEP WORKFLOWS:
 - CRITICAL: If previous_summary shows an action already succeeded (e.g. "Pressed hotkey ctrl+a"), move to the NEXT action in the sequence. Never repeat a succeeded action.
 
 NAVIGATION:
-- To navigate File Explorer to a specific folder, click the address bar at the top and type the full path (e.g. "C:\Users\YourName\Documents"), then press Enter. Do NOT try to click through the folder tree in the sidebar.
+- To navigate File Explorer to a specific folder, click the address bar at the top and type the destination folder path, then press Enter. Do NOT try to click through the folder tree in the sidebar.
 - To navigate a browser to a URL: after launch_app opens the browser, click the address bar at the TOP of the browser window (NOT the taskbar at the bottom), then type the full URL, then press Enter.
 - The browser address bar is near the top of the window, typically around y=60-80 pixels. The taskbar is at y=1040+ — do NOT click there for URL input.
 - To search on a website: navigate to the site first, then find and click the search input field, type the search term, and press Enter.

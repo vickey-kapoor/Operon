@@ -22,7 +22,6 @@ from src.api.runtime_config import browser_mode_config, desktop_mode_config
 from src.clients.gemini import GeminiHttpClient
 from src.clients.gemini_computer_use import GeminiComputerUseHttpClient
 from src.executor.browser_native import NativeBrowserExecutor
-from src.executor.desktop import DesktopExecutor
 from src.models.common import (
     CleanupRequest,
     CleanupResponse,
@@ -38,6 +37,7 @@ from src.store.run_store import FileBackedRunStore
 router = APIRouter()
 _agent_loop: AgentLoop | None = None
 _desktop_agent_loop: AgentLoop | None = None
+DesktopExecutor = None
 _MAX_RUN_ID_LENGTH = 64
 
 
@@ -122,8 +122,13 @@ def get_agent_loop() -> AgentLoop:
 
 def get_desktop_agent_loop() -> AgentLoop:
     """Build the desktop runtime lazily so env loading can happen first."""
-    global _desktop_agent_loop
+    global _desktop_agent_loop, DesktopExecutor
     if _desktop_agent_loop is None:
+        if DesktopExecutor is None:
+            from src.executor.desktop import DesktopExecutor as _DesktopExecutor
+
+            DesktopExecutor = _DesktopExecutor
+
         desktop_config = desktop_mode_config()
         backend = _build_desktop_backend()
         verifier_model = desktop_config.verifier_model or desktop_config.primary_model

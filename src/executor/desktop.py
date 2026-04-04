@@ -52,6 +52,12 @@ from .browser import Executor
 
 logger = logging.getLogger(__name__)
 
+if not hasattr(os, "startfile"):
+    def _missing_startfile(_path: str) -> None:
+        raise NotImplementedError("os.startfile is only available on Windows")
+
+    os.startfile = _missing_startfile  # type: ignore[attr-defined]
+
 # Apps that must NEVER be terminated by cleanup or blocked by safety guards.
 _PROTECTED_PROCESSES: set[str] = {
     "code", "code.exe",           # VS Code

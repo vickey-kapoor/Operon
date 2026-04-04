@@ -18,6 +18,11 @@ def runs_root() -> Path:
     return Path(os.getenv("OPERON_RUNS_ROOT", "runs")).resolve()
 
 
+def browser_artifacts_root() -> Path:
+    """Return the root directory used for browser session recordings."""
+    return Path(os.getenv("OPERON_BROWSER_ARTIFACTS_ROOT", ".browser-artifacts")).resolve()
+
+
 def list_runs(limit: int = 20) -> list[dict[str, Any]]:
     """Return recent runs ordered by state file timestamp."""
     root = runs_root()
@@ -81,6 +86,7 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
             "current_subgoal": state.current_subgoal,
             "current_task_id": _task_id_from_intent(state.intent),
             "current_phase": phase,
+            "session_video_path": _session_video_path(state),
         },
         "progress_state": state.progress_state.model_dump(mode="json"),
         "current_step": current_step,
@@ -92,15 +98,23 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
 
 def artifact_path_for_request(path_value: str) -> Path:
     """Resolve and validate an artifact path for local observer access."""
-    root = runs_root()
+    allowed_roots = [runs_root(), browser_artifacts_root()]
     requested = Path(path_value)
     candidate = requested if requested.is_absolute() else (Path.cwd() / requested)
     resolved = candidate.resolve()
-    if root not in resolved.parents and resolved != root:
-        raise ValueError("Artifact path is outside the runs root")
+    if not any(root == resolved or root in resolved.parents for root in allowed_roots):
+        raise ValueError("Artifact path is outside the allowed artifact roots")
     if not resolved.exists():
         raise FileNotFoundError(f"Artifact not found: {resolved}")
     return resolved
+
+
+def _session_video_path(state) -> str | None:
+    for artifact_path in reversed(state.artifact_paths):
+        lowered = artifact_path.lower()
+        if "session_video" in lowered and lowered.endswith((".webm", ".mp4")):
+            return artifact_path
+    return None
 
 
 def _step_payload(entry: StepLog) -> dict[str, Any]:

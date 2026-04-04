@@ -315,3 +315,35 @@ async def test_form_success_visible_stops_successfully_before_llm() -> None:
     assert decision.action.action_type is ActionType.STOP
     assert decision.active_subgoal == "verify_success"
     assert client.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_browser_navigation_summary_does_not_trigger_success_stop_rule() -> None:
+    root = _local_test_dir("test-policy-coordinator-browser-navigation")
+    client = StubGeminiClient(
+        response='{"action":{"action_type":"click","x":229,"y":257},"rationale":"Click the Learn more link.","confidence":0.8,"active_subgoal":"click_link"}'
+    )
+    coordinator = PolicyCoordinator(
+        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
+    )
+    state = AgentState(
+        run_id="run-1",
+        intent="Open example.com and click the More information link.",
+        status=RunStatus.RUNNING,
+        current_subgoal="click link",
+        step_count=2,
+    )
+    perception = ScreenPerception(
+        summary='I have successfully navigated to example.com and can see the "Learn more" link.',
+        page_hint="unknown",
+        visible_elements=[],
+        capture_artifact_path=str(root / "run-1" / "step_2" / "before.png"),
+        confidence=0.7,
+    )
+    Path(perception.capture_artifact_path).parent.mkdir(parents=True, exist_ok=True)
+
+    decision = await coordinator.choose_action(state, perception)
+
+    assert decision.action.action_type is ActionType.CLICK
+    assert client.calls == 1

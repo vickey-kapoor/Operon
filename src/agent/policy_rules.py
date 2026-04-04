@@ -266,7 +266,13 @@ class PolicyRuleEngine:
 
     @staticmethod
     def _has_success_signal(perception: ScreenPerception) -> bool:
-        success_tokens = ("success", "thank you", "submitted")
+        success_tokens = (
+            "thank you",
+            "submitted successfully",
+            "submission successful",
+            "submission complete",
+            "task completed",
+        )
         for element in perception.visible_elements:
             label = element.primary_name.lower()
             if any(token in label for token in success_tokens):

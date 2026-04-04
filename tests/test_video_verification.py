@@ -22,8 +22,12 @@ import pytest
 
 from src.agent.loop import AgentLoop
 from src.agent.screen_recorder import ScreenRecorder
-from src.agent.video_verifier import VideoVerificationResult, VideoVerifier
-from src.clients.gemini import GeminiClientError, GeminiHttpClient, PlaceholderGeminiClient
+from src.agent.video_verifier import VideoVerifier
+from src.clients.gemini import (
+    GeminiClientError,
+    GeminiHttpClient,
+    PlaceholderGeminiClient,
+)
 from src.models.common import FailureCategory, LoopStage
 from src.models.execution import ExecutedAction
 from src.models.policy import ActionType, AgentAction, PolicyDecision
@@ -33,7 +37,6 @@ from src.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -327,7 +330,6 @@ class TestVideoVerifierPromptRendering:
 
     def test_render_prompt_uses_fallback_when_no_details(self) -> None:
         verifier = _make_verifier()
-        action = AgentAction(action_type=ActionType.PRESS_KEY, key="Tab")
         # key is present, so detail won't be empty — use WAIT with wait_ms as no-detail action
         action_wait = AgentAction(action_type=ActionType.WAIT, wait_ms=500)
         prompt = verifier._render_prompt(action_wait, intent="pause")

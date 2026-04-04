@@ -9,11 +9,11 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.clients.gemini import GeminiClient, GeminiClientError
-from src.store.background_writer import bg_writer
 from src.models.logs import ModelDebugArtifacts
 from src.models.perception import ScreenPerception, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.state import AgentState
+from src.store.background_writer import bg_writer
 
 
 class PolicyError(RuntimeError):

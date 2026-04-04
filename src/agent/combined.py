@@ -8,7 +8,6 @@ from pathlib import Path
 
 from src.agent.perception import (
     PerceptionError,
-    PerceptionLowQualityError,
     PerceptionService,
     _apply_weak_canonicalization,
     _low_quality_reason,

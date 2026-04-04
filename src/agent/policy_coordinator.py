@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 from src.agent.policy import PolicyService
-from src.store.background_writer import bg_writer
 from src.agent.policy_rules import PolicyRuleEngine
 from src.models.common import FailureCategory
 from src.models.logs import ModelDebugArtifacts
@@ -15,6 +14,7 @@ from src.models.perception import ScreenPerception
 from src.models.policy import PolicyDecision
 from src.models.selector import SelectorTrace
 from src.models.state import AgentState
+from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore, benchmark_name_for_intent
 
 

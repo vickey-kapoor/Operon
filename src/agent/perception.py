@@ -11,7 +11,6 @@ from typing import Any
 from pydantic import ValidationError
 
 from src.clients.gemini import GeminiClient, GeminiClientError
-from src.store.background_writer import bg_writer
 from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, StopReason
 from src.models.logs import ModelDebugArtifacts
@@ -25,6 +24,7 @@ from src.models.perception import (
     UIElementType,
 )
 from src.models.state import AgentState
+from src.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
 

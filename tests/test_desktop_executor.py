@@ -594,7 +594,7 @@ async def test_launch_app_tracks_process() -> None:
     mock_proc.args = "calc.exe"
 
     with (
-        patch("src.executor.desktop.subprocess.Popen", return_value=mock_proc) as mock_popen,
+        patch("src.executor.desktop.subprocess.Popen", return_value=mock_proc),
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)

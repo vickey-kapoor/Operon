@@ -165,7 +165,7 @@ class PostRunReflector:
             else:
                 if subgoal_count >= 4 and current_subgoal:
                     patterns.append(ReflectionPattern(
-                        pattern_key=f"stuck_subgoal",
+                        pattern_key="stuck_subgoal",
                         description=f"Subgoal '{current_subgoal}' persisted for {subgoal_count} steps",
                         trigger_context=f"subgoal={current_subgoal}",
                         suggested_action=f"After completing an action, advance to the next subgoal immediately. Do not stay on '{current_subgoal}' if the action already succeeded.",
@@ -179,7 +179,7 @@ class PostRunReflector:
 
         if subgoal_count >= 4 and current_subgoal:
             patterns.append(ReflectionPattern(
-                pattern_key=f"stuck_subgoal",
+                pattern_key="stuck_subgoal",
                 description=f"Subgoal '{current_subgoal}' persisted for {subgoal_count} steps",
                 trigger_context=f"subgoal={current_subgoal}",
                 suggested_action=f"After completing an action, advance to the next subgoal immediately. Do not stay on '{current_subgoal}' if the action already succeeded.",
@@ -199,8 +199,6 @@ class PostRunReflector:
         for step in steps:
             progress = step.get("progress_state", {})
             step_idx = step.get("step_index", 0)
-            # Check the progress_trace if available
-            trace_path = step.get("progress_trace_artifact_path")
             no_progress = progress.get("no_progress_streak", 0)
 
             if no_progress > 0:

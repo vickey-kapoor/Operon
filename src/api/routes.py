@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, HTMLResponse
 
+from src.agent.backend import AgentBackend
+from src.agent.browser_computer_use import BrowserComputerUseBackend
+from src.agent.browser_json import BrowserJsonBackend
 from src.agent.capture import ScreenCaptureService
 from src.agent.combined import CombinedPerceptionPolicyService
+from src.agent.fallback_backend import FallbackBackend
 from src.agent.loop import AgentLoop
-from src.agent.perception import GeminiPerceptionService
-from src.agent.policy import GeminiPolicyService
 from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
 from src.api.observer import artifact_path_for_request, list_runs, load_run_snapshot
+from src.api.runtime_config import browser_mode_config, desktop_mode_config
 from src.clients.gemini import GeminiHttpClient
+from src.clients.gemini_computer_use import GeminiComputerUseHttpClient
+from src.executor.browser_native import NativeBrowserExecutor
 from src.executor.desktop import DesktopExecutor
 from src.models.common import (
     CleanupRequest,
@@ -45,29 +49,66 @@ _DESKTOP_HTML_PATH = Path(__file__).resolve().parent / "static" / "desktop.html"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
-_PERCEPTION_MODEL = os.getenv("GEMINI_PERCEPTION_MODEL", "gemini-2.0-flash")
-_POLICY_MODEL = os.getenv("GEMINI_POLICY_MODEL", "gemini-2.5-flash")
+def _build_json_backend(*, prompt_name: str, model: str, timeout_seconds: float = 120.0) -> AgentBackend:
+    return CombinedPerceptionPolicyService(
+        gemini_client=GeminiHttpClient(model=model, timeout_seconds=timeout_seconds),
+        prompt_path=_PROMPTS_DIR / prompt_name,
+    )
+
+
+def _build_browser_backend(executor) -> AgentBackend:
+    config = browser_mode_config()
+    if config.backend == "json":
+        return BrowserJsonBackend(
+            gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
+            prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
+        )
+    if config.backend == "computer_use":
+        primary = BrowserComputerUseBackend(
+            client=GeminiComputerUseHttpClient(model=config.primary_model),
+            prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
+            browser_runtime=executor,
+        )
+        if config.fallback_backend == "json" and config.fallback_model:
+            secondary = BrowserJsonBackend(
+                gemini_client=GeminiHttpClient(model=config.fallback_model, timeout_seconds=120.0),
+                prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
+            )
+            return FallbackBackend(primary=primary, secondary=secondary)
+        return primary
+    raise ValueError(f"Unsupported browser backend {config.backend!r}")
+
+
+def _build_desktop_backend() -> AgentBackend:
+    config = desktop_mode_config()
+    if config.backend != "json":
+        raise ValueError(
+            f"Unsupported desktop backend {config.backend!r}. "
+            "Only 'json' is implemented in this slice."
+        )
+    return _build_json_backend(
+        prompt_name="desktop_combined_prompt.txt",
+        model=config.primary_model,
+    )
 
 
 def get_agent_loop() -> AgentLoop:
     """Build the MVP runtime lazily so env loading can happen first."""
     global _agent_loop
     if _agent_loop is None:
-        combined_client = GeminiHttpClient(model=_POLICY_MODEL)
-        policy_client = GeminiHttpClient(model=_POLICY_MODEL)
-        executor = DesktopExecutor()
+        browser_config = browser_mode_config()
+        verifier_model = browser_config.verifier_model or browser_config.fallback_model or browser_config.primary_model
+        policy_client = GeminiHttpClient(model=verifier_model, timeout_seconds=120.0)
+        executor = NativeBrowserExecutor()
+        backend = _build_browser_backend(executor)
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
-        combined_service = CombinedPerceptionPolicyService(
-            gemini_client=combined_client,
-            prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
-        )
         _agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
-            perception_service=combined_service,
+            perception_service=backend,
             run_store=run_store,
             policy_service=PolicyCoordinator(
-                delegate=combined_service,
+                delegate=backend,
                 memory_store=memory_store,
             ),
             executor=executor,
@@ -83,21 +124,19 @@ def get_desktop_agent_loop() -> AgentLoop:
     """Build the desktop runtime lazily so env loading can happen first."""
     global _desktop_agent_loop
     if _desktop_agent_loop is None:
-        combined_client = GeminiHttpClient(model=_POLICY_MODEL, timeout_seconds=120.0)
-        policy_client = GeminiHttpClient(model=_POLICY_MODEL, timeout_seconds=120.0)
+        desktop_config = desktop_mode_config()
+        backend = _build_desktop_backend()
+        verifier_model = desktop_config.verifier_model or desktop_config.primary_model
+        policy_client = GeminiHttpClient(model=verifier_model, timeout_seconds=120.0)
         executor = DesktopExecutor()
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
-        combined_service = CombinedPerceptionPolicyService(
-            gemini_client=combined_client,
-            prompt_path=_PROMPTS_DIR / "desktop_combined_prompt.txt",
-        )
         _desktop_agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
-            perception_service=combined_service,
+            perception_service=backend,
             run_store=run_store,
             policy_service=PolicyCoordinator(
-                delegate=combined_service,
+                delegate=backend,
                 memory_store=memory_store,
             ),
             executor=executor,

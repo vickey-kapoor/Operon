@@ -51,8 +51,12 @@ def create_desktop_run(intent: str = "Open Notepad") -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def require_server():
-    resp = get("/health")
-    assert resp.status_code == 200, f"Server not reachable at {BASE_URL}"
+    try:
+        resp = get("/health")
+    except requests.RequestException as exc:
+        pytest.skip(f"Live server not reachable at {BASE_URL}: {exc}")
+    if resp.status_code != 200:
+        pytest.skip(f"Live server not reachable at {BASE_URL}: status={resp.status_code}")
     assert resp.json().get("status") == "ok"
 
 
@@ -298,13 +302,13 @@ class TestFix4ResumeReturns404:
     def test_desktop_resume_does_not_return_400(self):
         resp = post("/desktop/resume", {"run_id": "test-not-400-fix4"})
         assert resp.status_code != 400, (
-            f"FIX4 FAIL: /desktop/resume returned 400 instead of 404"
+            "FIX4 FAIL: /desktop/resume returned 400 instead of 404"
         )
 
     def test_browser_resume_does_not_return_400(self):
         resp = post("/resume", {"run_id": "test-not-400-browser-fix4"})
         assert resp.status_code != 400, (
-            f"FIX4 FAIL: /resume returned 400 instead of 404"
+            "FIX4 FAIL: /resume returned 400 instead of 404"
         )
 
     def test_desktop_resume_empty_run_id_still_422(self):
@@ -452,7 +456,6 @@ class TestFix6CorsMiddleware:
             timeout=10,
         )
         # If CORS is properly configured, allow-methods should be present
-        allow_methods = resp.headers.get("Access-Control-Allow-Methods", "")
         # This is informational — log if missing but check ACAO first
         cors_header = resp.headers.get("Access-Control-Allow-Origin", "")
         assert cors_header, (
@@ -617,7 +620,7 @@ class TestFix10PathTraversalInCleanup:
         # but the executor should handle it gracefully (not crash)
         # The important thing is no 500 and no filesystem exposure
         assert resp.status_code != 500, (
-            f"FIX10 FAIL: Path traversal run_id caused 500 on /desktop/cleanup"
+            "FIX10 FAIL: Path traversal run_id caused 500 on /desktop/cleanup"
         )
 
     def test_cleanup_with_very_long_run_id_no_500(self):
@@ -625,7 +628,7 @@ class TestFix10PathTraversalInCleanup:
         resp = post("/desktop/cleanup", {"run_id": long_run_id})
         # Cleanup does not route through _validate_run_id, so we test for no crash
         assert resp.status_code != 500, (
-            f"FIX10 FAIL: 256-char run_id caused 500 on /desktop/cleanup"
+            "FIX10 FAIL: 256-char run_id caused 500 on /desktop/cleanup"
         )
         # Should still return a valid response shape
         if resp.status_code == 200:
@@ -646,7 +649,7 @@ class TestFix10PathTraversalInCleanup:
     def test_observer_api_run_with_traversal_returns_404(self):
         resp = get("/observer/api/run/../../../etc/passwd")
         assert resp.status_code != 500, (
-            f"FIX10 FAIL: Path traversal in observer run URL caused 500"
+            "FIX10 FAIL: Path traversal in observer run URL caused 500"
         )
 
     def test_cleanup_with_empty_run_id_still_422(self):
@@ -774,7 +777,7 @@ class TestEdgeCasesAroundFixes:
         run_id = "i" * 65
         resp = post("/desktop/resume", {"run_id": run_id})
         assert resp.status_code != 500, (
-            f"EDGE: 65-char run_id on /desktop/resume caused 500"
+            "EDGE: 65-char run_id on /desktop/resume caused 500"
         )
 
     # Multiple runs with same intent are still unique

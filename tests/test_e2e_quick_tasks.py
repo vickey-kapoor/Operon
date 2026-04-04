@@ -17,10 +17,8 @@ and structural tests run regardless.
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 import pytest
 import requests
@@ -28,6 +26,17 @@ import requests
 BASE_URL = "http://127.0.0.1:8080"
 SESSION = requests.Session()
 SESSION.headers["Content-Type"] = "application/json"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def require_server():
+    try:
+        resp = SESSION.get(f"{BASE_URL}/health", timeout=10)
+    except requests.RequestException as exc:
+        pytest.skip(f"Live server not reachable at {BASE_URL}: {exc}")
+    if resp.status_code != 200:
+        pytest.skip(f"Live server not reachable at {BASE_URL}: status={resp.status_code}")
+    assert resp.json() == {"status": "ok"}
 
 # ---------------------------------------------------------------------------
 # Quick-task intent catalogue (all 22 tasks from the spec)
@@ -105,20 +114,6 @@ def cleanup(run_id: str) -> dict:
 
 # ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="session")
-def health_check():
-    """Verify server is reachable before any tests run."""
-    resp = get("/health")
-    assert resp.status_code == 200, f"Server not reachable at {BASE_URL}: {resp.status_code}"
-    data = resp.json()
-    assert data.get("status") == "ok"
-    return data
-
-
-# ---------------------------------------------------------------------------
-# 1. Server health
 # ---------------------------------------------------------------------------
 
 class TestHealth:

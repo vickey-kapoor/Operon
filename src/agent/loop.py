@@ -35,7 +35,11 @@ from src.models.policy import ActionType, AgentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.selector import TargetIntent, TargetIntentAction
-from src.models.verification import VerificationFailureType, VerificationResult, VerificationStatus
+from src.models.verification import (
+    VerificationFailureType,
+    VerificationResult,
+    VerificationStatus,
+)
 from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log
@@ -96,6 +100,8 @@ class AgentLoop:
         if hasattr(self.executor, "reset_desktop"):
             await self.executor.reset_desktop()
         record = self.run_store.create_run(intent=request.intent, start_url=request.start_url)
+        if hasattr(self.executor, "set_current_run_id"):
+            self.executor.set_current_run_id(record.run_id)
         if request.start_url:
             await self.executor.execute(
                 AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
@@ -125,6 +131,7 @@ class AgentLoop:
             if state.step_count >= max_steps:
                 state.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
                 updated = await self.run_store.set_status(state.run_id, RunStatus.FAILED)
+                await self._cleanup_completed_run(state.run_id)
                 return RunResponse(
                     run_id=updated.run_id,
                     status=updated.status,
@@ -317,6 +324,8 @@ class AgentLoop:
             state.stop_reason = None
 
         updated = await self.run_store.set_status(record.run_id, final_status)
+        if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
+            await self._cleanup_completed_run(record.run_id)
 
         # Post-run reflection: analyze completed/failed runs and learn
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED} and self.reflector is not None:
@@ -435,6 +444,7 @@ class AgentLoop:
         )
         record.stop_reason = stop_reason
         updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
+        await self._cleanup_completed_run(record.run_id)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -491,7 +501,10 @@ class AgentLoop:
         if not before_artifact_path or not after_path:
             return None
 
-        from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD, compute_screen_change_ratio
+        from src.agent.screen_diff import (
+            SCREEN_CHANGE_THRESHOLD,
+            compute_screen_change_ratio,
+        )
 
         ratio = compute_screen_change_ratio(before_artifact_path, after_path)
         if ratio >= SCREEN_CHANGE_THRESHOLD:
@@ -532,6 +545,23 @@ class AgentLoop:
         )
 
         if video_result.did_it_work:
+            if self._passive_wait_needs_more_signal(
+                state,
+                action,
+                video_result.what_happened,
+            ):
+                return VerificationResult(
+                    status=VerificationStatus.UNCERTAIN,
+                    expected_outcome_met=False,
+                    stop_condition_met=False,
+                    reason=f"Video verified the wait action, but it did not reveal enough new browser-task signal: {video_result.what_happened}",
+                    failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+                    recovery_hint="retry_same_step",
+                    video_verified=True,
+                    video_detail=video_result.what_happened,
+                    failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+                    failure_stage=LoopStage.VERIFY,
+                )
             return VerificationResult(
                 status=VerificationStatus.SUCCESS,
                 expected_outcome_met=True,
@@ -553,6 +583,72 @@ class AgentLoop:
             failure_category=FailureCategory.EXECUTION_ERROR,
             failure_stage=LoopStage.VERIFY,
         )
+
+    @classmethod
+    def _passive_wait_needs_more_signal(
+        cls,
+        state,
+        action: AgentAction,
+        video_detail: str,
+    ) -> bool:
+        if action.action_type is not ActionType.WAIT:
+            return False
+        intent = state.intent.lower()
+        if not any(token in intent for token in ("inspect", "look", "find", "open", "check", "view", "read")):
+            return False
+        if not cls._latest_observation_lacks_browser_signal(state):
+            return False
+        detail = video_detail.lower()
+        return any(
+            token in detail
+            for token in (
+                "loading",
+                "still loading",
+                "spinner",
+                "blank",
+                "empty",
+                "waiting",
+                "redirect",
+                "navigating",
+                "transition",
+            )
+        )
+
+    @staticmethod
+    def _latest_observation_lacks_browser_signal(state) -> bool:
+        if not state.observation_history:
+            return True
+        latest = state.observation_history[-1]
+        if latest.visible_elements:
+            return False
+        return str(latest.page_hint) == "unknown"
+
+    async def _cleanup_completed_run(self, run_id: str) -> None:
+        if not hasattr(self.executor, "aclose_run"):
+            return
+        try:
+            await self.executor.aclose_run(run_id)
+        except Exception:
+            pass
+        await self._persist_cleanup_artifacts(run_id)
+
+    async def _persist_cleanup_artifacts(self, run_id: str) -> None:
+        if not hasattr(self.executor, "recorded_video_path_for_run"):
+            return
+        try:
+            video_path = self.executor.recorded_video_path_for_run(run_id)
+        except Exception:
+            return
+        if video_path is None:
+            return
+        state = await self.run_store.get_run(run_id)
+        if state is None:
+            return
+        video_str = str(video_path)
+        if video_str in state.artifact_paths:
+            return
+        state.artifact_paths.append(video_str)
+        await self.run_store.save_state(state)
 
     def _resolve_model_debug_artifacts(
         self,

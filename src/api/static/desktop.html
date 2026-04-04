@@ -261,7 +261,7 @@
   .right-panel { flex: 1; display: flex; flex-direction: column; background: var(--bg); }
   .screenshot-area {
     flex: 1; display: flex; align-items: center; justify-content: center;
-    padding: 24px; overflow: auto;
+    padding: 24px; overflow: auto; flex-direction: column; gap: 18px;
   }
   .screenshot-container { position: relative; max-width: 100%; max-height: 100%; }
   .screenshot-container img {
@@ -269,6 +269,35 @@
     border-radius: var(--radius-lg); border: 1px solid var(--border);
     box-shadow: var(--shadow-lg);
     transition: opacity 0.3s ease;
+  }
+  .video-panel {
+    width: min(100%, 960px);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: 12px;
+    display: none;
+  }
+  .video-panel.visible { display: block; }
+  .video-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 10px;
+  }
+  .video-title {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.9px;
+    text-transform: uppercase; color: var(--accent);
+  }
+  .video-link {
+    color: var(--text-secondary); font-size: 11px; text-decoration: none;
+  }
+  .video-link:hover { color: var(--text); }
+  .video-player {
+    width: 100%;
+    max-height: 320px;
+    background: #000;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
   }
 
   /* Welcome / Placeholder */
@@ -526,6 +555,13 @@
           </div>
         </div>
       </div>
+      <div id="videoPanel" class="video-panel">
+        <div class="video-head">
+          <div class="video-title">Run Recording</div>
+          <a id="videoLink" class="video-link" href="#" target="_blank" rel="noopener">Open video</a>
+        </div>
+        <video id="videoPlayer" class="video-player" controls preload="metadata"></video>
+      </div>
     </div>
     <div class="detail-bar" id="detailBar">
       <div class="detail-grid" id="detailGrid"></div>
@@ -656,6 +692,7 @@ function setButtons(isRunning) {
 async function loadScreenshot(runId) {
   try {
     const data = await fetchJson('/observer/api/run/' + runId);
+    renderSessionVideo(data.run || {});
     const step = data.current_step ||
       (data.steps && data.steps.length > 0 ? data.steps[data.steps.length - 1] : null);
     if (!step) return;
@@ -674,6 +711,28 @@ async function loadScreenshot(runId) {
       container.appendChild(img);
     }
   } catch (e) { console.warn('loadScreenshot error:', e); }
+}
+
+function renderSessionVideo(run) {
+  const panel = document.getElementById('videoPanel');
+  const player = document.getElementById('videoPlayer');
+  const link = document.getElementById('videoLink');
+  const path = run.session_video_path;
+  if (!path) {
+    panel.classList.remove('visible');
+    player.removeAttribute('src');
+    player.load();
+    link.removeAttribute('href');
+    return;
+  }
+  const url = '/observer/api/artifact?path=' + encodeURIComponent(path);
+  if (player.dataset.src !== url) {
+    player.src = url;
+    player.dataset.src = url;
+    player.load();
+  }
+  link.href = url;
+  panel.classList.add('visible');
 }
 
 function renderDetail(step) {

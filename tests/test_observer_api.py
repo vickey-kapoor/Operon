@@ -55,10 +55,14 @@ def _debug(stage: str, step_dir: Path) -> ModelDebugArtifacts:
 
 def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
     root_dir = _local_test_dir("test-observer") / "runs"
+    browser_root = _local_test_dir("test-observer-browser-artifacts")
     run_id = "run-observer"
     run_dir = root_dir / run_id
     step_dir = run_dir / "step_1"
     step_dir.mkdir(parents=True, exist_ok=True)
+    video_path = browser_root / run_id / "session_video" / "session.webm"
+    video_path.parent.mkdir(parents=True, exist_ok=True)
+    video_path.write_bytes(b"fakewebm")
     (step_dir / "before.png").write_bytes(b"fakepng")
     (step_dir / "after.png").write_bytes(b"fakepng")
     (step_dir / "selector_trace.json").write_text(
@@ -119,6 +123,7 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
             loop_detected=False,
             latest_page_signature="form_page|none|submit-button:Submit",
         ),
+        artifact_paths=[str(video_path)],
     )
     _write_state(run_dir, state)
     append_step_log(
@@ -189,6 +194,7 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
     )
 
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
+    monkeypatch.setenv("OPERON_BROWSER_ARTIFACTS_ROOT", str(browser_root))
     client = TestClient(app)
 
     page = client.get("/desktop-pilot")
@@ -204,12 +210,15 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
     assert snapshot.status_code == 200
     assert body["run"]["run_id"] == run_id
     assert body["run"]["current_phase"] == "recover"
+    assert body["run"]["session_video_path"] == str(video_path)
     assert body["current_step"]["selector"]["trace"]["selected_candidate"] == "submit-button"
     assert body["current_step"]["execution"]["trace"]["final_outcome"] == "success"
     assert body["progress_state"]["completed_targets"] == ["id:submit-button"]
 
     artifact = client.get(f"/observer/api/artifact?path={step_dir / 'before.png'}")
     assert artifact.status_code == 200
+    video_artifact = client.get(f"/observer/api/artifact?path={video_path}")
+    assert video_artifact.status_code == 200
 
 
 def test_observer_handles_missing_artifacts_gracefully(monkeypatch) -> None:

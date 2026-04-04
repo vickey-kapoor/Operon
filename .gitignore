@@ -41,9 +41,11 @@ htmlcov/
 nosetests.xml
 test-results/
 runs/
+.desktop-artifacts/
 .browser-artifacts/
 .test-artifacts/
 .tmp/
+tests/e2e_*_results.json
 
 # Legacy browser binaries (no longer used)
 .ms-playwright/

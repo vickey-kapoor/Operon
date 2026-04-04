@@ -8,7 +8,7 @@ from src.clients.gemini import GeminiClient
 from src.models.common import FailureCategory, LoopStage, StopReason
 from src.models.execution import ExecutedAction
 from src.models.perception import PageHint
-from src.models.policy import ActionType, PolicyDecision
+from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.state import AgentState
 from src.models.verification import (
     VerificationFailureType,
@@ -58,6 +58,17 @@ class DeterministicVerifierService(VerifierService):
             )
 
         if action.action_type is ActionType.STOP:
+            if self._suspicious_early_stop(state, decision, latest_perception):
+                return VerificationResult(
+                    status=VerificationStatus.FAILURE,
+                    expected_outcome_met=False,
+                    stop_condition_met=False,
+                    reason="Stop was proposed before the browser task showed enough evidence of completion.",
+                    failure_type=VerificationFailureType.EXPECTED_OUTCOME_NOT_MET,
+                    recovery_hint="retry_same_step",
+                    failure_category=FailureCategory.EXPECTED_OUTCOME_NOT_MET,
+                    failure_stage=LoopStage.VERIFY,
+                )
             if decision.active_subgoal == "stop for benchmark setup":
                 return VerificationResult(
                     status=VerificationStatus.FAILURE,
@@ -104,6 +115,18 @@ class DeterministicVerifierService(VerifierService):
                 failure_stage=executed_action.failure_stage or LoopStage.EXECUTE,
             )
 
+        if self._passive_wait_needs_more_signal(state, action, latest_perception):
+            return VerificationResult(
+                status=VerificationStatus.UNCERTAIN,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason="Wait completed, but the browser task still lacks enough evidence of useful progress.",
+                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+                recovery_hint="retry_same_step",
+                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+                failure_stage=LoopStage.VERIFY,
+            )
+
         if decision.confidence < 0.5:
             return VerificationResult(
                 status=VerificationStatus.UNCERTAIN,
@@ -134,6 +157,41 @@ class DeterministicVerifierService(VerifierService):
         if decision.active_subgoal == "stop for benchmark setup":
             return StopReason.BENCHMARK_PRECONDITION_FAILED
         return StopReason.TASK_COMPLETED
+
+    @staticmethod
+    def _passive_wait_needs_more_signal(
+        state: AgentState,
+        action: AgentAction,
+        latest_perception,
+    ) -> bool:
+        if action.action_type is not ActionType.WAIT:
+            return False
+        if latest_perception is None:
+            return False
+        intent = state.intent.lower()
+        if not any(token in intent for token in ("inspect", "look", "find", "open", "check", "view", "read")):
+            return False
+        if latest_perception.page_hint is not PageHint.UNKNOWN:
+            return False
+        return not latest_perception.visible_elements
+
+    @staticmethod
+    def _suspicious_early_stop(
+        state: AgentState,
+        decision: PolicyDecision,
+        latest_perception,
+    ) -> bool:
+        if state.step_count > 1:
+            return False
+        if latest_perception is None:
+            return False
+        if latest_perception.page_hint is PageHint.FORM_SUCCESS:
+            return False
+        if latest_perception.visible_elements:
+            return False
+        if decision.active_subgoal in {"verify_success", "complete task"}:
+            return True
+        return latest_perception.page_hint is PageHint.UNKNOWN
 
     @staticmethod
     def _is_goal_completing_action(state: AgentState, action: AgentAction) -> bool:
@@ -167,7 +225,13 @@ class DeterministicVerifierService(VerifierService):
     def _task_success_visible(perception) -> bool:
         if perception.page_hint is PageHint.FORM_SUCCESS:
             return True
-        success_tokens = ("thank you", "success", "submitted")
+        success_tokens = (
+            "thank you",
+            "submitted successfully",
+            "submission successful",
+            "submission complete",
+            "task completed",
+        )
         if any(token in perception.summary.lower() for token in success_tokens):
             return True
         return any(any(token in element.primary_name.lower() for token in success_tokens) for element in perception.visible_elements)

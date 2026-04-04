@@ -177,6 +177,7 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
     run_store.get_run = AsyncMock(return_value=initial_state)
     run_store.set_status = AsyncMock(return_value=final_state)
     run_store.update_state = AsyncMock(return_value=updated_state)
+    run_store.save_state = AsyncMock()
     policy_service = Mock()
     policy_service.choose_action = AsyncMock(return_value=decision)
     policy_service.latest_debug_artifacts = Mock(
@@ -188,6 +189,8 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
     )
     executor = Mock()
     executor.execute = AsyncMock(return_value=executed)
+    executor.aclose_run = AsyncMock(return_value=1)
+    executor.recorded_video_path_for_run = Mock(return_value=Path("runs/run-2/session_video/session.webm"))
     verifier_service = Mock()
     verifier_service.verify = AsyncMock(return_value=verification)
     recovery_manager = Mock()
@@ -219,7 +222,89 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
     executor.execute.assert_awaited_once_with(action)
     verifier_service.verify.assert_awaited_once_with(updated_state, decision, remapped_executed)
     recovery_manager.recover.assert_awaited_once_with(updated_state, decision, remapped_executed, verification)
+    executor.aclose_run.assert_awaited_once_with("run-2")
+    run_store.save_state.assert_awaited()
     assert response.status is RunStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_does_not_cleanup_non_terminal_runs() -> None:
+    initial_state = AgentState(run_id="run-keep-open", intent="Create draft", status=RunStatus.PENDING)
+    updated_state = initial_state.model_copy(update={"step_count": 1, "status": RunStatus.RUNNING})
+    frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
+    perception = ScreenPerception(
+        summary="Compose button visible",
+        page_hint="gmail_inbox",
+        capture_artifact_path=frame.artifact_path,
+        visible_elements=[],
+    )
+    action = AgentAction(action_type=ActionType.WAIT, wait_ms=1000)
+    decision = PolicyDecision(action=action, rationale="Wait.", confidence=0.8, active_subgoal="wait")
+    executed = ExecutedAction(action=action, success=True, detail="waited")
+    verification = VerificationResult(
+        status=VerificationStatus.SUCCESS,
+        expected_outcome_met=True,
+        stop_condition_met=False,
+        reason="Continue",
+    )
+    recovery = RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="Try again", retry_after_ms=1000)
+    final_state = updated_state.model_copy(update={"status": RunStatus.RUNNING})
+
+    capture_service = Mock()
+    capture_service.capture = AsyncMock(return_value=frame)
+    perception_service = Mock()
+    perception_service.perceive = AsyncMock(return_value=perception)
+    perception_service.latest_debug_artifacts = Mock(
+        return_value=ModelDebugArtifacts(
+            prompt_artifact_path="runs/run-keep-open/step_1/perception_prompt.txt",
+            raw_response_artifact_path="runs/run-keep-open/step_1/perception_raw.txt",
+            parsed_artifact_path="runs/run-keep-open/step_1/perception_parsed.json",
+        )
+    )
+    run_store = Mock()
+    run_store.get_run = AsyncMock(return_value=initial_state)
+    run_store.set_status = AsyncMock(return_value=final_state)
+    run_store.update_state = AsyncMock(return_value=updated_state)
+    run_store.save_state = AsyncMock()
+    run_store.save_state = AsyncMock()
+    run_store.save_state = AsyncMock()
+    policy_service = Mock()
+    policy_service.choose_action = AsyncMock(return_value=decision)
+    policy_service.latest_debug_artifacts = Mock(
+        return_value=ModelDebugArtifacts(
+            prompt_artifact_path="runs/run-keep-open/step_1/policy_prompt.txt",
+            raw_response_artifact_path="runs/run-keep-open/step_1/policy_raw.txt",
+            parsed_artifact_path="runs/run-keep-open/step_1/policy_decision.json",
+        )
+    )
+    executor = Mock()
+    executor.execute = AsyncMock(return_value=executed)
+    executor.aclose_run = AsyncMock(return_value=1)
+    executor.recorded_video_path_for_run = Mock(return_value=Path("runs/run-keep-open/session_video/session.webm"))
+    verifier_service = Mock()
+    verifier_service.verify = AsyncMock(return_value=verification)
+    recovery_manager = Mock()
+    recovery_manager.recover = AsyncMock(return_value=recovery)
+    run_root = _local_test_dir("test-runs-running-no-cleanup")
+    run_store.before_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "before.png")
+    run_store.after_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "after.png")
+    run_store.run_log_path = lambda run_id: str(run_root / run_id / "run.jsonl")
+
+    loop = AgentLoop(
+        capture_service=capture_service,
+        perception_service=perception_service,
+        run_store=run_store,
+        policy_service=policy_service,
+        executor=executor,
+        verifier_service=verifier_service,
+        recovery_manager=recovery_manager,
+    )
+
+    response = await loop.step_run(StepRequest(run_id="run-keep-open"))
+
+    executor.aclose_run.assert_not_awaited()
+    run_store.save_state.assert_not_awaited()
+    assert response.status is RunStatus.RUNNING
 
 
 @pytest.mark.asyncio
@@ -309,6 +394,7 @@ async def test_agent_loop_marks_benchmark_precondition_stop_as_failed() -> None:
     )
     executor = Mock()
     executor.execute = AsyncMock(return_value=executed)
+    executor.recorded_video_path_for_run = Mock(return_value=None)
     verifier_service = Mock()
     verifier_service.verify = AsyncMock(return_value=verification)
     recovery_manager = Mock()

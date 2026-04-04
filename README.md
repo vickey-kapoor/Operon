@@ -2,209 +2,125 @@
 
 ![Operon loop mark](assets/operon-loop-mark.svg)
 
-**Operate any interface.**
-
-Operon is a vision-driven computer-use engine that interacts with software the way a human does: by observing the screen, deciding the next action, executing it, and verifying the outcome. It uses **full-screen desktop automation** (via pyautogui/mss) to control any application — no browser drivers, no DOM access, no accessibility APIs.
+Operate desktop apps and browser sessions through a closed loop: observe, choose the next action, execute it, verify the result, and store the run.
 
 License: Apache-2.0
 
-## What It Is
+## Overview
 
-Operon is not a chatbot and not a traditional automation script. It is a closed-loop interaction system built for UI-native automation:
+Operon has two execution paths:
 
-- Perception from pixels (Gemini vision)
-- Structured action selection (rule engine + LLM fallback)
-- Real execution on the desktop via pyautogui
-- Verification and recovery
-- Replayable runs with persistent learning signals
-- Local-only persistence
+- Desktop mode uses full-screen automation with `pyautogui` and `mss`.
+- Browser mode uses a native Playwright executor with Gemini Computer Use and a JSON fallback backend.
+
+Both paths share the same agent loop, verifier, recovery logic, and local run store.
 
 ## Architecture
 
-```
-HTTP Request
+```text
+FastAPI routes
     |
-+-- ROUTES (src/api/routes.py) ---------------------------+
-|                                                          |
-|  POST /desktop/run-task   GET / (Pilot UI)               |
-|  POST /desktop/step       GET /health                    |
-|  POST /desktop/resume     GET /observer/api/*            |
-|  POST /desktop/cleanup                                   |
-+----------------------------------------------------------+
-    |
-+-- AGENT LOOP (src/agent/loop.py) -----------------------+
-|                                                          |
-|  1. CAPTURE    -- full-screen screenshot (mss)           |
-|  2. PERCEIVE   -- Gemini vision -> ScreenPerception      |
-|  3. CHOOSE     -- PolicyRuleEngine -> CombinedService    |
-|  4. EXECUTE    -- DesktopExecutor (pyautogui)            |
-|  5. VERIFY     -- DeterministicVerifierService           |
-|  6. VIDEO      -- record + Gemini (when no screen change)|
-|  7. RECOVER    -- RuleBasedRecoveryManager               |
-|                                                          |
-+----------------------------------------------------------+
-    |
-+-- EXECUTOR (src/executor/desktop.py) -------------------+
-|                                                          |
-|  click, double_click, right_click, type, press_key,      |
-|  hotkey, launch_app, drag, scroll, hover,                |
-|  read_clipboard, write_clipboard, screenshot_region,     |
-|  wait, wait_for_user, stop                               |
-+----------------------------------------------------------+
-    |
-+-- STORAGE (src/store/) ---------------------------------+
-|  runs/{run_id}/state.json                                |
-|  runs/{run_id}/run.jsonl                                 |
-|  runs/{run_id}/step_N/before.png, after.png, ...         |
-+----------------------------------------------------------+
+    +-- AgentLoop
+          |
+          +-- capture
+          +-- backend selection
+          |     - desktop: combined JSON perception + policy
+          |     - browser: Computer Use or JSON fallback
+          +-- executor
+          |     - DesktopExecutor
+          |     - NativeBrowserExecutor
+          +-- verifier + recovery
+          +-- local run persistence
 ```
 
-### Module Map
+## Repository Layout
 
-| Directory | Purpose |
-|-----------|---------|
-| `src/agent/` | Core loop, perception, policy, combined service, selector, verifier, recovery |
-| `src/api/` | FastAPI routes, Operon Pilot UI, Observer API |
-| `src/executor/` | DesktopExecutor (pyautogui/mss) |
-| `src/models/` | Pydantic schemas: actions, perception, execution, state, progress, memory |
-| `src/clients/` | GeminiHttpClient (async httpx with HTTP/2 + connection pooling) |
-| `src/store/` | FileBackedRunStore, FileBackedMemoryStore, replay, summary |
-| `prompts/` | LLM prompt templates (combined, perception, policy) |
-| `tests/` | 204+ unit tests |
+| Path | Purpose |
+| --- | --- |
+| `src/agent/` | Main loop, backend adapters, verifier, policy coordinator, recovery |
+| `src/api/` | FastAPI routes, Pilot UI, observer endpoints |
+| `src/executor/` | Desktop and native browser execution |
+| `src/clients/` | Gemini HTTP clients, including Computer Use |
+| `src/models/` | Pydantic schemas for actions, runs, perception, and execution |
+| `src/store/` | Local run history, memory, replay, and summaries |
+| `prompts/` | Prompt templates for desktop, browser JSON, and browser Computer Use |
+| `tests/` | Unit, route, and browser-focused regression coverage |
 
-### Combined Perception+Policy
+## Browser Runtime
 
-The `CombinedPerceptionPolicyService` sends a single Gemini call per step that returns both screen perception AND the next action. This eliminates one full LLM round-trip (~1-3s/step). The `PolicyCoordinator` still runs deterministic rules first and can override the LLM's action choice.
+The browser path is built around:
 
-### Action Types (18 total)
+- `BrowserComputerUseBackend` for Gemini Computer Use turns
+- `BrowserJsonBackend` as a fallback backend
+- `NativeBrowserExecutor` for Playwright execution
+- mandatory browser-session video recording under `.browser-artifacts/`
+- observer support to review saved browser recordings from the run detail page
 
-| Action | Description |
-|--------|-------------|
-| `click` | Left-click at coordinates |
-| `double_click` | Double-click at coordinates |
-| `right_click` | Right-click (context menu) |
-| `type` | Click to focus, then type text |
-| `press_key` | Press a single key (enter, tab, etc.) |
-| `hotkey` | Key combination (ctrl+c, win+r, etc.) |
-| `launch_app` | Launch desktop app by name |
-| `drag` | Drag from (x,y) to (x_end,y_end) |
-| `scroll` | Scroll at position |
-| `hover` | Move mouse without clicking |
-| `read_clipboard` | Read clipboard contents |
-| `write_clipboard` | Copy text to clipboard |
-| `screenshot_region` | Capture a screen region |
-| `wait` | Wait for duration |
-| `wait_for_user` | Pause for human input |
-| `stop` | Mark task complete |
+Computer Use actions are translated to the documented browser protocol, including normalized coordinate handling and multi-call turns.
 
-### Progress Detection
+## Setup
 
-The agent tracks forward progress by monitoring subgoal changes. If the model returns the same `active_subgoal` for 3+ consecutive steps, the no-progress streak increments and:
-
-- Repeated actions (same type + same target region) are blocked
-- Stagnation warnings are injected into the prompt
-- After enough stagnation, the run terminates
-
-Coordinate-based targets are bucketed to a 50px grid so nearby clicks are detected as repeats.
-
-## Runtime
-
-Python **3.11** required.
+Python 3.11 is required.
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+pip install -e .[dev]
+playwright install chromium
 ```
 
-Gemini credentials via `.env` file or environment:
+Copy `.env.example` to `.env` and set your Gemini key:
 
+```env
+GOOGLE_API_KEY=your-gemini-api-key
 ```
-GEMINI_API_KEY=your-key-here
-```
 
-### Environment Variables
+Useful runtime settings:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `GEMINI_API_KEY` | (required) | Gemini API key |
-| `GEMINI_PERCEPTION_MODEL` | `gemini-2.0-flash` | Model for perception (faster) |
-| `GEMINI_POLICY_MODEL` | `gemini-2.5-flash` | Model for policy (smarter) |
-| `CORS_ORIGINS` | (disabled) | Comma-separated allowed origins |
+- `BROWSER_HEADLESS=true`
+- `OPERON_BROWSER_BACKEND=computer_use`
+- `OPERON_BROWSER_FALLBACK_BACKEND=json`
+- `OPERON_DESKTOP_BACKEND=json`
 
-## Run The API
+## Run
+
+Start the API:
 
 ```powershell
 python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
 ```
 
-Open `http://127.0.0.1:8080/` for the Operon Pilot UI.
+Main endpoints:
 
-### Routes
+- `POST /run-task`
+- `POST /step`
+- `POST /resume`
+- `GET /run/{run_id}`
+- `GET /observer/api/runs`
+- `GET /observer/api/run/{run_id}`
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/` or `/desktop-pilot` | Operon Pilot UI |
-| GET | `/health` | Health check |
-| POST | `/desktop/run-task` | Create a desktop automation run |
-| POST | `/desktop/step` | Advance a run one step |
-| POST | `/desktop/resume` | Resume run from user wait |
-| POST | `/desktop/cleanup` | Close apps launched during a run |
-| GET | `/desktop/run/{id}` | Get run state |
-| GET | `/observer/api/runs` | List recent runs |
-| GET | `/observer/api/run/{id}` | Run snapshot with step details |
+Open `http://127.0.0.1:8080/` for the Pilot UI and observer.
 
-### Example
+## Artifacts
 
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8080/desktop/run-task `
-  -ContentType "application/json" `
-  -Body '{"intent":"Open Notepad and type Hello World"}'
-```
+Operon stores run state under `runs/`. Browser recordings are saved under `.browser-artifacts/` and linked back into the run snapshot for the UI.
 
-## Run The Benchmark
+Typical artifacts include:
 
-```powershell
-$env:FORM_BENCHMARK_URL = "https://practice-automation.com/form-fields/"
-python -m src.agent.benchmark
-```
-
-## Inspect Stored Runs
-
-```powershell
-python -m src.store.replay <run_id>
-python -m src.store.summary <run_id>
-python -m src.store.summary runs
-```
-
-Run data layout:
-
-```
-runs/<run_id>/
-  state.json
-  run.jsonl
-  step_1/
-    before.png
-    after.png
-    combined_prompt.txt
-    combined_raw.txt
-    combined_parsed.json
-    execution_trace.json
-    progress_trace.json
-    verification_recording.mp4  (when video verification triggered)
-    reflection.json             (after run completes)
-```
+- screenshots before and after each step
+- execution traces
+- verifier outputs
+- reflection summaries
+- browser session video for browser runs
 
 ## Tests
 
 ```powershell
-python -m pytest tests\ -q
+python -m pytest tests -q
+ruff check src tests --select E,F,W,I --ignore E501
 ```
 
-## Windows Shell Troubleshooting
-
-If Python or other external processes fail to launch from PowerShell with a COM+ error:
+If PowerShell process launching breaks on Windows:
 
 ```powershell
 . .\scripts\repair-process-env.ps1 -PersistForSession

@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
+from core.contracts.perception import Environment as UnifiedEnvironment
 from src.agent.backend import AgentBackend
 from src.agent.browser_computer_use import BrowserComputerUseBackend
 from src.agent.browser_json import BrowserJsonBackend
@@ -17,7 +18,13 @@ from src.agent.loop import AgentLoop
 from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
-from src.api.observer import artifact_path_for_request, list_runs, load_run_snapshot
+from src.api.observer import (
+    artifact_path_for_request,
+    build_run_bundle,
+    list_runs,
+    load_run_snapshot,
+    reconcile_orphaned_browser_run,
+)
 from src.api.runtime_config import browser_mode_config, desktop_mode_config
 from src.clients.gemini import GeminiHttpClient
 from src.clients.gemini_computer_use import GeminiComputerUseHttpClient
@@ -28,8 +35,10 @@ from src.models.common import (
     HealthResponse,
     ResumeRequest,
     RunResponse,
+    RunStatus,
     RunTaskRequest,
     StepRequest,
+    StopRunRequest,
 )
 from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
@@ -45,7 +54,7 @@ def _validate_run_id(run_id: str) -> None:
     """Reject run_ids that would cause filesystem issues."""
     if len(run_id) > _MAX_RUN_ID_LENGTH:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-_DESKTOP_HTML_PATH = Path(__file__).resolve().parent / "static" / "desktop.html"
+_CONSOLE_HTML_PATH = Path(__file__).resolve().parent / "static" / "console.html"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
@@ -116,6 +125,7 @@ def get_agent_loop() -> AgentLoop:
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
             gemini_client=policy_client,
+            environment=UnifiedEnvironment.BROWSER,
         )
     return _agent_loop
 
@@ -149,6 +159,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
             gemini_client=policy_client,
+            environment=UnifiedEnvironment.DESKTOP,
         )
     return _desktop_agent_loop
 
@@ -179,6 +190,18 @@ async def resume_run(request: ResumeRequest) -> RunResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.post("/cleanup", response_model=CleanupResponse)
+async def cleanup(request: CleanupRequest) -> CleanupResponse:
+    """Close resources created during a browser-native run."""
+    loop = get_agent_loop()
+    executor = loop.executor
+    if not hasattr(executor, "cleanup_run"):
+        return CleanupResponse(run_id=request.run_id, closed_count=0, detail="Executor does not support cleanup")
+    closed = executor.cleanup_run(request.run_id)
+    detail = f"Closed {closed} browser session(s)" if closed else "No browser sessions to close"
+    return CleanupResponse(run_id=request.run_id, closed_count=closed, detail=detail)
+
+
 @router.get("/run/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str) -> RunResponse:
     """Return the current state for a stored run."""
@@ -201,9 +224,36 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+@router.post("/stop", response_model=RunResponse)
+async def stop_run(request: StopRunRequest) -> RunResponse:
+    """Cancel an active run. Safe to call on already-terminal runs."""
+    _validate_run_id(request.run_id)
+    run_store = get_agent_loop().run_store
+    run = await run_store.get_run(request.run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    terminal = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
+    if run.status not in terminal:
+        run = await run_store.set_status(request.run_id, RunStatus.CANCELLED)
+    return RunResponse(
+        run_id=run.run_id,
+        status=run.status,
+        intent=run.intent,
+        step_count=run.step_count,
+    )
+
+
 @router.get("/observer/api/runs")
 async def observer_runs(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     """Return recent local runs for the observer sidebar."""
+    executor = get_agent_loop().executor
+    recent_runs = list_runs(limit=limit)
+    if hasattr(executor, "current_url_for_run"):
+        for run in recent_runs:
+            if run["status"] != RunStatus.RUNNING.value:
+                continue
+            current_url = await executor.current_url_for_run(run["run_id"])
+            reconcile_orphaned_browser_run(run["run_id"], has_live_session=current_url is not None)
     return {"runs": list_runs(limit=limit)}
 
 
@@ -211,12 +261,21 @@ async def observer_runs(limit: int = Query(default=20, ge=1, le=100)) -> dict:
 async def observer_run(run_id: str) -> dict:
     """Return the current observer snapshot for one run."""
     _validate_run_id(run_id)
+    current_url = None
+    executor = get_agent_loop().executor
+    if hasattr(executor, "current_url_for_run"):
+        current_url = await executor.current_url_for_run(run_id)
+    reconcile_orphaned_browser_run(run_id, has_live_session=current_url is not None)
     try:
-        return load_run_snapshot(run_id)
+        snapshot = load_run_snapshot(run_id)
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found") from None
     except OSError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found") from None
+    snapshot["run"]["current_url"] = None
+    if current_url is not None:
+        snapshot["run"]["current_url"] = current_url
+    return snapshot
 
 
 @router.get("/observer/api/artifact")
@@ -231,14 +290,42 @@ async def observer_artifact(path: str = Query(..., min_length=1)) -> FileRespons
     return FileResponse(artifact_path)
 
 
-# ── Desktop (computer-use) routes ───────────────────────────────
+@router.get("/observer/api/export/{run_id}")
+async def observer_export_run(run_id: str) -> Response:
+    """Download a zip bundle of run artifacts and related outputs."""
+    _validate_run_id(run_id)
+    try:
+        bundle = build_run_bundle(run_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found") from None
+    headers = {"Content-Disposition": f'attachment; filename="{run_id}.zip"'}
+    return Response(content=bundle, media_type="application/zip", headers=headers)
+
+
+@router.get("/observer/api/live-browser/{run_id}")
+async def observer_live_browser(run_id: str) -> Response:
+    """Return a fresh PNG frame from an active browser-native run."""
+    _validate_run_id(run_id)
+    executor = get_agent_loop().executor
+    if not hasattr(executor, "live_frame_png"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Live browser view not available") from None
+    png_bytes = await executor.live_frame_png(run_id)
+    if png_bytes is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active browser session not found") from None
+    return Response(content=png_bytes, media_type="image/png")
+
+
+# ── UI ──────────────────────────────────────────────────────────
 
 
 @router.get("/", response_class=HTMLResponse)
-@router.get("/desktop-pilot", response_class=HTMLResponse)
-async def pilot_ui() -> str:
-    """Serve the Operon Pilot UI (unified desktop + browser)."""
-    return _DESKTOP_HTML_PATH.read_text(encoding="utf-8")
+@router.get("/console", response_class=HTMLResponse)
+async def task_console_ui() -> str:
+    """Serve the task console UI."""
+    return _CONSOLE_HTML_PATH.read_text(encoding="utf-8")
+
+
+# ── Desktop (computer-use) routes ───────────────────────────────
 
 
 @router.post("/desktop/run-task", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)

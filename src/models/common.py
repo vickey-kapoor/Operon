@@ -21,6 +21,7 @@ class RunStatus(StrEnum):
     WAITING_FOR_USER = "waiting_for_user"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class LoopStage(StrEnum):
@@ -69,6 +70,8 @@ class FailureCategory(StrEnum):
     EXECUTION_TARGET_NOT_FOUND = "execution_target_not_found"
     EXECUTION_TARGET_NOT_EDITABLE = "execution_target_not_editable"
     EXECUTION_ERROR = "execution_error"
+    PICKER_NOT_DETECTED = "picker_not_detected"
+    FILE_NOT_REFLECTED = "file_not_reflected"
     EXPECTED_OUTCOME_NOT_MET = "expected_outcome_not_met"
     UNCERTAIN_SCREEN_STATE = "uncertain_screen_state"
     RETRY_LIMIT_REACHED = "retry_limit_reached"
@@ -121,6 +124,7 @@ class ResumeRequest(StrictModel):
 class RunTaskRequest(StrictModel):
     intent: str = Field(min_length=1, max_length=500)
     start_url: str | None = Field(default=None, min_length=1)
+    headless: bool | None = None
 
     @field_validator("intent", mode="before")
     @classmethod
@@ -139,6 +143,12 @@ class RunResponse(StrictModel):
     status: RunStatus
     intent: str = Field(min_length=1)
     step_count: int = Field(ge=0)
+
+
+class StopRunRequest(StrictModel):
+    """Request to cancel an active run."""
+
+    run_id: str = Field(min_length=1)
 
 
 class CleanupRequest(StrictModel):

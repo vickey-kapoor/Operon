@@ -32,6 +32,8 @@ class ActionType(StrEnum):
     READ_CLIPBOARD = "read_clipboard"
     WRITE_CLIPBOARD = "write_clipboard"
     SCREENSHOT_REGION = "screenshot_region"
+    UPLOAD_FILE = "upload_file"
+    UPLOAD_FILE_NATIVE = "upload_file_native"
 
 
 class AgentAction(StrictModel):
@@ -263,6 +265,28 @@ class AgentAction(StrictModel):
                 )
             ):
                 raise ValueError("write_clipboard cannot include fields other than text")
+
+        elif self.action_type is ActionType.UPLOAD_FILE:
+            if self.text is None:
+                raise ValueError("upload_file requires text (the absolute file path to upload)")
+            if any(v is not None for v in _typing_flags):
+                raise ValueError("upload_file cannot include typing flags")
+            if any(
+                value is not None
+                for value in (self.key, self.url, self.wait_ms, self.x, self.y, *_new_fields)
+            ):
+                raise ValueError("upload_file cannot include key, url, wait_ms, or coordinate fields")
+
+        elif self.action_type is ActionType.UPLOAD_FILE_NATIVE:
+            if self.selector is None and self.target_element_id is None and (self.x is None or self.y is None):
+                raise ValueError("upload_file_native requires selector, target_element_id, or coordinates to identify the upload control")
+            if any(v is not None for v in _typing_flags):
+                raise ValueError("upload_file_native cannot include typing flags")
+            if any(
+                value is not None
+                for value in (self.key, self.url, self.wait_ms, *_new_fields)
+            ):
+                raise ValueError("upload_file_native cannot include key, url, wait_ms, or drag fields")
 
         elif self.action_type is ActionType.SCREENSHOT_REGION:
             if self.x is None or self.y is None or self.x_end is None or self.y_end is None:

@@ -1,0 +1,120 @@
+{
+  "steps": [
+    {
+      "perception": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_browser_step_1",
+        "summary": "A dashboard is visible with a settings button.",
+        "context_label": "Dashboard",
+        "active_app": "Example App",
+        "current_url": "https://app.example.com/dashboard",
+        "visible_targets": [
+          {
+            "target_id": "target_settings",
+            "role": "button",
+            "label": "Settings",
+            "text": "Settings",
+            "confidence": 0.98
+          }
+        ],
+        "focused_target_id": "target_settings",
+        "notes": []
+      },
+      "planner": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_browser_step_1",
+        "plan_id": "plan_browser_step_1",
+        "subgoal": "Open settings.",
+        "rationale": "The settings button is visible.",
+        "action": {
+          "action_type": "click",
+          "target_id": "target_settings",
+          "target_label": "Settings"
+        },
+        "expected_outcome": "The settings page opens."
+      },
+      "actor": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_browser_step_1",
+        "plan_id": "plan_browser_step_1",
+        "attempt_id": "attempt_browser_step_1",
+        "executor": "browser",
+        "action": {
+          "action_type": "click",
+          "target_id": "target_settings",
+          "target_label": "Settings",
+          "hotkey": []
+        },
+        "status": "success",
+        "failure_type": null,
+        "details": "Stub actor recorded a browser click request."
+      },
+      "critic": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_browser_step_1",
+        "plan_id": "plan_browser_step_1",
+        "attempt_id": "attempt_browser_step_1",
+        "outcome": "success",
+        "failure_type": null,
+        "judgment": "The browser state advanced."
+      }
+    },
+    {
+      "perception": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_browser_step_2",
+        "summary": "The settings page is visible.",
+        "context_label": "Settings",
+        "active_app": "Example App",
+        "current_url": "https://app.example.com/settings",
+        "visible_targets": [],
+        "focused_target_id": null,
+        "notes": []
+      },
+      "planner": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_browser_step_2",
+        "plan_id": "plan_browser_step_2",
+        "subgoal": "Wait for the page to settle.",
+        "rationale": "The page is already open.",
+        "action": {
+          "action_type": "wait",
+          "wait_ms": 500
+        },
+        "expected_outcome": "The settings page remains stable."
+      },
+      "actor": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_browser_step_2",
+        "plan_id": "plan_browser_step_2",
+        "attempt_id": "attempt_browser_step_2",
+        "executor": "browser",
+        "action": {
+          "action_type": "wait",
+          "hotkey": [],
+          "wait_ms": 500
+        },
+        "status": "success",
+        "failure_type": null,
+        "details": "Stub actor recorded a browser wait request."
+      },
+      "critic": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_browser_step_2",
+        "plan_id": "plan_browser_step_2",
+        "attempt_id": "attempt_browser_step_2",
+        "outcome": "success",
+        "failure_type": null,
+        "judgment": "The browser state remains healthy."
+      }
+    }
+  ]
+}

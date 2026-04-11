@@ -94,6 +94,31 @@ def _form_perception(root: Path, page_hint: str = "form_page", focused_element_i
     )
 
 
+def _search_perception(root: Path, *, focused_element_id: str | None = None) -> ScreenPerception:
+    path = root / "run-1" / "step_1" / "before.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return ScreenPerception(
+        summary="Search page with a single search input.",
+        page_hint="form_page",
+        visible_elements=[
+            UIElement(
+                element_id="search-input",
+                element_type=UIElementType.INPUT,
+                label="Search or jump to...",
+                x=700,
+                y=40,
+                width=220,
+                height=30,
+                is_interactable=True,
+                confidence=0.95,
+            )
+        ],
+        focused_element_id=focused_element_id,
+        capture_artifact_path=str(path),
+        confidence=0.95,
+    )
+
+
 @pytest.mark.asyncio
 async def test_rule_first_policy_takes_precedence_for_login_guardrail() -> None:
     root = _local_test_dir("test-policy-coordinator-login")
@@ -193,6 +218,59 @@ async def test_click_before_type_is_enforced_through_policy_path() -> None:
     trace_path = Path(debug_artifacts.selector_trace_artifact_path)
     assert trace_path.exists()
     assert '"selected_element_id": "name-input"' in trace_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_search_query_rule_clicks_search_input_before_typing() -> None:
+    root = _local_test_dir("test-policy-coordinator-search-click")
+    client = StubGeminiClient(
+        response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused"}'
+    )
+    coordinator = PolicyCoordinator(
+        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
+    )
+    state = AgentState(
+        run_id="run-1",
+        intent="Open Chrome, navigate to github.com, and search for Operon",
+        status=RunStatus.RUNNING,
+        current_subgoal="search",
+    )
+
+    decision = await coordinator.choose_action(state, _search_perception(root))
+
+    assert decision.action.action_type is ActionType.CLICK
+    assert decision.action.target_element_id == "search-input"
+    assert client.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_search_query_rule_types_and_submits_when_search_input_focused() -> None:
+    root = _local_test_dir("test-policy-coordinator-search-type")
+    client = StubGeminiClient(
+        response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused"}'
+    )
+    coordinator = PolicyCoordinator(
+        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
+    )
+    state = AgentState(
+        run_id="run-1",
+        intent="Open Chrome, navigate to github.com, and search for Operon",
+        status=RunStatus.RUNNING,
+        current_subgoal="search",
+    )
+
+    decision = await coordinator.choose_action(
+        state,
+        _search_perception(root, focused_element_id="search-input"),
+    )
+
+    assert decision.action.action_type is ActionType.TYPE
+    assert decision.action.target_element_id == "search-input"
+    assert decision.action.text == "Operon"
+    assert decision.action.press_enter is True
+    assert client.calls == 0
 
 
 @pytest.mark.asyncio

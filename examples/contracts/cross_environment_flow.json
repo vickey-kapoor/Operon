@@ -1,0 +1,116 @@
+{
+  "steps": [
+    {
+      "perception": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_cross_browser_1",
+        "summary": "A download page shows an installer link.",
+        "context_label": "Downloads Page",
+        "visible_targets": [
+          {
+            "target_id": "target_installer",
+            "role": "link",
+            "label": "Download Installer",
+            "text": "Download Installer",
+            "confidence": 0.97
+          }
+        ],
+        "focused_target_id": null,
+        "notes": []
+      },
+      "planner": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_cross_browser_1",
+        "plan_id": "plan_cross_browser_1",
+        "subgoal": "Download the installer.",
+        "rationale": "The installer download link is visible.",
+        "action": {
+          "action_type": "click",
+          "target_id": "target_installer",
+          "target_label": "Download Installer"
+        },
+        "expected_outcome": "The installer download starts."
+      },
+      "actor": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_cross_browser_1",
+        "plan_id": "plan_cross_browser_1",
+        "attempt_id": "attempt_cross_browser_1",
+        "executor": "browser",
+        "action": {
+          "action_type": "click",
+          "target_id": "target_installer",
+          "target_label": "Download Installer",
+          "hotkey": []
+        },
+        "status": "success",
+        "failure_type": null,
+        "details": "Stub actor recorded a browser click request."
+      },
+      "critic": {
+        "contract_version": "phase1",
+        "environment": "browser",
+        "observation_id": "obs_cross_browser_1",
+        "plan_id": "plan_cross_browser_1",
+        "attempt_id": "attempt_cross_browser_1",
+        "outcome": "success",
+        "failure_type": null,
+        "judgment": "The browser step is valid."
+      }
+    },
+    {
+      "perception": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_cross_desktop_1",
+        "summary": "The desktop is visible after the browser step.",
+        "context_label": "Desktop",
+        "visible_targets": [],
+        "focused_target_id": null,
+        "notes": []
+      },
+      "planner": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_cross_desktop_1",
+        "plan_id": "plan_cross_desktop_1",
+        "subgoal": "Launch the downloaded installer.",
+        "rationale": "The next step moves to the desktop environment.",
+        "action": {
+          "action_type": "launch_app",
+          "app_name": "Installer"
+        },
+        "expected_outcome": "The installer window opens."
+      },
+      "actor": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_cross_desktop_1",
+        "plan_id": "plan_cross_desktop_1",
+        "attempt_id": "attempt_cross_desktop_1",
+        "executor": "desktop",
+        "action": {
+          "action_type": "launch_app",
+          "app_name": "Installer",
+          "hotkey": []
+        },
+        "status": "success",
+        "failure_type": null,
+        "details": "Stub actor recorded a desktop launch request."
+      },
+      "critic": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_cross_desktop_1",
+        "plan_id": "plan_cross_desktop_1",
+        "attempt_id": "attempt_cross_desktop_1",
+        "outcome": "success",
+        "failure_type": null,
+        "judgment": "The desktop step is valid."
+      }
+    }
+  ]
+}

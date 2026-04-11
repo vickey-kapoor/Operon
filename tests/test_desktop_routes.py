@@ -27,12 +27,21 @@ def _mock_run_response(status: RunStatus = RunStatus.RUNNING) -> RunResponse:
     )
 
 
-def test_desktop_pilot_html(client: TestClient) -> None:
-    """GET /desktop-pilot should return the HTML UI."""
-    resp = client.get("/desktop-pilot")
+def test_root_serves_task_console(client: TestClient) -> None:
+    """GET / should return the task console UI."""
+    resp = client.get("/")
     assert resp.status_code == 200
-    assert "Operon Pilot" in resp.text
+    assert "Task Console" in resp.text
     assert "text/html" in resp.headers["content-type"]
+
+
+def test_console_route_serves_same_content(client: TestClient) -> None:
+    """GET /console should serve the same HTML as GET /."""
+    root = client.get("/")
+    console = client.get("/console")
+    assert root.status_code == 200
+    assert console.status_code == 200
+    assert root.text == console.text
 
 
 def test_desktop_run_task(client: TestClient) -> None:
@@ -167,6 +176,39 @@ def test_desktop_cleanup_no_apps(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["closed_count"] == 0
+
+
+def test_browser_cleanup(client: TestClient) -> None:
+    """POST /cleanup should call executor.cleanup_run for browser runs."""
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_executor = mock_loop.return_value.executor
+        mock_executor.cleanup_run.return_value = 1
+        resp = client.post(
+            "/cleanup",
+            json={"run_id": "browser-run-1"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == "browser-run-1"
+    assert data["closed_count"] == 1
+    assert "1 browser session" in data["detail"]
+
+
+def test_browser_cleanup_without_support(client: TestClient) -> None:
+    """POST /cleanup should return a no-op response if cleanup is unsupported."""
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        del mock_loop.return_value.executor.cleanup_run
+        resp = client.post(
+            "/cleanup",
+            json={"run_id": "browser-run-2"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == "browser-run-2"
+    assert data["closed_count"] == 0
+    assert "does not support cleanup" in data["detail"]
 
 
 # ── desktop agent loop configuration tests ──────────────────────

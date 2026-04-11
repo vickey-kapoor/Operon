@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from src.agent.policy import PolicyService
 from src.agent.policy_rules import PolicyRuleEngine
 from src.models.common import FailureCategory
+from src.models.episode import Episode, EpisodeReplayState
 from src.models.logs import ModelDebugArtifacts
 from src.models.memory import MemoryHint
 from src.models.perception import ScreenPerception
@@ -15,7 +17,9 @@ from src.models.policy import PolicyDecision
 from src.models.selector import SelectorTrace
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
-from src.store.memory import MemoryStore, benchmark_name_for_intent
+from src.store.memory import MemoryStore, benchmark_name_for_intent, normalize_intent
+
+logger = logging.getLogger(__name__)
 
 
 class PolicyCoordinator(PolicyService):
@@ -32,6 +36,8 @@ class PolicyCoordinator(PolicyService):
         self.memory_store = memory_store
         self.rule_engine = rule_engine or PolicyRuleEngine()
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
+        self._active_episode: Episode | None = None
+        self._replay_state: EpisodeReplayState | None = None
 
     def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
         """Fetch memory hints and inject them into the delegate BEFORE perceive().
@@ -54,6 +60,9 @@ class PolicyCoordinator(PolicyService):
         state: AgentState,
         perception: ScreenPerception,
     ) -> PolicyDecision:
+        # Inject episode advisory hint if a matching trajectory exists
+        self._try_episode_hint(state, perception)
+
         memory_hints = self.memory_store.get_hints(
             benchmark=benchmark_name_for_intent(state.intent),
             page_hint=perception.page_hint,
@@ -157,3 +166,66 @@ class PolicyCoordinator(PolicyService):
         if selector_trace_path is None:
             return debug_artifacts
         return debug_artifacts.model_copy(update={"selector_trace_artifact_path": str(selector_trace_path)})
+
+    # ------------------------------------------------------------------
+    # Episode replay (advisory hints)
+    # ------------------------------------------------------------------
+
+    def _try_episode_hint(self, state: AgentState, perception: ScreenPerception) -> None:
+        """Inject an advisory hint from a matching episode trajectory."""
+        # Initialize replay on first step
+        if self._replay_state is None and state.step_count <= 1:
+            benchmark = benchmark_name_for_intent(state.intent)
+            norm = normalize_intent(state.intent)
+            episode = self.memory_store.get_episode(norm, benchmark)
+            if episode is not None:
+                self._active_episode = episode
+                self._replay_state = EpisodeReplayState(episode_id=episode.episode_id)
+                logger.info(
+                    "Episode replay activated: %s (%d steps, %dx success)",
+                    episode.episode_id[:8],
+                    len(episode.steps),
+                    episode.success_count,
+                )
+
+        if self._replay_state is None or not self._replay_state.active:
+            return
+
+        episode = self._active_episode
+        if episode is None:
+            return
+
+        idx = self._replay_state.current_step_index
+        if idx >= len(episode.steps):
+            self._replay_state.active = False
+            return
+
+        expected = episode.steps[idx]
+
+        # Divergence check: page_hint mismatch
+        if perception.page_hint != expected.page_hint:
+            self._replay_state.deviations += 1
+            if self._replay_state.deviations >= self._replay_state.max_deviations:
+                self._replay_state.active = False
+                logger.info("Episode replay deactivated: too many divergences")
+                return
+
+        # Build advisory hint
+        total = len(episode.steps)
+        parts = [f"Episode replay (step {idx + 1}/{total}):"]
+        parts.append(f"perform {expected.action_type.value}")
+        if expected.target_description:
+            parts.append(f"on '{expected.target_description}'")
+        if expected.text:
+            parts.append(f"with text '{expected.text}'")
+        if expected.key:
+            parts.append(f"key '{expected.key}'")
+        parts.append(f"[subgoal: {expected.subgoal}]")
+        parts.append("Follow this if the screen matches.")
+        hint = " ".join(parts)
+
+        if hasattr(self.delegate, "set_advisory_hints"):
+            existing = getattr(self.delegate, "_advisory_hints", []) or []
+            self.delegate.set_advisory_hints(list(existing) + [hint])
+
+        self._replay_state.current_step_index += 1

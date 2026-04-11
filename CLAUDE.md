@@ -15,10 +15,18 @@ Python **3.11** required. Use a local venv:
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .
+pip install -e .[dev]
+playwright install chromium
 ```
 
-Gemini credentials via `.env` file or environment — set `GEMINI_API_KEY`.
+Copy `.env.example` to `.env` and set your Gemini key (`GOOGLE_API_KEY` or `GEMINI_API_KEY`).
+
+Runtime backend selection (env vars):
+
+- `OPERON_DESKTOP_BACKEND=json` (default desktop path)
+- `OPERON_BROWSER_BACKEND=computer_use` (Gemini Computer Use)
+- `OPERON_BROWSER_FALLBACK_BACKEND=json` (JSON fallback for browser)
+- `BROWSER_HEADLESS=true` (headless Playwright)
 
 If PowerShell fails to launch external processes (COM+ errors), run:
 
@@ -39,6 +47,12 @@ python -m pytest tests\ -q
 
 ```powershell
 python -m pytest tests\test_agent_loop.py -q
+```
+
+**Lint:**
+
+```powershell
+ruff check src tests --select E,F,W,I --ignore E501
 ```
 
 **Run the form benchmark:**
@@ -80,6 +94,15 @@ python -m src.store.summary runs
 10. **Log** — `StepLog` is appended to `runs/<run_id>/run.jsonl`; every artifact (screenshots, prompt/raw/parsed files, traces, recordings) goes under `runs/<run_id>/step_N/`
 
 Terminal conditions: `FORM_SUBMITTED_SUCCESS`, `STOP_BEFORE_SEND` (success); retry limit, max step limit, repeated loop detection (failure).
+
+### Dual Execution Paths
+
+Operon has two execution modes sharing the same loop, verifier, recovery, and persistence:
+
+- **Desktop mode** — full-screen automation via `pyautogui` + `mss`. Uses combined JSON perception+policy through `GeminiHttpClient`.
+- **Browser mode** — Playwright-based. Primary backend is `BrowserComputerUseBackend` (Gemini Computer Use with coordinate normalization and multi-call turns); fallback is `BrowserJsonBackend`. `NativeBrowserExecutor` translates actions to Playwright calls. Browser sessions are video-recorded under `.browser-artifacts/` and linked into the run snapshot for the observer UI.
+
+Backend selection is handled by `src/agent/backend.py` based on env vars. `src/agent/action_translation.py` bridges Computer Use action formats to the internal `AgentAction` schema.
 
 ### Policy Layer (`src/agent/policy_coordinator.py`, `policy_rules.py`, `policy.py`)
 
@@ -137,6 +160,7 @@ FastAPI app at `src/api/server.py`. Routes in `src/api/routes.py`:
 
 - `POST /run-task` — create a run record
 - `POST /step` — advance a run one step
+- `POST /resume` — resume a paused/stopped run
 - `GET /run/{id}` — read run state
 - `GET /health`
 - `GET /` or `GET /desktop-pilot` — Operon Pilot UI (unified desktop + browser)
@@ -166,4 +190,10 @@ runs/
       policy_decision.json
       execution_trace.json
       progress_trace.json
+
+.browser-artifacts/     # Browser session video recordings
 ```
+
+## Commit Style
+
+Use short imperative subjects with prefixes: `Fix:`, `Docs:`, `CI:`, `Chore:`, `Refactor:`. CI enforces Ruff rules `E,F,W,I`; `E501` (line length) is ignored.

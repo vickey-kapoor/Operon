@@ -1,0 +1,110 @@
+{
+  "steps": [
+    {
+      "perception": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_desktop_step_1",
+        "summary": "The desktop is visible.",
+        "context_label": "Desktop",
+        "active_app": "Windows Desktop",
+        "current_url": null,
+        "visible_targets": [],
+        "focused_target_id": null,
+        "notes": []
+      },
+      "planner": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_desktop_step_1",
+        "plan_id": "plan_desktop_step_1",
+        "subgoal": "Open Notepad.",
+        "rationale": "Launch the requested app.",
+        "action": {
+          "action_type": "launch_app",
+          "app_name": "Notepad"
+        },
+        "expected_outcome": "Notepad opens."
+      },
+      "actor": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_desktop_step_1",
+        "plan_id": "plan_desktop_step_1",
+        "attempt_id": "attempt_desktop_step_1",
+        "executor": "desktop",
+        "action": {
+          "action_type": "launch_app",
+          "app_name": "Notepad",
+          "hotkey": []
+        },
+        "status": "success",
+        "failure_type": null,
+        "details": "Stub actor recorded a desktop launch request."
+      },
+      "critic": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_desktop_step_1",
+        "plan_id": "plan_desktop_step_1",
+        "attempt_id": "attempt_desktop_step_1",
+        "outcome": "success",
+        "failure_type": null,
+        "judgment": "The desktop state advanced."
+      }
+    },
+    {
+      "perception": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_desktop_step_2",
+        "summary": "The Notepad window is visible.",
+        "context_label": "Notepad",
+        "active_app": "Notepad",
+        "current_url": null,
+        "visible_targets": [],
+        "focused_target_id": null,
+        "notes": []
+      },
+      "planner": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_desktop_step_2",
+        "plan_id": "plan_desktop_step_2",
+        "subgoal": "Wait for the window to settle.",
+        "rationale": "The app is already open.",
+        "action": {
+          "action_type": "wait",
+          "wait_ms": 300
+        },
+        "expected_outcome": "The Notepad window remains visible."
+      },
+      "actor": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_desktop_step_2",
+        "plan_id": "plan_desktop_step_2",
+        "attempt_id": "attempt_desktop_step_2",
+        "executor": "desktop",
+        "action": {
+          "action_type": "wait",
+          "hotkey": [],
+          "wait_ms": 300
+        },
+        "status": "success",
+        "failure_type": null,
+        "details": "Stub actor recorded a desktop wait request."
+      },
+      "critic": {
+        "contract_version": "phase1",
+        "environment": "desktop",
+        "observation_id": "obs_desktop_step_2",
+        "plan_id": "plan_desktop_step_2",
+        "attempt_id": "attempt_desktop_step_2",
+        "outcome": "success",
+        "failure_type": null,
+        "judgment": "The desktop state remains healthy."
+      }
+    }
+  ]
+}

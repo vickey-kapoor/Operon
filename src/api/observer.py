@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import os
 import re
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
+from src.models.common import RunStatus, StopReason
 from src.models.logs import PreStepFailureLog, StepLog
+from src.models.state import AgentState
 from src.store.replay import load_run_replay
 from src.store.summary import _load_state_from_path
 
@@ -70,10 +74,18 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
     pre_step_failures = [entry for entry in entries if isinstance(entry, PreStepFailureLog)]
     steps = [_step_payload(entry) for entry in completed_steps]
     partial_current_step = _latest_partial_step_payload(run_dir)
-    current_step = partial_current_step or (steps[-1] if steps else (_pre_step_payload(pre_step_failures[-1]) if pre_step_failures else None))
+    latest_completed_step = steps[-1] if steps else None
+    partial_is_newer = partial_current_step is not None and (
+        latest_completed_step is None or partial_current_step["step_index"] > latest_completed_step["step_index"]
+    )
+    current_step = (
+        partial_current_step
+        if partial_is_newer
+        else (latest_completed_step or (_pre_step_payload(pre_step_failures[-1]) if pre_step_failures else None))
+    )
     phase = _current_phase(state, current_step, pre_step_failures[-1] if pre_step_failures else None)
     event_log = _build_event_log(state, completed_steps, pre_step_failures, partial_current_step)
-    if partial_current_step is not None and not any(step["step_index"] == partial_current_step["step_index"] for step in steps):
+    if partial_is_newer:
         steps.append(partial_current_step)
         steps.sort(key=lambda item: item["step_index"])
     return {
@@ -82,6 +94,7 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
             "intent": state.intent,
             "status": state.status.value,
             "step_count": state.step_count,
+            "headless": state.headless,
             "stop_reason": state.stop_reason.value if state.stop_reason is not None else None,
             "current_subgoal": state.current_subgoal,
             "current_task_id": _task_id_from_intent(state.intent),
@@ -109,12 +122,64 @@ def artifact_path_for_request(path_value: str) -> Path:
     return resolved
 
 
+def build_run_bundle(run_id: str) -> bytes:
+    """Package a run's artifacts into an in-memory zip bundle."""
+    run_dir = runs_root() / run_id
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as bundle:
+        for path in run_dir.rglob("*"):
+            if path.is_file():
+                bundle.write(path, arcname=str(Path("runs") / run_id / path.relative_to(run_dir)))
+
+        state = _load_state_from_path(run_dir / "state.json")
+        session_video = _session_video_path(state)
+        if session_video:
+            try:
+                video_path = artifact_path_for_request(session_video)
+            except (FileNotFoundError, ValueError):
+                video_path = None
+            if video_path is not None:
+                bundle.write(
+                    video_path,
+                    arcname=str(Path("browser-artifacts") / run_id / video_path.parent.name / video_path.name),
+                )
+
+    return buffer.getvalue()
+
+
+def reconcile_orphaned_browser_run(run_id: str, *, has_live_session: bool) -> AgentState | None:
+    """Mark stale running browser runs as failed when no live session remains."""
+    state_path = runs_root() / run_id / "state.json"
+    if not state_path.exists():
+        return None
+    state = _load_state_from_path(state_path)
+    if state.status is not RunStatus.RUNNING:
+        return state
+    if has_live_session or not _looks_like_browser_run(state):
+        return state
+    state.status = RunStatus.FAILED
+    if state.stop_reason is None:
+        state.stop_reason = StopReason.EXECUTION_NO_PROGRESS
+    state_path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+    return state
+
+
 def _session_video_path(state) -> str | None:
     for artifact_path in reversed(state.artifact_paths):
         lowered = artifact_path.lower()
         if "session_video" in lowered and lowered.endswith((".webm", ".mp4")):
             return artifact_path
     return None
+
+
+def _looks_like_browser_run(state: AgentState) -> bool:
+    if state.start_url:
+        return True
+    intent = state.intent.lower()
+    return any(token in intent for token in ("chrome", "browser", "website", "http", "www."))
 
 
 def _step_payload(entry: StepLog) -> dict[str, Any]:
@@ -156,6 +221,12 @@ def _step_payload(entry: StepLog) -> dict[str, Any]:
         },
         "verification": entry.verification_result.model_dump(mode="json"),
         "recovery": entry.recovery_decision.model_dump(mode="json"),
+        "plan": {
+            "rationale": entry.policy_decision.rationale,
+            "confidence": entry.policy_decision.confidence,
+            "active_subgoal": entry.policy_decision.active_subgoal,
+            "proposed_action": entry.policy_decision.action.model_dump(mode="json"),
+        },
         "progress": {
             "state": entry.progress_state.model_dump(mode="json") if entry.progress_state is not None else None,
             "trace": _load_json(entry.progress_trace_artifact_path),
@@ -252,6 +323,7 @@ def _partial_step_payload(step_dir: Path) -> dict[str, Any] | None:
         "execution": _partial_execution_payload(execution_trace),
         "verification": None,
         "recovery": None,
+        "plan": None,
         "progress": {
             "state": None,
             "trace": progress_trace,

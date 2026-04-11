@@ -179,6 +179,13 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
 
     normalized_action = dict(action)
     action_type = normalized_action.get("action_type")
+    normalized_payload = dict(parsed)
+
+    nested_rationale = normalized_action.get("rationale")
+    if isinstance(nested_rationale, str):
+        if not isinstance(normalized_payload.get("rationale"), str):
+            normalized_payload["rationale"] = nested_rationale
+        normalized_action.pop("rationale", None)
 
     wait_ms = normalized_action.get("wait_ms")
     if action_type == ActionType.WAIT.value:
@@ -189,8 +196,21 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
         if wait_ms is not None:
             normalized_action.pop("wait_ms", None)
 
+    key_value = normalized_action.get("key")
+    if action_type == ActionType.TYPE.value and isinstance(key_value, str):
+        if key_value.strip().lower() == "enter":
+            normalized_action["press_enter"] = True
+            normalized_action.pop("key", None)
+
+    text_value = normalized_action.get("text")
+    if action_type == ActionType.TYPE.value and isinstance(text_value, str):
+        stripped_text = text_value.rstrip("\r\n")
+        if stripped_text != text_value:
+            normalized_action["text"] = stripped_text
+            if stripped_text:
+                normalized_action["press_enter"] = True
+
     if normalized_action != action:
-        normalized_payload = dict(parsed)
         normalized_payload["action"] = normalized_action
         return normalized_payload
-    return parsed
+    return normalized_payload

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -103,6 +104,90 @@ def test_parse_policy_output_rejects_schema_invalid_action() -> None:
 
     with pytest.raises(PolicyError, match="strict schema"):
         parse_policy_output(raw_output)
+
+
+def test_parse_policy_output_normalizes_type_enter_key_to_press_enter() -> None:
+    raw_output = """
+    {
+      "action": {
+        "action_type": "type",
+        "target_element_id": "searchInput",
+        "text": "Markov chain",
+        "key": "Enter"
+      },
+      "rationale": "Search for the article.",
+      "confidence": 1.0,
+      "active_subgoal": "search_for_markov_chain"
+    }
+    """
+
+    decision = parse_policy_output(raw_output)
+
+    assert decision.action.action_type is ActionType.TYPE
+    assert decision.action.text == "Markov chain"
+    assert decision.action.press_enter is True
+    assert decision.action.key is None
+
+
+def test_parse_policy_output_normalizes_type_trailing_newline_to_press_enter() -> None:
+    raw = json.dumps(
+        {
+            "action": {
+                "action_type": "type",
+                "target_element_id": "search_input",
+                "text": "Markov chain\n",
+            },
+            "rationale": "submit search",
+            "confidence": 0.9,
+            "active_subgoal": "search for markov chain",
+        }
+    )
+
+    decision = parse_policy_output(raw)
+
+    assert decision.action.text == "Markov chain"
+    assert decision.action.press_enter is True
+
+
+def test_parse_policy_output_lifts_nested_action_rationale() -> None:
+    raw_output = """
+    {
+      "action": {
+        "action_type": "press_key",
+        "key": "Enter",
+        "rationale": "Submit the search after typing."
+      },
+      "confidence": 0.8,
+      "active_subgoal": "search_for_markov_chain"
+    }
+    """
+
+    decision = parse_policy_output(raw_output)
+
+    assert decision.action.action_type is ActionType.PRESS_KEY
+    assert decision.action.key == "Enter"
+    assert decision.rationale == "Submit the search after typing."
+
+
+def test_parse_policy_output_strips_nested_action_rationale_when_top_level_exists() -> None:
+    raw_output = """
+    {
+      "action": {
+        "action_type": "press_key",
+        "key": "Enter",
+        "rationale": "Nested rationale should be ignored after lift."
+      },
+      "rationale": "Top-level rationale wins.",
+      "confidence": 0.8,
+      "active_subgoal": "search_for_markov_chain"
+    }
+    """
+
+    decision = parse_policy_output(raw_output)
+
+    assert decision.action.action_type is ActionType.PRESS_KEY
+    assert decision.action.key == "Enter"
+    assert decision.rationale == "Top-level rationale wins."
 
 
 def test_policy_decision_schema_rejects_invalid_action_payload() -> None:

@@ -1,0 +1,63 @@
+{
+  "perception": {
+    "contract_version": "phase1",
+    "environment": "browser",
+    "observation_id": "obs_browser_100",
+    "summary": "A settings button is visible in the left navigation.",
+    "context_label": "Dashboard",
+    "active_app": "Example App",
+    "current_url": "https://app.example.com/dashboard",
+    "visible_targets": [
+      {
+        "target_id": "target_settings",
+        "role": "button",
+        "label": "Settings",
+        "text": "Settings",
+        "confidence": 0.98
+      }
+    ],
+    "focused_target_id": "target_settings",
+    "notes": []
+  },
+  "planner": {
+    "contract_version": "phase1",
+    "environment": "browser",
+    "observation_id": "obs_browser_100",
+    "plan_id": "plan_browser_100",
+    "subgoal": "Open the settings page.",
+    "rationale": "The settings button is visible and matches the task.",
+    "action": {
+      "action_type": "click",
+      "target_id": "target_settings",
+      "target_label": "Settings"
+    },
+    "expected_outcome": "The settings page becomes visible."
+  },
+  "actor": {
+    "contract_version": "phase1",
+    "environment": "browser",
+    "observation_id": "obs_browser_100",
+    "plan_id": "plan_browser_100",
+    "attempt_id": "attempt_browser_100",
+    "executor": "browser",
+    "action": {
+      "action_type": "click",
+      "target_id": "target_settings",
+      "target_label": "Settings",
+      "hotkey": []
+    },
+    "status": "success",
+    "failure_type": null,
+    "details": "Stub actor recorded a browser click request."
+  },
+  "critic": {
+    "contract_version": "phase1",
+    "environment": "browser",
+    "observation_id": "obs_browser_100",
+    "plan_id": "plan_browser_100",
+    "attempt_id": "attempt_browser_100",
+    "outcome": "success",
+    "failure_type": null,
+    "judgment": "The browser step is valid for the current subgoal."
+  }
+}

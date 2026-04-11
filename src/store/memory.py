@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from src.models.common import FailureCategory, LoopStage
+from src.models.episode import Episode
 from src.models.execution import ExecutedAction
 from src.models.memory import MemoryHint, MemoryOutcome, MemoryRecord
 from src.models.perception import PageHint, ScreenPerception, UIElementType
@@ -29,6 +31,14 @@ def benchmark_name_for_intent(intent: str) -> str:
     if "form" in lowered and ("submit" in lowered or "fill" in lowered or "complete" in lowered):
         return FORM_BENCHMARK
     return GENERIC_TASK
+
+
+def normalize_intent(intent: str) -> str:
+    """Normalize an intent string for episode matching."""
+    text = intent.lower().strip()
+    text = re.sub(r"\s+", " ", text)
+    text = text.rstrip(".,;:!?")
+    return text
 
 
 class MemoryStore(ABC):
@@ -59,6 +69,14 @@ class MemoryStore(ABC):
     ) -> list[MemoryRecord]:
         """Persist compact memory candidates from a completed step."""
 
+    @abstractmethod
+    def save_episode(self, episode: Episode) -> None:
+        """Persist a compressed episode trajectory from a successful run."""
+
+    @abstractmethod
+    def get_episode(self, normalized_intent: str, benchmark: str) -> Episode | None:
+        """Retrieve the best-matching episode for a given intent."""
+
 
 class FileBackedMemoryStore(MemoryStore):
     """Append-only local advisory memory stored as compact JSONL records."""
@@ -70,6 +88,9 @@ class FileBackedMemoryStore(MemoryStore):
         self.memory_path = self.memory_dir / "memory.jsonl"
         self._cached_records: list[MemoryRecord] | None = None
         self._cached_mtime: float = 0.0
+        self.episodes_path = self.memory_dir / "episodes.jsonl"
+        self._cached_episodes: list[Episode] | None = None
+        self._cached_episodes_mtime: float = 0.0
         self._seed_default_guardrails()
 
     def get_hints(
@@ -367,3 +388,64 @@ class FileBackedMemoryStore(MemoryStore):
                 self._cached_mtime = self.memory_path.stat().st_mtime
             except OSError:
                 pass
+
+    # ------------------------------------------------------------------
+    # Episode storage
+    # ------------------------------------------------------------------
+
+    def save_episode(self, episode: Episode) -> None:
+        episodes = self._load_episodes()
+        updated = False
+        for i, existing in enumerate(episodes):
+            if existing.normalized_intent == episode.normalized_intent and existing.benchmark == episode.benchmark:
+                episode = episode.model_copy(update={"success_count": existing.success_count + 1})
+                episodes[i] = episode
+                updated = True
+                break
+        if not updated:
+            episodes.append(episode)
+        self._write_episodes(episodes)
+
+    def get_episode(self, normalized_intent: str, benchmark: str) -> Episode | None:
+        episodes = self._load_episodes()
+        exact: Episode | None = None
+        containment: Episode | None = None
+        for ep in episodes:
+            if ep.benchmark != benchmark:
+                continue
+            if ep.normalized_intent == normalized_intent:
+                if exact is None or ep.success_count > exact.success_count:
+                    exact = ep
+            elif normalized_intent in ep.normalized_intent or ep.normalized_intent in normalized_intent:
+                if containment is None or ep.success_count > containment.success_count:
+                    containment = ep
+        return exact or containment
+
+    def _load_episodes(self) -> list[Episode]:
+        if not self.episodes_path.exists():
+            return []
+        try:
+            mtime = self.episodes_path.stat().st_mtime
+        except OSError:
+            return []
+        if self._cached_episodes is not None and mtime == self._cached_episodes_mtime:
+            return list(self._cached_episodes)
+        episodes: list[Episode] = []
+        for line in self.episodes_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                episodes.append(Episode.model_validate_json(line))
+        self._cached_episodes = episodes
+        self._cached_episodes_mtime = mtime
+        return list(episodes)
+
+    def _write_episodes(self, episodes: list[Episode]) -> None:
+        self.episodes_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.episodes_path.open("w", encoding="utf-8") as handle:
+            for ep in episodes:
+                handle.write(ep.model_dump_json())
+                handle.write("\n")
+        self._cached_episodes = list(episodes)
+        try:
+            self._cached_episodes_mtime = self.episodes_path.stat().st_mtime
+        except OSError:
+            pass

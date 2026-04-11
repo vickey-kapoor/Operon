@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import json
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
+
+import cv2
+import numpy as np
 
 from src.executor.browser import Executor
 from src.models.capture import CaptureFrame
@@ -22,6 +28,7 @@ class _BrowserSession:
     context: object
     page: object
     video_dir: Path | None = None
+    browser_pid: int | None = None
 
 
 class NativeBrowserExecutor(Executor):
@@ -50,9 +57,14 @@ class NativeBrowserExecutor(Executor):
         self._post_action_delay = post_action_delay
         self._current_run_id: str | None = None
         self._sessions: dict[str, _BrowserSession] = {}
+        self._run_headless: dict[str, bool | None] = {}
+        self._fresh_session_run_id: str | None = None
 
     def set_current_run_id(self, run_id: str) -> None:
         self._current_run_id = run_id
+
+    def configure_run(self, run_id: str, *, headless: bool | None = None) -> None:
+        self._run_headless[run_id] = headless
 
     async def reset_desktop(self) -> None:
         """No-op for native browser control."""
@@ -60,6 +72,7 @@ class NativeBrowserExecutor(Executor):
 
     async def aclose_run(self, run_id: str) -> int:
         session = self._sessions.pop(run_id, None)
+        self._run_headless.pop(run_id, None)
         if session is None:
             return 0
         await self._close_session(session)
@@ -67,6 +80,7 @@ class NativeBrowserExecutor(Executor):
 
     def cleanup_run(self, run_id: str) -> int:
         session = self._sessions.pop(run_id, None)
+        self._run_headless.pop(run_id, None)
         if session is None:
             return 0
         try:
@@ -81,10 +95,13 @@ class NativeBrowserExecutor(Executor):
         return 1
 
     async def capture(self) -> CaptureFrame:
-        page = await self._current_page()
         filename = f"browser_{uuid4().hex[:8]}.png"
         filepath = self._artifact_dir / filename
-        await page.screenshot(path=str(filepath))
+        if self._current_run_id is None or self._current_run_id not in self._sessions:
+            self._write_blank_png(filepath)
+        else:
+            page = await self._current_page(foreground=False)
+            await page.screenshot(path=str(filepath))
         return CaptureFrame(
             artifact_path=str(filepath),
             width=self._viewport_width,
@@ -92,8 +109,13 @@ class NativeBrowserExecutor(Executor):
             mime_type="image/png",
         )
 
+    async def live_frame_png(self, run_id: str) -> bytes | None:
+        session = self._sessions.get(run_id)
+        if session is None:
+            return None
+        return await session.page.screenshot(type="png")
+
     async def execute(self, action: AgentAction) -> ExecutedAction:
-        page = await self._current_page()
         if action.action_type is ActionType.BATCH:
             return await self._execute_batch(action)
         at = action.action_type
@@ -101,36 +123,55 @@ class NativeBrowserExecutor(Executor):
             if at is ActionType.NAVIGATE:
                 if action.url is None:
                     return self._fail(action, "navigate requires url", FailureCategory.EXECUTION_ERROR)
+                page = await self._current_page(foreground=False)
                 await page.goto(action.url)
+                await self._foreground_if_fresh_session()
             elif at is ActionType.LAUNCH_APP:
                 if not action.text or action.text.lower() != "browser":
                     return self._fail(action, "native browser executor only supports launch_app for browser", FailureCategory.EXECUTION_ERROR)
-                after_path = await self._capture_after()
-                return self._ok(action, "Browser session already active", after_path)
+                existing = self._current_run_id is not None and self._current_run_id in self._sessions
+                if not existing:
+                    await self._current_page(foreground=False)
+                detail = "Opened browser session" if not existing else "Browser session already active"
+                return self._ok(action, detail, None)
             elif at is ActionType.CLICK:
-                if action.x is None or action.y is None:
-                    return self._fail(action, "click requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
-                await page.mouse.click(action.x, action.y)
+                page = await self._current_page()
+                if action.selector:
+                    await page.locator(action.selector).first.click(timeout=5000)
+                else:
+                    point = self._action_point(action)
+                    if point is None:
+                        return self._fail(action, "click requires selector or x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
+                    await page.mouse.click(*point)
             elif at is ActionType.HOVER:
-                if action.x is None or action.y is None:
+                page = await self._current_page()
+                point = self._action_point(action)
+                if point is None:
                     return self._fail(action, "hover requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
-                await page.mouse.move(action.x, action.y)
+                await page.mouse.move(*point)
             elif at is ActionType.TYPE:
+                page = await self._current_page()
                 if action.text is None:
                     return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
-                if action.x is not None and action.y is not None:
-                    await page.mouse.click(action.x, action.y)
+                point = self._action_point(action)
+                if point is not None:
+                    await page.mouse.click(*point)
                 if action.clear_before_typing:
                     await page.keyboard.press("Control+A")
                     await page.keyboard.press("Backspace")
-                await page.keyboard.type(action.text)
+                    await page.keyboard.type(action.text)
                 if action.press_enter:
                     await page.keyboard.press("Enter")
             elif at is ActionType.PRESS_KEY:
+                page = await self._current_page()
                 if action.key is None:
                     return self._fail(action, "press_key requires key", FailureCategory.EXECUTION_ERROR)
+                point = self._action_point(action)
+                if point is not None:
+                    await page.mouse.click(*point)
                 await page.keyboard.press(action.key)
             elif at is ActionType.HOTKEY:
+                page = await self._current_page()
                 if action.key is None:
                     return self._fail(action, "hotkey requires key", FailureCategory.EXECUTION_ERROR)
                 normalized = action.key.lower().replace(" ", "")
@@ -141,9 +182,11 @@ class NativeBrowserExecutor(Executor):
                 else:
                     await page.keyboard.press("+".join(k.strip() for k in action.key.split("+")))
             elif at is ActionType.SCROLL:
+                page = await self._current_page()
                 amount = action.scroll_amount or 800
                 await page.mouse.wheel(0, -amount)
             elif at is ActionType.DRAG:
+                page = await self._current_page()
                 if None in (action.x, action.y, action.x_end, action.y_end):
                     return self._fail(action, "drag requires x,y,x_end,y_end", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
                 await page.mouse.move(action.x, action.y)
@@ -154,6 +197,36 @@ class NativeBrowserExecutor(Executor):
                 await asyncio.sleep((action.wait_ms or 1000) / 1000)
             elif at in {ActionType.STOP, ActionType.WAIT_FOR_USER}:
                 return self._ok(action, "Acknowledged stop" if at is ActionType.STOP else f"Waiting for user: {action.text}", None)
+            elif at is ActionType.UPLOAD_FILE:
+                file_path = action.text
+                if not file_path:
+                    return self._fail(action, "upload_file requires text (file path)", FailureCategory.EXECUTION_ERROR)
+                page = await self._current_page()
+                point = self._action_point(action)
+                async with page.expect_file_chooser(timeout=8000) as fc_info:
+                    if point is not None:
+                        await page.mouse.click(*point)
+                    else:
+                        await page.locator("input[type=file]").first.click(force=True)
+                file_chooser = await fc_info.value
+                await file_chooser.set_files(file_path)
+            elif at is ActionType.UPLOAD_FILE_NATIVE:
+                # Click the upload control to trigger the native OS file picker.
+                # The desktop executor is responsible for interacting with the picker
+                # once it appears. This step only triggers it.
+                page = await self._current_page()
+                point = self._action_point(action)
+                if point is not None:
+                    await page.mouse.click(*point)
+                elif action.selector is not None:
+                    await page.locator(action.selector).first.click()
+                elif action.target_element_id is not None:
+                    await page.locator(f"[data-element-id='{action.target_element_id}']").first.click()
+                else:
+                    await page.locator("input[type=file]").first.click(force=True)
+                await asyncio.sleep(0.5)
+                after_path = await self._capture_after()
+                return self._ok(action, "native_picker_triggered", after_path)
             else:
                 return self._fail(action, f"Action '{at}' is not supported on native browser executor", FailureCategory.EXECUTION_ERROR)
             await page.wait_for_load_state(timeout=5000)
@@ -162,6 +235,24 @@ class NativeBrowserExecutor(Executor):
             return self._ok(action, f"Executed {at.value}", after_path)
         except Exception as exc:
             return self._fail(action, f"{at.value} failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
+    @staticmethod
+    def _action_point(action: AgentAction) -> tuple[int, int] | None:
+        if action.x is not None and action.y is not None:
+            return action.x, action.y
+        target_context = action.target_context
+        if target_context is None:
+            return None
+        original_target = getattr(target_context, "original_target", None)
+        if original_target is None:
+            return None
+        x = getattr(original_target, "x", None)
+        y = getattr(original_target, "y", None)
+        width = getattr(original_target, "width", None)
+        height = getattr(original_target, "height", None)
+        if not all(isinstance(value, int) for value in (x, y, width, height)):
+            return None
+        return x + max(1, width // 2), y + max(1, height // 2)
 
     async def _execute_batch(self, action: AgentAction) -> ExecutedAction:
         if not action.actions:
@@ -188,6 +279,12 @@ class NativeBrowserExecutor(Executor):
         page = await self._current_page()
         return page.url
 
+    async def current_url_for_run(self, run_id: str) -> str | None:
+        session = self._sessions.get(run_id)
+        if session is None:
+            return None
+        return session.page.url
+
     async def execute_with_recording(
         self, action: AgentAction, step_dir: Path,
     ) -> tuple[ExecutedAction, Path | None]:
@@ -198,25 +295,49 @@ class NativeBrowserExecutor(Executor):
         frame = await self.capture()
         return frame.artifact_path
 
-    async def _current_page(self):
+    async def _current_page(self, *, foreground: bool = True):
         if self._current_run_id is None:
             raise RuntimeError("No active browser run id set.")
-        session = await self._ensure_session(self._current_run_id)
+        session = await self._ensure_session(self._current_run_id, foreground=foreground)
         return session.page
 
-    async def _ensure_session(self, run_id: str) -> _BrowserSession:
+    async def _ensure_session(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:
         existing = self._sessions.get(run_id)
         if existing is not None:
             return existing
+        await self._close_other_sessions(run_id)
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
             raise RuntimeError("playwright is not installed for native browser execution.") from exc
         playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(headless=self._headless)
+        chromium_executable = getattr(playwright.chromium, "executable_path", None)
+        before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
+        launch_headless = self._run_headless.get(run_id)
+        if launch_headless is None:
+            launch_headless = self._headless
+        if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
+            launch_headless = True
+        headed_width, headed_height = self._headed_launch_size()
+        launch_args = (
+            [f"--window-size={self._viewport_width},{self._viewport_height}"]
+            if launch_headless
+            else [
+                f"--window-size={headed_width},{headed_height}",
+                "--window-position=0,0",
+            ]
+        )
+        browser = await playwright.chromium.launch(
+            headless=launch_headless,
+            args=launch_args,
+        )
         video_dir = self._video_dir_for_run(run_id) if self._record_video else None
         context_kwargs = {
-            "viewport": {"width": self._viewport_width, "height": self._viewport_height},
+            "viewport": (
+                {"width": self._viewport_width, "height": self._viewport_height}
+                if launch_headless
+                else {"width": headed_width, "height": headed_height}
+            ),
         }
         if video_dir is not None:
             video_dir.mkdir(parents=True, exist_ok=True)
@@ -227,15 +348,245 @@ class NativeBrowserExecutor(Executor):
             }
         context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
+        if foreground and hasattr(page, "bring_to_front"):
+            await page.bring_to_front()
+        if not launch_headless and foreground:
+            await self._reset_browser_zoom(page)
         session = _BrowserSession(
             playwright=playwright,
             browser=browser,
             context=context,
             page=page,
             video_dir=video_dir,
+            browser_pid=self._detect_browser_pid(chromium_executable, before_pids) if chromium_executable else None,
         )
         self._sessions[run_id] = session
+        self._fresh_session_run_id = run_id
+        if not launch_headless and foreground:
+            await self._bring_browser_to_foreground(session.browser_pid)
+            await asyncio.sleep(1.5)
         return session
+
+    async def _foreground_if_fresh_session(self) -> None:
+        if self._current_run_id is None:
+            return
+        if self._fresh_session_run_id != self._current_run_id:
+            return
+        session = self._sessions.get(self._current_run_id)
+        if session is None or self._headless:
+            return
+        await self._bring_browser_to_foreground(session.browser_pid)
+        await asyncio.sleep(0.5)
+
+    def _write_blank_png(self, path: Path) -> None:
+        frame = np.full((self._viewport_height, self._viewport_width, 3), 255, dtype=np.uint8)
+        cv2.imwrite(str(path), frame)
+
+    async def _bring_browser_to_foreground(self, browser_pid: int | None = None) -> None:
+        for _ in range(8):
+            if self._focus_browser_window(browser_pid):
+                return
+            await asyncio.sleep(0.2)
+        self._app_activate_browser_window(browser_pid)
+
+    def _headed_launch_size(self) -> tuple[int, int]:
+        if os.name != "nt":
+            return self._viewport_width, self._viewport_height
+        try:
+            user32 = ctypes.windll.user32
+            screen_width = int(user32.GetSystemMetrics(0))
+            screen_height = int(user32.GetSystemMetrics(1))
+        except Exception:
+            return self._viewport_width, self._viewport_height
+        if screen_width <= 0 or screen_height <= 0:
+            return self._viewport_width, self._viewport_height
+        return screen_width, screen_height
+
+    @staticmethod
+    async def _reset_browser_zoom(page: object) -> None:
+        keyboard = getattr(page, "keyboard", None)
+        if keyboard is None or not hasattr(keyboard, "press"):
+            return
+        try:
+            await keyboard.press("Control+0")
+        except Exception:
+            return
+
+    def _focus_browser_window(self, browser_pid: int | None = None) -> bool:
+        if os.name != "nt":
+            return False
+        handles = self._find_browser_window_handles(browser_pid)
+        for hwnd in reversed(handles):
+            if self._activate_window_handle(hwnd):
+                return True
+        return False
+
+    @staticmethod
+    def _find_browser_window_handles(browser_pid: int | None = None) -> list[int]:
+        user32 = ctypes.windll.user32
+        handles: list[int] = []
+
+        enum_windows_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def callback(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            process_id = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+            if browser_pid is not None and int(process_id.value) != browser_pid:
+                return True
+            class_buffer = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, class_buffer, 256)
+            window_class = class_buffer.value
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                if window_class.startswith("Chrome_WidgetWin"):
+                    handles.append(int(hwnd))
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            title = buffer.value
+            if "Google Chrome for Testing" in title or window_class.startswith("Chrome_WidgetWin"):
+                handles.append(int(hwnd))
+            return True
+
+        user32.EnumWindows(enum_windows_proc(callback), 0)
+        return handles
+
+    @staticmethod
+    def _activate_window_handle(hwnd: int) -> bool:
+        if os.name != "nt":
+            return False
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        SW_RESTORE = 9
+        SW_SHOW = 5
+        ASFW_ANY = 0xFFFFFFFF
+        VK_MENU = 0x12
+        KEYEVENTF_KEYUP = 0x0002
+        foreground = user32.GetForegroundWindow()
+        foreground_thread = user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+        current_thread = kernel32.GetCurrentThreadId()
+        attached = False
+        if hasattr(user32, "AllowSetForegroundWindow"):
+            user32.AllowSetForegroundWindow(ASFW_ANY)
+        if foreground_thread and foreground_thread != current_thread:
+            attached = bool(user32.AttachThreadInput(foreground_thread, current_thread, True))
+        if hasattr(user32, "IsIconic") and user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, SW_RESTORE)
+        else:
+            user32.ShowWindow(hwnd, SW_SHOW)
+        if hasattr(user32, "keybd_event"):
+            user32.keybd_event(VK_MENU, 0, 0, 0)
+            user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+        user32.BringWindowToTop(hwnd)
+        if hasattr(user32, "SetActiveWindow"):
+            user32.SetActiveWindow(hwnd)
+        if hasattr(user32, "SetFocus"):
+            user32.SetFocus(hwnd)
+        result = bool(user32.SetForegroundWindow(hwnd))
+        if attached:
+            user32.AttachThreadInput(foreground_thread, current_thread, False)
+        return result
+
+    @staticmethod
+    def _app_activate_browser_window(browser_pid: int | None = None) -> bool:
+        if os.name != "nt":
+            return False
+        activation_target = str(browser_pid) if browser_pid is not None else "Google Chrome for Testing"
+        command = (
+            "$wshell = New-Object -ComObject WScript.Shell; "
+            f"if ($wshell.AppActivate('{activation_target}')) {{ exit 0 }} "
+            "else { exit 1 }"
+        )
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    command,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+        except Exception:
+            return False
+        return result.returncode == 0
+
+    @staticmethod
+    def _chrome_process_ids(executable_path: str) -> set[int]:
+        if os.name != "nt":
+            return set()
+        escaped_path = executable_path.replace("'", "''")
+        command = (
+            "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" "
+            f"| Where-Object {{ $_.ExecutablePath -eq '{escaped_path}' }} "
+            "| Select-Object -ExpandProperty ProcessId "
+            "| ConvertTo-Json -Compress"
+        )
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    command,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+        except Exception:
+            return set()
+        if result.returncode != 0 or not result.stdout.strip():
+            return set()
+        try:
+            parsed = json.loads(result.stdout)
+        except Exception:
+            return set()
+        if isinstance(parsed, int):
+            return {parsed}
+        if isinstance(parsed, list):
+            return {int(value) for value in parsed if isinstance(value, int)}
+        return set()
+
+    def _detect_browser_pid(self, executable_path: str, before_pids: set[int]) -> int | None:
+        after_pids = self._chrome_process_ids(executable_path)
+        new_pids = sorted(pid for pid in after_pids if pid not in before_pids)
+        if new_pids:
+            return new_pids[-1]
+        existing_pids = sorted(after_pids)
+        if existing_pids:
+            return existing_pids[-1]
+        return None
+
+    async def _close_other_sessions(self, current_run_id: str) -> None:
+        stale_run_ids = [run_id for run_id in self._sessions if run_id != current_run_id]
+        for stale_run_id in stale_run_ids:
+            session = self._sessions.pop(stale_run_id, None)
+            self._run_headless.pop(stale_run_id, None)
+            if session is None:
+                continue
+            try:
+                await self._close_session(session)
+            except Exception:
+                continue
+
+    def _consume_fresh_session_flag(self) -> bool:
+        if self._current_run_id is None:
+            return False
+        was_fresh = self._fresh_session_run_id == self._current_run_id
+        if was_fresh:
+            self._fresh_session_run_id = None
+        return was_fresh
 
     async def _close_session(self, session: _BrowserSession) -> None:
         await session.context.close()

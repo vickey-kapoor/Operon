@@ -20,7 +20,7 @@ from src.models.common import (
 )
 from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
 from src.models.logs import ModelDebugArtifacts
-from src.models.perception import ScreenPerception, UIElement, UIElementType
+from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.progress import ProgressState
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
@@ -309,12 +309,13 @@ async def test_agent_loop_does_not_cleanup_non_terminal_runs() -> None:
 
 @pytest.mark.asyncio
 async def test_agent_loop_start_run_delegates_to_store_only() -> None:
-    created = AgentState(run_id="run-3", intent="Create draft", status=RunStatus.PENDING)
+    created = AgentState(run_id="run-3", intent="Create draft", headless=True, status=RunStatus.PENDING)
     run_store = Mock()
     run_store.create_run = Mock(return_value=created)
 
     executor = Mock()
     executor.reset_desktop = AsyncMock()
+    executor.configure_run = Mock()
 
     loop = AgentLoop(
         capture_service=Mock(),
@@ -326,11 +327,47 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
         recovery_manager=Mock(),
     )
 
-    response = await loop.start_run(RunTaskRequest(intent="Create a Gmail draft and stop before send."))
+    response = await loop.start_run(
+        RunTaskRequest(intent="Create a Gmail draft and stop before send.", headless=True)
+    )
 
-    run_store.create_run.assert_called_once()
+    run_store.create_run.assert_called_once_with(
+        intent="Create a Gmail draft and stop before send.",
+        start_url=None,
+        headless=True,
+    )
+    executor.configure_run.assert_called_once_with("run-3", headless=True)
     assert response.run_id == "run-3"
     assert response.status is RunStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_start_run_skips_reset_desktop_in_test_safe_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = AgentState(run_id="run-safe", intent="Create draft", status=RunStatus.PENDING)
+    run_store = Mock()
+    run_store.create_run = Mock(return_value=created)
+
+    executor = Mock()
+    executor.reset_desktop = AsyncMock()
+    executor.configure_run = Mock()
+
+    loop = AgentLoop(
+        capture_service=Mock(),
+        perception_service=Mock(),
+        run_store=run_store,
+        policy_service=Mock(),
+        executor=executor,
+        verifier_service=Mock(),
+        recovery_manager=Mock(),
+    )
+
+    monkeypatch.setenv("OPERON_TEST_SAFE_MODE", "true")
+    response = await loop.start_run(RunTaskRequest(intent="Create a Gmail draft"))
+
+    executor.reset_desktop.assert_not_awaited()
+    assert response.run_id == "run-safe"
 
 
 @pytest.mark.asyncio
@@ -836,6 +873,278 @@ def test_verified_type_action_marks_target_complete() -> None:
     assert "fill_name" in state.progress_state.completed_subgoals
     assert state.progress_state.no_progress_streak == 0
     assert trace.progress_made is True
+
+
+def test_click_focus_does_not_complete_new_subgoal_without_page_change() -> None:
+    loop = _loop()
+    state = AgentState(
+        run_id="run-progress-focus",
+        intent="Search site",
+        status=RunStatus.RUNNING,
+        progress_state=ProgressState(
+            previous_page_signature="form_page|none|search-input:Search",
+            latest_page_signature="form_page|none|search-input:Search",
+        ),
+    )
+    action = AgentAction(action_type=ActionType.CLICK, target_element_id="search-input")
+    decision = PolicyDecision(
+        action=action,
+        rationale="Focus search.",
+        confidence=0.9,
+        active_subgoal="search_for_markov_chain",
+    )
+    executed = ExecutedAction(action=action, success=True, detail="clicked")
+    verification = VerificationResult(
+        status=VerificationStatus.SUCCESS,
+        expected_outcome_met=True,
+        stop_condition_met=False,
+        reason="clicked",
+    )
+    recovery = RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="continue")
+
+    trace = loop._update_progress_state(
+        state=state,
+        decision=decision,
+        executed_action=executed,
+        verification=verification,
+        recovery=recovery,
+        step_index=1,
+    )
+
+    assert trace.progress_made is True
+    assert "search_for_markov_chain" not in state.progress_state.completed_subgoals
+
+
+def test_type_with_enter_does_not_complete_subgoal_without_page_change() -> None:
+    loop = _loop()
+    state = AgentState(
+        run_id="run-progress-submit",
+        intent="Search site",
+        status=RunStatus.RUNNING,
+        progress_state=ProgressState(
+            previous_page_signature="form_page|none|search-input:Search",
+            latest_page_signature="form_page|none|search-input:Search",
+        ),
+    )
+    action = AgentAction(
+        action_type=ActionType.TYPE,
+        target_element_id="search-input",
+        text="Markov chain",
+        press_enter=True,
+    )
+    decision = PolicyDecision(
+        action=action,
+        rationale="Search.",
+        confidence=0.9,
+        active_subgoal="search_for_markov_chain",
+    )
+    executed = ExecutedAction(action=action, success=True, detail="typed")
+    verification = VerificationResult(
+        status=VerificationStatus.SUCCESS,
+        expected_outcome_met=True,
+        stop_condition_met=False,
+        reason="typed",
+    )
+    recovery = RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="continue")
+
+    loop._update_progress_state(
+        state=state,
+        decision=decision,
+        executed_action=executed,
+        verification=verification,
+        recovery=recovery,
+        step_index=1,
+    )
+
+    assert "id:search-input" in state.progress_state.completed_targets
+    assert state.progress_state.target_value_history["id:search-input"] == "Markov chain"
+    assert "search_for_markov_chain" not in state.progress_state.completed_subgoals
+
+
+def test_infer_focused_element_from_direct_input_click() -> None:
+    loop = _loop()
+    state = AgentState(
+        run_id="run-focus-direct",
+        intent="Search site",
+        status=RunStatus.RUNNING,
+        observation_history=[
+            ScreenPerception(
+                summary="Search input visible.",
+                page_hint=PageHint.FORM_PAGE,
+                capture_artifact_path="runs/test/step_1/before.png",
+                visible_elements=[
+                    UIElement(
+                        element_id="search-input",
+                        element_type=UIElementType.INPUT,
+                        label="Search",
+                        x=100,
+                        y=50,
+                        width=200,
+                        height=30,
+                        is_interactable=True,
+                        confidence=0.9,
+                    )
+                ],
+                confidence=0.9,
+            )
+        ],
+        action_history=[
+            ExecutedAction(
+                action=AgentAction(action_type=ActionType.CLICK, target_element_id="search-input"),
+                success=True,
+                detail="clicked",
+            )
+        ],
+    )
+    perception = ScreenPerception(
+        summary="Search input still visible.",
+        page_hint=PageHint.FORM_PAGE,
+        capture_artifact_path="runs/test/step_2/before.png",
+        visible_elements=[
+            UIElement(
+                element_id="search-input",
+                element_type=UIElementType.INPUT,
+                label="Search",
+                x=100,
+                y=50,
+                width=200,
+                height=30,
+                is_interactable=True,
+                confidence=0.9,
+            )
+        ],
+        confidence=0.9,
+    )
+
+    inferred = loop._infer_focused_element(state, perception)
+
+    assert inferred.focused_element_id == "search-input"
+
+
+def test_infer_focused_element_from_matching_label_after_control_click() -> None:
+    loop = _loop()
+    state = AgentState(
+        run_id="run-focus-label",
+        intent="Search site",
+        status=RunStatus.RUNNING,
+        observation_history=[
+            ScreenPerception(
+                summary="Search control visible.",
+                page_hint=PageHint.UNKNOWN,
+                capture_artifact_path="runs/test/step_1/before.png",
+                visible_elements=[
+                    UIElement(
+                        element_id="search-button",
+                        element_type=UIElementType.BUTTON,
+                        label="Search or jump to...",
+                        x=100,
+                        y=50,
+                        width=200,
+                        height=30,
+                        is_interactable=True,
+                        confidence=0.9,
+                    )
+                ],
+                confidence=0.9,
+            )
+        ],
+        action_history=[
+            ExecutedAction(
+                action=AgentAction(action_type=ActionType.CLICK, target_element_id="search-button"),
+                success=True,
+                detail="clicked",
+            )
+        ],
+    )
+    perception = ScreenPerception(
+        summary="Search input visible.",
+        page_hint=PageHint.FORM_PAGE,
+        capture_artifact_path="runs/test/step_2/before.png",
+        visible_elements=[
+            UIElement(
+                element_id="search-input",
+                element_type=UIElementType.INPUT,
+                label="Search or jump to...",
+                x=100,
+                y=50,
+                width=200,
+                height=30,
+                is_interactable=True,
+                confidence=0.9,
+            )
+        ],
+        confidence=0.9,
+    )
+
+    inferred = loop._infer_focused_element(state, perception)
+
+    assert inferred.focused_element_id == "search-input"
+
+
+def test_attach_target_context_normalizes_click_to_target_center() -> None:
+    loop = _loop()
+    perception = ScreenPerception(
+        summary="GitHub homepage with search button",
+        page_hint=PageHint.FORM_PAGE,
+        capture_artifact_path="runs/test/step_1/before.png",
+        visible_elements=[
+            UIElement(
+                element_id="search_button",
+                element_type=UIElementType.BUTTON,
+                label="Search",
+                x=835,
+                y=44,
+                width=28,
+                height=28,
+                is_interactable=True,
+                confidence=0.9,
+            )
+        ],
+    )
+    action = AgentAction(
+        action_type=ActionType.CLICK,
+        target_element_id="search_button",
+        x=835,
+        y=44,
+    )
+
+    normalized = loop._attach_target_context(action, perception)
+
+    assert normalized.x == 849
+    assert normalized.y == 58
+    assert normalized.target_context is not None
+
+
+def test_attach_target_context_fills_missing_click_coordinates_from_target() -> None:
+    loop = _loop()
+    perception = ScreenPerception(
+        summary="GitHub homepage with search button",
+        page_hint=PageHint.FORM_PAGE,
+        capture_artifact_path="runs/test/step_1/before.png",
+        visible_elements=[
+            UIElement(
+                element_id="search_button",
+                element_type=UIElementType.BUTTON,
+                label="Search",
+                x=834,
+                y=44,
+                width=28,
+                height=28,
+                is_interactable=True,
+                confidence=1.0,
+            )
+        ],
+    )
+    action = AgentAction(
+        action_type=ActionType.CLICK,
+        target_element_id="search_button",
+    )
+
+    normalized = loop._attach_target_context(action, perception)
+
+    assert normalized.x == 848
+    assert normalized.y == 58
+    assert normalized.target_context is not None
 
 
 def test_repeated_same_value_type_action_is_blocked() -> None:

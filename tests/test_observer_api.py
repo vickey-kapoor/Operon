@@ -197,9 +197,9 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
     monkeypatch.setenv("OPERON_BROWSER_ARTIFACTS_ROOT", str(browser_root))
     client = TestClient(app)
 
-    page = client.get("/desktop-pilot")
+    page = client.get("/")
     assert page.status_code == 200
-    assert "Operon Pilot" in page.text
+    assert "Task Console" in page.text
 
     runs = client.get("/observer/api/runs")
     assert runs.status_code == 200
@@ -213,12 +213,193 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
     assert body["run"]["session_video_path"] == str(video_path)
     assert body["current_step"]["selector"]["trace"]["selected_candidate"] == "submit-button"
     assert body["current_step"]["execution"]["trace"]["final_outcome"] == "success"
+    assert body["current_step"]["plan"]["rationale"] == "Submit form."
+    assert body["current_step"]["plan"]["proposed_action"]["action_type"] == "click"
     assert body["progress_state"]["completed_targets"] == ["id:submit-button"]
 
     artifact = client.get(f"/observer/api/artifact?path={step_dir / 'before.png'}")
     assert artifact.status_code == 200
     video_artifact = client.get(f"/observer/api/artifact?path={video_path}")
     assert video_artifact.status_code == 200
+
+
+def test_observer_export_run_bundle(monkeypatch) -> None:
+    root_dir = _local_test_dir("test-observer-export") / "runs"
+    browser_root = _local_test_dir("test-observer-export-browser")
+    run_id = "run-export"
+    run_dir = root_dir / run_id
+    step_dir = run_dir / "step_1"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    (step_dir / "before.png").write_bytes(b"fakepng")
+    (run_dir / "state.json").write_text(
+        AgentState(
+            run_id=run_id,
+            intent="Open Chrome and navigate to example.com",
+            status=RunStatus.SUCCEEDED,
+            step_count=1,
+            artifact_paths=[str(browser_root / run_id / "session_video" / "session.webm")],
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    video_path = browser_root / run_id / "session_video" / "session.webm"
+    video_path.parent.mkdir(parents=True, exist_ok=True)
+    video_path.write_bytes(b"fakewebm")
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
+    monkeypatch.setenv("OPERON_BROWSER_ARTIFACTS_ROOT", str(browser_root))
+    client = TestClient(app)
+
+    resp = client.get(f"/observer/api/export/{run_id}")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    assert "attachment" in resp.headers["content-disposition"]
+    assert resp.content.startswith(b"PK")
+
+
+def test_observer_live_browser_frame() -> None:
+    """Observer live browser endpoint should return a PNG for active sessions."""
+    class _Executor:
+        async def live_frame_png(self, run_id: str) -> bytes | None:
+            assert run_id == "live-run"
+            return b"\x89PNG\r\n\x1a\nlive"
+
+    from unittest.mock import patch
+
+    client = TestClient(app)
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.executor = _Executor()
+        resp = client.get("/observer/api/live-browser/live-run")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content.startswith(b"\x89PNG")
+
+
+def test_observer_live_browser_frame_missing_session() -> None:
+    """Observer live browser endpoint should return 404 when no active session exists."""
+    class _Executor:
+        async def live_frame_png(self, run_id: str) -> bytes | None:
+            return None
+
+    from unittest.mock import patch
+
+    client = TestClient(app)
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.executor = _Executor()
+        resp = client.get("/observer/api/live-browser/missing-run")
+
+    assert resp.status_code == 404
+
+
+def test_observer_run_includes_current_browser_url(monkeypatch) -> None:
+    root_dir = _local_test_dir("test-observer-current-url") / "runs"
+    run_id = "run-current-url"
+    run_dir = root_dir / run_id
+    _write_state(
+        run_dir,
+        AgentState(
+            run_id=run_id,
+            intent="Open Chrome and navigate to example.com",
+            status=RunStatus.RUNNING,
+            step_count=0,
+        ),
+    )
+
+    class _Executor:
+        async def current_url_for_run(self, requested_run_id: str) -> str | None:
+            assert requested_run_id == run_id
+            return "https://example.com/"
+
+    from unittest.mock import patch
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
+    client = TestClient(app)
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.executor = _Executor()
+        resp = client.get(f"/observer/api/run/{run_id}")
+
+    assert resp.status_code == 200
+    assert resp.json()["run"]["current_url"] == "https://example.com/"
+
+
+def test_observer_run_reconciles_orphaned_browser_run(monkeypatch) -> None:
+    root_dir = _local_test_dir("test-observer-orphaned-run") / "runs"
+    run_id = "run-orphaned-browser"
+    run_dir = root_dir / run_id
+    _write_state(
+        run_dir,
+        AgentState(
+            run_id=run_id,
+            intent="Open Chrome and navigate to example.com",
+            status=RunStatus.RUNNING,
+            step_count=1,
+        ),
+    )
+
+    class _Executor:
+        async def current_url_for_run(self, requested_run_id: str) -> str | None:
+            assert requested_run_id == run_id
+            return None
+
+    from unittest.mock import patch
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
+    client = TestClient(app)
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.executor = _Executor()
+        resp = client.get(f"/observer/api/run/{run_id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["run"]["status"] == RunStatus.FAILED.value
+    assert body["run"]["stop_reason"] == StopReason.EXECUTION_NO_PROGRESS.value
+
+
+def test_observer_runs_reconciles_orphaned_browser_runs(monkeypatch) -> None:
+    root_dir = _local_test_dir("test-observer-orphaned-list") / "runs"
+    orphaned_run_id = "run-orphaned-list"
+    active_run_id = "run-active-list"
+    _write_state(
+        root_dir / orphaned_run_id,
+        AgentState(
+            run_id=orphaned_run_id,
+            intent="Open Chrome and navigate to example.com",
+            status=RunStatus.RUNNING,
+            step_count=1,
+        ),
+    )
+    _write_state(
+        root_dir / active_run_id,
+        AgentState(
+            run_id=active_run_id,
+            intent="Open Chrome and navigate to example.com",
+            status=RunStatus.RUNNING,
+            step_count=2,
+        ),
+    )
+
+    class _Executor:
+        async def current_url_for_run(self, requested_run_id: str) -> str | None:
+            if requested_run_id == orphaned_run_id:
+                return None
+            if requested_run_id == active_run_id:
+                return "https://example.com/"
+            return None
+
+    from unittest.mock import patch
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
+    client = TestClient(app)
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.executor = _Executor()
+        resp = client.get("/observer/api/runs?limit=10")
+
+    assert resp.status_code == 200
+    runs = {run["run_id"]: run for run in resp.json()["runs"]}
+    assert runs[orphaned_run_id]["status"] == RunStatus.FAILED.value
+    assert runs[orphaned_run_id]["stop_reason"] == StopReason.EXECUTION_NO_PROGRESS.value
+    assert runs[active_run_id]["status"] == RunStatus.RUNNING.value
 
 
 def test_observer_handles_missing_artifacts_gracefully(monkeypatch) -> None:

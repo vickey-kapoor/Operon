@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.models.common import FailureCategory, LoopStage
+from src.models.episode import Episode, EpisodeStep
 from src.models.memory import MemoryOutcome, MemoryRecord
+from src.models.perception import PageHint
+from src.models.policy import ActionType
 from src.models.reflection import ReflectionPattern, RunReflection
-from src.store.memory import MemoryStore, benchmark_name_for_intent
+from src.store.memory import MemoryStore, benchmark_name_for_intent, normalize_intent
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,15 @@ class PostRunReflector:
             )
             self.memory_store._append_record(record)
             memories_written += 1
+
+        # Extract episode trajectory from successful runs
+        if success:
+            episode = self._extract_episode(run_id, intent, benchmark, steps)
+            if episode is not None:
+                try:
+                    self.memory_store.save_episode(episode)
+                except Exception:
+                    logger.debug("Failed to save episode for %s", run_id, exc_info=True)
 
         reflection = RunReflection(
             run_id=run_id,
@@ -219,6 +232,72 @@ class PostRunReflector:
                 source_steps=no_change_steps,
             )]
         return []
+
+    # ------------------------------------------------------------------
+    # Episode extraction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_episode(
+        run_id: str,
+        intent: str,
+        benchmark: str,
+        steps: list[dict],
+    ) -> Episode | None:
+        """Compress a successful run into a reusable episode trajectory."""
+        _SKIP_ACTIONS = {"stop", "wait"}
+        episode_steps: list[EpisodeStep] = []
+
+        for step in steps:
+            policy = step.get("policy_decision", {})
+            action = policy.get("action", {})
+            action_type_str = action.get("action_type", "")
+
+            if action_type_str in _SKIP_ACTIONS:
+                continue
+
+            # Only include steps where execution succeeded
+            executed = step.get("executed_action", {})
+            if executed.get("failure_category") is not None:
+                continue
+
+            perception = step.get("perception", {})
+            page_hint_str = perception.get("page_hint", "")
+
+            # Resolve target description from perception elements
+            target_description = None
+            target_id = action.get("target_element_id")
+            if target_id:
+                for elem in perception.get("visible_elements", []):
+                    if elem.get("element_id") == target_id:
+                        target_description = elem.get("primary_name")
+                        break
+
+            try:
+                episode_steps.append(EpisodeStep(
+                    step_index=step.get("step_index", len(episode_steps) + 1),
+                    page_hint=PageHint(page_hint_str),
+                    action_type=ActionType(action_type_str),
+                    target_description=target_description,
+                    text=action.get("text"),
+                    key=action.get("key"),
+                    subgoal=policy.get("active_subgoal") or "unknown",
+                ))
+            except (ValueError, KeyError):
+                continue
+
+        if len(episode_steps) < 2:
+            return None
+
+        return Episode(
+            episode_id=run_id,
+            normalized_intent=normalize_intent(intent),
+            benchmark=benchmark,
+            source_run_id=run_id,
+            steps=episode_steps,
+            success_count=1,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     # ------------------------------------------------------------------
     # Helpers

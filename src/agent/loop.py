@@ -345,7 +345,27 @@ class AgentLoop:
                 _trace("  6 UNIFIED_CONTRACT skipped", f"{type(_exc).__name__}: {_exc}")
                 strategy = None
                 unified_step = None
-            if unified_step is None or unified_step.critic.outcome.value != "retry" or strategy is None:
+            # The unified layer may request an in-step adaptation retry, but only
+            # when (a) verification produced a hard FAILURE — not merely UNCERTAIN,
+            # which the outer recovery stage handles — and (b) the legacy hardening
+            # path did not already retry this action (e.g. stale-target
+            # re-resolution, successful or failed). Looping capture/perceive/choose
+            # inside a single step on UNCERTAIN verifications breaks the single-
+            # iteration contract that legacy tests rely on.
+            legacy_retry_attempted = bool(
+                executed_action.execution_trace is not None
+                and executed_action.execution_trace.retry_attempted
+            )
+            allow_adaptation_retry = (
+                verification.status is VerificationStatus.FAILURE
+                and not legacy_retry_attempted
+            )
+            if (
+                unified_step is None
+                or unified_step.critic.outcome.value != "retry"
+                or strategy is None
+                or not allow_adaptation_retry
+            ):
                 if retries_used > 0 and unified_step is not None:
                     unified_state = unified_state.model_copy(
                         update={
@@ -845,9 +865,6 @@ class AgentLoop:
         executor_runner = self.executor_adapter if use_unified_executor else self.executor
         executed_action = await executor_runner.execute(decision_action)
         executed_action = self._apply_no_progress_detection(state, executed_action)
-
-        if use_unified_executor:
-            return state, self._persist_execution_trace(record.run_id, step_index, executed_action)
 
         if not self._should_retry_execution(executed_action):
             return state, self._persist_execution_trace(record.run_id, step_index, executed_action)

@@ -25,7 +25,7 @@ class StubRunStore:
     def __init__(self) -> None:
         self.state: AgentState | None = None
 
-    def create_run(self, intent: str, *, start_url: str | None = None) -> AgentState:
+    def create_run(self, intent: str, *, start_url: str | None = None, headless: bool | None = None) -> AgentState:
         self.state = AgentState(run_id="run-benchmark", intent=intent, start_url=start_url, status=RunStatus.PENDING)
         return self.state
 

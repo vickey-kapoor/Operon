@@ -2,6 +2,34 @@
 
 Vision-driven computer-use engine. Closed loop: capture → perceive → decide → execute → verify → recover. Desktop (pyautogui) and browser (Playwright + Gemini Computer Use) share one loop.
 
+## HLD
+
+```text
+FastAPI  →  AgentLoop  →  Capture   (mss / Playwright screenshot)
+                       →  Perceive  (Gemini → ScreenPerception)
+                       →  Decide    PolicyCoordinator
+                                      ├── PolicyRuleEngine  (deterministic)
+                                      └── GeminiPolicyService (LLM fallback)
+                       →  Re-resolve DeterministicTargetSelector  (stale target)
+                       →  Execute   DesktopExecutor | NativeBrowserExecutor
+                       →  Verify    DeterministicVerifier + VideoVerifier
+                       →  Recover   RuleBasedRecoveryManager
+                       →  Reflect   PostRunReflector  (on terminal)
+                       →  Persist   FileBackedRunStore + MemoryStore (+ Episodes)
+
+Unified Contract Layer  (observer on top of the loop)
+    LegacyOperonContractAdapter → PerceptionOutput / PlannerOutput / ActorOutput / CriticOutput
+    UnifiedOrchestrator  →  core/router.py  →  AgentRuntimeState
+```
+
+- Vision only — no DOM / a11y tree.
+- Desktop and browser share verifier, recovery, persistence, memory.
+- Rules first, LLM fallback (`PolicyRuleEngine` → `GeminiPolicyService`).
+- Hardened targets: `DeterministicTargetSelector.reresolve()` re-binds to the original `TargetIntent` if the target moves.
+- Video fallback verify: on no-change, record 3s and ask Gemini for temporal evidence.
+- Self-improving: `PostRunReflector` writes `MemoryHint`s and compresses successful runs into reusable `Episode`s.
+- Unified contracts wrap every step in typed perception/planner/actor/critic bundles.
+
 ## Setup
 
 ```powershell

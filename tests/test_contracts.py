@@ -15,7 +15,6 @@ from core.contracts.planner import PlannerOutput
 from core.router import route_plan, validate_plan_route
 from runtime.orchestrator import Phase1Orchestrator
 
-
 EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples" / "contracts"
 
 

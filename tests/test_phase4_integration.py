@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-import sys
-import types
 
 import pytest
 
@@ -24,16 +24,30 @@ screen_diff_stub.SCREEN_CHANGE_THRESHOLD = 0.05
 screen_diff_stub.compute_screen_change_ratio = lambda before, after: 0.25
 sys.modules.setdefault("src.agent.screen_diff", screen_diff_stub)
 
-from src.agent.loop import AgentLoop
-from src.models.capture import CaptureFrame
-from src.models.common import FailureCategory, RunStatus, RunTaskRequest, StepRequest
-from src.models.execution import ExecutedAction
-from src.models.logs import ModelDebugArtifacts
-from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.verification import VerificationFailureType, VerificationResult, VerificationStatus
-from src.store.run_store import FileBackedRunStore
+from src.agent.loop import AgentLoop  # noqa: E402
+from src.models.capture import CaptureFrame  # noqa: E402
+from src.models.common import (  # noqa: E402
+    FailureCategory,
+    RunStatus,
+    RunTaskRequest,
+    StepRequest,
+)
+from src.models.execution import ExecutedAction  # noqa: E402
+from src.models.logs import ModelDebugArtifacts  # noqa: E402
+from src.models.perception import (  # noqa: E402
+    PageHint,
+    ScreenPerception,
+    UIElement,
+    UIElementType,
+)
+from src.models.policy import ActionType, AgentAction, PolicyDecision  # noqa: E402
+from src.models.recovery import RecoveryDecision, RecoveryStrategy  # noqa: E402
+from src.models.verification import (  # noqa: E402
+    VerificationFailureType,
+    VerificationResult,
+    VerificationStatus,
+)
+from src.store.run_store import FileBackedRunStore  # noqa: E402
 
 
 def _debug_artifacts(root: Path, stage: str) -> ModelDebugArtifacts:

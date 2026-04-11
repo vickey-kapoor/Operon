@@ -6,19 +6,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-_TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
-
-
-def _trace(stage: str, detail: str = "") -> None:
-    if not _TRACE:
-        return
-    suffix = f"  {detail}" if detail else ""
-    msg = f"[TRACE] {stage}{suffix}"
-    try:
-        print(f"\033[36m{msg}\033[0m", flush=True)
-    except UnicodeEncodeError:
-        print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
-
 from core.contracts.perception import Environment as UnifiedEnvironment
 from core.router import RoutingError
 from executors.browser_executor import BrowserExecutor as UnifiedBrowserExecutor
@@ -66,6 +53,19 @@ from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log
 from src.store.run_store import RunStore
+
+_TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
+
+
+def _trace(stage: str, detail: str = "") -> None:
+    if not _TRACE:
+        return
+    suffix = f"  {detail}" if detail else ""
+    msg = f"[TRACE] {stage}{suffix}"
+    try:
+        print(f"\033[36m{msg}\033[0m", flush=True)
+    except UnicodeEncodeError:
+        print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
 
 
 @dataclass(slots=True)
@@ -256,7 +256,7 @@ class AgentLoop:
         perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
         state = await self.run_store.update_state(record.run_id, perception)
         self._sync_progress_state_with_perception(state, perception)
-        _trace("  3 POLICY", f"PolicyCoordinator -> rule engine first, then LLM fallback")
+        _trace("  3 POLICY", "PolicyCoordinator -> rule engine first, then LLM fallback")
         _t0 = time.perf_counter()
         decision = await self.policy_service.choose_action(state, perception)
         decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})

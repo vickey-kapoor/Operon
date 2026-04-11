@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operon Task Console</title>
+<style>
+  :root {
+    --bg: #0b1120;
+    --panel: #131c30;
+    --border: #243452;
+    --text: #eef2ff;
+    --muted: #8ea3c3;
+    --accent: #4ade80;
+    --accent-soft: rgba(74,222,128,0.12);
+    --blue: #60a5fa;
+    --danger: #f87171;
+    --warning: #fbbf24;
+    --success-bg: rgba(52,211,153,0.10);
+    --success-border: rgba(52,211,153,0.30);
+    --fail-bg: rgba(248,113,113,0.10);
+    --fail-border: rgba(248,113,113,0.30);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .shell {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    min-height: 100vh;
+  }
+  /* ── sidebar ── */
+  .sidebar {
+    padding: 24px 20px;
+    border-right: 1px solid var(--border);
+    background: rgba(10,16,30,0.85);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow: auto;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .brand-logo {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #86efac, #4ade80);
+    display: grid; place-items: center;
+    font-weight: 800; color: #052e16; font-size: 16px;
+  }
+  .brand-name { font-size: 16px; font-weight: 700; }
+  .brand-sub { font-size: 11px; color: var(--muted); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .card-title {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 700;
+    margin-bottom: 12px;
+  }
+  .mode-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .mode-btn {
+    flex: 1;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    border-radius: 999px;
+    padding: 7px 10px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .mode-btn.active {
+    background: linear-gradient(135deg, #bbf7d0, #4ade80);
+    border-color: transparent;
+    color: #052e16;
+    font-weight: 700;
+  }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  textarea, input[type="text"] {
+    width: 100%;
+    background: rgba(8,12,24,0.80);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font: inherit;
+  }
+  textarea { min-height: 110px; resize: vertical; }
+  textarea:disabled, input:disabled { opacity: 0.5; }
+  .btn-row { display: flex; gap: 8px; }
+  .btn {
+    border: none;
+    border-radius: 10px;
+    padding: 10px 16px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .btn-run {
+    flex: 1;
+    background: linear-gradient(135deg, #86efac, #4ade80);
+    color: #052e16;
+  }
+  .btn-stop {
+    background: rgba(248,113,113,0.14);
+    color: var(--danger);
+    border: 1px solid rgba(248,113,113,0.28);
+  }
+  .btn-resume {
+    flex: 1;
+    background: rgba(96,165,250,0.14);
+    color: var(--blue);
+    border: 1px solid rgba(96,165,250,0.28);
+  }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .hidden { display: none !important; }
+  /* ── main workspace ── */
+  .workspace {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+  }
+  /* ── status bar ── */
+  .statusbar {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+  }
+  .status-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 1.4s infinite; }
+  .status-dot.succeeded { background: #34d399; }
+  .status-dot.failed { background: var(--danger); }
+  .status-dot.cancelled { background: var(--warning); }
+  .status-dot.pending { background: var(--muted); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+  .statusbar-meta { color: var(--muted); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* ── main grid ── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+  }
+  /* ── info panels ── */
+  .info-col { display: flex; flex-direction: column; gap: 16px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .panel-head {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 700;
+  }
+  .panel-body { padding: 14px 16px; }
+  .kv-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .kv-row:last-child { border-bottom: none; }
+  .kv-key { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  .kv-val { color: var(--text); font-size: 12px; text-align: right; word-break: break-all; }
+  .kv-val.accent { color: var(--accent); }
+  .kv-val.blue { color: var(--blue); }
+  .kv-val.danger { color: var(--danger); }
+  .kv-val.warning { color: var(--warning); }
+  /* ── log panel ── */
+  .log-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .log-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+    max-height: 480px;
+    font-size: 12px;
+    font-family: ui-monospace, monospace;
+  }
+  .log-entry {
+    display: flex;
+    gap: 10px;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    line-height: 1.45;
+  }
+  .log-step { color: var(--muted); width: 32px; flex-shrink: 0; text-align: right; }
+  .log-event { color: var(--blue); flex-shrink: 0; min-width: 160px; }
+  .log-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-empty { color: var(--muted); padding: 16px; text-align: center; font-style: italic; font-size: 12px; }
+  /* ── result banner ── */
+  .result-banner {
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    border: 1px solid;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .result-banner.success { background: var(--success-bg); border-color: var(--success-border); }
+  .result-banner.failure { background: var(--fail-bg); border-color: var(--fail-border); }
+  .result-icon { font-size: 20px; flex-shrink: 0; }
+  .result-title { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
+  .result-detail { color: var(--muted); font-size: 12px; }
+  /* ── responsive ── */
+  @media (max-width: 1024px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; }
+    .main-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">O</div>
+      <div>
+        <div class="brand-name">Operon</div>
+        <div class="brand-sub">Task Console</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">New Task</div>
+
+      <div class="mode-row">
+        <button id="modeBrowser" class="mode-btn active" type="button" onclick="setMode('browser')">Browser</button>
+        <button id="modeDesktop" class="mode-btn" type="button" onclick="setMode('desktop')">Desktop</button>
+      </div>
+
+      <div class="field">
+        <label for="taskInput">Instruction</label>
+        <textarea id="taskInput" placeholder="Describe what you want Operon to do..."></textarea>
+      </div>
+
+      <div class="field" id="urlField">
+        <label for="startUrl">Start URL <span style="color:var(--muted)">(optional)</span></label>
+        <input id="startUrl" type="text" placeholder="https://...">
+      </div>
+
+      <div class="btn-row">
+        <button id="btnRun" class="btn btn-run" type="button" onclick="startRun()">Run</button>
+        <button id="btnStop" class="btn btn-stop" type="button" onclick="stopRun()" disabled>Stop</button>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button id="btnResume" class="btn btn-resume hidden" type="button" onclick="resumeRun()">Resume</button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- workspace -->
+  <main class="workspace">
+    <!-- result banner (shown on terminal) -->
+    <div id="resultBanner" class="result-banner hidden success">
+      <div class="result-icon" id="resultIcon">&#x2713;</div>
+      <div>
+        <div class="result-title" id="resultTitle">Task succeeded</div>
+        <div class="result-detail" id="resultDetail"></div>
+      </div>
+    </div>
+
+    <!-- status bar -->
+    <div class="statusbar">
+      <div class="status-badge">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusLabel">Idle</span>
+      </div>
+      <div class="statusbar-meta" id="statusMeta">Start a task to begin.</div>
+    </div>
+
+    <!-- main grid: info panels + log -->
+    <div class="main-grid">
+      <!-- info panels -->
+      <div class="info-col">
+        <div class="panel">
+          <div class="panel-head">Run</div>
+          <div class="panel-body">
+            <div class="kv-row">
+              <span class="kv-key">Environment</span>
+              <span class="kv-val blue" id="kvEnv">—</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Step</span>
+              <span class="kv-val" id="kvStep">—</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Current subgoal</span>
+              <span class="kv-val accent" id="kvSubgoal">—</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Phase</span>
+              <span class="kv-val" id="kvPhase">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">Last Action</div>
+          <div class="panel-body">
+            <div class="kv-row">
+              <span class="kv-key">Type</span>
+              <span class="kv-val accent" id="kvActionType">—</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Detail</span>
+              <span class="kv-val" id="kvActionDetail">—</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Outcome</span>
+              <span class="kv-val" id="kvActionOutcome">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">Last Critic Result</div>
+          <div class="panel-body">
+            <div class="kv-row">
+              <span class="kv-key">Verdict</span>
+              <span class="kv-val" id="kvVerdict">—</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Expected</span>
+              <span class="kv-val" id="kvExpected">—</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Observed</span>
+              <span class="kv-val" id="kvObserved">—</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Rationale</span>
+              <span class="kv-val" id="kvRationale">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- live log -->
+      <div class="log-panel panel">
+        <div class="panel-head">Live Log</div>
+        <div class="log-body" id="logBody">
+          <div class="log-empty">Log entries appear here during a run.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+'use strict';
+
+// ── state ──────────────────────────────────────────────────────────────────
+let mode = 'browser';
+let runId = null;
+let running = false;
+let poller = null;
+let pollFails = 0;
+
+// ── utilities ──────────────────────────────────────────────────────────────
+function esc(v) {
+  if (v == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(v);
+  return d.innerHTML;
+}
+
+async function fetchJson(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let msg = 'Request failed';
+    try { const d = await r.json(); if (d && d.detail) msg = d.detail; } catch (_) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+function routes() {
+  return mode === 'browser'
+    ? { runTask: '/run-task', step: '/step', resume: '/resume', cleanup: '/cleanup' }
+    : { runTask: '/desktop/run-task', step: '/desktop/step', resume: '/desktop/resume', cleanup: '/desktop/cleanup' };
+}
+
+// ── mode selector ──────────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m;
+  document.getElementById('modeBrowser').classList.toggle('active', m === 'browser');
+  document.getElementById('modeDesktop').classList.toggle('active', m === 'desktop');
+  document.getElementById('urlField').classList.toggle('hidden', m !== 'browser');
+  document.getElementById('startUrl').disabled = m !== 'browser';
+}
+
+// ── UI state helpers ───────────────────────────────────────────────────────
+function setRunning(isRunning) {
+  running = isRunning;
+  document.getElementById('btnRun').disabled = isRunning;
+  document.getElementById('btnStop').disabled = !isRunning;
+  document.getElementById('taskInput').disabled = isRunning;
+  document.getElementById('startUrl').disabled = isRunning || mode !== 'browser';
+  document.getElementById('modeBrowser').disabled = isRunning;
+  document.getElementById('modeDesktop').disabled = isRunning;
+}
+
+function showStatusBar(label, meta, dotClass) {
+  const dot = document.getElementById('statusDot');
+  dot.className = 'status-dot ' + (dotClass || '');
+  document.getElementById('statusLabel').textContent = label;
+  document.getElementById('statusMeta').textContent = meta || '';
+}
+
+function showResultBanner(success, title, detail) {
+  const banner = document.getElementById('resultBanner');
+  banner.classList.remove('hidden', 'success', 'failure');
+  banner.classList.add(success ? 'success' : 'failure');
+  document.getElementById('resultIcon').innerHTML = success ? '&#x2713;' : '&#x2717;';
+  document.getElementById('resultTitle').textContent = title;
+  document.getElementById('resultDetail').textContent = detail || '';
+}
+
+function hideResultBanner() {
+  document.getElementById('resultBanner').classList.add('hidden');
+}
+
+function setText(id, val, fallback) {
+  document.getElementById(id).textContent = val != null && String(val).trim() ? String(val) : (fallback || '—');
+}
+
+function setClass(id, cls) {
+  const el = document.getElementById(id);
+  el.className = 'kv-val' + (cls ? ' ' + cls : '');
+}
+
+// ── snapshot rendering ─────────────────────────────────────────────────────
+function renderSnapshot(snap) {
+  const run = snap && snap.run ? snap.run : null;
+  const step = snap && snap.current_step ? snap.current_step : null;
+
+  // status bar
+  const st = run ? run.status : 'idle';
+  const dotCls = st === 'running' ? 'running' : st === 'succeeded' ? 'succeeded' : st === 'failed' || st === 'cancelled' ? 'failed' : 'pending';
+  showStatusBar(
+    st.replace(/_/g, ' '),
+    run ? ('Run ' + run.run_id + ' \u2022 ' + (run.step_count || 0) + ' steps' + (run.current_subgoal ? ' \u2022 ' + run.current_subgoal : '')) : 'Start a task to begin.',
+    dotCls
+  );
+
+  // run info
+  setText('kvEnv', mode === 'browser' ? 'Browser' : 'Desktop');
+  setClass('kvEnv', 'blue');
+  setText('kvStep', run ? String(run.step_count || 0) : null);
+  setText('kvSubgoal', run ? run.current_subgoal : null);
+  setClass('kvSubgoal', 'accent');
+  setText('kvPhase', run ? run.current_phase : null);
+
+  // last action
+  const exec = step && step.execution ? step.execution : null;
+  const actionType = exec && exec.action ? exec.action.action_type : null;
+  setText('kvActionType', actionType);
+  setClass('kvActionType', 'accent');
+  setText('kvActionDetail', exec ? exec.detail : null);
+  const failCat = exec ? exec.failure_category : null;
+  setText('kvActionOutcome', failCat ? ('fail: ' + failCat) : (exec && exec.action ? 'ok' : null));
+  setClass('kvActionOutcome', failCat ? 'danger' : '');
+
+  // last critic (verification)
+  const verif = step && step.verification ? step.verification : null;
+  const verdict = verif ? verif.status : null;
+  setText('kvVerdict', verdict);
+  setClass('kvVerdict', verdict === 'pass' ? 'accent' : verdict === 'fail' ? 'danger' : '');
+  setText('kvExpected', verif ? verif.expected_outcome : null);
+  setText('kvObserved', verif ? verif.observed_outcome : null);
+  const plan = step && step.plan ? step.plan : null;
+  setText('kvRationale', plan ? plan.rationale : null);
+
+  // result banner
+  if (run && (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled')) {
+    const ok = run.status === 'succeeded';
+    const reason = run.stop_reason ? run.stop_reason.replace(/_/g, ' ') : run.status;
+    showResultBanner(ok,
+      ok ? 'Task succeeded' : (run.status === 'cancelled' ? 'Run cancelled' : 'Task failed'),
+      reason
+    );
+    // resume button
+    document.getElementById('btnResume').classList.add('hidden');
+  } else if (run && run.status === 'waiting_for_user') {
+    document.getElementById('btnResume').classList.remove('hidden');
+    hideResultBanner();
+  } else {
+    document.getElementById('btnResume').classList.add('hidden');
+    hideResultBanner();
+  }
+
+  // log
+  renderLog(snap && snap.event_log ? snap.event_log : []);
+}
+
+function renderLog(events) {
+  const body = document.getElementById('logBody');
+  if (!events.length) {
+    body.innerHTML = '<div class="log-empty">Log entries appear here during a run.</div>';
+    return;
+  }
+  const rows = events.slice(-200).map(function(e) {
+    return '<div class="log-entry">' +
+      '<span class="log-step">' + esc(e.step_index) + '</span>' +
+      '<span class="log-event">' + esc(e.event) + '</span>' +
+      '<span class="log-detail" title="' + esc(e.detail) + '">' + esc(e.detail) + '</span>' +
+    '</div>';
+  }).join('');
+  body.innerHTML = rows;
+  body.scrollTop = body.scrollHeight;
+}
+
+// ── polling ────────────────────────────────────────────────────────────────
+function stopPoller() {
+  if (poller) { clearInterval(poller); poller = null; }
+}
+
+async function refreshSnapshot() {
+  const snap = await fetchJson('/observer/api/run/' + encodeURIComponent(runId));
+  renderSnapshot(snap);
+  return snap;
+}
+
+function startPoller() {
+  stopPoller();
+  pollFails = 0;
+  poller = setInterval(function() {
+    refreshSnapshot().then(function() { pollFails = 0; }).catch(function() {
+      pollFails++;
+      if (pollFails >= 3) {
+        showStatusBar('Connection lost', 'Polling paused after repeated errors.', '');
+        stopPoller();
+      }
+    });
+  }, 1000);
+}
+
+// ── run lifecycle ──────────────────────────────────────────────────────────
+async function runLoop() {
+  const r = routes();
+  while (running) {
+    const resp = await fetchJson(r.step, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: runId }),
+    });
+    if (resp.status !== 'running') {
+      setRunning(false);
+      stopPoller();
+      await refreshSnapshot();
+      // cleanup browser session silently
+      fetchJson(r.cleanup, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: runId }),
+      }).catch(function() {});
+      return;
+    }
+  }
+}
+
+async function startRun() {
+  const intent = document.getElementById('taskInput').value.trim();
+  if (!intent) return;
+  hideResultBanner();
+  setRunning(true);
+  showStatusBar('Starting', 'Creating run...', 'pending');
+  renderLog([]);
+  const r = routes();
+  const body = { intent: intent };
+  if (mode === 'browser') {
+    const url = document.getElementById('startUrl').value.trim();
+    if (url) body.start_url = url;
+    body.headless = false;
+  }
+  try {
+    const resp = await fetchJson(r.runTask, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    runId = resp.run_id;
+    showStatusBar('Running', 'Run ' + runId + ' started.', 'running');
+    startPoller();
+    await runLoop();
+  } catch (e) {
+    setRunning(false);
+    stopPoller();
+    showStatusBar('Error', e.message, '');
+  }
+}
+
+async function stopRun() {
+  if (!runId) return;
+  // signal server-side cancellation, then stop client loop
+  try {
+    await fetchJson('/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: runId }),
+    });
+  } catch (_) {}
+  running = false;
+  setRunning(false);
+  stopPoller();
+  await refreshSnapshot().catch(function() {});
+}
+
+async function resumeRun() {
+  if (!runId || running) return;
+  const r = routes();
+  try {
+    await fetchJson(r.resume, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: runId }),
+    });
+    setRunning(true);
+    startPoller();
+    await runLoop();
+  } catch (e) {
+    showStatusBar('Error', e.message, '');
+  }
+}
+
+// ── init ───────────────────────────────────────────────────────────────────
+setMode('browser');
+</script>
+</body>
+</html>

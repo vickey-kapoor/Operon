@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from src.agent.selector import DeterministicTargetSelector
 from src.models.common import FailureCategory
 from src.models.memory import MemoryHint
@@ -44,6 +46,7 @@ class PolicyRuleEngine:
             or self._avoid_identical_type_retry(state, perception, memory_hints)
             or self._compose_already_visible_rule(state, perception)
             or self._submit_form_when_ready_rule(state, perception)
+            or self._search_query_rule(state, perception)
             or self._focus_before_type_rule(state, perception, memory_hints)
         )
 
@@ -189,6 +192,50 @@ class PolicyRuleEngine:
             rationale="Required form fields are already filled; submit the form.",
             confidence=0.97,
             active_subgoal="submit_form",
+        )
+
+    def _search_query_rule(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision | None:
+        query = self._extract_search_query(state)
+        if query is None:
+            return None
+
+        search_input = self._search_input_target(perception)
+        if search_input is not None:
+            if perception.focused_element_id != search_input.element_id:
+                return self._click_decision(
+                    search_input,
+                    f"Focus {search_input.primary_name} so the search query can be entered.",
+                )
+
+            return PolicyDecision(
+                action=AgentAction(
+                    action_type=ActionType.TYPE,
+                    target_element_id=search_input.element_id,
+                    text=query,
+                    press_enter=True,
+                ),
+                rationale=f"Type the search query '{query}' into {search_input.primary_name} and submit it.",
+                confidence=0.97,
+                active_subgoal=f"search for {query}",
+            )
+
+        search_trigger = self._search_trigger_target(perception)
+        if search_trigger is None:
+            return None
+        return PolicyDecision(
+            action=AgentAction(
+                action_type=ActionType.CLICK,
+                target_element_id=search_trigger.element_id,
+                x=search_trigger.x + max(1, search_trigger.width // 2),
+                y=search_trigger.y + max(1, search_trigger.height // 2),
+            ),
+            rationale=f"Activate {search_trigger.primary_name} so the search input becomes available.",
+            confidence=0.94,
+            active_subgoal=f"focus {search_trigger.element_id}",
         )
 
     def _resolve_target_element(
@@ -402,6 +449,42 @@ class PolicyRuleEngine:
             expected_element_types=[UIElementType.INPUT],
             expected_section=expected_section,
         )
+
+    def _search_input_target(self, perception: ScreenPerception) -> UIElement | None:
+        search_candidates = [
+            element
+            for element in self._input_candidates(perception)
+            if "search" in element.primary_name.lower()
+        ]
+        if len(search_candidates) == 1:
+            return search_candidates[0]
+        if len(search_candidates) > 1:
+            return search_candidates[0]
+        return None
+
+    @staticmethod
+    def _search_trigger_target(perception: ScreenPerception) -> UIElement | None:
+        for element in perception.visible_elements:
+            if not element.usable_for_targeting:
+                continue
+            if element.element_type not in {UIElementType.BUTTON, UIElementType.LINK, UIElementType.ICON}:
+                continue
+            if "search" in element.primary_name.lower():
+                return element
+        return None
+
+    @staticmethod
+    def _extract_search_query(state: AgentState) -> str | None:
+        for source in (state.current_subgoal, state.intent):
+            if not source:
+                continue
+            match = re.search(r"search for\s+(.+?)(?:,|\sand\s|\sthen\s|$)", source, flags=re.IGNORECASE)
+            if match is None:
+                continue
+            query = match.group(1).strip(" .")
+            if query:
+                return query
+        return None
 
     def _select_target(self, perception: ScreenPerception, intent: TargetIntent) -> UIElement | None:
         result = self.selector.select(perception, intent, _cached_intermediates=self._cached_intermediates)

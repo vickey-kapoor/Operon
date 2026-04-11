@@ -17,6 +17,7 @@ class AgentState(StrictModel):
     run_id: str = Field(min_length=1)
     intent: str = Field(min_length=1)
     start_url: str | None = Field(default=None, min_length=1)
+    headless: bool | None = None
     status: RunStatus
     current_subgoal: str | None = Field(default=None, min_length=1)
     step_count: int = Field(default=0, ge=0)

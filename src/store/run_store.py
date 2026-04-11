@@ -17,7 +17,13 @@ class RunStore(ABC):
     """Typed interface for local run state persistence."""
 
     @abstractmethod
-    def create_run(self, intent: str, *, start_url: str | None = None) -> AgentState:
+    def create_run(
+        self,
+        intent: str,
+        *,
+        start_url: str | None = None,
+        headless: bool | None = None,
+    ) -> AgentState:
         """Create and store a new run."""
 
     @abstractmethod
@@ -45,10 +51,22 @@ class FileBackedRunStore(RunStore):
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self._runs: Dict[str, AgentState] = {}
 
-    def create_run(self, intent: str, *, start_url: str | None = None) -> AgentState:
+    def create_run(
+        self,
+        intent: str,
+        *,
+        start_url: str | None = None,
+        headless: bool | None = None,
+    ) -> AgentState:
         """Create and store a new run record."""
         run_id = str(uuid4())
-        record = AgentState(run_id=run_id, intent=intent, start_url=start_url, status=RunStatus.PENDING)
+        record = AgentState(
+            run_id=run_id,
+            intent=intent,
+            start_url=start_url,
+            headless=headless,
+            status=RunStatus.PENDING,
+        )
         self._runs[run_id] = record
         self._ensure_run_dir(run_id)
         self._write_state(record)

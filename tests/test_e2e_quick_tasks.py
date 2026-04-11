@@ -143,15 +143,15 @@ class TestUIEndpoints:
         # The page should have some UI content — not a blank page
         assert len(body) > 500, "HTML body is suspiciously short"
 
-    def test_desktop_pilot_route_serves_html(self):
-        resp = get("/desktop-pilot")
+    def test_console_route_serves_html(self):
+        resp = get("/console")
         assert resp.status_code == 200
         assert "text/html" in resp.headers.get("Content-Type", "")
 
-    def test_root_and_desktop_pilot_serve_same_content(self):
+    def test_root_and_console_serve_same_content(self):
         root = get("/")
-        pilot = get("/desktop-pilot")
-        assert root.text == pilot.text, "/ and /desktop-pilot should serve identical HTML"
+        console = get("/console")
+        assert root.text == console.text, "/ and /console should serve identical HTML"
 
 
 # ---------------------------------------------------------------------------

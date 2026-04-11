@@ -1,9 +1,18 @@
 """Agent loop orchestrator for the vision-driven automation workflow."""
 
+import os
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.contracts.perception import Environment as UnifiedEnvironment
+from core.router import RoutingError
+from executors.browser_executor import BrowserExecutor as UnifiedBrowserExecutor
+from executors.desktop_executor import DesktopExecutor as UnifiedDesktopExecutor
+from runtime.legacy_adapter import LegacyOperonContractAdapter
+from runtime.orchestrator import UnifiedOrchestrator
+from runtime.state import AgentRuntimeState
 from src.agent.capture import CaptureService
 from src.agent.perception import PerceptionLowQualityError, PerceptionService
 from src.agent.policy import PolicyService
@@ -30,7 +39,7 @@ from src.models.logs import (
     PreStepFailureLog,
     StepLog,
 )
-from src.models.perception import PageHint, UIElement
+from src.models.perception import PageHint, UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
@@ -44,6 +53,19 @@ from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log
 from src.store.run_store import RunStore
+
+_TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
+
+
+def _trace(stage: str, detail: str = "") -> None:
+    if not _TRACE:
+        return
+    suffix = f"  {detail}" if detail else ""
+    msg = f"[TRACE] {stage}{suffix}"
+    try:
+        print(f"\033[36m{msg}\033[0m", flush=True)
+    except UnicodeEncodeError:
+        print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
 
 
 @dataclass(slots=True)
@@ -78,6 +100,8 @@ class AgentLoop:
         recovery_manager: RecoveryManager,
         memory_store: MemoryStore | None = None,
         gemini_client: GeminiClient | None = None,
+        environment: UnifiedEnvironment = UnifiedEnvironment.BROWSER,
+        unified_orchestrator: UnifiedOrchestrator | None = None,
     ) -> None:
         self.capture_service = capture_service
         self.perception_service = perception_service
@@ -94,24 +118,55 @@ class AgentLoop:
         self.reflector: PostRunReflector | None = (
             PostRunReflector(memory_store) if memory_store is not None else None
         )
+        self.environment = environment
+        self.unified_orchestrator = unified_orchestrator or UnifiedOrchestrator()
+        self.legacy_contract_adapter = LegacyOperonContractAdapter(environment=environment)
+        self.unified_states: dict[str, AgentRuntimeState] = {}
+        if environment is UnifiedEnvironment.BROWSER:
+            self.executor_adapter = UnifiedBrowserExecutor(executor)
+        else:
+            self.executor_adapter = UnifiedDesktopExecutor(executor)
 
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
+        _trace("START_RUN", f"intent={request.intent!r}  url={request.start_url!r}")
         # Minimize all windows (including the Pilot UI browser) for a clean desktop
-        if hasattr(self.executor, "reset_desktop"):
+        if hasattr(self.executor, "reset_desktop") and not self._test_safe_mode_enabled():
             await self.executor.reset_desktop()
-        record = self.run_store.create_run(intent=request.intent, start_url=request.start_url)
+        record = self.run_store.create_run(
+            intent=request.intent,
+            start_url=request.start_url,
+            headless=request.headless,
+        )
+        _trace("START_RUN", f"run_id={record.run_id}")
         if hasattr(self.executor, "set_current_run_id"):
             self.executor.set_current_run_id(record.run_id)
+        if hasattr(self.executor, "configure_run"):
+            self.executor.configure_run(record.run_id, headless=request.headless)
         if request.start_url:
+            _trace("START_RUN -> NAVIGATE", request.start_url)
             await self.executor.execute(
                 AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
             )
+        self.unified_states[record.run_id] = AgentRuntimeState(
+            environment=self.environment,
+            active_app="browser" if self.environment is UnifiedEnvironment.BROWSER else "desktop",
+            current_url=request.start_url if self.environment is UnifiedEnvironment.BROWSER else None,
+        )
         return RunResponse(
             run_id=record.run_id,
             status=record.status,
             intent=record.intent,
             step_count=record.step_count,
         )
+
+    def unified_state_for_run(self, run_id: str) -> AgentRuntimeState | None:
+        """Return the unified runtime state for one run, if present."""
+
+        return self.unified_states.get(run_id)
+
+    @staticmethod
+    def _test_safe_mode_enabled() -> bool:
+        return os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true"
 
     async def run_live_benchmark(
         self,
@@ -126,7 +181,7 @@ class AgentLoop:
             state = await self.run_store.get_run(response.run_id)
             if state is None:
                 raise ValueError(f"Run {response.run_id!r} not found")
-            if state.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.WAITING_FOR_USER}:
+            if state.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.WAITING_FOR_USER, RunStatus.CANCELLED}:
                 return response
             if state.step_count >= max_steps:
                 state.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
@@ -160,37 +215,58 @@ class AgentLoop:
         record = await self.run_store.get_run(request.run_id)
         if record is None:
             raise ValueError(f"Run {request.run_id!r} not found")
+        if record.status is RunStatus.CANCELLED:
+            return RunResponse(
+                run_id=record.run_id,
+                status=record.status,
+                intent=record.intent,
+                step_count=record.step_count,
+            )
 
         step_index = record.step_count + 1
+        _trace("─" * 60)
+        _trace("STEP", f"step={step_index}  run_id={record.run_id}")
         before_artifact_path = self._before_artifact_path(record.run_id, step_index)
         after_artifact_path = self._after_artifact_path(record.run_id, step_index)
         self._prepare_step_artifacts(record.run_id, step_index, before_artifact_path, after_artifact_path)
 
+        _trace("  1 CAPTURE", "taking screenshot via CaptureService")
+        _t0 = time.perf_counter()
         frame = await self.capture_service.capture(record)
+        _trace("  1 CAPTURE OK", f"{time.perf_counter()-_t0:.2f}s  frame={type(frame).__name__}")
         # Inject memory hints before perceive() so combined mode includes them
         if hasattr(self.policy_service, "prepare_hints"):
             self.policy_service.prepare_hints(record, None)
         # Inject stagnation hint if subgoal hasn't changed for 3+ steps
         self._inject_stagnation_hint(record)
+        _trace("  2 PERCEIVE", f"sending screenshot to Gemini  backend={type(self.perception_service).__name__}")
+        _t0 = time.perf_counter()
         try:
             perception = await self.perception_service.perceive(frame, record)
         except Exception as exc:
+            _trace("  2 PERCEIVE FAIL", str(exc))
             return await self._record_pre_step_perception_failure(
                 record=record,
                 step_index=step_index,
                 before_artifact_path=before_artifact_path,
                 error=exc,
             )
+        _trace("  2 PERCEIVE OK", f"{time.perf_counter()-_t0:.2f}s  page_hint={perception.page_hint.value!r}  elements={len(perception.visible_elements)}")
+        perception = self._infer_focused_element(record, perception)
         perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
         state = await self.run_store.update_state(record.run_id, perception)
         self._sync_progress_state_with_perception(state, perception)
+        _trace("  3 POLICY", "PolicyCoordinator -> rule engine first, then LLM fallback")
+        _t0 = time.perf_counter()
         decision = await self.policy_service.choose_action(state, perception)
         decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})
+        _trace("  3 POLICY OK", f"{time.perf_counter()-_t0:.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
 
         # Human-in-the-loop: pause the run and wait for user input
         if decision.action.action_type is ActionType.WAIT_FOR_USER:
+            _trace("  3 POLICY -> WAIT_FOR_USER", "pausing run")
             return await self._pause_for_user(
                 record=record,
                 state=state,
@@ -206,39 +282,141 @@ class AgentLoop:
         # Set run context on the executor so launched processes are tracked per run
         if hasattr(self.executor, "set_current_run_id"):
             self.executor.set_current_run_id(record.run_id)
+        unified_state = self.unified_states.get(record.run_id)
+        adaptation_trace: list[str] = []
+        retries_used = 0
+        attempt_index = 1
 
-        blocked_action = self._block_redundant_action(state, decision.action, step_index)
-        if blocked_action is None:
-            state, executed_action = await self._execute_with_hardening(
-                record=record,
-                state=state,
-                perception=perception,
-                decision_action=decision.action,
-                step_index=step_index,
+        while True:
+            _trace("  4 EXECUTE", f"attempt={attempt_index}  action={decision.action.action_type.value!r}  executor={type(self.executor).__name__}")
+            blocked_action = self._block_redundant_action(state, decision.action, step_index)
+            if blocked_action is None:
+                _t0 = time.perf_counter()
+                state, executed_action = await self._execute_with_hardening(
+                    record=record,
+                    state=state,
+                    perception=perception,
+                    decision_action=decision.action,
+                    step_index=step_index,
+                    use_unified_executor=True,
+                )
+                _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{time.perf_counter()-_t0:.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
+            else:
+                _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
+                executed_action = blocked_action
+            executed_action = self._relocate_after_artifact(executed_action, after_artifact_path)
+            _trace("  5 VERIFY", "DeterministicVerifierService checking outcome")
+            verification = await self.verifier_service.verify(state, decision, executed_action)
+            _trace("  5 VERIFY OK", f"status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
+
+            # Video verification: when screen didn't change, record and ask Gemini
+            if not verification.stop_condition_met and self.video_verifier is not None:
+                video_result = await self._maybe_video_verify(
+                    state=state,
+                    decision=decision,
+                    executed_action=executed_action,
+                    before_artifact_path=before_artifact_path,
+                    step_index=step_index,
+                )
+                if video_result is not None:
+                    _trace("  5b VIDEO_VERIFY OK", f"status={video_result.status.value!r}")
+                    verification = video_result
+
+            _trace("  6 UNIFIED_CONTRACT", "translating step -> contracts via LegacyOperonContractAdapter -> UnifiedOrchestrator")
+            try:
+                unified_step = self._record_unified_step(
+                    record=record,
+                    state=state,
+                    perception=perception,
+                    decision=decision,
+                    executed_action=executed_action,
+                    verification=verification,
+                    unified_state=unified_state,
+                    attempt_index=attempt_index,
+                )
+                unified_state = unified_step.after
+                self.unified_states[record.run_id] = unified_state
+                strategy = self.unified_orchestrator.adaptation_strategy_for(unified_step.critic.failure_type)
+                _trace("  6 UNIFIED_CONTRACT OK", f"critic={unified_step.critic.outcome.value!r}  failure={unified_step.critic.failure_type!r}  strategy={strategy!r}")
+            except (RoutingError, ValueError) as _exc:
+                # RoutingError: policy returned an action that violates environment routing rules.
+                # ValueError: terminal actions (stop, etc.) not representable in the unified contract.
+                # Degrade gracefully: keep the current unified_state and break the retry loop.
+                _trace("  6 UNIFIED_CONTRACT skipped", f"{type(_exc).__name__}: {_exc}")
+                strategy = None
+                unified_step = None
+            # The unified layer may request an in-step adaptation retry, but only
+            # when (a) verification produced a hard FAILURE — not merely UNCERTAIN,
+            # which the outer recovery stage handles — and (b) the legacy hardening
+            # path did not already retry this action (e.g. stale-target
+            # re-resolution, successful or failed). Looping capture/perceive/choose
+            # inside a single step on UNCERTAIN verifications breaks the single-
+            # iteration contract that legacy tests rely on.
+            legacy_retry_attempted = bool(
+                executed_action.execution_trace is not None
+                and executed_action.execution_trace.retry_attempted
             )
-        else:
-            executed_action = blocked_action
-        executed_action = self._relocate_after_artifact(executed_action, after_artifact_path)
-        verification = await self.verifier_service.verify(state, decision, executed_action)
-
-        # Video verification: when screen didn't change, record and ask Gemini
-        if not verification.stop_condition_met and self.video_verifier is not None:
-            video_result = await self._maybe_video_verify(
-                state=state,
-                decision=decision,
-                executed_action=executed_action,
-                before_artifact_path=before_artifact_path,
-                step_index=step_index,
+            allow_adaptation_retry = (
+                verification.status is VerificationStatus.FAILURE
+                and not legacy_retry_attempted
             )
-            if video_result is not None:
-                verification = video_result
+            if (
+                unified_step is None
+                or unified_step.critic.outcome.value != "retry"
+                or strategy is None
+                or not allow_adaptation_retry
+            ):
+                if retries_used > 0 and unified_step is not None:
+                    unified_state = unified_state.model_copy(
+                        update={
+                            "retry_count": retries_used,
+                            "last_strategy": adaptation_trace[-1],
+                            "last_failure_type": None
+                            if unified_step.critic.outcome.value == "success"
+                            else unified_step.critic.failure_type,
+                        }
+                    )
+                    self.unified_states[record.run_id] = unified_state
+                _trace("  RETRY_LOOP -> break", f"outcome={unified_step.critic.outcome.value if unified_step else 'n/a'}  retries_used={retries_used}")
+                break
+            if retries_used >= self.unified_orchestrator.max_retries:
+                _trace("  RETRY_LOOP -> max_retries", f"retries_used={retries_used}")
+                break
 
+            retries_used += 1
+            adaptation_trace.append(strategy)
+            _trace("  RETRY_LOOP -> retry", f"retries_used={retries_used}  strategy={strategy!r}")
+            unified_state = unified_state.apply_retry_feedback(
+                perception=unified_step.perception,
+                planner=unified_step.planner,
+                actor=unified_step.actor,
+                critic=unified_step.critic,
+                retry_count=retries_used,
+                strategy=strategy,
+            )
+            self.unified_states[record.run_id] = unified_state
+
+            frame = await self.capture_service.capture(state)
+            if hasattr(self.policy_service, "prepare_hints"):
+                self.policy_service.prepare_hints(state, None)
+            self._inject_stagnation_hint(state)
+            perception = await self.perception_service.perceive(frame, state)
+            perception = self._infer_focused_element(state, perception)
+            state.observation_history.append(perception)
+            self._sync_progress_state_with_perception(state, perception)
+            decision = await self.policy_service.choose_action(state, perception)
+            decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})
+            state.current_subgoal = decision.active_subgoal
+            attempt_index += 1
+
+        _trace("  7 RECOVER", f"RuleBasedRecoveryManager  verification={verification.status.value!r}")
         recovery: RecoveryDecision = await self.recovery_manager.recover(
             state,
             decision,
             executed_action,
             verification,
         )
+        _trace("  7 RECOVER OK", f"strategy={recovery.strategy.value!r}  stop_reason={recovery.stop_reason!r}")
         progress_trace = self._update_progress_state(
             state=state,
             decision=decision,
@@ -323,17 +501,21 @@ class AgentLoop:
         else:
             state.stop_reason = None
 
+        _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
         updated = await self.run_store.set_status(record.run_id, final_status)
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
             await self._cleanup_completed_run(record.run_id)
 
         # Post-run reflection: analyze completed/failed runs and learn
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED} and self.reflector is not None:
+            _trace("  9 REFLECT", "PostRunReflector analyzing run -> MemoryRecord")
             try:
                 self.reflector.reflect(record.run_id)
+                _trace("  9 REFLECT OK")
             except Exception:
                 pass  # reflection is advisory, never block the response
 
+        _trace("STEP DONE", f"step={step_index}  status={final_status.value!r}")
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -417,7 +599,7 @@ class AgentLoop:
             retry_count=0,
             terminal=True,
             recoverable=False,
-            reason=str(error),
+            reason=str(error) or type(error).__name__,
             stop_reason=stop_reason,
         )
         append_step_log(
@@ -678,8 +860,10 @@ class AgentLoop:
         perception,
         decision_action,
         step_index: int,
+        use_unified_executor: bool = False,
     ):
-        executed_action = await self.executor.execute(decision_action)
+        executor_runner = self.executor_adapter if use_unified_executor else self.executor
+        executed_action = await executor_runner.execute(decision_action)
         executed_action = self._apply_no_progress_detection(state, executed_action)
 
         if not self._should_retry_execution(executed_action):
@@ -712,7 +896,7 @@ class AgentLoop:
             failed = self._apply_reresolution_failure(executed_action, resolution.trace)
             return retry_state, self._persist_execution_trace(record.run_id, step_index, failed)
 
-        retry_executed = await self.executor.execute(retry_action)
+        retry_executed = await executor_runner.execute(retry_action)
         retry_executed = self._merge_execution_retry(
             original=executed_action,
             retried=retry_executed,
@@ -722,6 +906,34 @@ class AgentLoop:
         )
         retry_executed = self._apply_no_progress_detection(state, retry_executed)
         return retry_state, self._persist_execution_trace(record.run_id, step_index, retry_executed)
+
+    def _record_unified_step(
+        self,
+        *,
+        record,
+        state,
+        perception,
+        decision,
+        executed_action,
+        verification,
+        unified_state: AgentRuntimeState | None,
+        attempt_index: int,
+    ):
+        bundle = self.legacy_contract_adapter.bundle(
+            state=state,
+            perception=perception,
+            decision=decision,
+            executed_action=executed_action,
+            verification=verification,
+            attempt_index=attempt_index,
+        )
+        return self.unified_orchestrator.process_step(
+            perception=bundle.perception,
+            planner=bundle.planner,
+            actor=bundle.actor,
+            critic=bundle.critic,
+            current_state=unified_state,
+        )
 
     @staticmethod
     def _should_retry_execution(executed_action) -> bool:
@@ -780,19 +992,40 @@ class AgentLoop:
         return retried.model_copy(update={"execution_trace": merged_trace})
 
     def _attach_target_context(self, action: AgentAction, perception) -> AgentAction:
-        if action.target_context is not None:
-            return action
         target = self._resolve_action_target(action, perception)
+        normalized_action = self._normalize_action_target_coordinates(action, target)
+        if normalized_action.target_context is not None:
+            return normalized_action
         intent = self._infer_target_intent(action, target, perception)
         if target is None or intent is None:
-            return action
+            return normalized_action
         context = self.target_selector.build_selection_context(
             perception,
             intent,
             target,
             page_signature=self._page_signature(perception),
         )
-        return action.model_copy(update={"target_context": context})
+        return normalized_action.model_copy(update={"target_context": context})
+
+    @staticmethod
+    def _normalize_action_target_coordinates(action: AgentAction, target: UIElement | None) -> AgentAction:
+        if target is None:
+            return action
+        if action.action_type in {ActionType.CLICK, ActionType.HOVER}:
+            return action.model_copy(
+                update={
+                    "x": target.x + max(1, target.width // 2),
+                    "y": target.y + max(1, target.height // 2),
+                }
+            )
+        if action.action_type is ActionType.TYPE and (action.x is None or action.y is None):
+            return action.model_copy(
+                update={
+                    "x": target.x + max(1, target.width // 2),
+                    "y": target.y + max(1, target.height // 2),
+                }
+            )
+        return action
 
     def _intent_reresolve_action(
         self,
@@ -958,6 +1191,55 @@ class AgentLoop:
         progress_state.recent_failures = []
         progress_state.loop_detected = False
 
+    def _infer_focused_element(self, state, perception):
+        if perception.focused_element_id is not None:
+            return perception
+        if not state.action_history or not state.observation_history:
+            return perception
+
+        last_executed = state.action_history[-1]
+        if not last_executed.success:
+            return perception
+
+        action = last_executed.action
+        if action.action_type not in {ActionType.CLICK, ActionType.TYPE, ActionType.SELECT}:
+            return perception
+
+        current_inputs = [
+            element
+            for element in perception.visible_elements
+            if element.element_type is UIElementType.INPUT and element.usable_for_targeting
+        ]
+        if not current_inputs:
+            return perception
+
+        target_id = action.target_element_id
+        if target_id is not None:
+            direct_match = next((element for element in current_inputs if element.element_id == target_id), None)
+            if direct_match is not None:
+                return perception.model_copy(update={"focused_element_id": direct_match.element_id})
+
+        previous_perception = state.observation_history[-1]
+        previous_target = None
+        if target_id is not None:
+            previous_target = next(
+                (element for element in previous_perception.visible_elements if element.element_id == target_id),
+                None,
+            )
+
+        if previous_target is None:
+            return perception
+
+        matched_inputs = [
+            element
+            for element in current_inputs
+            if element.primary_name == previous_target.primary_name
+        ]
+        if len(matched_inputs) == 1:
+            return perception.model_copy(update={"focused_element_id": matched_inputs[0].element_id})
+
+        return perception
+
     def _block_redundant_action(self, state, action, step_index: int):
         progress_state = state.progress_state
         page_signature = progress_state.latest_page_signature or "unknown_page"
@@ -1079,7 +1361,7 @@ class AgentLoop:
             progress_state.repeated_target_count.clear()
             progress_state.recent_failures = []
             progress_state.last_meaningful_progress_step = step_index
-            self._mark_completed_progress(state, decision, executed_action)
+            self._mark_completed_progress(state, decision, executed_action, verification)
         else:
             progress_state.no_progress_streak += 1
             progress_state.repeated_action_count[action_signature] = progress_state.repeated_action_count.get(action_signature, 0) + 1
@@ -1174,7 +1456,7 @@ class AgentLoop:
         a, b, c, d = recent_actions[-4:]
         return a == c and b == d and a != b
 
-    def _mark_completed_progress(self, state, decision, executed_action) -> None:
+    def _mark_completed_progress(self, state, decision, executed_action, verification) -> None:
         progress_state = state.progress_state
         target_signature = self._target_signature(executed_action.action)
         subgoal_signature = self._subgoal_signature(decision.active_subgoal)
@@ -1187,9 +1469,37 @@ class AgentLoop:
             if executed_action.action.action_type in {ActionType.TYPE, ActionType.SELECT} and executed_action.action.text is not None:
                 progress_state.target_value_history[target_signature] = executed_action.action.text
 
-        if subgoal_signature not in progress_state.completed_subgoals:
-            progress_state.completed_subgoals.append(subgoal_signature)
-        progress_state.subgoal_completion_page_signatures[subgoal_signature] = page_signature
+        if self._should_mark_subgoal_complete(progress_state, executed_action, verification):
+            if subgoal_signature not in progress_state.completed_subgoals:
+                progress_state.completed_subgoals.append(subgoal_signature)
+            progress_state.subgoal_completion_page_signatures[subgoal_signature] = page_signature
+
+    @staticmethod
+    def _should_mark_subgoal_complete(progress_state, executed_action, verification) -> bool:
+        if not executed_action.success:
+            return False
+        if verification.stop_condition_met:
+            return True
+
+        action = executed_action.action
+        previous_page = progress_state.previous_page_signature
+        current_page = progress_state.latest_page_signature
+        page_changed = previous_page is not None and current_page is not None and previous_page != current_page
+
+        if action.action_type is ActionType.NAVIGATE:
+            return True
+        if action.action_type in {ActionType.TYPE, ActionType.SELECT}:
+            return page_changed or not bool(action.press_enter)
+        if action.action_type in {
+            ActionType.CLICK,
+            ActionType.DOUBLE_CLICK,
+            ActionType.RIGHT_CLICK,
+            ActionType.PRESS_KEY,
+            ActionType.HOTKEY,
+            ActionType.LAUNCH_APP,
+        }:
+            return page_changed
+        return page_changed
 
     @staticmethod
     def _meaningful_progress(

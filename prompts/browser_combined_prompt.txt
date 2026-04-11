@@ -20,7 +20,7 @@ Return a single JSON object with this shape:
     ]
   }},
   "action": {{
-    "action_type": "click|type|select|press_key|navigate|wait|stop",
+    "action_type": "click|type|select|press_key|navigate|wait|upload_file|stop",
     "selector": "optional CSS selector or null",
     "target_element_id": "optional element id or null",
     "text": "optional string or null",
@@ -42,10 +42,12 @@ Perception rules:
 
 Action rules:
 - Choose exactly one action. Only include fields relevant to the action type.
-- Prefer target_element_id over coordinates when a suitable visible element is available.
+- Prefer selector over coordinates for reliable clicking. Use selector like "text=Button Label" when the button text is known.
+- Prefer target_element_id over raw coordinates when a suitable visible element is available.
 - For input fields, do not choose type unless focus/editability is clearly established.
 - If focus is uncertain, choose click first, then type on the next step.
 - Use navigate to go to a specific URL directly.
+- Use upload_file when you need to attach or upload a file via a file-picker button. Set text to the absolute file path and target_element_id to the button that opens the file picker.
 - Use stop when the task goal appears achieved or a terminal condition is reached.
 
 {advisory_hints}

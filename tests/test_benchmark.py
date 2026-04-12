@@ -7,19 +7,47 @@ from uuid import uuid4
 
 import pytest
 
-from core.contracts.critic import FailureType
-from core.contracts.perception import Environment as UnifiedEnvironment
 from evaluation.benchmark_native_upload import (
     BenchmarkRunResult,
     BenchmarkSummary,
     run_benchmark,
 )
-from runtime.state import AgentRuntimeState
-from src.models.common import RunResponse, RunStatus
+from src.models.common import RunResponse, RunStatus, StopReason
+from src.models.state import AgentState
 
 # ---------------------------------------------------------------------------
 # Fake loop helpers
 # ---------------------------------------------------------------------------
+
+
+class _FakeRunStore:
+    """Minimal async run-store stub: maps run_id -> AgentState."""
+
+    def __init__(self) -> None:
+        self._runs: dict[str, AgentState] = {}
+
+    def put(self, state: AgentState) -> None:
+        self._runs[state.run_id] = state
+
+    async def get_run(self, run_id: str) -> AgentState | None:
+        return self._runs.get(run_id)
+
+
+def _make_agent_state(
+    *,
+    run_id: str,
+    status: RunStatus,
+    retries: int,
+    stop_reason: StopReason | None,
+) -> AgentState:
+    retry_counts: dict[str, int] = {"subgoal:action_failed": retries} if retries else {}
+    return AgentState(
+        run_id=run_id,
+        intent="test",
+        status=status,
+        retry_counts=retry_counts,
+        stop_reason=stop_reason,
+    )
 
 
 class _FakeLoop:
@@ -30,16 +58,18 @@ class _FakeLoop:
         *,
         status: RunStatus,
         retry_count: int,
-        failure_type: FailureType | None,
+        stop_reason: StopReason | None,
     ) -> None:
         self._status = status
-        self._retry_count = retry_count
-        self._failure_type = failure_type
         self._run_id = f"run-{uuid4().hex[:8]}"
-        self._state = AgentRuntimeState(
-            environment=UnifiedEnvironment.BROWSER,
-            retry_count=retry_count,
-            last_failure_type=failure_type,
+        self.run_store = _FakeRunStore()
+        self.run_store.put(
+            _make_agent_state(
+                run_id=self._run_id,
+                status=status,
+                retries=retry_count,
+                stop_reason=stop_reason,
+            )
         )
 
     async def start_run(self, request) -> RunResponse:
@@ -64,16 +94,14 @@ class _FakeLoop:
             step_count=1,
         )
 
-    def unified_state_for_run(self, run_id: str) -> AgentRuntimeState | None:
-        return self._state if run_id == self._run_id else None
-
 
 class _CyclingFakeLoop:
-    """Loop stub that cycles through a list of (status, failure_type) pairs."""
+    """Loop stub that cycles through a list of (status, stop_reason) pairs."""
 
-    def __init__(self, outcomes: list[tuple[RunStatus, FailureType | None]]) -> None:
+    def __init__(self, outcomes: list[tuple[RunStatus, StopReason | None]]) -> None:
         self._outcomes = outcomes
         self._index = 0
+        self.run_store = _FakeRunStore()
 
     async def run_live_benchmark(
         self,
@@ -82,23 +110,22 @@ class _CyclingFakeLoop:
         benchmark_url: str,
         max_steps: int,
     ) -> RunResponse:
-        status, failure_type = self._outcomes[self._index % len(self._outcomes)]
-        self._current_run_id = f"run-{uuid4().hex[:8]}"
-        self._current_failure_type = failure_type
-        self._current_status = status
+        status, stop_reason = self._outcomes[self._index % len(self._outcomes)]
+        run_id = f"run-{uuid4().hex[:8]}"
+        self.run_store.put(
+            _make_agent_state(
+                run_id=run_id,
+                status=status,
+                retries=0,
+                stop_reason=stop_reason,
+            )
+        )
         self._index += 1
         return RunResponse(
-            run_id=self._current_run_id,
+            run_id=run_id,
             status=status,
             intent=intent,
             step_count=1,
-        )
-
-    def unified_state_for_run(self, run_id: str) -> AgentRuntimeState | None:
-        return AgentRuntimeState(
-            environment=UnifiedEnvironment.BROWSER,
-            retry_count=0,
-            last_failure_type=self._current_failure_type,
         )
 
 
@@ -137,7 +164,7 @@ def test_benchmark_summary_model() -> None:
         success_rate=0.8,
         avg_retries=1.0,
         avg_duration_seconds=12.5,
-        failure_distribution={"target_not_found": 1},
+        failure_distribution={"no_meaningful_progress_across_steps": 1},
         runs=[
             BenchmarkRunResult(
                 run_id="run-001",
@@ -150,13 +177,13 @@ def test_benchmark_summary_model() -> None:
     )
     assert summary.total_runs == 5
     assert summary.success_rate == pytest.approx(0.8)
-    assert summary.failure_distribution["target_not_found"] == 1
+    assert summary.failure_distribution["no_meaningful_progress_across_steps"] == 1
 
 
 @pytest.mark.asyncio
 async def test_run_benchmark_success(tmp_path: Path) -> None:
     """All-success loop produces success_rate=1.0 and avg_retries=0."""
-    fake = _FakeLoop(status=RunStatus.SUCCEEDED, retry_count=0, failure_type=None)
+    fake = _FakeLoop(status=RunStatus.SUCCEEDED, retry_count=0, stop_reason=None)
 
     async def _builder():
         return fake
@@ -183,7 +210,7 @@ async def test_run_benchmark_failure(tmp_path: Path) -> None:
     fake = _FakeLoop(
         status=RunStatus.FAILED,
         retry_count=2,
-        failure_type=FailureType.TARGET_NOT_FOUND,
+        stop_reason=StopReason.RETRY_LIMIT_REACHED,
     )
 
     async def _builder():
@@ -205,12 +232,12 @@ async def test_run_benchmark_failure(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_run_benchmark_failure_distribution(tmp_path: Path) -> None:
-    """Mixed outcomes with distinct failure types are tallied correctly."""
+    """Mixed outcomes with distinct stop reasons are tallied correctly."""
     outcomes = [
-        (RunStatus.FAILED, FailureType.TARGET_NOT_FOUND),
-        (RunStatus.FAILED, FailureType.PICKER_NOT_DETECTED),
+        (RunStatus.FAILED, StopReason.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS),
+        (RunStatus.FAILED, StopReason.MAX_STEP_LIMIT_REACHED),
         (RunStatus.SUCCEEDED, None),
-        (RunStatus.FAILED, FailureType.TARGET_NOT_FOUND),
+        (RunStatus.FAILED, StopReason.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS),
     ]
     cycling = _CyclingFakeLoop(outcomes)
 
@@ -228,14 +255,14 @@ async def test_run_benchmark_failure_distribution(tmp_path: Path) -> None:
 
     assert summary.total_runs == 4
     assert summary.success_rate == pytest.approx(0.25)
-    assert summary.failure_distribution.get("target_not_found") == 2
-    assert summary.failure_distribution.get("picker_not_detected") == 1
+    assert summary.failure_distribution.get("no_meaningful_progress_across_steps") == 2
+    assert summary.failure_distribution.get("max_step_limit_reached") == 1
 
 
 @pytest.mark.asyncio
 async def test_per_run_summary_json_written(tmp_path: Path) -> None:
     """run_benchmark writes a summary.json under runs/<run_id>/ for each run."""
-    fake = _FakeLoop(status=RunStatus.SUCCEEDED, retry_count=0, failure_type=None)
+    fake = _FakeLoop(status=RunStatus.SUCCEEDED, retry_count=0, stop_reason=None)
 
     async def _builder():
         return fake

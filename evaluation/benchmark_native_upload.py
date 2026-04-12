@@ -102,12 +102,22 @@ async def run_benchmark(
         run_id = response.run_id
         succeeded = response.status is RunStatus.SUCCEEDED
 
-        # Read retry / failure info from unified state
-        unified_state = loop.unified_state_for_run(run_id)
-        retries: int = unified_state.retry_count if unified_state is not None else 0
+        # Read retry / failure info from the run's AgentState. This is the
+        # authoritative record across all failure paths — the unified
+        # orchestrator only records last_failure_type inside its own retry
+        # loop, so failures that bypass it (e.g. loop detection,
+        # max_step_limit) would otherwise show failure_type=None.
+        agent_state = await loop.run_store.get_run(run_id)
+        retries: int = (
+            sum(agent_state.retry_counts.values()) if agent_state is not None else 0
+        )
         failure_type_value: str | None = None
-        if unified_state is not None and unified_state.last_failure_type is not None:
-            failure_type_value = unified_state.last_failure_type.value
+        if (
+            not succeeded
+            and agent_state is not None
+            and agent_state.stop_reason is not None
+        ):
+            failure_type_value = agent_state.stop_reason.value
 
         result = BenchmarkRunResult(
             run_id=run_id,

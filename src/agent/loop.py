@@ -1011,20 +1011,16 @@ class AgentLoop:
     def _normalize_action_target_coordinates(action: AgentAction, target: UIElement | None) -> AgentAction:
         if target is None:
             return action
-        if action.action_type in {ActionType.CLICK, ActionType.HOVER}:
-            return action.model_copy(
-                update={
-                    "x": target.x + max(1, target.width // 2),
-                    "y": target.y + max(1, target.height // 2),
-                }
-            )
+        center_x = target.x + max(1, target.width // 2)
+        center_y = target.y + max(1, target.height // 2)
+        if action.action_type in {
+            ActionType.CLICK,
+            ActionType.HOVER,
+            ActionType.UPLOAD_FILE_NATIVE,
+        }:
+            return action.model_copy(update={"x": center_x, "y": center_y})
         if action.action_type is ActionType.TYPE and (action.x is None or action.y is None):
-            return action.model_copy(
-                update={
-                    "x": target.x + max(1, target.width // 2),
-                    "y": target.y + max(1, target.height // 2),
-                }
-            )
+            return action.model_copy(update={"x": center_x, "y": center_y})
         return action
 
     def _intent_reresolve_action(

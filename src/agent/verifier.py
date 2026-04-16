@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
+from pathlib import Path
 
-from src.clients.gemini import GeminiClient
+from pydantic import ValidationError
+
+from src.clients.anthropic import AnthropicClientError
+from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.common import FailureCategory, LoopStage, StopReason
 from src.models.execution import ExecutedAction
+from src.models.logs import ModelDebugArtifacts
 from src.models.perception import PageHint
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.state import AgentState
@@ -15,6 +21,7 @@ from src.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
+from src.store.background_writer import bg_writer
 
 
 class VerifierService(ABC):
@@ -33,8 +40,18 @@ class VerifierService(ABC):
 class DeterministicVerifierService(VerifierService):
     """Deterministic verifier for general-purpose agent tasks."""
 
-    def __init__(self, gemini_client: GeminiClient) -> None:
+    def __init__(
+        self,
+        gemini_client: GeminiClient,
+        prompt_path: Path | None = None,
+    ) -> None:
         self.gemini_client = gemini_client
+        self.prompt_path = prompt_path or Path(__file__).resolve().parents[2] / "prompts" / "critic_prompt.txt"
+        self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
+        self._last_debug_artifacts: ModelDebugArtifacts | None = None
+
+    def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
+        return self._last_debug_artifacts
 
     async def verify(
         self,
@@ -127,6 +144,10 @@ class DeterministicVerifierService(VerifierService):
                 failure_stage=LoopStage.VERIFY,
             )
 
+        model_result = await self._model_verify(state, decision, executed_action)
+        if model_result is not None:
+            return model_result
+
         if decision.confidence < 0.5:
             return VerificationResult(
                 status=VerificationStatus.UNCERTAIN,
@@ -137,6 +158,7 @@ class DeterministicVerifierService(VerifierService):
                 recovery_hint="wait_and_retry",
                 failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
                 failure_stage=LoopStage.VERIFY,
+                critic_fallback_reason="critic_unavailable_or_unusable",
             )
 
         return VerificationResult(
@@ -145,7 +167,94 @@ class DeterministicVerifierService(VerifierService):
             stop_condition_met=False,
             reason="Executed action succeeded and the expected outcome is treated as met.",
             recovery_hint="advance",
+            critic_fallback_reason="critic_unavailable_or_unusable",
         )
+
+    async def _model_verify(
+        self,
+        state: AgentState,
+        decision: PolicyDecision,
+        executed_action: ExecutedAction,
+    ) -> VerificationResult | None:
+        screenshot_path = executed_action.artifact_path
+        if not screenshot_path:
+            self._last_debug_artifacts = None
+            return None
+
+        prompt = self._render_prompt(state, decision, executed_action)
+        step_dir = Path(screenshot_path).resolve().parent
+        debug_artifacts = self._artifact_paths(step_dir)
+        bg_writer.enqueue(debug_artifacts.prompt_artifact_path, prompt)
+        raw_output: str
+        try:
+            if hasattr(self.gemini_client, "generate_verification"):
+                raw_output = await self.gemini_client.generate_verification(prompt, screenshot_path)
+            elif hasattr(self.gemini_client, "generate_policy"):
+                raw_output = await self.gemini_client.generate_policy(prompt)
+            else:
+                self._write_fallback_debug(debug_artifacts, "client_missing_verification_method")
+                return None
+        except (AnthropicClientError, GeminiClientError, NotImplementedError, RuntimeError) as exc:
+            self._write_fallback_debug(debug_artifacts, f"critic_error: {exc}")
+            return None
+        except Exception as exc:
+            self._write_fallback_debug(debug_artifacts, f"critic_error: {exc}")
+            return None
+
+        bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
+        parsed = _parse_verification_output(raw_output)
+        if parsed is None:
+            self._write_fallback_debug(debug_artifacts, "critic_parse_failed", raw_output=raw_output)
+            return None
+        normalized = _normalize_verification_result(parsed).model_copy(
+            update={"critic_model_used": True, "critic_fallback_reason": None}
+        )
+        bg_writer.enqueue(debug_artifacts.parsed_artifact_path, normalized.model_dump_json())
+        self._last_debug_artifacts = debug_artifacts
+        return normalized
+
+    def _render_prompt(
+        self,
+        state: AgentState,
+        decision: PolicyDecision,
+        executed_action: ExecutedAction,
+    ) -> str:
+        latest_perception = state.observation_history[-1] if state.observation_history else None
+        return self._prompt_template.format(
+            intent=state.intent,
+            current_subgoal=decision.active_subgoal,
+            action_json=decision.action.model_dump_json(),
+            rationale=decision.rationale,
+            confidence=decision.confidence,
+            execution_detail=executed_action.detail,
+            previous_summary=latest_perception.summary if latest_perception is not None else "none",
+        )
+
+    @staticmethod
+    def _artifact_paths(step_dir: Path) -> ModelDebugArtifacts:
+        step_dir.mkdir(parents=True, exist_ok=True)
+        return ModelDebugArtifacts(
+            prompt_artifact_path=str(step_dir / "verification_prompt.txt"),
+            raw_response_artifact_path=str(step_dir / "verification_raw.txt"),
+            parsed_artifact_path=str(step_dir / "verification_result.json"),
+            retry_log_artifact_path=str(step_dir / "verification_retry_log.txt"),
+            diagnostics_artifact_path=str(step_dir / "verification_diagnostics.json"),
+        )
+
+    def _write_fallback_debug(
+        self,
+        debug_artifacts: ModelDebugArtifacts,
+        fallback_reason: str,
+        *,
+        raw_output: str | None = None,
+    ) -> None:
+        if raw_output is not None:
+            bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
+        bg_writer.enqueue(
+            debug_artifacts.diagnostics_artifact_path,
+            json.dumps({"critic_model_used": False, "critic_fallback_reason": fallback_reason}),
+        )
+        self._last_debug_artifacts = debug_artifacts
 
     @staticmethod
     def _stop_reason_for_intentional_stop(state: AgentState, decision: PolicyDecision) -> StopReason:
@@ -235,3 +344,41 @@ class DeterministicVerifierService(VerifierService):
         if any(token in perception.summary.lower() for token in success_tokens):
             return True
         return any(any(token in element.primary_name.lower() for token in success_tokens) for element in perception.visible_elements)
+
+
+def _parse_verification_output(raw_output: str) -> VerificationResult | None:
+    cleaned = raw_output.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+    try:
+        return VerificationResult.model_validate(payload)
+    except ValidationError:
+        return None
+
+
+def _normalize_verification_result(result: VerificationResult) -> VerificationResult:
+    updates: dict[str, object] = {}
+    if result.status is VerificationStatus.FAILURE:
+        if result.failure_type is None:
+            updates["failure_type"] = VerificationFailureType.EXPECTED_OUTCOME_NOT_MET
+        if result.failure_category is None:
+            updates["failure_category"] = FailureCategory.EXPECTED_OUTCOME_NOT_MET
+        if result.failure_stage is None:
+            updates["failure_stage"] = LoopStage.VERIFY
+    elif result.status is VerificationStatus.UNCERTAIN:
+        if result.failure_type is None:
+            updates["failure_type"] = VerificationFailureType.UNCERTAIN_SCREEN_STATE
+        if result.failure_category is None:
+            updates["failure_category"] = FailureCategory.UNCERTAIN_SCREEN_STATE
+        if result.failure_stage is None:
+            updates["failure_stage"] = LoopStage.VERIFY
+    return result.model_copy(update=updates) if updates else result

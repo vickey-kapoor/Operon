@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import importlib
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from core.contracts.perception import Environment as UnifiedEnvironment
+from src.agent.anthropic_policy import AnthropicPolicyService
 from src.agent.backend import AgentBackend
 from src.agent.browser_computer_use import BrowserComputerUseBackend
 from src.agent.browser_json import BrowserJsonBackend
@@ -15,6 +18,8 @@ from src.agent.capture import ScreenCaptureService
 from src.agent.combined import CombinedPerceptionPolicyService
 from src.agent.fallback_backend import FallbackBackend
 from src.agent.loop import AgentLoop
+from src.agent.perception import GeminiPerceptionService, PerceptionService
+from src.agent.policy import GeminiPolicyService, PolicyService
 from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
@@ -26,9 +31,9 @@ from src.api.observer import (
     reconcile_orphaned_browser_run,
 )
 from src.api.runtime_config import browser_mode_config, desktop_mode_config
+from src.clients.anthropic import AnthropicHttpClient
 from src.clients.gemini import GeminiHttpClient
 from src.clients.gemini_computer_use import GeminiComputerUseHttpClient
-from src.executor.browser_native import NativeBrowserExecutor
 from src.models.common import (
     CleanupRequest,
     CleanupResponse,
@@ -47,6 +52,7 @@ router = APIRouter()
 _agent_loop: AgentLoop | None = None
 _desktop_agent_loop: AgentLoop | None = None
 DesktopExecutor = None
+NativeBrowserExecutor = None
 _MAX_RUN_ID_LENGTH = 64
 
 
@@ -58,6 +64,12 @@ _CONSOLE_HTML_PATH = Path(__file__).resolve().parent / "static" / "console.html"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
+@dataclass(frozen=True)
+class _RuntimeServices:
+    perception_service: PerceptionService
+    policy_delegate: PolicyService
+
+
 def _build_json_backend(*, prompt_name: str, model: str, timeout_seconds: float = 120.0) -> AgentBackend:
     return CombinedPerceptionPolicyService(
         gemini_client=GeminiHttpClient(model=model, timeout_seconds=timeout_seconds),
@@ -65,13 +77,45 @@ def _build_json_backend(*, prompt_name: str, model: str, timeout_seconds: float 
     )
 
 
-def _build_browser_backend(executor) -> AgentBackend:
+def _build_policy_delegate(*, config, prompt_name: str) -> PolicyService:
+    planner_provider = config.planner_provider.lower()
+    if planner_provider == "anthropic":
+        planner_model = config.planner_model or "claude-sonnet-4-20250514"
+        return AnthropicPolicyService(
+            anthropic_client=AnthropicHttpClient(model=planner_model, timeout_seconds=120.0),
+            prompt_path=_PROMPTS_DIR / prompt_name,
+        )
+    return GeminiPolicyService(
+        gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
+        prompt_path=_PROMPTS_DIR / prompt_name,
+    )
+
+
+def _build_verifier_client(*, config):
+    verifier_provider = config.verifier_provider.lower()
+    verifier_model = config.verifier_model or config.fallback_model or config.primary_model
+    if verifier_provider == "anthropic":
+        verifier_model = verifier_model or "claude-sonnet-4-20250514"
+        return AnthropicHttpClient(model=verifier_model, timeout_seconds=120.0)
+    return GeminiHttpClient(model=verifier_model, timeout_seconds=120.0)
+
+
+def _build_browser_services(executor) -> _RuntimeServices:
     config = browser_mode_config()
     if config.backend == "json":
-        return BrowserJsonBackend(
+        if config.planner_provider.lower() == "anthropic":
+            return _RuntimeServices(
+                perception_service=GeminiPerceptionService(
+                    gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
+                    prompt_path=_PROMPTS_DIR / "perception_prompt.txt",
+                ),
+                policy_delegate=_build_policy_delegate(config=config, prompt_name="policy_prompt.txt"),
+            )
+        backend = BrowserJsonBackend(
             gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
             prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
         )
+        return _RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend == "computer_use":
         primary = BrowserComputerUseBackend(
             client=GeminiComputerUseHttpClient(model=config.primary_model),
@@ -83,48 +127,59 @@ def _build_browser_backend(executor) -> AgentBackend:
                 gemini_client=GeminiHttpClient(model=config.fallback_model, timeout_seconds=120.0),
                 prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
             )
-            return FallbackBackend(primary=primary, secondary=secondary)
-        return primary
+            backend = FallbackBackend(primary=primary, secondary=secondary)
+            return _RuntimeServices(perception_service=backend, policy_delegate=backend)
+        return _RuntimeServices(perception_service=primary, policy_delegate=primary)
     raise ValueError(f"Unsupported browser backend {config.backend!r}")
 
 
-def _build_desktop_backend() -> AgentBackend:
+def _build_desktop_services() -> _RuntimeServices:
     config = desktop_mode_config()
     if config.backend != "json":
         raise ValueError(
             f"Unsupported desktop backend {config.backend!r}. "
             "Only 'json' is implemented in this slice."
         )
-    return _build_json_backend(
+    if config.planner_provider.lower() == "anthropic":
+        return _RuntimeServices(
+            perception_service=GeminiPerceptionService(
+                gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
+                prompt_path=_PROMPTS_DIR / "desktop_perception_prompt.txt",
+            ),
+            policy_delegate=_build_policy_delegate(config=config, prompt_name="desktop_policy_prompt.txt"),
+        )
+    backend = _build_json_backend(
         prompt_name="desktop_combined_prompt.txt",
         model=config.primary_model,
     )
+    return _RuntimeServices(perception_service=backend, policy_delegate=backend)
 
 
 def get_agent_loop() -> AgentLoop:
     """Build the MVP runtime lazily so env loading can happen first."""
-    global _agent_loop
+    global _agent_loop, NativeBrowserExecutor
     if _agent_loop is None:
+        if NativeBrowserExecutor is None:
+            NativeBrowserExecutor = importlib.import_module("src.executor.browser_native").NativeBrowserExecutor
         browser_config = browser_mode_config()
-        verifier_model = browser_config.verifier_model or browser_config.fallback_model or browser_config.primary_model
-        policy_client = GeminiHttpClient(model=verifier_model, timeout_seconds=120.0)
+        verifier_client = _build_verifier_client(config=browser_config)
         executor = NativeBrowserExecutor()
-        backend = _build_browser_backend(executor)
+        services = _build_browser_services(executor)
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
         _agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
-            perception_service=backend,
+            perception_service=services.perception_service,
             run_store=run_store,
             policy_service=PolicyCoordinator(
-                delegate=backend,
+                delegate=services.policy_delegate,
                 memory_store=memory_store,
             ),
             executor=executor,
-            verifier_service=DeterministicVerifierService(gemini_client=policy_client),
+            verifier_service=DeterministicVerifierService(gemini_client=verifier_client),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
-            gemini_client=policy_client,
+            gemini_client=verifier_client,
             environment=UnifiedEnvironment.BROWSER,
         )
     return _agent_loop
@@ -140,25 +195,24 @@ def get_desktop_agent_loop() -> AgentLoop:
             DesktopExecutor = _DesktopExecutor
 
         desktop_config = desktop_mode_config()
-        backend = _build_desktop_backend()
-        verifier_model = desktop_config.verifier_model or desktop_config.primary_model
-        policy_client = GeminiHttpClient(model=verifier_model, timeout_seconds=120.0)
+        services = _build_desktop_services()
+        verifier_client = _build_verifier_client(config=desktop_config)
         executor = DesktopExecutor()
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
         _desktop_agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
-            perception_service=backend,
+            perception_service=services.perception_service,
             run_store=run_store,
             policy_service=PolicyCoordinator(
-                delegate=backend,
+                delegate=services.policy_delegate,
                 memory_store=memory_store,
             ),
             executor=executor,
-            verifier_service=DeterministicVerifierService(gemini_client=policy_client),
+            verifier_service=DeterministicVerifierService(gemini_client=verifier_client),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
-            gemini_client=policy_client,
+            gemini_client=verifier_client,
             environment=UnifiedEnvironment.DESKTOP,
         )
     return _desktop_agent_loop

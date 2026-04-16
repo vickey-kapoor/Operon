@@ -308,6 +308,7 @@ class AgentLoop:
             _trace("  5 VERIFY", "DeterministicVerifierService checking outcome")
             verification = await self.verifier_service.verify(state, decision, executed_action)
             _trace("  5 VERIFY OK", f"status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
+            verification_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "verification", self.verifier_service)
 
             # Video verification: when screen didn't change, record and ask Gemini
             if not verification.stop_condition_met and self.video_verifier is not None:
@@ -482,6 +483,10 @@ class AgentLoop:
                 policy_debug.prompt_artifact_path,
                 policy_debug.raw_response_artifact_path,
                 policy_debug.parsed_artifact_path,
+                verification_debug.prompt_artifact_path,
+                verification_debug.raw_response_artifact_path,
+                verification_debug.parsed_artifact_path,
+                *( [verification_debug.diagnostics_artifact_path] if verification_debug.diagnostics_artifact_path else [] ),
                 *( [executed_action.execution_trace_artifact_path] if executed_action.execution_trace_artifact_path else [] ),
                 progress_trace_artifact_path,
             ]
@@ -848,8 +853,8 @@ class AgentLoop:
         return ModelDebugArtifacts(
             prompt_artifact_path=str(step_dir / f"{stage_name}_prompt.txt"),
             raw_response_artifact_path=str(step_dir / f"{stage_name}_raw.txt"),
-            parsed_artifact_path=str(step_dir / ("policy_decision.json" if stage_name == "policy" else "perception_parsed.json")),
-            diagnostics_artifact_path=str(step_dir / f"{stage_name}_diagnostics.json") if stage_name == "perception" else None,
+            parsed_artifact_path=str(step_dir / ("policy_decision.json" if stage_name == "policy" else "verification_result.json" if stage_name == "verification" else "perception_parsed.json")),
+            diagnostics_artifact_path=str(step_dir / f"{stage_name}_diagnostics.json") if stage_name in {"perception", "verification"} else None,
         )
 
     async def _execute_with_hardening(
@@ -1011,20 +1016,16 @@ class AgentLoop:
     def _normalize_action_target_coordinates(action: AgentAction, target: UIElement | None) -> AgentAction:
         if target is None:
             return action
-        if action.action_type in {ActionType.CLICK, ActionType.HOVER}:
-            return action.model_copy(
-                update={
-                    "x": target.x + max(1, target.width // 2),
-                    "y": target.y + max(1, target.height // 2),
-                }
-            )
+        center_x = target.x + max(1, target.width // 2)
+        center_y = target.y + max(1, target.height // 2)
+        if action.action_type in {
+            ActionType.CLICK,
+            ActionType.HOVER,
+            ActionType.UPLOAD_FILE_NATIVE,
+        }:
+            return action.model_copy(update={"x": center_x, "y": center_y})
         if action.action_type is ActionType.TYPE and (action.x is None or action.y is None):
-            return action.model_copy(
-                update={
-                    "x": target.x + max(1, target.width // 2),
-                    "y": target.y + max(1, target.height // 2),
-                }
-            )
+            return action.model_copy(update={"x": center_x, "y": center_y})
         return action
 
     def _intent_reresolve_action(

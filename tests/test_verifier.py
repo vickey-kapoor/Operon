@@ -1,5 +1,8 @@
 """Focused tests for deterministic verifier behavior."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from src.agent.verifier import DeterministicVerifierService
@@ -14,6 +17,29 @@ from src.models.verification import VerificationFailureType, VerificationStatus
 
 def _service() -> DeterministicVerifierService:
     return DeterministicVerifierService(gemini_client=PlaceholderGeminiClient())
+
+
+class StubVerificationClient:
+    def __init__(self, response: str | None = None, *, raises: bool = False) -> None:
+        self.response = response
+        self.raises = raises
+
+    async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
+        if self.raises:
+            raise RuntimeError("verification unavailable")
+        if self.response is None:
+            raise RuntimeError("missing response")
+        return self.response
+
+
+def _prompt_path(tmp_path: Path) -> Path:
+    path = tmp_path / "critic_prompt.txt"
+    path.write_text(
+        "intent={intent}\nsubgoal={current_subgoal}\naction={action_json}\nreason={rationale}\nconfidence={confidence}\n"
+        "detail={execution_detail}\nprevious={previous_summary}",
+        encoding="utf-8",
+    )
+    return path
 
 
 @pytest.mark.asyncio
@@ -123,3 +149,91 @@ async def test_verifier_detects_form_success_from_page_hint() -> None:
     assert result.status is VerificationStatus.SUCCESS
     assert result.stop_condition_met is True
     assert result.stop_reason is StopReason.FORM_SUBMITTED_SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_verifier_uses_model_backed_critic_success(tmp_path: Path) -> None:
+    state = AgentState(run_id="run-5", intent="Create draft", status="running")
+    action = AgentAction(action_type=ActionType.CLICK, target_element_id="compose")
+    decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.2, active_subgoal="open compose")
+    screenshot = tmp_path / "after.png"
+    screenshot.write_bytes(b"fake")
+    executed = ExecutedAction(action=action, success=True, detail="clicked compose", artifact_path=str(screenshot))
+    client = StubVerificationClient(
+        response=json.dumps(
+            {
+                "status": "success",
+                "expected_outcome_met": True,
+                "stop_condition_met": False,
+                "reason": "Compose view is visible after the click.",
+                "recovery_hint": "advance",
+            }
+        )
+    )
+
+    service = DeterministicVerifierService(gemini_client=client, prompt_path=_prompt_path(tmp_path))
+    result = await service.verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.SUCCESS
+    assert result.expected_outcome_met is True
+    assert result.reason == "Compose view is visible after the click."
+    assert result.critic_model_used is True
+    assert result.critic_fallback_reason is None
+    debug = service.latest_debug_artifacts()
+    assert debug is not None
+    assert debug.prompt_artifact_path.endswith("verification_prompt.txt")
+    assert debug.raw_response_artifact_path.endswith("verification_raw.txt")
+    assert debug.parsed_artifact_path.endswith("verification_result.json")
+
+
+@pytest.mark.asyncio
+async def test_verifier_uses_model_backed_critic_failure(tmp_path: Path) -> None:
+    state = AgentState(run_id="run-6", intent="Fill subject", status="running")
+    action = AgentAction(action_type=ActionType.TYPE, target_element_id="subject", text="Hello")
+    decision = PolicyDecision(action=action, rationale="Fill subject.", confidence=0.9, active_subgoal="fill subject")
+    screenshot = tmp_path / "after.png"
+    screenshot.write_bytes(b"fake")
+    executed = ExecutedAction(action=action, success=True, detail="typed subject", artifact_path=str(screenshot))
+    client = StubVerificationClient(
+        response=json.dumps(
+            {
+                "status": "failure",
+                "expected_outcome_met": False,
+                "stop_condition_met": False,
+                "reason": "The subject field still appears empty.",
+                "recovery_hint": "retry_same_step",
+            }
+        )
+    )
+
+    service = DeterministicVerifierService(gemini_client=client, prompt_path=_prompt_path(tmp_path))
+    result = await service.verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.FAILURE
+    assert result.failure_type is VerificationFailureType.EXPECTED_OUTCOME_NOT_MET
+    assert result.failure_category is FailureCategory.EXPECTED_OUTCOME_NOT_MET
+    assert result.failure_stage is LoopStage.VERIFY
+
+
+@pytest.mark.asyncio
+async def test_verifier_falls_back_when_model_critic_unavailable(tmp_path: Path) -> None:
+    state = AgentState(run_id="run-7", intent="Create draft", status="running")
+    action = AgentAction(action_type=ActionType.CLICK, target_element_id="compose")
+    decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.2, active_subgoal="open compose")
+    screenshot = tmp_path / "after.png"
+    screenshot.write_bytes(b"fake")
+    executed = ExecutedAction(action=action, success=True, detail="clicked compose", artifact_path=str(screenshot))
+
+    service = DeterministicVerifierService(
+        gemini_client=StubVerificationClient(raises=True),
+        prompt_path=_prompt_path(tmp_path),
+    )
+    result = await service.verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.UNCERTAIN
+    assert result.failure_type is VerificationFailureType.UNCERTAIN_SCREEN_STATE
+    assert result.critic_model_used is False
+    assert result.critic_fallback_reason == "critic_unavailable_or_unusable"
+    debug = service.latest_debug_artifacts()
+    assert debug is not None
+    assert debug.diagnostics_artifact_path is not None

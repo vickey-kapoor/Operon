@@ -41,3 +41,5 @@ class VerificationResult(StrictModel):
     stop_reason: StopReason | None = None
     video_verified: bool = False
     video_detail: str | None = Field(default=None, min_length=1)
+    critic_model_used: bool = False
+    critic_fallback_reason: str | None = Field(default=None, min_length=1)

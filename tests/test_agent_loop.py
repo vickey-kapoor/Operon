@@ -1147,6 +1147,41 @@ def test_attach_target_context_fills_missing_click_coordinates_from_target() -> 
     assert normalized.target_context is not None
 
 
+def test_attach_target_context_fills_upload_file_native_coordinates_from_target() -> None:
+    """Regression: upload_file_native must get x,y populated from the target
+    element, otherwise NativeBrowserExecutor falls through to a broken
+    [data-element-id='...'] locator and times out."""
+    loop = _loop()
+    perception = ScreenPerception(
+        summary="File uploader page with Add files button",
+        page_hint=PageHint.FORM_PAGE,
+        capture_artifact_path="runs/test/step_1/before.png",
+        visible_elements=[
+            UIElement(
+                element_id="add_files_btn",
+                element_type=UIElementType.BUTTON,
+                label="Add files",
+                x=660,
+                y=312,
+                width=130,
+                height=40,
+                is_interactable=True,
+                confidence=0.9,
+            )
+        ],
+    )
+    action = AgentAction(
+        action_type=ActionType.UPLOAD_FILE_NATIVE,
+        target_element_id="add_files_btn",
+        text=r"C:\tmp\test_upload.txt",
+    )
+
+    normalized = loop._attach_target_context(action, perception)
+
+    assert normalized.x == 725
+    assert normalized.y == 332
+
+
 def test_repeated_same_value_type_action_is_blocked() -> None:
     loop = _loop()
     state = AgentState(

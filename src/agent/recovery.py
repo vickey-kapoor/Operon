@@ -74,6 +74,15 @@ class RuleBasedRecoveryManager(RecoveryManager):
                 recoverable=True,
             )
 
+        # Use the critic's recovery hint when the model was used and produced one.
+        # Hard deterministic outcomes (stop_condition_met, no_progress, clear success) above
+        # always take priority. The hint guides uncertain and failure cases where the model
+        # has visual context the rule tree lacks.
+        if verification.critic_model_used and verification.recovery_hint is not None:
+            critic_decision = self._apply_critic_hint(verification, retries, state, retry_key)
+            if critic_decision is not None:
+                return critic_decision
+
         if verification.status is VerificationStatus.UNCERTAIN:
             state.retry_counts[retry_key] = retries + 1
             if retries >= 1:
@@ -158,6 +167,87 @@ class RuleBasedRecoveryManager(RecoveryManager):
             terminal=False,
             recoverable=True,
         )
+
+    def _apply_critic_hint(
+        self,
+        verification: VerificationResult,
+        retries: int,
+        state: AgentState,
+        retry_key: str,
+    ) -> RecoveryDecision | None:
+        """Translate the critic's recovery_hint to a RecoveryDecision.
+
+        Returns None to fall through to existing rules when the hint is
+        unrecognised or retry limits have been reached for non-stop hints.
+        """
+        hint = verification.recovery_hint
+        fc = verification.failure_category or FailureCategory.EXPECTED_OUTCOME_NOT_MET
+        fs = verification.failure_stage or LoopStage.VERIFY
+
+        if hint == "advance":
+            state.retry_counts[retry_key] = 0
+            return RecoveryDecision(
+                strategy=RecoveryStrategy.ADVANCE,
+                message="Critic judged the action successful; advancing.",
+                terminal=False,
+                recoverable=True,
+            )
+
+        if hint == "stop":
+            return RecoveryDecision(
+                strategy=RecoveryStrategy.STOP,
+                message="Critic signaled a terminal stop condition.",
+                failure_category=fc,
+                failure_stage=fs,
+                terminal=True,
+                recoverable=False,
+                stop_reason=verification.stop_reason or StopReason.TASK_COMPLETED,
+            )
+
+        if hint == "retry_same_step":
+            state.retry_counts[retry_key] = retries + 1
+            if retries >= 2:
+                return RecoveryDecision(
+                    strategy=RecoveryStrategy.STOP,
+                    message="Retry limit reached following repeated critic retry_same_step hints.",
+                    failure_category=FailureCategory.RETRY_LIMIT_REACHED,
+                    failure_stage=LoopStage.RECOVER,
+                    terminal=True,
+                    recoverable=False,
+                    stop_reason=StopReason.RETRY_LIMIT_REACHED,
+                )
+            return RecoveryDecision(
+                strategy=RecoveryStrategy.RETRY_SAME_STEP,
+                message="Critic recommended retrying the same step.",
+                failure_category=fc,
+                failure_stage=fs,
+                terminal=False,
+                recoverable=True,
+            )
+
+        if hint == "wait_and_retry":
+            state.retry_counts[retry_key] = retries + 1
+            if retries >= 2:
+                return RecoveryDecision(
+                    strategy=RecoveryStrategy.BACKOFF,
+                    message="Critic recommended wait_and_retry; backing off after repeated attempts.",
+                    retry_after_ms=3000,
+                    failure_category=fc,
+                    failure_stage=fs,
+                    terminal=False,
+                    recoverable=True,
+                )
+            return RecoveryDecision(
+                strategy=RecoveryStrategy.WAIT_AND_RETRY,
+                message="Critic recommended waiting before retrying.",
+                retry_after_ms=1500,
+                failure_category=fc,
+                failure_stage=fs,
+                terminal=False,
+                recoverable=True,
+            )
+
+        return None  # unrecognised hint — fall through to existing rules
 
     @staticmethod
     def _retry_key(decision: PolicyDecision, verification: VerificationResult) -> str:

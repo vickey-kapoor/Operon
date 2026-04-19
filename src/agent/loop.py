@@ -743,7 +743,6 @@ class AgentLoop:
                     stop_condition_met=False,
                     reason=f"Video verified the wait action, but it did not reveal enough new browser-task signal: {video_result.what_happened}",
                     failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
-                    recovery_hint="retry_same_step",
                     video_verified=True,
                     video_detail=video_result.what_happened,
                     failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
@@ -754,7 +753,6 @@ class AgentLoop:
                 expected_outcome_met=True,
                 stop_condition_met=False,
                 reason=f"Video verified: {video_result.what_happened}",
-                recovery_hint="advance",
                 video_verified=True,
                 video_detail=video_result.what_happened,
             )
@@ -764,7 +762,6 @@ class AgentLoop:
             stop_condition_met=False,
             reason=f"Video showed no effect: {video_result.what_happened}",
             failure_type=VerificationFailureType.ACTION_FAILED,
-            recovery_hint="retry_same_step",
             video_verified=True,
             video_detail=video_result.suggested_next_action,
             failure_category=FailureCategory.EXECUTION_ERROR,
@@ -1647,8 +1644,16 @@ class AgentLoop:
 
     @staticmethod
     def _retry_count(state, decision, verification) -> int:
-        suffix = verification.failure_type.value if verification.failure_type else verification.status.value
-        return state.retry_counts.get(f"{decision.active_subgoal}:{suffix}", 0)
+        suffix = (
+            verification.failure_category.value
+            if verification.failure_category is not None
+            else verification.failure_type.value
+            if verification.failure_type is not None
+            else verification.status.value
+        )
+        prefix = f"{decision.active_subgoal}:"
+        matches = [count for key, count in state.retry_counts.items() if key.startswith(prefix) and key.endswith(f":{suffix}")]
+        return max(matches, default=0)
 
     @staticmethod
     def _update_target_failure_signal(state, executed_action, verification) -> None:

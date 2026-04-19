@@ -247,84 +247,322 @@ def test_legacy_adapter_maps_upload_file_native_action_type() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_browser_native_executor_upload_file_native_clicks_then_returns() -> None:
-    """upload_file_native should click the upload element and return native_picker_triggered."""
+def _make_executor_and_page(
+    *,
+    run_id: str = "run_test",
+    headless: bool = False,
+):
+    """Return (executor, mock_page) wired up for upload_file_native tests."""
     from src.executor.browser_native import NativeBrowserExecutor
 
-    # Build a minimal mock page
     mock_page = MagicMock()
     mock_page.mouse = MagicMock()
     mock_page.mouse.click = AsyncMock()
-    mock_page.locator = MagicMock(return_value=MagicMock(first=MagicMock(click=AsyncMock())))
+    mock_locator = MagicMock()
+    mock_locator.first = MagicMock()
+    mock_locator.first.click = AsyncMock()
+    mock_page.locator = MagicMock(return_value=mock_locator)
     mock_page.wait_for_load_state = AsyncMock()
 
     executor = NativeBrowserExecutor.__new__(NativeBrowserExecutor)
-    executor._current_run_id = "run_test"
+    executor._current_run_id = run_id
+    executor._headless = headless
+    executor._run_headless = {}
     executor._post_action_delay = 0.0
     executor._artifact_dir = MagicMock()
     executor._sessions = {}
+    return executor, mock_page
 
-    async def _fake_current_page(**_kwargs):
+
+@pytest.mark.asyncio
+async def test_browser_native_executor_upload_file_native_clicks_and_runs_macro() -> None:
+    """upload_file_native should click, then delegate to the OS picker macro."""
+    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
+
+    executor, mock_page = _make_executor_and_page()
+
+    async def _fake_current_page(**_kw):
         return mock_page
 
     async def _fake_capture_after():
         return "after.png"
 
+    mock_macro_result = PickerMacroResult(
+        outcome=PickerOutcome.SUCCESS,
+        detail="os_picker_macro typed file path and confirmed: C:\\tmp\\test.txt",
+    )
+
     with (
         patch.object(executor, "_current_page", side_effect=_fake_current_page),
         patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
+        patch(
+            "src.executor.browser_native.run_os_picker_macro",
+            return_value=mock_macro_result,
+        ) as mock_macro,
     ):
         action = AgentAction(
             action_type=ActionType.UPLOAD_FILE_NATIVE,
             x=100,
             y=200,
+            text=r"C:\tmp\test.txt",
         )
         result = await executor.execute(action)
 
     assert result.success is True
-    assert result.detail == "native_picker_triggered"
+    assert "os_picker_macro" in result.detail
     mock_page.mouse.click.assert_called_once_with(100, 200)
+    mock_macro.assert_called_once_with(r"C:\tmp\test.txt")
 
 
 @pytest.mark.asyncio
 async def test_browser_native_executor_upload_file_native_uses_selector_fallback() -> None:
     """upload_file_native falls back to selector-based click when no coordinates given."""
-    from src.executor.browser_native import NativeBrowserExecutor
+    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
 
-    mock_locator_instance = MagicMock()
-    mock_locator_instance.first = MagicMock()
-    mock_locator_instance.first.click = AsyncMock()
+    executor, mock_page = _make_executor_and_page(run_id="run_test2")
 
-    mock_page = MagicMock()
-    mock_page.mouse = MagicMock()
-    mock_page.mouse.click = AsyncMock()
-    mock_page.locator = MagicMock(return_value=mock_locator_instance)
-    mock_page.wait_for_load_state = AsyncMock()
-
-    executor = NativeBrowserExecutor.__new__(NativeBrowserExecutor)
-    executor._current_run_id = "run_test2"
-    executor._post_action_delay = 0.0
-    executor._artifact_dir = MagicMock()
-    executor._sessions = {}
-
-    async def _fake_current_page(**_kwargs):
+    async def _fake_current_page(**_kw):
         return mock_page
 
     async def _fake_capture_after():
         return "after.png"
 
+    mock_macro_result = PickerMacroResult(
+        outcome=PickerOutcome.SUCCESS,
+        detail="os_picker_macro typed file path and confirmed: C:\\tmp\\test.txt",
+    )
+
     with (
         patch.object(executor, "_current_page", side_effect=_fake_current_page),
         patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
+        patch(
+            "src.executor.browser_native.run_os_picker_macro",
+            return_value=mock_macro_result,
+        ),
     ):
         action = AgentAction(
             action_type=ActionType.UPLOAD_FILE_NATIVE,
             selector="#upload-btn",
+            text=r"C:\tmp\test.txt",
         )
         result = await executor.execute(action)
 
     assert result.success is True
-    assert result.detail == "native_picker_triggered"
     mock_page.locator.assert_called_once_with("#upload-btn")
-    mock_locator_instance.first.click.assert_called_once()
+    mock_page.locator.return_value.first.click.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_browser_native_executor_upload_file_native_headless_guard() -> None:
+    """upload_file_native must fail immediately in headless mode."""
+    executor, _ = _make_executor_and_page(headless=True)
+
+    action = AgentAction(
+        action_type=ActionType.UPLOAD_FILE_NATIVE,
+        x=100,
+        y=200,
+        text=r"C:\tmp\test.txt",
+    )
+    result = await executor.execute(action)
+
+    assert result.success is False
+    assert "headed" in result.detail
+    assert result.failure_category is FailureCategory.EXECUTION_ERROR
+
+
+@pytest.mark.asyncio
+async def test_browser_native_executor_upload_file_native_missing_text() -> None:
+    """upload_file_native must fail when text (file path) is missing."""
+    executor, _ = _make_executor_and_page()
+
+    action = AgentAction(
+        action_type=ActionType.UPLOAD_FILE_NATIVE,
+        x=100,
+        y=200,
+    )
+    result = await executor.execute(action)
+
+    assert result.success is False
+    assert "requires text" in result.detail
+    assert result.failure_category is FailureCategory.EXECUTION_ERROR
+
+
+@pytest.mark.asyncio
+async def test_browser_native_executor_upload_file_native_picker_not_detected() -> None:
+    """PICKER_NOT_DETECTED outcome maps to the correct failure category."""
+    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
+
+    executor, mock_page = _make_executor_and_page()
+
+    async def _fake_current_page(**_kw):
+        return mock_page
+
+    async def _fake_capture_after():
+        return "after.png"
+
+    mock_macro_result = PickerMacroResult(
+        outcome=PickerOutcome.PICKER_NOT_DETECTED,
+        detail="No OS file picker window appeared within 3.0s",
+    )
+
+    with (
+        patch.object(executor, "_current_page", side_effect=_fake_current_page),
+        patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
+        patch(
+            "src.executor.browser_native.run_os_picker_macro",
+            return_value=mock_macro_result,
+        ),
+    ):
+        action = AgentAction(
+            action_type=ActionType.UPLOAD_FILE_NATIVE,
+            x=100,
+            y=200,
+            text=r"C:\tmp\test.txt",
+        )
+        result = await executor.execute(action)
+
+    assert result.success is False
+    assert result.failure_category is FailureCategory.PICKER_NOT_DETECTED
+    assert result.artifact_path == "after.png"
+
+
+@pytest.mark.asyncio
+async def test_browser_native_executor_upload_file_native_file_not_reflected() -> None:
+    """FILE_NOT_REFLECTED outcome maps to the correct failure category."""
+    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
+
+    executor, mock_page = _make_executor_and_page()
+
+    async def _fake_current_page(**_kw):
+        return mock_page
+
+    async def _fake_capture_after():
+        return "after.png"
+
+    mock_macro_result = PickerMacroResult(
+        outcome=PickerOutcome.FILE_NOT_REFLECTED,
+        detail="OS file picker did not close within 3.0s",
+    )
+
+    with (
+        patch.object(executor, "_current_page", side_effect=_fake_current_page),
+        patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
+        patch(
+            "src.executor.browser_native.run_os_picker_macro",
+            return_value=mock_macro_result,
+        ),
+    ):
+        action = AgentAction(
+            action_type=ActionType.UPLOAD_FILE_NATIVE,
+            x=100,
+            y=200,
+            text=r"C:\tmp\test.txt",
+        )
+        result = await executor.execute(action)
+
+    assert result.success is False
+    assert result.failure_category is FailureCategory.FILE_NOT_REFLECTED
+    assert result.artifact_path == "after.png"
+
+
+@pytest.mark.asyncio
+async def test_browser_native_executor_upload_file_native_no_coordinates_or_selector() -> None:
+    """upload_file_native must fail when neither coordinates nor selector provided."""
+    executor, mock_page = _make_executor_and_page()
+
+    async def _fake_current_page(**_kw):
+        return mock_page
+
+    with patch.object(executor, "_current_page", side_effect=_fake_current_page):
+        action = AgentAction(
+            action_type=ActionType.UPLOAD_FILE_NATIVE,
+            target_element_id="some_id",
+            text=r"C:\tmp\test.txt",
+        )
+        result = await executor.execute(action)
+
+    assert result.success is False
+    assert result.failure_category is FailureCategory.EXECUTION_TARGET_NOT_FOUND
+
+
+# ---------------------------------------------------------------------------
+# 9. os_picker_macro unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_os_picker_macro_unavailable_when_deps_missing() -> None:
+    """Macro returns UNAVAILABLE when pyautogui/pygetwindow can't import."""
+    from src.executor.os_picker_macro import PickerOutcome
+
+    with (
+        patch("src.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", RuntimeError("no display")),
+    ):
+        from src.executor.os_picker_macro import run_os_picker_macro
+        result = run_os_picker_macro(r"C:\tmp\test.txt")
+
+    assert result.outcome is PickerOutcome.UNAVAILABLE
+    assert "unavailable" in result.detail.lower()
+
+
+def test_os_picker_macro_picker_not_detected() -> None:
+    """Macro returns PICKER_NOT_DETECTED if no picker window appears."""
+    from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
+
+    with (
+        patch("src.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
+        patch("src.executor.os_picker_macro.pygetwindow") as mock_pgw,
+    ):
+        mock_pgw.getAllWindows.return_value = []
+        result = run_os_picker_macro(r"C:\tmp\test.txt", appear_timeout_s=0.1)
+
+    assert result.outcome is PickerOutcome.PICKER_NOT_DETECTED
+
+
+def test_os_picker_macro_success() -> None:
+    """Macro types path and presses Enter when picker window found and closes."""
+    from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
+
+    mock_window = MagicMock()
+    mock_window.title = "Open File Dialog"
+    mock_window.activate = MagicMock()
+
+    call_count = {"n": 0}
+
+    def _mock_get_all_windows():
+        call_count["n"] += 1
+        # First call: picker visible; subsequent: picker closed
+        if call_count["n"] <= 2:
+            return [mock_window]
+        return []
+
+    with (
+        patch("src.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
+        patch("src.executor.os_picker_macro.pygetwindow") as mock_pgw,
+        patch("src.executor.os_picker_macro.pyautogui") as mock_pag,
+    ):
+        mock_pgw.getAllWindows = _mock_get_all_windows
+        result = run_os_picker_macro(r"C:\tmp\test.txt", appear_timeout_s=1.0, close_timeout_s=1.0)
+
+    assert result.outcome is PickerOutcome.SUCCESS
+    mock_pag.write.assert_called_once_with(r"C:\tmp\test.txt", interval=0.02)
+    mock_pag.press.assert_called_once_with("enter")
+
+
+def test_os_picker_macro_file_not_reflected() -> None:
+    """Macro returns FILE_NOT_REFLECTED when picker doesn't close after Enter."""
+    from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
+
+    mock_window = MagicMock()
+    mock_window.title = "Open File Dialog"
+    mock_window.activate = MagicMock()
+
+    with (
+        patch("src.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
+        patch("src.executor.os_picker_macro.pygetwindow") as mock_pgw,
+        patch("src.executor.os_picker_macro.pyautogui"),
+    ):
+        # Picker always visible — never closes
+        mock_pgw.getAllWindows.return_value = [mock_window]
+        result = run_os_picker_macro(r"C:\tmp\test.txt", appear_timeout_s=0.1, close_timeout_s=0.1)
+
+    assert result.outcome is PickerOutcome.FILE_NOT_REFLECTED

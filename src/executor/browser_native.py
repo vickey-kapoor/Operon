@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 from src.executor.browser import Executor
+from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, LoopStage
 from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
@@ -211,22 +212,62 @@ class NativeBrowserExecutor(Executor):
                 file_chooser = await fc_info.value
                 await file_chooser.set_files(file_path)
             elif at is ActionType.UPLOAD_FILE_NATIVE:
+                file_path = action.text
+                if not file_path:
+                    return self._fail(
+                        action,
+                        "upload_file_native requires text (absolute file path)",
+                        FailureCategory.EXECUTION_ERROR,
+                    )
+
+                run_id = self._current_run_id or ""
+                run_headless = self._run_headless.get(run_id, self._headless)
+                if run_headless:
+                    return self._fail(
+                        action,
+                        "upload_file_native requires headed browser mode (OS file picker unavailable in headless)",
+                        FailureCategory.EXECUTION_ERROR,
+                    )
+
                 # Click the upload control to trigger the native OS file picker.
-                # The desktop executor is responsible for interacting with the picker
-                # once it appears. This step only triggers it.
                 page = await self._current_page()
                 point = self._action_point(action)
                 if point is not None:
                     await page.mouse.click(*point)
                 elif action.selector is not None:
                     await page.locator(action.selector).first.click()
-                elif action.target_element_id is not None:
-                    await page.locator(f"[data-element-id='{action.target_element_id}']").first.click()
                 else:
-                    await page.locator("input[type=file]").first.click(force=True)
-                await asyncio.sleep(0.5)
+                    return self._fail(
+                        action,
+                        "upload_file_native requires x/y coordinates or CSS selector",
+                        FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+                    )
+
+                # Wait for OS picker to appear, then run deterministic macro.
+                await asyncio.sleep(1.0)
+                macro_result = await asyncio.to_thread(run_os_picker_macro, file_path)
+
                 after_path = await self._capture_after()
-                return self._ok(action, "native_picker_triggered", after_path)
+                if macro_result.outcome is PickerOutcome.SUCCESS:
+                    return self._ok(action, macro_result.detail, after_path)
+
+                category_map = {
+                    PickerOutcome.PICKER_NOT_DETECTED: FailureCategory.PICKER_NOT_DETECTED,
+                    PickerOutcome.FILE_NOT_REFLECTED: FailureCategory.FILE_NOT_REFLECTED,
+                    PickerOutcome.UNAVAILABLE: FailureCategory.EXECUTION_ERROR,
+                }
+                failed = self._fail(
+                    action, macro_result.detail, category_map[macro_result.outcome]
+                )
+                return ExecutedAction(
+                    action=failed.action,
+                    success=False,
+                    detail=failed.detail,
+                    artifact_path=after_path,
+                    execution_trace=failed.execution_trace,
+                    failure_category=failed.failure_category,
+                    failure_stage=failed.failure_stage,
+                )
             else:
                 return self._fail(action, f"Action '{at}' is not supported on native browser executor", FailureCategory.EXECUTION_ERROR)
             await page.wait_for_load_state(timeout=5000)

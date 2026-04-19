@@ -1173,7 +1173,7 @@ class AgentLoop:
                 "Try a DIFFERENT action or update your subgoal. "
                 "If the task is already complete, use the stop action."
             )
-            self.perception_service.add_advisory_hints([hint])
+            self.perception_service.add_advisory_hints([hint], source="no_progress")
 
     def _sync_progress_state_with_perception(self, state, perception) -> None:
         page_signature = self._page_signature(perception)

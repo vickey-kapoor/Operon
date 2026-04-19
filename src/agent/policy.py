@@ -45,7 +45,7 @@ class GeminiPolicyService(PolicyService):
         self.prompt_path = prompt_path or Path(__file__).resolve().parents[2] / "prompts" / "policy_prompt.txt"
         self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
-        self._advisory_hints: list[str] = []
+        self._advisory_hints: list[tuple[str, str]] = []
 
     async def choose_action(
         self,
@@ -74,17 +74,17 @@ class GeminiPolicyService(PolicyService):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
-        """Replace all advisory hints (use add_advisory_hints to append)."""
-        self._advisory_hints = [hint for hint in hints if hint]
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state. Test use only."""
+        self._advisory_hints = [(h, "") for h in hints if h]
 
-    def add_advisory_hints(self, hints: list[str]) -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
         """Append hints without discarding hints set by other writers."""
-        incoming = [hint for hint in hints if hint]
+        incoming = [(h, source) for h in hints if h]
         self._advisory_hints.extend(incoming)
         logger.debug(
-            "add_advisory_hints(%s): incoming=%s final=%s",
-            self.__class__.__name__, incoming, self._advisory_hints,
+            "add_advisory_hints(%s): source=%r incoming=%d total=%d",
+            self.__class__.__name__, source, len(incoming), len(self._advisory_hints),
         )
 
     def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
@@ -96,8 +96,12 @@ class GeminiPolicyService(PolicyService):
             perception_json=perception.model_dump_json(),
         )
         if self._advisory_hints:
-            logger.debug("prompt assembly (%s): injecting %d hints: %s", self.__class__.__name__, len(self._advisory_hints), self._advisory_hints)
-            prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {hint}" for hint in self._advisory_hints)
+            _counts: dict[str, int] = {}
+            for _, _src in self._advisory_hints:
+                _label = _src or "unknown"
+                _counts[_label] = _counts.get(_label, 0) + 1
+            logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
+            prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {h}" for h, _ in self._advisory_hints)
         self._advisory_hints = []
         return prompt
 

@@ -26,10 +26,10 @@ class AgentBackend(ABC):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         ...
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
-        """Replace all advisory hints. Optional hook — override to implement."""
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state. Optional hook — test use only."""
         return None
 
-    def add_advisory_hints(self, hints: list[str]) -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
         """Append advisory hints without discarding existing ones. Optional hook."""
         return None

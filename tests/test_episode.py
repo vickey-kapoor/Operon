@@ -448,7 +448,7 @@ def test_episode_replay_deactivates_after_max_deviations_page_hint_mismatches(
     mock_store.get_episode.return_value = episode
 
     mock_delegate = MagicMock()
-    mock_delegate.set_advisory_hints = MagicMock()
+    mock_delegate._reset_advisory_hints_for_test = MagicMock()
     mock_delegate._advisory_hints = []
 
     coordinator = PolicyCoordinator(delegate=mock_delegate, memory_store=mock_store)
@@ -477,13 +477,13 @@ class _MockPolicyDelegate:
 
     def __init__(self) -> None:
         self.advisory_hints_received: list[list[str]] = []
-        self._advisory_hints: list[str] = []
+        self._advisory_hints: list[tuple[str, str]] = []
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self._advisory_hints = list(hints)
         self.advisory_hints_received.append(list(hints))
 
-    def add_advisory_hints(self, hints: list[str]) -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
         self._advisory_hints.extend(h for h in hints if h)
         self.advisory_hints_received.append(list(hints))
 
@@ -521,7 +521,7 @@ async def test_policy_coordinator_injects_episode_hint_when_episode_matches() ->
 
     await coordinator.choose_action(state, perception)
 
-    # Delegate must have received at least one set_advisory_hints call containing an episode hint
+    # Delegate must have received at least one add_advisory_hints call containing an episode hint
     all_hints = [h for call in delegate.advisory_hints_received for h in call]
     episode_hints = [h for h in all_hints if "Episode replay" in h]
     assert episode_hints, "Expected at least one episode replay advisory hint to be injected"

@@ -23,7 +23,7 @@ class _FailingBackend:
     def latest_debug_artifacts(self):
         return None
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
 
 
@@ -55,7 +55,7 @@ class _RunScopedBackend:
     def latest_debug_artifacts(self):
         return None
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
 
 
@@ -85,7 +85,7 @@ class _WorkingBackend:
     def latest_debug_artifacts(self):
         return None
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
 
 
@@ -137,7 +137,7 @@ def test_fallback_backend_forwards_hints_to_active_backend() -> None:
     primary = _FailingBackend()
     backend = FallbackBackend(primary=primary, secondary=secondary)
 
-    backend.set_advisory_hints(["avoid repeated clicks"])
+    backend._reset_advisory_hints_for_test(["avoid repeated clicks"])
 
     assert primary.hints == ["avoid repeated clicks"]
     assert secondary.hints == ["avoid repeated clicks"]

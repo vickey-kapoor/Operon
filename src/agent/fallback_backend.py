@@ -44,15 +44,15 @@ class FallbackBackend(AgentBackend):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._latest_backend.latest_debug_artifacts()
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
-        """Replace all advisory hints on both backends."""
-        self.primary.set_advisory_hints(hints)
-        self.secondary.set_advisory_hints(hints)
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state on both backends. Test use only."""
+        self.primary._reset_advisory_hints_for_test(hints)
+        self.secondary._reset_advisory_hints_for_test(hints)
 
-    def add_advisory_hints(self, hints: list[str]) -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
         """Append hints on both backends without discarding existing ones."""
-        self.primary.add_advisory_hints(hints)
-        self.secondary.add_advisory_hints(hints)
+        self.primary.add_advisory_hints(hints, source=source)
+        self.secondary.add_advisory_hints(hints, source=source)
 
     def _backend_for_run(self, run_id: str) -> AgentBackend:
         return self._active_backends.get(run_id, self.primary)

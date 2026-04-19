@@ -9,7 +9,7 @@ from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import PlaceholderGeminiClient
 from src.models.common import FailureCategory, LoopStage, StopReason
 from src.models.execution import ExecutedAction
-from src.models.perception import ScreenPerception
+from src.models.perception import ScreenPerception, UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.state import AgentState
 from src.models.verification import VerificationFailureType, VerificationStatus
@@ -68,7 +68,6 @@ async def test_verifier_expected_outcome_not_met() -> None:
     assert result.status is VerificationStatus.FAILURE
     assert result.expected_outcome_met is False
     assert result.failure_type is VerificationFailureType.ACTION_FAILED
-    assert result.recovery_hint == "retry_same_step"
 
 
 @pytest.mark.asyncio
@@ -166,7 +165,6 @@ async def test_verifier_uses_model_backed_critic_success(tmp_path: Path) -> None
                 "expected_outcome_met": True,
                 "stop_condition_met": False,
                 "reason": "Compose view is visible after the click.",
-                "recovery_hint": "advance",
             }
         )
     )
@@ -201,7 +199,6 @@ async def test_verifier_uses_model_backed_critic_failure(tmp_path: Path) -> None
                 "expected_outcome_met": False,
                 "stop_condition_met": False,
                 "reason": "The subject field still appears empty.",
-                "recovery_hint": "retry_same_step",
             }
         )
     )
@@ -237,3 +234,48 @@ async def test_verifier_falls_back_when_model_critic_unavailable(tmp_path: Path)
     debug = service.latest_debug_artifacts()
     assert debug is not None
     assert debug.diagnostics_artifact_path is not None
+
+
+@pytest.mark.asyncio
+async def test_verifier_rejects_stale_visible_input_value() -> None:
+    state = AgentState(
+        run_id="run-8",
+        intent="Find the best MacBook under $2000",
+        status="running",
+    )
+    state.progress_state.target_value_history["id:search_input"] = "MacBook under $2000"
+    state.observation_history.append(
+        ScreenPerception(
+            summary="Search results for busboys movie review.",
+            page_hint="search_results",
+            capture_artifact_path="runs/run-8/step_3/after.png",
+            visible_elements=[],
+        )
+    )
+    action = AgentAction(action_type=ActionType.CLICK, target_element_id="search_button")
+    decision = PolicyDecision(action=action, rationale="Submit the search.", confidence=0.9, active_subgoal="submit search")
+    executed = ExecutedAction(action=action, success=True, detail="clicked search")
+    state.observation_history[-1] = ScreenPerception(
+        summary="Search results page with the old query still visible.",
+        page_hint="search_results",
+        capture_artifact_path="runs/run-8/step_3/after.png",
+        visible_elements=[
+            UIElement(
+                element_id="search_input",
+                element_type=UIElementType.INPUT,
+                label="busboys movie review",
+                x=100,
+                y=20,
+                width=400,
+                height=40,
+                is_interactable=True,
+                confidence=1.0,
+            )
+        ],
+    )
+
+    result = await _service().verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.FAILURE
+    assert result.failure_type is VerificationFailureType.EXPECTED_OUTCOME_NOT_MET
+    assert result.failure_category is FailureCategory.TYPE_VERIFICATION_FAILED

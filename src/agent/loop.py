@@ -753,6 +753,7 @@ class AgentLoop:
                 expected_outcome_met=True,
                 stop_condition_met=False,
                 reason=f"Video verified: {video_result.what_happened}",
+                recovery_hint="advance",
                 video_verified=True,
                 video_detail=video_result.what_happened,
             )
@@ -762,6 +763,7 @@ class AgentLoop:
             stop_condition_met=False,
             reason=f"Video showed no effect: {video_result.what_happened}",
             failure_type=VerificationFailureType.ACTION_FAILED,
+            recovery_hint="retry_same_step",
             video_verified=True,
             video_detail=video_result.suggested_next_action,
             failure_category=FailureCategory.EXECUTION_ERROR,

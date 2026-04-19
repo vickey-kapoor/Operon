@@ -125,8 +125,17 @@ class BrowserComputerUseBackend(AgentBackend):
         return self._last_debug_artifacts
 
     def set_advisory_hints(self, hints: list[str]) -> None:
+        """Replace all advisory hints (use add_advisory_hints to append)."""
         self._advisory_hints = [hint for hint in hints if hint]
-        logger.debug("set_advisory_hints(%s): %s", self.__class__.__name__, self._advisory_hints)
+
+    def add_advisory_hints(self, hints: list[str]) -> None:
+        """Append hints without discarding hints set by other writers."""
+        incoming = [hint for hint in hints if hint]
+        self._advisory_hints.extend(incoming)
+        logger.debug(
+            "add_advisory_hints(%s): incoming=%s final=%s",
+            self.__class__.__name__, incoming, self._advisory_hints,
+        )
 
     async def _run_with_retry(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
         try:
@@ -208,6 +217,8 @@ class BrowserComputerUseBackend(AgentBackend):
         return response_payload
 
     def _render_prompt(self, state: AgentState) -> str:
+        if self._advisory_hints:
+            logger.debug("prompt assembly (%s): injecting %d hints: %s", self.__class__.__name__, len(self._advisory_hints), self._advisory_hints)
         hint_block = "\n".join(f"- {hint}" for hint in self._advisory_hints) if self._advisory_hints else "none"
         self._advisory_hints = []
         return self._prompt_template.format(

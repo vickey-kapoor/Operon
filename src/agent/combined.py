@@ -128,8 +128,17 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         return self._last_debug_artifacts
 
     def set_advisory_hints(self, hints: list[str]) -> None:
+        """Replace all advisory hints (use add_advisory_hints to append)."""
         self._advisory_hints = [hint for hint in hints if hint]
-        logger.debug("set_advisory_hints(%s): %s", self.__class__.__name__, self._advisory_hints)
+
+    def add_advisory_hints(self, hints: list[str]) -> None:
+        """Append hints without discarding hints set by other writers."""
+        incoming = [hint for hint in hints if hint]
+        self._advisory_hints.extend(incoming)
+        logger.debug(
+            "add_advisory_hints(%s): incoming=%s final=%s",
+            self.__class__.__name__, incoming, self._advisory_hints,
+        )
 
     def set_perception_only(self, value: bool) -> None:
         """When True, perceive() won't overwrite the cached policy decision."""
@@ -141,6 +150,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         action_log = self._format_action_history(state)
         hints_text = ""
         if self._advisory_hints:
+            logger.debug("prompt assembly (%s): injecting %d hints: %s", self.__class__.__name__, len(self._advisory_hints), self._advisory_hints)
             hints_text = "Advisory memory hints:\n" + "\n".join(f"- {hint}" for hint in self._advisory_hints)
             self._advisory_hints = []
         if action_log:

@@ -1166,15 +1166,14 @@ class AgentLoop:
     def _inject_stagnation_hint(self, state) -> None:
         """If the same subgoal persists for 3+ steps without progress, inject a hint."""
         ps = state.progress_state
-        if ps.no_progress_streak >= 3 and hasattr(self.perception_service, "set_advisory_hints"):
+        if ps.no_progress_streak >= 3 and hasattr(self.perception_service, "add_advisory_hints"):
             hint = (
                 f"WARNING: You have been on the same subgoal for {ps.no_progress_streak} steps "
                 "without visible progress. The screen has not changed. "
                 "Try a DIFFERENT action or update your subgoal. "
                 "If the task is already complete, use the stop action."
             )
-            current = getattr(self.perception_service, "_advisory_hints", [])
-            self.perception_service.set_advisory_hints(current + [hint])
+            self.perception_service.add_advisory_hints([hint])
 
     def _sync_progress_state_with_perception(self, state, perception) -> None:
         page_signature = self._page_signature(perception)

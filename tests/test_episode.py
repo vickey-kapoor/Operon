@@ -480,7 +480,11 @@ class _MockPolicyDelegate:
         self._advisory_hints: list[str] = []
 
     def set_advisory_hints(self, hints: list[str]) -> None:
-        self._advisory_hints = hints
+        self._advisory_hints = list(hints)
+        self.advisory_hints_received.append(list(hints))
+
+    def add_advisory_hints(self, hints: list[str]) -> None:
+        self._advisory_hints.extend(h for h in hints if h)
         self.advisory_hints_received.append(list(hints))
 
     async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:

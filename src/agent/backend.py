@@ -27,5 +27,9 @@ class AgentBackend(ABC):
         ...
 
     def set_advisory_hints(self, hints: list[str]) -> None:
-        """Optional hook used by PolicyCoordinator."""
+        """Replace all advisory hints. Optional hook — override to implement."""
+        return None
+
+    def add_advisory_hints(self, hints: list[str]) -> None:
+        """Append advisory hints without discarding existing ones. Optional hook."""
         return None

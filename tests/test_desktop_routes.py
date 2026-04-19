@@ -237,8 +237,8 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
         ):
             routes_module.get_desktop_agent_loop()
 
-            # Default path now creates one Gemini client for the combined backend.
-            assert mock_gemini.call_count == 1
+            # Default path creates two Gemini clients: one for the combined backend, one for the verifier.
+            assert mock_gemini.call_count == 2
             calls = mock_gemini.call_args_list
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in calls)
     finally:

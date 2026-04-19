@@ -129,6 +129,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
 
     def set_advisory_hints(self, hints: list[str]) -> None:
         self._advisory_hints = [hint for hint in hints if hint]
+        logger.debug("set_advisory_hints(%s): %s", self.__class__.__name__, self._advisory_hints)
 
     def set_perception_only(self, value: bool) -> None:
         """When True, perceive() won't overwrite the cached policy decision."""

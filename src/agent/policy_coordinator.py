@@ -53,7 +53,8 @@ class PolicyCoordinator(PolicyService):
             recent_failure_category=self._recent_failure_category(state),
         )
         if hasattr(self.delegate, "set_advisory_hints"):
-            self.delegate.set_advisory_hints([hint.hint for hint in memory_hints])
+            existing = getattr(self.delegate, "_advisory_hints", []) or []
+            self.delegate.set_advisory_hints(existing + [hint.hint for hint in memory_hints])
 
     async def choose_action(
         self,
@@ -77,7 +78,8 @@ class PolicyCoordinator(PolicyService):
             return decision
 
         if hasattr(self.delegate, "set_advisory_hints"):
-            self.delegate.set_advisory_hints([hint.hint for hint in memory_hints])
+            existing = getattr(self.delegate, "_advisory_hints", []) or []
+            self.delegate.set_advisory_hints(existing + [hint.hint for hint in memory_hints])
 
         decision = await self.delegate.choose_action(state, perception)
         if hasattr(self.delegate, "latest_debug_artifacts"):

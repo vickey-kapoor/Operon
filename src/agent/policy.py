@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from src.models.perception import ScreenPerception, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
+
+logger = logging.getLogger(__name__)
 
 
 class PolicyError(RuntimeError):
@@ -73,6 +76,7 @@ class GeminiPolicyService(PolicyService):
 
     def set_advisory_hints(self, hints: list[str]) -> None:
         self._advisory_hints = [hint for hint in hints if hint]
+        logger.debug("set_advisory_hints(%s): %s", self.__class__.__name__, self._advisory_hints)
 
     def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
         prompt = self._prompt_template.format(

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from src.agent.action_translation import (
     build_policy_decision,
@@ -123,6 +126,7 @@ class BrowserComputerUseBackend(AgentBackend):
 
     def set_advisory_hints(self, hints: list[str]) -> None:
         self._advisory_hints = [hint for hint in hints if hint]
+        logger.debug("set_advisory_hints(%s): %s", self.__class__.__name__, self._advisory_hints)
 
     async def _run_with_retry(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
         try:

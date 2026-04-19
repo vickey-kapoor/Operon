@@ -484,6 +484,7 @@ class _MockPolicyDelegate:
         self.advisory_hints_received.append(list(hints))
 
     async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
+        self._advisory_hints = []  # real delegates clear hints after consuming them
         return PolicyDecision(
             action=AgentAction(action_type=ActionType.CLICK, target_element_id="el_1"),
             rationale="delegate chose click",

@@ -184,7 +184,6 @@ async def test_native_browser_executor_upload_file_native_headed_end_to_end() ->
         )
 
         # Verify the filename appears in the page DOM
-        from playwright.async_api import async_playwright  # type: ignore[import-not-found]
         session = executor._sessions.get(run_id)
         assert session is not None
         filename_text = await session.page.locator("#filename").text_content(timeout=3000)

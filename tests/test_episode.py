@@ -455,7 +455,7 @@ def test_episode_replay_deactivates_after_max_deviations_page_hint_mismatches(
     state = _make_state(step_count=1)
 
     # First call triggers episode load; page_hint differs from episode (GMAIL_INBOX vs FORM_PAGE)
-    wrong_hint_perception = _make_perception(page_hint=PageHint.GMAIL_INBOX)
+    wrong_hint_perception = _make_perception(page_hint=PageHint("gmail_inbox"))
     coordinator._try_episode_hint(state, wrong_hint_perception)
     assert coordinator._replay_state is not None
     assert coordinator._replay_state.deviations == 1
@@ -592,7 +592,7 @@ async def test_policy_coordinator_deactivates_episode_after_max_deviations() -> 
 
     coordinator = PolicyCoordinator(delegate=delegate, memory_store=mock_store)
     # Use a page hint that mismatches the episode's FORM_PAGE
-    wrong_perception = _make_perception(page_hint=PageHint.GMAIL_INBOX)
+    wrong_perception = _make_perception(page_hint=PageHint("gmail_inbox"))
 
     # First step initializes replay; wrong page_hint → first deviation
     await coordinator.choose_action(_make_state(step_count=1), wrong_perception)

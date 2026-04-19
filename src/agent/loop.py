@@ -1143,7 +1143,7 @@ class AgentLoop:
     def _expected_section(page_hint: PageHint) -> str | None:
         if page_hint in {PageHint.FORM_PAGE, PageHint.FORM_SUCCESS}:
             return "form"
-        if page_hint in {PageHint.GMAIL_COMPOSE, PageHint.GMAIL_INBOX, PageHint.GMAIL_MESSAGE_VIEW}:
+        if page_hint in {"gmail_compose", "gmail_inbox", "gmail_message_view"}:
             return "compose"
         return None
 

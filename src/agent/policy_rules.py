@@ -37,7 +37,7 @@ def gmail_login_page_guardrail(
     perception: ScreenPerception,
     memory_hints: list[MemoryHint],
 ) -> PolicyDecision | None:
-    if perception.page_hint is not PageHint.GOOGLE_SIGN_IN:
+    if perception.page_hint != "google_sign_in":
         return None
     if _has_hint(memory_hints, "authenticated_start_required"):
         return PolicyDecision(
@@ -65,7 +65,7 @@ def gmail_compose_already_visible_rule(
     current_subgoal = (state.current_subgoal or "").lower()
     if "open compose" not in current_subgoal and "compose" not in current_subgoal:
         return None
-    if perception.page_hint is not PageHint.GMAIL_COMPOSE and not _compose_form_visible(perception):
+    if perception.page_hint != "gmail_compose" and not _compose_form_visible(perception):
         return None
     target = _preferred_compose_input(perception)
     if target is None:

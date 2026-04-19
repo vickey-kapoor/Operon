@@ -112,7 +112,7 @@ class FileBackedMemoryStore(MemoryStore):
             score = 0
             if record.outcome is MemoryOutcome.GUARDRAIL:
                 score += 1
-            if record.page_hint is page_hint:
+            if record.page_hint is not None and record.page_hint == page_hint:
                 score += 4
             elif record.page_hint is None:
                 score += 1
@@ -220,7 +220,7 @@ class FileBackedMemoryStore(MemoryStore):
                 benchmark=GMAIL_BENCHMARK,
                 hint="Login pages are out of scope for this benchmark; use an authenticated Gmail start state.",
                 outcome=MemoryOutcome.GUARDRAIL,
-                page_hint=PageHint.GOOGLE_SIGN_IN,
+                page_hint=PageHint("google_sign_in"),
                 stage=LoopStage.CHOOSE_ACTION,
                 success=False,
             ),
@@ -336,7 +336,7 @@ class FileBackedMemoryStore(MemoryStore):
                 )
             )
 
-        if benchmark == GMAIL_BENCHMARK and perception.page_hint is PageHint.GOOGLE_SIGN_IN:
+        if benchmark == GMAIL_BENCHMARK and perception.page_hint == "google_sign_in":
             records.append(
                 MemoryRecord(
                     key="authenticated_start_required",

@@ -70,7 +70,7 @@ class PolicyCoordinator(PolicyService):
             recent_failure_category=self._recent_failure_category(state),
         )
 
-        decision = self.rule_engine.choose_action(state, perception, memory_hints)
+        decision = self.rule_engine.choose_action(state, perception, memory_hints, benchmark_name=benchmark_name_for_intent(state.intent))
         selector_traces = self.rule_engine.latest_selector_traces()
         if decision is not None:
             self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision, selector_traces)

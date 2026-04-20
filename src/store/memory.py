@@ -94,6 +94,7 @@ class FileBackedMemoryStore(MemoryStore):
         self.episodes_path = self.memory_dir / "episodes.jsonl"
         self._cached_episodes: list[Episode] | None = None
         self._cached_episodes_mtime: float = 0.0
+        self._seeded_guardrail_keys: set[str] = set()
         self._seed_default_guardrails()
 
     def get_hints(
@@ -183,8 +184,10 @@ class FileBackedMemoryStore(MemoryStore):
         return records
 
     def _seed_default_guardrails(self) -> None:
+        # Load once at startup; track seeded keys so record_step never re-reads.
         existing = self._load_records()
         existing_keys = {record.key for record in existing if record.outcome is MemoryOutcome.GUARDRAIL}
+        self._seeded_guardrail_keys = set(existing_keys)
         defaults = [
             MemoryRecord(
                 key="click_before_type",
@@ -247,6 +250,7 @@ class FileBackedMemoryStore(MemoryStore):
         for record in defaults:
             if record.key not in existing_keys:
                 self._append_record(record)
+                self._seeded_guardrail_keys.add(record.key)
 
     def _build_step_records(
         self,
@@ -384,11 +388,10 @@ class FileBackedMemoryStore(MemoryStore):
         return records
 
     def _append_record(self, record: MemoryRecord) -> None:
+        from src.store.background_writer import bg_writer
         self.memory_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.memory_path.open("a", encoding="utf-8") as handle:
-            handle.write(record.model_dump_json())
-            handle.write("\n")
-        # Append to in-memory cache instead of full invalidation
+        bg_writer.append(self.memory_path, record.model_dump_json() + "\n")
+        # Update in-memory cache immediately so get_hints() sees the new record.
         if self._cached_records is not None:
             self._cached_records.append(record)
             try:

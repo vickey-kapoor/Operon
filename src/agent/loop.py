@@ -262,7 +262,9 @@ class AgentLoop:
         _trace("  3 POLICY", "PolicyCoordinator -> rule engine first, then LLM fallback")
         _t0 = time.perf_counter()
         decision = await self.policy_service.choose_action(state, perception)
-        decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})
+        _enriched = self._attach_target_context(decision.action, perception)
+        if _enriched is not decision.action:
+            decision = decision.model_copy(update={"action": _enriched})
         _trace("  3 POLICY OK", f"{time.perf_counter()-_t0:.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
@@ -419,7 +421,9 @@ class AgentLoop:
             state.observation_history.append(perception)
             self._sync_progress_state_with_perception(state, perception)
             decision = await self.policy_service.choose_action(state, perception)
-            decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})
+            _enriched = self._attach_target_context(decision.action, perception)
+            if _enriched is not decision.action:
+                decision = decision.model_copy(update={"action": _enriched})
             state.current_subgoal = decision.active_subgoal
             attempt_index += 1
 

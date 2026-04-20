@@ -53,6 +53,27 @@ class BackgroundWriter:
             # No running event loop (startup context) — write inline.
             _write_file(path, content)
 
+    def append(self, path: Path, line: str) -> None:
+        """Schedule an append of one line to *path*.  Never overwrites existing content."""
+        def _append_line(p: Path, content: str) -> None:
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with p.open("a", encoding="utf-8") as fh:
+                    fh.write(content)
+            except Exception:
+                logger.debug("artifact append failed: %s", p, exc_info=True)
+
+        if self._sync:
+            _append_line(path, line)
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            fut = loop.run_in_executor(_thread_pool, _append_line, path, line)
+            self._pending.append(fut)
+            fut.add_done_callback(lambda f: self._pending.remove(f) if f in self._pending else None)
+        except RuntimeError:
+            _append_line(path, line)
+
     async def flush(self) -> None:
         """Await all pending background writes.  Use in tests that check artifacts."""
         if self._pending:

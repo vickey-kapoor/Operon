@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -209,5 +210,7 @@ def _render_suite_markdown(summary: BenchmarkSuiteSummary) -> str:
 
 
 if __name__ == "__main__":
+    _log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(level=getattr(logging, _log_level, logging.INFO), format="%(name)s %(levelname)s %(message)s")
     result = asyncio.run(run_form_benchmark())
     print(result.model_dump_json(indent=2))

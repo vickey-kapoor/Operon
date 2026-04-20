@@ -23,8 +23,14 @@ class _FailingBackend:
     def latest_debug_artifacts(self):
         return None
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        self.hints.extend(hints)
+
+    def clear_advisory_hints(self) -> None:
+        self.hints = []
 
 
 class _RunScopedBackend:
@@ -55,8 +61,14 @@ class _RunScopedBackend:
     def latest_debug_artifacts(self):
         return None
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        self.hints.extend(hints)
+
+    def clear_advisory_hints(self) -> None:
+        self.hints = []
 
 
 class _WorkingBackend:
@@ -85,8 +97,14 @@ class _WorkingBackend:
     def latest_debug_artifacts(self):
         return None
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        self.hints.extend(hints)
+
+    def clear_advisory_hints(self) -> None:
+        self.hints = []
 
 
 @pytest.mark.asyncio
@@ -137,7 +155,27 @@ def test_fallback_backend_forwards_hints_to_active_backend() -> None:
     primary = _FailingBackend()
     backend = FallbackBackend(primary=primary, secondary=secondary)
 
-    backend.set_advisory_hints(["avoid repeated clicks"])
+    backend._reset_advisory_hints_for_test(["avoid repeated clicks"])
 
     assert primary.hints == ["avoid repeated clicks"]
     assert secondary.hints == ["avoid repeated clicks"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_backend_clears_inactive_hints_after_primary_success() -> None:
+    primary = _RunScopedBackend()
+    secondary = _WorkingBackend()
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+    frame = CaptureFrame(
+        artifact_path="runs/run-2/step_1/before.png",
+        width=1280,
+        height=720,
+        mime_type="image/png",
+    )
+    state = AgentState(run_id="run-2", intent="Browse", status=RunStatus.PENDING)
+
+    backend.add_advisory_hints(["fresh hint"], source="memory")
+    await backend.perceive(frame, state)
+
+    assert primary.hints == ["fresh hint"]
+    assert secondary.hints == []

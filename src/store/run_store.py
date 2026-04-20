@@ -121,7 +121,9 @@ class FileBackedRunStore(RunStore):
         return str(self._step_dir(run_id, step_index) / "after.png")
 
     def _ensure_run_dir(self, run_id: str) -> Path:
-        path = self.root_dir / run_id
+        path = (self.root_dir / run_id).resolve()
+        if not path.is_relative_to(self.root_dir.resolve()):
+            raise ValueError(f"run_id {run_id!r} escapes the runs directory")
         path.mkdir(parents=True, exist_ok=True)
         return path
 

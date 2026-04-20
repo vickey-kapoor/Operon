@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,8 @@ from src.models.perception import PageHint, ScreenPerception
 from src.models.policy import PolicyDecision
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -59,7 +62,7 @@ class BrowserComputerUseBackend(AgentBackend):
         )
         self._cached_decision: PolicyDecision | None = None
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
-        self._advisory_hints: list[str] = []
+        self._advisory_hints: list[tuple[str, str]] = []
         self._conversations: dict[str, _ConversationState] = {}
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
@@ -121,8 +124,21 @@ class BrowserComputerUseBackend(AgentBackend):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
-        self._advisory_hints = [hint for hint in hints if hint]
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state. Test use only."""
+        self._advisory_hints = [(h, "") for h in hints if h]
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        """Append hints without discarding hints set by other writers."""
+        incoming = [(h, source) for h in hints if h]
+        self._advisory_hints.extend(incoming)
+        logger.debug(
+            "add_advisory_hints(%s): source=%r incoming=%d total=%d",
+            self.__class__.__name__, source, len(incoming), len(self._advisory_hints),
+        )
+
+    def clear_advisory_hints(self) -> None:
+        self._advisory_hints = []
 
     async def _run_with_retry(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
         try:
@@ -204,7 +220,13 @@ class BrowserComputerUseBackend(AgentBackend):
         return response_payload
 
     def _render_prompt(self, state: AgentState) -> str:
-        hint_block = "\n".join(f"- {hint}" for hint in self._advisory_hints) if self._advisory_hints else "none"
+        if self._advisory_hints:
+            _counts: dict[str, int] = {}
+            for _, _src in self._advisory_hints:
+                _label = _src or "unknown"
+                _counts[_label] = _counts.get(_label, 0) + 1
+            logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
+        hint_block = "\n".join(f"- {h}" for h, _ in self._advisory_hints) if self._advisory_hints else "none"
         self._advisory_hints = []
         return self._prompt_template.format(
             intent=state.intent,

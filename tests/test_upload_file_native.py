@@ -467,13 +467,30 @@ async def test_browser_native_executor_upload_file_native_file_not_reflected() -
 
 @pytest.mark.asyncio
 async def test_browser_native_executor_upload_file_native_no_coordinates_or_selector() -> None:
-    """upload_file_native must fail when neither coordinates nor selector provided."""
+    """upload_file_native may fall back to target_element_id-based lookup."""
     executor, mock_page = _make_executor_and_page()
 
     async def _fake_current_page(**_kw):
         return mock_page
 
-    with patch.object(executor, "_current_page", side_effect=_fake_current_page):
+    async def _fake_capture_after():
+        return "after.png"
+
+    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
+
+    mock_macro_result = PickerMacroResult(
+        outcome=PickerOutcome.SUCCESS,
+        detail="os_picker_macro typed file path and confirmed: C:\\tmp\\test.txt",
+    )
+
+    with (
+        patch.object(executor, "_current_page", side_effect=_fake_current_page),
+        patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
+        patch(
+            "src.executor.browser_native.run_os_picker_macro",
+            return_value=mock_macro_result,
+        ),
+    ):
         action = AgentAction(
             action_type=ActionType.UPLOAD_FILE_NATIVE,
             target_element_id="some_id",
@@ -481,8 +498,11 @@ async def test_browser_native_executor_upload_file_native_no_coordinates_or_sele
         )
         result = await executor.execute(action)
 
-    assert result.success is False
-    assert result.failure_category is FailureCategory.EXECUTION_TARGET_NOT_FOUND
+    assert result.success is True
+    mock_page.locator.assert_called_once_with(
+        '[id="some_id"], [data-element-id="some_id"], [data-testid="some_id"], [name="some_id"]'
+    )
+    mock_page.locator.return_value.first.click.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

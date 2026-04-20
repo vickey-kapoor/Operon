@@ -448,14 +448,14 @@ def test_episode_replay_deactivates_after_max_deviations_page_hint_mismatches(
     mock_store.get_episode.return_value = episode
 
     mock_delegate = MagicMock()
-    mock_delegate.set_advisory_hints = MagicMock()
+    mock_delegate._reset_advisory_hints_for_test = MagicMock()
     mock_delegate._advisory_hints = []
 
     coordinator = PolicyCoordinator(delegate=mock_delegate, memory_store=mock_store)
     state = _make_state(step_count=1)
 
     # First call triggers episode load; page_hint differs from episode (GMAIL_INBOX vs FORM_PAGE)
-    wrong_hint_perception = _make_perception(page_hint=PageHint.GMAIL_INBOX)
+    wrong_hint_perception = _make_perception(page_hint=PageHint("gmail_inbox"))
     coordinator._try_episode_hint(state, wrong_hint_perception)
     assert coordinator._replay_state is not None
     assert coordinator._replay_state.deviations == 1
@@ -477,13 +477,18 @@ class _MockPolicyDelegate:
 
     def __init__(self) -> None:
         self.advisory_hints_received: list[list[str]] = []
-        self._advisory_hints: list[str] = []
+        self._advisory_hints: list[tuple[str, str]] = []
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
-        self._advisory_hints = hints
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        self._advisory_hints = list(hints)
+        self.advisory_hints_received.append(list(hints))
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        self._advisory_hints.extend(h for h in hints if h)
         self.advisory_hints_received.append(list(hints))
 
     async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
+        self._advisory_hints = []  # real delegates clear hints after consuming them
         return PolicyDecision(
             action=AgentAction(action_type=ActionType.CLICK, target_element_id="el_1"),
             rationale="delegate chose click",
@@ -516,7 +521,7 @@ async def test_policy_coordinator_injects_episode_hint_when_episode_matches() ->
 
     await coordinator.choose_action(state, perception)
 
-    # Delegate must have received at least one set_advisory_hints call containing an episode hint
+    # Delegate must have received at least one add_advisory_hints call containing an episode hint
     all_hints = [h for call in delegate.advisory_hints_received for h in call]
     episode_hints = [h for h in all_hints if "Episode replay" in h]
     assert episode_hints, "Expected at least one episode replay advisory hint to be injected"
@@ -592,7 +597,7 @@ async def test_policy_coordinator_deactivates_episode_after_max_deviations() -> 
 
     coordinator = PolicyCoordinator(delegate=delegate, memory_store=mock_store)
     # Use a page hint that mismatches the episode's FORM_PAGE
-    wrong_perception = _make_perception(page_hint=PageHint.GMAIL_INBOX)
+    wrong_perception = _make_perception(page_hint=PageHint("gmail_inbox"))
 
     # First step initializes replay; wrong page_hint → first deviation
     await coordinator.choose_action(_make_state(step_count=1), wrong_perception)

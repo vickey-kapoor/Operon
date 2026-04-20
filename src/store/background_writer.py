@@ -1,32 +1,62 @@
 """Non-blocking file writer for debug artifacts.
 
-Writes synchronously (small files are fast) but provides a central
-point to batch or defer writes in the future.  The ``indent=2``
-removal across all callers already reduced serialization cost by ~20%.
+Offloads disk I/O to a background thread pool so artifact writes never
+block the asyncio event loop.  Falls back to synchronous writes outside
+of an async context (tests, startup code).
 """
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_thread_pool = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="bg_writer"
+)
+
+
+def _write_file(path: Path, content: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    except Exception:
+        logger.debug("artifact write failed: %s", path, exc_info=True)
+
 
 class BackgroundWriter:
-    """Central artifact writer.  Currently writes synchronously.
+    """Central artifact writer — fire-and-forget, never blocks the event loop.
 
-    All debug/trace artifact writes go through this so they can be
-    batched or deferred in the future without touching every call site.
+    In synchronous mode (``sync=True``) writes happen inline — used in unit
+    tests that assert file existence immediately after the call.
     """
 
+    def __init__(self, *, sync: bool = False) -> None:
+        self._sync = sync
+        self._pending: list[asyncio.Future] = []
+
     def enqueue(self, path: Path, content: str) -> None:
-        """Write content to *path*.  Creates parent dirs as needed."""
+        """Schedule a file write.  Returns immediately; write runs in a thread."""
+        if self._sync:
+            _write_file(path, content)
+            return
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
-        except Exception:
-            logger.debug("artifact write failed: %s", path, exc_info=True)
+            loop = asyncio.get_running_loop()
+            fut = loop.run_in_executor(_thread_pool, _write_file, path, content)
+            self._pending.append(fut)
+            # Remove completed futures to avoid accumulating references.
+            fut.add_done_callback(lambda f: self._pending.remove(f) if f in self._pending else None)
+        except RuntimeError:
+            # No running event loop (startup context) — write inline.
+            _write_file(path, content)
+
+    async def flush(self) -> None:
+        """Await all pending background writes.  Use in tests that check artifacts."""
+        if self._pending:
+            await asyncio.gather(*list(self._pending), return_exceptions=True)
 
 
 # Module-level singleton

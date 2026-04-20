@@ -6,6 +6,19 @@ import sys
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _sync_bg_writer():
+    """Force bg_writer to write synchronously during tests.
+
+    Ensures tests that assert Path(...).exists() immediately after a service
+    call see the file without having to await a background thread.
+    """
+    from src.store.background_writer import bg_writer
+    bg_writer._sync = True
+    yield
+    bg_writer._sync = False
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Auto-skip tests that target a different platform.
 

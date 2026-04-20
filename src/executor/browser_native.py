@@ -282,12 +282,32 @@ class NativeBrowserExecutor(Executor):
                 )
             else:
                 return self._fail(action, f"Action '{at}' is not supported on native browser executor", FailureCategory.EXECUTION_ERROR)
-            await page.wait_for_load_state(timeout=5000)
-            await asyncio.sleep(self._post_action_delay)
+            # Only wait for page load after actions that can trigger navigation.
+            if at in {ActionType.NAVIGATE, ActionType.CLICK, ActionType.PRESS_KEY, ActionType.HOTKEY}:
+                await page.wait_for_load_state(timeout=5000)
+            await asyncio.sleep(self._action_delay(at))
             after_path = await self._capture_after()
             return self._ok(action, f"Executed {at.value}", after_path)
         except Exception as exc:
             return self._fail(action, f"{at.value} failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
+    def _action_delay(self, action_type: ActionType) -> float:
+        """Return the post-action settle delay appropriate for each action type."""
+        delays = {
+            ActionType.NAVIGATE: 1.0,
+            ActionType.CLICK: 0.3,
+            ActionType.DOUBLE_CLICK: 0.3,
+            ActionType.TYPE: 0.2,
+            ActionType.UPLOAD_FILE: 0.5,
+            ActionType.UPLOAD_FILE_NATIVE: 0.5,
+            ActionType.PRESS_KEY: 0.15,
+            ActionType.HOTKEY: 0.15,
+            ActionType.SCROLL: 0.1,
+            ActionType.DRAG: 0.2,
+            ActionType.HOVER: 0.05,
+            ActionType.SELECT: 0.2,
+        }
+        return delays.get(action_type, self._post_action_delay)
 
     @staticmethod
     def _action_point(action: AgentAction) -> tuple[int, int] | None:

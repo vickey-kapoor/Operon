@@ -38,6 +38,26 @@ class PolicyCoordinator(PolicyService):
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._active_episode: Episode | None = None
         self._replay_state: EpisodeReplayState | None = None
+        # Single-step hint cache: avoids re-loading memory JSONL twice per step.
+        self._cached_hints: list[MemoryHint] | None = None
+        self._cached_hints_key: tuple | None = None
+
+    def _get_hints(self, state: AgentState, perception: ScreenPerception | None) -> list[MemoryHint]:
+        """Fetch hints, using a single-step in-memory cache to avoid double JSONL reads."""
+        benchmark = benchmark_name_for_intent(state.intent)
+        page_hint = perception.page_hint if perception else None
+        cache_key = (benchmark, page_hint, state.current_subgoal, self._recent_failure_category(state))
+        if self._cached_hints is not None and self._cached_hints_key == cache_key:
+            return self._cached_hints
+        hints = self.memory_store.get_hints(
+            benchmark=benchmark,
+            page_hint=page_hint,
+            subgoal=state.current_subgoal,
+            recent_failure_category=self._recent_failure_category(state),
+        )
+        self._cached_hints = hints
+        self._cached_hints_key = cache_key
+        return hints
 
     def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
         """Fetch memory hints and inject them into the delegate BEFORE perceive().
@@ -46,12 +66,10 @@ class PolicyCoordinator(PolicyService):
         must be set before that call.  In separate mode this is a harmless no-op
         because choose_action() will re-fetch and set hints anyway.
         """
-        memory_hints = self.memory_store.get_hints(
-            benchmark=benchmark_name_for_intent(state.intent),
-            page_hint=perception.page_hint if perception else None,
-            subgoal=state.current_subgoal,
-            recent_failure_category=self._recent_failure_category(state),
-        )
+        # Clear the step cache so this step's hints are freshly loaded.
+        self._cached_hints = None
+        self._cached_hints_key = None
+        memory_hints = self._get_hints(state, perception)
         if hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
 
@@ -63,14 +81,10 @@ class PolicyCoordinator(PolicyService):
         # Inject episode advisory hint if a matching trajectory exists
         self._try_episode_hint(state, perception)
 
-        memory_hints = self.memory_store.get_hints(
-            benchmark=benchmark_name_for_intent(state.intent),
-            page_hint=perception.page_hint,
-            subgoal=state.current_subgoal,
-            recent_failure_category=self._recent_failure_category(state),
-        )
+        memory_hints = self._get_hints(state, perception)
+        benchmark = benchmark_name_for_intent(state.intent)
 
-        decision = self.rule_engine.choose_action(state, perception, memory_hints, benchmark_name=benchmark_name_for_intent(state.intent))
+        decision = self.rule_engine.choose_action(state, perception, memory_hints, benchmark_name=benchmark)
         selector_traces = self.rule_engine.latest_selector_traces()
         if decision is not None:
             self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision, selector_traces)

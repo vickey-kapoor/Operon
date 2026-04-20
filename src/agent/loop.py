@@ -313,6 +313,15 @@ class AgentLoop:
             _trace("  5 VERIFY OK", f"status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
             verification_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "verification", self.verifier_service)
 
+            # Compute screen change ratio once; reused by video verify and progress tracking.
+            from src.agent.screen_diff import compute_screen_change_ratio as _scr
+            _after_path = executed_action.artifact_path
+            _screen_change_ratio: float | None = (
+                _scr(before_artifact_path, _after_path)
+                if before_artifact_path and _after_path
+                else None
+            )
+
             # Video verification: when screen didn't change, record and ask Gemini
             if not verification.stop_condition_met and self.video_verifier is not None:
                 video_result = await self._maybe_video_verify(
@@ -321,6 +330,7 @@ class AgentLoop:
                     executed_action=executed_action,
                     before_artifact_path=before_artifact_path,
                     step_index=step_index,
+                    screen_change_ratio=_screen_change_ratio,
                 )
                 if video_result is not None:
                     _trace("  5b VIDEO_VERIFY OK", f"status={video_result.status.value!r}")
@@ -429,6 +439,7 @@ class AgentLoop:
             recovery=recovery,
             step_index=step_index,
             before_artifact_path=before_artifact_path,
+            screen_change_ratio=_screen_change_ratio,
         )
         recovery = self._apply_progress_stop_guard(recovery, progress_trace)
         progress_trace = progress_trace.model_copy(
@@ -456,7 +467,7 @@ class AgentLoop:
             executed_action=executed_action,
             verification_result=verification,
             recovery_decision=recovery,
-            progress_state=state.progress_state.model_copy(),
+            progress_state=state.progress_state,
             progress_trace_artifact_path=progress_trace_artifact_path,
             failure=failure,
         )
@@ -683,6 +694,7 @@ class AgentLoop:
         executed_action,
         before_artifact_path: str,
         step_index: int,
+        screen_change_ratio: float | None = None,
     ) -> VerificationResult | None:
         """Record a video and verify with Gemini when screen_diff shows no change."""
         if not executed_action.success:
@@ -692,12 +704,13 @@ class AgentLoop:
         if not before_artifact_path or not after_path:
             return None
 
-        from src.agent.screen_diff import (
-            SCREEN_CHANGE_THRESHOLD,
-            compute_screen_change_ratio,
-        )
+        from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD
 
-        ratio = compute_screen_change_ratio(before_artifact_path, after_path)
+        if screen_change_ratio is None:
+            from src.agent.screen_diff import compute_screen_change_ratio
+            screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
+
+        ratio = screen_change_ratio
         if ratio >= SCREEN_CHANGE_THRESHOLD:
             return None  # Screen changed — no video needed
 
@@ -1153,15 +1166,15 @@ class AgentLoop:
     def _persist_execution_trace(self, run_id: str, step_index: int, executed_action):
         if executed_action.execution_trace is None:
             return executed_action
+        # Step dir already created by _prepare_step_artifacts — no mkdir needed.
         step_dir = Path(self._before_artifact_path(run_id, step_index)).resolve().parent
-        step_dir.mkdir(parents=True, exist_ok=True)
         trace_path = step_dir / "execution_trace.json"
         bg_writer.enqueue(trace_path, executed_action.execution_trace.model_dump_json())
         return executed_action.model_copy(update={"execution_trace_artifact_path": str(trace_path)})
 
     def _persist_progress_trace(self, run_id: str, step_index: int, progress_trace: ProgressTrace) -> str:
+        # Step dir already created by _prepare_step_artifacts — no mkdir needed.
         step_dir = Path(self._before_artifact_path(run_id, step_index)).resolve().parent
-        step_dir.mkdir(parents=True, exist_ok=True)
         trace_path = step_dir / "progress_trace.json"
         bg_writer.enqueue(trace_path, progress_trace.model_dump_json())
         return str(trace_path)
@@ -1324,6 +1337,7 @@ class AgentLoop:
         recovery,
         step_index: int,
         before_artifact_path: str | None = None,
+        screen_change_ratio: float | None = None,
     ) -> ProgressTrace:
         progress_state = state.progress_state
         action_signature = self._action_signature(executed_action.action)
@@ -1336,12 +1350,12 @@ class AgentLoop:
         subgoal_changed = previous_subgoal is None or subgoal_signature != previous_subgoal
         progress_state.latest_subgoal_signature = subgoal_signature
 
-        # Pixel-level screen change signal (before vs after screenshots)
-        screen_change_ratio: float | None = None
-        after_path = executed_action.artifact_path if hasattr(executed_action, "artifact_path") else None
-        if before_artifact_path and after_path:
-            from src.agent.screen_diff import compute_screen_change_ratio
-            screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
+        # Use pre-computed ratio if available; compute only as fallback.
+        if screen_change_ratio is None:
+            after_path = executed_action.artifact_path if hasattr(executed_action, "artifact_path") else None
+            if before_artifact_path and after_path:
+                from src.agent.screen_diff import compute_screen_change_ratio
+                screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
 
         # An action is "novel" if its signature hasn't been seen before in this run
         is_novel_action = action_signature not in progress_state.repeated_action_count

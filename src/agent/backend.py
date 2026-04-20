@@ -26,6 +26,14 @@ class AgentBackend(ABC):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         ...
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
-        """Optional hook used by PolicyCoordinator."""
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state. Optional hook — test use only."""
+        return None
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        """Append advisory hints without discarding existing ones. Optional hook."""
+        return None
+
+    def clear_advisory_hints(self) -> None:
+        """Drop any queued advisory hints. Optional hook."""
         return None

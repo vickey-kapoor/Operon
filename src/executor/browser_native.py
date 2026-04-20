@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import json
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, LoopStage
 from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
 from src.models.policy import ActionType, AgentAction
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -87,12 +90,19 @@ class NativeBrowserExecutor(Executor):
         try:
             asyncio.run(self._close_session(session))
         except RuntimeError:
-            # If already inside an event loop, close best-effort in the background.
+            # Already inside a running event loop — schedule and keep a reference
+            # so the task is not garbage-collected before completion.
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return 0
-            loop.create_task(self._close_session(session))
+            task = loop.create_task(self._close_session(session))
+            # Prevent silent discard: log any unexpected error from the background close.
+            task.add_done_callback(
+                lambda t: logger.warning("cleanup_run background close error: %s", t.exception())
+                if not t.cancelled() and t.exception() is not None
+                else None
+            )
         return 1
 
     async def capture(self) -> CaptureFrame:
@@ -160,7 +170,7 @@ class NativeBrowserExecutor(Executor):
                 if action.clear_before_typing:
                     await page.keyboard.press("Control+A")
                     await page.keyboard.press("Backspace")
-                    await page.keyboard.type(action.text)
+                await page.keyboard.type(action.text)
                 if action.press_enter:
                     await page.keyboard.press("Enter")
             elif at is ActionType.PRESS_KEY:
@@ -236,10 +246,12 @@ class NativeBrowserExecutor(Executor):
                     await page.mouse.click(*point)
                 elif action.selector is not None:
                     await page.locator(action.selector).first.click()
+                elif action.target_element_id is not None:
+                    await page.locator(self._target_element_locator(action.target_element_id)).first.click()
                 else:
                     return self._fail(
                         action,
-                        "upload_file_native requires x/y coordinates or CSS selector",
+                        "upload_file_native requires coordinates, CSS selector, target context, or target_element_id",
                         FailureCategory.EXECUTION_TARGET_NOT_FOUND,
                     )
 
@@ -294,6 +306,16 @@ class NativeBrowserExecutor(Executor):
         if not all(isinstance(value, int) for value in (x, y, width, height)):
             return None
         return x + max(1, width // 2), y + max(1, height // 2)
+
+    @staticmethod
+    def _target_element_locator(target_element_id: str) -> str:
+        escaped = target_element_id.replace("\\", "\\\\").replace('"', '\\"')
+        return (
+            f'[id="{escaped}"], '
+            f'[data-element-id="{escaped}"], '
+            f'[data-testid="{escaped}"], '
+            f'[name="{escaped}"]'
+        )
 
     async def _execute_batch(self, action: AgentAction) -> ExecutedAction:
         if not action.actions:
@@ -352,26 +374,30 @@ class NativeBrowserExecutor(Executor):
         except ImportError as exc:
             raise RuntimeError("playwright is not installed for native browser execution.") from exc
         playwright = await async_playwright().start()
-        chromium_executable = getattr(playwright.chromium, "executable_path", None)
-        before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
-        launch_headless = self._run_headless.get(run_id)
-        if launch_headless is None:
-            launch_headless = self._headless
-        if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
-            launch_headless = True
-        headed_width, headed_height = self._headed_launch_size()
-        launch_args = (
-            [f"--window-size={self._viewport_width},{self._viewport_height}"]
-            if launch_headless
-            else [
-                f"--window-size={headed_width},{headed_height}",
-                "--window-position=0,0",
-            ]
-        )
-        browser = await playwright.chromium.launch(
-            headless=launch_headless,
-            args=launch_args,
-        )
+        try:
+            chromium_executable = getattr(playwright.chromium, "executable_path", None)
+            before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
+            launch_headless = self._run_headless.get(run_id)
+            if launch_headless is None:
+                launch_headless = self._headless
+            if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
+                launch_headless = True
+            headed_width, headed_height = self._headed_launch_size()
+            launch_args = (
+                [f"--window-size={self._viewport_width},{self._viewport_height}"]
+                if launch_headless
+                else [
+                    f"--window-size={headed_width},{headed_height}",
+                    "--window-position=0,0",
+                ]
+            )
+            browser = await playwright.chromium.launch(
+                headless=launch_headless,
+                args=launch_args,
+            )
+        except Exception:
+            await playwright.stop()
+            raise
         video_dir = self._video_dir_for_run(run_id) if self._record_video else None
         context_kwargs = {
             "viewport": (

@@ -249,13 +249,13 @@ def _fallback_page_hint_from_summary(summary: object) -> PageHint:
     if all(token in lowered for token in ("name", "email")) and ("message" in lowered or "submit" in lowered):
         return PageHint.FORM_PAGE
     if "sign in" in lowered or "google account" in lowered or "email or phone" in lowered:
-        return PageHint.GOOGLE_SIGN_IN
+        return PageHint("google_sign_in")
     if "compose" in lowered or "draft" in lowered:
-        return PageHint.GMAIL_COMPOSE
+        return PageHint("gmail_compose")
     if "inbox" in lowered:
-        return PageHint.GMAIL_INBOX
+        return PageHint("gmail_inbox")
     if "message" in lowered or "conversation" in lowered:
-        return PageHint.GMAIL_MESSAGE_VIEW
+        return PageHint("gmail_message_view")
     if "wikipedia" in lowered or "article" in lowered or "wiki" in lowered:
         return PageHint("article_page")
     if "search" in lowered:

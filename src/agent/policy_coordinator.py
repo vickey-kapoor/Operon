@@ -52,8 +52,8 @@ class PolicyCoordinator(PolicyService):
             subgoal=state.current_subgoal,
             recent_failure_category=self._recent_failure_category(state),
         )
-        if hasattr(self.delegate, "set_advisory_hints"):
-            self.delegate.set_advisory_hints([hint.hint for hint in memory_hints])
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
 
     async def choose_action(
         self,
@@ -70,14 +70,14 @@ class PolicyCoordinator(PolicyService):
             recent_failure_category=self._recent_failure_category(state),
         )
 
-        decision = self.rule_engine.choose_action(state, perception, memory_hints)
+        decision = self.rule_engine.choose_action(state, perception, memory_hints, benchmark_name=benchmark_name_for_intent(state.intent))
         selector_traces = self.rule_engine.latest_selector_traces()
         if decision is not None:
             self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision, selector_traces)
             return decision
 
-        if hasattr(self.delegate, "set_advisory_hints"):
-            self.delegate.set_advisory_hints([hint.hint for hint in memory_hints])
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
 
         decision = await self.delegate.choose_action(state, perception)
         if hasattr(self.delegate, "latest_debug_artifacts"):
@@ -224,8 +224,7 @@ class PolicyCoordinator(PolicyService):
         parts.append("Follow this if the screen matches.")
         hint = " ".join(parts)
 
-        if hasattr(self.delegate, "set_advisory_hints"):
-            existing = getattr(self.delegate, "_advisory_hints", []) or []
-            self.delegate.set_advisory_hints(list(existing) + [hint])
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([hint], source="episode", run_id=state.run_id)
 
         self._replay_state.current_step_index += 1

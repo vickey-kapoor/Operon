@@ -37,10 +37,6 @@ class PageHint(StrEnum):
 
     FORM_PAGE = "form_page"
     FORM_SUCCESS = "form_success"
-    GOOGLE_SIGN_IN = "google_sign_in"
-    GMAIL_INBOX = "gmail_inbox"
-    GMAIL_COMPOSE = "gmail_compose"
-    GMAIL_MESSAGE_VIEW = "gmail_message_view"
     UNKNOWN = "unknown"
 
     @classmethod

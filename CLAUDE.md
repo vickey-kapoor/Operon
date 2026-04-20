@@ -21,12 +21,23 @@ playwright install chromium
 
 Copy `.env.example` to `.env` and set your Gemini key (`GOOGLE_API_KEY` or `GEMINI_API_KEY`).
 
-Runtime backend selection (env vars):
+Runtime backend and model selection (env vars):
 
 - `OPERON_DESKTOP_BACKEND=json` (default desktop path)
 - `OPERON_BROWSER_BACKEND=computer_use` (Gemini Computer Use)
 - `OPERON_BROWSER_FALLBACK_BACKEND=json` (JSON fallback for browser)
 - `BROWSER_HEADLESS=true` (headless Playwright)
+
+Planner provider override (per-mode, defaults to `gemini`):
+
+- `OPERON_DESKTOP_PLANNER_PROVIDER=anthropic` — use Claude as the desktop planner
+- `OPERON_BROWSER_PLANNER_PROVIDER=anthropic` — use Claude as the browser planner
+- `ANTHROPIC_API_KEY` — required when either planner provider is `anthropic`
+
+Model overrides (all optional, see `src/api/runtime_config.py` for defaults):
+
+- `OPERON_DESKTOP_MODEL`, `OPERON_DESKTOP_PLANNER_MODEL`, `OPERON_DESKTOP_VERIFIER_MODEL`
+- `OPERON_BROWSER_MODEL`, `OPERON_BROWSER_PLANNER_MODEL`, `OPERON_BROWSER_VERIFIER_MODEL`, `OPERON_BROWSER_FALLBACK_MODEL`
 
 If PowerShell fails to launch external processes (COM+ errors), run:
 
@@ -89,7 +100,7 @@ python -m src.store.summary runs
 5. **Execute** — `DesktopExecutor` performs the action via pyautogui/mss. `AgentLoop._execute_with_hardening()` owns one bounded retry: on `stale_target_before_action`, `target_shifted_before_action`, or `target_lost_before_action`, it captures fresh perception and re-runs the deterministic selector against the original `TargetIntent` plus lightweight target context instead of relying only on the old `target_element_id`
 6. **Verify** — `DeterministicVerifierService` checks whether the outcome matches what was expected
 7. **Video verify** (conditional) — If `screen_diff` detects no visual change, `VideoVerifier` records a 3-second video via `ScreenRecorder`, re-executes the action, and sends the clip to Gemini for temporal analysis. This only triggers for idempotent actions (click, press_key, hotkey, launch_app, scroll, hover) and adds ~5-8s to uncertain steps.
-8. **Recover** — `RuleBasedRecoveryManager` decides whether to continue, retry, or stop the run
+8. **Recover** — `RuleBasedRecoveryManager` decides whether to continue, retry, or stop the run via a staged recovery ladder: soft-retry → subgoal reset → hard-stop, escalating only when the same failure repeats on the same target. The critic's `recovery_hint` (from the critic prompt at `prompts/critic_prompt.txt`) is injected into the ladder to influence escalation decisions.
 9. **Reflect** (on terminal) — `PostRunReflector` analyzes the completed run, extracts failure patterns, and writes `MemoryRecord` entries for future runs
 10. **Log** — `StepLog` is appended to `runs/<run_id>/run.jsonl`; every artifact (screenshots, prompt/raw/parsed files, traces, recordings) goes under `runs/<run_id>/step_N/`
 
@@ -104,13 +115,24 @@ Operon has two execution modes sharing the same loop, verifier, recovery, and pe
 
 Backend selection is handled by `src/agent/backend.py` based on env vars. `src/agent/action_translation.py` bridges Computer Use action formats to the internal `AgentAction` schema.
 
+### Runtime Package (`runtime/`)
+
+A top-level `runtime/` package (not under `src/`) provides the unified contract layer:
+
+- `UnifiedOrchestrator` — receives `LegacyContractBundle` from `LegacyOperonContractAdapter` each step, runs adaptation strategy lookup, detects OS file pickers via perception, and advances `AgentRuntimeState`
+- `AgentRuntimeState` — structured per-run mutable state tracking subgoal progress, last perception summary, retry context, and advisory hints; separate from `AgentState` in `src/models/`
+- `LegacyOperonContractAdapter` — translates the existing `AgentState`/`ScreenPerception`/`PolicyDecision`/`ExecutedAction`/`VerificationResult` types into the unified `LegacyContractBundle` format consumed by `UnifiedOrchestrator`
+
+`AgentLoop` creates a `UnifiedOrchestrator` singleton and maintains a `unified_states` dict of `AgentRuntimeState` per run. After each step's verify phase (step 6), the loop translates to contracts and calls `UnifiedOrchestrator.process_step()`.
+
 ### Policy Layer (`src/agent/policy_coordinator.py`, `policy_rules.py`, `policy.py`)
 
 `PolicyCoordinator` wraps `GeminiPolicyService` with a rule layer:
 
 - `PolicyRuleEngine` runs 6 deterministic rules in priority order (selector-based matching via `src/agent/selector.py` and `geometry.py`)
 - Memory hints from `FileBackedMemoryStore` are injected into both the rule engine and the LLM prompt
-- If no rule fires, the LLM prompt in `prompts/policy_prompt.txt` is rendered and sent to Gemini
+- If no rule fires, the LLM prompt in `prompts/policy_prompt.txt` is rendered and sent to Gemini (or Claude via `AnthropicPolicyService` when `planner_provider=anthropic`)
+- `AnthropicPolicyService` (`src/agent/anthropic_policy.py`) subclasses `GeminiPolicyService`, reusing the same prompt renderer and strict output parser but routing generation through `AnthropicHttpClient` (`src/clients/anthropic.py`)
 
 ### Intent-Based Re-resolution (`src/agent/loop.py`, `src/agent/selector.py`)
 
@@ -168,9 +190,15 @@ FastAPI app at `src/api/server.py`. Routes in `src/api/routes.py`:
 
 The `AgentLoop` singleton is built lazily on first request via `get_agent_loop()`.
 
-### Clients (`src/clients/gemini.py`)
+### OS File Picker Macro (`src/executor/os_picker_macro.py`)
+
+`run_os_picker_macro()` is a deterministic, LLM-free primitive invoked by `NativeBrowserExecutor` after clicking an upload control that opens a native OS file dialog (headed mode only). It polls for a picker window via `pygetwindow` keyword matching, types the absolute file path with `pyautogui.write`, presses Enter, then polls for the window to close. Returns `PickerMacroResult` with a `PickerOutcome` enum (`SUCCESS`, `PICKER_NOT_DETECTED`, `FILE_NOT_REFLECTED`, `UNAVAILABLE`). Failures map to standard executor failure categories.
+
+### Clients (`src/clients/gemini.py`, `src/clients/anthropic.py`)
 
 `GeminiHttpClient` wraps raw HTTP calls for both perception and policy Gemini requests. Prompt templates live in `prompts/perception_prompt.txt` and `prompts/policy_prompt.txt`.
+
+`AnthropicHttpClient` wraps the Anthropic Messages API for text-only planner and vision-based verifier calls. Requires `ANTHROPIC_API_KEY`. Supports configurable model, retry backoff, and HTTP/2 via `httpx`.
 
 ## Run Data Layout
 

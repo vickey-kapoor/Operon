@@ -20,7 +20,6 @@ Return one JSON object with exactly this shape:
   "stop_condition_met": false,
   "reason": "short factual judgment grounded in the visible post-action state",
   "failure_type": "action_failed|benchmark_precondition_failed|expected_outcome_not_met|stop_boundary_reached|uncertain_screen_state|null",
-  "recovery_hint": "advance|retry_same_step|wait_and_retry|stop|null",
   "stop_reason": null
 }}
 

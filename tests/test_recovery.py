@@ -93,19 +93,20 @@ async def test_recovery_stop_mapping() -> None:
 async def test_recovery_retry_limit_behavior() -> None:
     manager = RuleBasedRecoveryManager()
     decision = _decision()
-    retry_key = f"{decision.active_subgoal}:{VerificationFailureType.ACTION_FAILED.value}"
+    retry_key = f"{decision.active_subgoal}:id:compose:{FailureCategory.EXPECTED_OUTCOME_NOT_MET.value}"
     state = AgentState(
         run_id="run-4",
         intent="Create draft",
         status="running",
-        retry_counts={retry_key: 2},
+        retry_counts={retry_key: 4},
     )
     verification = VerificationResult(
         status=VerificationStatus.FAILURE,
         expected_outcome_met=False,
         stop_condition_met=False,
         reason="Action failed repeatedly",
-        failure_type=VerificationFailureType.ACTION_FAILED,
+        failure_type=VerificationFailureType.EXPECTED_OUTCOME_NOT_MET,
+        failure_category=FailureCategory.EXPECTED_OUTCOME_NOT_MET,
     )
 
     result = await manager.recover(state, decision, _executed(), verification)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import re as _re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,9 +57,12 @@ NativeBrowserExecutor = None
 _MAX_RUN_ID_LENGTH = 64
 
 
+_RUN_ID_RE = _re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
 def _validate_run_id(run_id: str) -> None:
-    """Reject run_ids that would cause filesystem issues."""
-    if len(run_id) > _MAX_RUN_ID_LENGTH:
+    """Reject run_ids that would cause filesystem issues or path traversal."""
+    if len(run_id) > _MAX_RUN_ID_LENGTH or not _RUN_ID_RE.match(run_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 _CONSOLE_HTML_PATH = Path(__file__).resolve().parent / "static" / "console.html"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"

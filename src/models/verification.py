@@ -35,10 +35,10 @@ class VerificationResult(StrictModel):
     stop_condition_met: bool
     reason: str = Field(min_length=1)
     failure_type: VerificationFailureType | None = None
-    recovery_hint: str | None = Field(default=None, min_length=1)
     failure_category: FailureCategory | None = None
     failure_stage: LoopStage | None = None
     stop_reason: StopReason | None = None
+    recovery_hint: str | None = Field(default=None, min_length=1)
     video_verified: bool = False
     video_detail: str | None = Field(default=None, min_length=1)
     critic_model_used: bool = False

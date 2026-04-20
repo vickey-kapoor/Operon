@@ -34,15 +34,10 @@ def compute_screen_change_ratio(before_path: str, after_path: str) -> float:
         if not Path(before_path).exists() or not Path(after_path).exists():
             return 0.0
 
-        before = Image.open(before_path).convert("L").resize(
-            (_COMPARE_WIDTH, _COMPARE_HEIGHT), Image.LANCZOS,
-        )
-        after = Image.open(after_path).convert("L").resize(
-            (_COMPARE_WIDTH, _COMPARE_HEIGHT), Image.LANCZOS,
-        )
-
-        before_data = before.tobytes()
-        after_data = after.tobytes()
+        with Image.open(before_path) as _b:
+            before_data = _b.convert("L").resize((_COMPARE_WIDTH, _COMPARE_HEIGHT), Image.LANCZOS).tobytes()
+        with Image.open(after_path) as _a:
+            after_data = _a.convert("L").resize((_COMPARE_WIDTH, _COMPARE_HEIGHT), Image.LANCZOS).tobytes()
 
         total = len(before_data)
         if total == 0:

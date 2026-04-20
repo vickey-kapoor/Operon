@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from src.models.verification import (
     VerificationStatus,
 )
 from src.store.background_writer import bg_writer
+
+logger = logging.getLogger(__name__)
 
 
 class VerifierService(ABC):
@@ -70,7 +73,6 @@ class DeterministicVerifierService(VerifierService):
                 stop_condition_met=True,
                 reason="Task success state is visible.",
                 failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
-                recovery_hint="stop",
                 stop_reason=StopReason.FORM_SUBMITTED_SUCCESS,
             )
 
@@ -82,7 +84,6 @@ class DeterministicVerifierService(VerifierService):
                     stop_condition_met=False,
                     reason="Stop was proposed before the browser task showed enough evidence of completion.",
                     failure_type=VerificationFailureType.EXPECTED_OUTCOME_NOT_MET,
-                    recovery_hint="retry_same_step",
                     failure_category=FailureCategory.EXPECTED_OUTCOME_NOT_MET,
                     failure_stage=LoopStage.VERIFY,
                 )
@@ -93,7 +94,6 @@ class DeterministicVerifierService(VerifierService):
                     stop_condition_met=True,
                     reason="Benchmark precondition failed: authenticated Gmail start state was required.",
                     failure_type=VerificationFailureType.BENCHMARK_PRECONDITION_FAILED,
-                    recovery_hint="stop",
                     failure_category=FailureCategory.BENCHMARK_PRECONDITION_FAILED,
                     failure_stage=LoopStage.CHOOSE_ACTION,
                     stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED,
@@ -104,7 +104,6 @@ class DeterministicVerifierService(VerifierService):
                 stop_condition_met=True,
                 reason="Intentional task stop boundary met.",
                 failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
-                recovery_hint="stop",
                 stop_reason=self._stop_reason_for_intentional_stop(state, decision),
             )
 
@@ -116,7 +115,6 @@ class DeterministicVerifierService(VerifierService):
                 stop_condition_met=True,
                 reason=f"Goal-completing action {action.action_type.value} succeeded.",
                 failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
-                recovery_hint="stop",
                 stop_reason=StopReason.TASK_COMPLETED,
             )
 
@@ -127,7 +125,6 @@ class DeterministicVerifierService(VerifierService):
                 stop_condition_met=False,
                 reason="Executed action reported failure.",
                 failure_type=VerificationFailureType.ACTION_FAILED,
-                recovery_hint="retry_same_step",
                 failure_category=executed_action.failure_category or FailureCategory.EXECUTION_ERROR,
                 failure_stage=executed_action.failure_stage or LoopStage.EXECUTE,
             )
@@ -139,7 +136,6 @@ class DeterministicVerifierService(VerifierService):
                 stop_condition_met=False,
                 reason="Wait completed, but the browser task still lacks enough evidence of useful progress.",
                 failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
-                recovery_hint="retry_same_step",
                 failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
                 failure_stage=LoopStage.VERIFY,
             )
@@ -155,7 +151,6 @@ class DeterministicVerifierService(VerifierService):
                 stop_condition_met=False,
                 reason="Policy confidence is too low to confirm the expected outcome.",
                 failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
-                recovery_hint="wait_and_retry",
                 failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
                 failure_stage=LoopStage.VERIFY,
                 critic_fallback_reason="critic_unavailable_or_unusable",
@@ -166,7 +161,6 @@ class DeterministicVerifierService(VerifierService):
             expected_outcome_met=True,
             stop_condition_met=False,
             reason="Executed action succeeded and the expected outcome is treated as met.",
-            recovery_hint="advance",
             critic_fallback_reason="critic_unavailable_or_unusable",
         )
 
@@ -198,7 +192,8 @@ class DeterministicVerifierService(VerifierService):
             self._write_fallback_debug(debug_artifacts, f"critic_error: {exc}")
             return None
         except Exception as exc:
-            self._write_fallback_debug(debug_artifacts, f"critic_error: {exc}")
+            logger.error("Unexpected error in critic call (possible code bug): %s: %s", type(exc).__name__, exc, exc_info=True)
+            self._write_fallback_debug(debug_artifacts, f"critic_error_unexpected: {type(exc).__name__}: {exc}")
             return None
 
         bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
@@ -344,7 +339,6 @@ class DeterministicVerifierService(VerifierService):
         if any(token in perception.summary.lower() for token in success_tokens):
             return True
         return any(any(token in element.primary_name.lower() for token in success_tokens) for element in perception.visible_elements)
-
 
 def _parse_verification_output(raw_output: str) -> VerificationResult | None:
     cleaned = raw_output.strip()

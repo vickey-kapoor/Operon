@@ -217,13 +217,23 @@ def test_browser_cleanup_without_support(client: TestClient) -> None:
 def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
     """get_desktop_agent_loop should use CombinedPerceptionPolicyService with 120s timeout."""
     import src.api.routes as routes_module
+    from src.api.runtime_config import RuntimeModeConfig
 
     # Reset the singleton so it gets rebuilt
     original = routes_module._desktop_agent_loop
     routes_module._desktop_agent_loop = None
 
+    gemini_config = RuntimeModeConfig(
+        backend="json",
+        primary_model="gemini-3-flash-preview",
+        planner_provider="gemini",
+        verifier_provider="gemini",
+        verifier_model="gemini-3-flash-preview",
+    )
+
     try:
         with (
+            patch("src.api.routes.desktop_mode_config", return_value=gemini_config),
             patch("src.api.routes.DesktopExecutor"),
             patch("src.api.routes.FileBackedRunStore"),
             patch("src.api.routes.FileBackedMemoryStore"),
@@ -237,7 +247,7 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
         ):
             routes_module.get_desktop_agent_loop()
 
-            # Default path creates two Gemini clients: one for the combined backend, one for the verifier.
+            # Gemini path creates two clients: one for the combined backend, one for the verifier.
             assert mock_gemini.call_count == 2
             calls = mock_gemini.call_args_list
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in calls)

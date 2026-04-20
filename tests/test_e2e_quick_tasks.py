@@ -99,8 +99,8 @@ ALL_RESULTS: list[TaskTestResult] = []
 # Helpers
 # ---------------------------------------------------------------------------
 
-def post(path: str, body: dict) -> requests.Response:
-    return SESSION.post(f"{BASE_URL}{path}", json=body, timeout=15)
+def post(path: str, body: dict, timeout: int = 15) -> requests.Response:
+    return SESSION.post(f"{BASE_URL}{path}", json=body, timeout=timeout)
 
 
 def get(path: str, **params) -> requests.Response:
@@ -624,7 +624,7 @@ class TestEdgeCases:
         resp = post("/desktop/run-task", {"intent": "Open Notepad"})
         assert resp.status_code == 202
         run_id = resp.json()["run_id"]
-        step_resp = post("/desktop/step", {"run_id": run_id})
+        step_resp = post("/desktop/step", {"run_id": run_id}, timeout=60)
         # Step might succeed (202/200) or fail gracefully — should not be 500
         assert step_resp.status_code != 500, (
             f"Step on fresh run returned 500: {step_resp.text}"

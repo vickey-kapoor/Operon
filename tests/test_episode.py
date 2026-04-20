@@ -483,7 +483,7 @@ class _MockPolicyDelegate:
         self._advisory_hints = list(hints)
         self.advisory_hints_received.append(list(hints))
 
-    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self._advisory_hints.extend(h for h in hints if h)
         self.advisory_hints_received.append(list(hints))
 

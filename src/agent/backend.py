@@ -30,7 +30,7 @@ class AgentBackend(ABC):
         """Reset hints to a known state. Optional hook — test use only."""
         return None
 
-    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         """Append advisory hints without discarding existing ones. Optional hook."""
         return None
 

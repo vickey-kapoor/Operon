@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from src.models.verification import (
     VerificationStatus,
 )
 from src.store.background_writer import bg_writer
+
+logger = logging.getLogger(__name__)
 
 
 class VerifierService(ABC):
@@ -189,7 +192,8 @@ class DeterministicVerifierService(VerifierService):
             self._write_fallback_debug(debug_artifacts, f"critic_error: {exc}")
             return None
         except Exception as exc:
-            self._write_fallback_debug(debug_artifacts, f"critic_error: {exc}")
+            logger.error("Unexpected error in critic call (possible code bug): %s: %s", type(exc).__name__, exc, exc_info=True)
+            self._write_fallback_debug(debug_artifacts, f"critic_error_unexpected: {type(exc).__name__}: {exc}")
             return None
 
         bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)

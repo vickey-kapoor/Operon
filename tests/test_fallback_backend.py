@@ -26,7 +26,7 @@ class _FailingBackend:
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
 
-    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self.hints.extend(hints)
 
     def clear_advisory_hints(self) -> None:
@@ -64,7 +64,7 @@ class _RunScopedBackend:
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
 
-    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self.hints.extend(hints)
 
     def clear_advisory_hints(self) -> None:
@@ -100,7 +100,7 @@ class _WorkingBackend:
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self.hints = hints
 
-    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self.hints.extend(hints)
 
     def clear_advisory_hints(self) -> None:

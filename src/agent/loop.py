@@ -1,5 +1,6 @@
 """Agent loop orchestrator for the vision-driven automation workflow."""
 
+import logging
 import os
 import shutil
 import time
@@ -53,6 +54,8 @@ from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log
 from src.store.run_store import RunStore
+
+logger = logging.getLogger(__name__)
 
 _TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
 
@@ -517,8 +520,9 @@ class AgentLoop:
             try:
                 self.reflector.reflect(record.run_id)
                 _trace("  9 REFLECT OK")
-            except Exception:
-                pass  # reflection is advisory, never block the response
+            except Exception as exc:
+                logger.warning("post-run reflection failed for %s: %s", record.run_id, exc)
+                _trace("  9 REFLECT ERROR", str(exc))
 
         _trace("STEP DONE", f"step={step_index}  status={final_status.value!r}")
         return RunResponse(
@@ -814,8 +818,8 @@ class AgentLoop:
             return
         try:
             await self.executor.aclose_run(run_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("cleanup_completed_run: aclose_run failed for %s: %s", run_id, exc)
         await self._persist_cleanup_artifacts(run_id)
 
     async def _persist_cleanup_artifacts(self, run_id: str) -> None:
@@ -1450,10 +1454,17 @@ class AgentLoop:
 
     @staticmethod
     def _alternating_action_loop(recent_actions: list[str]) -> bool:
-        if len(recent_actions) < 4:
-            return False
-        a, b, c, d = recent_actions[-4:]
-        return a == c and b == d and a != b
+        # Period-2: abab
+        if len(recent_actions) >= 4:
+            a, b, c, d = recent_actions[-4:]
+            if a == c and b == d and a != b:
+                return True
+        # Period-3: abcabc
+        if len(recent_actions) >= 6:
+            tail = recent_actions[-6:]
+            if tail[:3] == tail[3:] and len(set(tail[:3])) > 1:
+                return True
+        return False
 
     def _mark_completed_progress(self, state, decision, executed_action, verification) -> None:
         progress_state = state.progress_state
@@ -1533,7 +1544,9 @@ class AgentLoop:
             screen_changed = screen_change_ratio >= SCREEN_CHANGE_THRESHOLD
             return screen_changed and is_novel_action
 
-        return is_novel_action
+        # Screenshots unavailable — require novelty but don't treat as confirmed progress;
+        # return False so the no-progress streak is not reset without visual evidence.
+        return False
 
     @classmethod
     def _failure_signature(cls, executed_action, verification, recovery, target_signature: str | None) -> str | None:
@@ -1551,7 +1564,7 @@ class AgentLoop:
 
     @classmethod
     def _page_signature(cls, perception) -> str:
-        top_elements = perception.visible_elements[:6]
+        top_elements = perception.visible_elements[:15]
         element_part = "|".join(f"{element.element_id}:{element.primary_name}" for element in top_elements) or "none"
         focused = perception.focused_element_id or "none"
         return f"{perception.page_hint.value}|{focused}|{element_part}"

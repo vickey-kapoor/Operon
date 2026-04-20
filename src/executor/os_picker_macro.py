@@ -64,12 +64,14 @@ class PickerMacroResult:
 # Window-title keywords that identify a native file picker across browsers and
 # platforms. Matching is case-insensitive and substring-based.
 _PICKER_TITLE_KEYWORDS: tuple[str, ...] = (
-    "open",
+    "open file",
+    "open files",
     "save as",
     "select file",
     "choose file",
     "file upload",
-    "browse",
+    "upload file",
+    "browse for file",
 )
 
 

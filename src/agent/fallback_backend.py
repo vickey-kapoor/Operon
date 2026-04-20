@@ -52,7 +52,7 @@ class FallbackBackend(AgentBackend):
         self.primary._reset_advisory_hints_for_test(hints)
         self.secondary._reset_advisory_hints_for_test(hints)
 
-    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         """Append hints on both backends without discarding existing ones."""
         self.primary.add_advisory_hints(hints, source=source)
         self.secondary.add_advisory_hints(hints, source=source)

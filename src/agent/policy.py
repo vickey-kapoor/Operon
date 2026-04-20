@@ -45,7 +45,7 @@ class GeminiPolicyService(PolicyService):
         self.prompt_path = prompt_path or Path(__file__).resolve().parents[2] / "prompts" / "policy_prompt.txt"
         self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
-        self._advisory_hints: list[tuple[str, str]] = []
+        self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
 
     async def choose_action(
         self,
@@ -76,19 +76,20 @@ class GeminiPolicyService(PolicyService):
 
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         """Reset hints to a known state. Test use only."""
-        self._advisory_hints = [(h, "") for h in hints if h]
+        self._advisory_hints = {"": [(h, "") for h in hints if h]}
 
-    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
-        """Append hints without discarding hints set by other writers."""
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        """Append hints scoped to run_id so concurrent runs don't cross-contaminate."""
         incoming = [(h, source) for h in hints if h]
-        self._advisory_hints.extend(incoming)
+        bucket = self._advisory_hints.setdefault(run_id, [])
+        bucket.extend(incoming)
         logger.debug(
-            "add_advisory_hints(%s): source=%r incoming=%d total=%d",
-            self.__class__.__name__, source, len(incoming), len(self._advisory_hints),
+            "add_advisory_hints(%s): run=%r source=%r incoming=%d total=%d",
+            self.__class__.__name__, run_id, source, len(incoming), len(bucket),
         )
 
-    def clear_advisory_hints(self) -> None:
-        self._advisory_hints = []
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        self._advisory_hints.pop(run_id, None)
 
     def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
         prompt = self._prompt_template.format(
@@ -98,14 +99,14 @@ class GeminiPolicyService(PolicyService):
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             perception_json=perception.model_dump_json(),
         )
-        if self._advisory_hints:
+        hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None)
+        if hints:
             _counts: dict[str, int] = {}
-            for _, _src in self._advisory_hints:
+            for _, _src in hints:
                 _label = _src or "unknown"
                 _counts[_label] = _counts.get(_label, 0) + 1
             logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
-            prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {h}" for h, _ in self._advisory_hints)
-        self._advisory_hints = []
+            prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {h}" for h, _ in hints)
         return prompt
 
     def _apply_focus_first_guardrail(

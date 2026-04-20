@@ -151,7 +151,7 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
     fake_module = SimpleNamespace(async_playwright=lambda: manager)
     monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
 
-    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=False)
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=False, viewport_width=1440, viewport_height=900)
     executor.configure_run("run-override", headless=True)
 
     await executor._ensure_session("run-override")
@@ -277,7 +277,7 @@ async def test_ensure_session_forces_headless_in_test_safe_mode(
     monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
     monkeypatch.setenv("OPERON_TEST_SAFE_MODE", "true")
 
-    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=False)
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=False, viewport_width=1440, viewport_height=900)
 
     await executor._ensure_session("run-safe")
 

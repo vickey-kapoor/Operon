@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import json
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, LoopStage
 from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
 from src.models.policy import ActionType, AgentAction
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -87,12 +90,19 @@ class NativeBrowserExecutor(Executor):
         try:
             asyncio.run(self._close_session(session))
         except RuntimeError:
-            # If already inside an event loop, close best-effort in the background.
+            # Already inside a running event loop — schedule and keep a reference
+            # so the task is not garbage-collected before completion.
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return 0
-            loop.create_task(self._close_session(session))
+            task = loop.create_task(self._close_session(session))
+            # Prevent silent discard: log any unexpected error from the background close.
+            task.add_done_callback(
+                lambda t: logger.warning("cleanup_run background close error: %s", t.exception())
+                if not t.cancelled() and t.exception() is not None
+                else None
+            )
         return 1
 
     async def capture(self) -> CaptureFrame:
@@ -364,26 +374,30 @@ class NativeBrowserExecutor(Executor):
         except ImportError as exc:
             raise RuntimeError("playwright is not installed for native browser execution.") from exc
         playwright = await async_playwright().start()
-        chromium_executable = getattr(playwright.chromium, "executable_path", None)
-        before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
-        launch_headless = self._run_headless.get(run_id)
-        if launch_headless is None:
-            launch_headless = self._headless
-        if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
-            launch_headless = True
-        headed_width, headed_height = self._headed_launch_size()
-        launch_args = (
-            [f"--window-size={self._viewport_width},{self._viewport_height}"]
-            if launch_headless
-            else [
-                f"--window-size={headed_width},{headed_height}",
-                "--window-position=0,0",
-            ]
-        )
-        browser = await playwright.chromium.launch(
-            headless=launch_headless,
-            args=launch_args,
-        )
+        try:
+            chromium_executable = getattr(playwright.chromium, "executable_path", None)
+            before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
+            launch_headless = self._run_headless.get(run_id)
+            if launch_headless is None:
+                launch_headless = self._headless
+            if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
+                launch_headless = True
+            headed_width, headed_height = self._headed_launch_size()
+            launch_args = (
+                [f"--window-size={self._viewport_width},{self._viewport_height}"]
+                if launch_headless
+                else [
+                    f"--window-size={headed_width},{headed_height}",
+                    "--window-position=0,0",
+                ]
+            )
+            browser = await playwright.chromium.launch(
+                headless=launch_headless,
+                args=launch_args,
+            )
+        except Exception:
+            await playwright.stop()
+            raise
         video_dir = self._video_dir_for_run(run_id) if self._record_video else None
         context_kwargs = {
             "viewport": (

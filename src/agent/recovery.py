@@ -84,17 +84,20 @@ class RuleBasedRecoveryManager(RecoveryManager):
                 FailureCategory.EXECUTION_TARGET_NOT_EDITABLE,
             }
         ):
-            state.retry_counts[retry_key] = retries + 1
             target = decision.action.target_element_id or "input"
             state.current_subgoal = f"focus {target}"
-            return RecoveryDecision(
-                strategy=RecoveryStrategy.WAIT_AND_RETRY,
-                message="Type failed; focus the target first before typing again.",
-                retry_after_ms=500,
-                failure_category=executed_action.failure_category,
-                failure_stage=LoopStage.EXECUTE,
-                terminal=False,
-                recoverable=True,
+            # Pass retries unchanged so _ladder_decision counts this as attempt 1
+            # (not a second increment on the same failure).
+            return self._ladder_decision(
+                state=state,
+                decision=decision,
+                executed_action=executed_action,
+                verification=verification,
+                retry_key=retry_key,
+                retries=retries,
+                override_strategy=RecoveryStrategy.WAIT_AND_RETRY,
+                override_message="Type failed; focus the target first before typing again.",
+                override_retry_after_ms=500,
             )
 
         return self._ladder_decision(
@@ -115,6 +118,9 @@ class RuleBasedRecoveryManager(RecoveryManager):
         verification: VerificationResult,
         retry_key: str,
         retries: int,
+        override_strategy: RecoveryStrategy | None = None,
+        override_message: str | None = None,
+        override_retry_after_ms: int | None = None,
     ) -> RecoveryDecision:
         state.retry_counts[retry_key] = retries + 1
         attempt = retries + 1
@@ -139,8 +145,9 @@ class RuleBasedRecoveryManager(RecoveryManager):
 
         if attempt == 1:
             return RecoveryDecision(
-                strategy=RecoveryStrategy.RETRY_SAME_STEP,
-                message="First failure on this subgoal and target; retry once before escalating.",
+                strategy=override_strategy or RecoveryStrategy.RETRY_SAME_STEP,
+                message=override_message or "First failure on this subgoal and target; retry once before escalating.",
+                retry_after_ms=override_retry_after_ms,
                 failure_category=failure_category,
                 failure_stage=failure_stage,
                 terminal=False,
@@ -150,8 +157,9 @@ class RuleBasedRecoveryManager(RecoveryManager):
         if attempt == 2:
             state.current_subgoal = f"Try a different tactic for: {subgoal}"
             return RecoveryDecision(
-                strategy=RecoveryStrategy.RETRY_DIFFERENT_TACTIC,
-                message="Repeated failure detected; choose a different tactic instead of repeating the same action.",
+                strategy=override_strategy or RecoveryStrategy.RETRY_DIFFERENT_TACTIC,
+                message=override_message or "Repeated failure detected; choose a different tactic instead of repeating the same action.",
+                retry_after_ms=override_retry_after_ms,
                 failure_category=failure_category,
                 failure_stage=LoopStage.RECOVER,
                 terminal=False,
@@ -161,9 +169,9 @@ class RuleBasedRecoveryManager(RecoveryManager):
         if attempt == 3:
             state.current_subgoal = f"Reset the local page context, then continue: {subgoal}"
             return RecoveryDecision(
-                strategy=RecoveryStrategy.CONTEXT_RESET,
-                message="Repeated failure persists; reset the local context before continuing.",
-                retry_after_ms=1000,
+                strategy=override_strategy or RecoveryStrategy.CONTEXT_RESET,
+                message=override_message or "Repeated failure persists; reset the local context before continuing.",
+                retry_after_ms=override_retry_after_ms if override_retry_after_ms is not None else 1000,
                 failure_category=failure_category,
                 failure_stage=LoopStage.RECOVER,
                 terminal=False,
@@ -172,9 +180,9 @@ class RuleBasedRecoveryManager(RecoveryManager):
 
         state.current_subgoal = f"Restart the session context, then continue: {subgoal}"
         return RecoveryDecision(
-            strategy=RecoveryStrategy.SESSION_RESET,
-            message="Context reset was insufficient; restart the session context before continuing.",
-            retry_after_ms=1500,
+            strategy=override_strategy or RecoveryStrategy.SESSION_RESET,
+            message=override_message or "Context reset was insufficient; restart the session context before continuing.",
+            retry_after_ms=override_retry_after_ms if override_retry_after_ms is not None else 1500,
             failure_category=failure_category,
             failure_stage=LoopStage.RECOVER,
             terminal=False,

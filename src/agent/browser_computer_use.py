@@ -128,7 +128,7 @@ class BrowserComputerUseBackend(AgentBackend):
         """Reset hints to a known state. Test use only."""
         self._advisory_hints = [(h, "") for h in hints if h]
 
-    def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         """Append hints without discarding hints set by other writers."""
         incoming = [(h, source) for h in hints if h]
         self._advisory_hints.extend(incoming)

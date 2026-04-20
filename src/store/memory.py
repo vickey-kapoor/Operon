@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -15,6 +16,8 @@ from src.models.policy import ActionType, PolicyDecision
 from src.models.recovery import RecoveryDecision
 from src.models.state import AgentState
 from src.models.verification import VerificationResult, VerificationStatus
+
+logger = logging.getLogger(__name__)
 
 FORM_BENCHMARK = "auth_free_form"
 GMAIL_BENCHMARK = "gmail_draft_authenticated"
@@ -369,9 +372,13 @@ class FileBackedMemoryStore(MemoryStore):
         if self._cached_records is not None and mtime == self._cached_mtime:
             return self._cached_records
         records: list[MemoryRecord] = []
-        for line in self.memory_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
+        for lineno, line in enumerate(self.memory_path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
                 records.append(MemoryRecord.model_validate_json(line))
+            except Exception as exc:
+                logger.warning("memory store: skipping corrupt line %d in %s: %s", lineno, self.memory_path, exc)
         self._cached_records = records
         self._cached_mtime = mtime
         return records

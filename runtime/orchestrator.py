@@ -39,6 +39,12 @@ class UnifiedOrchestrator(BaseModel):
             return "wait_then_retry"
         if failure_type is FailureType.FILE_NOT_REFLECTED:
             return "reperceive_and_replan"
+        if failure_type is FailureType.TEXT_NOT_ENTERED:
+            return "wait_then_retry"
+        if failure_type is FailureType.DIALOG_NOT_OPENED:
+            return "wait_then_retry"
+        if failure_type is FailureType.UI_CHANGED:
+            return "reperceive_and_replan"
         return None
 
     @staticmethod

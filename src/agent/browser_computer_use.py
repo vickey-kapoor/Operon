@@ -137,6 +137,9 @@ class BrowserComputerUseBackend(AgentBackend):
             self.__class__.__name__, source, len(incoming), len(self._advisory_hints),
         )
 
+    def clear_advisory_hints(self) -> None:
+        self._advisory_hints = []
+
     async def _run_with_retry(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
         try:
             response_payload = await self._run_turn(prompt=prompt, screenshot=screenshot, state=state)

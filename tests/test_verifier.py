@@ -237,7 +237,7 @@ async def test_verifier_falls_back_when_model_critic_unavailable(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_verifier_rejects_stale_visible_input_value() -> None:
+async def test_verifier_does_not_treat_input_label_as_typed_value() -> None:
     state = AgentState(
         run_id="run-8",
         intent="Find the best MacBook under $2000",
@@ -276,6 +276,5 @@ async def test_verifier_rejects_stale_visible_input_value() -> None:
 
     result = await _service().verify(state, decision, executed)
 
-    assert result.status is VerificationStatus.FAILURE
-    assert result.failure_type is VerificationFailureType.EXPECTED_OUTCOME_NOT_MET
-    assert result.failure_category is FailureCategory.TYPE_VERIFICATION_FAILED
+    assert result.status is VerificationStatus.SUCCESS
+    assert result.expected_outcome_met is True

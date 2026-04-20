@@ -160,7 +160,7 @@ class NativeBrowserExecutor(Executor):
                 if action.clear_before_typing:
                     await page.keyboard.press("Control+A")
                     await page.keyboard.press("Backspace")
-                    await page.keyboard.type(action.text)
+                await page.keyboard.type(action.text)
                 if action.press_enter:
                     await page.keyboard.press("Enter")
             elif at is ActionType.PRESS_KEY:
@@ -236,10 +236,12 @@ class NativeBrowserExecutor(Executor):
                     await page.mouse.click(*point)
                 elif action.selector is not None:
                     await page.locator(action.selector).first.click()
+                elif action.target_element_id is not None:
+                    await page.locator(self._target_element_locator(action.target_element_id)).first.click()
                 else:
                     return self._fail(
                         action,
-                        "upload_file_native requires x/y coordinates or CSS selector",
+                        "upload_file_native requires coordinates, CSS selector, target context, or target_element_id",
                         FailureCategory.EXECUTION_TARGET_NOT_FOUND,
                     )
 
@@ -294,6 +296,16 @@ class NativeBrowserExecutor(Executor):
         if not all(isinstance(value, int) for value in (x, y, width, height)):
             return None
         return x + max(1, width // 2), y + max(1, height // 2)
+
+    @staticmethod
+    def _target_element_locator(target_element_id: str) -> str:
+        escaped = target_element_id.replace("\\", "\\\\").replace('"', '\\"')
+        return (
+            f'[id="{escaped}"], '
+            f'[data-element-id="{escaped}"], '
+            f'[data-testid="{escaped}"], '
+            f'[name="{escaped}"]'
+        )
 
     async def _execute_batch(self, action: AgentAction) -> ExecutedAction:
         if not action.actions:

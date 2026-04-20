@@ -429,3 +429,77 @@ async def test_press_key_focuses_target_context_before_keypress(tmp_path: Path) 
     assert result.success is True
     mouse.click.assert_awaited_once_with(100, 80)
     keyboard.press.assert_awaited_once_with("Enter")
+
+
+@pytest.mark.asyncio
+async def test_type_enters_text_without_clear_before_typing(tmp_path: Path) -> None:
+    mouse = SimpleNamespace(click=AsyncMock())
+    keyboard = SimpleNamespace(type=AsyncMock(), press=AsyncMock())
+    page = SimpleNamespace(mouse=mouse, keyboard=keyboard, wait_for_load_state=AsyncMock())
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+
+    result = await executor.execute(
+        AgentAction(
+            action_type=ActionType.TYPE,
+            target_element_id="search_input",
+            text="MacBook under $2000",
+            press_enter=True,
+            target_context={
+                "intent": {"action": "type", "target_text": "Search", "expected_element_types": ["input"]},
+                "original_target": {
+                    "element_id": "search_input",
+                    "element_type": "input",
+                    "primary_name": "Search",
+                    "x": 50,
+                    "y": 60,
+                    "width": 100,
+                    "height": 40,
+                },
+                "selected_candidate_evidence": {
+                    "element_id": "search_input",
+                    "element_type": "input",
+                    "primary_name": "Search",
+                    "total_score": 1.0,
+                    "matched_signals": [],
+                    "rejected_by": [],
+                    "action_compatible": True,
+                    "exact_semantic_match": True,
+                    "uses_unlabeled_fallback": False,
+                    "nearest_matched_text_candidate_id": None,
+                    "spatial_grounding_contributed": False,
+                    "confidence_band": "high",
+                },
+            },
+        )
+    )
+
+    assert result.success is True
+    mouse.click.assert_awaited_once_with(100, 80)
+    keyboard.type.assert_awaited_once_with("MacBook under $2000")
+    keyboard.press.assert_awaited_once_with("Enter")
+
+
+@pytest.mark.asyncio
+async def test_type_clears_before_typing_when_requested(tmp_path: Path) -> None:
+    keyboard = SimpleNamespace(type=AsyncMock(), press=AsyncMock())
+    page = SimpleNamespace(mouse=SimpleNamespace(click=AsyncMock()), keyboard=keyboard, wait_for_load_state=AsyncMock())
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+
+    result = await executor.execute(
+        AgentAction(
+            action_type=ActionType.TYPE,
+            x=10,
+            y=20,
+            text="updated query",
+            clear_before_typing=True,
+        )
+    )
+
+    assert result.success is True
+    assert keyboard.press.await_args_list[0].args == ("Control+A",)
+    assert keyboard.press.await_args_list[1].args == ("Backspace",)
+    keyboard.type.assert_awaited_once_with("updated query")

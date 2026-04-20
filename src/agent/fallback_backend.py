@@ -29,6 +29,7 @@ class FallbackBackend(AgentBackend):
             self._active_backends[state.run_id] = self.secondary
             backend = self.secondary
             perception = await backend.perceive(screenshot, state)
+        self._clear_inactive_hints(active=backend)
         self._latest_backend = backend
         return perception
 
@@ -38,8 +39,10 @@ class FallbackBackend(AgentBackend):
         perception: ScreenPerception,
     ) -> PolicyDecision:
         backend = self._backend_for_run(state.run_id)
+        decision = await backend.choose_action(state, perception)
+        self._clear_inactive_hints(active=backend)
         self._latest_backend = backend
-        return await backend.choose_action(state, perception)
+        return decision
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._latest_backend.latest_debug_artifacts()
@@ -56,3 +59,7 @@ class FallbackBackend(AgentBackend):
 
     def _backend_for_run(self, run_id: str) -> AgentBackend:
         return self._active_backends.get(run_id, self.primary)
+
+    def _clear_inactive_hints(self, *, active: AgentBackend) -> None:
+        inactive = self.secondary if active is self.primary else self.primary
+        inactive.clear_advisory_hints()

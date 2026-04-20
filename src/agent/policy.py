@@ -87,6 +87,9 @@ class GeminiPolicyService(PolicyService):
             self.__class__.__name__, source, len(incoming), len(self._advisory_hints),
         )
 
+    def clear_advisory_hints(self) -> None:
+        self._advisory_hints = []
+
     def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
         prompt = self._prompt_template.format(
             intent=state.intent,

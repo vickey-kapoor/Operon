@@ -137,10 +137,6 @@ class DeterministicVerifierService(VerifierService):
                 failure_stage=LoopStage.VERIFY,
             )
 
-        value_mismatch = self._expected_value_mismatch(state, action, latest_perception)
-        if value_mismatch is not None:
-            return value_mismatch
-
         model_result = await self._model_verify(state, decision, executed_action)
         if model_result is not None:
             return model_result
@@ -339,47 +335,6 @@ class DeterministicVerifierService(VerifierService):
         if any(token in perception.summary.lower() for token in success_tokens):
             return True
         return any(any(token in element.primary_name.lower() for token in success_tokens) for element in perception.visible_elements)
-
-    @staticmethod
-    def _expected_value_mismatch(
-        state: AgentState,
-        action: AgentAction,
-        latest_perception,
-    ) -> VerificationResult | None:
-        if latest_perception is None:
-            return None
-        if action.action_type not in {ActionType.CLICK, ActionType.PRESS_KEY, ActionType.HOTKEY}:
-            return None
-
-        expected_values = state.progress_state.target_value_history
-        if not expected_values:
-            return None
-
-        for element in latest_perception.visible_elements:
-            if element.element_type.value != "input":
-                continue
-            expected_value = expected_values.get(f"id:{element.element_id}")
-            if not expected_value:
-                continue
-            actual_value = (element.primary_name or "").strip()
-            if not actual_value:
-                continue
-            if actual_value.lower() == expected_value.strip().lower():
-                continue
-            return VerificationResult(
-                status=VerificationStatus.FAILURE,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason=(
-                    f"Input '{element.element_id}' still shows '{actual_value}' instead of the expected "
-                    f"'{expected_value}'."
-                ),
-                failure_type=VerificationFailureType.EXPECTED_OUTCOME_NOT_MET,
-                failure_category=FailureCategory.TYPE_VERIFICATION_FAILED,
-                failure_stage=LoopStage.VERIFY,
-            )
-        return None
-
 
 def _parse_verification_output(raw_output: str) -> VerificationResult | None:
     cleaned = raw_output.strip()

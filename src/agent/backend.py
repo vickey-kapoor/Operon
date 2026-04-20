@@ -33,3 +33,7 @@ class AgentBackend(ABC):
     def add_advisory_hints(self, hints: list[str], source: str = "") -> None:
         """Append advisory hints without discarding existing ones. Optional hook."""
         return None
+
+    def clear_advisory_hints(self) -> None:
+        """Drop any queued advisory hints. Optional hook."""
+        return None

@@ -273,6 +273,7 @@ async def get_run(run_id: str) -> RunResponse:
         status=run.status,
         intent=run.intent,
         step_count=run.step_count,
+        hitl_message=getattr(run, "hitl_message", None),
     )
 
 

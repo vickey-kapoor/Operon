@@ -277,6 +277,61 @@
 </style>
 </head>
 <body>
+
+<!-- ── HITL Overlay ── shown when run status = waiting_for_user ── -->
+<div id="hitlOverlay" class="hidden" style="
+  position:fixed; inset:0; z-index:9999;
+  background:rgba(10,14,23,0.88); backdrop-filter:blur(6px);
+  display:flex; align-items:center; justify-content:center; padding:24px;">
+  <div style="
+    background:var(--surface,#1a1f2e); border:1px solid rgba(250,180,40,0.4);
+    border-radius:16px; padding:32px; max-width:680px; width:100%;
+    box-shadow:0 0 60px rgba(250,180,40,0.15); display:flex; flex-direction:column; gap:20px;">
+
+    <!-- header -->
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div style="font-size:28px;">🙋</div>
+      <div>
+        <div style="font-size:17px; font-weight:700; color:#f8b828; letter-spacing:0.01em;">
+          Agent needs your help
+        </div>
+        <div style="font-size:12px; color:var(--muted,#6b7280); margin-top:2px;" id="hitlRunId"></div>
+      </div>
+    </div>
+
+    <!-- LLM message -->
+    <div id="hitlMessage" style="
+      font-size:14px; line-height:1.65; color:#e2e8f0;
+      background:rgba(255,255,255,0.04); border-radius:8px; padding:16px;">
+      Loading…
+    </div>
+
+    <!-- live browser screenshot -->
+    <div>
+      <div style="font-size:11px; color:var(--muted,#6b7280); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.05em;">
+        Current browser state (auto-refreshes every 3s)
+      </div>
+      <img id="hitlScreenshot" style="
+        width:100%; border-radius:8px; border:1px solid rgba(255,255,255,0.08);
+        max-height:320px; object-fit:contain; background:#0a0e17;"
+        src="" alt="Loading screenshot…" />
+    </div>
+
+    <!-- actions -->
+    <div style="display:flex; gap:12px; align-items:center;">
+      <button onclick="hitlResume()" style="
+        flex:1; padding:11px 0; border-radius:8px; border:none; cursor:pointer;
+        background:#f8b828; color:#0a0e17; font-size:14px; font-weight:700;
+        letter-spacing:0.02em;">
+        ✅ I'm done — Resume Agent
+      </button>
+      <div style="font-size:11px; color:var(--muted,#6b7280); text-align:right; line-height:1.4;">
+        Complete the action in<br>the browser, then click ↑
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="shell">
   <!-- sidebar -->
   <aside class="sidebar">
@@ -553,9 +608,11 @@ function renderSnapshot(snap) {
   } else if (run && run.status === 'waiting_for_user') {
     document.getElementById('btnResume').classList.remove('hidden');
     hideResultBanner();
+    showHitlOverlay(run);
   } else {
     document.getElementById('btnResume').classList.add('hidden');
     hideResultBanner();
+    hideHitlOverlay();
   }
 
   // log
@@ -673,6 +730,46 @@ async function stopRun() {
   setRunning(false);
   stopPoller();
   await refreshSnapshot().catch(function() {});
+}
+
+// ── HITL overlay ─────────────────────────────────────────────────
+let _hitlScreenshotTimer = null;
+
+function showHitlOverlay(run) {
+  const overlay = document.getElementById('hitlOverlay');
+  if (!overlay.classList.contains('hidden')) return; // already visible
+  overlay.classList.remove('hidden');
+  overlay.style.display = 'flex';
+
+  document.getElementById('hitlRunId').textContent = 'Run ' + (run.run_id || '').slice(0, 8) + '…';
+
+  // Populate LLM message from run state (served by GET /run/{id})
+  const msg = run.hitl_message || 'The agent is waiting for you to complete an action in the browser window.';
+  document.getElementById('hitlMessage').textContent = msg;
+
+  // Start refreshing the live screenshot
+  _refreshHitlScreenshot();
+  _hitlScreenshotTimer = setInterval(_refreshHitlScreenshot, 3000);
+}
+
+function hideHitlOverlay() {
+  const overlay = document.getElementById('hitlOverlay');
+  overlay.classList.add('hidden');
+  overlay.style.display = 'none';
+  if (_hitlScreenshotTimer) { clearInterval(_hitlScreenshotTimer); _hitlScreenshotTimer = null; }
+}
+
+async function _refreshHitlScreenshot() {
+  if (!runId) return;
+  try {
+    const url = `/observer/api/live-browser/${runId}?t=${Date.now()}`;
+    document.getElementById('hitlScreenshot').src = url;
+  } catch (_) {}
+}
+
+async function hitlResume() {
+  hideHitlOverlay();
+  await resumeRun();
 }
 
 async function resumeRun() {

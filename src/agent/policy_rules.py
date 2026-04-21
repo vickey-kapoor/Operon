@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from src.agent.hitl import HITL_PAGE_HINT_KEYWORDS
 from src.agent.selector import DeterministicTargetSelector
 from src.models.common import FailureCategory
 from src.models.memory import MemoryHint
@@ -161,7 +162,8 @@ class PolicyRuleEngine:
 
         # Engine primitives — always active
         return (
-            self._task_success_stop_rule(perception)
+            self._human_intervention_rule(perception)
+            or self._task_success_stop_rule(perception)
             or self._avoid_identical_type_retry(state, perception, memory_hints)
             or self._search_query_rule(state, perception)
             or self._focus_before_type_rule(state, perception, memory_hints)
@@ -223,6 +225,23 @@ class PolicyRuleEngine:
             rationale="Previous type action failed on the same target; avoid repeating the identical type action blindly.",
             confidence=0.93,
             active_subgoal=f"re-assess {last_action.target_element_id or 'input'}",
+        )
+
+    @staticmethod
+    def _human_intervention_rule(perception: ScreenPerception) -> PolicyDecision | None:
+        """Fire WAIT_FOR_USER whenever the page requires human action (CAPTCHA, login, consent, etc.)."""
+        hint = perception.page_hint.value.lower()
+        matched = next((kw for kw in HITL_PAGE_HINT_KEYWORDS if kw in hint), None)
+        if matched is None:
+            return None
+        return PolicyDecision(
+            action=AgentAction(
+                action_type=ActionType.WAIT_FOR_USER,
+                text=f"hitl:{hint}",
+            ),
+            rationale=f"Page requires human action ({hint}). Agent pausing for human to complete this step.",
+            confidence=0.99,
+            active_subgoal=f"human_intervention_required:{hint}",
         )
 
     def _task_success_stop_rule(self, perception: ScreenPerception) -> PolicyDecision | None:

@@ -1,5 +1,6 @@
 """Agent loop orchestrator for the vision-driven automation workflow."""
 
+import asyncio
 import logging
 import os
 import shutil
@@ -560,7 +561,24 @@ class AgentLoop:
         before_artifact_path: str,
         after_artifact_path: str,
     ) -> RunResponse:
-        """Pause the run and set status to WAITING_FOR_USER."""
+        """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer."""
+        from src.agent.hitl import (
+            generate_hitl_message,
+            notify_desktop,
+            start_escalation_timer,
+        )
+
+        # Generate a human-readable LLM explanation of why we're pausing.
+        element_names = [e.primary_name for e in perception.visible_elements[:12]]
+        hitl_message = await generate_hitl_message(
+            intent=state.intent,
+            page_hint=perception.page_hint.value,
+            url=state.start_url,
+            visible_element_names=element_names,
+            gemini_client=self.gemini_client,
+        )
+        state.hitl_message = hitl_message
+
         executed_action = ExecutedAction(
             action=decision.action,
             success=True,
@@ -569,7 +587,8 @@ class AgentLoop:
         verification = await self.verifier_service.verify(state, decision, executed_action)
         recovery = RecoveryDecision(
             strategy=RecoveryStrategy.STOP,
-            message=f"Waiting for user: {decision.action.text}",
+            message=hitl_message,
+            failure_category=FailureCategory.HUMAN_INTERVENTION_REQUIRED,
             terminal=False,
             recoverable=True,
             stop_reason=StopReason.WAITING_FOR_USER,
@@ -595,6 +614,32 @@ class AgentLoop:
         state.step_count = step_index
         await self.run_store.save_state(state)
         updated = await self.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
+
+        # Fire desktop notification.
+        notify_desktop(
+            title="Operon needs you",
+            message=hitl_message[:120],
+        )
+
+        # Start escalating re-notification in the background.
+        run_store = self.run_store
+        run_id = record.run_id
+
+        async def _get_status():
+            s = await run_store.get_run(run_id)
+            return s.status.value if s else None
+
+        def _re_notify():
+            notify_desktop("Operon still waiting", f"Run {run_id[:8]}… still needs your help.")
+
+        task = asyncio.create_task(
+            start_escalation_timer(run_id, get_status_fn=_get_status, notify_fn=_re_notify)
+        )
+        task.add_done_callback(
+            lambda t: logger.warning("HITL escalation error: %s", t.exception())
+            if not t.cancelled() and t.exception() is not None else None
+        )
+
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,

@@ -76,6 +76,7 @@ class FailureCategory(StrEnum):
     UNCERTAIN_SCREEN_STATE = "uncertain_screen_state"
     RETRY_LIMIT_REACHED = "retry_limit_reached"
     MAX_STEP_LIMIT_REACHED = "max_step_limit_reached"
+    HUMAN_INTERVENTION_REQUIRED = "human_intervention_required"
 
 
 class StopReason(StrEnum):
@@ -143,6 +144,7 @@ class RunResponse(StrictModel):
     status: RunStatus
     intent: str = Field(min_length=1)
     step_count: int = Field(ge=0)
+    hitl_message: str | None = None
 
 
 class StopRunRequest(StrictModel):

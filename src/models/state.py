@@ -29,3 +29,4 @@ class AgentState(StrictModel):
     progress_state: ProgressState = Field(default_factory=ProgressState)
     artifact_paths: list[str] = Field(default_factory=list)
     stop_reason: StopReason | None = None
+    hitl_message: str | None = Field(default=None, description="LLM-generated message shown to the human when a run pauses for intervention")

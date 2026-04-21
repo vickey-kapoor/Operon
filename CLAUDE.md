@@ -47,17 +47,17 @@ If PowerShell fails to launch external processes (COM+ errors), run:
 
 ## Common Commands
 
-**Run tests:**
+**Run tests (safe default — excludes live-server tests):**
 
 ```powershell
 $env:GEMINI_API_KEY = "fake-test-key"
-python -m pytest tests\ -q
+.venv\Scripts\python -m pytest tests\ -q --ignore=tests/test_e2e_quick_tasks.py --ignore=tests/test_bug_fixes_verification.py
 ```
 
 **Single test file:**
 
 ```powershell
-python -m pytest tests\test_agent_loop.py -q
+.venv\Scripts\python -m pytest tests\test_agent_loop.py -q
 ```
 
 **Lint:**
@@ -104,7 +104,7 @@ python -m src.store.summary runs
 9. **Reflect** (on terminal) — `PostRunReflector` analyzes the completed run, extracts failure patterns, and writes `MemoryRecord` entries for future runs
 10. **Log** — `StepLog` is appended to `runs/<run_id>/run.jsonl`; every artifact (screenshots, prompt/raw/parsed files, traces, recordings) goes under `runs/<run_id>/step_N/`
 
-Terminal conditions: `FORM_SUBMITTED_SUCCESS`, `STOP_BEFORE_SEND` (success); retry limit, max step limit, repeated loop detection (failure).
+Terminal conditions: `FORM_SUBMITTED_SUCCESS`, `STOP_BEFORE_SEND` (success); retry limit, max step limit, repeated loop detection (failure). `WAITING_FOR_USER` is a non-terminal pause — the run resumes when `POST /resume` is called.
 
 ### Dual Execution Paths
 
@@ -146,6 +146,7 @@ A top-level `runtime/` package (not under `src/`) provides the unified contract 
 
 | Rule | Type | Trigger |
 |---|---|---|
+| `_human_intervention_rule` | Engine primitive (HITL) | page hint contains any `HITL_PAGE_HINT_KEYWORDS` keyword |
 | `_login_page_guardrail` | Benchmark-specific (Gmail) | `page_hint == GOOGLE_SIGN_IN` + memory hint `authenticated_start_required` |
 | `_form_success_stop_rule` | Engine primitive (generic stop) | `page_hint == FORM_SUCCESS` or "success"/"thank you"/"submitted" in elements |
 | `_avoid_identical_type_retry` | Engine primitive | Memory hint `avoid_identical_type_retry` + repeated TYPE failure on same element |
@@ -153,7 +154,7 @@ A top-level `runtime/` package (not under `src/`) provides the unified contract 
 | `_submit_form_when_ready_rule` | Benchmark-specific (form) | `page_hint == FORM_PAGE` + name/email/message all successfully typed |
 | `_focus_before_type_rule` | Engine primitive | Memory hint `click_before_type` + target not focused |
 
-Rules 3 and 6 are memory-gated engine primitives seeded for both benchmarks. Rules 1, 4, and 5 embed domain knowledge that will not generalise to a third benchmark. The domain bleed also runs through: `PageHint` enum (four of six values are Gmail-specific), `_seed_default_guardrails()` seeding Gmail guardrails on every run, `benchmark_name_for_intent()` defaulting unknown intents to `FORM_BENCHMARK`, and the label tokens in `_required_form_fields_completed()`. A third benchmark is the natural forcing function to split this into a base engine rule set and per-benchmark rule registrations.
+Rule 0 (`_human_intervention_rule`) is a pure engine primitive — it fires on any page hint containing a HITL keyword and requires no memory seed. Rules 3 and 6 are memory-gated engine primitives seeded for both benchmarks. Rules 1, 4, and 5 embed domain knowledge that will not generalise to a third benchmark. The domain bleed also runs through: `PageHint` enum (four of six values are Gmail-specific), `_seed_default_guardrails()` seeding Gmail guardrails on every run, `benchmark_name_for_intent()` defaulting unknown intents to `FORM_BENCHMARK`, and the label tokens in `_required_form_fields_completed()`. A third benchmark is the natural forcing function to split this into a base engine rule set and per-benchmark rule registrations.
 
 ### State & Models (`src/models/`)
 
@@ -161,12 +162,12 @@ All Pydantic v2. Key types:
 
 | File | Purpose |
 |---|---|
-| `state.py` — `AgentState` | Full mutable run state (history, progress counters, subgoal, status) |
+| `state.py` — `AgentState` | Full mutable run state (history, progress counters, subgoal, status, `hitl_message`) |
 | `perception.py` — `ScreenPerception` | Typed output of one perception call (elements, page hint) |
 | `policy.py` — `PolicyDecision`, `AgentAction` | What the policy chose and why |
 | `execution.py` — `ExecutedAction` | Outcome of the executor, including `ExecutionTrace` with per-attempt detail |
 | `progress.py` — `ProgressTrace` | Snapshot of loop progress state at one step |
-| `common.py` | Shared enums: `RunStatus`, `StopReason`, `FailureCategory`, `LoopStage` |
+| `common.py` | Shared enums: `RunStatus`, `StopReason`, `FailureCategory`, `LoopStage`; `RunResponse` includes `hitl_message: str \| None` |
 | `memory.py` — `MemoryRecord`, `MemoryHint` | Advisory hint schema stored by `FileBackedMemoryStore` |
 
 ### Persistence (`src/store/`)
@@ -182,13 +183,25 @@ FastAPI app at `src/api/server.py`. Routes in `src/api/routes.py`:
 
 - `POST /run-task` — create a run record
 - `POST /step` — advance a run one step
-- `POST /resume` — resume a paused/stopped run
+- `POST /resume` — resume a `WAITING_FOR_USER` run (called by Pilot UI's "Resume Agent" button after human intervention)
 - `GET /run/{id}` — read run state
 - `GET /health`
 - `GET /` or `GET /desktop-pilot` — Operon Pilot UI (unified desktop + browser)
 - `GET /observer/api/runs`, `GET /observer/api/run/{id}`, `GET /observer/api/artifact` — run data endpoints
 
 The `AgentLoop` singleton is built lazily on first request via `get_agent_loop()`.
+
+### Human-in-the-Loop (`src/agent/hitl.py`)
+
+When the agent encounters a page it cannot handle autonomously (CAPTCHA, login wall, cookie consent, 2FA, age gate, payment, T&C, bot-detection block), `_human_intervention_rule` in `PolicyRuleEngine` fires and issues `ActionType.WAIT_FOR_USER`. The loop then calls `_pause_for_user()` which:
+
+1. Calls `generate_hitl_message()` — Gemini produces a 2-sentence explanation of what happened and what the human needs to do, grounded in the current intent and visible elements.
+2. Sets `AgentState.hitl_message` and transitions to `RunStatus.WAITING_FOR_USER` (non-terminal).
+3. Calls `notify_desktop()` — Windows balloon tip via PowerShell, macOS `osascript`, Linux `notify-send`.
+4. Starts `start_escalation_timer()` as an asyncio task — re-notifies at 2 min → 10 min → 30 min if the run is still paused.
+5. The Pilot UI shows a full-screen overlay with the LLM message, a live screenshot refreshing every 3 s, and a "Resume Agent" button that calls `POST /resume`.
+
+`HITL_PAGE_HINT_KEYWORDS` — the frozenset that drives keyword matching — covers: `captcha`, `recaptcha`, `robot`, `login`, `sign_in`, `cookie_consent`, `gdpr`, `age_verification`, `two_factor`, `2fa`, `mfa`, `otp`, `terms_and_conditions`, `payment`, `checkout`, `blocked`, `access_denied`, `bot_detection`.
 
 ### OS File Picker Macro (`src/executor/os_picker_macro.py`)
 

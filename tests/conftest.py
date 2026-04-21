@@ -5,6 +5,28 @@ import sys
 
 import pytest
 
+# Prevent any AgentLoop from calling reset_desktop() (Win+D) or other
+# real desktop side-effects during the test suite.
+os.environ.setdefault("OPERON_TEST_SAFE_MODE", "true")
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register opt-in flags for tests that hit a live local server."""
+    parser.addoption(
+        "--live",
+        action="store_true",
+        default=False,
+        help="Run tests that talk to a live local Operon server and may touch the real desktop/browser.",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Document custom markers used by the suite."""
+    config.addinivalue_line(
+        "markers",
+        "live_server: test requires --live or OPERON_RUN_LIVE_SERVER_TESTS=true and may exercise a real local server",
+    )
+
 
 @pytest.fixture(autouse=True)
 def _sync_bg_writer():

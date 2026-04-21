@@ -37,6 +37,8 @@ async def test_close_session_finalizes_single_recorded_video(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+
     class FakePage:
         url = "about:blank"
 
@@ -166,6 +168,8 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
 async def test_ensure_session_closes_stale_sessions_before_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+
     class FakePage:
         url = "about:blank"
 

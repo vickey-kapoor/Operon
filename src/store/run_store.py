@@ -70,7 +70,10 @@ class FileBackedRunStore(RunStore):
         )
         self._runs[run_id] = record
         self._ensure_run_dir(run_id)
-        self._write_state(record)
+        # Fresh runs must be observable immediately after the API returns.
+        # Writing the initial state synchronously avoids a race where
+        # /observer/api/run/{run_id} reads before bg_writer flushes state.json.
+        self._write_state_sync(record)
         return record
 
     async def get_run(self, run_id: str) -> AgentState | None:
@@ -159,3 +162,8 @@ class FileBackedRunStore(RunStore):
             bg_writer.enqueue(self._state_path(state.run_id), trimmed.model_dump_json())
         else:
             bg_writer.enqueue(self._state_path(state.run_id), state.model_dump_json())
+
+    def _write_state_sync(self, state: AgentState) -> None:
+        path = self._state_path(state.run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(state.model_dump_json(), encoding="utf-8")

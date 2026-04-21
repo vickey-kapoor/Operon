@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,6 +135,29 @@ def _build_browser_services(executor) -> _RuntimeServices:
             backend = FallbackBackend(primary=primary, secondary=secondary)
             return _RuntimeServices(perception_service=backend, policy_delegate=backend)
         return _RuntimeServices(perception_service=primary, policy_delegate=primary)
+    if config.backend == "browserbase":
+        # Browserbase is a transport-layer choice; use computer_use AI backend by default,
+        # falling back to json if computer_use is not explicitly selected via env.
+        ai_backend = os.getenv("BROWSERBASE_AI_BACKEND", "computer_use")
+        if ai_backend == "json":
+            backend = BrowserJsonBackend(
+                gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
+                prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
+            )
+            return _RuntimeServices(perception_service=backend, policy_delegate=backend)
+        primary = BrowserComputerUseBackend(
+            client=GeminiComputerUseHttpClient(model=config.primary_model),
+            prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
+            browser_runtime=executor,
+        )
+        if config.fallback_backend == "json" and config.fallback_model:
+            secondary = BrowserJsonBackend(
+                gemini_client=GeminiHttpClient(model=config.fallback_model, timeout_seconds=120.0),
+                prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
+            )
+            backend = FallbackBackend(primary=primary, secondary=secondary)
+            return _RuntimeServices(perception_service=backend, policy_delegate=backend)
+        return _RuntimeServices(perception_service=primary, policy_delegate=primary)
     raise ValueError(f"Unsupported browser backend {config.backend!r}")
 
 
@@ -159,15 +183,25 @@ def _build_desktop_services() -> _RuntimeServices:
     return _RuntimeServices(perception_service=backend, policy_delegate=backend)
 
 
+def _build_browser_executor():
+    browser_config = browser_mode_config()
+    if browser_config.backend == "browserbase":
+        return importlib.import_module(
+            "src.executor.browserbase_native"
+        ).BrowserbaseNativeBrowserExecutor()
+    global NativeBrowserExecutor
+    if NativeBrowserExecutor is None:
+        NativeBrowserExecutor = importlib.import_module("src.executor.browser_native").NativeBrowserExecutor
+    return NativeBrowserExecutor()
+
+
 def get_agent_loop() -> AgentLoop:
     """Build the MVP runtime lazily so env loading can happen first."""
-    global _agent_loop, NativeBrowserExecutor
+    global _agent_loop
     if _agent_loop is None:
-        if NativeBrowserExecutor is None:
-            NativeBrowserExecutor = importlib.import_module("src.executor.browser_native").NativeBrowserExecutor
         browser_config = browser_mode_config()
         verifier_client = _build_verifier_client(config=browser_config)
-        executor = NativeBrowserExecutor()
+        executor = _build_browser_executor()
         services = _build_browser_services(executor)
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()

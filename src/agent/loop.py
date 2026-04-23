@@ -115,6 +115,7 @@ class AgentLoop:
         self.verifier_service = verifier_service
         self.recovery_manager = recovery_manager
         self.memory_store = memory_store
+        self.gemini_client = gemini_client
         self.target_selector = DeterministicTargetSelector()
         self.video_verifier: VideoVerifier | None = (
             VideoVerifier(gemini_client) if gemini_client is not None else None
@@ -190,7 +191,10 @@ class AgentLoop:
             if state.step_count >= max_steps:
                 state.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
                 updated = await self.run_store.set_status(state.run_id, RunStatus.FAILED)
-                await self._cleanup_completed_run(state.run_id)
+                try:
+                    await self._cleanup_completed_run(state.run_id)
+                except Exception as exc:
+                    logger.warning("cleanup after max_steps failed: %s", exc)
                 return RunResponse(
                     run_id=updated.run_id,
                     status=updated.status,
@@ -467,6 +471,7 @@ class AgentLoop:
             after_artifact_path=after_artifact_path,
             perception_debug=perception_debug,
             policy_debug=policy_debug,
+            verification_debug=verification_debug,
             perception=perception,
             policy_decision=decision,
             executed_action=executed_action,
@@ -498,13 +503,16 @@ class AgentLoop:
                 perception_debug.prompt_artifact_path,
                 perception_debug.raw_response_artifact_path,
                 perception_debug.parsed_artifact_path,
+                *( [perception_debug.usage_artifact_path] if perception_debug.usage_artifact_path else [] ),
                 *( [perception_debug.diagnostics_artifact_path] if perception_debug.diagnostics_artifact_path else [] ),
                 policy_debug.prompt_artifact_path,
                 policy_debug.raw_response_artifact_path,
                 policy_debug.parsed_artifact_path,
+                *( [policy_debug.usage_artifact_path] if policy_debug.usage_artifact_path else [] ),
                 verification_debug.prompt_artifact_path,
                 verification_debug.raw_response_artifact_path,
                 verification_debug.parsed_artifact_path,
+                *( [verification_debug.usage_artifact_path] if verification_debug.usage_artifact_path else [] ),
                 *( [verification_debug.diagnostics_artifact_path] if verification_debug.diagnostics_artifact_path else [] ),
                 *( [executed_action.execution_trace_artifact_path] if executed_action.execution_trace_artifact_path else [] ),
                 progress_trace_artifact_path,
@@ -528,7 +536,10 @@ class AgentLoop:
         _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
         updated = await self.run_store.set_status(record.run_id, final_status)
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
-            await self._cleanup_completed_run(record.run_id)
+            try:
+                await self._cleanup_completed_run(record.run_id)
+            except Exception as exc:
+                logger.warning("cleanup after %s failed, continuing: %s", final_status.value, exc)
 
         # Post-run reflection: analyze completed/failed runs and learn
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED} and self.reflector is not None:
@@ -565,6 +576,7 @@ class AgentLoop:
         from src.agent.hitl import (
             generate_hitl_message,
             notify_desktop,
+            post_hitl_webhook,
             start_escalation_timer,
         )
 
@@ -615,7 +627,7 @@ class AgentLoop:
         await self.run_store.save_state(state)
         updated = await self.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
 
-        # Fire desktop notification.
+        # Fire desktop notification (best-effort).
         notify_desktop(
             title="Operon needs you",
             message=hitl_message[:120],
@@ -624,6 +636,17 @@ class AgentLoop:
         # Start escalating re-notification in the background.
         run_store = self.run_store
         run_id = record.run_id
+
+        # POST webhook (reliable channel — always attempted, always logged).
+        asyncio.create_task(
+            post_hitl_webhook(
+                run_id=run_id,
+                intent=state.intent,
+                page_hint=perception.page_hint.value,
+                message=hitl_message,
+                url=state.start_url,
+            )
+        )
 
         async def _get_status():
             s = await run_store.get_run(run_id)
@@ -689,13 +712,17 @@ class AgentLoop:
                 perception_debug.prompt_artifact_path,
                 perception_debug.raw_response_artifact_path,
                 perception_debug.parsed_artifact_path,
+                *( [perception_debug.usage_artifact_path] if perception_debug.usage_artifact_path else [] ),
                 *( [perception_debug.diagnostics_artifact_path] if perception_debug.diagnostics_artifact_path else [] ),
                 *( [perception_debug.retry_log_artifact_path] if perception_debug.retry_log_artifact_path else [] ),
             ]
         )
         record.stop_reason = stop_reason
         updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
-        await self._cleanup_completed_run(record.run_id)
+        try:
+            await self._cleanup_completed_run(record.run_id)
+        except Exception as exc:
+            logger.warning("cleanup after pre-step failure: %s", exc)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -1064,6 +1091,10 @@ class AgentLoop:
     def _attach_target_context(self, action: AgentAction, perception) -> AgentAction:
         target = self._resolve_action_target(action, perception)
         normalized_action = self._normalize_action_target_coordinates(action, target)
+        # Apply monitor origin: perception coords are monitor-local; pyautogui needs
+        # virtual-desktop coords. This is the single transform point — perception
+        # and policy layers stay in monitor-local space throughout.
+        normalized_action = self._apply_monitor_origin(normalized_action, perception)
         if normalized_action.target_context is not None:
             return normalized_action
         intent = self._infer_target_intent(action, target, perception)
@@ -1076,6 +1107,21 @@ class AgentLoop:
             page_signature=self._page_signature(perception),
         )
         return normalized_action.model_copy(update={"target_context": context})
+
+    @staticmethod
+    def _apply_monitor_origin(action: AgentAction, perception) -> AgentAction:
+        """Translate monitor-local x,y to virtual-desktop coords by adding the
+        monitor origin stored in perception. No-op when origin is (0, 0)."""
+        origin = getattr(perception, "monitor_origin", (0, 0))
+        ox, oy = origin
+        if (ox == 0 and oy == 0) or (action.x is None and action.y is None):
+            return action
+        updates: dict = {}
+        if action.x is not None:
+            updates["x"] = action.x + ox
+        if action.y is not None:
+            updates["y"] = action.y + oy
+        return action.model_copy(update=updates)
 
     @staticmethod
     def _normalize_action_target_coordinates(action: AgentAction, target: UIElement | None) -> AgentAction:

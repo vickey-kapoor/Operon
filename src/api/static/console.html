@@ -3,484 +3,494 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Operon Task Console</title>
+<title>Operon — Command Center</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232563eb'/><text x='16' y='23' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'>O</text></svg>">
 <style>
   :root {
-    --bg: #0b1120;
-    --panel: #131c30;
-    --border: #243452;
-    --text: #eef2ff;
-    --muted: #8ea3c3;
-    --accent: #4ade80;
-    --accent-soft: rgba(74,222,128,0.12);
-    --blue: #60a5fa;
-    --danger: #f87171;
-    --warning: #fbbf24;
-    --success-bg: rgba(52,211,153,0.10);
-    --success-border: rgba(52,211,153,0.30);
-    --fail-bg: rgba(248,113,113,0.10);
-    --fail-border: rgba(248,113,113,0.30);
-    --radius: 14px;
+    --ink:        #0f172a;
+    --muted:      #5f7188;
+    --line:       rgba(15,23,42,0.08);
+    --panel:      rgba(255,255,255,0.82);
+    --blue:       #2563eb;
+    --blue-deep:  #1d4ed8;
+    --green:      #059669;
+    --green-soft: rgba(5,150,105,0.10);
+    --danger:     #dc2626;
+    --warning:    #d97706;
+    --shadow:     0 4px 24px rgba(15,23,42,0.07);
+    --shadow-lg:  0 26px 80px rgba(15,23,42,0.08);
+    --radius:     16px;
+    --success-bg:     rgba(5,150,105,0.08);
+    --success-border: rgba(5,150,105,0.22);
+    --fail-bg:        rgba(220,38,38,0.07);
+    --fail-border:    rgba(220,38,38,0.22);
   }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
   body {
-    font-family: system-ui, -apple-system, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left,  rgba(37,99,235,0.10), transparent 30%),
+      radial-gradient(circle at 85% 8%,    rgba(5,150,105,0.08), transparent 24%),
+      linear-gradient(180deg, #fbfdff, #f3f7fc 60%, #eef3f9);
     font-size: 14px;
     line-height: 1.5;
   }
-  .shell {
-    display: grid;
-    grid-template-columns: 320px 1fr;
-    min-height: 100vh;
-  }
-  /* ── sidebar ── */
-  .sidebar {
-    padding: 24px 20px;
-    border-right: 1px solid var(--border);
-    background: rgba(10,16,30,0.85);
+
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 28px 24px 60px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    overflow: auto;
-    height: 100vh;
-    position: sticky;
-    top: 0;
+    gap: 20px;
   }
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 4px;
+
+  /* ── Topbar ──────────────────────────────────────────────────────── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px;
   }
-  .brand-logo {
-    width: 36px; height: 36px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #86efac, #4ade80);
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 42px; height: 42px; border-radius: 14px;
+    background: linear-gradient(135deg, var(--blue), var(--green));
     display: grid; place-items: center;
-    font-weight: 800; color: #052e16; font-size: 16px;
+    color: white; font-weight: 900; font-size: 17px;
+    box-shadow: 0 8px 20px rgba(37,99,235,0.22);
   }
-  .brand-name { font-size: 16px; font-weight: 700; }
-  .brand-sub { font-size: 11px; color: var(--muted); }
-  .card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
+  .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -0.03em; }
+  .brand-sub  { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav a {
+    text-decoration: none; color: var(--muted);
+    border: 1px solid var(--line); background: rgba(255,255,255,0.6);
+    padding: 9px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    transition: color 0.12s, border-color 0.12s;
   }
-  .card-title {
-    font-size: 11px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--muted);
-    font-weight: 700;
-    margin-bottom: 12px;
+  .nav a:hover  { color: var(--ink); border-color: rgba(15,23,42,0.22); }
+  .nav a.active {
+    background: linear-gradient(135deg, #dbeafe, #d1fae5);
+    color: var(--ink); border-color: transparent;
   }
-  .mode-row {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 12px;
+
+  /* ── Task hero card ──────────────────────────────────────────────── */
+  .task-hero {
+    position: relative; overflow: hidden;
+    border-radius: 26px;
+    border: 1px solid rgba(255,255,255,0.65);
+    background:
+      radial-gradient(circle at top left, rgba(37,99,235,0.10), transparent 28%),
+      linear-gradient(135deg, rgba(255,255,255,0.90), rgba(255,255,255,0.68));
+    backdrop-filter: blur(16px);
+    box-shadow: var(--shadow-lg);
+    padding: 30px 32px;
   }
+  .task-hero::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      linear-gradient(rgba(15,23,42,0.022) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15,23,42,0.022) 1px, transparent 1px);
+    background-size: 28px 28px; opacity: 0.5;
+  }
+  .task-hero > * { position: relative; z-index: 1; }
+
+  .task-eyebrow {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 20px;
+  }
+  .eyebrow-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--blue), var(--green));
+  }
+
+  .task-layout {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 24px;
+    align-items: start;
+  }
+  .task-fields { display: flex; flex-direction: column; gap: 14px; }
+
+  /* Mode buttons */
+  .mode-row { display: flex; gap: 6px; }
   .mode-btn {
-    flex: 1;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--muted);
-    border-radius: 999px;
-    padding: 7px 10px;
-    font: inherit;
-    font-size: 12px;
-    cursor: pointer;
+    border: 1px solid var(--line); background: rgba(255,255,255,0.7);
+    color: var(--muted); border-radius: 999px;
+    padding: 7px 18px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    transition: all 0.12s;
   }
+  .mode-btn:hover:not(.active):not(:disabled) { color: var(--ink); border-color: rgba(15,23,42,0.22); }
   .mode-btn.active {
-    background: linear-gradient(135deg, #bbf7d0, #4ade80);
-    border-color: transparent;
-    color: #052e16;
-    font-weight: 700;
+    background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+    border-color: transparent; color: #1e40af;
   }
-  .field { margin-bottom: 10px; }
-  .field label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .mode-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* Fields */
+  .field label {
+    display: block; color: var(--muted); font-size: 11px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px;
+  }
+  .field label span { text-transform: none; letter-spacing: 0; font-weight: 400; }
+
   textarea, input[type="text"] {
-    width: 100%;
-    background: rgba(8,12,24,0.80);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 12px;
-    font: inherit;
+    width: 100%; background: rgba(255,255,255,0.80); color: var(--ink);
+    border: 1px solid rgba(15,23,42,0.12); border-radius: 12px;
+    padding: 11px 14px; font: inherit; font-size: 14px;
+    transition: border-color 0.12s, box-shadow 0.12s;
+    outline: none;
   }
-  textarea { min-height: 110px; resize: vertical; }
-  textarea:disabled, input:disabled { opacity: 0.5; }
-  .btn-row { display: flex; gap: 8px; }
+  textarea { min-height: 96px; resize: vertical; }
+  textarea:focus, input[type="text"]:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.10);
+    background: #fff;
+  }
+  textarea:disabled, input:disabled { opacity: 0.45; }
+  textarea::placeholder, input::placeholder { color: #94a3b8; }
+
+  /* Action buttons */
+  .task-actions { display: flex; flex-direction: column; gap: 8px; padding-top: 24px; }
+
   .btn {
-    border: none;
-    border-radius: 10px;
-    padding: 10px 16px;
-    font: inherit;
-    font-size: 13px;
-    font-weight: 700;
-    cursor: pointer;
-  }
-  .btn-run {
-    flex: 1;
-    background: linear-gradient(135deg, #86efac, #4ade80);
-    color: #052e16;
-  }
-  .btn-stop {
-    background: rgba(248,113,113,0.14);
-    color: var(--danger);
-    border: 1px solid rgba(248,113,113,0.28);
-  }
-  .btn-resume {
-    flex: 1;
-    background: rgba(96,165,250,0.14);
-    color: var(--blue);
-    border: 1px solid rgba(96,165,250,0.28);
-  }
-  .btn:disabled { opacity: 0.4; cursor: default; }
-  .hidden { display: none !important; }
-  /* ── main workspace ── */
-  .workspace {
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    min-width: 0;
-  }
-  /* ── status bar ── */
-  .statusbar {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px 20px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
-  }
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 12px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid var(--border);
+    border: none; border-radius: 12px; padding: 12px 22px;
+    font: inherit; font-size: 13px; font-weight: 800; cursor: pointer;
+    letter-spacing: -0.01em; transition: opacity 0.12s, transform 0.10s, box-shadow 0.12s;
     white-space: nowrap;
   }
+  .btn:hover:not(:disabled) { opacity: 0.90; transform: translateY(-1px); }
+  .btn:active:not(:disabled) { transform: translateY(0); }
+  .btn:disabled { opacity: 0.38; cursor: default; transform: none; }
+
+  .btn-run {
+    background: linear-gradient(135deg, var(--blue), var(--blue-deep));
+    color: white; box-shadow: 0 6px 20px rgba(37,99,235,0.24);
+  }
+  .btn-stop {
+    background: rgba(220,38,38,0.08); color: var(--danger);
+    border: 1px solid rgba(220,38,38,0.20);
+  }
+  .btn-resume {
+    background: rgba(37,99,235,0.08); color: var(--blue);
+    border: 1px solid rgba(37,99,235,0.20);
+  }
+
+  .hidden { display: none !important; }
+
+  /* ── Status bar ──────────────────────────────────────────────────── */
+  .statusbar {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 13px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 13px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: #f1f5f9; border: 1px solid var(--line); white-space: nowrap;
+  }
   .status-dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--muted);
-    flex-shrink: 0;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+    transition: background 0.2s;
   }
-  .status-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 1.4s infinite; }
-  .status-dot.succeeded { background: #34d399; }
-  .status-dot.failed { background: var(--danger); }
-  .status-dot.cancelled { background: var(--warning); }
-  .status-dot.pending { background: var(--muted); }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+  .status-dot.running  { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); animation: pulse 1.5s infinite; }
+  .status-dot.succeeded{ background: #059669; }
+  .status-dot.failed   { background: var(--danger); }
+  .status-dot.cancelled{ background: var(--warning); }
+  .status-dot.pending  { background: var(--muted); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
   .statusbar-meta { color: var(--muted); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* ── main grid ── */
-  .main-grid {
-    display: grid;
-    grid-template-columns: 1fr 320px;
-    gap: 16px;
-    flex: 1;
-    min-height: 0;
-  }
-  /* ── info panels ── */
-  .info-col { display: flex; flex-direction: column; gap: 16px; }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-  .panel-head {
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
-    font-size: 11px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--muted);
-    font-weight: 700;
-  }
-  .panel-body { padding: 14px 16px; }
-  .kv-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 12px;
-    padding: 5px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-  }
-  .kv-row:last-child { border-bottom: none; }
-  .kv-key { color: var(--muted); font-size: 12px; flex-shrink: 0; }
-  .kv-val { color: var(--text); font-size: 12px; text-align: right; word-break: break-all; }
-  .kv-val.accent { color: var(--accent); }
-  .kv-val.blue { color: var(--blue); }
-  .kv-val.danger { color: var(--danger); }
-  .kv-val.warning { color: var(--warning); }
-  /* ── log panel ── */
-  .log-panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-  .log-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 10px 14px;
-    max-height: 480px;
-    font-size: 12px;
-    font-family: ui-monospace, monospace;
-  }
-  .log-entry {
-    display: flex;
-    gap: 10px;
-    padding: 3px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.03);
-    line-height: 1.45;
-  }
-  .log-step { color: var(--muted); width: 32px; flex-shrink: 0; text-align: right; }
-  .log-event { color: var(--blue); flex-shrink: 0; min-width: 160px; }
-  .log-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .log-empty { color: var(--muted); padding: 16px; text-align: center; font-style: italic; font-size: 12px; }
-  /* ── result banner ── */
+
+  /* ── Result banner ───────────────────────────────────────────────── */
   .result-banner {
-    border-radius: var(--radius);
-    padding: 16px 20px;
-    border: 1px solid;
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    border-radius: var(--radius); padding: 14px 20px; border: 1px solid;
+    display: flex; align-items: center; gap: 12px;
+    box-shadow: var(--shadow);
   }
   .result-banner.success { background: var(--success-bg); border-color: var(--success-border); }
-  .result-banner.failure { background: var(--fail-bg); border-color: var(--fail-border); }
-  .result-icon { font-size: 20px; flex-shrink: 0; }
+  .result-banner.failure { background: var(--fail-bg);    border-color: var(--fail-border); }
+  .result-icon  { font-size: 20px; flex-shrink: 0; }
   .result-title { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
-  .result-detail { color: var(--muted); font-size: 12px; }
-  /* ── responsive ── */
+  .result-detail{ color: var(--muted); font-size: 12px; }
+
+  /* ── Main grid ───────────────────────────────────────────────────── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+    align-items: start;
+  }
+  .info-col { display: flex; flex-direction: column; gap: 16px; }
+
+  /* ── Panels ──────────────────────────────────────────────────────── */
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
+  }
+  .panel-head {
+    padding: 10px 16px; border-bottom: 1px solid var(--line);
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; background: rgba(248,250,252,0.80);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .panel-head-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--blue), var(--green));
+    flex-shrink: 0;
+  }
+  .panel-body { padding: 2px 0; }
+
+  .kv-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px; padding: 8px 16px;
+    border-bottom: 1px solid rgba(15,23,42,0.04);
+    transition: background 0.08s;
+  }
+  .kv-row:last-child { border-bottom: none; }
+  .kv-row:hover { background: rgba(15,23,42,0.015); }
+  .kv-key { color: var(--muted); font-size: 12px; flex-shrink: 0; font-weight: 500; }
+  .kv-val { color: var(--ink); font-size: 12px; text-align: right; word-break: break-all; font-weight: 500; }
+  .kv-val.accent  { color: var(--green); }
+  .kv-val.blue    { color: var(--blue);  }
+  .kv-val.danger  { color: var(--danger);}
+  .kv-val.warning { color: var(--warning);}
+  .kv-val.muted   { color: var(--muted); font-weight: 400; }
+
+  /* ── Log panel ───────────────────────────────────────────────────── */
+  .log-panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+    min-height: 480px;
+  }
+  .log-body {
+    flex: 1; overflow-y: auto;
+    padding: 6px 0;
+    font-size: 12px; font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  }
+  .log-body::-webkit-scrollbar { width: 4px; }
+  .log-body::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.12); border-radius: 99px; }
+
+  .log-entry {
+    display: grid; grid-template-columns: 30px 1fr;
+    gap: 0; padding: 3px 16px;
+    border-bottom: 1px solid rgba(15,23,42,0.035);
+    transition: background 0.08s;
+  }
+  .log-entry:last-child { border-bottom: none; }
+  .log-entry:hover { background: rgba(15,23,42,0.02); }
+  .log-step {
+    color: #94a3b8; text-align: right; font-size: 10px;
+    padding-top: 2px; padding-right: 10px;
+    user-select: none; flex-shrink: 0;
+  }
+  .log-line  { display: flex; gap: 10px; min-width: 0; }
+  .log-event { color: var(--blue); flex-shrink: 0; min-width: 148px; font-size: 11px; }
+  .log-detail{ color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .log-empty {
+    margin: 12px; padding: 28px 16px; text-align: center; font-style: italic; font-size: 12px;
+    color: var(--muted); background: #f8fafc;
+    border: 1px dashed rgba(15,23,42,0.12); border-radius: 10px;
+  }
+
+  /* ── HITL Overlay ────────────────────────────────────────────────── */
+  #hitlOverlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(15,23,42,0.55); backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .hitl-card {
+    background: #ffffff; border: 1px solid rgba(217,119,6,0.28);
+    border-radius: 22px; padding: 32px; max-width: 680px; width: 100%;
+    box-shadow: 0 24px 80px rgba(15,23,42,0.18);
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .hitl-header { display: flex; align-items: center; gap: 14px; }
+  .hitl-icon-wrap {
+    width: 46px; height: 46px; border-radius: 14px;
+    background: #fef3c7; border: 1px solid rgba(217,119,6,0.18);
+    display: grid; place-items: center; font-size: 22px; flex-shrink: 0;
+  }
+  .hitl-title { font-size: 17px; font-weight: 800; color: #92400e; letter-spacing: -0.01em; }
+  .hitl-runid { font-size: 12px; color: var(--muted); margin-top: 3px; font-family: ui-monospace, monospace; }
+  .hitl-message {
+    font-size: 14px; line-height: 1.7; color: var(--ink);
+    background: #f8fafc; border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px;
+  }
+  .hitl-ss-label { font-size: 11px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+  .hitl-screenshot {
+    width: 100%; border-radius: 12px; border: 1px solid var(--line);
+    max-height: 300px; object-fit: contain; background: #f1f5f9; display: block;
+  }
+  .hitl-actions { display: flex; gap: 12px; align-items: center; }
+  .hitl-btn {
+    flex: 1; padding: 13px;
+    border-radius: 12px; border: none; cursor: pointer;
+    background: linear-gradient(135deg, #d97706, #b45309);
+    color: white; font: inherit; font-size: 14px; font-weight: 800;
+    box-shadow: 0 6px 16px rgba(180,83,9,0.22);
+    transition: opacity 0.12s;
+  }
+  .hitl-btn:hover { opacity: 0.90; }
+  .hitl-hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+  /* ── Responsive ──────────────────────────────────────────────────── */
   @media (max-width: 1024px) {
-    .shell { grid-template-columns: 1fr; }
-    .sidebar { position: static; height: auto; }
+    .task-layout { grid-template-columns: 1fr; }
+    .task-actions { flex-direction: row; padding-top: 0; }
     .main-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 
-<!-- ── HITL Overlay ── shown when run status = waiting_for_user ── -->
-<div id="hitlOverlay" class="hidden" style="
-  position:fixed; inset:0; z-index:9999;
-  background:rgba(10,14,23,0.88); backdrop-filter:blur(6px);
-  display:flex; align-items:center; justify-content:center; padding:24px;">
-  <div style="
-    background:var(--surface,#1a1f2e); border:1px solid rgba(250,180,40,0.4);
-    border-radius:16px; padding:32px; max-width:680px; width:100%;
-    box-shadow:0 0 60px rgba(250,180,40,0.15); display:flex; flex-direction:column; gap:20px;">
-
-    <!-- header -->
-    <div style="display:flex; align-items:center; gap:12px;">
-      <div style="font-size:28px;">🙋</div>
+<!-- HITL Overlay -->
+<div id="hitlOverlay" class="hidden">
+  <div class="hitl-card">
+    <div class="hitl-header">
+      <div class="hitl-icon-wrap">⚠️</div>
       <div>
-        <div style="font-size:17px; font-weight:700; color:#f8b828; letter-spacing:0.01em;">
-          Agent needs your help
-        </div>
-        <div style="font-size:12px; color:var(--muted,#6b7280); margin-top:2px;" id="hitlRunId"></div>
+        <div class="hitl-title">Agent needs your help</div>
+        <div class="hitl-runid" id="hitlRunId"></div>
       </div>
     </div>
-
-    <!-- LLM message -->
-    <div id="hitlMessage" style="
-      font-size:14px; line-height:1.65; color:#e2e8f0;
-      background:rgba(255,255,255,0.04); border-radius:8px; padding:16px;">
-      Loading…
-    </div>
-
-    <!-- live browser screenshot -->
+    <div id="hitlMessage" class="hitl-message">Loading…</div>
     <div>
-      <div style="font-size:11px; color:var(--muted,#6b7280); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.05em;">
-        Current browser state (auto-refreshes every 3s)
-      </div>
-      <img id="hitlScreenshot" style="
-        width:100%; border-radius:8px; border:1px solid rgba(255,255,255,0.08);
-        max-height:320px; object-fit:contain; background:#0a0e17;"
-        src="" alt="Loading screenshot…" />
+      <div class="hitl-ss-label">Current browser state — refreshes every 3s</div>
+      <img id="hitlScreenshot" class="hitl-screenshot" src="" alt="Loading screenshot…">
     </div>
-
-    <!-- actions -->
-    <div style="display:flex; gap:12px; align-items:center;">
-      <button onclick="hitlResume()" style="
-        flex:1; padding:11px 0; border-radius:8px; border:none; cursor:pointer;
-        background:#f8b828; color:#0a0e17; font-size:14px; font-weight:700;
-        letter-spacing:0.02em;">
-        ✅ I'm done — Resume Agent
-      </button>
-      <div style="font-size:11px; color:var(--muted,#6b7280); text-align:right; line-height:1.4;">
-        Complete the action in<br>the browser, then click ↑
-      </div>
+    <div class="hitl-actions">
+      <button class="hitl-btn" onclick="hitlResume()">I'm done — Resume Agent</button>
+      <div class="hitl-hint">Complete the action in<br>the browser, then click →</div>
     </div>
   </div>
 </div>
 
-<div class="shell">
-  <!-- sidebar -->
-  <aside class="sidebar">
+<main class="page">
+
+  <!-- Topbar -->
+  <header class="topbar">
     <div class="brand">
-      <div class="brand-logo">O</div>
+      <div class="brand-mark">O</div>
       <div>
         <div class="brand-name">Operon</div>
-        <div class="brand-sub">Task Console</div>
+        <div class="brand-sub">Command Center</div>
       </div>
     </div>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/console" class="active">Command Center</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/benchmarks">Benchmarks</a>
+    </nav>
+  </header>
 
-    <div class="card">
-      <div class="card-title">New Task</div>
-
-      <div class="mode-row">
-        <button id="modeBrowser" class="mode-btn active" type="button" onclick="setMode('browser')">Browser</button>
-        <button id="modeDesktop" class="mode-btn" type="button" onclick="setMode('desktop')">Desktop</button>
-      </div>
-
-      <div class="field">
-        <label for="taskInput">Instruction</label>
-        <textarea id="taskInput" placeholder="Describe what you want Operon to do..."></textarea>
-      </div>
-
-      <div class="field" id="urlField">
-        <label for="startUrl">Start URL <span style="color:var(--muted)">(optional)</span></label>
-        <input id="startUrl" type="text" placeholder="https://...">
-      </div>
-
-      <div class="btn-row">
-        <button id="btnRun" class="btn btn-run" type="button" onclick="startRun()">Run</button>
-        <button id="btnStop" class="btn btn-stop" type="button" onclick="stopRun()" disabled>Stop</button>
-      </div>
-      <div class="btn-row" style="margin-top:8px">
-        <button id="btnResume" class="btn btn-resume hidden" type="button" onclick="resumeRun()">Resume</button>
-      </div>
-    </div>
-
-  </aside>
-
-  <!-- workspace -->
-  <main class="workspace">
-    <!-- result banner (shown on terminal) -->
-    <div id="resultBanner" class="result-banner hidden success">
-      <div class="result-icon" id="resultIcon">&#x2713;</div>
-      <div>
-        <div class="result-title" id="resultTitle">Task succeeded</div>
-        <div class="result-detail" id="resultDetail"></div>
-      </div>
-    </div>
-
-    <!-- status bar -->
-    <div class="statusbar">
-      <div class="status-badge">
-        <div class="status-dot" id="statusDot"></div>
-        <span id="statusLabel">Idle</span>
-      </div>
-      <div class="statusbar-meta" id="statusMeta">Start a task to begin.</div>
-    </div>
-
-    <!-- main grid: info panels + log -->
-    <div class="main-grid">
-      <!-- info panels -->
-      <div class="info-col">
-        <div class="panel">
-          <div class="panel-head">Run</div>
-          <div class="panel-body">
-            <div class="kv-row">
-              <span class="kv-key">Environment</span>
-              <span class="kv-val blue" id="kvEnv">—</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Step</span>
-              <span class="kv-val" id="kvStep">—</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Current subgoal</span>
-              <span class="kv-val accent" id="kvSubgoal">—</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Phase</span>
-              <span class="kv-val" id="kvPhase">—</span>
-            </div>
-          </div>
+  <!-- Task hero -->
+  <section class="task-hero">
+    <div class="task-eyebrow"><span class="eyebrow-dot"></span> New Task</div>
+    <div class="task-layout">
+      <div class="task-fields">
+        <div class="mode-row">
+          <button id="modeBrowser" class="mode-btn active" type="button" onclick="setMode('browser')">Browser</button>
+          <button id="modeDesktop" class="mode-btn"        type="button" onclick="setMode('desktop')">Desktop</button>
         </div>
-
-        <div class="panel">
-          <div class="panel-head">Last Action</div>
-          <div class="panel-body">
-            <div class="kv-row">
-              <span class="kv-key">Type</span>
-              <span class="kv-val accent" id="kvActionType">—</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Detail</span>
-              <span class="kv-val" id="kvActionDetail">—</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Outcome</span>
-              <span class="kv-val" id="kvActionOutcome">—</span>
-            </div>
-          </div>
+        <div class="field">
+          <label for="taskInput">Instruction</label>
+          <textarea id="taskInput" placeholder="Describe what you want Operon to do…"></textarea>
         </div>
+        <div class="field" id="urlField">
+          <label for="startUrl">Start URL <span>(optional)</span></label>
+          <input id="startUrl" type="text" placeholder="https://…">
+        </div>
+      </div>
+      <div class="task-actions">
+        <button id="btnRun"    class="btn btn-run"            type="button" onclick="startRun()">▶ Run Task</button>
+        <button id="btnStop"   class="btn btn-stop"           type="button" onclick="stopRun()" disabled>■ Stop</button>
+        <button id="btnResume" class="btn btn-resume hidden"  type="button" onclick="resumeRun()">↻ Resume</button>
+      </div>
+    </div>
+  </section>
 
-        <div class="panel">
-          <div class="panel-head">Last Critic Result</div>
-          <div class="panel-body">
-            <div class="kv-row">
-              <span class="kv-key">Verdict</span>
-              <span class="kv-val" id="kvVerdict">—</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Expected</span>
-              <span class="kv-val" id="kvExpected">—</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Observed</span>
-              <span class="kv-val" id="kvObserved">—</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Rationale</span>
-              <span class="kv-val" id="kvRationale">—</span>
-            </div>
-          </div>
+  <!-- Result banner -->
+  <div id="resultBanner" class="result-banner hidden success">
+    <div class="result-icon" id="resultIcon">✓</div>
+    <div>
+      <div class="result-title" id="resultTitle">Task succeeded</div>
+      <div class="result-detail" id="resultDetail"></div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="statusbar">
+    <div class="status-badge">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusLabel">Idle</span>
+    </div>
+    <div class="statusbar-meta" id="statusMeta">Start a task to begin.</div>
+  </div>
+
+  <!-- Main grid -->
+  <div class="main-grid">
+    <div class="info-col">
+
+      <div class="panel">
+        <div class="panel-head"><span class="panel-head-dot"></span>Run</div>
+        <div class="panel-body">
+          <div class="kv-row"><span class="kv-key">Environment</span><span class="kv-val blue"   id="kvEnv">—</span></div>
+          <div class="kv-row"><span class="kv-key">Step</span>       <span class="kv-val"         id="kvStep">—</span></div>
+          <div class="kv-row"><span class="kv-key">Subgoal</span>    <span class="kv-val accent"  id="kvSubgoal">—</span></div>
+          <div class="kv-row"><span class="kv-key">Phase</span>      <span class="kv-val muted"   id="kvPhase">—</span></div>
         </div>
       </div>
 
-      <!-- live log -->
-      <div class="log-panel panel">
-        <div class="panel-head">Live Log</div>
-        <div class="log-body" id="logBody">
-          <div class="log-empty">Log entries appear here during a run.</div>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-head-dot"></span>Last Action</div>
+        <div class="panel-body">
+          <div class="kv-row"><span class="kv-key">Type</span>   <span class="kv-val accent" id="kvActionType">—</span></div>
+          <div class="kv-row"><span class="kv-key">Detail</span> <span class="kv-val"        id="kvActionDetail">—</span></div>
+          <div class="kv-row"><span class="kv-key">Outcome</span><span class="kv-val"        id="kvActionOutcome">—</span></div>
         </div>
       </div>
+
+      <div class="panel">
+        <div class="panel-head"><span class="panel-head-dot"></span>Last Critic Result</div>
+        <div class="panel-body">
+          <div class="kv-row"><span class="kv-key">Verdict</span>  <span class="kv-val"       id="kvVerdict">—</span></div>
+          <div class="kv-row"><span class="kv-key">Expected</span> <span class="kv-val muted" id="kvExpected">—</span></div>
+          <div class="kv-row"><span class="kv-key">Observed</span> <span class="kv-val muted" id="kvObserved">—</span></div>
+          <div class="kv-row"><span class="kv-key">Rationale</span><span class="kv-val muted" id="kvRationale">—</span></div>
+        </div>
+      </div>
+
     </div>
-  </main>
-</div>
+
+    <!-- Live log -->
+    <div class="log-panel panel">
+      <div class="panel-head"><span class="panel-head-dot"></span>Live Log</div>
+      <div class="log-body" id="logBody">
+        <div class="log-empty">Log entries appear here during a run.</div>
+      </div>
+    </div>
+  </div>
+
+</main>
 
 <script>
 'use strict';
 
-// ── state ──────────────────────────────────────────────────────────────────
 let mode = 'browser';
 let runId = null;
 let running = false;
 let poller = null;
 let pollFails = 0;
 
-// ── utilities ──────────────────────────────────────────────────────────────
 function esc(v) {
   if (v == null) return '';
   const d = document.createElement('div');
@@ -504,7 +514,6 @@ function routes() {
     : { runTask: '/desktop/run-task', step: '/desktop/step', resume: '/desktop/resume', cleanup: '/desktop/cleanup' };
 }
 
-// ── mode selector ──────────────────────────────────────────────────────────
 function setMode(m) {
   mode = m;
   document.getElementById('modeBrowser').classList.toggle('active', m === 'browser');
@@ -513,7 +522,6 @@ function setMode(m) {
   document.getElementById('startUrl').disabled = m !== 'browser';
 }
 
-// ── UI state helpers ───────────────────────────────────────────────────────
 function setRunning(isRunning) {
   running = isRunning;
   document.getElementById('btnRun').disabled = isRunning;
@@ -525,8 +533,7 @@ function setRunning(isRunning) {
 }
 
 function showStatusBar(label, meta, dotClass) {
-  const dot = document.getElementById('statusDot');
-  dot.className = 'status-dot ' + (dotClass || '');
+  document.getElementById('statusDot').className = 'status-dot ' + (dotClass || '');
   document.getElementById('statusLabel').textContent = label;
   document.getElementById('statusMeta').textContent = meta || '';
 }
@@ -535,7 +542,7 @@ function showResultBanner(success, title, detail) {
   const banner = document.getElementById('resultBanner');
   banner.classList.remove('hidden', 'success', 'failure');
   banner.classList.add(success ? 'success' : 'failure');
-  document.getElementById('resultIcon').innerHTML = success ? '&#x2713;' : '&#x2717;';
+  document.getElementById('resultIcon').textContent = success ? '✓' : '✕';
   document.getElementById('resultTitle').textContent = title;
   document.getElementById('resultDetail').textContent = detail || '';
 }
@@ -545,37 +552,40 @@ function hideResultBanner() {
 }
 
 function setText(id, val, fallback) {
-  document.getElementById(id).textContent = val != null && String(val).trim() ? String(val) : (fallback || '—');
+  document.getElementById(id).textContent =
+    val != null && String(val).trim() ? String(val) : (fallback || '—');
 }
 
 function setClass(id, cls) {
-  const el = document.getElementById(id);
-  el.className = 'kv-val' + (cls ? ' ' + cls : '');
+  document.getElementById(id).className = 'kv-val' + (cls ? ' ' + cls : '');
 }
 
-// ── snapshot rendering ─────────────────────────────────────────────────────
 function renderSnapshot(snap) {
-  const run = snap && snap.run ? snap.run : null;
+  const run  = snap && snap.run          ? snap.run          : null;
   const step = snap && snap.current_step ? snap.current_step : null;
+  const st   = run ? run.status : 'idle';
+  const dotCls = st === 'running'   ? 'running'
+               : st === 'succeeded' ? 'succeeded'
+               : (st === 'failed' || st === 'cancelled') ? 'failed'
+               : 'pending';
 
-  // status bar
-  const st = run ? run.status : 'idle';
-  const dotCls = st === 'running' ? 'running' : st === 'succeeded' ? 'succeeded' : st === 'failed' || st === 'cancelled' ? 'failed' : 'pending';
   showStatusBar(
     st.replace(/_/g, ' '),
-    run ? ('Run ' + run.run_id + ' \u2022 ' + (run.step_count || 0) + ' steps' + (run.current_subgoal ? ' \u2022 ' + run.current_subgoal : '')) : 'Start a task to begin.',
+    run
+      ? ('Run ' + run.run_id + ' • ' + (run.step_count || 0) + ' steps'
+          + (run.current_subgoal ? ' • ' + run.current_subgoal : ''))
+      : 'Start a task to begin.',
     dotCls
   );
 
-  // run info
   setText('kvEnv', mode === 'browser' ? 'Browser' : 'Desktop');
   setClass('kvEnv', 'blue');
   setText('kvStep', run ? String(run.step_count || 0) : null);
   setText('kvSubgoal', run ? run.current_subgoal : null);
   setClass('kvSubgoal', 'accent');
   setText('kvPhase', run ? run.current_phase : null);
+  setClass('kvPhase', 'muted');
 
-  // last action
   const exec = step && step.execution ? step.execution : null;
   const actionType = exec && exec.action ? exec.action.action_type : null;
   setText('kvActionType', actionType);
@@ -583,27 +593,26 @@ function renderSnapshot(snap) {
   setText('kvActionDetail', exec ? exec.detail : null);
   const failCat = exec ? exec.failure_category : null;
   setText('kvActionOutcome', failCat ? ('fail: ' + failCat) : (exec && exec.action ? 'ok' : null));
-  setClass('kvActionOutcome', failCat ? 'danger' : '');
+  setClass('kvActionOutcome', failCat ? 'danger' : (exec && exec.action ? 'accent' : ''));
 
-  // last critic (verification)
   const verif = step && step.verification ? step.verification : null;
   const verdict = verif ? verif.status : null;
   setText('kvVerdict', verdict);
   setClass('kvVerdict', verdict === 'pass' ? 'accent' : verdict === 'fail' ? 'danger' : '');
   setText('kvExpected', verif ? verif.expected_outcome : null);
+  setClass('kvExpected', 'muted');
   setText('kvObserved', verif ? verif.observed_outcome : null);
-  const plan = step && step.plan ? step.plan : null;
-  setText('kvRationale', plan ? plan.rationale : null);
+  setClass('kvObserved', 'muted');
+  setText('kvRationale', step && step.plan ? step.plan.rationale : null);
+  setClass('kvRationale', 'muted');
 
-  // result banner
   if (run && (run.status === 'succeeded' || run.status === 'failed' || run.status === 'cancelled')) {
     const ok = run.status === 'succeeded';
-    const reason = run.stop_reason ? run.stop_reason.replace(/_/g, ' ') : run.status;
-    showResultBanner(ok,
+    showResultBanner(
+      ok,
       ok ? 'Task succeeded' : (run.status === 'cancelled' ? 'Run cancelled' : 'Task failed'),
-      reason
+      run.stop_reason ? run.stop_reason.replace(/_/g, ' ') : run.status
     );
-    // resume button
     document.getElementById('btnResume').classList.add('hidden');
   } else if (run && run.status === 'waiting_for_user') {
     document.getElementById('btnResume').classList.remove('hidden');
@@ -615,7 +624,6 @@ function renderSnapshot(snap) {
     hideHitlOverlay();
   }
 
-  // log
   renderLog(snap && snap.event_log ? snap.event_log : []);
 }
 
@@ -625,18 +633,18 @@ function renderLog(events) {
     body.innerHTML = '<div class="log-empty">Log entries appear here during a run.</div>';
     return;
   }
-  const rows = events.slice(-200).map(function(e) {
+  body.innerHTML = events.slice(-200).map(function(e) {
     return '<div class="log-entry">' +
       '<span class="log-step">' + esc(e.step_index) + '</span>' +
-      '<span class="log-event">' + esc(e.event) + '</span>' +
-      '<span class="log-detail" title="' + esc(e.detail) + '">' + esc(e.detail) + '</span>' +
+      '<span class="log-line">' +
+        '<span class="log-event">' + esc(e.event) + '</span>' +
+        '<span class="log-detail" title="' + esc(e.detail) + '">' + esc(e.detail) + '</span>' +
+      '</span>' +
     '</div>';
   }).join('');
-  body.innerHTML = rows;
   body.scrollTop = body.scrollHeight;
 }
 
-// ── polling ────────────────────────────────────────────────────────────────
 function stopPoller() {
   if (poller) { clearInterval(poller); poller = null; }
 }
@@ -661,23 +669,19 @@ function startPoller() {
   }, 1000);
 }
 
-// ── run lifecycle ──────────────────────────────────────────────────────────
 async function runLoop() {
   const r = routes();
   while (running) {
     const resp = await fetchJson(r.step, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ run_id: runId }),
     });
     if (resp.status !== 'running') {
       setRunning(false);
       stopPoller();
       await refreshSnapshot();
-      // cleanup browser session silently
       fetchJson(r.cleanup, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ run_id: runId }),
       }).catch(function() {});
       return;
@@ -690,7 +694,7 @@ async function startRun() {
   if (!intent) return;
   hideResultBanner();
   setRunning(true);
-  showStatusBar('Starting', 'Creating run...', 'pending');
+  showStatusBar('Starting', 'Creating run…', 'pending');
   renderLog([]);
   const r = routes();
   const body = { intent: intent };
@@ -701,8 +705,7 @@ async function startRun() {
   }
   try {
     const resp = await fetchJson(r.runTask, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     runId = resp.run_id;
@@ -718,11 +721,9 @@ async function startRun() {
 
 async function stopRun() {
   if (!runId) return;
-  // signal server-side cancellation, then stop client loop
   try {
     await fetchJson('/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ run_id: runId }),
     });
   } catch (_) {}
@@ -732,22 +733,16 @@ async function stopRun() {
   await refreshSnapshot().catch(function() {});
 }
 
-// ── HITL overlay ─────────────────────────────────────────────────
 let _hitlScreenshotTimer = null;
 
 function showHitlOverlay(run) {
   const overlay = document.getElementById('hitlOverlay');
-  if (!overlay.classList.contains('hidden')) return; // already visible
+  if (!overlay.classList.contains('hidden')) return;
   overlay.classList.remove('hidden');
   overlay.style.display = 'flex';
-
   document.getElementById('hitlRunId').textContent = 'Run ' + (run.run_id || '').slice(0, 8) + '…';
-
-  // Populate LLM message from run state (served by GET /run/{id})
-  const msg = run.hitl_message || 'The agent is waiting for you to complete an action in the browser window.';
-  document.getElementById('hitlMessage').textContent = msg;
-
-  // Start refreshing the live screenshot
+  document.getElementById('hitlMessage').textContent =
+    run.hitl_message || 'The agent is waiting for you to complete an action in the browser window.';
   _refreshHitlScreenshot();
   _hitlScreenshotTimer = setInterval(_refreshHitlScreenshot, 3000);
 }
@@ -762,8 +757,8 @@ function hideHitlOverlay() {
 async function _refreshHitlScreenshot() {
   if (!runId) return;
   try {
-    const url = `/observer/api/live-browser/${runId}?t=${Date.now()}`;
-    document.getElementById('hitlScreenshot').src = url;
+    document.getElementById('hitlScreenshot').src =
+      '/observer/api/live-browser/' + runId + '?t=' + Date.now();
   } catch (_) {}
 }
 
@@ -777,8 +772,7 @@ async function resumeRun() {
   const r = routes();
   try {
     await fetchJson(r.resume, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ run_id: runId }),
     });
     setRunning(true);
@@ -789,7 +783,6 @@ async function resumeRun() {
   }
 }
 
-// ── init ───────────────────────────────────────────────────────────────────
 setMode('browser');
 </script>
 </body>

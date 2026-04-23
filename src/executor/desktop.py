@@ -97,16 +97,61 @@ _APP_ALIASES: dict[str, str] = {
 
 
 def _set_dpi_awareness() -> None:
-    """Set per-monitor DPI awareness on Windows for accurate coordinates."""
+    """Set per-monitor DPI awareness at process startup on Windows.
+
+    Must be called once before any window or HDC is created (done in __init__).
+    Uses PMv2 (DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, Win10 1607+) so each
+    monitor's DPI is honoured independently. Falls back to PMv1 shcore, then the
+    legacy v1 API, so older OS versions still get something sensible.
+    """
     if sys.platform != "win32":
         return
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
+        # PMv2: -4 == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (Win10 1607+)
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)  # type: ignore[attr-defined]
     except (AttributeError, OSError):
         try:
-            ctypes.windll.user32.SetProcessDPIAware()  # type: ignore[attr-defined]
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
         except (AttributeError, OSError):
-            pass
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()  # type: ignore[attr-defined]
+            except (AttributeError, OSError):
+                pass
+
+
+def _foreground_monitor() -> dict | None:
+    """Return the mss monitor dict for whichever display contains the foreground window.
+
+    Falls back to None when the Win32 calls are unavailable (non-Windows, or the
+    foreground window handle is 0). The caller should fall back to monitors[1].
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        # MONITOR_DEFAULTTONEAREST = 2
+        hmon = user32.MonitorFromWindow(hwnd, 2)
+        if not hmon:
+            return None
+        with mss.mss() as sct:
+            for mon in sct.monitors[1:]:  # skip monitors[0] (virtual combined)
+                # mss monitor dicts use left/top/width/height; cross-reference via
+                # the monitor's origin to match the HMONITOR returned by Win32.
+                info = ctypes.create_string_buffer(40)
+                ctypes.c_uint32.from_buffer(info, 0).value = 40  # cbSize
+                if user32.GetMonitorInfoA(hmon, info):
+                    # rcMonitor occupies bytes 4-20: left, top, right, bottom (4×int32)
+                    left, top, right, bottom = (
+                        ctypes.c_int32.from_buffer(info, 4 + i * 4).value for i in range(4)
+                    )
+                    if mon["left"] == left and mon["top"] == top:
+                        return mon
+    except Exception as exc:
+        logger.debug("_foreground_monitor: %s", exc)
+    return None
 
 
 class DesktopExecutor(Executor):
@@ -200,7 +245,10 @@ class DesktopExecutor(Executor):
 
     def _capture_sync(self) -> CaptureFrame:
         with mss.mss() as sct:
-            monitor = sct.monitors[0]  # full virtual screen
+            # Prefer the monitor that contains the active foreground window so
+            # coords are always in that monitor's pixel space. Falls back to
+            # monitors[1] (first physical display) when the Win32 call fails.
+            monitor = _foreground_monitor() or sct.monitors[1]
             shot = sct.grab(monitor)
             filename = f"desktop_{uuid4().hex[:8]}.png"
             filepath = self._artifact_dir / filename
@@ -210,6 +258,8 @@ class DesktopExecutor(Executor):
                 width=shot.width,
                 height=shot.height,
                 mime_type="image/png",
+                monitor_left=monitor.get("left", 0),
+                monitor_top=monitor.get("top", 0),
             )
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
@@ -278,14 +328,41 @@ class DesktopExecutor(Executor):
             return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
         try:
             if action.x is not None and action.y is not None:
+                pre_pixels = await asyncio.to_thread(self._sample_region, action.x, action.y)
                 await asyncio.to_thread(pyautogui.click, action.x, action.y)
                 await asyncio.sleep(0.15)
-            await asyncio.to_thread(pyautogui.write, action.text, interval=self._type_interval)
+                post_pixels = await asyncio.to_thread(self._sample_region, action.x, action.y)
+                if pre_pixels == post_pixels:
+                    # No visual change — focus likely stolen; retry click once
+                    logger.debug("Focus verification: no visual change at (%d, %d), retrying click", action.x, action.y)
+                    await asyncio.to_thread(pyautogui.click, action.x, action.y)
+                    await asyncio.sleep(0.25)
+            if action.clear_before_typing:
+                await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'a')
+                await asyncio.sleep(0.05)
+            # Clipboard-paste avoids character-ordering issues with pyautogui.write()
+            # when typing long strings or strings containing special characters like $
+            await asyncio.to_thread(pyperclip.copy, action.text)
+            await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'v')
+            if action.press_enter:
+                await asyncio.sleep(0.05)
+                await asyncio.to_thread(pyautogui.press, 'enter')
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Typed '{action.text}'", after_path)
         except Exception as exc:
             return self._fail(action, f"Type failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
+    def _sample_region(self, x: int, y: int, radius: int = 30) -> bytes:
+        """Capture a small pixel region around (x, y) for focus-change detection."""
+        with mss.mss() as sct:
+            region = {
+                "left": max(0, x - radius),
+                "top": max(0, y - radius),
+                "width": radius * 2,
+                "height": radius * 2,
+            }
+            return bytes(sct.grab(region).rgb)
 
     async def _exec_press_key(self, action: AgentAction) -> ExecutedAction:
         if action.key is None:

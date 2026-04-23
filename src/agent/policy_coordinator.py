@@ -13,7 +13,7 @@ from src.models.episode import Episode, EpisodeReplayState
 from src.models.logs import ModelDebugArtifacts
 from src.models.memory import MemoryHint
 from src.models.perception import ScreenPerception
-from src.models.policy import PolicyDecision
+from src.models.policy import ActionType, PolicyDecision
 from src.models.selector import SelectorTrace
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
@@ -94,10 +94,101 @@ class PolicyCoordinator(PolicyService):
             self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
 
         decision = await self.delegate.choose_action(state, perception)
+        decision = await self._reject_hallucinated_target(state, perception, decision)
+        decision = await self._reject_premature_stop(state, perception, decision)
         if hasattr(self.delegate, "latest_debug_artifacts"):
             self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
         self._last_debug_artifacts = self._attach_selector_trace(perception, self._last_debug_artifacts, selector_traces)
         return decision
+
+    async def _reject_premature_stop(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision:
+        """Re-plan once if the LLM issues STOP before taking any meaningful action.
+
+        A STOP is premature when the agent has performed zero substantive actions
+        (TYPE, CLICK, NAVIGATE, HOTKEY, PRESS_KEY, LAUNCH_APP) in the current run.
+        This catches the pattern where the LLM reads information on an already-open
+        page and declares the task done without having done any work itself.
+
+        The re-plan hint is derived from the action history gap — no domain
+        knowledge or static keyword lists are used.
+        """
+        if decision.action.action_type is not ActionType.STOP:
+            return decision
+
+        substantive = {
+            ActionType.CLICK,
+            ActionType.DOUBLE_CLICK,
+            ActionType.TYPE,
+            ActionType.PRESS_KEY,
+            ActionType.HOTKEY,
+            ActionType.NAVIGATE,
+            ActionType.LAUNCH_APP,
+            ActionType.DRAG,
+            ActionType.SELECT,
+        }
+        actions_taken = [h.action.action_type for h in state.action_history]
+        if any(a in substantive for a in actions_taken):
+            return decision
+
+        logger.warning(
+            "Policy issued STOP with no prior substantive actions (history=%s). Re-planning.",
+            [a.value for a in actions_taken] or "[]",
+        )
+        correction = (
+            "CORRECTION: you issued STOP before performing any actions. "
+            "The task has not been started yet — you have not navigated, typed, clicked, "
+            "or taken any action to complete it. "
+            f"Original task: {state.intent!r}. "
+            "Plan and execute the next concrete step toward completing this task."
+        )
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([correction], source="validation", run_id=state.run_id)
+
+        replanned = await self.delegate.choose_action(state, perception)
+        return replanned
+
+    async def _reject_hallucinated_target(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision:
+        """Re-plan once if the LLM produced a target_element_id absent from perception."""
+        target_id = decision.action.target_element_id
+        if target_id is None:
+            return decision
+        known_ids = {e.element_id for e in perception.visible_elements}
+        if target_id in known_ids:
+            return decision
+
+        logger.warning(
+            "Policy hallucinated element_id %r (not in current perception). Re-planning.",
+            target_id,
+        )
+        known_list = ", ".join(sorted(known_ids)) if known_ids else "none"
+        correction = (
+            f"CORRECTION: element_id '{target_id}' does not exist on the current screen. "
+            f"You MUST use one of these actual element IDs: [{known_list}]. "
+            "Do not invent element IDs."
+        )
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([correction], source="validation", run_id=state.run_id)
+
+        replanned = await self.delegate.choose_action(state, perception)
+        if (
+            replanned.action.target_element_id is not None
+            and replanned.action.target_element_id not in known_ids
+        ):
+            logger.warning(
+                "Re-planned policy still references unknown element_id %r. Proceeding anyway.",
+                replanned.action.target_element_id,
+            )
+        return replanned
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts

@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operon — Benchmarks</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232563eb'/><text x='16' y='23' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'>O</text></svg>">
+<style>
+  :root {
+    --bg: #f4f7fb;
+    --panel: #ffffff;
+    --border: rgba(15,23,42,0.10);
+    --text: #0f172a;
+    --muted: #5f7188;
+    --accent: #059669;
+    --accent-soft: rgba(5,150,105,0.10);
+    --blue: #2563eb;
+    --purple: #7c3aed;
+    --danger: #dc2626;
+    --warning: #d97706;
+    --radius: 16px;
+    --shadow: 0 4px 24px rgba(15,23,42,0.07);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(37,99,235,0.08), transparent 28%),
+      radial-gradient(circle at 80% 10%, rgba(5,150,105,0.06), transparent 22%),
+      linear-gradient(180deg, #fbfdff, #f3f7fc 58%, #eef3f9);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* ── Topbar (matches landing + dashboard) ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; margin-bottom: 30px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 42px; height: 42px; border-radius: 14px;
+    background: linear-gradient(135deg, #2563eb, #059669);
+    display: grid; place-items: center;
+    color: white; font-weight: 900; font-size: 17px;
+    box-shadow: 0 8px 20px rgba(37,99,235,0.22);
+  }
+  .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -0.03em; }
+  .brand-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav a {
+    text-decoration: none; color: var(--muted);
+    border: 1px solid rgba(15,23,42,0.08); background: rgba(255,255,255,0.6);
+    padding: 9px 14px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .nav a:hover { color: var(--text); border-color: rgba(15,23,42,0.22); }
+  .nav a.active { background: linear-gradient(135deg, #dbeafe, #d1fae5); color: var(--text); border-color: transparent; }
+
+  /* ── Layout ── */
+  .page { max-width: 1280px; margin: 0 auto; padding: 28px 28px 60px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* ── Control bar ── */
+  .control-bar {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    box-shadow: var(--shadow);
+  }
+  .control-label { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+  .diff-btns { display: flex; gap: 6px; }
+  .diff-btn {
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); border-radius: 999px;
+    padding: 7px 16px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    transition: all 0.12s;
+  }
+  .diff-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .diff-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .steps-field { display: flex; align-items: center; gap: 8px; }
+  .steps-input {
+    width: 64px; background: #f8fafc; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 10px; font: inherit; font-size: 12px; text-align: center;
+  }
+  .control-sep { flex: 1; }
+  .run-suite-btn {
+    border: none; border-radius: 10px; padding: 10px 24px;
+    font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: white;
+    box-shadow: 0 4px 14px rgba(37,99,235,0.20);
+    transition: opacity 0.12s;
+  }
+  .run-suite-btn:disabled { opacity: 0.45; cursor: default; }
+
+  /* ── Progress bar ── */
+  .progress-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: var(--shadow);
+  }
+  .progress-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .progress-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .progress-stat-val { font-size: 22px; font-weight: 800; }
+  .progress-stat-val.green { color: var(--accent); }
+  .progress-stat-val.red { color: var(--danger); }
+  .progress-stat-val.blue { color: var(--blue); }
+  .progress-stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .progress-divider { width: 1px; height: 36px; background: var(--border); }
+  .progress-bar-wrap { flex: 1; min-width: 160px; }
+  .progress-bar-track { height: 6px; background: rgba(15,23,42,0.08); border-radius: 99px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.4s; }
+  .progress-bar-label { font-size: 11px; color: var(--muted); margin-top: 5px; }
+  .suite-status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: #f1f5f9; border: 1px solid var(--border);
+  }
+  .suite-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .suite-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 1.4s infinite; }
+  .suite-dot.completed { background: var(--accent); }
+  .suite-dot.failed { background: var(--danger); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── Scoreboard ── */
+  .scoreboard {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .scoreboard-head {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .scoreboard-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody tr { border-bottom: 1px solid rgba(15,23,42,0.05); transition: background 0.1s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: #f8fafc; }
+  tbody td { padding: 11px 14px; font-size: 12px; vertical-align: middle; }
+
+  .chip {
+    display: inline-block; border-radius: 4px; padding: 2px 7px;
+    font-size: 10px; font-weight: 700; font-family: ui-monospace, monospace;
+  }
+  .chip-id { background: #dbeafe; color: #1d4ed8; }
+  .chip-easy { background: #d1fae5; color: #065f46; }
+  .chip-medium { background: #fef3c7; color: #92400e; }
+  .chip-hard { background: #fee2e2; color: #991b1b; }
+  .chip-info { background: #d1fae5; color: #065f46; }
+  .chip-nav { background: #ede9fe; color: #5b21b6; }
+  .chip-form { background: #fef3c7; color: #92400e; }
+
+  .status-cell { display: flex; align-items: center; gap: 7px; }
+  .task-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .task-dot.pending { background: rgba(255,255,255,0.15); }
+  .task-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 1.2s infinite; }
+  .task-dot.passed { background: var(--accent); }
+  .task-dot.failed { background: var(--danger); }
+  .status-text { font-weight: 600; }
+  .status-text.pending { color: var(--muted); }
+  .status-text.running { color: var(--accent); }
+  .status-text.passed { color: var(--accent); }
+  .status-text.failed { color: var(--danger); }
+
+  .view-link {
+    color: var(--blue); text-decoration: none; font-size: 11px; font-weight: 600;
+    padding: 3px 8px; border: 1px solid rgba(37,99,235,0.25); border-radius: 6px;
+    white-space: nowrap; background: #eff6ff;
+  }
+  .view-link:hover { background: rgba(96,165,250,0.08); }
+  .view-link.hidden { display: none; }
+
+  .td-intent { color: var(--muted); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .td-stop { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty-row td { text-align: center; color: var(--muted); font-style: italic; padding: 32px; }
+
+  @media (max-width: 900px) {
+    .page { padding: 16px; }
+    .td-intent { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">O</div>
+      <div>
+        <div class="brand-name">Operon</div>
+        <div class="brand-sub">Benchmarks</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/console">Command Center</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/benchmarks" class="active">Benchmarks</a>
+    </nav>
+  </header>
+
+  <!-- Control bar -->
+  <div class="control-bar">
+    <span class="control-label">Difficulty</span>
+    <div class="diff-btns">
+      <button class="diff-btn active" id="diffAll" onclick="selectDiff('all')">All <span id="cntAll"></span></button>
+      <button class="diff-btn" id="diffEasy" onclick="selectDiff('easy')">Easy <span id="cntEasy"></span></button>
+      <button class="diff-btn" id="diffMedium" onclick="selectDiff('medium')">Medium <span id="cntMedium"></span></button>
+    </div>
+    <div class="steps-field">
+      <span class="control-label">Max steps</span>
+      <input id="maxSteps" class="steps-input" type="number" value="15" min="5" max="40">
+    </div>
+    <div class="control-sep"></div>
+    <button id="runSuiteBtn" class="run-suite-btn" onclick="runSuite()">&#9654; Run Suite</button>
+  </div>
+
+  <!-- Progress card -->
+  <div class="progress-card" id="progressCard">
+    <div class="progress-row">
+      <div class="suite-status-badge">
+        <div class="suite-dot" id="suiteDot"></div>
+        <span id="suiteStatusLabel">Idle</span>
+      </div>
+      <div class="progress-divider"></div>
+      <div class="progress-stat">
+        <span class="progress-stat-val blue" id="statTotal">—</span>
+        <span class="progress-stat-label">Total</span>
+      </div>
+      <div class="progress-stat">
+        <span class="progress-stat-val" id="statCompleted">—</span>
+        <span class="progress-stat-label">Done</span>
+      </div>
+      <div class="progress-stat">
+        <span class="progress-stat-val green" id="statPassed">—</span>
+        <span class="progress-stat-label">Passed</span>
+      </div>
+      <div class="progress-stat">
+        <span class="progress-stat-val red" id="statFailed">—</span>
+        <span class="progress-stat-label">Failed</span>
+      </div>
+      <div class="progress-divider"></div>
+      <div class="progress-stat">
+        <span class="progress-stat-val green" id="statRate">—</span>
+        <span class="progress-stat-label">Pass rate</span>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
+        </div>
+        <div class="progress-bar-label" id="progressLabel">Run a suite to see results</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scoreboard -->
+  <div class="scoreboard">
+    <div class="scoreboard-head">
+      <span class="scoreboard-title">Scoreboard</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Task</th>
+          <th>Difficulty</th>
+          <th>Category</th>
+          <th>Site</th>
+          <th>Intent</th>
+          <th>Status</th>
+          <th>Steps</th>
+          <th>Duration</th>
+          <th>Stop reason</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="scoreBody">
+        <tr class="empty-row"><td colspan="10">Select a difficulty and click Run Suite to start</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+const TASKS = [
+  { task_id: 'wiki_001', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
+    intent: 'Find the year in which Python programming language was first released and state it clearly.',
+    start_url: 'https://en.wikipedia.org/wiki/Python_(programming_language)' },
+  { task_id: 'wiki_002', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
+    intent: 'Find the height of the Eiffel Tower in metres as stated on its Wikipedia page.',
+    start_url: 'https://en.wikipedia.org/wiki/Eiffel_Tower' },
+  { task_id: 'wiki_003', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
+    intent: 'Find the birth date of Marie Curie as stated on her Wikipedia page.',
+    start_url: 'https://en.wikipedia.org/wiki/Marie_Curie' },
+  { task_id: 'wiki_005', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
+    intent: 'Find the year JavaScript was created and who created it, as stated on its Wikipedia page.',
+    start_url: 'https://en.wikipedia.org/wiki/JavaScript' },
+  { task_id: 'wiki_006', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
+    intent: 'Find the name of the person who created the Linux kernel and the year it was first released.',
+    start_url: 'https://en.wikipedia.org/wiki/Linux' },
+  { task_id: 'wiki_008', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
+    intent: 'Find the year OpenAI was founded and name at least two of its co-founders as stated on its Wikipedia page.',
+    start_url: 'https://en.wikipedia.org/wiki/OpenAI' },
+  { task_id: 'nav_001', difficulty: 'easy', category: 'navigation', site: 'example.com',
+    intent: 'Read and state the main heading (h1) visible on example.com.',
+    start_url: 'https://example.com' },
+  { task_id: 'wiki_004', difficulty: 'medium', category: 'navigation', site: 'wikipedia',
+    intent: 'Navigate to the Wikipedia article about the Python programming language by searching for it, then find and state what type of programming language Python is described as.',
+    start_url: 'https://en.wikipedia.org/wiki/Main_Page' },
+  { task_id: 'wiki_007', difficulty: 'medium', category: 'navigation', site: 'wikipedia',
+    intent: "Search Wikipedia for 'Large Language Model' and find what year the term was coined or popularised according to the article.",
+    start_url: 'https://en.wikipedia.org/wiki/Main_Page' },
+  { task_id: 'nav_002', difficulty: 'medium', category: 'navigation', site: 'wikipedia',
+    intent: "Find the section titled 'History' on the Python Wikipedia article and state the name of the language that Python was designed to succeed.",
+    start_url: 'https://en.wikipedia.org/wiki/Python_(programming_language)' },
+  { task_id: 'form_001', difficulty: 'medium', category: 'form_fill', site: 'practice_form',
+    intent: "Fill in the Name field with 'Alice Johnson' and the Email field with 'alice@test.com' on the form, then submit it.",
+    start_url: 'https://practice-automation.com/form-fields/' },
+  { task_id: 'form_002', difficulty: 'medium', category: 'form_fill', site: 'practice_form',
+    intent: "Fill in the Full Name as 'Bob Smith', the Email as 'bob@example.com', the Current Address as '123 Main Street', and submit the form.",
+    start_url: 'https://demoqa.com/text-box' },
+];
+
+const CAT_LABELS = { information_retrieval: 'Info Retrieval', navigation: 'Navigation', form_fill: 'Form Fill' };
+const CAT_CLS = { information_retrieval: 'chip-info', navigation: 'chip-nav', form_fill: 'chip-form' };
+
+let selectedDiff = 'all';
+let suiteId = null;
+let poller = null;
+let suiteRunning = false;
+
+function esc(v) {
+  if (v == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(v);
+  return d.innerHTML;
+}
+
+function tasksForDiff(diff) {
+  return diff === 'all' ? TASKS : TASKS.filter(function(t) { return t.difficulty === diff; });
+}
+
+function initCounts() {
+  document.getElementById('cntAll').textContent = '(' + TASKS.length + ')';
+  const easy = TASKS.filter(function(t) { return t.difficulty === 'easy'; }).length;
+  const medium = TASKS.filter(function(t) { return t.difficulty === 'medium'; }).length;
+  document.getElementById('cntEasy').textContent = '(' + easy + ')';
+  document.getElementById('cntMedium').textContent = '(' + medium + ')';
+}
+
+function selectDiff(diff) {
+  if (suiteRunning) return;
+  selectedDiff = diff;
+  ['all','easy','medium'].forEach(function(d) {
+    document.getElementById('diff' + d.charAt(0).toUpperCase() + d.slice(1)).classList.toggle('active', d === diff);
+  });
+  renderIdleScoreboard();
+}
+
+function renderIdleScoreboard() {
+  const tasks = tasksForDiff(selectedDiff);
+  const body = document.getElementById('scoreBody');
+  if (!tasks.length) {
+    body.innerHTML = '<tr class="empty-row"><td colspan="10">No tasks for this filter</td></tr>';
+    return;
+  }
+  body.innerHTML = tasks.map(function(t) {
+    return '<tr>'
+      + '<td><span class="chip chip-id">' + esc(t.task_id) + '</span></td>'
+      + '<td><span class="chip chip-' + t.difficulty + '">' + t.difficulty + '</span></td>'
+      + '<td><span class="chip ' + (CAT_CLS[t.category] || '') + '">' + esc(CAT_LABELS[t.category] || t.category) + '</span></td>'
+      + '<td style="color:var(--muted);font-size:11px;">' + esc(t.site) + '</td>'
+      + '<td class="td-intent" title="' + esc(t.intent) + '">' + esc(t.intent) + '</td>'
+      + '<td><div class="status-cell"><div class="task-dot pending"></div><span class="status-text pending">Pending</span></div></td>'
+      + '<td style="color:var(--muted)">—</td>'
+      + '<td style="color:var(--muted)">—</td>'
+      + '<td class="td-stop">—</td>'
+      + '<td></td>'
+      + '</tr>';
+  }).join('');
+  resetProgress(tasks.length);
+}
+
+function resetProgress(total) {
+  setSuiteStatus('idle', '');
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statCompleted').textContent = '0';
+  document.getElementById('statPassed').textContent = '0';
+  document.getElementById('statFailed').textContent = '0';
+  document.getElementById('statRate').textContent = '—';
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressLabel').textContent = 'Ready to run';
+}
+
+function setSuiteStatus(status, label) {
+  const dot = document.getElementById('suiteDot');
+  const lbl = document.getElementById('suiteStatusLabel');
+  dot.className = 'suite-dot ' + status;
+  lbl.textContent = label || status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+async function runSuite() {
+  if (suiteRunning) return;
+  const maxSteps = Math.max(5, Math.min(40, parseInt(document.getElementById('maxSteps').value, 10) || 15));
+  suiteRunning = true;
+  document.getElementById('runSuiteBtn').disabled = true;
+  document.getElementById('runSuiteBtn').textContent = 'Running…';
+  ['diffAll','diffEasy','diffMedium'].forEach(function(id) { document.getElementById(id).disabled = true; });
+
+  setSuiteStatus('running', 'Starting…');
+  renderIdleScoreboard();
+
+  try {
+    const resp = await fetch('/benchmark/run-suite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ difficulty: selectedDiff, max_steps: maxSteps }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(function() { return {}; });
+      throw new Error(err.detail || 'Failed to start suite');
+    }
+    const data = await resp.json();
+    suiteId = data.suite_id;
+    setSuiteStatus('running', 'Running — suite ' + suiteId);
+    startPoller();
+  } catch (e) {
+    setSuiteStatus('failed', 'Error: ' + e.message);
+    resetRunBtn();
+  }
+}
+
+function startPoller() {
+  if (poller) clearInterval(poller);
+  poller = setInterval(function() {
+    pollSuite().catch(function() {});
+  }, 2000);
+  pollSuite().catch(function() {});
+}
+
+function stopPoller() {
+  if (poller) { clearInterval(poller); poller = null; }
+}
+
+async function pollSuite() {
+  if (!suiteId) return;
+  const resp = await fetch('/benchmark/suite/' + suiteId);
+  if (!resp.ok) return;
+  const data = await resp.json();
+  renderSuiteState(data);
+  if (data.status === 'completed') {
+    stopPoller();
+    suiteRunning = false;
+    resetRunBtn();
+  }
+}
+
+function resetRunBtn() {
+  document.getElementById('runSuiteBtn').disabled = false;
+  document.getElementById('runSuiteBtn').textContent = '▶ Run Suite';
+  ['diffAll','diffEasy','diffMedium'].forEach(function(id) { document.getElementById(id).disabled = false; });
+}
+
+function renderSuiteState(data) {
+  const tasks = data.tasks || [];
+  const total = data.total || tasks.length;
+  const completed = data.completed || 0;
+  const passed = data.passed || 0;
+  const failed = completed - passed;
+  const rate = data.pass_rate != null ? Math.round(data.pass_rate * 100) + '%' : '—';
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+  const isCompleted = data.status === 'completed';
+  setSuiteStatus(isCompleted ? 'completed' : 'running', isCompleted ? 'Completed' : ('Running — ' + completed + ' / ' + total));
+
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statCompleted').textContent = completed;
+  document.getElementById('statPassed').textContent = passed;
+  document.getElementById('statFailed').textContent = failed;
+  document.getElementById('statRate').textContent = rate;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' tasks complete' + (isCompleted ? ' — ' + rate + ' pass rate' : '');
+
+  const body = document.getElementById('scoreBody');
+  if (!tasks.length) return;
+  body.innerHTML = tasks.map(function(t) {
+    const statusCls = t.status;
+    const statusLabel = t.status.charAt(0).toUpperCase() + t.status.slice(1);
+    const diffCls = 'chip-' + t.difficulty;
+    const catCls = CAT_CLS[t.category] || '';
+    const catLabel = CAT_LABELS[t.category] || t.category;
+    const dur = t.duration_seconds != null ? t.duration_seconds + 's' : '—';
+    const steps = t.step_count || '—';
+    const stopReason = t.stop_reason ? t.stop_reason.replace(/_/g, ' ') : (t.error ? 'error' : '—');
+    const viewHref = t.run_id ? '/console' : '';
+    const viewBtn = t.run_id
+      ? '<a class="view-link" href="/console" title="' + esc(t.run_id) + '">View run &#8594;</a>'
+      : '';
+    return '<tr>'
+      + '<td><span class="chip chip-id">' + esc(t.task_id) + '</span></td>'
+      + '<td><span class="chip ' + diffCls + '">' + esc(t.difficulty) + '</span></td>'
+      + '<td><span class="chip ' + catCls + '">' + esc(catLabel) + '</span></td>'
+      + '<td style="color:var(--muted);font-size:11px;">' + esc(t.site) + '</td>'
+      + '<td class="td-intent" title="' + esc(t.intent) + '">' + esc(t.intent) + '</td>'
+      + '<td><div class="status-cell"><div class="task-dot ' + statusCls + '"></div><span class="status-text ' + statusCls + '">' + statusLabel + '</span></div></td>'
+      + '<td style="color:var(--muted)">' + esc(steps) + '</td>'
+      + '<td style="color:var(--muted)">' + esc(dur) + '</td>'
+      + '<td class="td-stop" title="' + esc(t.stop_reason || '') + '">' + esc(stopReason) + '</td>'
+      + '<td>' + viewBtn + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+initCounts();
+renderIdleScoreboard();
+</script>
+</body>
+</html>

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from pydantic import ValidationError
 
@@ -92,8 +95,14 @@ class GeminiPerceptionService(PerceptionService):
                 parsed_artifact_path=str(debug_artifacts.parsed_artifact_path),
                 retry_log_artifact_path=str(debug_artifacts.retry_log_artifact_path),
                 diagnostics_artifact_path=str(debug_artifacts.diagnostics_artifact_path),
+                usage_artifact_path=str(debug_artifacts.usage_artifact_path),
+                usage=_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
             )
             perception = parse_perception_output(raw_output, screenshot.artifact_path)
+            if screenshot.monitor_left or screenshot.monitor_top:
+                perception = perception.model_copy(
+                    update={"monitor_origin": (screenshot.monitor_left, screenshot.monitor_top)}
+                )
             quality_metrics = _quality_metrics(perception)
             low_quality_reason = _low_quality_reason(perception, quality_metrics=quality_metrics)
             if low_quality_reason is None:
@@ -172,6 +181,7 @@ class GeminiPerceptionService(PerceptionService):
             parsed_artifact_path=step_dir / "perception_parsed.json",
             retry_log_artifact_path=step_dir / "perception_retry_log.txt",
             diagnostics_artifact_path=step_dir / "perception_diagnostics.json",
+            usage_artifact_path=step_dir / "perception_usage.json",
         )
 
 
@@ -185,12 +195,14 @@ class _StageArtifactPaths:
         parsed_artifact_path: Path,
         retry_log_artifact_path: Path,
         diagnostics_artifact_path: Path,
+        usage_artifact_path: Path,
     ) -> None:
         self.prompt_artifact_path = prompt_artifact_path
         self.raw_response_artifact_path = raw_response_artifact_path
         self.parsed_artifact_path = parsed_artifact_path
         self.retry_log_artifact_path = retry_log_artifact_path
         self.diagnostics_artifact_path = diagnostics_artifact_path
+        self.usage_artifact_path = usage_artifact_path
 
 
 
@@ -217,8 +229,77 @@ def _normalize_visible_elements(parsed: dict[str, Any]) -> None:
             del element[key]
 
 
+def _fix_spaced_json(text: str) -> str:
+    """Collapse space-separated single characters in malformed Gemini output.
+
+    Gemini occasionally returns JSON with spaces between every character, e.g.
+    '"s u m m a r y": "s e a r c h _ p a g e"'. This iteratively collapses
+    adjacent single-char pairs until the string is stable.
+    """
+    if '"s u m m a r y"' not in text:
+        return text
+    logger.warning("Detected spaced-character Gemini output; collapsing before parse.")
+    pattern = re.compile(r'([a-zA-Z0-9_]) ([a-zA-Z0-9_])')
+    prev = None
+    while prev != text:
+        prev = text
+        text = pattern.sub(r'\1\2', text)
+    return text
+
+
+def _check_coord_bounds(perception: "ScreenPerception", screenshot_path: str) -> None:
+    """Assert that every returned element coordinate lies within the native screenshot
+    dimensions, then log native dims alongside the coord ranges found.
+
+    This is the runtime guard for the coordinate-space contract documented in
+    prompts/perception_prompt.txt. A violation means a model upgrade or prompt
+    edit broke the raw-pixel assumption — coords will be silently wrong at
+    execution time without this check.
+
+    Logs a WARNING on violation (does not raise) so a single bad element does
+    not abort the whole step; the log makes the divergence immediately debuggable.
+    """
+    try:
+        with Image.open(screenshot_path) as img:
+            native_w, native_h = img.size
+    except Exception as exc:
+        logger.debug("coord_bounds_check: could not read %s: %s", screenshot_path, exc)
+        return
+
+    elements = perception.visible_elements
+    if not elements:
+        logger.debug("coord_bounds native=%dx%d  elements=0", native_w, native_h)
+        return
+
+    xs = [e.x for e in elements]
+    ys = [e.y for e in elements]
+    x_max = max(e.x + e.width for e in elements)
+    y_max = max(e.y + e.height for e in elements)
+
+    ox, oy = perception.monitor_origin
+    # Log native dims, monitor origin, and coord ranges on every parse.
+    # If DPI scaling or a model change ever shifts the coordinate space,
+    # this line makes the divergence immediately visible in the log stream.
+    logger.debug(
+        "coord_bounds native=%dx%d  origin=(%d,%d)  x=[%d..%d]  y=[%d..%d]  elements=%d",
+        native_w, native_h, ox, oy, min(xs), x_max, min(ys), y_max, len(elements),
+    )
+
+    violations = [
+        e for e in elements
+        if e.x < 0 or e.y < 0 or e.x + e.width > native_w or e.y + e.height > native_h
+    ]
+    if violations:
+        ids = [e.element_id for e in violations]
+        logger.warning(
+            "coord_bounds VIOLATION native=%dx%d origin=(%d,%d) — %d element(s) exceed "
+            "screen bounds: %s. Check prompts/perception_prompt.txt coordinate-space contract.",
+            native_w, native_h, ox, oy, len(violations), ids,
+        )
+
+
 def parse_perception_output(raw_output: str, screenshot_path: str) -> ScreenPerception:
-    cleaned = _strip_json_fence(raw_output)
+    cleaned = _fix_spaced_json(_strip_json_fence(raw_output))
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
@@ -236,7 +317,9 @@ def parse_perception_output(raw_output: str, screenshot_path: str) -> ScreenPerc
         raw_perception = RawScreenPerception.model_validate(parsed)
     except ValidationError as exc:
         raise PerceptionError("Gemini perception output did not match the strict schema.") from exc
-    return _apply_weak_canonicalization(_canonicalize_perception(raw_perception))
+    perception = _apply_weak_canonicalization(_canonicalize_perception(raw_perception))
+    _check_coord_bounds(perception, screenshot_path)
+    return perception
 
 
 
@@ -272,6 +355,7 @@ def _canonicalize_perception(raw_perception: RawScreenPerception) -> ScreenPerce
         focused_element_id=raw_perception.focused_element_id,
         capture_artifact_path=raw_perception.capture_artifact_path,
         confidence=raw_perception.confidence,
+        monitor_origin=raw_perception.monitor_origin,
     )
 
 
@@ -539,3 +623,12 @@ def _strip_json_fence(raw_output: str) -> str:
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
     return "\n".join(lines).strip()
+
+
+def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
+    if not hasattr(client, "latest_usage"):
+        return None
+    usage = client.latest_usage()
+    if usage is not None:
+        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
+    return usage

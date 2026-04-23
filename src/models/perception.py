@@ -178,6 +178,10 @@ class RawScreenPerception(StrictModel):
     focused_element_id: str | None = Field(default=None, min_length=1)
     capture_artifact_path: str = Field(min_length=1)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Virtual-desktop origin of the monitor this perception was captured from.
+    # Coords in visible_elements are monitor-local; add this offset to get
+    # virtual-desktop coords for pyautogui. Defaults to (0, 0) (primary display).
+    monitor_origin: tuple[int, int] = Field(default=(0, 0))
 
 
 class ScreenPerception(StrictModel):
@@ -189,3 +193,4 @@ class ScreenPerception(StrictModel):
     focused_element_id: str | None = Field(default=None, min_length=1)
     capture_artifact_path: str = Field(min_length=1)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    monitor_origin: tuple[int, int] = Field(default=(0, 0))

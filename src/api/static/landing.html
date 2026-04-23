@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operon</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232563eb'/><text x='16' y='23' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'>O</text></svg>">
+<style>
+  :root {
+    --ink: #0f172a;
+    --muted: #5f7188;
+    --line: rgba(15,23,42,0.08);
+    --blue: #2563eb;
+    --blue-deep: #1d4ed8;
+    --green: #059669;
+    --shadow: 0 4px 24px rgba(15,23,42,0.07);
+    --shadow-lg: 0 26px 80px rgba(15,23,42,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left, rgba(37,99,235,0.10), transparent 30%),
+      radial-gradient(circle at 85% 8%, rgba(5,150,105,0.08), transparent 24%),
+      linear-gradient(180deg, #fbfdff, #f3f7fc 60%, #eef3f9);
+  }
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 28px 28px 72px;
+  }
+
+  /* ── Topbar ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; margin-bottom: 48px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 42px; height: 42px; border-radius: 14px;
+    background: linear-gradient(135deg, var(--blue), var(--green));
+    display: grid; place-items: center;
+    color: white; font-weight: 900; font-size: 17px;
+    box-shadow: 0 8px 20px rgba(37,99,235,0.22);
+  }
+  .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -0.03em; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav a {
+    text-decoration: none; color: var(--muted);
+    border: 1px solid var(--line); background: rgba(255,255,255,0.6);
+    padding: 9px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  .nav a:hover { color: var(--ink); border-color: rgba(15,23,42,0.22); }
+
+  /* ── Hero ── */
+  .hero {
+    position: relative; overflow: hidden;
+    border-radius: 32px;
+    border: 1px solid rgba(255,255,255,0.70);
+    background:
+      radial-gradient(circle at 20% 50%, rgba(37,99,235,0.08), transparent 40%),
+      radial-gradient(circle at 80% 20%, rgba(5,150,105,0.07), transparent 35%),
+      linear-gradient(135deg, rgba(255,255,255,0.92), rgba(255,255,255,0.68));
+    backdrop-filter: blur(20px);
+    box-shadow: var(--shadow-lg);
+    padding: 60px 56px;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  .hero::after {
+    content: ""; position: absolute; inset: 0;
+    background:
+      linear-gradient(rgba(15,23,42,0.022) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15,23,42,0.022) 1px, transparent 1px);
+    background-size: 32px 32px; opacity: 0.5; pointer-events: none;
+  }
+  .hero > * { position: relative; z-index: 1; }
+  .hero h1 {
+    font-size: clamp(52px, 9vw, 96px);
+    line-height: 0.92; letter-spacing: -0.06em;
+    margin-bottom: 22px;
+  }
+  .hero-sub {
+    max-width: 52ch; margin: 0 auto 36px;
+    color: var(--muted); font-size: 17px; line-height: 1.75;
+  }
+  .hero-ctas {
+    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+  }
+  .hero-cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none; font-size: 14px; font-weight: 800;
+    padding: 13px 24px; border-radius: 14px;
+    transition: opacity 0.12s, transform 0.12s;
+  }
+  .hero-cta:hover { opacity: 0.88; transform: translateY(-1px); }
+  .hero-cta.primary {
+    background: linear-gradient(135deg, var(--blue), var(--blue-deep));
+    color: white; box-shadow: 0 8px 24px rgba(37,99,235,0.24);
+  }
+  .hero-cta.outlined {
+    background: rgba(255,255,255,0.80); color: var(--ink);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+  }
+
+  /* ── Cards ── */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .card {
+    position: relative; overflow: hidden;
+    border-radius: 26px; padding: 30px;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.86);
+    backdrop-filter: blur(14px);
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+  }
+  .card-accent {
+    width: 40px; height: 40px; border-radius: 12px;
+    display: grid; place-items: center;
+    font-size: 18px; margin-bottom: 20px; flex-shrink: 0;
+  }
+  .card-accent.blue { background: #dbeafe; }
+  .card-accent.green { background: #d1fae5; }
+  .card-accent.purple { background: #ede9fe; }
+  .card-kicker {
+    font-size: 11px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.10em; color: var(--muted); margin-bottom: 8px;
+  }
+  .card h2 {
+    font-size: 22px; font-weight: 800; letter-spacing: -0.03em;
+    margin-bottom: 12px; line-height: 1.15;
+  }
+  .card p {
+    color: var(--muted); font-size: 14px; line-height: 1.75;
+    flex: 1; margin-bottom: 24px;
+  }
+  .card-features {
+    display: flex; flex-direction: column; gap: 6px;
+    margin-bottom: 24px;
+  }
+  .card-feature {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--muted);
+  }
+  .card-feature::before {
+    content: ""; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--line); flex-shrink: 0;
+  }
+  .card-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    text-decoration: none; font-size: 13px; font-weight: 800;
+    padding: 12px 20px; border-radius: 12px;
+    background: var(--ink); color: white;
+    letter-spacing: -0.01em; align-self: flex-start;
+    transition: opacity 0.12s;
+  }
+  .card-btn:hover { opacity: 0.82; }
+
+  @media (max-width: 1000px) { .cards { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 640px) {
+    .cards { grid-template-columns: 1fr; }
+    .hero { padding: 40px 28px; }
+    .hero-ctas { flex-direction: column; align-items: center; }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">O</div>
+      <div><div class="brand-name">Operon</div></div>
+    </div>
+    <nav class="nav">
+      <a href="/console">Command Center</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/benchmarks">Benchmarks</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h1>Run. Analyze.<br>Benchmark.</h1>
+    <p class="hero-sub">
+      Three purpose-built surfaces for browser and desktop automation —
+      run tasks, track spend, and evaluate performance against WebArena.
+    </p>
+    <div class="hero-ctas">
+      <a class="hero-cta primary" href="/console">Open Command Center</a>
+      <a class="hero-cta outlined" href="/dashboard">Usage Dashboard</a>
+      <a class="hero-cta outlined" href="/benchmarks">Benchmarks</a>
+    </div>
+  </section>
+
+  <section class="cards">
+    <article class="card">
+      <div class="card-accent blue">&#9654;</div>
+      <div class="card-kicker">Execution</div>
+      <h2>Command Center</h2>
+      <p>Run browser and desktop tasks, monitor state in real time, and manage active automation sessions.</p>
+      <div class="card-features">
+        <span class="card-feature">Browser &amp; desktop modes</span>
+        <span class="card-feature">Live step log</span>
+        <span class="card-feature">Human-in-the-loop support</span>
+      </div>
+      <a class="card-btn" href="/console">Open &rarr;</a>
+    </article>
+
+    <article class="card">
+      <div class="card-accent green">&#36;</div>
+      <div class="card-kicker">Billing</div>
+      <h2>Usage Dashboard</h2>
+      <p>Track month-to-date spend, model breakdown, daily cost trend, and recent run activity.</p>
+      <div class="card-features">
+        <span class="card-feature">MTD spend tracking</span>
+        <span class="card-feature">Per-model cost breakdown</span>
+        <span class="card-feature">Run ledger</span>
+      </div>
+      <a class="card-btn" href="/dashboard">Open &rarr;</a>
+    </article>
+
+    <article class="card">
+      <div class="card-accent purple">&#9733;</div>
+      <div class="card-kicker">Evaluation</div>
+      <h2>Benchmarks</h2>
+      <p>Run WebArena task suites and watch a live scoreboard track pass rate, steps, and duration per task.</p>
+      <div class="card-features">
+        <span class="card-feature">12 tasks — Easy &amp; Medium</span>
+        <span class="card-feature">Sequential suite runner</span>
+        <span class="card-feature">Live pass-rate scoreboard</span>
+      </div>
+      <a class="card-btn" href="/benchmarks">Open &rarr;</a>
+    </article>
+  </section>
+
+</main>
+</body>
+</html>

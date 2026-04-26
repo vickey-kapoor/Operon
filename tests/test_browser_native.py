@@ -37,6 +37,8 @@ async def test_close_session_finalizes_single_recorded_video(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+
     class FakePage:
         url = "about:blank"
 
@@ -46,6 +48,7 @@ async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, mon
             self.evaluate = AsyncMock()
             self.keyboard = SimpleNamespace(press=AsyncMock())
             self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
 
     class FakeContext:
         def __init__(self) -> None:
@@ -84,12 +87,11 @@ async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, mon
 
     executor = NativeBrowserExecutor(
         artifact_dir=tmp_path,
-        viewport_width=1440,
-        viewport_height=900,
+        viewport_width=1920,
+        viewport_height=1080,
         headless=False,
     )
     executor._bring_browser_to_foreground = AsyncMock()
-    executor._headed_launch_size = lambda: (1920, 1080)
     executor._detect_browser_pid = lambda *_args: 4321
 
     session = await executor._ensure_session("run-123")
@@ -99,7 +101,7 @@ async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, mon
     assert session.video_dir.exists()
     assert manager.playwright.browser.context_kwargs["viewport"] == {"width": 1920, "height": 1080}
     assert manager.playwright.browser.context_kwargs["record_video_dir"] == str(session.video_dir)
-    assert manager.playwright.browser.context_kwargs["record_video_size"] == {"width": 1440, "height": 900}
+    assert manager.playwright.browser.context_kwargs["record_video_size"] == {"width": 1920, "height": 1080}
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=False,
         args=["--window-size=1920,1080", "--window-position=0,0"],
@@ -120,6 +122,7 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
             self.evaluate = AsyncMock()
             self.keyboard = SimpleNamespace(press=AsyncMock())
             self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
 
     class FakeContext:
         def __init__(self) -> None:
@@ -158,7 +161,7 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
 
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=True,
-        args=["--window-size=1440,900"],
+        args=["--window-size=1440,900", "--window-position=0,0"],
     )
 
 
@@ -166,6 +169,8 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
 async def test_ensure_session_closes_stale_sessions_before_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+
     class FakePage:
         url = "about:blank"
 
@@ -175,6 +180,7 @@ async def test_ensure_session_closes_stale_sessions_before_launch(
             self.evaluate = AsyncMock()
             self.keyboard = SimpleNamespace(press=AsyncMock())
             self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
 
     class FakeContext:
         def __init__(self) -> None:
@@ -243,6 +249,7 @@ async def test_ensure_session_forces_headless_in_test_safe_mode(
             self.evaluate = AsyncMock()
             self.keyboard = SimpleNamespace(press=AsyncMock())
             self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
 
     class FakeContext:
         def __init__(self) -> None:
@@ -283,7 +290,7 @@ async def test_ensure_session_forces_headless_in_test_safe_mode(
 
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=True,
-        args=["--window-size=1440,900"],
+        args=["--window-size=1440,900", "--window-position=0,0"],
     )
 
 

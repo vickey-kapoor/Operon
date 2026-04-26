@@ -207,7 +207,7 @@ class LegacyOperonContractAdapter:
             plan_id=planner.plan_id,
             attempt_id=f"{planner.plan_id}:attempt:{attempt_index}",
             executor=executor,
-            action=ActorAction.model_validate(planner.action.model_dump()),
+            action=ActorAction.model_construct(**planner.action.model_dump()),
             status=status,
             failure_type=failure_type,
             details=executed_action.detail,

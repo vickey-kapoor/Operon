@@ -173,8 +173,18 @@ async def test_recovery_focus_subgoal_drives_next_policy_click(tmp_path: Path) -
         "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nRetry: {retry_counts}\nPerception: {perception_json}",
         encoding="utf-8",
     )
+    # After removing _focus_before_type_rule, the LLM is called for the
+    # recovery step. The stub returns a CLICK on subject-input, which is what
+    # a well-prompted LLM would choose given subgoal="focus subject-input".
+    class _ClickStubClient:
+        async def generate_policy(self, prompt: str) -> str:
+            return '{"action":{"action_type":"click","target_element_id":"subject-input","x":470,"y":194},"rationale":"Focus subject-input.","confidence":0.9,"active_subgoal":"focus subject-input"}'
+
+        async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
+            raise NotImplementedError
+
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=_UnusedGeminiClient(), prompt_path=prompt_path),
+        delegate=GeminiPolicyService(gemini_client=_ClickStubClient(), prompt_path=prompt_path),
         memory_store=FileBackedMemoryStore(root_dir=tmp_path / "runs"),
     )
     perception_path = tmp_path / "runs" / "run-6" / "step_2" / "before.png"

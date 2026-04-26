@@ -1,5 +1,6 @@
 """Agent loop orchestrator for the vision-driven automation workflow."""
 
+import asyncio
 import logging
 import os
 import shutil
@@ -24,6 +25,7 @@ from src.agent.verifier import VerifierService
 from src.agent.video_verifier import VideoVerifier
 from src.clients.gemini import GeminiClient
 from src.executor.browser import Executor
+from src.models.capture import CaptureFrame
 from src.models.common import (
     FailureCategory,
     LoopStage,
@@ -33,14 +35,18 @@ from src.models.common import (
     StepRequest,
     StopReason,
 )
-from src.models.execution import ExecutedAction, ExecutionReresolutionTrace
+from src.models.execution import (
+    AnchorSnapInfo,
+    ExecutedAction,
+    ExecutionReresolutionTrace,
+)
 from src.models.logs import (
     FailureRecord,
     ModelDebugArtifacts,
     PreStepFailureLog,
     StepLog,
 )
-from src.models.perception import PageHint, UIElement, UIElementType
+from src.models.perception import UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
@@ -58,6 +64,8 @@ from src.store.run_store import RunStore
 logger = logging.getLogger(__name__)
 
 _TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
+_LIVENESS_RETRY_MAX = 3
+_LIVENESS_RETRY_SLEEP_S = 1.5
 
 
 def _trace(stage: str, detail: str = "") -> None:
@@ -114,9 +122,10 @@ class AgentLoop:
         self.verifier_service = verifier_service
         self.recovery_manager = recovery_manager
         self.memory_store = memory_store
+        self.gemini_client = gemini_client
         self.target_selector = DeterministicTargetSelector()
         self.video_verifier: VideoVerifier | None = (
-            VideoVerifier(gemini_client) if gemini_client is not None else None
+            VideoVerifier(gemini_client) if isinstance(gemini_client, GeminiClient) else None
         )
         self.reflector: PostRunReflector | None = (
             PostRunReflector(memory_store) if memory_store is not None else None
@@ -125,6 +134,9 @@ class AgentLoop:
         self.unified_orchestrator = unified_orchestrator or UnifiedOrchestrator()
         self.legacy_contract_adapter = LegacyOperonContractAdapter(environment=environment)
         self.unified_states: dict[str, AgentRuntimeState] = {}
+        # Per-run anchor cache: element_id → (cx, cy) of the last successful click.
+        # Used by _apply_coord_anchor to suppress small perception jitter on TYPE actions.
+        self._coord_anchors: dict[str, dict[str, tuple[int, int]]] = {}
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -139,6 +151,7 @@ class AgentLoop:
             intent=request.intent,
             start_url=request.start_url,
             headless=request.headless,
+            benchmark=request.benchmark,
         )
         _trace("START_RUN", f"run_id={record.run_id}")
         if hasattr(self.executor, "set_current_run_id"):
@@ -189,7 +202,10 @@ class AgentLoop:
             if state.step_count >= max_steps:
                 state.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
                 updated = await self.run_store.set_status(state.run_id, RunStatus.FAILED)
-                await self._cleanup_completed_run(state.run_id)
+                try:
+                    await self._cleanup_completed_run(state.run_id)
+                except Exception as exc:
+                    logger.warning("cleanup after max_steps failed: %s", exc)
                 return RunResponse(
                     run_id=updated.run_id,
                     status=updated.status,
@@ -233,6 +249,23 @@ class AgentLoop:
         after_artifact_path = self._after_artifact_path(record.run_id, step_index)
         self._prepare_step_artifacts(record.run_id, step_index, before_artifact_path, after_artifact_path)
 
+        if step_index == 1 and not self._test_safe_mode_enabled():
+            logger.info("Bootstrap warmup: Allowing OS and Browser window to hydrate...")
+            if (
+                self.environment is UnifiedEnvironment.BROWSER
+                and not record.start_url
+                and hasattr(self.executor, "execute")
+            ):
+                logger.info("Bootstrap warmup: no start URL — navigating to google.com")
+                await self.executor.execute(
+                    AgentAction(action_type=ActionType.NAVIGATE, url="https://www.google.com")
+                )
+            await asyncio.sleep(2.5)
+
+        if record.force_fresh_perception:
+            record.force_fresh_perception = False
+            await asyncio.sleep(0.5)  # let UI settle after visual perturbation
+
         _trace("  1 CAPTURE", "taking screenshot via CaptureService")
         _t0 = time.perf_counter()
         frame = await self.capture_service.capture(record)
@@ -245,7 +278,7 @@ class AgentLoop:
         _trace("  2 PERCEIVE", f"sending screenshot to Gemini  backend={type(self.perception_service).__name__}")
         _t0 = time.perf_counter()
         try:
-            perception = await self.perception_service.perceive(frame, record)
+            perception = await self._perceive_with_liveness_retry(record, frame)
         except Exception as exc:
             _trace("  2 PERCEIVE FAIL", str(exc))
             return await self._record_pre_step_perception_failure(
@@ -262,10 +295,14 @@ class AgentLoop:
         _trace("  3 POLICY", "PolicyCoordinator -> rule engine first, then LLM fallback")
         _t0 = time.perf_counter()
         decision = await self.policy_service.choose_action(state, perception)
-        decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})
+        _enriched = self._attach_target_context(decision.action, perception, state.benchmark)
+        if _enriched is not decision.action:
+            decision = decision.model_copy(update={"action": _enriched})
         _trace("  3 POLICY OK", f"{time.perf_counter()-_t0:.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
+        _anchor_snap_info: AnchorSnapInfo | None = None
+        decision, _anchor_snap_info = self._apply_coord_anchor(record.run_id, decision)
 
         # Human-in-the-loop: pause the run and wait for user input
         if decision.action.action_type is ActionType.WAIT_FOR_USER:
@@ -304,14 +341,33 @@ class AgentLoop:
                     use_unified_executor=True,
                 )
                 _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{time.perf_counter()-_t0:.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
+                if executed_action.success and decision.action.action_type is ActionType.CLICK:
+                    self._update_coord_anchor(record.run_id, executed_action.action)
             else:
                 _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
                 executed_action = blocked_action
             executed_action = self._relocate_after_artifact(executed_action, after_artifact_path)
             _trace("  5 VERIFY", "DeterministicVerifierService checking outcome")
             verification = await self.verifier_service.verify(state, decision, executed_action)
+            if verification.status is VerificationStatus.PENDING:
+                verification = await self._wait_for_page_load(
+                    record=record,
+                    state=state,
+                    decision=decision,
+                    executed_action=executed_action,
+                    before_artifact_path=before_artifact_path,
+                )
             _trace("  5 VERIFY OK", f"status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
             verification_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "verification", self.verifier_service)
+
+            # Compute screen change ratio once; reused by video verify and progress tracking.
+            from src.agent.screen_diff import compute_screen_change_ratio as _scr
+            _after_path = executed_action.artifact_path
+            _screen_change_ratio: float | None = (
+                _scr(before_artifact_path, _after_path)
+                if before_artifact_path and _after_path
+                else None
+            )
 
             # Video verification: when screen didn't change, record and ask Gemini
             if not verification.stop_condition_met and self.video_verifier is not None:
@@ -321,6 +377,7 @@ class AgentLoop:
                     executed_action=executed_action,
                     before_artifact_path=before_artifact_path,
                     step_index=step_index,
+                    screen_change_ratio=_screen_change_ratio,
                 )
                 if video_result is not None:
                     _trace("  5b VIDEO_VERIFY OK", f"status={video_result.status.value!r}")
@@ -404,13 +461,18 @@ class AgentLoop:
             if hasattr(self.policy_service, "prepare_hints"):
                 self.policy_service.prepare_hints(state, None)
             self._inject_stagnation_hint(state)
-            perception = await self.perception_service.perceive(frame, state)
+            perception = await self._perceive_with_liveness_retry(state, frame)
             perception = self._infer_focused_element(state, perception)
             state.observation_history.append(perception)
             self._sync_progress_state_with_perception(state, perception)
             decision = await self.policy_service.choose_action(state, perception)
-            decision = decision.model_copy(update={"action": self._attach_target_context(decision.action, perception)})
+            _enriched = self._attach_target_context(decision.action, perception, state.benchmark)
+            if _enriched is not decision.action:
+                decision = decision.model_copy(update={"action": _enriched})
             state.current_subgoal = decision.active_subgoal
+            decision, _retry_snap = self._apply_coord_anchor(record.run_id, decision)
+            if _retry_snap is not None:
+                _anchor_snap_info = _retry_snap
             attempt_index += 1
 
         _trace("  7 RECOVER", f"RuleBasedRecoveryManager  verification={verification.status.value!r}")
@@ -429,6 +491,7 @@ class AgentLoop:
             recovery=recovery,
             step_index=step_index,
             before_artifact_path=before_artifact_path,
+            screen_change_ratio=_screen_change_ratio,
         )
         recovery = self._apply_progress_stop_guard(recovery, progress_trace)
         progress_trace = progress_trace.model_copy(
@@ -441,6 +504,9 @@ class AgentLoop:
             }
         )
         progress_trace_artifact_path = self._persist_progress_trace(record.run_id, step_index, progress_trace)
+        if _anchor_snap_info is not None:
+            executed_action = executed_action.model_copy(update={"anchor_snap": _anchor_snap_info})
+
         failure = self._build_failure_record(state, decision, executed_action, verification, recovery)
 
         step_log = StepLog(
@@ -451,12 +517,13 @@ class AgentLoop:
             after_artifact_path=after_artifact_path,
             perception_debug=perception_debug,
             policy_debug=policy_debug,
+            verification_debug=verification_debug,
             perception=perception,
             policy_decision=decision,
             executed_action=executed_action,
             verification_result=verification,
             recovery_decision=recovery,
-            progress_state=state.progress_state.model_copy(),
+            progress_state=state.progress_state,
             progress_trace_artifact_path=progress_trace_artifact_path,
             failure=failure,
         )
@@ -482,13 +549,16 @@ class AgentLoop:
                 perception_debug.prompt_artifact_path,
                 perception_debug.raw_response_artifact_path,
                 perception_debug.parsed_artifact_path,
+                *( [perception_debug.usage_artifact_path] if perception_debug.usage_artifact_path else [] ),
                 *( [perception_debug.diagnostics_artifact_path] if perception_debug.diagnostics_artifact_path else [] ),
                 policy_debug.prompt_artifact_path,
                 policy_debug.raw_response_artifact_path,
                 policy_debug.parsed_artifact_path,
+                *( [policy_debug.usage_artifact_path] if policy_debug.usage_artifact_path else [] ),
                 verification_debug.prompt_artifact_path,
                 verification_debug.raw_response_artifact_path,
                 verification_debug.parsed_artifact_path,
+                *( [verification_debug.usage_artifact_path] if verification_debug.usage_artifact_path else [] ),
                 *( [verification_debug.diagnostics_artifact_path] if verification_debug.diagnostics_artifact_path else [] ),
                 *( [executed_action.execution_trace_artifact_path] if executed_action.execution_trace_artifact_path else [] ),
                 progress_trace_artifact_path,
@@ -512,7 +582,11 @@ class AgentLoop:
         _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
         updated = await self.run_store.set_status(record.run_id, final_status)
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
-            await self._cleanup_completed_run(record.run_id)
+            self._coord_anchors.pop(record.run_id, None)
+            try:
+                await self._cleanup_completed_run(record.run_id)
+            except Exception as exc:
+                logger.warning("cleanup after %s failed, continuing: %s", final_status.value, exc)
 
         # Post-run reflection: analyze completed/failed runs and learn
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED} and self.reflector is not None:
@@ -545,7 +619,25 @@ class AgentLoop:
         before_artifact_path: str,
         after_artifact_path: str,
     ) -> RunResponse:
-        """Pause the run and set status to WAITING_FOR_USER."""
+        """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer."""
+        from src.agent.hitl import (
+            generate_hitl_message,
+            notify_desktop,
+            post_hitl_webhook,
+            start_escalation_timer,
+        )
+
+        # Generate a human-readable LLM explanation of why we're pausing.
+        element_names = [e.primary_name for e in perception.visible_elements[:12]]
+        hitl_message = await generate_hitl_message(
+            intent=state.intent,
+            page_hint=perception.page_hint.value,
+            url=state.start_url,
+            visible_element_names=element_names,
+            gemini_client=self.gemini_client,
+        )
+        state.hitl_message = hitl_message
+
         executed_action = ExecutedAction(
             action=decision.action,
             success=True,
@@ -554,7 +646,8 @@ class AgentLoop:
         verification = await self.verifier_service.verify(state, decision, executed_action)
         recovery = RecoveryDecision(
             strategy=RecoveryStrategy.STOP,
-            message=f"Waiting for user: {decision.action.text}",
+            message=hitl_message,
+            failure_category=FailureCategory.HUMAN_INTERVENTION_REQUIRED,
             terminal=False,
             recoverable=True,
             stop_reason=StopReason.WAITING_FOR_USER,
@@ -580,12 +673,82 @@ class AgentLoop:
         state.step_count = step_index
         await self.run_store.save_state(state)
         updated = await self.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
+
+        # Fire desktop notification (best-effort).
+        notify_desktop(
+            title="Operon needs you",
+            message=hitl_message[:120],
+        )
+
+        # Start escalating re-notification in the background.
+        run_store = self.run_store
+        run_id = record.run_id
+
+        # POST webhook (reliable channel — always attempted, always logged).
+        asyncio.create_task(
+            post_hitl_webhook(
+                run_id=run_id,
+                intent=state.intent,
+                page_hint=perception.page_hint.value,
+                message=hitl_message,
+                url=state.start_url,
+            )
+        )
+
+        async def _get_status():
+            s = await run_store.get_run(run_id)
+            return s.status.value if s else None
+
+        def _re_notify():
+            notify_desktop("Operon still waiting", f"Run {run_id[:8]}… still needs your help.")
+
+        task = asyncio.create_task(
+            start_escalation_timer(run_id, get_status_fn=_get_status, notify_fn=_re_notify)
+        )
+        task.add_done_callback(
+            lambda t: logger.warning("HITL escalation error: %s", t.exception())
+            if not t.cancelled() and t.exception() is not None else None
+        )
+
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    async def _perceive_with_liveness_retry(self, state, initial_frame: CaptureFrame):
+        """Perceive with flag-based liveness retries for transient zero-element frames.
+
+        When perception returns is_empty_frame=True (blank/loading screen), re-capture
+        and retry up to _LIVENESS_RETRY_MAX times before raising PerceptionLowQualityError.
+        Other quality failures (unlabeled elements, etc.) propagate immediately.
+        The liveness_retries count is stamped onto the returned ScreenPerception so it
+        appears in run.jsonl for observability.
+        """
+        frame = initial_frame
+        for attempt in range(1, _LIVENESS_RETRY_MAX + 1):
+            result = await self.perception_service.perceive(frame, state)
+            if not result.is_empty_frame:
+                liveness_retries = attempt - 1
+                if liveness_retries > 0:
+                    logger.info("liveness_retry: resolved after %d retries", liveness_retries)
+                    return result.model_copy(update={"liveness_retries": liveness_retries})
+                return result
+
+            if attempt == _LIVENESS_RETRY_MAX:
+                raise PerceptionLowQualityError(
+                    f"no visible elements after {_LIVENESS_RETRY_MAX} liveness retries"
+                )
+            logger.warning(
+                "liveness_retry=%d/%d: zero elements detected — waiting %.1fs to recapture",
+                attempt,
+                _LIVENESS_RETRY_MAX,
+                _LIVENESS_RETRY_SLEEP_S,
+            )
+            await asyncio.sleep(_LIVENESS_RETRY_SLEEP_S)
+            frame = await self.capture_service.capture(state)
+        raise PerceptionLowQualityError("no visible elements after all liveness retries")  # pragma: no cover
 
     async def _record_pre_step_perception_failure(
         self,
@@ -629,13 +792,17 @@ class AgentLoop:
                 perception_debug.prompt_artifact_path,
                 perception_debug.raw_response_artifact_path,
                 perception_debug.parsed_artifact_path,
+                *( [perception_debug.usage_artifact_path] if perception_debug.usage_artifact_path else [] ),
                 *( [perception_debug.diagnostics_artifact_path] if perception_debug.diagnostics_artifact_path else [] ),
                 *( [perception_debug.retry_log_artifact_path] if perception_debug.retry_log_artifact_path else [] ),
             ]
         )
         record.stop_reason = stop_reason
         updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
-        await self._cleanup_completed_run(record.run_id)
+        try:
+            await self._cleanup_completed_run(record.run_id)
+        except Exception as exc:
+            logger.warning("cleanup after pre-step failure: %s", exc)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -683,6 +850,7 @@ class AgentLoop:
         executed_action,
         before_artifact_path: str,
         step_index: int,
+        screen_change_ratio: float | None = None,
     ) -> VerificationResult | None:
         """Record a video and verify with Gemini when screen_diff shows no change."""
         if not executed_action.success:
@@ -692,12 +860,13 @@ class AgentLoop:
         if not before_artifact_path or not after_path:
             return None
 
-        from src.agent.screen_diff import (
-            SCREEN_CHANGE_THRESHOLD,
-            compute_screen_change_ratio,
-        )
+        from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD
 
-        ratio = compute_screen_change_ratio(before_artifact_path, after_path)
+        if screen_change_ratio is None:
+            from src.agent.screen_diff import compute_screen_change_ratio
+            screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
+
+        ratio = screen_change_ratio
         if ratio >= SCREEN_CHANGE_THRESHOLD:
             return None  # Screen changed — no video needed
 
@@ -735,43 +904,60 @@ class AgentLoop:
             video_path=video_path, action=action, intent=state.intent,
         )
 
-        if video_result.did_it_work:
-            if self._passive_wait_needs_more_signal(
-                state,
-                action,
-                video_result.what_happened,
-            ):
-                return VerificationResult(
-                    status=VerificationStatus.UNCERTAIN,
-                    expected_outcome_met=False,
-                    stop_condition_met=False,
-                    reason=f"Video verified the wait action, but it did not reveal enough new browser-task signal: {video_result.what_happened}",
-                    failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
-                    video_verified=True,
-                    video_detail=video_result.what_happened,
-                    failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
-                    failure_stage=LoopStage.VERIFY,
-                )
+        confidence = video_result.confidence_score
+        motion_detail = f"[{video_result.motion_class}, confidence={confidence:.2f}] {video_result.what_happened}"
+
+        if confidence < 0.2:
+            # Hung app or Gemini confirmed no effect — hard failure.
             return VerificationResult(
-                status=VerificationStatus.SUCCESS,
-                expected_outcome_met=True,
+                status=VerificationStatus.FAILURE,
+                expected_outcome_met=False,
                 stop_condition_met=False,
-                reason=f"Video verified: {video_result.what_happened}",
-                recovery_hint="advance",
+                reason=f"Video showed no effect: {motion_detail}",
+                failure_type=VerificationFailureType.ACTION_FAILED,
+                recovery_hint="retry_same_step",
+                video_verified=True,
+                video_detail=video_result.suggested_next_action,
+                failure_category=FailureCategory.EXECUTION_ERROR,
+                failure_stage=LoopStage.VERIFY,
+            )
+
+        if confidence < 0.5:
+            # Loading spinner or ambiguous — stay uncertain so recovery can wait.
+            return VerificationResult(
+                status=VerificationStatus.UNCERTAIN,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason=f"Video detected loading motion; waiting for completion: {motion_detail}",
+                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+                recovery_hint="wait_and_retry",
                 video_verified=True,
                 video_detail=video_result.what_happened,
+                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+                failure_stage=LoopStage.VERIFY,
+            )
+
+        # High confidence: action produced directed progress.
+        if self._passive_wait_needs_more_signal(state, action, video_result.what_happened):
+            return VerificationResult(
+                status=VerificationStatus.UNCERTAIN,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason=f"Video verified the wait action, but it did not reveal enough new browser-task signal: {motion_detail}",
+                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+                video_verified=True,
+                video_detail=video_result.what_happened,
+                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+                failure_stage=LoopStage.VERIFY,
             )
         return VerificationResult(
-            status=VerificationStatus.FAILURE,
-            expected_outcome_met=False,
+            status=VerificationStatus.SUCCESS,
+            expected_outcome_met=True,
             stop_condition_met=False,
-            reason=f"Video showed no effect: {video_result.what_happened}",
-            failure_type=VerificationFailureType.ACTION_FAILED,
-            recovery_hint="retry_same_step",
+            reason=f"Video verified: {motion_detail}",
+            recovery_hint="advance",
             video_verified=True,
-            video_detail=video_result.suggested_next_action,
-            failure_category=FailureCategory.EXECUTION_ERROR,
-            failure_stage=LoopStage.VERIFY,
+            video_detail=video_result.what_happened,
         )
 
     @classmethod
@@ -812,6 +998,77 @@ class AgentLoop:
         if latest.visible_elements:
             return False
         return str(latest.page_hint) == "unknown"
+
+    _PENDING_BACKOFF_DELAYS: tuple[float, ...] = (2.0, 4.0, 8.0)
+
+    async def _wait_for_page_load(
+        self,
+        *,
+        record,
+        state,
+        decision,
+        executed_action,
+        before_artifact_path: str,
+    ) -> VerificationResult:
+        """Exponential-backoff re-verify loop for PENDING (page-loading) states.
+
+        Waits 2s → 4s → 8s (14s total) between re-captures.  Downgrades to
+        UNCERTAIN if the page never settles within the budget.
+        """
+        from src.agent.perception import PerceptionLowQualityError
+
+        retries = 0
+        for delay in self._PENDING_BACKOFF_DELAYS:
+            retries += 1
+            _trace("  5-PENDING wait", f"retry={retries} delay={delay:.0f}s")
+            logger.info("patience_retry=%d: waiting %.0fs for page load (run=%s)", retries, delay, record.run_id[:8])
+            await asyncio.sleep(delay)
+            try:
+                frame = await self.capture_service.capture(record)
+                fresh_perception = await self._perceive_with_liveness_retry(record, frame)
+            except PerceptionLowQualityError:
+                # Zero-element liveness retries exhausted — page still blank; keep waiting.
+                logger.info("patience_retry=%d: perception still blank after liveness retries", retries)
+                continue
+            except Exception as exc:
+                logger.warning("_wait_for_page_load: perception error: %s", exc)
+                continue
+
+            if fresh_perception.is_empty_frame:
+                # Guard: shouldn't reach here after liveness retries, but handle defensively.
+                logger.info("patience_retry=%d: empty frame — still loading", retries)
+                continue
+
+            if fresh_perception.liveness_retries > 0:
+                logger.info(
+                    "patience_retry=%d: page settled after %d liveness retries",
+                    retries, fresh_perception.liveness_retries,
+                )
+
+            # Update state observation so the verifier sees fresh elements.
+            fresh_perception = self._infer_focused_element(record, fresh_perception)
+            state.observation_history.append(fresh_perception)
+            self._sync_progress_state_with_perception(state, fresh_perception)
+            _trace("  5-PENDING re-verify", f"retry={retries} elements={len(fresh_perception.visible_elements)} hint={fresh_perception.page_hint.value!r}")
+            verification = await self.verifier_service.verify(state, decision, executed_action)
+            if verification.status is not VerificationStatus.PENDING:
+                _trace("  5-PENDING resolved", f"retry={retries} status={verification.status.value!r}")
+                logger.info("patience_retry=%d: resolved to %s", retries, verification.status.value)
+                return verification.model_copy(update={"patience_retries": retries})
+
+        # Budget exhausted — page never settled; downgrade to UNCERTAIN.
+        _trace("  5-PENDING timeout", f"exhausted after {retries} retries — downgrading to UNCERTAIN")
+        logger.warning("patience_retry: budget exhausted after %d retries (run=%s)", retries, record.run_id[:8])
+        return VerificationResult(
+            status=VerificationStatus.UNCERTAIN,
+            expected_outcome_met=False,
+            stop_condition_met=False,
+            reason=f"Page did not settle within the 14s loading budget ({retries} patience retries); treating as uncertain.",
+            failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+            failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+            failure_stage=LoopStage.VERIFY,
+            patience_retries=retries,
+        )
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
         if not hasattr(self.executor, "aclose_run"):
@@ -965,6 +1222,73 @@ class AgentLoop:
             return self._intent_reresolve_action(action, perception, retry_reason)
         return _RetryResolution(action=self._refresh_action_coordinates(action, perception), trace=None)
 
+    # ------------------------------------------------------------------
+    # Coordinate anchor cache
+    # ------------------------------------------------------------------
+
+    _ANCHOR_SNAP_THRESHOLD_PX: int = 50
+
+    def _update_coord_anchor(self, run_id: str, action: AgentAction) -> None:
+        """Record the click coordinates for an element as the known-good anchor.
+
+        Called after every successful CLICK so subsequent TYPE actions on the same
+        element can snap back to this position if perception jitter shifts the
+        reported coordinates by a small amount.
+        """
+        target_id = action.target_element_id
+        if target_id is None or action.x is None or action.y is None:
+            return
+        self._coord_anchors.setdefault(run_id, {})[target_id] = (action.x, action.y)
+        logger.debug("coord_anchor: stored %r → (%d, %d) for run %s", target_id, action.x, action.y, run_id[:8])
+
+    def _apply_coord_anchor(
+        self,
+        run_id: str,
+        decision,
+    ) -> tuple:
+        """Snap TYPE action coordinates to the post-click anchor when drift is small.
+
+        Returns (possibly-modified decision, AnchorSnapInfo | None).  The snap only
+        fires when all of the following hold:
+        - Action is TYPE with a target_element_id and x/y coordinates.
+        - An anchor exists for that element_id in this run.
+        - Euclidean distance between fresh perception coords and the anchor is
+          strictly less than _ANCHOR_SNAP_THRESHOLD_PX (small jitter, not a
+          genuine element move).
+        """
+        action = decision.action
+        if action.action_type is not ActionType.TYPE:
+            return decision, None
+        target_id = action.target_element_id
+        if target_id is None or action.x is None or action.y is None:
+            return decision, None
+        anchors = self._coord_anchors.get(run_id, {})
+        anchor = anchors.get(target_id)
+        if anchor is None:
+            return decision, None
+        ax, ay = anchor
+        drift = ((action.x - ax) ** 2 + (action.y - ay) ** 2) ** 0.5
+        if drift >= self._ANCHOR_SNAP_THRESHOLD_PX:
+            logger.debug(
+                "coord_anchor: %r drift=%.1fpx ≥ threshold — trusting fresh perception",
+                target_id, drift,
+            )
+            return decision, None
+        logger.info(
+            "snap_to_anchor: %r drift=%.1fpx original=(%d,%d) anchor=(%d,%d) run=%s",
+            target_id, drift, action.x, action.y, ax, ay, run_id[:8],
+        )
+        snapped_action = action.model_copy(update={"x": ax, "y": ay})
+        snap_info = AnchorSnapInfo(
+            element_id=target_id,
+            original_x=action.x,
+            original_y=action.y,
+            anchored_x=ax,
+            anchored_y=ay,
+            drift_px=round(drift, 1),
+        )
+        return decision.model_copy(update={"action": snapped_action}), snap_info
+
     @staticmethod
     def _refresh_action_coordinates(action, perception):
         target_id = action.target_element_id
@@ -999,12 +1323,16 @@ class AgentLoop:
         )
         return retried.model_copy(update={"execution_trace": merged_trace})
 
-    def _attach_target_context(self, action: AgentAction, perception) -> AgentAction:
+    def _attach_target_context(self, action: AgentAction, perception, benchmark: str | None = None) -> AgentAction:
         target = self._resolve_action_target(action, perception)
         normalized_action = self._normalize_action_target_coordinates(action, target)
+        # Apply monitor origin: perception coords are monitor-local; pyautogui needs
+        # virtual-desktop coords. This is the single transform point — perception
+        # and policy layers stay in monitor-local space throughout.
+        normalized_action = self._apply_monitor_origin(normalized_action, perception)
         if normalized_action.target_context is not None:
             return normalized_action
-        intent = self._infer_target_intent(action, target, perception)
+        intent = self._infer_target_intent(action, target, perception, benchmark)
         if target is None or intent is None:
             return normalized_action
         context = self.target_selector.build_selection_context(
@@ -1014,6 +1342,30 @@ class AgentLoop:
             page_signature=self._page_signature(perception),
         )
         return normalized_action.model_copy(update={"target_context": context})
+
+    @staticmethod
+    def _apply_monitor_origin(action: AgentAction, perception) -> AgentAction:
+        """Translate monitor-local coords to virtual-desktop coords by adding the
+        monitor origin stored in perception. No-op when origin is (0, 0).
+
+        Covers x/y (start point) and x_end/y_end (drag/screenshot_region end point).
+        """
+        origin = getattr(perception, "monitor_origin", (0, 0))
+        ox, oy = origin
+        if ox == 0 and oy == 0:
+            return action
+        updates: dict = {}
+        if action.x is not None:
+            updates["x"] = action.x + ox
+        if action.y is not None:
+            updates["y"] = action.y + oy
+        if action.x_end is not None:
+            updates["x_end"] = action.x_end + ox
+        if action.y_end is not None:
+            updates["y_end"] = action.y_end + oy
+        if not updates:
+            return action
+        return action.model_copy(update=updates)
 
     @staticmethod
     def _normalize_action_target_coordinates(action: AgentAction, target: UIElement | None) -> AgentAction:
@@ -1122,7 +1474,8 @@ class AgentLoop:
             return sorted(containing, key=lambda element: (element.y, element.x, element.element_id))[0]
         return None
 
-    def _infer_target_intent(self, action: AgentAction, target: UIElement | None, perception) -> TargetIntent | None:
+    def _infer_target_intent(self, action: AgentAction, target: UIElement | None, perception, benchmark: str | None = None) -> TargetIntent | None:
+        from src.benchmarks.registry import BENCHMARK_REGISTRY
         if target is None:
             return None
         if action.action_type is ActionType.CLICK:
@@ -1139,29 +1492,21 @@ class AgentLoop:
             target_role=target.role,
             expected_element_types=[target.element_type],
             value_to_type=action.text if action.action_type in {ActionType.TYPE, ActionType.SELECT} else None,
-            expected_section=self._expected_section(perception.page_hint),
+            expected_section=BENCHMARK_REGISTRY.get_section(benchmark, perception.page_hint),
         )
-
-    @staticmethod
-    def _expected_section(page_hint: PageHint) -> str | None:
-        if page_hint in {PageHint.FORM_PAGE, PageHint.FORM_SUCCESS}:
-            return "form"
-        if page_hint in {"gmail_compose", "gmail_inbox", "gmail_message_view"}:
-            return "compose"
-        return None
 
     def _persist_execution_trace(self, run_id: str, step_index: int, executed_action):
         if executed_action.execution_trace is None:
             return executed_action
+        # Step dir already created by _prepare_step_artifacts — no mkdir needed.
         step_dir = Path(self._before_artifact_path(run_id, step_index)).resolve().parent
-        step_dir.mkdir(parents=True, exist_ok=True)
         trace_path = step_dir / "execution_trace.json"
         bg_writer.enqueue(trace_path, executed_action.execution_trace.model_dump_json())
         return executed_action.model_copy(update={"execution_trace_artifact_path": str(trace_path)})
 
     def _persist_progress_trace(self, run_id: str, step_index: int, progress_trace: ProgressTrace) -> str:
+        # Step dir already created by _prepare_step_artifacts — no mkdir needed.
         step_dir = Path(self._before_artifact_path(run_id, step_index)).resolve().parent
-        step_dir.mkdir(parents=True, exist_ok=True)
         trace_path = step_dir / "progress_trace.json"
         bg_writer.enqueue(trace_path, progress_trace.model_dump_json())
         return str(trace_path)
@@ -1324,6 +1669,7 @@ class AgentLoop:
         recovery,
         step_index: int,
         before_artifact_path: str | None = None,
+        screen_change_ratio: float | None = None,
     ) -> ProgressTrace:
         progress_state = state.progress_state
         action_signature = self._action_signature(executed_action.action)
@@ -1336,12 +1682,12 @@ class AgentLoop:
         subgoal_changed = previous_subgoal is None or subgoal_signature != previous_subgoal
         progress_state.latest_subgoal_signature = subgoal_signature
 
-        # Pixel-level screen change signal (before vs after screenshots)
-        screen_change_ratio: float | None = None
-        after_path = executed_action.artifact_path if hasattr(executed_action, "artifact_path") else None
-        if before_artifact_path and after_path:
-            from src.agent.screen_diff import compute_screen_change_ratio
-            screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
+        # Use pre-computed ratio if available; compute only as fallback.
+        if screen_change_ratio is None:
+            after_path = executed_action.artifact_path if hasattr(executed_action, "artifact_path") else None
+            if before_artifact_path and after_path:
+                from src.agent.screen_diff import compute_screen_change_ratio
+                screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
 
         # An action is "novel" if its signature hasn't been seen before in this run
         is_novel_action = action_signature not in progress_state.repeated_action_count

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 
+from src.agent.hitl import HITL_PAGE_HINT_KEYWORDS
 from src.agent.selector import DeterministicTargetSelector
 from src.models.common import FailureCategory
 from src.models.memory import MemoryHint
@@ -19,6 +21,14 @@ from src.models.selector import (
 )
 from src.models.state import AgentState
 from src.models.verification import VerificationStatus
+
+logger = logging.getLogger(__name__)
+
+# Labels that suggest a button dismisses / rejects rather than accepts.
+_DISMISS_TOKENS: frozenset[str] = frozenset({
+    "don't", "dont", "dismiss", "close", "cancel", "no thanks", "skip",
+    "not now", "maybe later", "decline", "reject", "later", "no", "×", "✕",
+})
 
 # A benchmark rule plugin is any callable that matches this signature.
 # Return a PolicyDecision to short-circuit the engine, or None to pass through.
@@ -106,15 +116,7 @@ def form_submit_when_ready_rule(
 # Default plugin registry — benchmark name → plugins
 # ---------------------------------------------------------------------------
 
-BENCHMARK_PLUGINS: dict[str, list[BenchmarkRulePlugin]] = {
-    "gmail_draft_authenticated": [
-        gmail_login_page_guardrail,
-        gmail_compose_already_visible_rule,
-    ],
-    "auth_free_form": [
-        form_submit_when_ready_rule,
-    ],
-}
+BENCHMARK_PLUGINS: dict[str, list[BenchmarkRulePlugin]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,12 @@ class PolicyRuleEngine:
         self._plugins = plugins if plugins is not None else dict(BENCHMARK_PLUGINS)
         self._latest_selector_traces: list[SelectorTrace] = []
         self._cached_intermediates: tuple[list[UIElement], list[list[UIElement]]] | None = None
+        # Tracks consecutive steps where a HITL keyword matched, per run_id.
+        # HITL only fires after HITL_DEBOUNCE_THRESHOLD consecutive matches to
+        # prevent false positives from a single bad perception.
+        self._hitl_consecutive: dict[str, int] = {}
+
+    _HITL_DEBOUNCE_THRESHOLD: int = 2
 
     def choose_action(
         self,
@@ -154,17 +162,21 @@ class PolicyRuleEngine:
 
         # Benchmark-specific plugins run first (higher priority / more specific)
         if benchmark_name is not None:
-            for plugin in self._plugins.get(benchmark_name, []):
+            from src.benchmarks.registry import BENCHMARK_REGISTRY
+            for plugin in BENCHMARK_REGISTRY.get_rules(benchmark_name) or self._plugins.get(benchmark_name, []):
                 decision = plugin(state, perception, memory_hints)
                 if decision is not None:
                     return decision
 
         # Engine primitives — always active
         return (
-            self._task_success_stop_rule(perception)
+            self._human_intervention_rule(state, perception)
+            or self._task_success_stop_rule(perception)
+            or self._dropdown_menu_select_rule(state, perception)
             or self._avoid_identical_type_retry(state, perception, memory_hints)
+            or self._no_progress_recovery_rule(state, perception)
+            or self._dismiss_blocking_overlay_rule(state, perception)
             or self._search_query_rule(state, perception)
-            or self._focus_before_type_rule(state, perception, memory_hints)
         )
 
     def register_plugins(self, benchmark_name: str, plugins: list[BenchmarkRulePlugin]) -> None:
@@ -225,6 +237,118 @@ class PolicyRuleEngine:
             active_subgoal=f"re-assess {last_action.target_element_id or 'input'}",
         )
 
+    # Substrings in element_id that signal a secondary menu / dropdown child item.
+    _DROPDOWN_ID_SIGNALS: frozenset[str] = frozenset({
+        "dropdown", "submenu", "menu_item", "menuitem", "popover", "flyout", "child",
+    })
+
+    def _dropdown_menu_select_rule(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision | None:
+        """Fire when a dropdown/submenu is open and the agent should pick a child item.
+
+        Fires when ALL of the following hold:
+        - The last action was a successful CLICK on a non-dropdown element (the parent trigger).
+        - The current perception contains at least one element whose element_id includes a
+          known dropdown-child signal substring (dropdown, submenu, menu_item, etc.).
+        - The last-clicked element is still visible (meaning no navigation occurred — same page).
+
+        Chooses the best-matching child item by scoring against intent + subgoal keywords.
+        This prevents the LLM from either re-clicking the parent or picking an unrelated element.
+        """
+        if not state.action_history:
+            return None
+
+        last = state.action_history[-1].action
+        if last.action_type is not ActionType.CLICK:
+            return None
+        last_id = last.target_element_id
+        if last_id is None:
+            return None
+
+        # Only fire when the last-clicked element is itself NOT a dropdown child
+        # (prevents rule from firing repeatedly after we've already selected a child).
+        if any(sig in last_id.lower() for sig in self._DROPDOWN_ID_SIGNALS):
+            return None
+
+        # Collect visible child items — elements whose IDs signal secondary menu membership.
+        child_items = [
+            e for e in perception.visible_elements
+            if any(sig in e.element_id.lower() for sig in self._DROPDOWN_ID_SIGNALS)
+            and e.usable_for_targeting
+        ]
+        if not child_items:
+            return None
+
+        # Score each child by how many intent/subgoal keywords appear in its label or id.
+        all_tokens = _match_tokens(state.intent) | _match_tokens(state.current_subgoal)
+
+        def _score(el: UIElement) -> int:
+            text = (el.primary_name + " " + el.element_id).lower()
+            return sum(1 for t in all_tokens if t in text)
+
+        best = max(child_items, key=_score)
+        logger.info(
+            "Dropdown-menu rule: last click was '%s', %d child items visible. "
+            "Selecting best match '%s' (score=%d).",
+            last_id, len(child_items), best.element_id, _score(best),
+        )
+        return PolicyDecision(
+            action=AgentAction(
+                action_type=ActionType.CLICK,
+                target_element_id=best.element_id,
+                x=best.x + max(1, best.width // 2),
+                y=best.y + max(1, best.height // 2),
+            ),
+            rationale=(
+                f"Dropdown menu is open after clicking '{last_id}'. "
+                f"Selecting child item '{best.primary_name}' that best matches the current intent."
+            ),
+            confidence=0.92,
+            active_subgoal=f"select_menu_item:{best.element_id}",
+        )
+
+    def _human_intervention_rule(
+        self, state: AgentState, perception: ScreenPerception
+    ) -> PolicyDecision | None:
+        """Fire WAIT_FOR_USER when the page requires human action (CAPTCHA, login, etc.).
+
+        Requires HITL_DEBOUNCE_THRESHOLD consecutive steps with a matching page
+        hint before pausing — prevents false positives from a single bad perception.
+        """
+        hint = perception.page_hint.value.lower()
+        matched = next((kw for kw in HITL_PAGE_HINT_KEYWORDS if kw in hint), None)
+        run_id = state.run_id
+
+        if matched is None:
+            # Page no longer looks like a HITL page — reset the counter.
+            self._hitl_consecutive.pop(run_id, None)
+            return None
+
+        count = self._hitl_consecutive.get(run_id, 0) + 1
+        self._hitl_consecutive[run_id] = count
+
+        if count < self._HITL_DEBOUNCE_THRESHOLD:
+            logger.debug(
+                "HITL keyword %r matched on run %s (hit %d/%d) — holding off for next step",
+                matched, run_id, count, self._HITL_DEBOUNCE_THRESHOLD,
+            )
+            return None
+
+        # Threshold reached — fire and reset so resuming works cleanly.
+        self._hitl_consecutive.pop(run_id, None)
+        return PolicyDecision(
+            action=AgentAction(
+                action_type=ActionType.WAIT_FOR_USER,
+                text=f"hitl:{hint}",
+            ),
+            rationale=f"Page requires human action ({hint}). Agent pausing for human to complete this step.",
+            confidence=0.99,
+            active_subgoal=f"human_intervention_required:{hint}",
+        )
+
     def _task_success_stop_rule(self, perception: ScreenPerception) -> PolicyDecision | None:
         if perception.page_hint is not PageHint.FORM_SUCCESS and not _has_success_signal(perception):
             return None
@@ -235,22 +359,107 @@ class PolicyRuleEngine:
             active_subgoal="verify_success",
         )
 
-    def _focus_before_type_rule(
+    _NO_PROGRESS_REPEAT_THRESHOLD: int = 3
+
+    def _no_progress_recovery_rule(
         self,
         state: AgentState,
         perception: ScreenPerception,
-        memory_hints: list[MemoryHint],
     ) -> PolicyDecision | None:
-        if not _has_hint(memory_hints, "click_before_type"):
+        """Fire when the same action+target has been repeated N times with no progress.
+
+        Issues a visual perturbation (Escape key) to clear stale OS/DOM render
+        state and sets force_fresh_perception so the next capture waits for the
+        UI to settle. Safer than a geometry-based adjacent click, which risks
+        hitting Cancel buttons or diverging form state.
+        """
+        n = self._NO_PROGRESS_REPEAT_THRESHOLD
+        if len(state.action_history) < n:
             return None
-        target = self._resolve_target_element(
-            perception,
-            target_element_id=None,
-            subgoal=state.current_subgoal,
+
+        recent = [h.action for h in state.action_history[-n:]]
+        if len({a.action_type for a in recent}) != 1:
+            return None
+        if len({a.target_element_id for a in recent}) != 1:
+            return None
+        stuck_target_id = recent[0].target_element_id
+        if stuck_target_id is None:
+            return None
+
+        if not any(e.element_id == stuck_target_id for e in perception.visible_elements):
+            return None
+
+        stuck_type = recent[0].action_type.value
+        logger.info(
+            "No-progress rule: %r repeated %d× on '%s'. Issuing Escape to clear stale render state.",
+            stuck_type, n, stuck_target_id,
         )
-        if target is None or perception.focused_element_id == target.element_id:
+        state.force_fresh_perception = True
+        return PolicyDecision(
+            action=AgentAction(
+                action_type=ActionType.PRESS_KEY,
+                key="escape",
+            ),
+            rationale=(
+                f"'{stuck_type}' on '{stuck_target_id}' repeated {n}× with no progress. "
+                "Pressing Escape to clear stale OS/render state before retrying."
+            ),
+            confidence=0.85,
+            active_subgoal=f"visual_perturbation_before_{stuck_target_id}",
+        )
+
+    def _dismiss_blocking_overlay_rule(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision | None:
+        """Dismiss any blocking dialog/overlay when the agent is stuck on a target.
+
+        Fires when ALL of the following hold:
+        - A dialog, modal, banner, or non-interactable overlay element is visible.
+        - The last 2 consecutive actions were clicks on the same target (stuck signal).
+        - A dismiss-like button exists within or near the blocking element's bounds.
+        - The dismiss button is not itself the stuck target (avoid infinite loops).
+        """
+        dialogs = _blocking_overlay_elements(perception)
+        if not dialogs:
             return None
-        return _click_decision(target, f"Focus {target.primary_name} before typing because input focus is not established.")
+
+        # Stuck signal: 2+ consecutive clicks on the same target_element_id
+        if len(state.action_history) < 2:
+            return None
+        recent = [h.action for h in state.action_history[-2:]]
+        if not all(a.action_type is ActionType.CLICK for a in recent):
+            return None
+        stuck_ids = {a.target_element_id for a in recent}
+        if len(stuck_ids) != 1 or None in stuck_ids:
+            return None
+        stuck_target = next(iter(stuck_ids))
+
+        for overlay in dialogs:
+            btn = _best_dismiss_button(overlay, perception, exclude_id=stuck_target)
+            if btn is None:
+                continue
+            logger.info(
+                "Dismiss-overlay rule: blocking element %r detected, stuck on %r. "
+                "Dismissing via %r.",
+                overlay.element_id, stuck_target, btn.element_id,
+            )
+            return PolicyDecision(
+                action=AgentAction(
+                    action_type=ActionType.CLICK,
+                    target_element_id=btn.element_id,
+                    x=btn.x + max(1, btn.width // 2),
+                    y=btn.y + max(1, btn.height // 2),
+                ),
+                rationale=(
+                    f"Blocking overlay '{overlay.element_id}' is present while agent is stuck "
+                    f"clicking '{stuck_target}'. Dismissing via '{btn.primary_name}' to unblock."
+                ),
+                confidence=0.93,
+                active_subgoal="dismiss_blocking_overlay",
+            )
+        return None
 
     def _search_query_rule(
         self,
@@ -507,6 +716,60 @@ def _preferred_compose_input(perception: ScreenPerception) -> UIElement | None:
 
 def _compose_form_visible(perception: ScreenPerception) -> bool:
     return _preferred_compose_input(perception) is not None
+
+
+def _blocking_overlay_elements(perception: ScreenPerception) -> list[UIElement]:
+    """Return elements that look like blocking overlays: dialogs or non-interactable
+    banners/windows that might intercept clicks intended for other elements."""
+    overlay_types = {UIElementType.DIALOG, UIElementType.WINDOW}
+    results = []
+    for e in perception.visible_elements:
+        if e.element_type in overlay_types:
+            results.append(e)
+            continue
+        # Non-interactable elements with overlay-like labels also qualify
+        if not e.is_interactable and e.element_type not in {UIElementType.TEXT, UIElementType.ICON}:
+            name = e.primary_name.lower()
+            if any(tok in name for tok in ("banner", "promo", "modal", "overlay", "popup", "notification", "toast", "cookie", "consent")):
+                results.append(e)
+    return results
+
+
+def _best_dismiss_button(
+    overlay: UIElement,
+    perception: ScreenPerception,
+    *,
+    exclude_id: str | None,
+) -> UIElement | None:
+    """Find the most dismiss-like interactable button within or near the overlay bounds.
+
+    Search radius expands 80px beyond the overlay boundary to catch buttons
+    that are visually attached but not strictly inside the bounding box.
+    """
+    margin = 80
+    x1, y1 = overlay.x - margin, overlay.y - margin
+    x2, y2 = overlay.x + overlay.width + margin, overlay.y + overlay.height + margin
+
+    candidates: list[tuple[int, UIElement]] = []
+    for e in perception.visible_elements:
+        if not e.is_interactable:
+            continue
+        if e.element_type not in {UIElementType.BUTTON, UIElementType.LINK, UIElementType.ICON}:
+            continue
+        if e.element_id == exclude_id:
+            continue
+        cx = e.x + e.width // 2
+        cy = e.y + e.height // 2
+        if not (x1 <= cx <= x2 and y1 <= cy <= y2):
+            continue
+        score = sum(1 for tok in _DISMISS_TOKENS if tok in e.primary_name.lower())
+        candidates.append((score, e))
+
+    if not candidates:
+        return None
+    # Prefer highest dismiss-token score; break ties by shorter label (X > "No thanks")
+    candidates.sort(key=lambda item: (-item[0], len(item[1].primary_name)))
+    return candidates[0][1]
 
 
 def _form_fields_completed(state: AgentState, perception: ScreenPerception) -> bool:

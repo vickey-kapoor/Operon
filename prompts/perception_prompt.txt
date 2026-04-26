@@ -43,3 +43,10 @@ Rules:
 - If no interactive elements are visible, return an empty visible_elements list.
 - Use form_page when a visible form with input fields is present.
 - Use form_success when a visible success, thank-you, or confirmation state is clearly shown.
+# LOAD-BEARING — do not change without updating the coordinate assertion in perception.py:
+# Coordinates (x, y, width, height) MUST be in the pixel space of the image provided.
+# Do not normalize, use percentages, or adjust for display DPI.
+# If the image was downscaled before being sent, perception.py applies the inverse scale
+# ratio automatically to restore coords to native screen space before execution.
+# Any prompt edit that adds normalization or percentage-based coords will silently
+# double-transform coordinates and misclick on every action.

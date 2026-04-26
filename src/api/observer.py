@@ -13,6 +13,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from src.models.common import RunStatus, StopReason
 from src.models.logs import PreStepFailureLog, StepLog
 from src.models.state import AgentState
+from src.models.usage import ModelUsage, UsageAggregate
 from src.store.replay import load_run_replay
 from src.store.summary import _load_state_from_path
 
@@ -50,6 +51,7 @@ def list_runs(limit: int = 20) -> list[dict[str, Any]]:
                 "step_count": state.step_count,
                 "stop_reason": state.stop_reason.value if state.stop_reason is not None else None,
                 "updated_at": state_path.stat().st_mtime,
+                "usage": summarize_run_usage(state.run_id).model_dump(mode="json"),
             }
         )
         if len(runs) >= limit:
@@ -97,10 +99,11 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
             "headless": state.headless,
             "stop_reason": state.stop_reason.value if state.stop_reason is not None else None,
             "current_subgoal": state.current_subgoal,
-            "current_task_id": _task_id_from_intent(state.intent),
+            "current_task_id": state.benchmark or "ad_hoc_run",
             "current_phase": phase,
             "session_video_path": _session_video_path(state),
         },
+        "usage": summarize_run_usage(run_id).model_dump(mode="json"),
         "progress_state": state.progress_state.model_dump(mode="json"),
         "current_step": current_step,
         "steps": steps,
@@ -196,6 +199,7 @@ def _step_payload(entry: StepLog) -> dict[str, Any]:
             "summary": entry.perception.summary,
             "focused_element_id": entry.perception.focused_element_id,
             "confidence": entry.perception.confidence,
+            "usage": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
             "metrics": _perception_metrics(entry),
             "elements": [element.model_dump(mode="json") for element in entry.perception.visible_elements],
             "retry_log": _read_text(entry.perception_debug.retry_log_artifact_path),
@@ -220,12 +224,18 @@ def _step_payload(entry: StepLog) -> dict[str, Any]:
             "trace": _load_json(entry.executed_action.execution_trace_artifact_path),
         },
         "verification": entry.verification_result.model_dump(mode="json"),
+        "usage": {
+            "perception": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
+            "policy": entry.policy_debug.usage.model_dump(mode="json") if entry.policy_debug.usage is not None else None,
+            "verification": entry.verification_debug.usage.model_dump(mode="json") if entry.verification_debug is not None and entry.verification_debug.usage is not None else None,
+        },
         "recovery": entry.recovery_decision.model_dump(mode="json"),
         "plan": {
             "rationale": entry.policy_decision.rationale,
             "confidence": entry.policy_decision.confidence,
             "active_subgoal": entry.policy_decision.active_subgoal,
             "proposed_action": entry.policy_decision.action.model_dump(mode="json"),
+            "usage": entry.policy_debug.usage.model_dump(mode="json") if entry.policy_debug.usage is not None else None,
         },
         "progress": {
             "state": entry.progress_state.model_dump(mode="json") if entry.progress_state is not None else None,
@@ -255,6 +265,7 @@ def _pre_step_payload(entry: PreStepFailureLog) -> dict[str, Any]:
             if isinstance(diagnostics.get("normalized_raw_perception_summary"), dict)
             else parsed_perception.get("focused_element_id"),
             "confidence": parsed_perception.get("confidence"),
+            "usage": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
             "metrics": _pre_step_perception_metrics(diagnostics),
             "elements": visible_elements,
             "retry_log": _read_text(entry.perception_debug.retry_log_artifact_path),
@@ -337,6 +348,7 @@ def _partial_perception_payload(step_dir: Path, before_artifact_path: str) -> di
     parsed_perception = _load_json(_existing_path(step_dir / "perception_parsed.json"))
     diagnostics = _load_json(_existing_path(step_dir / "perception_diagnostics.json"))
     retry_log = _read_text(_existing_path(step_dir / "perception_retry_log.txt"))
+    usage = _load_json(_existing_path(step_dir / "perception_usage.json"))
     if parsed_perception is None and diagnostics is None and retry_log is None:
         return None
 
@@ -360,6 +372,7 @@ def _partial_perception_payload(step_dir: Path, before_artifact_path: str) -> di
         "summary": summary,
         "focused_element_id": focused_element_id,
         "confidence": confidence,
+        "usage": usage,
         "metrics": metrics,
         "elements": elements,
         "retry_log": retry_log,
@@ -554,13 +567,6 @@ def _current_phase(state, current_step: dict[str, Any] | None, pre_step_failure:
     return "recover" if current_step is not None else "capture"
 
 
-def _task_id_from_intent(intent: str) -> str:
-    lowered = intent.lower()
-    if "gmail" in lowered:
-        return "gmail_draft_authenticated"
-    if "form" in lowered:
-        return "practice_form_submit"
-    return "ad_hoc_run"
 
 
 def _read_text(path_value: str | None) -> str | None:
@@ -603,6 +609,61 @@ def _partial_step_phase(step_dir: Path) -> str:
     return "capture"
 
 
+def summarize_run_usage(run_id: str) -> UsageAggregate:
+    root = runs_root()
+    run_dir = root / run_id
+    aggregate = UsageAggregate()
+    try:
+        entries = load_run_replay(run_id, root_dir=root)
+    except FileNotFoundError:
+        entries = []
+    latest_logged_step_index = 0
+    for entry in entries:
+        latest_logged_step_index = max(latest_logged_step_index, entry.step_index)
+        for usage in _entry_usages(entry):
+            _merge_usage(aggregate, usage)
+    step_dir = _latest_step_dir(run_dir) if run_dir.exists() else None
+    if step_dir is not None:
+        step_index = int(step_dir.name.split("_", 1)[1])
+        if step_index <= latest_logged_step_index:
+            return aggregate
+        for filename in ("combined_usage.json", "computer_use_usage.json", "perception_usage.json", "policy_usage.json", "verification_usage.json"):
+            usage = _usage_from_path(step_dir / filename)
+            if usage is not None:
+                _merge_usage(aggregate, usage)
+    return aggregate
+
+
+def usage_dashboard(limit: int = 50) -> dict[str, Any]:
+    root = runs_root()
+    overall = UsageAggregate()
+    runs: list[dict[str, Any]] = []
+    if not root.exists():
+        return {"summary": overall.model_dump(mode="json"), "runs": runs}
+    candidates = sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.stat().st_mtime, reverse=True)
+    for run_dir in candidates[:limit]:
+        state_path = run_dir / "state.json"
+        if not state_path.exists():
+            continue
+        try:
+            state = _load_state_from_path(state_path)
+        except Exception:
+            continue
+        usage = summarize_run_usage(state.run_id)
+        _merge_aggregate(overall, usage)
+        runs.append(
+            {
+                "run_id": state.run_id,
+                "intent": state.intent,
+                "status": state.status.value,
+                "step_count": state.step_count,
+                "updated_at": state_path.stat().st_mtime,
+                "usage": usage.model_dump(mode="json"),
+            }
+        )
+    return {"summary": overall.model_dump(mode="json"), "runs": runs}
+
+
 def _partial_step_events(step: dict[str, Any]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     step_index = step["step_index"]
@@ -634,6 +695,66 @@ def _partial_step_events(step: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(progress, dict) and progress.get("blocked_as_redundant"):
         events.append({"step_index": step_index, "event": "progress_blocked_action", "detail": progress.get("redundancy_reason")})
     return events
+
+
+def _entry_usages(entry: StepLog | PreStepFailureLog) -> list[ModelUsage]:
+    usages: list[ModelUsage] = []
+    seen_keys: set[str] = set()
+    if entry.perception_debug.usage is not None:
+        key = entry.perception_debug.usage_artifact_path or f"{entry.perception_debug.usage.provider}:{entry.perception_debug.usage.model}:{entry.perception_debug.usage.request_kind}:{entry.perception_debug.usage.total_tokens}"
+        seen_keys.add(key)
+        usages.append(entry.perception_debug.usage)
+    if isinstance(entry, StepLog):
+        for debug in [entry.policy_debug, entry.verification_debug]:
+            if debug is None or debug.usage is None:
+                continue
+            key = debug.usage_artifact_path or f"{debug.usage.provider}:{debug.usage.model}:{debug.usage.request_kind}:{debug.usage.total_tokens}"
+            if key not in seen_keys:
+                seen_keys.add(key)
+                usages.append(debug.usage)
+    return usages
+
+
+def _usage_from_path(path: Path) -> ModelUsage | None:
+    try:
+        payload = _load_json(str(path))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return ModelUsage.model_validate(payload)
+    except Exception:
+        return None
+
+
+def _merge_usage(aggregate: UsageAggregate, usage: ModelUsage) -> None:
+    aggregate.request_count += 1
+    aggregate.input_tokens += usage.input_tokens or 0
+    aggregate.output_tokens += usage.output_tokens or 0
+    aggregate.total_tokens += usage.total_tokens or 0
+    aggregate.estimated_cost_usd = round(aggregate.estimated_cost_usd + (usage.estimated_cost_usd or 0.0), 8)
+    model_bucket = aggregate.by_model.setdefault(usage.model, UsageAggregate())
+    model_bucket.request_count += 1
+    model_bucket.input_tokens += usage.input_tokens or 0
+    model_bucket.output_tokens += usage.output_tokens or 0
+    model_bucket.total_tokens += usage.total_tokens or 0
+    model_bucket.estimated_cost_usd = round(model_bucket.estimated_cost_usd + (usage.estimated_cost_usd or 0.0), 8)
+
+
+def _merge_aggregate(target: UsageAggregate, source: UsageAggregate) -> None:
+    target.request_count += source.request_count
+    target.input_tokens += source.input_tokens
+    target.output_tokens += source.output_tokens
+    target.total_tokens += source.total_tokens
+    target.estimated_cost_usd = round(target.estimated_cost_usd + source.estimated_cost_usd, 8)
+    for model, bucket in source.by_model.items():
+        target_bucket = target.by_model.setdefault(model, UsageAggregate())
+        target_bucket.request_count += bucket.request_count
+        target_bucket.input_tokens += bucket.input_tokens
+        target_bucket.output_tokens += bucket.output_tokens
+        target_bucket.total_tokens += bucket.total_tokens
+        target_bucket.estimated_cost_usd = round(target_bucket.estimated_cost_usd + bucket.estimated_cost_usd, 8)
 
 
 def _image_dimensions(path_value: str | None) -> dict[str, int] | None:

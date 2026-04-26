@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operon — Benchmarks</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232563eb'/><text x='16' y='23' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'>O</text></svg>">
+<style>
+  :root {
+    --bg: #f4f7fb;
+    --panel: #ffffff;
+    --border: rgba(15,23,42,0.10);
+    --text: #0f172a;
+    --muted: #5f7188;
+    --accent: #059669;
+    --accent-soft: rgba(5,150,105,0.10);
+    --blue: #2563eb;
+    --purple: #7c3aed;
+    --danger: #dc2626;
+    --warning: #d97706;
+    --radius: 16px;
+    --shadow: 0 4px 24px rgba(15,23,42,0.07);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(37,99,235,0.08), transparent 28%),
+      radial-gradient(circle at 80% 10%, rgba(5,150,105,0.06), transparent 22%),
+      linear-gradient(180deg, #fbfdff, #f3f7fc 58%, #eef3f9);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; margin-bottom: 30px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 42px; height: 42px; border-radius: 14px;
+    background: linear-gradient(135deg, #2563eb, #059669);
+    display: grid; place-items: center;
+    color: white; font-weight: 900; font-size: 17px;
+    box-shadow: 0 8px 20px rgba(37,99,235,0.22);
+  }
+  .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -0.03em; }
+  .brand-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav a {
+    text-decoration: none; color: var(--muted);
+    border: 1px solid rgba(15,23,42,0.08); background: rgba(255,255,255,0.6);
+    padding: 9px 14px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .nav a:hover { color: var(--text); border-color: rgba(15,23,42,0.22); }
+  .nav a.active { background: linear-gradient(135deg, #dbeafe, #d1fae5); color: var(--text); border-color: transparent; }
+
+  .page { max-width: 1400px; margin: 0 auto; padding: 28px 28px 60px; display: flex; flex-direction: column; gap: 20px; }
+
+  .control-bar {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    box-shadow: var(--shadow);
+  }
+  .control-label { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+  .filter-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-btn {
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); border-radius: 999px;
+    padding: 7px 14px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    transition: all 0.12s;
+  }
+  .filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .filter-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .filter-btn.active.blue { background: rgba(37,99,235,0.08); border-color: var(--blue); color: var(--blue); }
+  .filter-btn.active.purple { background: rgba(124,58,237,0.08); border-color: var(--purple); color: var(--purple); }
+  .control-sep { flex: 1; min-width: 10px; }
+  .steps-field { display: flex; align-items: center; gap: 8px; }
+  .steps-input {
+    width: 64px; background: #f8fafc; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 10px; font: inherit; font-size: 12px; text-align: center;
+  }
+  .run-suite-btn {
+    border: none; border-radius: 10px; padding: 10px 24px;
+    font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: white;
+    box-shadow: 0 4px 14px rgba(37,99,235,0.20);
+    transition: opacity 0.12s;
+  }
+  .run-suite-btn:disabled { opacity: 0.45; cursor: default; }
+  .stop-suite-btn {
+    border: none; border-radius: 10px; padding: 10px 20px;
+    font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    color: white;
+    box-shadow: 0 4px 14px rgba(220,38,38,0.20);
+    transition: opacity 0.12s;
+    display: none;
+  }
+  .stop-suite-btn.visible { display: inline-flex; align-items: center; gap: 6px; }
+  .task-run-btn {
+    border: 1px solid rgba(37,99,235,0.3); border-radius: 6px;
+    padding: 4px 10px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+    background: #eff6ff; color: var(--blue);
+    transition: background 0.1s;
+    white-space: nowrap;
+  }
+  .task-run-btn:hover { background: #dbeafe; }
+  .task-run-btn:disabled { opacity: 0.4; cursor: default; }
+
+  .progress-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: var(--shadow);
+  }
+  .progress-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .progress-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .progress-stat-val { font-size: 22px; font-weight: 800; }
+  .progress-stat-val.green { color: var(--accent); }
+  .progress-stat-val.red { color: var(--danger); }
+  .progress-stat-val.blue { color: var(--blue); }
+  .progress-stat-val.purple { color: var(--purple); }
+  .progress-stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .progress-divider { width: 1px; height: 36px; background: var(--border); }
+  .progress-bar-wrap { flex: 1; min-width: 160px; }
+  .progress-bar-track { height: 6px; background: rgba(15,23,42,0.08); border-radius: 99px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.4s; }
+  .progress-bar-label { font-size: 11px; color: var(--muted); margin-top: 5px; }
+  .suite-status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: #f1f5f9; border: 1px solid var(--border);
+  }
+  .suite-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .suite-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 1.4s infinite; }
+  .suite-dot.completed { background: var(--accent); }
+  .suite-dot.failed { background: var(--danger); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .scoreboard {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .scoreboard-head {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .scoreboard-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  .task-count-badge {
+    font-size: 11px; font-weight: 700; color: var(--blue);
+    background: #eff6ff; border: 1px solid rgba(37,99,235,0.2);
+    border-radius: 999px; padding: 2px 9px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; font-weight: 700; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody tr { border-bottom: 1px solid rgba(15,23,42,0.05); transition: background 0.1s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: #f8fafc; }
+  tbody td { padding: 10px 12px; font-size: 12px; vertical-align: middle; }
+
+  .chip {
+    display: inline-block; border-radius: 4px; padding: 2px 7px;
+    font-size: 10px; font-weight: 700; font-family: ui-monospace, monospace;
+  }
+  .chip-id { background: #dbeafe; color: #1d4ed8; }
+  .chip-easy { background: #d1fae5; color: #065f46; }
+  .chip-medium { background: #fef3c7; color: #92400e; }
+  .chip-hard { background: #fee2e2; color: #991b1b; }
+  .chip-info { background: #d1fae5; color: #065f46; }
+  .chip-nav { background: #ede9fe; color: #5b21b6; }
+  .chip-form { background: #fef3c7; color: #92400e; }
+  .chip-complex { background: #fee2e2; color: #991b1b; }
+
+  /* Source chips */
+  .source-operon { background: #dbeafe; color: #1d4ed8; }
+  .source-mind2web { background: #ede9fe; color: #5b21b6; }
+  .source-webarena { background: #fef3c7; color: #92400e; }
+
+  .status-cell { display: flex; align-items: center; gap: 7px; }
+  .task-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .task-dot.pending { background: #cbd5e1; }
+  .task-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 1.2s infinite; }
+  .task-dot.passed { background: var(--accent); }
+  .task-dot.failed { background: var(--danger); }
+  .status-text { font-weight: 600; }
+  .status-text.pending { color: var(--muted); }
+  .status-text.running { color: var(--accent); }
+  .status-text.passed { color: var(--accent); }
+  .status-text.failed { color: var(--danger); }
+
+  .efficiency-bar {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .eff-track {
+    width: 48px; height: 4px; background: rgba(15,23,42,0.10); border-radius: 99px; overflow: hidden;
+  }
+  .eff-fill { height: 100%; border-radius: 99px; }
+  .eff-fill.high { background: var(--accent); }
+  .eff-fill.mid { background: var(--warning); }
+  .eff-fill.low { background: var(--danger); }
+  .eff-label { font-size: 11px; font-weight: 700; color: var(--muted); }
+
+  .infra-tag {
+    display: inline-block; border-radius: 4px; padding: 2px 6px;
+    font-size: 9px; font-weight: 700; font-family: ui-monospace, monospace;
+    background: #fff1f2; color: #9f1239; border: 1px solid rgba(159,18,57,0.2);
+  }
+
+  .view-link {
+    color: var(--blue); text-decoration: none; font-size: 11px; font-weight: 600;
+    padding: 3px 8px; border: 1px solid rgba(37,99,235,0.25); border-radius: 6px;
+    white-space: nowrap; background: #eff6ff;
+  }
+  .view-link:hover { background: rgba(96,165,250,0.08); }
+
+  .td-intent { color: var(--muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .td-stop { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty-row td { text-align: center; color: var(--muted); font-style: italic; padding: 32px; }
+  .actions-cell { display: flex; gap: 5px; align-items: center; }
+
+  @media (max-width: 1100px) {
+    .td-intent { display: none; }
+  }
+  @media (max-width: 800px) {
+    .page { padding: 14px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">O</div>
+      <div>
+        <div class="brand-name">Operon</div>
+        <div class="brand-sub">Benchmarks</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/console">Command Center</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/benchmarks" class="active">Benchmarks</a>
+    </nav>
+  </header>
+
+  <!-- Control bar -->
+  <div class="control-bar">
+    <span class="control-label">Source</span>
+    <div class="filter-btns" id="sourceBtns">
+      <button class="filter-btn active" id="srcAll" onclick="selectSource('all')">All <span id="cntSrcAll"></span></button>
+      <button class="filter-btn" id="srcOperon" onclick="selectSource('operon')">Operon <span id="cntSrcOperon"></span></button>
+      <button class="filter-btn" id="srcMind2web" onclick="selectSource('mind2web')">Mind2Web <span id="cntSrcMind2web"></span></button>
+      <button class="filter-btn" id="srcWebarena" onclick="selectSource('webarena')">WebArena <span id="cntSrcWebarena"></span></button>
+    </div>
+    <div style="width:1px;height:24px;background:var(--border);"></div>
+    <span class="control-label">Difficulty</span>
+    <div class="filter-btns" id="diffBtns">
+      <button class="filter-btn active" id="diffAll" onclick="selectDiff('all')">All</button>
+      <button class="filter-btn" id="diffEasy" onclick="selectDiff('easy')">Easy</button>
+      <button class="filter-btn" id="diffMedium" onclick="selectDiff('medium')">Medium</button>
+    </div>
+    <div class="steps-field">
+      <span class="control-label">Max steps</span>
+      <input id="maxSteps" class="steps-input" type="number" value="15" min="5" max="40">
+    </div>
+    <div class="control-sep"></div>
+    <button id="stopSuiteBtn" class="stop-suite-btn" onclick="stopSuite()">&#9632; Stop</button>
+    <button id="runSuiteBtn" class="run-suite-btn" onclick="runSuite()">&#9654; Run Suite</button>
+  </div>
+
+  <!-- Progress card -->
+  <div class="progress-card">
+    <div class="progress-row">
+      <div class="suite-status-badge">
+        <div class="suite-dot" id="suiteDot"></div>
+        <span id="suiteStatusLabel">Idle</span>
+      </div>
+      <div class="progress-divider"></div>
+      <div class="progress-stat">
+        <span class="progress-stat-val blue" id="statTotal">—</span>
+        <span class="progress-stat-label">Total</span>
+      </div>
+      <div class="progress-stat">
+        <span class="progress-stat-val" id="statCompleted">—</span>
+        <span class="progress-stat-label">Done</span>
+      </div>
+      <div class="progress-stat">
+        <span class="progress-stat-val green" id="statPassed">—</span>
+        <span class="progress-stat-label">Passed</span>
+      </div>
+      <div class="progress-stat">
+        <span class="progress-stat-val red" id="statFailed">—</span>
+        <span class="progress-stat-label">Failed</span>
+      </div>
+      <div class="progress-divider"></div>
+      <div class="progress-stat">
+        <span class="progress-stat-val green" id="statRate">—</span>
+        <span class="progress-stat-label">Pass rate</span>
+      </div>
+      <div class="progress-stat">
+        <span class="progress-stat-val purple" id="statEfficiency">—</span>
+        <span class="progress-stat-label">Avg Efficiency</span>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
+        </div>
+        <div class="progress-bar-label" id="progressLabel">Load datasets to see tasks</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scoreboard -->
+  <div class="scoreboard">
+    <div class="scoreboard-head">
+      <span class="scoreboard-title">Scoreboard</span>
+      <span class="task-count-badge" id="taskCountBadge">Loading…</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Task</th>
+          <th>Source</th>
+          <th>Diff</th>
+          <th>Category</th>
+          <th>Site</th>
+          <th>Intent</th>
+          <th>Status</th>
+          <th>Steps / Opt</th>
+          <th>Efficiency</th>
+          <th>Duration</th>
+          <th>Stop / Infra</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="scoreBody">
+        <tr class="empty-row"><td colspan="12">Loading benchmark tasks…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+const CAT_LABELS = {
+  information_retrieval: 'Info Retrieval',
+  navigation: 'Navigation',
+  form_fill: 'Form Fill',
+  complex_workflow: 'Complex Workflow',
+};
+const CAT_CLS = {
+  information_retrieval: 'chip-info',
+  navigation: 'chip-nav',
+  form_fill: 'chip-form',
+  complex_workflow: 'chip-complex',
+};
+const SRC_CLS = { operon: 'source-operon', mind2web: 'source-mind2web', webarena: 'source-webarena' };
+const SRC_LABEL = { operon: 'Operon', mind2web: 'Mind2Web', webarena: 'WebArena' };
+
+let ALL_TASKS = [];
+let selectedDiff = 'all';
+let selectedSource = 'all';
+let suiteId = null;
+let poller = null;
+let suiteRunning = false;
+let taskSuites = {};
+
+function esc(v) {
+  if (v == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(v);
+  return d.innerHTML;
+}
+
+function filteredTasks() {
+  return ALL_TASKS.filter(function(t) {
+    if (selectedDiff !== 'all' && t.difficulty !== selectedDiff) return false;
+    if (selectedSource !== 'all' && (t.source || 'operon') !== selectedSource) return false;
+    return true;
+  });
+}
+
+function updateCounts() {
+  const sources = ['All', 'Operon', 'Mind2web', 'Webarena'];
+  const srcKeys = ['all', 'operon', 'mind2web', 'webarena'];
+  srcKeys.forEach(function(s, i) {
+    const el = document.getElementById('cntSrc' + sources[i]);
+    if (!el) return;
+    const cnt = s === 'all' ? ALL_TASKS.length : ALL_TASKS.filter(function(t) { return (t.source || 'operon') === s; }).length;
+    el.textContent = '(' + cnt + ')';
+  });
+}
+
+function selectSource(src) {
+  if (suiteRunning) return;
+  selectedSource = src;
+  ['All','Operon','Mind2web','Webarena'].forEach(function(s) {
+    const btn = document.getElementById('src' + s);
+    if (btn) btn.classList.toggle('active', s.toLowerCase() === src || (src === 'all' && s === 'All'));
+  });
+  renderIdleScoreboard();
+}
+
+function selectDiff(diff) {
+  if (suiteRunning) return;
+  selectedDiff = diff;
+  ['All','Easy','Medium'].forEach(function(d) {
+    const btn = document.getElementById('diff' + d);
+    if (btn) btn.classList.toggle('active', d.toLowerCase() === diff);
+  });
+  renderIdleScoreboard();
+}
+
+function efficiencyHtml(eff) {
+  if (eff == null) return '<span style="color:var(--muted)">—</span>';
+  const pct = Math.round(eff * 100);
+  const cls = pct >= 80 ? 'high' : pct >= 50 ? 'mid' : 'low';
+  return '<div class="efficiency-bar">'
+    + '<div class="eff-track"><div class="eff-fill ' + cls + '" style="width:' + pct + '%"></div></div>'
+    + '<span class="eff-label">' + pct + '%</span>'
+    + '</div>';
+}
+
+function taskRowHtml(t, isLive) {
+  const statusCls = t.status || 'pending';
+  const statusLabel = statusCls.charAt(0).toUpperCase() + statusCls.slice(1);
+  const src = t.source || 'operon';
+  const diffCls = 'chip-' + (t.difficulty || 'easy');
+  const catCls = CAT_CLS[t.category] || '';
+  const catLabel = CAT_LABELS[t.category] || t.category;
+  const stepsStr = isLive && t.step_count
+    ? (t.step_count + ' / ' + (t.optimal_steps || '?'))
+    : (t.optimal_steps ? ('— / ' + t.optimal_steps) : '—');
+  const dur = t.duration_seconds != null ? t.duration_seconds + 's' : '—';
+  const stopReason = t.stop_reason ? t.stop_reason.replace(/_/g, ' ') : (t.error ? 'error' : '—');
+  const infraHtml = t.infra_tag
+    ? '<span class="infra-tag">' + esc(t.infra_tag) + '</span>'
+    : '<span style="color:var(--muted);font-size:11px;">' + esc(stopReason) + '</span>';
+  const isRunning = t.status === 'running';
+  const runBtn = '<button class="task-run-btn" id="runbtn-' + esc(t.task_id) + '" onclick="runSingleTask(\'' + t.task_id + '\')" ' + (isRunning ? 'disabled' : '') + '>'
+    + (isRunning ? 'Running…' : '&#9654; Run') + '</button>';
+  const viewBtn = t.run_id
+    ? '<a class="view-link" href="/console" title="' + esc(t.run_id) + '">View &#8594;</a>'
+    : '';
+
+  return '<tr id="row-' + esc(t.task_id) + '">'
+    + '<td><span class="chip chip-id">' + esc(t.task_id) + '</span></td>'
+    + '<td><span class="chip ' + (SRC_CLS[src] || '') + '">' + esc(SRC_LABEL[src] || src) + '</span></td>'
+    + '<td><span class="chip ' + diffCls + '">' + esc(t.difficulty) + '</span></td>'
+    + '<td><span class="chip ' + catCls + '">' + esc(catLabel) + '</span></td>'
+    + '<td style="color:var(--muted);font-size:11px;">' + esc(t.site) + '</td>'
+    + '<td class="td-intent" title="' + esc(t.intent) + '">' + esc(t.intent) + '</td>'
+    + '<td><div class="status-cell"><div class="task-dot ' + statusCls + '"></div><span class="status-text ' + statusCls + '">' + statusLabel + '</span></div></td>'
+    + '<td style="color:var(--muted);font-size:11px;font-family:ui-monospace,monospace;">' + esc(stepsStr) + '</td>'
+    + '<td>' + efficiencyHtml(t.step_efficiency != null ? t.step_efficiency : null) + '</td>'
+    + '<td style="color:var(--muted)">' + esc(dur) + '</td>'
+    + '<td class="td-stop">' + infraHtml + '</td>'
+    + '<td class="actions-cell">' + runBtn + viewBtn + '</td>'
+    + '</tr>';
+}
+
+function renderIdleScoreboard() {
+  const tasks = filteredTasks();
+  const body = document.getElementById('scoreBody');
+  document.getElementById('taskCountBadge').textContent = tasks.length + ' tasks';
+  if (!tasks.length) {
+    body.innerHTML = '<tr class="empty-row"><td colspan="12">No tasks match the selected filters</td></tr>';
+    resetProgress(0);
+    return;
+  }
+  body.innerHTML = tasks.map(function(t) { return taskRowHtml(t, false); }).join('');
+  resetProgress(tasks.length);
+}
+
+function resetProgress(total) {
+  setSuiteStatus('idle', 'Idle');
+  document.getElementById('statTotal').textContent = total || '—';
+  document.getElementById('statCompleted').textContent = '0';
+  document.getElementById('statPassed').textContent = '0';
+  document.getElementById('statFailed').textContent = '0';
+  document.getElementById('statRate').textContent = '—';
+  document.getElementById('statEfficiency').textContent = '—';
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressLabel').textContent = total ? 'Ready to run ' + total + ' tasks' : 'No tasks selected';
+}
+
+function setSuiteStatus(status, label) {
+  const dot = document.getElementById('suiteDot');
+  const lbl = document.getElementById('suiteStatusLabel');
+  dot.className = 'suite-dot ' + status;
+  lbl.textContent = label || (status.charAt(0).toUpperCase() + status.slice(1));
+}
+
+async function runSuite() {
+  if (suiteRunning) return;
+  const maxSteps = Math.max(5, Math.min(40, parseInt(document.getElementById('maxSteps').value, 10) || 15));
+  suiteRunning = true;
+  document.getElementById('runSuiteBtn').disabled = true;
+  document.getElementById('runSuiteBtn').textContent = 'Running…';
+  document.getElementById('stopSuiteBtn').classList.add('visible');
+  ['diffAll','diffEasy','diffMedium'].forEach(function(id) {
+    const el = document.getElementById(id); if (el) el.disabled = true;
+  });
+
+  setSuiteStatus('running', 'Starting…');
+
+  try {
+    const resp = await fetch('/benchmark/run-suite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ difficulty: selectedDiff, source: selectedSource, max_steps: maxSteps, headless: false }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(function() { return {}; });
+      throw new Error(err.detail || 'Failed to start suite');
+    }
+    const data = await resp.json();
+    suiteId = data.suite_id;
+    setSuiteStatus('running', 'Running — suite ' + suiteId);
+    startPoller();
+  } catch(e) {
+    setSuiteStatus('failed', 'Error: ' + e.message);
+    resetRunBtn();
+  }
+}
+
+async function stopSuite() {
+  if (!suiteId) return;
+  try {
+    await fetch('/benchmark/stop-suite/' + suiteId, { method: 'POST' });
+    document.getElementById('stopSuiteBtn').classList.remove('visible');
+    setSuiteStatus('failed', 'Stopping…');
+  } catch(e) {}
+}
+
+function startPoller() {
+  if (poller) clearInterval(poller);
+  poller = setInterval(function() { pollSuite().catch(function() {}); }, 2000);
+  pollSuite().catch(function() {});
+}
+
+function stopPoller() {
+  if (poller) { clearInterval(poller); poller = null; }
+}
+
+async function pollSuite() {
+  if (!suiteId) return;
+  const resp = await fetch('/benchmark/suite/' + suiteId);
+  if (!resp.ok) return;
+  const data = await resp.json();
+  renderSuiteState(data);
+  if (data.status === 'completed') {
+    stopPoller();
+    suiteRunning = false;
+    resetRunBtn();
+  }
+}
+
+function resetRunBtn() {
+  document.getElementById('runSuiteBtn').disabled = false;
+  document.getElementById('runSuiteBtn').textContent = '▶ Run Suite';
+  document.getElementById('stopSuiteBtn').classList.remove('visible');
+  ['diffAll','diffEasy','diffMedium'].forEach(function(id) {
+    const el = document.getElementById(id); if (el) el.disabled = false;
+  });
+}
+
+function renderSuiteState(data) {
+  const tasks = data.tasks || [];
+  const total = data.total || tasks.length;
+  const completed = data.completed || 0;
+  const passed = data.passed || 0;
+  const failed = completed - passed;
+  const rate = data.pass_rate != null ? Math.round(data.pass_rate * 100) + '%' : '—';
+  const eff = data.avg_step_efficiency != null ? Math.round(data.avg_step_efficiency * 100) + '%' : '—';
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const isCompleted = data.status === 'completed';
+
+  setSuiteStatus(isCompleted ? 'completed' : 'running',
+    isCompleted ? 'Completed' : ('Running — ' + completed + ' / ' + total));
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statCompleted').textContent = completed;
+  document.getElementById('statPassed').textContent = passed;
+  document.getElementById('statFailed').textContent = failed;
+  document.getElementById('statRate').textContent = rate;
+  document.getElementById('statEfficiency').textContent = eff;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' tasks complete'
+    + (isCompleted ? ' — ' + rate + ' pass rate, ' + eff + ' avg efficiency' : '');
+  document.getElementById('taskCountBadge').textContent = total + ' tasks';
+
+  const body = document.getElementById('scoreBody');
+  if (tasks.length) {
+    body.innerHTML = tasks.map(function(t) { return taskRowHtml(t, true); }).join('');
+  }
+}
+
+async function runSingleTask(taskId) {
+  const btn = document.getElementById('runbtn-' + taskId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  const maxSteps = Math.max(5, Math.min(40, parseInt(document.getElementById('maxSteps').value, 10) || 15));
+  try {
+    const resp = await fetch('/benchmark/run-task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: taskId, max_steps: maxSteps, headless: false }),
+    });
+    if (!resp.ok) throw new Error('Failed to start task');
+    const data = await resp.json();
+    const sid = data.suite_id;
+    taskSuites[taskId] = { suite_id: sid };
+    const row = document.getElementById('row-' + taskId);
+    if (row) {
+      row.querySelector('.task-dot').className = 'task-dot running';
+      const st = row.querySelector('.status-text');
+      if (st) { st.className = 'status-text running'; st.textContent = 'Running'; }
+    }
+    const pollId = setInterval(async function() {
+      try {
+        const r = await fetch('/benchmark/suite/' + sid);
+        if (!r.ok) return;
+        const d = await r.json();
+        const t = d.tasks && d.tasks[0];
+        if (!t) return;
+        updateTaskRow(taskId, t);
+        if (d.status === 'completed') {
+          clearInterval(pollId);
+          const b = document.getElementById('runbtn-' + taskId);
+          if (b) { b.disabled = false; b.textContent = '▶ Run'; }
+        }
+      } catch(e) {}
+    }, 2000);
+    taskSuites[taskId].poller = pollId;
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Run'; }
+  }
+}
+
+function updateTaskRow(taskId, t) {
+  const row = document.getElementById('row-' + taskId);
+  if (!row) return;
+  const statusCls = t.status;
+  const statusLabel = t.status.charAt(0).toUpperCase() + t.status.slice(1);
+  const cells = row.querySelectorAll('td');
+  const stepsStr = t.step_count ? (t.step_count + ' / ' + (t.optimal_steps || '?')) : '—';
+  cells[5].innerHTML = '<div class="status-cell"><div class="task-dot ' + statusCls + '"></div><span class="status-text ' + statusCls + '">' + statusLabel + '</span></div>';
+  cells[7].textContent = stepsStr;
+  cells[8].innerHTML = efficiencyHtml(t.step_efficiency);
+  cells[9].textContent = t.duration_seconds != null ? t.duration_seconds + 's' : '—';
+  const stopReason = t.stop_reason ? t.stop_reason.replace(/_/g, ' ') : (t.error ? 'error' : '—');
+  cells[10].innerHTML = t.infra_tag
+    ? '<span class="infra-tag">' + esc(t.infra_tag) + '</span>'
+    : '<span style="color:var(--muted);font-size:11px;">' + esc(stopReason) + '</span>';
+  if (t.run_id) {
+    const actCell = cells[11];
+    const existing = actCell.querySelector('.task-run-btn');
+    if (existing) { existing.disabled = false; existing.textContent = '▶ Run'; }
+    if (!actCell.querySelector('.view-link')) {
+      actCell.insertAdjacentHTML('beforeend', '<a class="view-link" href="/console" title="' + esc(t.run_id) + '">View &#8594;</a>');
+    }
+  }
+}
+
+// Bootstrap — load all tasks from API
+async function loadTasks() {
+  try {
+    const resp = await fetch('/benchmark/tasks');
+    if (!resp.ok) throw new Error('failed');
+    ALL_TASKS = await resp.json();
+    updateCounts();
+    renderIdleScoreboard();
+  } catch(e) {
+    document.getElementById('scoreBody').innerHTML =
+      '<tr class="empty-row"><td colspan="12">Failed to load tasks from server</td></tr>';
+    document.getElementById('taskCountBadge').textContent = 'Error';
+  }
+}
+
+loadTasks();
+</script>
+</body>
+</html>

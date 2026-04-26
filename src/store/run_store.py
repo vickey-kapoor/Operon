@@ -49,6 +49,7 @@ class FileBackedRunStore(RunStore):
     def __init__(self, root_dir: str | Path = "runs") -> None:
         self.root_dir = Path(root_dir)
         self.root_dir.mkdir(parents=True, exist_ok=True)
+        self._resolved_root = self.root_dir.resolve()
         self._runs: Dict[str, AgentState] = {}
 
     def create_run(
@@ -57,6 +58,7 @@ class FileBackedRunStore(RunStore):
         *,
         start_url: str | None = None,
         headless: bool | None = None,
+        benchmark: str | None = None,
     ) -> AgentState:
         """Create and store a new run record."""
         run_id = str(uuid4())
@@ -65,11 +67,15 @@ class FileBackedRunStore(RunStore):
             intent=intent,
             start_url=start_url,
             headless=headless,
+            benchmark=benchmark,
             status=RunStatus.PENDING,
         )
         self._runs[run_id] = record
         self._ensure_run_dir(run_id)
-        self._write_state(record)
+        # Fresh runs must be observable immediately after the API returns.
+        # Writing the initial state synchronously avoids a race where
+        # /observer/api/run/{run_id} reads before bg_writer flushes state.json.
+        self._write_state_sync(record)
         return record
 
     async def get_run(self, run_id: str) -> AgentState | None:
@@ -86,6 +92,10 @@ class FileBackedRunStore(RunStore):
         self._runs[run_id] = record
         return record
 
+    # How many history entries to retain in the on-disk state snapshot.
+    # The full history is always in run.jsonl; state.json is the live cursor.
+    _MAX_HISTORY = 20
+
     async def update_state(self, run_id: str, perception: ScreenPerception) -> AgentState:
         """Persist a new perception snapshot and return the updated state."""
         record = self._runs[run_id]
@@ -96,10 +106,11 @@ class FileBackedRunStore(RunStore):
         return record
 
     async def set_status(self, run_id: str, status: RunStatus) -> AgentState:
-        """Update a run status in place and return the record."""
+        """Update run status in place.  Write only on terminal transitions."""
         record = self._runs[run_id]
         record.status = status
-        self._write_state(record)
+        if status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.WAITING_FOR_USER}:
+            self._write_state(record)
         return record
 
     async def save_state(self, state: AgentState) -> None:
@@ -122,7 +133,7 @@ class FileBackedRunStore(RunStore):
 
     def _ensure_run_dir(self, run_id: str) -> Path:
         path = (self.root_dir / run_id).resolve()
-        if not path.is_relative_to(self.root_dir.resolve()):
+        if not path.is_relative_to(self._resolved_root):
             raise ValueError(f"run_id {run_id!r} escapes the runs directory")
         path.mkdir(parents=True, exist_ok=True)
         return path
@@ -136,4 +147,25 @@ class FileBackedRunStore(RunStore):
         return self._ensure_run_dir(run_id) / "state.json"
 
     def _write_state(self, state: AgentState) -> None:
-        bg_writer.enqueue(self._state_path(state.run_id), state.model_dump_json())
+        # Trim history lists for the on-disk snapshot to keep serialization O(1).
+        # The full history lives in run.jsonl; only the last N entries are needed
+        # here for recovery context.
+        n = self._MAX_HISTORY
+        if (
+            len(state.observation_history) > n
+            or len(state.action_history) > n
+            or len(state.verification_history) > n
+        ):
+            trimmed = state.model_copy(update={
+                "observation_history": state.observation_history[-n:],
+                "action_history": state.action_history[-n:],
+                "verification_history": state.verification_history[-n:],
+            })
+            bg_writer.enqueue(self._state_path(state.run_id), trimmed.model_dump_json())
+        else:
+            bg_writer.enqueue(self._state_path(state.run_id), state.model_dump_json())
+
+    def _write_state_sync(self, state: AgentState) -> None:
+        path = self._state_path(state.run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(state.model_dump_json(), encoding="utf-8")

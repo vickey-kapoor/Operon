@@ -12,6 +12,7 @@ from src.models.common import FailureCategory, RunStatus, StopReason, StrictMode
 class BenchmarkTaskType(StrEnum):
     """Supported benchmark task families for Operon v1 evaluation."""
 
+    GENERIC = "generic"
     FORM_FILL = "form_fill"
     FORM_SUBMIT = "form_submit"
     MULTI_STEP_FORM = "multi_step_form"

@@ -12,6 +12,7 @@ from src.models.perception import ScreenPerception
 from src.models.policy import PolicyDecision
 from src.models.progress import ProgressState
 from src.models.recovery import RecoveryDecision
+from src.models.usage import ModelUsage
 from src.models.verification import VerificationResult
 
 
@@ -24,6 +25,8 @@ class ModelDebugArtifacts(StrictModel):
     retry_log_artifact_path: str | None = None
     selector_trace_artifact_path: str | None = None
     diagnostics_artifact_path: str | None = None
+    usage_artifact_path: str | None = None
+    usage: ModelUsage | None = None
 
 
 class FailureRecord(StrictModel):
@@ -48,6 +51,7 @@ class StepLog(StrictModel):
     after_artifact_path: str = Field(min_length=1)
     perception_debug: ModelDebugArtifacts
     policy_debug: ModelDebugArtifacts
+    verification_debug: ModelDebugArtifacts | None = None
     perception: ScreenPerception
     policy_decision: PolicyDecision
     executed_action: ExecutedAction

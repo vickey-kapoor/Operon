@@ -107,6 +107,8 @@ class BrowserComputerUseBackend(AgentBackend):
             prompt_artifact_path=str(prompt_path),
             raw_response_artifact_path=str(raw_path),
             parsed_artifact_path=str(parsed_path),
+            usage_artifact_path=str(step_dir / "computer_use_usage.json"),
+            usage=_latest_usage(self.client, step_dir / "computer_use_usage.json"),
         )
         return perception
 
@@ -309,3 +311,12 @@ class BrowserComputerUseBackend(AgentBackend):
             )
         parts.append(first["parts"][1])
         return {"role": "user", "parts": parts}
+
+
+def _latest_usage(client: GeminiComputerUseClient, usage_artifact_path: Path):
+    if not hasattr(client, "latest_usage"):
+        return None
+    usage = client.latest_usage()
+    if usage is not None:
+        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
+    return usage

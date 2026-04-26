@@ -34,6 +34,8 @@ class ActionType(StrEnum):
     SCREENSHOT_REGION = "screenshot_region"
     UPLOAD_FILE = "upload_file"
     UPLOAD_FILE_NATIVE = "upload_file_native"
+    READ_TEXT = "read_text"
+    FILE_PORTER = "file_porter"
 
 
 class AgentAction(StrictModel):
@@ -298,6 +300,22 @@ class AgentAction(StrictModel):
                 for value in (self.selector, self.target_element_id, self.text, self.key, self.url, self.wait_ms, self.scroll_amount)
             ):
                 raise ValueError("screenshot_region cannot include selector, target, text, key, url, wait_ms, or scroll_amount")
+
+        elif self.action_type is ActionType.FILE_PORTER:
+            if self.url is None:
+                raise ValueError("file_porter requires url (the file to download)")
+            if self.text is None:
+                raise ValueError("file_porter requires text (the Drive folder ID)")
+            if any(v is not None for v in _typing_flags):
+                raise ValueError("file_porter cannot include typing flags")
+            if any(
+                value is not None
+                for value in (
+                    self.selector, self.target_element_id, self.key, self.wait_ms,
+                    self.x, self.y, self.target_context, *_new_fields,
+                )
+            ):
+                raise ValueError("file_porter cannot include selector, target, key, wait_ms, or coordinate fields")
 
         return self
 

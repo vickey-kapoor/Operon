@@ -132,6 +132,7 @@ async def test_rule_first_policy_takes_precedence_for_login_guardrail() -> None:
     state = AgentState(
         run_id="run-1",
         intent="Create a Gmail draft and stop before send.",
+        benchmark="gmail_draft_authenticated",
         status=RunStatus.RUNNING,
         current_subgoal="open compose",
     )
@@ -191,7 +192,11 @@ async def test_llm_policy_used_only_when_no_rule_matches() -> None:
 
 
 @pytest.mark.asyncio
-async def test_click_before_type_is_enforced_through_policy_path() -> None:
+async def test_type_action_reaches_executor_without_rule_interception() -> None:
+    # The focus-before-type rule was removed: click+type is now handled atomically
+    # in DesktopExecutor._exec_type (it clicks at the target coords before typing).
+    # This test confirms the policy engine passes TYPE through to the LLM and that
+    # the returned TYPE decision is not intercepted by a pre-emptive CLICK rule.
     root = _local_test_dir("test-policy-coordinator-focus")
     client = StubGeminiClient(
         response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.8,"active_subgoal":"fill_name"}'
@@ -209,15 +214,11 @@ async def test_click_before_type_is_enforced_through_policy_path() -> None:
 
     decision = await coordinator.choose_action(state, _form_perception(root))
 
-    assert decision.action.action_type is ActionType.CLICK
+    # Rule engine passes through; LLM is called and its TYPE decision is used directly.
+    assert decision.action.action_type is ActionType.TYPE
     assert decision.action.target_element_id == "name-input"
-    assert client.calls == 0
-    debug_artifacts = coordinator.latest_debug_artifacts()
-    assert debug_artifacts is not None
-    assert debug_artifacts.selector_trace_artifact_path is not None
-    trace_path = Path(debug_artifacts.selector_trace_artifact_path)
-    assert trace_path.exists()
-    assert '"selected_element_id": "name-input"' in trace_path.read_text(encoding="utf-8")
+    assert decision.action.text == "Alice"
+    assert client.calls == 1
 
 
 @pytest.mark.asyncio
@@ -371,10 +372,11 @@ async def test_failed_type_target_not_found_forces_click_on_next_step() -> None:
 
 
 @pytest.mark.asyncio
-async def test_form_success_visible_stops_successfully_before_llm() -> None:
-    root = _local_test_dir("test-policy-coordinator-form-success")
+async def test_form_success_stop_confirmed_when_llm_agrees() -> None:
+    """Rule fires success stop; LLM also returns STOP → run terminates."""
+    root = _local_test_dir("test-policy-coordinator-form-success-confirmed")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"wait","wait_ms":1000},"rationale":"Wait.","confidence":0.8,"active_subgoal":"wait"}'
+        response='{"action":{"action_type":"stop"},"rationale":"Task complete.","confidence":1.0,"active_subgoal":"verify_success"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -390,9 +392,37 @@ async def test_form_success_visible_stops_successfully_before_llm() -> None:
 
     decision = await coordinator.choose_action(state, perception)
 
+    # LLM confirmed — original rule decision is returned (preserves rationale/subgoal)
     assert decision.action.action_type is ActionType.STOP
     assert decision.active_subgoal == "verify_success"
-    assert client.calls == 0
+    assert client.calls == 1  # LLM was consulted exactly once
+
+
+@pytest.mark.asyncio
+async def test_form_success_stop_overridden_when_llm_sees_error() -> None:
+    """Rule fires success stop; LLM returns a recovery action → stop is rejected."""
+    root = _local_test_dir("test-policy-coordinator-form-success-override")
+    client = StubGeminiClient(
+        response='{"action":{"action_type":"wait","wait_ms":500},"rationale":"Error page visible, not success.","confidence":0.9,"active_subgoal":"reassess"}'
+    )
+    coordinator = PolicyCoordinator(
+        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
+    )
+    state = AgentState(
+        run_id="run-1",
+        intent="Complete the auth-free form and submit it successfully.",
+        status=RunStatus.RUNNING,
+        current_subgoal="verify_success",
+    )
+    perception = _form_perception(root, page_hint="form_success")
+
+    decision = await coordinator.choose_action(state, perception)
+
+    # LLM overrode — the LLM's recovery action is returned, not STOP
+    assert decision.action.action_type is ActionType.WAIT
+    assert decision.active_subgoal == "reassess"
+    assert client.calls == 1
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,8 @@ from typing import Any
 import httpx
 from PIL import Image
 
+from src.models.usage import ModelUsage, estimate_usage_cost
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,6 +38,14 @@ class GeminiClient(ABC):
     @abstractmethod
     async def generate_video_verification(self, prompt: str, video_path: str) -> str:
         """Send a video clip with a verification prompt and return raw JSON."""
+
+    def latest_usage(self) -> ModelUsage | None:
+        """Return provider-reported usage for the most recent call, when available."""
+        return None
+
+    def latest_perception_scale_ratio(self) -> float:
+        """Return the scale ratio applied to the most recent perception screenshot. 1.0 = no resize."""
+        return 1.0
 
 
 class GeminiHttpClient(GeminiClient):
@@ -60,6 +70,8 @@ class GeminiHttpClient(GeminiClient):
         self.max_retries = max(0, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self._client: httpx.AsyncClient | None = None
+        self._last_usage: ModelUsage | None = None
+        self._last_perception_scale_ratio: float = 1.0
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazy-init a persistent async client with connection pooling."""
@@ -73,14 +85,18 @@ class GeminiHttpClient(GeminiClient):
 
     async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
         """Send the screenshot and prompt to Gemini and return raw JSON text."""
-        image_bytes = await asyncio.to_thread(_optimize_screenshot, Path(screenshot_path))
+        image_bytes, scale_ratio = await asyncio.to_thread(_optimize_screenshot, Path(screenshot_path))
+        self._last_perception_scale_ratio = scale_ratio
         payload = self._build_perception_payload(prompt=prompt, image_bytes=image_bytes, mime_type="image/jpeg")
-        return await self._post_json_payload(payload)
+        return await self._post_json_payload(payload, request_kind="image")
+
+    def latest_perception_scale_ratio(self) -> float:
+        return self._last_perception_scale_ratio
 
     async def generate_policy(self, prompt: str) -> str:
         """Send the policy prompt to Gemini and return raw JSON text."""
         payload = self._build_text_payload(prompt=prompt)
-        return await self._post_json_payload(payload)
+        return await self._post_json_payload(payload, request_kind="text")
 
     async def generate_video_verification(self, prompt: str, video_path: str) -> str:
         """Send a video clip with verification prompt and return raw JSON."""
@@ -88,9 +104,12 @@ class GeminiHttpClient(GeminiClient):
         payload = self._build_perception_payload(
             prompt=prompt, image_bytes=video_bytes, mime_type="video/mp4",
         )
-        return await self._post_json_payload(payload)
+        return await self._post_json_payload(payload, request_kind="video")
 
-    async def _post_json_payload(self, payload: dict[str, Any]) -> str:
+    def latest_usage(self) -> ModelUsage | None:
+        return self._last_usage
+
+    async def _post_json_payload(self, payload: dict[str, Any], *, request_kind: str) -> str:
         api_key = self.api_key or os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise GeminiClientError("GEMINI_API_KEY is not configured.")
@@ -142,6 +161,7 @@ class GeminiHttpClient(GeminiClient):
             response_payload = json.loads(response_body)
         except json.JSONDecodeError as exc:
             raise GeminiClientError("Gemini response was not valid JSON.") from exc
+        self._last_usage = _extract_usage(payload=response_payload, model=self.model, request_kind=request_kind)
         return self.extract_text(response_payload)
 
     @staticmethod
@@ -223,21 +243,26 @@ _MAX_SCREENSHOT_WIDTH = 1280
 _JPEG_QUALITY = 92
 
 
-def _optimize_screenshot(path: Path) -> bytes:
-    """Resize to max 1280px wide and convert to JPEG for smaller payloads."""
+def _optimize_screenshot(path: Path) -> tuple[bytes, float]:
+    """Resize to max 1280px wide and convert to JPEG. Returns (bytes, scale_ratio).
+
+    scale_ratio < 1.0 when the image was downscaled. Callers must invert this ratio
+    to restore Gemini's returned coordinates back to native pixel space before use.
+    """
     try:
         img = Image.open(path)
+        scale_ratio = 1.0
         if img.width > _MAX_SCREENSHOT_WIDTH:
-            ratio = _MAX_SCREENSHOT_WIDTH / img.width
-            new_size = (int(img.width * ratio), int(img.height * ratio))
+            scale_ratio = _MAX_SCREENSHOT_WIDTH / img.width
+            new_size = (int(img.width * scale_ratio), int(img.height * scale_ratio))
             img = img.resize(new_size, Image.LANCZOS)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
-        return buf.getvalue()
+        return buf.getvalue(), scale_ratio
     except Exception:
-        return path.read_bytes()
+        return path.read_bytes(), 1.0
 
 
 class PlaceholderGeminiClient(GeminiClient):
@@ -254,3 +279,39 @@ class PlaceholderGeminiClient(GeminiClient):
     async def generate_video_verification(self, prompt: str, video_path: str) -> str:
         """Placeholder model interface; external API calls are intentionally disabled."""
         raise NotImplementedError("Gemini video verification is not configured for this client.")
+
+
+def _extract_usage(*, payload: dict[str, Any], model: str, request_kind: str) -> ModelUsage | None:
+    usage = payload.get("usageMetadata")
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = _as_int(usage.get("promptTokenCount"))
+    output_tokens = _as_int(usage.get("candidatesTokenCount"))
+    total_tokens = _as_int(usage.get("totalTokenCount"))
+    cache_creation_input_tokens = _as_int(usage.get("cacheCreationInputTokens"))
+    cache_read_input_tokens = _as_int(usage.get("cachedContentTokenCount"))
+    thoughts_tokens = _as_int(usage.get("thoughtsTokenCount"))
+    input_cost, output_cost, total_cost = estimate_usage_cost(
+        provider="gemini",
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+    return ModelUsage(
+        provider="gemini",
+        model=model,
+        request_kind=request_kind,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+        thoughts_tokens=thoughts_tokens,
+        input_cost_usd=input_cost,
+        output_cost_usd=output_cost,
+        estimated_cost_usd=total_cost,
+    )
+
+
+def _as_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and value >= 0 else None

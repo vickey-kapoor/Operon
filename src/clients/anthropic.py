@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 
+from src.models.usage import ModelUsage, estimate_usage_cost
+
 
 class AnthropicClientError(RuntimeError):
     """Raised when Anthropic requests or responses are invalid."""
@@ -37,6 +39,7 @@ class AnthropicHttpClient:
         self.max_retries = max(0, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self._client: httpx.AsyncClient | None = None
+        self._last_usage: ModelUsage | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -54,7 +57,8 @@ class AnthropicHttpClient:
                 "max_tokens": 1024,
                 "temperature": 0,
                 "messages": [{"role": "user", "content": prompt}],
-            }
+            },
+            request_kind="text",
         )
 
     async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
@@ -85,10 +89,14 @@ class AnthropicHttpClient:
                         ],
                     }
                 ],
-            }
+            },
+            request_kind="image",
         )
 
-    async def _post_message(self, payload: dict[str, Any]) -> str:
+    def latest_usage(self) -> ModelUsage | None:
+        return self._last_usage
+
+    async def _post_message(self, payload: dict[str, Any], *, request_kind: str) -> str:
         api_key = self.api_key or os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise AnthropicClientError("ANTHROPIC_API_KEY is not configured.")
@@ -116,7 +124,9 @@ class AnthropicHttpClient:
                     if not retryable or attempt >= attempts:
                         raise last_error
                 else:
-                    return _extract_text(response.json())
+                    response_payload = response.json()
+                    self._last_usage = _extract_usage(payload=response_payload, model=self.model, request_kind=request_kind)
+                    return _extract_text(response_payload)
             except httpx.TimeoutException as exc:
                 last_error = AnthropicClientError(
                     f"Anthropic request timed out after {self.timeout_seconds} seconds."
@@ -153,3 +163,39 @@ def _extract_text(response_payload: dict[str, Any]) -> str:
     if not combined:
         raise AnthropicClientError("Anthropic response did not contain text content.")
     return combined
+
+
+def _extract_usage(*, payload: dict[str, Any], model: str, request_kind: str) -> ModelUsage | None:
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = _as_int(usage.get("input_tokens"))
+    output_tokens = _as_int(usage.get("output_tokens"))
+    cache_creation_input_tokens = _as_int(usage.get("cache_creation_input_tokens"))
+    cache_read_input_tokens = _as_int(usage.get("cache_read_input_tokens"))
+    total_tokens = None
+    if input_tokens is not None or output_tokens is not None:
+        total_tokens = (input_tokens or 0) + (output_tokens or 0)
+    input_cost, output_cost, total_cost = estimate_usage_cost(
+        provider="anthropic",
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+    return ModelUsage(
+        provider="anthropic",
+        model=model,
+        request_kind=request_kind,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+        input_cost_usd=input_cost,
+        output_cost_usd=output_cost,
+        estimated_cost_usd=total_cost,
+    )
+
+
+def _as_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and value >= 0 else None

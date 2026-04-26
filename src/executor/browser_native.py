@@ -25,6 +25,37 @@ from src.models.policy import ActionType, AgentAction
 logger = logging.getLogger(__name__)
 
 
+# Playwright expects PascalCase key names. Normalise common variants the LLM may emit.
+_PLAYWRIGHT_KEY_MAP: dict[str, str] = {
+    "escape": "Escape",
+    "esc": "Escape",
+    "enter": "Enter",
+    "return": "Enter",
+    "backspace": "Backspace",
+    "delete": "Delete",
+    "del": "Delete",
+    "tab": "Tab",
+    "space": "Space",
+    "arrowup": "ArrowUp",
+    "up": "ArrowUp",
+    "arrowdown": "ArrowDown",
+    "down": "ArrowDown",
+    "arrowleft": "ArrowLeft",
+    "left": "ArrowLeft",
+    "arrowright": "ArrowRight",
+    "right": "ArrowRight",
+    "pageup": "PageUp",
+    "pagedown": "PageDown",
+    "home": "Home",
+    "end": "End",
+    "insert": "Insert",
+}
+
+
+def _normalize_key_playwright(key: str) -> str:
+    return _PLAYWRIGHT_KEY_MAP.get(key.lower(), key)
+
+
 @dataclass(slots=True)
 class _BrowserSession:
     playwright: object
@@ -50,8 +81,8 @@ class NativeBrowserExecutor(Executor):
     ) -> None:
         self._artifact_dir = Path(artifact_dir)
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
-        self._viewport_width = viewport_width or int(os.getenv("BROWSER_WIDTH", "1440"))
-        self._viewport_height = viewport_height or int(os.getenv("BROWSER_HEIGHT", "900"))
+        self._viewport_width = viewport_width or int(os.getenv("BROWSER_WIDTH", "1920"))
+        self._viewport_height = viewport_height or int(os.getenv("BROWSER_HEIGHT", "1080"))
         if headless is None:
             headless = os.getenv("BROWSER_HEADLESS", "false").lower() == "true"
         self._headless = headless
@@ -177,10 +208,11 @@ class NativeBrowserExecutor(Executor):
                 page = await self._current_page()
                 if action.key is None:
                     return self._fail(action, "press_key requires key", FailureCategory.EXECUTION_ERROR)
+                key = _normalize_key_playwright(action.key)
                 point = self._action_point(action)
                 if point is not None:
                     await page.mouse.click(*point)
-                await page.keyboard.press(action.key)
+                await page.keyboard.press(key)
             elif at is ActionType.HOTKEY:
                 page = await self._current_page()
                 if action.key is None:
@@ -221,6 +253,32 @@ class NativeBrowserExecutor(Executor):
                         await page.locator("input[type=file]").first.click(force=True)
                 file_chooser = await fc_info.value
                 await file_chooser.set_files(file_path)
+            elif at is ActionType.READ_TEXT:
+                page = await self._current_page()
+                css = action.selector or "main, article, #content, body"
+                extracted: str = await page.evaluate(
+                    """(sel) => {
+                        const el = document.querySelector(sel);
+                        if (!el) return "";
+                        const paras = Array.from(el.querySelectorAll("p"))
+                            .map(p => p.innerText.trim())
+                            .filter(t => t.length > 40);
+                        return paras.length > 0 ? paras.join("\\n\\n") : el.innerText.trim();
+                    }""",
+                    css,
+                )
+                if not extracted:
+                    return self._fail(action, f"No text found at selector {css!r}", FailureCategory.EXECUTION_ERROR)
+                output_path = action.text
+                if output_path:
+                    import os as _os
+                    parent = _os.path.dirname(_os.path.abspath(output_path))
+                    if parent:
+                        _os.makedirs(parent, exist_ok=True)
+                    with open(output_path, "w", encoding="utf-8") as fh:
+                        fh.write(extracted)
+                after_path = await self._capture_after()
+                return self._ok(action, extracted[:500], after_path)
             elif at is ActionType.UPLOAD_FILE_NATIVE:
                 file_path = action.text
                 if not file_path:
@@ -402,15 +460,12 @@ class NativeBrowserExecutor(Executor):
                 launch_headless = self._headless
             if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
                 launch_headless = True
-            headed_width, headed_height = self._headed_launch_size()
-            launch_args = (
-                [f"--window-size={self._viewport_width},{self._viewport_height}"]
-                if launch_headless
-                else [
-                    f"--window-size={headed_width},{headed_height}",
-                    "--window-position=0,0",
-                ]
-            )
+            # Homeostasis baseline: lock to 1920x1080 in all modes.
+            # --start-maximized caused clipping inconsistency → perception_low_quality.
+            launch_args = [
+                f"--window-size={self._viewport_width},{self._viewport_height}",
+                "--window-position=0,0",
+            ]
             browser = await playwright.chromium.launch(
                 headless=launch_headless,
                 args=launch_args,
@@ -420,11 +475,8 @@ class NativeBrowserExecutor(Executor):
             raise
         video_dir = self._video_dir_for_run(run_id) if self._record_video else None
         context_kwargs = {
-            "viewport": (
-                {"width": self._viewport_width, "height": self._viewport_height}
-                if launch_headless
-                else {"width": headed_width, "height": headed_height}
-            ),
+            "viewport": {"width": self._viewport_width, "height": self._viewport_height},
+            "device_scale_factor": 1,
         }
         if video_dir is not None:
             video_dir.mkdir(parents=True, exist_ok=True)
@@ -453,6 +505,15 @@ class NativeBrowserExecutor(Executor):
             await self._bring_browser_to_foreground(session.browser_pid)
             await asyncio.sleep(1.5)
         return session
+
+    async def focus_window(self) -> None:
+        """Bring the active browser window to the foreground. No-op in headless mode."""
+        if self._current_run_id is None or self._headless:
+            return
+        session = self._sessions.get(self._current_run_id)
+        if session is None:
+            return
+        await self._bring_browser_to_foreground(session.browser_pid)
 
     async def _foreground_if_fresh_session(self) -> None:
         if self._current_run_id is None:

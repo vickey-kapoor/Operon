@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
-import os
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,12 +25,14 @@ from src.agent.policy import GeminiPolicyService, PolicyService
 from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
+from src.api.benchmark_suite import create_single_task_suite, create_suite, get_all_tasks, get_suite, run_suite_background, stop_suite
 from src.api.observer import (
     artifact_path_for_request,
     build_run_bundle,
     list_runs,
     load_run_snapshot,
     reconcile_orphaned_browser_run,
+    usage_dashboard,
 )
 from src.api.runtime_config import browser_mode_config, desktop_mode_config
 from src.clients.anthropic import AnthropicHttpClient
@@ -46,6 +48,7 @@ from src.models.common import (
     RunTaskRequest,
     StepRequest,
     StopRunRequest,
+    StrictModel,
 )
 from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
@@ -65,7 +68,11 @@ def _validate_run_id(run_id: str) -> None:
     """Reject run_ids that would cause filesystem issues or path traversal."""
     if len(run_id) > _MAX_RUN_ID_LENGTH or not _RUN_ID_RE.match(run_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-_CONSOLE_HTML_PATH = Path(__file__).resolve().parent / "static" / "console.html"
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+_LANDING_HTML_PATH = _STATIC_DIR / "landing.html"
+_CONSOLE_HTML_PATH = _STATIC_DIR / "console.html"
+_DASHBOARD_HTML_PATH = _STATIC_DIR / "dashboard.html"
+_BENCHMARKS_HTML_PATH = _STATIC_DIR / "benchmarks.html"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
@@ -136,15 +143,6 @@ def _build_browser_services(executor) -> _RuntimeServices:
             return _RuntimeServices(perception_service=backend, policy_delegate=backend)
         return _RuntimeServices(perception_service=primary, policy_delegate=primary)
     if config.backend == "browserbase":
-        # Browserbase is a transport-layer choice; use computer_use AI backend by default,
-        # falling back to json if computer_use is not explicitly selected via env.
-        ai_backend = os.getenv("BROWSERBASE_AI_BACKEND", "computer_use")
-        if ai_backend == "json":
-            backend = BrowserJsonBackend(
-                gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
-                prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
-            )
-            return _RuntimeServices(perception_service=backend, policy_delegate=backend)
         primary = BrowserComputerUseBackend(
             client=GeminiComputerUseHttpClient(model=config.primary_model),
             prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
@@ -265,11 +263,31 @@ async def run_task(request: RunTaskRequest) -> RunResponse:
 @router.post("/step", response_model=RunResponse)
 async def step_run(request: StepRequest) -> RunResponse:
     """Advance an existing run by one placeholder loop step."""
+    import logging as _logging
+    _step_log = _logging.getLogger(__name__)
     _validate_run_id(request.run_id)
     try:
         return await get_agent_loop().step_run(request)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except Exception as exc:
+        _step_log.exception("unhandled exception in step_run for %s: %s", request.run_id, exc)
+        # Mark the run as failed and return a clean response rather than a bare 500
+        loop = get_agent_loop()
+        try:
+            from src.models.common import RunStatus
+            state = await loop.run_store.get_run(request.run_id)
+            if state is not None and state.status not in (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED):
+                updated = await loop.run_store.set_status(request.run_id, RunStatus.FAILED)
+                return RunResponse(
+                    run_id=updated.run_id,
+                    status=updated.status,
+                    intent=updated.intent,
+                    step_count=updated.step_count,
+                )
+        except Exception:
+            pass
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
 @router.post("/resume", response_model=RunResponse)
@@ -371,6 +389,12 @@ async def observer_run(run_id: str) -> dict:
     return snapshot
 
 
+@router.get("/observer/api/usage")
+async def observer_usage(limit: int = Query(default=500, ge=1, le=2000)) -> dict:
+    """Return aggregated model usage and cost estimates across recent runs."""
+    return usage_dashboard(limit=limit)
+
+
 @router.get("/observer/api/artifact")
 async def observer_artifact(path: str = Query(..., min_length=1)) -> FileResponse:
     """Serve a local artifact from the runs directory."""
@@ -411,11 +435,95 @@ async def observer_live_browser(run_id: str) -> Response:
 # ── UI ──────────────────────────────────────────────────────────
 
 
-@router.get("/", response_class=HTMLResponse)
 @router.get("/console", response_class=HTMLResponse)
 async def task_console_ui() -> str:
     """Serve the task console UI."""
     return _CONSOLE_HTML_PATH.read_text(encoding="utf-8")
+
+
+@router.get("/", response_class=HTMLResponse)
+async def landing_ui() -> str:
+    """Serve the landing page linking to app surfaces."""
+    return _LANDING_HTML_PATH.read_text(encoding="utf-8")
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_ui() -> str:
+    """Serve the standalone usage dashboard UI."""
+    return _DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
+
+
+@router.get("/benchmarks", response_class=HTMLResponse)
+async def benchmarks_ui() -> str:
+    """Serve the WebArena benchmark suite runner UI."""
+    return _BENCHMARKS_HTML_PATH.read_text(encoding="utf-8")
+
+
+# ── Benchmark suite ─────────────────────────────────────────────
+
+
+_VALID_DIFFICULTIES = {"easy", "medium", "hard", "all"}
+
+
+class _SuiteRequest(StrictModel):
+    difficulty: str = "all"
+    source: str = "all"
+    max_steps: int = 15
+    headless: bool = False
+
+
+class _SingleTaskRequest(StrictModel):
+    task_id: str
+    max_steps: int = 15
+    headless: bool = False
+
+
+@router.post("/benchmark/run-suite")
+async def benchmark_run_suite(body: _SuiteRequest) -> dict:
+    """Start a benchmark suite run in the background and return its suite_id."""
+    difficulty = body.difficulty.lower()
+    if difficulty not in _VALID_DIFFICULTIES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"difficulty must be one of {sorted(_VALID_DIFFICULTIES)}")
+    max_steps = max(5, min(body.max_steps, 40))
+    suite = create_suite(difficulty, source=body.source)
+    asyncio.create_task(run_suite_background(suite.suite_id, max_steps, get_agent_loop, headless=body.headless))
+    return {"suite_id": suite.suite_id, "status": suite.status, "total": suite.total, "difficulty": suite.difficulty}
+
+
+@router.post("/benchmark/stop-suite/{suite_id}")
+async def benchmark_stop_suite(suite_id: str) -> dict:
+    """Cancel a running benchmark suite."""
+    stopped = stop_suite(suite_id)
+    if not stopped:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suite not found or not running")
+    return {"suite_id": suite_id, "cancelled": True}
+
+
+@router.post("/benchmark/run-task")
+async def benchmark_run_task(body: _SingleTaskRequest) -> dict:
+    """Start a single benchmark task in the background; returns suite_id for polling."""
+    max_steps = max(5, min(body.max_steps, 40))
+    try:
+        suite = create_single_task_suite(body.task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    asyncio.create_task(run_suite_background(suite.suite_id, max_steps, get_agent_loop, headless=body.headless))
+    return {"suite_id": suite.suite_id, "task_id": body.task_id, "status": "running"}
+
+
+@router.get("/benchmark/tasks")
+async def benchmark_tasks(difficulty: str = "all", source: str = "all") -> list:
+    """Return all benchmark tasks from all datasets for UI initialisation."""
+    return get_all_tasks(difficulty=difficulty, source=source)
+
+
+@router.get("/benchmark/suite/{suite_id}")
+async def benchmark_suite_status(suite_id: str) -> dict:
+    """Return the current status of a benchmark suite run."""
+    suite = get_suite(suite_id)
+    if suite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suite not found")
+    return suite.to_dict()
 
 
 # ── Desktop (computer-use) routes ───────────────────────────────

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import subprocess
 import sys
 from typing import TYPE_CHECKING
+
+import httpx
 
 if TYPE_CHECKING:
     from src.clients.gemini import GeminiClient
@@ -81,16 +85,30 @@ def notify_desktop(title: str, message: str) -> None:
         else:
             _notify_linux(title, message)
     except Exception as exc:
-        logger.debug("desktop notification failed: %s", exc)
+        logger.warning("desktop notification failed: %s", exc)
 
 
 def _notify_windows(title: str, message: str) -> None:
+    # Primary: win11toast — proper Windows 10/11 Action Center toast that
+    # persists until dismissed, respects notification settings, and works
+    # for unpackaged apps.  Falls back to the old balloon tip if unavailable.
+    try:
+        from win11toast import notify as _win11_notify
+        _win11_notify(title, message)
+        return
+    except Exception as exc:
+        logger.warning("win11toast notification failed, falling back to balloon tip: %s", exc)
+
+    # Fallback: PowerShell balloon tip (Windows XP-era, may be silenced by
+    # Focus Assist, but better than nothing).
+    safe_title = title.replace('"', "'")
+    safe_msg = message.replace('"', "'")
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
-        f'$n = New-Object System.Windows.Forms.NotifyIcon; '
+        "$n = New-Object System.Windows.Forms.NotifyIcon; "
         "$n.Icon = [System.Drawing.SystemIcons]::Information; "
         "$n.Visible = $true; "
-        f'$n.ShowBalloonTip(8000, "{title}", "{message}", [System.Windows.Forms.ToolTipIcon]::Warning); '
+        f'$n.ShowBalloonTip(8000, "{safe_title}", "{safe_msg}", [System.Windows.Forms.ToolTipIcon]::Warning); '
         "Start-Sleep -Seconds 9; $n.Visible = $false"
     )
     subprocess.Popen(
@@ -135,4 +153,46 @@ async def start_escalation_timer(
         try:
             notify_fn()
         except Exception as exc:
-            logger.debug("escalation notify failed: %s", exc)
+            logger.warning("escalation notify failed: %s", exc)
+
+
+async def post_hitl_webhook(
+    *,
+    run_id: str,
+    intent: str,
+    page_hint: str,
+    message: str,
+    url: str | None,
+) -> None:
+    """POST a JSON payload to HITL_WEBHOOK_URL if configured.
+
+    This is the reliable notification channel — always attempted, always logged.
+    Desktop notifications are best-effort; the webhook is the authoritative signal.
+    """
+    webhook_url = os.getenv("HITL_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return
+    payload = {
+        "event": "hitl_triggered",
+        "run_id": run_id,
+        "intent": intent,
+        "page_hint": page_hint,
+        "message": message,
+        "url": url,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                webhook_url,
+                content=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+            )
+        if resp.is_success:
+            logger.info("HITL webhook delivered to %s (status %s)", webhook_url, resp.status_code)
+        else:
+            logger.warning(
+                "HITL webhook returned %s from %s: %s",
+                resp.status_code, webhook_url, resp.text[:200],
+            )
+    except Exception as exc:
+        logger.warning("HITL webhook POST failed: %s", exc)

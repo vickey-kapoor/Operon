@@ -19,21 +19,7 @@ from src.models.verification import VerificationResult, VerificationStatus
 
 logger = logging.getLogger(__name__)
 
-FORM_BENCHMARK = "auth_free_form"
-GMAIL_BENCHMARK = "gmail_draft_authenticated"
 GENERIC_TASK = "generic_task"
-DEFAULT_BENCHMARK = FORM_BENCHMARK
-
-
-def benchmark_name_for_intent(intent: str) -> str:
-    """Map an intent string to a task category key for memory scoping."""
-
-    lowered = intent.lower()
-    if "gmail" in lowered:
-        return GMAIL_BENCHMARK
-    if "form" in lowered and ("submit" in lowered or "fill" in lowered or "complete" in lowered):
-        return FORM_BENCHMARK
-    return GENERIC_TASK
 
 
 def normalize_intent(intent: str) -> str:
@@ -169,7 +155,7 @@ class FileBackedMemoryStore(MemoryStore):
         verification: VerificationResult,
         recovery: RecoveryDecision,
     ) -> list[MemoryRecord]:
-        benchmark = benchmark_name_for_intent(state.intent)
+        benchmark = state.benchmark or GENERIC_TASK
         records = self._build_step_records(
             benchmark=benchmark,
             state=state,
@@ -184,52 +170,11 @@ class FileBackedMemoryStore(MemoryStore):
         return records
 
     def _seed_default_guardrails(self) -> None:
-        # Load once at startup; track seeded keys so record_step never re-reads.
+        from src.benchmarks.registry import BENCHMARK_REGISTRY
         existing = self._load_records()
-        existing_keys = {record.key for record in existing if record.outcome is MemoryOutcome.GUARDRAIL}
-        self._seeded_guardrail_keys = set(existing_keys)
-        defaults = [
-            MemoryRecord(
-                key="click_before_type",
-                benchmark=FORM_BENCHMARK,
-                hint="When input focus is uncertain, click the input before typing.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
-            MemoryRecord(
-                key="avoid_identical_type_retry",
-                benchmark=FORM_BENCHMARK,
-                hint="Do not repeat the same type action after a focus or target failure; re-establish focus first.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
-            MemoryRecord(
-                key="click_before_type",
-                benchmark=GMAIL_BENCHMARK,
-                hint="When input focus is uncertain, click the input before typing.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
-            MemoryRecord(
-                key="avoid_identical_type_retry",
-                benchmark=GMAIL_BENCHMARK,
-                hint="Do not repeat the same type action after a focus or target failure; re-establish focus first.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
-            MemoryRecord(
-                key="authenticated_start_required",
-                benchmark=GMAIL_BENCHMARK,
-                hint="Login pages are out of scope for this benchmark; use an authenticated Gmail start state.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                page_hint=PageHint("google_sign_in"),
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
+        existing_keys = {(record.key, record.benchmark) for record in existing if record.outcome is MemoryOutcome.GUARDRAIL}
+        self._seeded_guardrail_keys = {k for k, _ in existing_keys}
+        generic_seeds = [
             MemoryRecord(
                 key="click_before_type",
                 benchmark=GENERIC_TASK,
@@ -247,8 +192,9 @@ class FileBackedMemoryStore(MemoryStore):
                 success=False,
             ),
         ]
-        for record in defaults:
-            if record.key not in existing_keys:
+        all_seeds = generic_seeds + BENCHMARK_REGISTRY.all_seeds()
+        for record in all_seeds:
+            if (record.key, record.benchmark) not in existing_keys:
                 self._append_record(record)
                 self._seeded_guardrail_keys.add(record.key)
 
@@ -340,21 +286,6 @@ class FileBackedMemoryStore(MemoryStore):
                     target_element_id=action.target_element_id,
                     stage=LoopStage.EXECUTE,
                     success=True,
-                )
-            )
-
-        if benchmark == GMAIL_BENCHMARK and perception.page_hint == "google_sign_in":
-            records.append(
-                MemoryRecord(
-                    key="authenticated_start_required",
-                    benchmark=GMAIL_BENCHMARK,
-                    hint="Login pages are out of scope for this benchmark; use an authenticated Gmail start state.",
-                    outcome=MemoryOutcome.FAILURE,
-                    page_hint=perception.page_hint,
-                    subgoal=state.current_subgoal,
-                    failure_category=recent_failure_category,
-                    stage=recovery.failure_stage or LoopStage.CHOOSE_ACTION,
-                    success=False,
                 )
             )
 

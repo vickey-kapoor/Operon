@@ -41,6 +41,8 @@ htmlcov/
 nosetests.xml
 test-results/
 runs/
+results/
+.codex-logs/
 .desktop-artifacts/
 .browser-artifacts/
 .test-artifacts/

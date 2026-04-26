@@ -207,6 +207,17 @@ When the agent encounters a page it cannot handle autonomously (CAPTCHA, login w
 
 `run_os_picker_macro()` is a deterministic, LLM-free primitive invoked by `NativeBrowserExecutor` after clicking an upload control that opens a native OS file dialog (headed mode only). It polls for a picker window via `pygetwindow` keyword matching, types the absolute file path with `pyautogui.write`, presses Enter, then polls for the window to close. Returns `PickerMacroResult` with a `PickerOutcome` enum (`SUCCESS`, `PICKER_NOT_DETECTED`, `FILE_NOT_REFLECTED`, `UNAVAILABLE`). Failures map to standard executor failure categories.
 
+### Atomic Execution Pattern
+
+The executor merges focus and type into a single atomic operation rather than issuing two sequential actions. When a TYPE action targets an element that is not currently focused, `DesktopExecutor` performs a click on the target's center coordinates immediately before writing the text — both within the same executor call. This eliminates the race condition where a separate CLICK step can change screen state before the TYPE arrives (e.g., an autocomplete dropdown opening and stealing focus between steps).
+
+Consequences for policy and rules:
+- **Never emit a CLICK immediately followed by TYPE on the same element.** The executor handles focus internally; a pre-click from the policy wastes a step and can cause double-click behavior on some inputs.
+- `_avoid_identical_type_retry` (`policy_rules.py`) fires when this pattern is violated — it re-establishes focus rather than retrying the raw type, which is the correct recovery path.
+- `_focus_before_type_rule` is memory-gated and only fires when the `click_before_type` hint is active (seeded from failure patterns). Do not add explicit focus steps outside that rule.
+
+When adding new action types that write to an element, follow the same pattern: embed the focus acquisition inside the executor call, not as a separate policy step.
+
 ### Clients (`src/clients/gemini.py`, `src/clients/anthropic.py`)
 
 `GeminiHttpClient` wraps raw HTTP calls for both perception and policy Gemini requests. Prompt templates live in `prompts/perception_prompt.txt` and `prompts/policy_prompt.txt`.
@@ -234,6 +245,43 @@ runs/
 
 .browser-artifacts/     # Browser session video recordings
 ```
+
+## Coding Style
+
+- **Functional over stateful.** Prefer pure functions and immutable data transformations. Stateful objects (`AgentState`, `ScreenPerception`) are Pydantic models mutated only at explicit loop boundaries — not inside helper functions.
+- **Async/await for all I/O.** Every network call, file read, and subprocess interaction must use `async`/`await`. Blocking I/O inside an `async` function must be wrapped with `asyncio.to_thread`. Never call `time.sleep` in async code; use `asyncio.sleep`.
+- **Pydantic v2 for all state boundaries.** Every object that crosses a service boundary (perception output, policy decision, verification result, step log) must be a `StrictModel` subclass. Validate at ingestion (`model_validate`), not at use. Do not use raw dicts for inter-service data.
+- **No DOM, no selectors, no XPaths.** Operon is vision-only. Element targeting uses `UIElement` coordinates from perception output. Any code that references HTML structure, CSS selectors, accessibility trees, or Playwright `locator()` in the policy/perception path is a contract violation.
+- **Rules before LLM.** Deterministic logic belongs in `PolicyRuleEngine`, not prompt engineering. If a condition can be expressed as a Python predicate over `ScreenPerception` + `AgentState`, it must be a rule, not an instruction appended to the planner prompt.
+- **One responsibility per service.** `PerceptionService` returns typed screen state. `PolicyService` returns an action decision. `VerifierService` returns a verification result. Do not let concerns leak across these boundaries.
+
+## Debug Skill
+
+When a task fails or produces unexpected behavior, always start with the run's JSONL log before reading source code:
+
+```powershell
+# Tail the last N steps of a run
+.venv\Scripts\python -m src.store.summary <run_id>
+
+# Read raw step logs (one JSON object per line)
+cat runs/<run_id>/run.jsonl
+```
+
+Each line in `run.jsonl` is a `StepLog` with: `step`, `stage`, `action_type`, `status`, `failure_category`, `stop_reason`, and `rationale`. Look for:
+
+- `failure_category` — maps directly to `FailureCategory` enum values; pinpoints whether the failure is in perception, policy, execution, or verification
+- `stop_reason` — explains why the run terminated; unexpected values like `MAX_RETRIES_EXCEEDED` or `REPEATED_LOOP_DETECTED` indicate a recovery failure
+- `rationale` — the policy's stated reason for its chosen action; a hallucinated rationale usually points to a prompt or perception quality issue
+
+Per-step artifacts under `runs/<run_id>/step_N/` contain the raw model input/output:
+
+| File | What to check |
+|---|---|
+| `perception_parsed.json` | Element coordinates, page_hint, confidence — are elements where the policy thinks they are? |
+| `perception_diagnostics.json` | Quality gate outcome, salvage attempts — was perception rejected or salvaged? |
+| `policy_decision.json` | Full `PolicyDecision` including `active_subgoal` and `confidence` |
+| `execution_trace.json` | Per-attempt detail, re-resolution trace — did the target shift between steps? |
+| `verification_result.json` | Critic verdict and `recovery_hint` — what did the verifier conclude? |
 
 ## Commit Style
 

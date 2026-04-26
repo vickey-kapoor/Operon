@@ -17,7 +17,7 @@ from src.models.policy import ActionType, PolicyDecision
 from src.models.selector import SelectorTrace
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
-from src.store.memory import MemoryStore, benchmark_name_for_intent, normalize_intent
+from src.store.memory import MemoryStore, normalize_intent
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class PolicyCoordinator(PolicyService):
 
     def _get_hints(self, state: AgentState, perception: ScreenPerception | None) -> list[MemoryHint]:
         """Fetch hints, using a single-step in-memory cache to avoid double JSONL reads."""
-        benchmark = benchmark_name_for_intent(state.intent)
+        benchmark = state.benchmark or "generic_task"
         page_hint = perception.page_hint if perception else None
         cache_key = (benchmark, page_hint, state.current_subgoal, self._recent_failure_category(state))
         if self._cached_hints is not None and self._cached_hints_key == cache_key:
@@ -82,11 +82,18 @@ class PolicyCoordinator(PolicyService):
         self._try_episode_hint(state, perception)
 
         memory_hints = self._get_hints(state, perception)
-        benchmark = benchmark_name_for_intent(state.intent)
+        benchmark = state.benchmark
 
         decision = self.rule_engine.choose_action(state, perception, memory_hints, benchmark_name=benchmark)
         selector_traces = self.rule_engine.latest_selector_traces()
         if decision is not None:
+            if _is_rule_success_stop(decision):
+                confirmed = await self._confirm_success(state, perception, decision)
+                if confirmed is not decision:
+                    # LLM overrode — propagate its decision and its debug artifacts
+                    if hasattr(self.delegate, "latest_debug_artifacts"):
+                        self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
+                    return confirmed
             self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision, selector_traces)
             return decision
 
@@ -100,6 +107,54 @@ class PolicyCoordinator(PolicyService):
             self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
         self._last_debug_artifacts = self._attach_selector_trace(perception, self._last_debug_artifacts, selector_traces)
         return decision
+
+    async def _confirm_success(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        rule_stop: PolicyDecision,
+    ) -> PolicyDecision:
+        """Ask the delegate LLM to confirm or override a rule-sourced success stop.
+
+        Returns the original rule_stop when the LLM agrees (preserves rationale and
+        subgoal for the verifier). Returns the LLM's recovery decision when it
+        disagrees. Falls back to rule_stop on any LLM error so a transient API
+        failure never blocks task completion.
+        """
+        hint = (
+            "CONFIRMATION REQUIRED: The success-detection rule believes the task is "
+            f"complete (page_hint={perception.page_hint.value!r}, "
+            f"summary={perception.summary!r}). "
+            "Examine the current screen carefully. "
+            "If the task is genuinely complete, respond with STOP. "
+            "If this is an error message, a partial state, or the task is not done, "
+            "respond with the appropriate recovery action instead."
+        )
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([hint], source="success_confirm", run_id=state.run_id)
+
+        try:
+            llm_decision = await self.delegate.choose_action(state, perception)
+        except Exception as exc:
+            logger.warning(
+                "Success confirmation LLM call failed (%s: %s) — accepting rule stop.",
+                type(exc).__name__, exc,
+            )
+            return rule_stop
+
+        if llm_decision.action.action_type is ActionType.STOP:
+            logger.info(
+                "Success confirmed by LLM policy (page_hint=%r).",
+                perception.page_hint.value,
+            )
+            return rule_stop
+
+        logger.warning(
+            "LLM rejected rule-based success stop (page_hint=%r). Recovery: %s.",
+            perception.page_hint.value,
+            llm_decision.action.action_type.value,
+        )
+        return llm_decision
 
     async def _reject_premature_stop(
         self,
@@ -280,7 +335,7 @@ class PolicyCoordinator(PolicyService):
         """Inject an advisory hint from a matching episode trajectory."""
         # Initialize replay on first step
         if self._replay_state is None and state.step_count <= 1:
-            benchmark = benchmark_name_for_intent(state.intent)
+            benchmark = state.benchmark or "generic_task"
             norm = normalize_intent(state.intent)
             episode = self.memory_store.get_episode(norm, benchmark)
             if episode is not None:
@@ -333,3 +388,11 @@ class PolicyCoordinator(PolicyService):
             self.delegate.add_advisory_hints([hint], source="episode", run_id=state.run_id)
 
         self._replay_state.current_step_index += 1
+
+
+def _is_rule_success_stop(decision: PolicyDecision) -> bool:
+    """True when a rule engine decision is a success-flagged STOP needing LLM confirmation."""
+    return (
+        decision.action.action_type is ActionType.STOP
+        and decision.active_subgoal == "verify_success"
+    )

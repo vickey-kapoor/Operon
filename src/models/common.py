@@ -126,12 +126,16 @@ class RunTaskRequest(StrictModel):
     intent: str = Field(min_length=1, max_length=500)
     start_url: str | None = Field(default=None, min_length=1)
     headless: bool | None = None
+    benchmark: str | None = Field(default=None, min_length=1)
 
     @field_validator("intent", mode="before")
     @classmethod
     def strip_intent_whitespace(cls, v: str) -> str:
         if isinstance(v, str):
-            return v.strip()
+            stripped = v.strip()
+            if not stripped:
+                raise ValueError("intent must not be blank or whitespace-only")
+            return stripped
         return v
 
 

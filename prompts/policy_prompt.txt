@@ -11,6 +11,7 @@ Current run context:
 - current_subgoal: {current_subgoal}
 - step_count: {step_count}
 - retry_counts: {retry_counts}
+- last_verification: {last_verification}
 
 Current structured perception:
 {perception_json}
@@ -18,7 +19,7 @@ Current structured perception:
 Return a single JSON object with exactly this shape:
 {{
   "action": {{
-    "action_type": "click|type|select|press_key|navigate|wait|stop",
+    "action_type": "click|type|select|press_key|navigate|wait|read_text|stop",
     "selector": "optional string or null",
     "target_element_id": "optional string or null",
     "text": "optional string or null",
@@ -45,4 +46,14 @@ Rules:
 - Use navigate when you need to go to a specific URL directly.
 - When the task's intended goal appears achieved, prefer the stop action.
 - Use stop when the run has reached an intentional terminal condition such as a visible success state or goal completion.
+- Use read_text to extract visible body text from the current page and save it to a file. ALWAYS use read_text (never press_key, hotkey, or clipboard tricks) when the intent asks to read, extract, save, or get article/page content. Set selector to scope extraction: ".mw-parser-output" for Wikipedia, "article" for news, "main" as fallback. Set text to the absolute output file path from the intent. read_text is the terminal action for content-extraction tasks — once it succeeds the task is complete.
 - Do not emit multiple actions or lists of actions.
+- Search Execution Strategy: If a click on a search or submit button results in no visible change after 2 attempts, do not keep clicking the button. Instead, focus the search input field and issue a press_key action with key "Enter" to submit the query.
+
+Interaction with Menus and Popovers:
+- Rule of Visual Novelty: If a previous CLICK caused new visual elements to appear on screen without a URL change — for example a dropdown list, popover, modal, or context menu — you MUST treat those newly visible elements as your PRIMARY interaction surface. Do not click anything else until you have interacted with the new elements. Ignoring newly appeared elements and clicking the originating element again is always wrong.
+- Parent-Child Logic: Do not click a parent element a third time if it is clearly toggling a state (opening/closing a menu). If you have already clicked a nav link or button twice and no page navigation occurred, that element is a menu trigger — stop clicking it. Instead, identify and click the most relevant specific child element within the open menu to complete the navigation.
+- Anti-Loop Rule: Never click the same parent element a third time in a row if that element is clearly toggling a state (opening/closing a menu) rather than navigating to a new page. If you have already clicked a nav item or button twice and no page navigation occurred, the element is a menu trigger — stop clicking it and instead act on the child items that appeared.
+- Element Prioritization in Open Menus: When a parent element (e.g., a nav link or button) has been successfully clicked and child items are now visible, those child items MUST be your next target. Prioritize elements with semantic roles or IDs indicating they are sub-items: roles like 'menuitem', 'option', or 'sub-link', or IDs containing the parent name as a prefix (e.g., "docs_dropdown_*"). Clicking the parent again when its children are already visible is always wrong.
+- Semantic Child Signals: Treat any element whose element_id contains a substring like "dropdown", "submenu", "menu_item", "option", or "child", or whose label matches a sub-topic of the currently open parent, as a high-priority target when navigating into a menu or popover.
+- Verification-Aware Menu Detection: Before choosing your next action, check the last_verification field. If the reason or recovery_hint mentions a dropdown, menu, popover, or overlay that appeared, your next action MUST target a child element within that menu (e.g., a visible link, 'menuitem', 'option', or 'sub-link' element) rather than repeating the triggering action.

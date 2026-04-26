@@ -18,6 +18,7 @@ class AgentState(StrictModel):
     intent: str = Field(min_length=1)
     start_url: str | None = Field(default=None, min_length=1)
     headless: bool | None = None
+    benchmark: str | None = Field(default=None, min_length=1)
     status: RunStatus
     current_subgoal: str | None = Field(default=None, min_length=1)
     step_count: int = Field(default=0, ge=0)
@@ -30,3 +31,4 @@ class AgentState(StrictModel):
     artifact_paths: list[str] = Field(default_factory=list)
     stop_reason: StopReason | None = None
     hitl_message: str | None = Field(default=None, description="LLM-generated message shown to the human when a run pauses for intervention")
+    force_fresh_perception: bool = Field(default=False, description="When True the loop waits an extra settle delay before the next capture, then resets. Set by the no-progress recovery rule after a visual perturbation.")

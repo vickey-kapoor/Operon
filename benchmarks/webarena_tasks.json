@@ -1,0 +1,326 @@
+[
+  {
+    "task_id": "wiki_001",
+    "site": "wikipedia",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+    "intent": "Find the year in which Python programming language was first released and state it clearly.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "1991"
+        ]
+      }
+    },
+    "difficulty": "easy",
+    "tags": [
+      "wikipedia",
+      "read_only",
+      "single_page"
+    ],
+    "source": "operon",
+    "optimal_steps": 2
+  },
+  {
+    "task_id": "wiki_002",
+    "site": "wikipedia",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Eiffel_Tower",
+    "intent": "Find the height of the Eiffel Tower in metres as stated on its Wikipedia page.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "330"
+        ]
+      }
+    },
+    "difficulty": "easy",
+    "tags": [
+      "wikipedia",
+      "read_only",
+      "single_page"
+    ],
+    "source": "operon",
+    "optimal_steps": 2
+  },
+  {
+    "task_id": "wiki_003",
+    "site": "wikipedia",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Marie_Curie",
+    "intent": "Find the birth date of Marie Curie as stated on her Wikipedia page.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "1867"
+        ]
+      }
+    },
+    "difficulty": "easy",
+    "tags": [
+      "wikipedia",
+      "read_only",
+      "single_page"
+    ],
+    "source": "operon",
+    "optimal_steps": 2
+  },
+  {
+    "task_id": "wiki_004",
+    "site": "wikipedia",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "Navigate to the Wikipedia article about the Python programming language by searching for it, then find and state what type of programming language Python is described as.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "interpreted",
+          "high-level"
+        ]
+      }
+    },
+    "difficulty": "medium",
+    "tags": [
+      "wikipedia",
+      "search",
+      "multi_step"
+    ],
+    "source": "operon",
+    "optimal_steps": 5
+  },
+  {
+    "task_id": "wiki_005",
+    "site": "wikipedia",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/JavaScript",
+    "intent": "Find the year JavaScript was created and who created it, as stated on its Wikipedia page.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "1995",
+          "Brendan Eich"
+        ]
+      }
+    },
+    "difficulty": "easy",
+    "tags": [
+      "wikipedia",
+      "read_only",
+      "single_page"
+    ],
+    "source": "operon",
+    "optimal_steps": 2
+  },
+  {
+    "task_id": "wiki_006",
+    "site": "wikipedia",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Linux",
+    "intent": "Find the name of the person who created the Linux kernel and the year it was first released.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "Linus Torvalds",
+          "1991"
+        ]
+      }
+    },
+    "difficulty": "easy",
+    "tags": [
+      "wikipedia",
+      "read_only",
+      "single_page"
+    ],
+    "source": "operon",
+    "optimal_steps": 2
+  },
+  {
+    "task_id": "wiki_007",
+    "site": "wikipedia",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "Search Wikipedia for 'Large Language Model' and find what year the term was coined or popularised according to the article.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "2017",
+          "2020",
+          "2021",
+          "2022"
+        ]
+      }
+    },
+    "difficulty": "medium",
+    "tags": [
+      "wikipedia",
+      "search",
+      "multi_step"
+    ],
+    "source": "operon",
+    "optimal_steps": 5
+  },
+  {
+    "task_id": "form_001",
+    "site": "practice_form",
+    "category": "form_fill",
+    "require_login": false,
+    "start_url": "https://practice-automation.com/form-fields/",
+    "intent": "Fill in the Name field with 'Alice Johnson' and the Email field with 'alice@test.com' on the form, then submit it.",
+    "eval": {
+      "eval_types": [
+        "url_match",
+        "string_match"
+      ],
+      "reference_answers": {
+        "url_contains": "practice-automation.com",
+        "must_include": [
+          "success",
+          "thank",
+          "submitted",
+          "Alice"
+        ]
+      }
+    },
+    "difficulty": "medium",
+    "tags": [
+      "form",
+      "browser",
+      "multi_field"
+    ],
+    "source": "operon",
+    "optimal_steps": 8
+  },
+  {
+    "task_id": "form_002",
+    "site": "practice_form",
+    "category": "form_fill",
+    "require_login": false,
+    "start_url": "https://demoqa.com/text-box",
+    "intent": "Fill in the Full Name as 'Bob Smith', the Email as 'bob@example.com', the Current Address as '123 Main Street', and submit the form.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "Bob Smith",
+          "bob@example.com"
+        ]
+      }
+    },
+    "difficulty": "medium",
+    "tags": [
+      "form",
+      "browser",
+      "multi_field"
+    ],
+    "source": "operon",
+    "optimal_steps": 7
+  },
+  {
+    "task_id": "nav_001",
+    "site": "example_com",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://example.com",
+    "intent": "Read and state the main heading (h1) visible on example.com.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "Example Domain"
+        ]
+      }
+    },
+    "difficulty": "easy",
+    "tags": [
+      "navigation",
+      "read_only",
+      "single_page"
+    ],
+    "source": "operon",
+    "optimal_steps": 2
+  },
+  {
+    "task_id": "nav_002",
+    "site": "wikipedia",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+    "intent": "Find the section titled 'History' on the Python Wikipedia article and state the name of the language that Python was designed to succeed.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "ABC"
+        ]
+      }
+    },
+    "difficulty": "medium",
+    "tags": [
+      "wikipedia",
+      "scroll",
+      "section_find"
+    ],
+    "source": "operon",
+    "optimal_steps": 4
+  },
+  {
+    "task_id": "wiki_008",
+    "site": "wikipedia",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/OpenAI",
+    "intent": "Find the year OpenAI was founded and name at least two of its co-founders as stated on its Wikipedia page.",
+    "eval": {
+      "eval_types": [
+        "string_match"
+      ],
+      "reference_answers": {
+        "must_include": [
+          "2015"
+        ]
+      }
+    },
+    "difficulty": "easy",
+    "tags": [
+      "wikipedia",
+      "read_only",
+      "single_page"
+    ],
+    "source": "operon",
+    "optimal_steps": 2
+  }
+]

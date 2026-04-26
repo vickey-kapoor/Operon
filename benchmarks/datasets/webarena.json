@@ -1,0 +1,133 @@
+[
+  {
+    "task_id": "wa_001",
+    "source": "webarena",
+    "site": "wikipedia",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "Search for 'GPT-4' on Wikipedia and find the release date of GPT-4 as stated in the article.",
+    "optimal_steps": 4,
+    "difficulty": "easy",
+    "tags": ["wikipedia", "search", "single_site"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": ["2023"] }
+    }
+  },
+  {
+    "task_id": "wa_002",
+    "source": "webarena",
+    "site": "github",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://github.com/trending",
+    "intent": "On GitHub Trending, find the name of the #1 trending repository today and state the language it is written in.",
+    "optimal_steps": 3,
+    "difficulty": "easy",
+    "tags": ["github", "read_only", "single_page"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  },
+  {
+    "task_id": "wa_003",
+    "source": "webarena",
+    "site": "hacker_news",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://news.ycombinator.com/ask",
+    "intent": "On Hacker News Ask HN page, find the top Ask HN post and state its title and current score.",
+    "optimal_steps": 3,
+    "difficulty": "easy",
+    "tags": ["hn", "read_only", "single_page"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  },
+  {
+    "task_id": "wa_004",
+    "source": "webarena",
+    "site": "wikipedia",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "Find the Wikipedia article for 'React (JavaScript library)', navigate to it, and state who created it and in what year.",
+    "optimal_steps": 5,
+    "difficulty": "medium",
+    "tags": ["wikipedia", "search", "multi_step", "cross_page"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": ["Jordan Walke", "2013"] }
+    }
+  },
+  {
+    "task_id": "wa_005",
+    "source": "webarena",
+    "site": "github",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://github.com/features/actions",
+    "intent": "On the GitHub Actions features page, navigate to the pricing page and state the number of free minutes per month for GitHub Actions on free plans.",
+    "optimal_steps": 6,
+    "difficulty": "medium",
+    "tags": ["github", "navigation", "multi_step", "cross_page"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": ["2,000", "2000"] }
+    }
+  },
+  {
+    "task_id": "wa_006",
+    "source": "webarena",
+    "site": "practice_form",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://practice-automation.com/form-fields/",
+    "intent": "Fill out the complete contact form: Name as 'Jane Doe', Email as 'jane@example.com', select 'Water' from the drink checkboxes, set the color to blue using the color picker, and submit the form.",
+    "optimal_steps": 10,
+    "difficulty": "medium",
+    "tags": ["form", "multi_field", "complex_interaction"],
+    "eval": {
+      "eval_types": ["url_match", "string_match"],
+      "reference_answers": {
+        "url_contains": "practice-automation.com",
+        "must_include": ["thank", "success", "submitted"]
+      }
+    }
+  },
+  {
+    "task_id": "wa_007",
+    "source": "webarena",
+    "site": "wikipedia",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Artificial_intelligence",
+    "intent": "On the Artificial Intelligence Wikipedia article, find the 'History' section, scroll to it, and state the name of the first AI program mentioned.",
+    "optimal_steps": 7,
+    "difficulty": "medium",
+    "tags": ["wikipedia", "scroll", "section_find", "long_page"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": ["Logic Theorist", "ENIAC"] }
+    }
+  },
+  {
+    "task_id": "wa_008",
+    "source": "webarena",
+    "site": "github",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://github.com/search",
+    "intent": "Search GitHub for Python repositories with more than 50000 stars. Navigate to the top result and state its description.",
+    "optimal_steps": 8,
+    "difficulty": "medium",
+    "tags": ["github", "search", "filter", "multi_step", "cross_page"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  }
+]

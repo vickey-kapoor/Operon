@@ -31,7 +31,14 @@ dev = [
     "pytest-asyncio>=0.24.0,<1.0.0",
 ]
 browserbase = [
-    "browserbase>=2.0.0,<3.0.0",
+    "browserbase>=1.0.0,<2.0.0",
+]
+notifications = [
+    "win11toast>=0.36.0",
+]
+drive = [
+    "google-api-python-client>=2.100.0,<3.0.0",
+    "google-auth>=2.20.0,<3.0.0",
 ]
 
 [tool.pytest.ini_options]

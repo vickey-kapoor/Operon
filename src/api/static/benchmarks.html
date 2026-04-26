@@ -34,7 +34,6 @@
     line-height: 1.5;
   }
 
-  /* ── Topbar (matches landing + dashboard) ── */
   .topbar {
     display: flex; align-items: center; justify-content: space-between;
     gap: 18px; margin-bottom: 30px;
@@ -59,10 +58,8 @@
   .nav a:hover { color: var(--text); border-color: rgba(15,23,42,0.22); }
   .nav a.active { background: linear-gradient(135deg, #dbeafe, #d1fae5); color: var(--text); border-color: transparent; }
 
-  /* ── Layout ── */
-  .page { max-width: 1280px; margin: 0 auto; padding: 28px 28px 60px; display: flex; flex-direction: column; gap: 20px; }
+  .page { max-width: 1400px; margin: 0 auto; padding: 28px 28px 60px; display: flex; flex-direction: column; gap: 20px; }
 
-  /* ── Control bar ── */
   .control-bar {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -75,22 +72,24 @@
     box-shadow: var(--shadow);
   }
   .control-label { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
-  .diff-btns { display: flex; gap: 6px; }
-  .diff-btn {
+  .filter-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-btn {
     border: 1px solid var(--border); background: transparent;
     color: var(--muted); border-radius: 999px;
-    padding: 7px 16px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    padding: 7px 14px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
     transition: all 0.12s;
   }
-  .diff-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .diff-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .filter-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .filter-btn.active.blue { background: rgba(37,99,235,0.08); border-color: var(--blue); color: var(--blue); }
+  .filter-btn.active.purple { background: rgba(124,58,237,0.08); border-color: var(--purple); color: var(--purple); }
+  .control-sep { flex: 1; min-width: 10px; }
   .steps-field { display: flex; align-items: center; gap: 8px; }
   .steps-input {
     width: 64px; background: #f8fafc; color: var(--text);
     border: 1px solid var(--border); border-radius: 8px;
     padding: 7px 10px; font: inherit; font-size: 12px; text-align: center;
   }
-  .control-sep { flex: 1; }
   .run-suite-btn {
     border: none; border-radius: 10px; padding: 10px 24px;
     font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
@@ -100,8 +99,26 @@
     transition: opacity 0.12s;
   }
   .run-suite-btn:disabled { opacity: 0.45; cursor: default; }
+  .stop-suite-btn {
+    border: none; border-radius: 10px; padding: 10px 20px;
+    font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    color: white;
+    box-shadow: 0 4px 14px rgba(220,38,38,0.20);
+    transition: opacity 0.12s;
+    display: none;
+  }
+  .stop-suite-btn.visible { display: inline-flex; align-items: center; gap: 6px; }
+  .task-run-btn {
+    border: 1px solid rgba(37,99,235,0.3); border-radius: 6px;
+    padding: 4px 10px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+    background: #eff6ff; color: var(--blue);
+    transition: background 0.1s;
+    white-space: nowrap;
+  }
+  .task-run-btn:hover { background: #dbeafe; }
+  .task-run-btn:disabled { opacity: 0.4; cursor: default; }
 
-  /* ── Progress bar ── */
   .progress-card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -118,6 +135,7 @@
   .progress-stat-val.green { color: var(--accent); }
   .progress-stat-val.red { color: var(--danger); }
   .progress-stat-val.blue { color: var(--blue); }
+  .progress-stat-val.purple { color: var(--purple); }
   .progress-stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
   .progress-divider { width: 1px; height: 36px; background: var(--border); }
   .progress-bar-wrap { flex: 1; min-width: 160px; }
@@ -135,7 +153,6 @@
   .suite-dot.failed { background: var(--danger); }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
-  /* ── Scoreboard ── */
   .scoreboard {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -149,17 +166,22 @@
     display: flex; align-items: center; gap: 10px;
   }
   .scoreboard-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  .task-count-badge {
+    font-size: 11px; font-weight: 700; color: var(--blue);
+    background: #eff6ff; border: 1px solid rgba(37,99,235,0.2);
+    border-radius: 999px; padding: 2px 9px;
+  }
   table { width: 100%; border-collapse: collapse; }
   thead th {
     text-align: left; font-size: 11px; font-weight: 700; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.06em;
-    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
     white-space: nowrap;
   }
   tbody tr { border-bottom: 1px solid rgba(15,23,42,0.05); transition: background 0.1s; }
   tbody tr:last-child { border-bottom: none; }
   tbody tr:hover { background: #f8fafc; }
-  tbody td { padding: 11px 14px; font-size: 12px; vertical-align: middle; }
+  tbody td { padding: 10px 12px; font-size: 12px; vertical-align: middle; }
 
   .chip {
     display: inline-block; border-radius: 4px; padding: 2px 7px;
@@ -172,10 +194,16 @@
   .chip-info { background: #d1fae5; color: #065f46; }
   .chip-nav { background: #ede9fe; color: #5b21b6; }
   .chip-form { background: #fef3c7; color: #92400e; }
+  .chip-complex { background: #fee2e2; color: #991b1b; }
+
+  /* Source chips */
+  .source-operon { background: #dbeafe; color: #1d4ed8; }
+  .source-mind2web { background: #ede9fe; color: #5b21b6; }
+  .source-webarena { background: #fef3c7; color: #92400e; }
 
   .status-cell { display: flex; align-items: center; gap: 7px; }
   .task-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .task-dot.pending { background: rgba(255,255,255,0.15); }
+  .task-dot.pending { background: #cbd5e1; }
   .task-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 1.2s infinite; }
   .task-dot.passed { background: var(--accent); }
   .task-dot.failed { background: var(--danger); }
@@ -185,21 +213,41 @@
   .status-text.passed { color: var(--accent); }
   .status-text.failed { color: var(--danger); }
 
+  .efficiency-bar {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .eff-track {
+    width: 48px; height: 4px; background: rgba(15,23,42,0.10); border-radius: 99px; overflow: hidden;
+  }
+  .eff-fill { height: 100%; border-radius: 99px; }
+  .eff-fill.high { background: var(--accent); }
+  .eff-fill.mid { background: var(--warning); }
+  .eff-fill.low { background: var(--danger); }
+  .eff-label { font-size: 11px; font-weight: 700; color: var(--muted); }
+
+  .infra-tag {
+    display: inline-block; border-radius: 4px; padding: 2px 6px;
+    font-size: 9px; font-weight: 700; font-family: ui-monospace, monospace;
+    background: #fff1f2; color: #9f1239; border: 1px solid rgba(159,18,57,0.2);
+  }
+
   .view-link {
     color: var(--blue); text-decoration: none; font-size: 11px; font-weight: 600;
     padding: 3px 8px; border: 1px solid rgba(37,99,235,0.25); border-radius: 6px;
     white-space: nowrap; background: #eff6ff;
   }
   .view-link:hover { background: rgba(96,165,250,0.08); }
-  .view-link.hidden { display: none; }
 
-  .td-intent { color: var(--muted); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .td-stop { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .td-intent { color: var(--muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .td-stop { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .empty-row td { text-align: center; color: var(--muted); font-style: italic; padding: 32px; }
+  .actions-cell { display: flex; gap: 5px; align-items: center; }
 
-  @media (max-width: 900px) {
-    .page { padding: 16px; }
+  @media (max-width: 1100px) {
     .td-intent { display: none; }
+  }
+  @media (max-width: 800px) {
+    .page { padding: 14px; }
   }
 </style>
 </head>
@@ -225,22 +273,31 @@
 
   <!-- Control bar -->
   <div class="control-bar">
+    <span class="control-label">Source</span>
+    <div class="filter-btns" id="sourceBtns">
+      <button class="filter-btn active" id="srcAll" onclick="selectSource('all')">All <span id="cntSrcAll"></span></button>
+      <button class="filter-btn" id="srcOperon" onclick="selectSource('operon')">Operon <span id="cntSrcOperon"></span></button>
+      <button class="filter-btn" id="srcMind2web" onclick="selectSource('mind2web')">Mind2Web <span id="cntSrcMind2web"></span></button>
+      <button class="filter-btn" id="srcWebarena" onclick="selectSource('webarena')">WebArena <span id="cntSrcWebarena"></span></button>
+    </div>
+    <div style="width:1px;height:24px;background:var(--border);"></div>
     <span class="control-label">Difficulty</span>
-    <div class="diff-btns">
-      <button class="diff-btn active" id="diffAll" onclick="selectDiff('all')">All <span id="cntAll"></span></button>
-      <button class="diff-btn" id="diffEasy" onclick="selectDiff('easy')">Easy <span id="cntEasy"></span></button>
-      <button class="diff-btn" id="diffMedium" onclick="selectDiff('medium')">Medium <span id="cntMedium"></span></button>
+    <div class="filter-btns" id="diffBtns">
+      <button class="filter-btn active" id="diffAll" onclick="selectDiff('all')">All</button>
+      <button class="filter-btn" id="diffEasy" onclick="selectDiff('easy')">Easy</button>
+      <button class="filter-btn" id="diffMedium" onclick="selectDiff('medium')">Medium</button>
     </div>
     <div class="steps-field">
       <span class="control-label">Max steps</span>
       <input id="maxSteps" class="steps-input" type="number" value="15" min="5" max="40">
     </div>
     <div class="control-sep"></div>
+    <button id="stopSuiteBtn" class="stop-suite-btn" onclick="stopSuite()">&#9632; Stop</button>
     <button id="runSuiteBtn" class="run-suite-btn" onclick="runSuite()">&#9654; Run Suite</button>
   </div>
 
   <!-- Progress card -->
-  <div class="progress-card" id="progressCard">
+  <div class="progress-card">
     <div class="progress-row">
       <div class="suite-status-badge">
         <div class="suite-dot" id="suiteDot"></div>
@@ -268,11 +325,15 @@
         <span class="progress-stat-val green" id="statRate">—</span>
         <span class="progress-stat-label">Pass rate</span>
       </div>
+      <div class="progress-stat">
+        <span class="progress-stat-val purple" id="statEfficiency">—</span>
+        <span class="progress-stat-label">Avg Efficiency</span>
+      </div>
       <div class="progress-bar-wrap">
         <div class="progress-bar-track">
           <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
         </div>
-        <div class="progress-bar-label" id="progressLabel">Run a suite to see results</div>
+        <div class="progress-bar-label" id="progressLabel">Load datasets to see tasks</div>
       </div>
     </div>
   </div>
@@ -281,24 +342,27 @@
   <div class="scoreboard">
     <div class="scoreboard-head">
       <span class="scoreboard-title">Scoreboard</span>
+      <span class="task-count-badge" id="taskCountBadge">Loading…</span>
     </div>
     <table>
       <thead>
         <tr>
           <th>Task</th>
-          <th>Difficulty</th>
+          <th>Source</th>
+          <th>Diff</th>
           <th>Category</th>
           <th>Site</th>
           <th>Intent</th>
           <th>Status</th>
-          <th>Steps</th>
+          <th>Steps / Opt</th>
+          <th>Efficiency</th>
           <th>Duration</th>
-          <th>Stop reason</th>
+          <th>Stop / Infra</th>
           <th></th>
         </tr>
       </thead>
       <tbody id="scoreBody">
-        <tr class="empty-row"><td colspan="10">Select a difficulty and click Run Suite to start</td></tr>
+        <tr class="empty-row"><td colspan="12">Loading benchmark tasks…</td></tr>
       </tbody>
     </table>
   </div>
@@ -308,52 +372,28 @@
 <script>
 'use strict';
 
-const TASKS = [
-  { task_id: 'wiki_001', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
-    intent: 'Find the year in which Python programming language was first released and state it clearly.',
-    start_url: 'https://en.wikipedia.org/wiki/Python_(programming_language)' },
-  { task_id: 'wiki_002', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
-    intent: 'Find the height of the Eiffel Tower in metres as stated on its Wikipedia page.',
-    start_url: 'https://en.wikipedia.org/wiki/Eiffel_Tower' },
-  { task_id: 'wiki_003', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
-    intent: 'Find the birth date of Marie Curie as stated on her Wikipedia page.',
-    start_url: 'https://en.wikipedia.org/wiki/Marie_Curie' },
-  { task_id: 'wiki_005', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
-    intent: 'Find the year JavaScript was created and who created it, as stated on its Wikipedia page.',
-    start_url: 'https://en.wikipedia.org/wiki/JavaScript' },
-  { task_id: 'wiki_006', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
-    intent: 'Find the name of the person who created the Linux kernel and the year it was first released.',
-    start_url: 'https://en.wikipedia.org/wiki/Linux' },
-  { task_id: 'wiki_008', difficulty: 'easy', category: 'information_retrieval', site: 'wikipedia',
-    intent: 'Find the year OpenAI was founded and name at least two of its co-founders as stated on its Wikipedia page.',
-    start_url: 'https://en.wikipedia.org/wiki/OpenAI' },
-  { task_id: 'nav_001', difficulty: 'easy', category: 'navigation', site: 'example.com',
-    intent: 'Read and state the main heading (h1) visible on example.com.',
-    start_url: 'https://example.com' },
-  { task_id: 'wiki_004', difficulty: 'medium', category: 'navigation', site: 'wikipedia',
-    intent: 'Navigate to the Wikipedia article about the Python programming language by searching for it, then find and state what type of programming language Python is described as.',
-    start_url: 'https://en.wikipedia.org/wiki/Main_Page' },
-  { task_id: 'wiki_007', difficulty: 'medium', category: 'navigation', site: 'wikipedia',
-    intent: "Search Wikipedia for 'Large Language Model' and find what year the term was coined or popularised according to the article.",
-    start_url: 'https://en.wikipedia.org/wiki/Main_Page' },
-  { task_id: 'nav_002', difficulty: 'medium', category: 'navigation', site: 'wikipedia',
-    intent: "Find the section titled 'History' on the Python Wikipedia article and state the name of the language that Python was designed to succeed.",
-    start_url: 'https://en.wikipedia.org/wiki/Python_(programming_language)' },
-  { task_id: 'form_001', difficulty: 'medium', category: 'form_fill', site: 'practice_form',
-    intent: "Fill in the Name field with 'Alice Johnson' and the Email field with 'alice@test.com' on the form, then submit it.",
-    start_url: 'https://practice-automation.com/form-fields/' },
-  { task_id: 'form_002', difficulty: 'medium', category: 'form_fill', site: 'practice_form',
-    intent: "Fill in the Full Name as 'Bob Smith', the Email as 'bob@example.com', the Current Address as '123 Main Street', and submit the form.",
-    start_url: 'https://demoqa.com/text-box' },
-];
+const CAT_LABELS = {
+  information_retrieval: 'Info Retrieval',
+  navigation: 'Navigation',
+  form_fill: 'Form Fill',
+  complex_workflow: 'Complex Workflow',
+};
+const CAT_CLS = {
+  information_retrieval: 'chip-info',
+  navigation: 'chip-nav',
+  form_fill: 'chip-form',
+  complex_workflow: 'chip-complex',
+};
+const SRC_CLS = { operon: 'source-operon', mind2web: 'source-mind2web', webarena: 'source-webarena' };
+const SRC_LABEL = { operon: 'Operon', mind2web: 'Mind2Web', webarena: 'WebArena' };
 
-const CAT_LABELS = { information_retrieval: 'Info Retrieval', navigation: 'Navigation', form_fill: 'Form Fill' };
-const CAT_CLS = { information_retrieval: 'chip-info', navigation: 'chip-nav', form_fill: 'chip-form' };
-
+let ALL_TASKS = [];
 let selectedDiff = 'all';
+let selectedSource = 'all';
 let suiteId = null;
 let poller = null;
 let suiteRunning = false;
+let taskSuites = {};
 
 function esc(v) {
   if (v == null) return '';
@@ -362,67 +402,123 @@ function esc(v) {
   return d.innerHTML;
 }
 
-function tasksForDiff(diff) {
-  return diff === 'all' ? TASKS : TASKS.filter(function(t) { return t.difficulty === diff; });
+function filteredTasks() {
+  return ALL_TASKS.filter(function(t) {
+    if (selectedDiff !== 'all' && t.difficulty !== selectedDiff) return false;
+    if (selectedSource !== 'all' && (t.source || 'operon') !== selectedSource) return false;
+    return true;
+  });
 }
 
-function initCounts() {
-  document.getElementById('cntAll').textContent = '(' + TASKS.length + ')';
-  const easy = TASKS.filter(function(t) { return t.difficulty === 'easy'; }).length;
-  const medium = TASKS.filter(function(t) { return t.difficulty === 'medium'; }).length;
-  document.getElementById('cntEasy').textContent = '(' + easy + ')';
-  document.getElementById('cntMedium').textContent = '(' + medium + ')';
+function updateCounts() {
+  const sources = ['All', 'Operon', 'Mind2web', 'Webarena'];
+  const srcKeys = ['all', 'operon', 'mind2web', 'webarena'];
+  srcKeys.forEach(function(s, i) {
+    const el = document.getElementById('cntSrc' + sources[i]);
+    if (!el) return;
+    const cnt = s === 'all' ? ALL_TASKS.length : ALL_TASKS.filter(function(t) { return (t.source || 'operon') === s; }).length;
+    el.textContent = '(' + cnt + ')';
+  });
+}
+
+function selectSource(src) {
+  if (suiteRunning) return;
+  selectedSource = src;
+  ['All','Operon','Mind2web','Webarena'].forEach(function(s) {
+    const btn = document.getElementById('src' + s);
+    if (btn) btn.classList.toggle('active', s.toLowerCase() === src || (src === 'all' && s === 'All'));
+  });
+  renderIdleScoreboard();
 }
 
 function selectDiff(diff) {
   if (suiteRunning) return;
   selectedDiff = diff;
-  ['all','easy','medium'].forEach(function(d) {
-    document.getElementById('diff' + d.charAt(0).toUpperCase() + d.slice(1)).classList.toggle('active', d === diff);
+  ['All','Easy','Medium'].forEach(function(d) {
+    const btn = document.getElementById('diff' + d);
+    if (btn) btn.classList.toggle('active', d.toLowerCase() === diff);
   });
   renderIdleScoreboard();
 }
 
+function efficiencyHtml(eff) {
+  if (eff == null) return '<span style="color:var(--muted)">—</span>';
+  const pct = Math.round(eff * 100);
+  const cls = pct >= 80 ? 'high' : pct >= 50 ? 'mid' : 'low';
+  return '<div class="efficiency-bar">'
+    + '<div class="eff-track"><div class="eff-fill ' + cls + '" style="width:' + pct + '%"></div></div>'
+    + '<span class="eff-label">' + pct + '%</span>'
+    + '</div>';
+}
+
+function taskRowHtml(t, isLive) {
+  const statusCls = t.status || 'pending';
+  const statusLabel = statusCls.charAt(0).toUpperCase() + statusCls.slice(1);
+  const src = t.source || 'operon';
+  const diffCls = 'chip-' + (t.difficulty || 'easy');
+  const catCls = CAT_CLS[t.category] || '';
+  const catLabel = CAT_LABELS[t.category] || t.category;
+  const stepsStr = isLive && t.step_count
+    ? (t.step_count + ' / ' + (t.optimal_steps || '?'))
+    : (t.optimal_steps ? ('— / ' + t.optimal_steps) : '—');
+  const dur = t.duration_seconds != null ? t.duration_seconds + 's' : '—';
+  const stopReason = t.stop_reason ? t.stop_reason.replace(/_/g, ' ') : (t.error ? 'error' : '—');
+  const infraHtml = t.infra_tag
+    ? '<span class="infra-tag">' + esc(t.infra_tag) + '</span>'
+    : '<span style="color:var(--muted);font-size:11px;">' + esc(stopReason) + '</span>';
+  const isRunning = t.status === 'running';
+  const runBtn = '<button class="task-run-btn" id="runbtn-' + esc(t.task_id) + '" onclick="runSingleTask(\'' + t.task_id + '\')" ' + (isRunning ? 'disabled' : '') + '>'
+    + (isRunning ? 'Running…' : '&#9654; Run') + '</button>';
+  const viewBtn = t.run_id
+    ? '<a class="view-link" href="/console" title="' + esc(t.run_id) + '">View &#8594;</a>'
+    : '';
+
+  return '<tr id="row-' + esc(t.task_id) + '">'
+    + '<td><span class="chip chip-id">' + esc(t.task_id) + '</span></td>'
+    + '<td><span class="chip ' + (SRC_CLS[src] || '') + '">' + esc(SRC_LABEL[src] || src) + '</span></td>'
+    + '<td><span class="chip ' + diffCls + '">' + esc(t.difficulty) + '</span></td>'
+    + '<td><span class="chip ' + catCls + '">' + esc(catLabel) + '</span></td>'
+    + '<td style="color:var(--muted);font-size:11px;">' + esc(t.site) + '</td>'
+    + '<td class="td-intent" title="' + esc(t.intent) + '">' + esc(t.intent) + '</td>'
+    + '<td><div class="status-cell"><div class="task-dot ' + statusCls + '"></div><span class="status-text ' + statusCls + '">' + statusLabel + '</span></div></td>'
+    + '<td style="color:var(--muted);font-size:11px;font-family:ui-monospace,monospace;">' + esc(stepsStr) + '</td>'
+    + '<td>' + efficiencyHtml(t.step_efficiency != null ? t.step_efficiency : null) + '</td>'
+    + '<td style="color:var(--muted)">' + esc(dur) + '</td>'
+    + '<td class="td-stop">' + infraHtml + '</td>'
+    + '<td class="actions-cell">' + runBtn + viewBtn + '</td>'
+    + '</tr>';
+}
+
 function renderIdleScoreboard() {
-  const tasks = tasksForDiff(selectedDiff);
+  const tasks = filteredTasks();
   const body = document.getElementById('scoreBody');
+  document.getElementById('taskCountBadge').textContent = tasks.length + ' tasks';
   if (!tasks.length) {
-    body.innerHTML = '<tr class="empty-row"><td colspan="10">No tasks for this filter</td></tr>';
+    body.innerHTML = '<tr class="empty-row"><td colspan="12">No tasks match the selected filters</td></tr>';
+    resetProgress(0);
     return;
   }
-  body.innerHTML = tasks.map(function(t) {
-    return '<tr>'
-      + '<td><span class="chip chip-id">' + esc(t.task_id) + '</span></td>'
-      + '<td><span class="chip chip-' + t.difficulty + '">' + t.difficulty + '</span></td>'
-      + '<td><span class="chip ' + (CAT_CLS[t.category] || '') + '">' + esc(CAT_LABELS[t.category] || t.category) + '</span></td>'
-      + '<td style="color:var(--muted);font-size:11px;">' + esc(t.site) + '</td>'
-      + '<td class="td-intent" title="' + esc(t.intent) + '">' + esc(t.intent) + '</td>'
-      + '<td><div class="status-cell"><div class="task-dot pending"></div><span class="status-text pending">Pending</span></div></td>'
-      + '<td style="color:var(--muted)">—</td>'
-      + '<td style="color:var(--muted)">—</td>'
-      + '<td class="td-stop">—</td>'
-      + '<td></td>'
-      + '</tr>';
-  }).join('');
+  body.innerHTML = tasks.map(function(t) { return taskRowHtml(t, false); }).join('');
   resetProgress(tasks.length);
 }
 
 function resetProgress(total) {
-  setSuiteStatus('idle', '');
-  document.getElementById('statTotal').textContent = total;
+  setSuiteStatus('idle', 'Idle');
+  document.getElementById('statTotal').textContent = total || '—';
   document.getElementById('statCompleted').textContent = '0';
   document.getElementById('statPassed').textContent = '0';
   document.getElementById('statFailed').textContent = '0';
   document.getElementById('statRate').textContent = '—';
+  document.getElementById('statEfficiency').textContent = '—';
   document.getElementById('progressFill').style.width = '0%';
-  document.getElementById('progressLabel').textContent = 'Ready to run';
+  document.getElementById('progressLabel').textContent = total ? 'Ready to run ' + total + ' tasks' : 'No tasks selected';
 }
 
 function setSuiteStatus(status, label) {
   const dot = document.getElementById('suiteDot');
   const lbl = document.getElementById('suiteStatusLabel');
   dot.className = 'suite-dot ' + status;
-  lbl.textContent = label || status.charAt(0).toUpperCase() + status.slice(1);
+  lbl.textContent = label || (status.charAt(0).toUpperCase() + status.slice(1));
 }
 
 async function runSuite() {
@@ -431,16 +527,18 @@ async function runSuite() {
   suiteRunning = true;
   document.getElementById('runSuiteBtn').disabled = true;
   document.getElementById('runSuiteBtn').textContent = 'Running…';
-  ['diffAll','diffEasy','diffMedium'].forEach(function(id) { document.getElementById(id).disabled = true; });
+  document.getElementById('stopSuiteBtn').classList.add('visible');
+  ['diffAll','diffEasy','diffMedium'].forEach(function(id) {
+    const el = document.getElementById(id); if (el) el.disabled = true;
+  });
 
   setSuiteStatus('running', 'Starting…');
-  renderIdleScoreboard();
 
   try {
     const resp = await fetch('/benchmark/run-suite', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ difficulty: selectedDiff, max_steps: maxSteps }),
+      body: JSON.stringify({ difficulty: selectedDiff, source: selectedSource, max_steps: maxSteps, headless: false }),
     });
     if (!resp.ok) {
       const err = await resp.json().catch(function() { return {}; });
@@ -450,17 +548,24 @@ async function runSuite() {
     suiteId = data.suite_id;
     setSuiteStatus('running', 'Running — suite ' + suiteId);
     startPoller();
-  } catch (e) {
+  } catch(e) {
     setSuiteStatus('failed', 'Error: ' + e.message);
     resetRunBtn();
   }
 }
 
+async function stopSuite() {
+  if (!suiteId) return;
+  try {
+    await fetch('/benchmark/stop-suite/' + suiteId, { method: 'POST' });
+    document.getElementById('stopSuiteBtn').classList.remove('visible');
+    setSuiteStatus('failed', 'Stopping…');
+  } catch(e) {}
+}
+
 function startPoller() {
   if (poller) clearInterval(poller);
-  poller = setInterval(function() {
-    pollSuite().catch(function() {});
-  }, 2000);
+  poller = setInterval(function() { pollSuite().catch(function() {}); }, 2000);
   pollSuite().catch(function() {});
 }
 
@@ -484,7 +589,10 @@ async function pollSuite() {
 function resetRunBtn() {
   document.getElementById('runSuiteBtn').disabled = false;
   document.getElementById('runSuiteBtn').textContent = '▶ Run Suite';
-  ['diffAll','diffEasy','diffMedium'].forEach(function(id) { document.getElementById(id).disabled = false; });
+  document.getElementById('stopSuiteBtn').classList.remove('visible');
+  ['diffAll','diffEasy','diffMedium'].forEach(function(id) {
+    const el = document.getElementById(id); if (el) el.disabled = false;
+  });
 }
 
 function renderSuiteState(data) {
@@ -494,51 +602,111 @@ function renderSuiteState(data) {
   const passed = data.passed || 0;
   const failed = completed - passed;
   const rate = data.pass_rate != null ? Math.round(data.pass_rate * 100) + '%' : '—';
+  const eff = data.avg_step_efficiency != null ? Math.round(data.avg_step_efficiency * 100) + '%' : '—';
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-
   const isCompleted = data.status === 'completed';
-  setSuiteStatus(isCompleted ? 'completed' : 'running', isCompleted ? 'Completed' : ('Running — ' + completed + ' / ' + total));
 
+  setSuiteStatus(isCompleted ? 'completed' : 'running',
+    isCompleted ? 'Completed' : ('Running — ' + completed + ' / ' + total));
   document.getElementById('statTotal').textContent = total;
   document.getElementById('statCompleted').textContent = completed;
   document.getElementById('statPassed').textContent = passed;
   document.getElementById('statFailed').textContent = failed;
   document.getElementById('statRate').textContent = rate;
+  document.getElementById('statEfficiency').textContent = eff;
   document.getElementById('progressFill').style.width = pct + '%';
-  document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' tasks complete' + (isCompleted ? ' — ' + rate + ' pass rate' : '');
+  document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' tasks complete'
+    + (isCompleted ? ' — ' + rate + ' pass rate, ' + eff + ' avg efficiency' : '');
+  document.getElementById('taskCountBadge').textContent = total + ' tasks';
 
   const body = document.getElementById('scoreBody');
-  if (!tasks.length) return;
-  body.innerHTML = tasks.map(function(t) {
-    const statusCls = t.status;
-    const statusLabel = t.status.charAt(0).toUpperCase() + t.status.slice(1);
-    const diffCls = 'chip-' + t.difficulty;
-    const catCls = CAT_CLS[t.category] || '';
-    const catLabel = CAT_LABELS[t.category] || t.category;
-    const dur = t.duration_seconds != null ? t.duration_seconds + 's' : '—';
-    const steps = t.step_count || '—';
-    const stopReason = t.stop_reason ? t.stop_reason.replace(/_/g, ' ') : (t.error ? 'error' : '—');
-    const viewHref = t.run_id ? '/console' : '';
-    const viewBtn = t.run_id
-      ? '<a class="view-link" href="/console" title="' + esc(t.run_id) + '">View run &#8594;</a>'
-      : '';
-    return '<tr>'
-      + '<td><span class="chip chip-id">' + esc(t.task_id) + '</span></td>'
-      + '<td><span class="chip ' + diffCls + '">' + esc(t.difficulty) + '</span></td>'
-      + '<td><span class="chip ' + catCls + '">' + esc(catLabel) + '</span></td>'
-      + '<td style="color:var(--muted);font-size:11px;">' + esc(t.site) + '</td>'
-      + '<td class="td-intent" title="' + esc(t.intent) + '">' + esc(t.intent) + '</td>'
-      + '<td><div class="status-cell"><div class="task-dot ' + statusCls + '"></div><span class="status-text ' + statusCls + '">' + statusLabel + '</span></div></td>'
-      + '<td style="color:var(--muted)">' + esc(steps) + '</td>'
-      + '<td style="color:var(--muted)">' + esc(dur) + '</td>'
-      + '<td class="td-stop" title="' + esc(t.stop_reason || '') + '">' + esc(stopReason) + '</td>'
-      + '<td>' + viewBtn + '</td>'
-      + '</tr>';
-  }).join('');
+  if (tasks.length) {
+    body.innerHTML = tasks.map(function(t) { return taskRowHtml(t, true); }).join('');
+  }
 }
 
-initCounts();
-renderIdleScoreboard();
+async function runSingleTask(taskId) {
+  const btn = document.getElementById('runbtn-' + taskId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  const maxSteps = Math.max(5, Math.min(40, parseInt(document.getElementById('maxSteps').value, 10) || 15));
+  try {
+    const resp = await fetch('/benchmark/run-task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: taskId, max_steps: maxSteps, headless: false }),
+    });
+    if (!resp.ok) throw new Error('Failed to start task');
+    const data = await resp.json();
+    const sid = data.suite_id;
+    taskSuites[taskId] = { suite_id: sid };
+    const row = document.getElementById('row-' + taskId);
+    if (row) {
+      row.querySelector('.task-dot').className = 'task-dot running';
+      const st = row.querySelector('.status-text');
+      if (st) { st.className = 'status-text running'; st.textContent = 'Running'; }
+    }
+    const pollId = setInterval(async function() {
+      try {
+        const r = await fetch('/benchmark/suite/' + sid);
+        if (!r.ok) return;
+        const d = await r.json();
+        const t = d.tasks && d.tasks[0];
+        if (!t) return;
+        updateTaskRow(taskId, t);
+        if (d.status === 'completed') {
+          clearInterval(pollId);
+          const b = document.getElementById('runbtn-' + taskId);
+          if (b) { b.disabled = false; b.textContent = '▶ Run'; }
+        }
+      } catch(e) {}
+    }, 2000);
+    taskSuites[taskId].poller = pollId;
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Run'; }
+  }
+}
+
+function updateTaskRow(taskId, t) {
+  const row = document.getElementById('row-' + taskId);
+  if (!row) return;
+  const statusCls = t.status;
+  const statusLabel = t.status.charAt(0).toUpperCase() + t.status.slice(1);
+  const cells = row.querySelectorAll('td');
+  const stepsStr = t.step_count ? (t.step_count + ' / ' + (t.optimal_steps || '?')) : '—';
+  cells[5].innerHTML = '<div class="status-cell"><div class="task-dot ' + statusCls + '"></div><span class="status-text ' + statusCls + '">' + statusLabel + '</span></div>';
+  cells[7].textContent = stepsStr;
+  cells[8].innerHTML = efficiencyHtml(t.step_efficiency);
+  cells[9].textContent = t.duration_seconds != null ? t.duration_seconds + 's' : '—';
+  const stopReason = t.stop_reason ? t.stop_reason.replace(/_/g, ' ') : (t.error ? 'error' : '—');
+  cells[10].innerHTML = t.infra_tag
+    ? '<span class="infra-tag">' + esc(t.infra_tag) + '</span>'
+    : '<span style="color:var(--muted);font-size:11px;">' + esc(stopReason) + '</span>';
+  if (t.run_id) {
+    const actCell = cells[11];
+    const existing = actCell.querySelector('.task-run-btn');
+    if (existing) { existing.disabled = false; existing.textContent = '▶ Run'; }
+    if (!actCell.querySelector('.view-link')) {
+      actCell.insertAdjacentHTML('beforeend', '<a class="view-link" href="/console" title="' + esc(t.run_id) + '">View &#8594;</a>');
+    }
+  }
+}
+
+// Bootstrap — load all tasks from API
+async function loadTasks() {
+  try {
+    const resp = await fetch('/benchmark/tasks');
+    if (!resp.ok) throw new Error('failed');
+    ALL_TASKS = await resp.json();
+    updateCounts();
+    renderIdleScoreboard();
+  } catch(e) {
+    document.getElementById('scoreBody').innerHTML =
+      '<tr class="empty-row"><td colspan="12">Failed to load tasks from server</td></tr>';
+    document.getElementById('taskCountBadge').textContent = 'Error';
+  }
+}
+
+loadTasks();
 </script>
 </body>
 </html>

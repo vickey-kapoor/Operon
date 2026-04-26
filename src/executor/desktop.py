@@ -154,6 +154,33 @@ def _foreground_monitor() -> dict | None:
     return None
 
 
+# PyAutoGUI expects lowercase key names. Normalise common variants the LLM may emit.
+_PYAUTOGUI_KEY_MAP: dict[str, str] = {
+    "escape": "escape",
+    "esc": "escape",
+    "enter": "enter",
+    "return": "enter",
+    "backspace": "backspace",
+    "delete": "delete",
+    "del": "delete",
+    "tab": "tab",
+    "space": "space",
+    "arrowup": "up",
+    "arrowdown": "down",
+    "arrowleft": "left",
+    "arrowright": "right",
+    "pageup": "pageup",
+    "pagedown": "pagedown",
+    "home": "home",
+    "end": "end",
+    "insert": "insert",
+}
+
+
+def _normalize_key_pyautogui(key: str) -> str:
+    return _PYAUTOGUI_KEY_MAP.get(key.lower(), key.lower())
+
+
 class DesktopExecutor(Executor):
     """Desktop executor using pyautogui/mss for full-screen automation."""
 
@@ -181,6 +208,22 @@ class DesktopExecutor(Executor):
     def set_current_run_id(self, run_id: str) -> None:
         """Set the active run ID so launched processes are tracked per run."""
         self._current_run_id = run_id
+
+    def _coord_in_monitor_bounds(self, virt_x: int, virt_y: int) -> tuple[bool, list[dict]]:
+        """Return (in_bounds, physical_monitors) for the given virtual-desktop coord."""
+        try:
+            with mss.mss() as sct:
+                monitors = list(sct.monitors[1:])
+            if not monitors:
+                return True, monitors
+            in_bounds = any(
+                mon["left"] <= virt_x < mon["left"] + mon["width"]
+                and mon["top"] <= virt_y < mon["top"] + mon["height"]
+                for mon in monitors
+            )
+            return in_bounds, monitors
+        except Exception:
+            return True, []
 
     async def reset_desktop(self) -> None:
         """Minimize all windows (Win+D) to give each task a clean desktop."""
@@ -284,6 +327,7 @@ class DesktopExecutor(Executor):
             ActionType.WAIT_FOR_USER: self._exec_noop,
             ActionType.NAVIGATE: self._exec_unsupported,
             ActionType.SELECT: self._exec_unsupported,
+            ActionType.FILE_PORTER: self._exec_file_porter,
         }
         handler = dispatch.get(at, self._exec_unsupported)
         return await handler(action)
@@ -294,6 +338,19 @@ class DesktopExecutor(Executor):
         if action.x is None or action.y is None:
             return self._fail(action, "click requires x,y coordinates on desktop", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
         try:
+            # action.x/y are already virtual-desktop coords — the loop applies
+            # monitor_origin via _apply_monitor_origin before calling the executor.
+            in_bounds, monitors = self._coord_in_monitor_bounds(action.x, action.y)
+            if not in_bounds:
+                logger.warning(
+                    "click skipped: coord (%d, %d) is outside all monitor bounds [monitors=%s]",
+                    action.x, action.y, monitors,
+                )
+                return self._fail(
+                    action,
+                    f"click skipped: coord ({action.x}, {action.y}) is outside all monitor bounds",
+                    FailureCategory.EXECUTION_ERROR,
+                )
             await asyncio.to_thread(pyautogui.click, action.x, action.y)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
@@ -367,11 +424,12 @@ class DesktopExecutor(Executor):
     async def _exec_press_key(self, action: AgentAction) -> ExecutedAction:
         if action.key is None:
             return self._fail(action, "press_key requires key", FailureCategory.EXECUTION_ERROR)
+        key = _normalize_key_pyautogui(action.key)
         try:
-            await asyncio.to_thread(pyautogui.press, action.key)
+            await asyncio.to_thread(pyautogui.press, key)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
-            return self._ok(action, f"Pressed key '{action.key}'", after_path)
+            return self._ok(action, f"Pressed key '{key}'", after_path)
         except Exception as exc:
             return self._fail(action, f"Press key failed: {exc}", FailureCategory.EXECUTION_ERROR)
 
@@ -540,6 +598,22 @@ class DesktopExecutor(Executor):
             f"Action '{action.action_type}' is not supported on desktop",
             FailureCategory.EXECUTION_ERROR,
         )
+
+    async def _exec_file_porter(self, action: AgentAction) -> ExecutedAction:
+        if action.url is None or action.text is None:
+            return self._fail(
+                action,
+                "file_porter requires url and text (folder ID)",
+                FailureCategory.EXECUTION_ERROR,
+            )
+        try:
+            from src.tools.file_porter import run_porter
+            result = await asyncio.to_thread(run_porter, action.url, action.text)
+            if result.success:
+                return self._ok(action, result.detail, None)
+            return self._fail(action, result.detail, FailureCategory.EXECUTION_ERROR)
+        except Exception as exc:
+            return self._fail(action, f"FilePorter raised: {exc}", FailureCategory.EXECUTION_ERROR)
 
     # ── helpers ──────────────────────────────────────────────────
 

@@ -116,15 +116,7 @@ def form_submit_when_ready_rule(
 # Default plugin registry — benchmark name → plugins
 # ---------------------------------------------------------------------------
 
-BENCHMARK_PLUGINS: dict[str, list[BenchmarkRulePlugin]] = {
-    "gmail_draft_authenticated": [
-        gmail_login_page_guardrail,
-        gmail_compose_already_visible_rule,
-    ],
-    "auth_free_form": [
-        form_submit_when_ready_rule,
-    ],
-}
+BENCHMARK_PLUGINS: dict[str, list[BenchmarkRulePlugin]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +162,8 @@ class PolicyRuleEngine:
 
         # Benchmark-specific plugins run first (higher priority / more specific)
         if benchmark_name is not None:
-            for plugin in self._plugins.get(benchmark_name, []):
+            from src.benchmarks.registry import BENCHMARK_REGISTRY
+            for plugin in BENCHMARK_REGISTRY.get_rules(benchmark_name) or self._plugins.get(benchmark_name, []):
                 decision = plugin(state, perception, memory_hints)
                 if decision is not None:
                     return decision
@@ -179,11 +172,11 @@ class PolicyRuleEngine:
         return (
             self._human_intervention_rule(state, perception)
             or self._task_success_stop_rule(perception)
+            or self._dropdown_menu_select_rule(state, perception)
             or self._avoid_identical_type_retry(state, perception, memory_hints)
             or self._no_progress_recovery_rule(state, perception)
             or self._dismiss_blocking_overlay_rule(state, perception)
             or self._search_query_rule(state, perception)
-            or self._focus_before_type_rule(state, perception, memory_hints)
         )
 
     def register_plugins(self, benchmark_name: str, plugins: list[BenchmarkRulePlugin]) -> None:
@@ -244,6 +237,79 @@ class PolicyRuleEngine:
             active_subgoal=f"re-assess {last_action.target_element_id or 'input'}",
         )
 
+    # Substrings in element_id that signal a secondary menu / dropdown child item.
+    _DROPDOWN_ID_SIGNALS: frozenset[str] = frozenset({
+        "dropdown", "submenu", "menu_item", "menuitem", "popover", "flyout", "child",
+    })
+
+    def _dropdown_menu_select_rule(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision | None:
+        """Fire when a dropdown/submenu is open and the agent should pick a child item.
+
+        Fires when ALL of the following hold:
+        - The last action was a successful CLICK on a non-dropdown element (the parent trigger).
+        - The current perception contains at least one element whose element_id includes a
+          known dropdown-child signal substring (dropdown, submenu, menu_item, etc.).
+        - The last-clicked element is still visible (meaning no navigation occurred — same page).
+
+        Chooses the best-matching child item by scoring against intent + subgoal keywords.
+        This prevents the LLM from either re-clicking the parent or picking an unrelated element.
+        """
+        if not state.action_history:
+            return None
+
+        last = state.action_history[-1].action
+        if last.action_type is not ActionType.CLICK:
+            return None
+        last_id = last.target_element_id
+        if last_id is None:
+            return None
+
+        # Only fire when the last-clicked element is itself NOT a dropdown child
+        # (prevents rule from firing repeatedly after we've already selected a child).
+        if any(sig in last_id.lower() for sig in self._DROPDOWN_ID_SIGNALS):
+            return None
+
+        # Collect visible child items — elements whose IDs signal secondary menu membership.
+        child_items = [
+            e for e in perception.visible_elements
+            if any(sig in e.element_id.lower() for sig in self._DROPDOWN_ID_SIGNALS)
+            and e.usable_for_targeting
+        ]
+        if not child_items:
+            return None
+
+        # Score each child by how many intent/subgoal keywords appear in its label or id.
+        all_tokens = _match_tokens(state.intent) | _match_tokens(state.current_subgoal)
+
+        def _score(el: UIElement) -> int:
+            text = (el.primary_name + " " + el.element_id).lower()
+            return sum(1 for t in all_tokens if t in text)
+
+        best = max(child_items, key=_score)
+        logger.info(
+            "Dropdown-menu rule: last click was '%s', %d child items visible. "
+            "Selecting best match '%s' (score=%d).",
+            last_id, len(child_items), best.element_id, _score(best),
+        )
+        return PolicyDecision(
+            action=AgentAction(
+                action_type=ActionType.CLICK,
+                target_element_id=best.element_id,
+                x=best.x + max(1, best.width // 2),
+                y=best.y + max(1, best.height // 2),
+            ),
+            rationale=(
+                f"Dropdown menu is open after clicking '{last_id}'. "
+                f"Selecting child item '{best.primary_name}' that best matches the current intent."
+            ),
+            confidence=0.92,
+            active_subgoal=f"select_menu_item:{best.element_id}",
+        )
+
     def _human_intervention_rule(
         self, state: AgentState, perception: ScreenPerception
     ) -> PolicyDecision | None:
@@ -293,23 +359,6 @@ class PolicyRuleEngine:
             active_subgoal="verify_success",
         )
 
-    def _focus_before_type_rule(
-        self,
-        state: AgentState,
-        perception: ScreenPerception,
-        memory_hints: list[MemoryHint],
-    ) -> PolicyDecision | None:
-        if not _has_hint(memory_hints, "click_before_type"):
-            return None
-        target = self._resolve_target_element(
-            perception,
-            target_element_id=None,
-            subgoal=state.current_subgoal,
-        )
-        if target is None or perception.focused_element_id == target.element_id:
-            return None
-        return _click_decision(target, f"Focus {target.primary_name} before typing because input focus is not established.")
-
     _NO_PROGRESS_REPEAT_THRESHOLD: int = 3
 
     def _no_progress_recovery_rule(
@@ -319,10 +368,10 @@ class PolicyRuleEngine:
     ) -> PolicyDecision | None:
         """Fire when the same action+target has been repeated N times with no progress.
 
-        Rather than repeating the stuck action, finds the nearest interactable
-        element adjacent to the stuck target and clicks it. Works for any action
-        type on any page — the alternative is derived purely from current geometry,
-        not hardcoded domain knowledge.
+        Issues a visual perturbation (Escape key) to clear stale OS/DOM render
+        state and sets force_fresh_perception so the next capture waits for the
+        UI to settle. Safer than a geometry-based adjacent click, which risks
+        hitting Cancel buttons or diverging form state.
         """
         n = self._NO_PROGRESS_REPEAT_THRESHOLD
         if len(state.action_history) < n:
@@ -337,32 +386,26 @@ class PolicyRuleEngine:
         if stuck_target_id is None:
             return None
 
-        stuck = next((e for e in perception.visible_elements if e.element_id == stuck_target_id), None)
-        if stuck is None:
-            return None
-
-        alternative = _nearest_adjacent_actionable(stuck, perception, exclude_id=stuck_target_id)
-        if alternative is None:
+        if not any(e.element_id == stuck_target_id for e in perception.visible_elements):
             return None
 
         stuck_type = recent[0].action_type.value
         logger.info(
-            "No-progress rule: %r repeated %d× on '%s'. Trying adjacent '%s'.",
-            stuck_type, n, stuck_target_id, alternative.element_id,
+            "No-progress rule: %r repeated %d× on '%s'. Issuing Escape to clear stale render state.",
+            stuck_type, n, stuck_target_id,
         )
+        state.force_fresh_perception = True
         return PolicyDecision(
             action=AgentAction(
-                action_type=ActionType.CLICK,
-                target_element_id=alternative.element_id,
-                x=alternative.x + max(1, alternative.width // 2),
-                y=alternative.y + max(1, alternative.height // 2),
+                action_type=ActionType.PRESS_KEY,
+                key="escape",
             ),
             rationale=(
                 f"'{stuck_type}' on '{stuck_target_id}' repeated {n}× with no progress. "
-                f"Trying spatially adjacent element '{alternative.element_id}' ({alternative.primary_name})."
+                "Pressing Escape to clear stale OS/render state before retrying."
             ),
-            confidence=0.88,
-            active_subgoal=f"recover_via_{alternative.element_id}",
+            confidence=0.85,
+            active_subgoal=f"visual_perturbation_before_{stuck_target_id}",
         )
 
     def _dismiss_blocking_overlay_rule(
@@ -673,60 +716,6 @@ def _preferred_compose_input(perception: ScreenPerception) -> UIElement | None:
 
 def _compose_form_visible(perception: ScreenPerception) -> bool:
     return _preferred_compose_input(perception) is not None
-
-
-def _nearest_adjacent_actionable(
-    stuck: UIElement,
-    perception: ScreenPerception,
-    *,
-    exclude_id: str | None,
-    proximity: int = 200,
-) -> UIElement | None:
-    """Return the nearest interactable button/link/icon within `proximity` px of
-    the stuck element's center, excluding elements that are sub-components of the
-    same composite widget.
-
-    Sub-component detection: any candidate whose bounding box overlaps the stuck
-    element's bounding box is treated as part of the same widget (e.g. a language
-    selector embedded inside a search input) and skipped.
-
-    Same-row elements (±30px y) are preferred over elements in adjacent rows.
-    Fully geometry-driven — no element IDs or page types are referenced.
-    """
-    sx = stuck.x + stuck.width // 2
-    sy = stuck.y + stuck.height // 2
-
-    candidates: list[tuple[float, UIElement]] = []
-    for e in perception.visible_elements:
-        if not e.is_interactable:
-            continue
-        if e.element_id == exclude_id:
-            continue
-        if e.element_type not in {UIElementType.BUTTON, UIElementType.LINK, UIElementType.ICON}:
-            continue
-        # Skip elements whose bounding box overlaps the stuck element — they are
-        # sub-components of the same composite widget, not true adjacent targets.
-        overlaps = (
-            e.x < stuck.x + stuck.width
-            and e.x + e.width > stuck.x
-            and e.y < stuck.y + stuck.height
-            and e.y + e.height > stuck.y
-        )
-        if overlaps:
-            continue
-        cx = e.x + e.width // 2
-        cy = e.y + e.height // 2
-        dist = ((cx - sx) ** 2 + (cy - sy) ** 2) ** 0.5
-        if dist > proximity:
-            continue
-        # Same-row elements (within 30px vertically) get 0 penalty; others pay 60
-        row_penalty = 0.0 if abs(cy - sy) <= 30 else 60.0
-        candidates.append((dist + row_penalty, e))
-
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
 
 
 def _blocking_overlay_elements(perception: ScreenPerception) -> list[UIElement]:

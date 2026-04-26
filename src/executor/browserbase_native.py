@@ -6,17 +6,28 @@ import logging
 import os
 
 from src.executor.browser_native import NativeBrowserExecutor, _BrowserSession
+from src.models.capture import CaptureFrame
+from src.models.common import FailureCategory
+from src.models.execution import ExecutedAction
+from src.models.policy import AgentAction
 
 logger = logging.getLogger(__name__)
+
+
+def _is_session_closed(exc: Exception) -> bool:
+    """Return True if the exception signals a closed/expired Browserbase session."""
+    name = type(exc).__name__
+    msg = str(exc)
+    return "TargetClosedError" in name or "Target page" in msg or "Target closed" in msg
 
 
 class BrowserbaseNativeBrowserExecutor(NativeBrowserExecutor):
     """Browser executor that connects to a Browserbase remote session via CDP.
 
-    Drop-in replacement for NativeBrowserExecutor. The only behavioural
-    difference is in session creation: instead of launching a local Chromium
-    process we create a Browserbase session and connect via CDP. All action
-    execution, screenshot capture, and cleanup logic is inherited unchanged.
+    Drop-in replacement for NativeBrowserExecutor. Session creation connects
+    to a Browserbase cloud browser via CDP instead of launching local Chromium.
+    If the remote session expires mid-run, capture() and execute() evict the
+    dead session and reconnect transparently on the next call.
     """
 
     def __init__(
@@ -26,13 +37,73 @@ class BrowserbaseNativeBrowserExecutor(NativeBrowserExecutor):
         project_id: str | None = None,
         **kwargs,
     ) -> None:
-        # Force record_video=False — Browserbase handles session replay natively.
+        # Browserbase records sessions natively; skip local video recording.
         kwargs.setdefault("record_video", False)
         super().__init__(**kwargs)
         self._bb_api_key = api_key or os.getenv("BROWSERBASE_API_KEY", "")
         self._bb_project_id = project_id or os.getenv("BROWSERBASE_PROJECT_ID", "")
         # Maps run_id → Browserbase session id for cleanup.
         self._bb_session_ids: dict[str, str] = {}
+
+    # ------------------------------------------------------------------
+    # Resilience wrapper
+    # ------------------------------------------------------------------
+
+    def _evict_dead_session(self) -> None:
+        """Remove the current run's session so the next call reconnects."""
+        run_id = self._current_run_id
+        if run_id is None:
+            return
+        dead = self._sessions.pop(run_id, None)
+        self._stop_bb_session(run_id)
+        if dead is not None:
+            logger.warning(
+                "Browserbase session expired for run %s — evicted, will reconnect on next step",
+                run_id,
+            )
+            # Best-effort teardown of the dead playwright handle.
+            try:
+                import asyncio
+
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(dead.playwright.stop())
+                else:
+                    loop.run_until_complete(dead.playwright.stop())
+            except Exception:
+                pass
+
+    async def capture(self) -> CaptureFrame:
+        try:
+            return await super().capture()
+        except Exception as exc:
+            if not _is_session_closed(exc):
+                raise
+            self._evict_dead_session()
+            # Return a blank frame — the loop will retry on the next step with a fresh session.
+            from uuid import uuid4
+
+            blank_path = self._artifact_dir / f"browser_{uuid4().hex[:8]}.png"
+            self._write_blank_png(blank_path)
+            return CaptureFrame(
+                artifact_path=str(blank_path),
+                width=self._viewport_width,
+                height=self._viewport_height,
+                mime_type="image/png",
+            )
+
+    async def execute(self, action: AgentAction) -> ExecutedAction:
+        try:
+            return await super().execute(action)
+        except Exception as exc:
+            if not _is_session_closed(exc):
+                raise
+            self._evict_dead_session()
+            return self._fail(
+                action,
+                "Browserbase session expired — reconnecting on next step",
+                FailureCategory.EXECUTION_ERROR,
+            )
 
     # ------------------------------------------------------------------
     # Session lifecycle
@@ -67,10 +138,8 @@ class BrowserbaseNativeBrowserExecutor(NativeBrowserExecutor):
         self._bb_session_ids[run_id] = bb_session.id
         logger.info("Created Browserbase session %s for run %s", bb_session.id, run_id)
 
-        cdp_url = (
-            f"wss://connect.browserbase.com"
-            f"?apiKey={self._bb_api_key}&sessionId={bb_session.id}"
-        )
+        live_urls = bb.sessions.debug(bb_session.id)
+        cdp_url = live_urls.ws_url
 
         playwright = await async_playwright().start()
         try:
@@ -80,8 +149,12 @@ class BrowserbaseNativeBrowserExecutor(NativeBrowserExecutor):
             raise
 
         # CDP connections reuse the pre-provisioned context/page.
-        context = browser.contexts[0] if browser.contexts else await browser.new_context(
-            viewport={"width": self._viewport_width, "height": self._viewport_height}
+        context = (
+            browser.contexts[0]
+            if browser.contexts
+            else await browser.new_context(
+                viewport={"width": self._viewport_width, "height": self._viewport_height}
+            )
         )
         page = context.pages[0] if context.pages else await context.new_page()
 
@@ -99,13 +172,11 @@ class BrowserbaseNativeBrowserExecutor(NativeBrowserExecutor):
 
     async def _close_session(self, session: _BrowserSession) -> None:
         await super()._close_session(session)
-        # Stop the Browserbase session by releasing whichever run_id owns it.
         for run_id, s in list(self._sessions.items()):
             if s is session:
                 self._stop_bb_session(run_id)
                 break
-        # Also check already-popped sessions (run_id already removed from _sessions).
-        for run_id, bb_sid in list(self._bb_session_ids.items()):
+        for run_id in list(self._bb_session_ids):
             if run_id not in self._sessions:
                 self._stop_bb_session(run_id)
 

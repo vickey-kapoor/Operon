@@ -194,3 +194,9 @@ class ScreenPerception(StrictModel):
     capture_artifact_path: str = Field(min_length=1)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     monitor_origin: tuple[int, int] = Field(default=(0, 0))
+    # Set to True when Gemini returned zero elements (blank/loading frame).
+    # The loop uses this as the trigger for liveness retries rather than a hard failure.
+    is_empty_frame: bool = False
+    # Stamped with the number of zero-element liveness retries that occurred before
+    # a usable frame was captured. Appears in run.jsonl for observability.
+    liveness_retries: int = 0

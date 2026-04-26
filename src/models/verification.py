@@ -15,6 +15,7 @@ class VerificationStatus(StrEnum):
     SUCCESS = "success"
     FAILURE = "failure"
     UNCERTAIN = "uncertain"
+    PENDING = "pending"  # page is mid-transition; wait before re-verifying
 
 
 class VerificationFailureType(StrEnum):
@@ -23,6 +24,7 @@ class VerificationFailureType(StrEnum):
     ACTION_FAILED = "action_failed"
     BENCHMARK_PRECONDITION_FAILED = "benchmark_precondition_failed"
     EXPECTED_OUTCOME_NOT_MET = "expected_outcome_not_met"
+    PAGE_LOADING = "page_loading"  # transient: page navigating or redirecting
     STOP_BOUNDARY_REACHED = "stop_boundary_reached"
     UNCERTAIN_SCREEN_STATE = "uncertain_screen_state"
 
@@ -43,3 +45,4 @@ class VerificationResult(StrictModel):
     video_detail: str | None = Field(default=None, min_length=1)
     critic_model_used: bool = False
     critic_fallback_reason: str | None = Field(default=None, min_length=1)
+    patience_retries: int = 0  # number of PENDING re-verify attempts before settling

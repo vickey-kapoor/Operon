@@ -44,9 +44,9 @@ Rules:
 - Use form_page when a visible form with input fields is present.
 - Use form_success when a visible success, thank-you, or confirmation state is clearly shown.
 # LOAD-BEARING — do not change without updating the coordinate assertion in perception.py:
-# Coordinates (x, y, width, height) MUST be in native screenshot pixel space — the same
-# pixel grid as the image provided. Do not normalize, rescale, or adjust for display DPI.
-# The execution layer maps these values directly to pyautogui/Playwright coordinates.
-# Verified empirically: Gemini returns raw-pixel coords even when the image is downscaled
-# for the API call. Any prompt edit that adds normalization or percentage-based coords
-# will silently misclick on every action.
+# Coordinates (x, y, width, height) MUST be in the pixel space of the image provided.
+# Do not normalize, use percentages, or adjust for display DPI.
+# If the image was downscaled before being sent, perception.py applies the inverse scale
+# ratio automatically to restore coords to native screen space before execution.
+# Any prompt edit that adds normalization or percentage-based coords will silently
+# double-transform coordinates and misclick on every action.

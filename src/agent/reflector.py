@@ -13,7 +13,7 @@ from src.models.memory import MemoryOutcome, MemoryRecord
 from src.models.perception import PageHint
 from src.models.policy import ActionType
 from src.models.reflection import ReflectionPattern, RunReflection
-from src.store.memory import MemoryStore, benchmark_name_for_intent, normalize_intent
+from src.store.memory import GENERIC_TASK, MemoryStore, normalize_intent
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class PostRunReflector:
 
         success = state.get("status") == "succeeded"
         intent = state.get("intent", "")
-        benchmark = benchmark_name_for_intent(intent)
+        benchmark = state.get("benchmark") or GENERIC_TASK
         patterns: list[ReflectionPattern] = []
 
         patterns.extend(self._detect_repeated_key_press(steps, run_id))

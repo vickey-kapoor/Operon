@@ -42,7 +42,11 @@ async def test_capture_returns_valid_frame() -> None:
         width=100,
         height=100,
     )
-    fake_monitor = [{"top": 0, "left": 0, "width": 100, "height": 100}]
+    # monitors[0] is the virtual combined screen; monitors[1] is the first physical monitor
+    fake_monitor = [
+        {"top": 0, "left": 0, "width": 100, "height": 100},
+        {"top": 0, "left": 0, "width": 100, "height": 100},
+    ]
 
     with (
         patch("src.executor.desktop.mss.mss") as mock_mss,
@@ -101,20 +105,44 @@ async def test_click_without_coords_fails() -> None:
 
 @pytest.mark.asyncio
 async def test_type_with_coords() -> None:
-    """Type at coordinates should click then type."""
+    """Type at coordinates should click once when focus is detected, then paste via clipboard."""
     executor = _make_executor()
     action = AgentAction(action_type=ActionType.TYPE, text="hello", x=100, y=200)
 
     with (
         patch("src.executor.desktop.pyautogui.click") as mock_click,
-        patch("src.executor.desktop.pyautogui.write") as mock_write,
+        patch("src.executor.desktop.pyautogui.hotkey") as mock_hotkey,
+        patch("src.executor.desktop.pyperclip.copy") as mock_copy,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        # Return different bytes pre/post click to simulate focus change (no retry needed)
+        patch.object(executor, "_sample_region", side_effect=[b"\x00" * 100, b"\xff" * 100]),
     ):
         result = await executor.execute(action)
 
         assert result.success is True
         mock_click.assert_called_once_with(100, 200)
-        mock_write.assert_called_once()
+        mock_copy.assert_called_once_with("hello")
+        mock_hotkey.assert_any_call("ctrl", "v")
+
+
+@pytest.mark.asyncio
+async def test_type_with_coords_retries_click_when_focus_not_detected() -> None:
+    """Type should retry click once when pre/post pixel region is unchanged (focus stolen)."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.TYPE, text="hello", x=100, y=200)
+
+    with (
+        patch("src.executor.desktop.pyautogui.click") as mock_click,
+        patch("src.executor.desktop.pyautogui.hotkey"),
+        patch("src.executor.desktop.pyperclip.copy"),
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        # Return identical bytes to simulate no visual change (focus stolen → retry)
+        patch.object(executor, "_sample_region", return_value=b"\x00" * 100),
+    ):
+        result = await executor.execute(action)
+
+        assert result.success is True
+        assert mock_click.call_count == 2
 
 
 # ── press_key tests ──────────────────────────────────────────────

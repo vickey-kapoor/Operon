@@ -33,7 +33,7 @@ def test_console_page_served(client: TestClient) -> None:
     resp = client.get("/console")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "Task Console" in resp.text
+    assert "Command Center" in resp.text
 
 
 def test_console_has_run_button(client: TestClient) -> None:
@@ -47,6 +47,14 @@ def test_console_has_log_panel(client: TestClient) -> None:
     """Console HTML should include the live log panel."""
     resp = client.get("/console")
     assert "logBody" in resp.text or "Live Log" in resp.text
+
+
+def test_root_page_has_links_to_console_and_dashboard(client: TestClient) -> None:
+    """Landing page should link to both primary UI surfaces."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'href="/console"' in resp.text
+    assert 'href="/dashboard"' in resp.text
 
 
 

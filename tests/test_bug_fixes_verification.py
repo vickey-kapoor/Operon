@@ -3,11 +3,12 @@ Verification test suite for 11 bug fixes applied to Operon Pilot.
 
 Tests each fix with targeted assertions, edge cases, and regression checks.
 Run with server already started:
-    GEMINI_API_KEY=fake-test-key .venv/Scripts/python -m pytest tests/test_bug_fixes_verification.py -v
+    GEMINI_API_KEY=fake-test-key .venv/Scripts/python -m pytest tests/test_bug_fixes_verification.py -v --live
 """
 
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
@@ -16,18 +17,32 @@ import requests
 BASE_URL = "http://127.0.0.1:8080"
 SESSION = requests.Session()
 SESSION.headers["Content-Type"] = "application/json"
+_LIVE_SERVER_OPT_IN = os.getenv("OPERON_RUN_LIVE_SERVER_TESTS", "false").lower() == "true"
+
+pytestmark = pytest.mark.live_server
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+_PATH_ALIASES = {
+    "/desktop/run-task": "/run-task",
+    "/desktop/step": "/step",
+    "/desktop/cleanup": "/cleanup",
+    "/desktop/resume": "/resume",
+}
+
 def get(url_path: str, **params) -> requests.Response:
-    return SESSION.get(f"{BASE_URL}{url_path}", params=params or None, timeout=10)
+    aliased = url_path
+    if url_path.startswith("/desktop/run/"):
+        aliased = url_path.replace("/desktop/run/", "/run/", 1)
+    return SESSION.get(f"{BASE_URL}{aliased}", params=params or None, timeout=10)
 
 
 def post(path: str, body: dict) -> requests.Response:
-    return SESSION.post(f"{BASE_URL}{path}", json=body, timeout=10)
+    aliased = _PATH_ALIASES.get(path, path)
+    return SESSION.post(f"{BASE_URL}{aliased}", json=body, timeout=10)
 
 
 def options(path: str, **headers) -> requests.Response:
@@ -50,7 +65,12 @@ def create_desktop_run(intent: str = "Open Notepad") -> str:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session", autouse=True)
-def require_server():
+def require_server(request: pytest.FixtureRequest):
+    if not (request.config.getoption("--live") or _LIVE_SERVER_OPT_IN):
+        pytest.skip(
+            "Live-server tests are disabled by default. Use --live or "
+            "OPERON_RUN_LIVE_SERVER_TESTS=true to enable them."
+        )
     try:
         resp = get("/health")
     except requests.RequestException as exc:
@@ -414,7 +434,7 @@ class TestFix6CorsMiddleware:
 
     def test_cors_header_present_on_run_task_post(self):
         resp = SESSION.post(
-            f"{BASE_URL}/desktop/run-task",
+            f"{BASE_URL}/run-task",
             json={"intent": "Open Notepad"},
             headers={"Origin": "http://localhost:3000", "Content-Type": "application/json"},
             timeout=10,

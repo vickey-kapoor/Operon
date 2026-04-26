@@ -38,7 +38,7 @@ class AnthropicPolicyService(GeminiPolicyService):
         except AnthropicClientError:
             raise
         bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
-        decision = self._apply_focus_first_guardrail(state, perception, self._parse_output(raw_output))
+        decision = self._parse_output(raw_output)
         bg_writer.enqueue(debug_artifacts.parsed_artifact_path, decision.model_dump_json())
         from src.models.logs import ModelDebugArtifacts
 
@@ -46,6 +46,8 @@ class AnthropicPolicyService(GeminiPolicyService):
             prompt_artifact_path=str(debug_artifacts.prompt_artifact_path),
             raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
             parsed_artifact_path=str(debug_artifacts.parsed_artifact_path),
+            usage_artifact_path=str(debug_artifacts.usage_artifact_path),
+            usage=_latest_usage(self.anthropic_client, debug_artifacts.usage_artifact_path),
         )
         return decision
 
@@ -54,3 +56,14 @@ class AnthropicPolicyService(GeminiPolicyService):
         from src.agent.policy import parse_policy_output
 
         return parse_policy_output(raw_output)
+
+
+def _latest_usage(client: AnthropicHttpClient, usage_artifact_path: Path):
+    if not hasattr(client, "latest_usage"):
+        return None
+    usage = client.latest_usage()
+    if usage is not None:
+        from src.store.background_writer import bg_writer
+
+        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
+    return usage

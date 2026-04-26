@@ -37,6 +37,9 @@ class StubGeminiClient:
     async def generate_policy(self, prompt: str) -> str:
         raise NotImplementedError
 
+    def latest_perception_scale_ratio(self) -> float:
+        return 1.0
+
 
 class SequencedGeminiClient:
     def __init__(self, responses: list[str]) -> None:
@@ -49,6 +52,9 @@ class SequencedGeminiClient:
 
     async def generate_policy(self, prompt: str) -> str:
         raise NotImplementedError
+
+    def latest_perception_scale_ratio(self) -> float:
+        return 1.0
 
 
 def test_google_sign_in_page_classification() -> None:
@@ -143,7 +149,8 @@ def test_missing_page_hint_uses_small_summary_fallback() -> None:
 
     perception = parse_perception_output(raw_output, "runs/run-1/step_1/before.png")
 
-    assert perception.page_hint == "google_sign_in"
+    # Fallback classifier no longer detects app-specific pages; LLM provides page_hint.
+    assert perception.page_hint is PageHint.UNKNOWN
 
 
 def test_missing_page_hint_uses_form_summary_fallback() -> None:

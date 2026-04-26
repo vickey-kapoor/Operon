@@ -1,0 +1,162 @@
+[
+  {
+    "task_id": "m2w_001",
+    "source": "mind2web",
+    "site": "bbc_news",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://www.bbc.com/news",
+    "intent": "Find and state the headline of the top news article visible on the BBC News homepage.",
+    "optimal_steps": 2,
+    "difficulty": "easy",
+    "tags": ["news", "read_only", "single_page", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  },
+  {
+    "task_id": "m2w_002",
+    "source": "mind2web",
+    "site": "github",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://github.com/search?q=playwright&type=repositories",
+    "intent": "Search GitHub for 'playwright' repositories and state the name of the top result.",
+    "optimal_steps": 3,
+    "difficulty": "easy",
+    "tags": ["github", "search", "single_page", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": ["playwright"] }
+    }
+  },
+  {
+    "task_id": "m2w_003",
+    "source": "mind2web",
+    "site": "mdn",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_flexible_box_layout",
+    "intent": "On the MDN CSS Flexbox documentation page, find and state the name of the main CSS property that defines a flex container.",
+    "optimal_steps": 2,
+    "difficulty": "easy",
+    "tags": ["documentation", "read_only", "single_page", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": ["display", "flex"] }
+    }
+  },
+  {
+    "task_id": "m2w_004",
+    "source": "mind2web",
+    "site": "hacker_news",
+    "category": "information_retrieval",
+    "require_login": false,
+    "start_url": "https://news.ycombinator.com",
+    "intent": "On Hacker News, find the title and point score of the #1 ranked story.",
+    "optimal_steps": 2,
+    "difficulty": "easy",
+    "tags": ["hn", "read_only", "single_page", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  },
+  {
+    "task_id": "m2w_005",
+    "source": "mind2web",
+    "site": "wikipedia",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "From the Wikipedia main page, navigate to the 'Featured article' and state its title.",
+    "optimal_steps": 3,
+    "difficulty": "easy",
+    "tags": ["wikipedia", "click", "navigation", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  },
+  {
+    "task_id": "m2w_006",
+    "source": "mind2web",
+    "site": "github",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://github.com/microsoft/playwright",
+    "intent": "On the Microsoft Playwright GitHub repository page, find and state the number of stars the repository has.",
+    "optimal_steps": 2,
+    "difficulty": "easy",
+    "tags": ["github", "read_only", "single_page", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  },
+  {
+    "task_id": "m2w_007",
+    "source": "mind2web",
+    "site": "mdn",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://developer.mozilla.org/en-US/",
+    "intent": "Use the MDN search bar to search for 'async await' and navigate to the first result. State the page title.",
+    "optimal_steps": 5,
+    "difficulty": "medium",
+    "tags": ["documentation", "search", "multi_step", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": ["async"] }
+    }
+  },
+  {
+    "task_id": "m2w_008",
+    "source": "mind2web",
+    "site": "hacker_news",
+    "category": "navigation",
+    "require_login": false,
+    "start_url": "https://news.ycombinator.com",
+    "intent": "On Hacker News, click on the comments link for the top story and state how many comments it has.",
+    "optimal_steps": 4,
+    "difficulty": "medium",
+    "tags": ["hn", "click", "multi_step", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  },
+  {
+    "task_id": "m2w_009",
+    "source": "mind2web",
+    "site": "github",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://github.com/anthropics/anthropic-sdk-python",
+    "intent": "On the Anthropic Python SDK GitHub page, find the latest release version number listed under Releases.",
+    "optimal_steps": 4,
+    "difficulty": "medium",
+    "tags": ["github", "navigation", "multi_step", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": [] }
+    }
+  },
+  {
+    "task_id": "m2w_010",
+    "source": "mind2web",
+    "site": "wikipedia",
+    "category": "complex_workflow",
+    "require_login": false,
+    "start_url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "Search Wikipedia for 'transformer neural network', navigate to the article, and state the year the transformer architecture was introduced.",
+    "optimal_steps": 6,
+    "difficulty": "medium",
+    "tags": ["wikipedia", "search", "multi_step", "diverse_ui"],
+    "eval": {
+      "eval_types": ["string_match"],
+      "reference_answers": { "must_include": ["2017"] }
+    }
+  }
+]

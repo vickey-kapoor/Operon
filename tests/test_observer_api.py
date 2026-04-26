@@ -26,6 +26,7 @@ from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.progress import ProgressState
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.state import AgentState
+from src.models.usage import ModelUsage
 from src.models.verification import VerificationResult, VerificationStatus
 from src.store.run_logger import append_step_log
 
@@ -50,6 +51,18 @@ def _debug(stage: str, step_dir: Path) -> ModelDebugArtifacts:
         retry_log_artifact_path=str(step_dir / "perception_retry_log.txt") if stage == "perception" else None,
         selector_trace_artifact_path=str(step_dir / "selector_trace.json") if stage == "policy" else None,
         diagnostics_artifact_path=str(step_dir / "perception_diagnostics.json") if stage == "perception" else None,
+    )
+
+
+def _usage(provider: str, model: str, request_kind: str, *, total_tokens: int, estimated_cost_usd: float) -> ModelUsage:
+    return ModelUsage(
+        provider=provider,
+        model=model,
+        request_kind=request_kind,
+        input_tokens=max(total_tokens - 100, 0),
+        output_tokens=100,
+        total_tokens=total_tokens,
+        estimated_cost_usd=estimated_cost_usd,
     )
 
 
@@ -199,7 +212,11 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
 
     page = client.get("/")
     assert page.status_code == 200
-    assert "Task Console" in page.text
+    assert "Command Center" in page.text
+
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    assert "Billing period" in dashboard.text
 
     runs = client.get("/observer/api/runs")
     assert runs.status_code == 200
@@ -721,3 +738,134 @@ def test_observer_shows_partial_selector_and_execution_before_step_commit(monkey
     assert body["run"]["current_phase"] == "verify"
     assert body["current_step"]["selector"]["trace"]["selected_candidate"] == "submit-button"
     assert body["current_step"]["execution"]["trace"]["final_outcome"] == "success"
+
+
+def test_observer_usage_dashboard_aggregates_run_and_model_costs(monkeypatch) -> None:
+    root_dir = _local_test_dir("test-observer-usage") / "runs"
+    run_id = "run-usage"
+    run_dir = root_dir / run_id
+    step_dir = run_dir / "step_1"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    before_path = step_dir / "before.png"
+    after_path = step_dir / "after.png"
+    before_path.write_bytes(b"fakepng")
+    after_path.write_bytes(b"fakepng")
+
+    perception_debug = _debug("perception", step_dir).model_copy(
+        update={
+            "usage_artifact_path": str(step_dir / "perception_usage.json"),
+            "usage": _usage("gemini", "gemini-3-flash-preview", "image", total_tokens=1200, estimated_cost_usd=0.0012),
+        }
+    )
+    policy_debug = _debug("policy", step_dir).model_copy(
+        update={
+            "usage_artifact_path": str(step_dir / "policy_usage.json"),
+            "usage": _usage("anthropic", "claude-sonnet-4-20250514", "text", total_tokens=900, estimated_cost_usd=0.0045),
+        }
+    )
+    verification_debug = ModelDebugArtifacts(
+        prompt_artifact_path=str(step_dir / "verification_prompt.txt"),
+        raw_response_artifact_path=str(step_dir / "verification_raw.txt"),
+        parsed_artifact_path=str(step_dir / "verification_result.json"),
+        usage_artifact_path=str(step_dir / "verification_usage.json"),
+        usage=_usage("anthropic", "claude-sonnet-4-20250514", "image", total_tokens=600, estimated_cost_usd=0.003),
+    )
+    _write_state(
+        run_dir,
+        AgentState(
+            run_id=run_id,
+            intent="Check usage aggregation",
+            status=RunStatus.SUCCEEDED,
+            step_count=1,
+        ),
+    )
+    append_step_log(
+        run_dir / "run.jsonl",
+        StepLog(
+            run_id=run_id,
+            step_id="step_1",
+            step_index=1,
+            before_artifact_path=str(before_path),
+            after_artifact_path=str(after_path),
+            perception_debug=perception_debug,
+            policy_debug=policy_debug,
+            verification_debug=verification_debug,
+            perception=ScreenPerception(summary="Observed", page_hint="unknown", capture_artifact_path=str(before_path), visible_elements=[]),
+            policy_decision=PolicyDecision(action=AgentAction(action_type=ActionType.WAIT, wait_ms=1000), rationale="Wait.", confidence=0.5, active_subgoal="wait"),
+            executed_action=ExecutedAction(action=AgentAction(action_type=ActionType.WAIT, wait_ms=1000), success=True, detail="waited"),
+            verification_result=VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=False, reason="ok"),
+            recovery_decision=RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="continue"),
+        ),
+    )
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
+    client = TestClient(app)
+
+    snapshot = client.get(f"/observer/api/run/{run_id}")
+    assert snapshot.status_code == 200
+    assert snapshot.json()["usage"]["request_count"] == 3
+    assert snapshot.json()["usage"]["estimated_cost_usd"] == 0.0087
+
+    usage = client.get("/observer/api/usage?limit=10")
+    assert usage.status_code == 200
+    body = usage.json()
+    assert body["summary"]["request_count"] == 3
+    assert body["summary"]["by_model"]["gemini-3-flash-preview"]["request_count"] == 1
+    assert body["summary"]["by_model"]["claude-sonnet-4-20250514"]["request_count"] == 2
+    assert body["summary"]["estimated_cost_usd"] == 0.0087
+
+
+def test_observer_usage_dashboard_deduplicates_combined_backend_calls(monkeypatch) -> None:
+    root_dir = _local_test_dir("test-observer-usage-combined") / "runs"
+    run_id = "run-usage-combined"
+    run_dir = root_dir / run_id
+    step_dir = run_dir / "step_1"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    before_path = step_dir / "before.png"
+    after_path = step_dir / "after.png"
+    before_path.write_bytes(b"fakepng")
+    after_path.write_bytes(b"fakepng")
+
+    shared_usage = _usage("gemini", "gemini-3-flash-preview", "image", total_tokens=777, estimated_cost_usd=0.000777)
+    perception_debug = ModelDebugArtifacts(
+        prompt_artifact_path=str(step_dir / "combined_prompt.txt"),
+        raw_response_artifact_path=str(step_dir / "combined_raw.txt"),
+        parsed_artifact_path=str(step_dir / "combined_parsed.json"),
+        usage_artifact_path=str(step_dir / "combined_usage.json"),
+        usage=shared_usage,
+    )
+    policy_debug = perception_debug.model_copy()
+    _write_state(
+        run_dir,
+        AgentState(
+            run_id=run_id,
+            intent="Check combined usage dedupe",
+            status=RunStatus.SUCCEEDED,
+            step_count=1,
+        ),
+    )
+    append_step_log(
+        run_dir / "run.jsonl",
+        StepLog(
+            run_id=run_id,
+            step_id="step_1",
+            step_index=1,
+            before_artifact_path=str(before_path),
+            after_artifact_path=str(after_path),
+            perception_debug=perception_debug,
+            policy_debug=policy_debug,
+            perception=ScreenPerception(summary="Observed", page_hint="unknown", capture_artifact_path=str(before_path), visible_elements=[]),
+            policy_decision=PolicyDecision(action=AgentAction(action_type=ActionType.WAIT, wait_ms=1000), rationale="Wait.", confidence=0.5, active_subgoal="wait"),
+            executed_action=ExecutedAction(action=AgentAction(action_type=ActionType.WAIT, wait_ms=1000), success=True, detail="waited"),
+            verification_result=VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=False, reason="ok"),
+            recovery_decision=RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="continue"),
+        ),
+    )
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
+    client = TestClient(app)
+    usage = client.get("/observer/api/usage?limit=10")
+
+    assert usage.status_code == 200
+    assert usage.json()["summary"]["request_count"] == 1
+    assert usage.json()["summary"]["estimated_cost_usd"] == 0.000777

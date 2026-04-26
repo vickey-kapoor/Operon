@@ -11,8 +11,8 @@ from pydantic import ValidationError
 
 from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.logs import ModelDebugArtifacts
-from src.models.perception import ScreenPerception, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
+from src.models.perception import ScreenPerception
+from src.models.policy import ActionType, PolicyDecision
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
 
@@ -62,12 +62,13 @@ class GeminiPolicyService(PolicyService):
             raise
         bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
         decision = parse_policy_output(raw_output)
-        decision = self._apply_focus_first_guardrail(state, perception, decision)
         bg_writer.enqueue(debug_artifacts.parsed_artifact_path, decision.model_dump_json())
         self._last_debug_artifacts = ModelDebugArtifacts(
             prompt_artifact_path=str(debug_artifacts.prompt_artifact_path),
             raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
             parsed_artifact_path=str(debug_artifacts.parsed_artifact_path),
+            usage_artifact_path=str(debug_artifacts.usage_artifact_path),
+            usage=_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
         )
         return decision
 
@@ -92,12 +93,20 @@ class GeminiPolicyService(PolicyService):
         self._advisory_hints.pop(run_id, None)
 
     def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
+        last_verification = "none"
+        if state.verification_history:
+            last_vr = state.verification_history[-1]
+            parts = [f"status={last_vr.status}", f"reason={last_vr.reason!r}"]
+            if last_vr.recovery_hint:
+                parts.append(f"recovery_hint={last_vr.recovery_hint!r}")
+            last_verification = ", ".join(parts)
         prompt = self._prompt_template.format(
             intent=state.intent,
             current_subgoal=state.current_subgoal or "not set",
             step_count=state.step_count,
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             perception_json=perception.model_dump_json(),
+            last_verification=last_verification,
         )
         hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None)
         if hints:
@@ -109,42 +118,6 @@ class GeminiPolicyService(PolicyService):
             prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {h}" for h, _ in hints)
         return prompt
 
-    def _apply_focus_first_guardrail(
-        self,
-        state: AgentState,
-        perception: ScreenPerception,
-        decision: PolicyDecision,
-    ) -> PolicyDecision:
-        action = decision.action
-        if action.action_type is not ActionType.TYPE:
-            return decision
-        if action.selector is not None:
-            return decision
-
-        target_id = action.target_element_id
-        if target_id is None:
-            return decision
-
-        target = next((element for element in perception.visible_elements if element.element_id == target_id), None)
-        if target is None or target.element_type is not UIElementType.INPUT or not target.usable_for_targeting:
-            return decision
-
-        if perception.focused_element_id == target_id:
-            return decision
-
-        click_action = AgentAction(
-            action_type=ActionType.CLICK,
-            target_element_id=target_id,
-            x=target.x + max(1, target.width // 2),
-            y=target.y + max(1, target.height // 2),
-        )
-        return PolicyDecision(
-            action=click_action,
-            rationale=f"Focus {target.primary_name} before typing.",
-            confidence=min(decision.confidence, 0.8),
-            active_subgoal=f"focus {target_id}",
-        )
-
     @staticmethod
     def _artifact_paths(step_dir: Path) -> "_StageArtifactPaths":
         step_dir.mkdir(parents=True, exist_ok=True)
@@ -152,14 +125,16 @@ class GeminiPolicyService(PolicyService):
             prompt_artifact_path=step_dir / "policy_prompt.txt",
             raw_response_artifact_path=step_dir / "policy_raw.txt",
             parsed_artifact_path=step_dir / "policy_decision.json",
+            usage_artifact_path=step_dir / "policy_usage.json",
         )
 
 
 class _StageArtifactPaths:
-    def __init__(self, prompt_artifact_path: Path, raw_response_artifact_path: Path, parsed_artifact_path: Path) -> None:
+    def __init__(self, prompt_artifact_path: Path, raw_response_artifact_path: Path, parsed_artifact_path: Path, usage_artifact_path: Path) -> None:
         self.prompt_artifact_path = prompt_artifact_path
         self.raw_response_artifact_path = raw_response_artifact_path
         self.parsed_artifact_path = parsed_artifact_path
+        self.usage_artifact_path = usage_artifact_path
 
 
 def parse_policy_output(raw_output: str) -> PolicyDecision:
@@ -209,6 +184,12 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
             normalized_payload["rationale"] = nested_rationale
         normalized_action.pop("rationale", None)
 
+    # STOP/WAIT_FOR_USER must not carry payload fields (LLMs sometimes put answer text in text=)
+    _PAYLOAD_FIELDS = {"text", "url", "key", "selector", "x", "y", "wait_ms", "scroll_amount"}
+    if action_type in (ActionType.STOP.value, ActionType.WAIT_FOR_USER.value):
+        for _f in _PAYLOAD_FIELDS:
+            normalized_action.pop(_f, None)
+
     wait_ms = normalized_action.get("wait_ms")
     if action_type == ActionType.WAIT.value:
         if isinstance(wait_ms, int) and wait_ms <= 0:
@@ -236,3 +217,12 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
         normalized_payload["action"] = normalized_action
         return normalized_payload
     return normalized_payload
+
+
+def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
+    if not hasattr(client, "latest_usage"):
+        return None
+    usage = client.latest_usage()
+    if usage is not None:
+        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
+    return usage

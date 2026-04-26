@@ -78,7 +78,7 @@ async def test_post_json_payload_retries_transient_timeout(caplog) -> None:
     client._client = mock_client
 
     with caplog.at_level("WARNING"):
-        text = await client._post_json_payload(payload)
+        text = await client._post_json_payload(payload, request_kind="text")
 
     assert text == "{}"
     assert attempts["count"] == 3
@@ -107,7 +107,7 @@ async def test_post_json_payload_fails_cleanly_after_retry_limit(caplog) -> None
 
     with caplog.at_level("WARNING"):
         with pytest.raises(GeminiClientError, match="timed out"):
-            await client._post_json_payload(payload)
+            await client._post_json_payload(payload, request_kind="text")
 
     assert attempts["count"] == 3
     assert caplog.text.count("Retrying Gemini request") == 2
@@ -133,6 +133,6 @@ async def test_post_json_payload_does_not_retry_non_retryable_http_error() -> No
     client._client = mock_client
 
     with pytest.raises(GeminiClientError, match="Gemini HTTP error 400"):
-        await client._post_json_payload(payload)
+        await client._post_json_payload(payload, request_kind="text")
 
     assert attempts["count"] == 1

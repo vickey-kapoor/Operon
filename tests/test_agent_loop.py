@@ -193,6 +193,13 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
     executor.recorded_video_path_for_run = Mock(return_value=Path("runs/run-2/session_video/session.webm"))
     verifier_service = Mock()
     verifier_service.verify = AsyncMock(return_value=verification)
+    verifier_service.latest_debug_artifacts = Mock(
+        return_value=ModelDebugArtifacts(
+            prompt_artifact_path="runs/run-2/step_1/verification_prompt.txt",
+            raw_response_artifact_path="runs/run-2/step_1/verification_raw.txt",
+            parsed_artifact_path="runs/run-2/step_1/verification_result.json",
+        )
+    )
     recovery_manager = Mock()
     recovery_manager.recover = AsyncMock(return_value=recovery)
     run_root = _local_test_dir("test-runs-delegate")
@@ -283,6 +290,13 @@ async def test_agent_loop_does_not_cleanup_non_terminal_runs() -> None:
     executor.recorded_video_path_for_run = Mock(return_value=Path("runs/run-keep-open/session_video/session.webm"))
     verifier_service = Mock()
     verifier_service.verify = AsyncMock(return_value=verification)
+    verifier_service.latest_debug_artifacts = Mock(
+        return_value=ModelDebugArtifacts(
+            prompt_artifact_path="runs/run-keep-open/step_1/verification_prompt.txt",
+            raw_response_artifact_path="runs/run-keep-open/step_1/verification_raw.txt",
+            parsed_artifact_path="runs/run-keep-open/step_1/verification_result.json",
+        )
+    )
     recovery_manager = Mock()
     recovery_manager.recover = AsyncMock(return_value=recovery)
     run_root = _local_test_dir("test-runs-running-no-cleanup")
@@ -335,6 +349,7 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
         intent="Create a Gmail draft and stop before send.",
         start_url=None,
         headless=True,
+        benchmark=None,
     )
     executor.configure_run.assert_called_once_with("run-3", headless=True)
     assert response.run_id == "run-3"
@@ -434,6 +449,13 @@ async def test_agent_loop_marks_benchmark_precondition_stop_as_failed() -> None:
     executor.recorded_video_path_for_run = Mock(return_value=None)
     verifier_service = Mock()
     verifier_service.verify = AsyncMock(return_value=verification)
+    verifier_service.latest_debug_artifacts = Mock(
+        return_value=ModelDebugArtifacts(
+            prompt_artifact_path="runs/run-setup/step_1/verification_prompt.txt",
+            raw_response_artifact_path="runs/run-setup/step_1/verification_raw.txt",
+            parsed_artifact_path="runs/run-setup/step_1/verification_result.json",
+        )
+    )
     recovery_manager = Mock()
     recovery_manager.recover = AsyncMock(return_value=recovery)
     run_root = _local_test_dir("test-runs-precondition-stop")

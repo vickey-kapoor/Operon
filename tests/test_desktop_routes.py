@@ -27,21 +27,28 @@ def _mock_run_response(status: RunStatus = RunStatus.RUNNING) -> RunResponse:
     )
 
 
-def test_root_serves_task_console(client: TestClient) -> None:
-    """GET / should return the task console UI."""
+def test_root_serves_landing_page(client: TestClient) -> None:
+    """GET / should return the landing page."""
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "Task Console" in resp.text
+    assert "Command Center" in resp.text
     assert "text/html" in resp.headers["content-type"]
 
 
-def test_console_route_serves_same_content(client: TestClient) -> None:
-    """GET /console should serve the same HTML as GET /."""
-    root = client.get("/")
+def test_console_route_serves_command_center(client: TestClient) -> None:
+    """GET /console should serve the command center."""
     console = client.get("/console")
-    assert root.status_code == 200
     assert console.status_code == 200
-    assert root.text == console.text
+    assert "Command Center" in console.text
+    assert "btnRun" in console.text
+
+
+def test_dashboard_route_serves_dashboard(client: TestClient) -> None:
+    """GET /dashboard should serve the standalone usage dashboard."""
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    assert "Billing period" in resp.text
+    assert "Spend by model" in resp.text
 
 
 def test_desktop_run_task(client: TestClient) -> None:

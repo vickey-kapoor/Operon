@@ -60,6 +60,12 @@ class ScreenRecorder:
         except Exception:
             logger.debug("screen_recorder: encoding failed", exc_info=True)
             return None
+        finally:
+            self._frames = []  # always release buffer, even if encoding failed
+
+    def clear_frames(self) -> None:
+        """Explicitly release the in-memory frame buffer."""
+        self._frames = []
 
     def _capture_loop(self) -> None:
         """Synchronous loop: grabs mss screenshots at the target fps."""

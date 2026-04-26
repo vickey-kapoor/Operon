@@ -106,6 +106,8 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
                 prompt_artifact_path=str(prompt_path),
                 raw_response_artifact_path=str(raw_path),
                 parsed_artifact_path=str(parsed_path),
+                usage_artifact_path=str(step_dir / "combined_usage.json"),
+                usage=_latest_usage(self.gemini_client, step_dir / "combined_usage.json"),
             )
             return perception
 
@@ -227,3 +229,12 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         decision = parse_policy_output(json.dumps(decision_data))
 
         return perception, decision
+
+
+def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
+    if not hasattr(client, "latest_usage"):
+        return None
+    usage = client.latest_usage()
+    if usage is not None:
+        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
+    return usage

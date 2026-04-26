@@ -52,11 +52,12 @@ class StubComputerUseClient:
 
     @staticmethod
     def _tool_response() -> dict:
+        _btn = {"element_id": "btn-1", "element_type": "button", "name": "Click me", "x": 500, "y": 250, "width": 80, "height": 30, "is_interactable": True}
         return {
             "perception": {
                 "summary": "Example page visible",
                 "page_hint": "unknown",
-                "visible_elements": [],
+                "visible_elements": [_btn, _btn, _btn],
                 "confidence": 0.9,
             },
             "function_call": {

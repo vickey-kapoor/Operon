@@ -15,18 +15,47 @@ pip install -e .[dev]
 Common commands:
 
 ```powershell
-python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
-python -m pytest tests\ -q
-python -m pytest tests\test_agent_loop.py -q
+\.\venv\Scripts\python.exe -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
+\.\venv\Scripts\python.exe -m pytest tests\ -q
+\.\venv\Scripts\python.exe -m pytest tests\test_agent_loop.py -q
 ruff check src tests --select E,F,W,I --ignore E501
-python -m src.agent.benchmark
+\.\venv\Scripts\python.exe -m src.agent.benchmark
 ```
 
 ## Coding Style & Naming Conventions
 Follow existing Python style: 4-space indentation, type hints, small focused modules, and Pydantic models for structured data. Use `snake_case` for functions, variables, and test files; `PascalCase` for classes; and keep FastAPI route handlers and model names explicit. CI enforces Ruff rules `E,F,W,I`; import ordering matters, while long lines are tolerated (`E501` ignored).
 
 ## Testing Guidelines
-Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name tests `test_<behavior>` and keep one responsibility per test. Run the full suite before opening a PR. Use the real `GEMINI_API_KEY` from `.env` — do not use fake/mock API keys. Add or update tests whenever changing agent flow, API contracts, persistence, or execution behavior.
+Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name tests `test_<behavior>` and keep one responsibility per test. Run the full suite before opening a PR. Use the repo virtualenv interpreter (`.\.venv\Scripts\python.exe`), not system `python`, because several dependencies are only installed in `.venv`. Use the real `GEMINI_API_KEY` from `.env` - do not use fake or mock API keys. Add or update tests whenever changing agent flow, API contracts, persistence, or execution behavior.
+
+### Safe Test Execution For Agents
+Before running broad pytest commands, scan the test tree for live-server or real-desktop patterns:
+
+```powershell
+rg -n "127.0.0.1:8080|/desktop/run-task|/desktop/step|/desktop/cleanup|/desktop/resume|requests\.Session\(|pyautogui|mss" tests
+```
+
+Rules:
+
+- Do not run live-server tests unless explicitly requested.
+- Treat any test that talks to `http://127.0.0.1:8080` or posts to `/desktop/*` as potentially dangerous.
+- Prefer browser `/run-task` over `/desktop/run-task` for API-contract tests unless the test is specifically about desktop executor behavior.
+- Keep `OPERON_TEST_SAFE_MODE=true` for normal test runs.
+- The live-server modules `tests/test_e2e_quick_tasks.py` and `tests/test_bug_fixes_verification.py` are opt-in only. Exclude them from broad runs unless the user explicitly asks for live-server validation.
+
+Safe default broad run:
+
+```powershell
+\.\venv\Scripts\python.exe -m pytest tests\ -q --ignore=tests/test_e2e_quick_tasks.py --ignore=tests/test_bug_fixes_verification.py
+```
+
+Intentional live-server run:
+
+```powershell
+$env:OPERON_RUN_LIVE_SERVER_TESTS='true'
+\.\venv\Scripts\python.exe -m pytest tests\test_e2e_quick_tasks.py -q --live
+\.\venv\Scripts\python.exe -m pytest tests\test_bug_fixes_verification.py -q --live
+```
 
 ## Commit & Pull Request Guidelines
 Recent history uses short imperative subjects with prefixes such as `Fix:`, `Docs:`, `CI:`, `Chore:`, and `Refactor:`. Keep commit titles specific, scoped, and under one line. PRs should describe the user-visible or architectural change, list validation performed (`pytest`, `ruff`, benchmark/manual API checks), and include screenshots only when the UI or desktop behavior changes. Link related issues when applicable.

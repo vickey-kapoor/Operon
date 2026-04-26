@@ -356,30 +356,24 @@ def _state_level_failure_category(state: AgentState, entries: list[StepLog | Pre
 
 
 def _default_task_spec_for_state(state: AgentState) -> BenchmarkTaskSpec:
+    from src.benchmarks.registry import BENCHMARK_REGISTRY
     page_url = state.start_url or "unknown"
-    lowered = state.intent.lower()
-    if "gmail" in lowered:
+    plugin = BENCHMARK_REGISTRY.get(state.benchmark)
+    if plugin is not None:
+        resolved_url = page_url if page_url != "unknown" else (plugin.default_url or page_url)
+        task_type = BenchmarkTaskType(plugin.task_type) if plugin.task_type in BenchmarkTaskType._value2member_map_ else BenchmarkTaskType.GENERIC
         return BenchmarkTaskSpec(
             task_id=state.run_id,
-            page_url=page_url if page_url != "unknown" else "https://mail.google.com/",
-            task_type=BenchmarkTaskType.MULTI_STEP_FORM,
+            page_url=resolved_url,
+            task_type=task_type,
             intent=state.intent,
-            expected_completion_signal="draft created or intentional stop",
-            difficulty_tags=["multi_step"],
-        )
-    if "form" in lowered and ("submit" in lowered or "fill" in lowered or "complete" in lowered):
-        return BenchmarkTaskSpec(
-            task_id=state.run_id,
-            page_url=page_url if page_url != "unknown" else "https://practice-automation.com/form-fields/",
-            task_type=BenchmarkTaskType.FORM_SUBMIT,
-            intent=state.intent,
-            expected_completion_signal="form success",
-            difficulty_tags=["single_page"],
+            expected_completion_signal=plugin.expected_completion_signal,
+            difficulty_tags=[],
         )
     return BenchmarkTaskSpec(
         task_id=state.run_id,
         page_url=page_url,
-        task_type=BenchmarkTaskType.FORM_SUBMIT,
+        task_type=BenchmarkTaskType.GENERIC,
         intent=state.intent,
         expected_completion_signal="task completed",
         difficulty_tags=[],

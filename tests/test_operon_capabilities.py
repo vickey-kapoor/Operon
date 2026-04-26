@@ -22,10 +22,10 @@ from fastapi.testclient import TestClient
 from src.agent.loop import AgentLoop
 from src.api.server import app
 from src.models.capture import CaptureFrame
-from src.models.common import RunStatus, RunTaskRequest, StepRequest, StopReason
-from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
+from src.models.common import RunStatus, StepRequest
+from src.models.execution import ExecutedAction
 from src.models.logs import ModelDebugArtifacts
-from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
+from src.models.perception import ScreenPerception, UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.state import AgentState
@@ -34,7 +34,6 @@ from src.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared test fixtures and helpers
@@ -671,9 +670,6 @@ async def test_policy_llm_fallback_is_used_when_no_rule_fires() -> None:
 
     Uses PolicyCoordinator with a stub LLM to verify the fallback path.
     """
-    import json
-    from pathlib import Path
-    from uuid import uuid4
 
     from src.agent.policy_coordinator import PolicyCoordinator
     from src.store.memory import FileBackedMemoryStore

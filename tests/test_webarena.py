@@ -8,8 +8,12 @@ from pathlib import Path
 import pytest
 
 from src.benchmarks.webarena_eval import evaluate_task, string_match, url_match
-from src.benchmarks.webarena_models import WebArenaEval, WebArenaTask, WebArenaSummary, WebArenaTaskResult
-
+from src.benchmarks.webarena_models import (
+    WebArenaEval,
+    WebArenaSummary,
+    WebArenaTask,
+    WebArenaTaskResult,
+)
 
 # ---------------------------------------------------------------------------
 # string_match

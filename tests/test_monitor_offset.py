@@ -23,7 +23,6 @@ import pytest
 from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction
 
-
 # ── shared helpers ────────────────────────────────────────────────────────────
 
 def _local_test_dir(name: str) -> Path:

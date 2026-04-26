@@ -14,7 +14,6 @@ def create_app() -> FastAPI:
     # Register benchmark plugins before any engine code runs.
     import src.benchmarks.form_plugin  # noqa: F401
     import src.benchmarks.gmail_plugin  # noqa: F401
-
     from src.api.routes import router
 
     app = FastAPI(

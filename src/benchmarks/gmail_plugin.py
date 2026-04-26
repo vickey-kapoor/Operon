@@ -39,7 +39,10 @@ _seeds = [
 
 
 def _get_rules():
-    from src.agent.policy_rules import gmail_login_page_guardrail, gmail_compose_already_visible_rule
+    from src.agent.policy_rules import (
+        gmail_compose_already_visible_rule,
+        gmail_login_page_guardrail,
+    )
     return [gmail_login_page_guardrail, gmail_compose_already_visible_rule]
 
 

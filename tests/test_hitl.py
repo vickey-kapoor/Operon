@@ -8,7 +8,6 @@ Tier progression: SIMPLE → MODERATE → COMPLEX
 
 from __future__ import annotations
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,9 +21,8 @@ from src.agent.hitl import (
 )
 from src.agent.policy_rules import PolicyRuleEngine
 from src.models.common import RunStatus
-from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
+from src.models.perception import ScreenPerception, UIElement, UIElementType
 from src.models.state import AgentState
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -164,8 +162,6 @@ async def test_post_hitl_webhook_posts_correct_payload(tmp_path) -> None:
     """Webhook posts all required fields as JSON."""
     received_payload: dict = {}
 
-    import httpx
-    from unittest.mock import AsyncMock as _AM
 
     mock_response = MagicMock()
     mock_response.is_success = True

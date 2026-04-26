@@ -46,7 +46,7 @@ from src.models.logs import (
     PreStepFailureLog,
     StepLog,
 )
-from src.models.perception import PageHint, UIElement, UIElementType
+from src.models.perception import UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
@@ -1256,7 +1256,6 @@ class AgentLoop:
           strictly less than _ANCHOR_SNAP_THRESHOLD_PX (small jitter, not a
           genuine element move).
         """
-        from src.models.policy import PolicyDecision  # local import avoids circular
         action = decision.action
         if action.action_type is not ActionType.TYPE:
             return decision, None

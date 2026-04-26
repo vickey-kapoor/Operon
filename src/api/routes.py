@@ -522,7 +522,14 @@ async def benchmark_suite_status(suite_id: str) -> dict:
     """Return the current status of a benchmark suite run."""
     suite = get_suite(suite_id)
     if suite is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suite not found")
+        # Return a terminal EXPIRED state instead of a bare 404.
+        # A bare 404 causes the browser agent to loop endlessly polling a
+        # stale suite_id that was lost when the server restarted.
+        return {
+            "suite_id": suite_id,
+            "status":   "expired",
+            "detail":   "Suite state was lost — server restarted. Do not retry this suite_id.",
+        }
     return suite.to_dict()
 
 

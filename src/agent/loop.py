@@ -249,7 +249,7 @@ class AgentLoop:
         after_artifact_path = self._after_artifact_path(record.run_id, step_index)
         self._prepare_step_artifacts(record.run_id, step_index, before_artifact_path, after_artifact_path)
 
-        if step_index == 1:
+        if step_index == 1 and not self._test_safe_mode_enabled():
             logger.info("Bootstrap warmup: Allowing OS and Browser window to hydrate...")
             if (
                 self.environment is UnifiedEnvironment.BROWSER

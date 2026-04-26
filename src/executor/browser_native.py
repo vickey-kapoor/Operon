@@ -487,6 +487,14 @@ class NativeBrowserExecutor(Executor):
             }
         context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
+
+        # Diagnostic listeners — surface browser console output and network
+        # failures to the Python log so blank-screen causes are visible.
+        page.on("console", lambda msg: logger.debug("BROWSER_LOG [%s]: %s", msg.type, msg.text))
+        page.on("requestfailed", lambda req: logger.warning(
+            "NETWORK_FAIL: %s — %s", req.url, req.failure
+        ))
+
         if foreground and hasattr(page, "bring_to_front"):
             await page.bring_to_front()
         if not launch_headless and foreground:

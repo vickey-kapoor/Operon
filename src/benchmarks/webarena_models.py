@@ -13,7 +13,7 @@ class WebArenaEval(BaseModel):
 
 
 class WebArenaTask(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     task_id: str
     site: str

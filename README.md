@@ -1,6 +1,59 @@
 # Operon
 
-Vision-driven computer-use engine. Closed loop: capture → perceive → decide → execute → verify → recover. Desktop (pyautogui) and browser (Playwright + Gemini Computer Use) share one loop.
+**Operon is a vision-only computer use agent — no DOM, no selectors. It sees the screen like a human does and acts on it.**
+
+Closed loop: `capture → perceive → decide → execute → verify → recover`. Desktop (pyautogui) and browser (Playwright + Gemini Computer Use) share one loop.
+
+> 🚧 Early stage — actively building in public. Failures included.
+
+---
+
+## Demo
+
+<!-- Add a GIF or screenshot here once available -->
+*Demo coming soon.*
+
+---
+
+## Why Vision-Only?
+
+Most automation frameworks anchor to the DOM — CSS selectors, XPath, element IDs. Operon deliberately doesn't.
+
+- **Selectors are brittle.** A class name change, a UI redesign, a framework migration — your automation breaks. You're not building an agent, you're building a dependency on someone else's HTML decisions.
+- **The DOM is a human construct. AI shouldn't need it.** Humans don't read source code to use an interface — they look at it. Agents that generalize need to see what users see.
+- **Vision-only works everywhere.** Web apps, desktop apps, internal tools, legacy systems with no clean DOM. If a human can see it, Operon can use it.
+
+---
+
+## HLD
+
+```text
+FastAPI  →  AgentLoop  →  Capture   (mss / Playwright screenshot)
+                       →  Perceive  (Gemini → ScreenPerception)
+                       →  Decide    PolicyCoordinator
+                                      ├── PolicyRuleEngine  (deterministic)
+                                      └── GeminiPolicyService (LLM fallback)
+                       →  Re-resolve DeterministicTargetSelector  (stale target)
+                       →  Execute   DesktopExecutor | NativeBrowserExecutor
+                       →  Verify    DeterministicVerifier + VideoVerifier
+                       →  Recover   RuleBasedRecoveryManager
+                       →  Reflect   PostRunReflector  (on terminal)
+                       →  Persist   FileBackedRunStore + MemoryStore (+ Episodes)
+
+Unified Contract Layer  (observer on top of the loop)
+    LegacyOperonContractAdapter → PerceptionOutput / PlannerOutput / ActorOutput / CriticOutput
+    UnifiedOrchestrator  →  core/router.py  →  AgentRuntimeState
+```
+
+- Vision only — no DOM / a11y tree.
+- Desktop and browser share verifier, recovery, persistence, memory.
+- Rules first, LLM fallback (`PolicyRuleEngine` → `GeminiPolicyService`).
+- Hardened targets: `DeterministicTargetSelector.reresolve()` re-binds to the original `TargetIntent` if the target moves.
+- Video fallback verify: on no-change, record 3s and ask Gemini for temporal evidence.
+- Self-improving: `PostRunReflector` writes `MemoryHint`s and compresses successful runs into reusable `Episode`s.
+- Unified contracts wrap every step in typed perception/planner/actor/critic bundles.
+
+---
 
 ## Setup
 

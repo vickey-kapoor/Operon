@@ -6,7 +6,7 @@ from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import PlaceholderGeminiClient
 from src.models.common import RunStatus
 from src.models.execution import ExecutedAction
-from src.models.perception import ScreenPerception
+from src.models.perception import ScreenPerception, UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.state import AgentState
 from src.models.verification import VerificationStatus
@@ -15,10 +15,20 @@ from src.models.verification import VerificationStatus
 @pytest.mark.asyncio
 async def test_verifier_does_not_treat_successfully_navigated_as_task_completion() -> None:
     verifier = DeterministicVerifierService(gemini_client=PlaceholderGeminiClient())
+    learn_more_link = UIElement(
+        element_id="learn-more",
+        element_type=UIElementType.LINK,
+        name="Learn more",
+        x=229,
+        y=257,
+        width=80,
+        height=20,
+        is_interactable=True,
+    )
     perception = ScreenPerception(
         summary='I have successfully navigated to example.com and can now click the "Learn more" link.',
         page_hint="unknown",
-        visible_elements=[],
+        visible_elements=[learn_more_link, learn_more_link, learn_more_link],
         capture_artifact_path="runs/run-1/step_2/before.png",
         confidence=0.7,
     )

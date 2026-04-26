@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -28,6 +29,9 @@ class ScreenCaptureService(CaptureService):
 
     async def capture(self, state: AgentState) -> CaptureFrame:
         """Capture a screenshot into the planned run artifact path."""
+        if state.step_count == 0 and hasattr(self.executor, "focus_window"):
+            await self.executor.focus_window()
+            await asyncio.sleep(0.5)
         frame = await self.executor.capture()
         step_index = state.step_count + 1
         planned_path = self.root_dir / state.run_id / f"step_{step_index}" / "before.png"

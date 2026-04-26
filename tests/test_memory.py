@@ -16,7 +16,7 @@ from src.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
-from src.store.memory import FileBackedMemoryStore, benchmark_name_for_intent
+from src.store.memory import FileBackedMemoryStore
 
 
 def _local_test_dir(name: str) -> Path:
@@ -163,7 +163,7 @@ def test_memory_retrieval_returns_relevant_hints() -> None:
     )
 
     hints = store.get_hints(
-        benchmark=benchmark_name_for_intent(state.intent),
+        benchmark=state.benchmark or "generic_task",
         page_hint=_perception().page_hint,
         subgoal="fill_name",
         recent_failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND,

@@ -93,19 +93,20 @@ async def test_recovery_stop_mapping() -> None:
 async def test_recovery_retry_limit_behavior() -> None:
     manager = RuleBasedRecoveryManager()
     decision = _decision()
-    retry_key = f"{decision.active_subgoal}:{VerificationFailureType.ACTION_FAILED.value}"
+    retry_key = f"{decision.active_subgoal}:id:compose:{FailureCategory.EXPECTED_OUTCOME_NOT_MET.value}"
     state = AgentState(
         run_id="run-4",
         intent="Create draft",
         status="running",
-        retry_counts={retry_key: 2},
+        retry_counts={retry_key: 4},
     )
     verification = VerificationResult(
         status=VerificationStatus.FAILURE,
         expected_outcome_met=False,
         stop_condition_met=False,
         reason="Action failed repeatedly",
-        failure_type=VerificationFailureType.ACTION_FAILED,
+        failure_type=VerificationFailureType.EXPECTED_OUTCOME_NOT_MET,
+        failure_category=FailureCategory.EXPECTED_OUTCOME_NOT_MET,
     )
 
     result = await manager.recover(state, decision, _executed(), verification)
@@ -172,8 +173,18 @@ async def test_recovery_focus_subgoal_drives_next_policy_click(tmp_path: Path) -
         "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nRetry: {retry_counts}\nPerception: {perception_json}",
         encoding="utf-8",
     )
+    # After removing _focus_before_type_rule, the LLM is called for the
+    # recovery step. The stub returns a CLICK on subject-input, which is what
+    # a well-prompted LLM would choose given subgoal="focus subject-input".
+    class _ClickStubClient:
+        async def generate_policy(self, prompt: str) -> str:
+            return '{"action":{"action_type":"click","target_element_id":"subject-input","x":470,"y":194},"rationale":"Focus subject-input.","confidence":0.9,"active_subgoal":"focus subject-input"}'
+
+        async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
+            raise NotImplementedError
+
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=_UnusedGeminiClient(), prompt_path=prompt_path),
+        delegate=GeminiPolicyService(gemini_client=_ClickStubClient(), prompt_path=prompt_path),
         memory_store=FileBackedMemoryStore(root_dir=tmp_path / "runs"),
     )
     perception_path = tmp_path / "runs" / "run-6" / "step_2" / "before.png"

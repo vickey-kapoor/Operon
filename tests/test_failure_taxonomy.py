@@ -66,12 +66,13 @@ async def test_recovery_marks_retry_limit_as_terminal_failure() -> None:
     manager = RuleBasedRecoveryManager()
     action = AgentAction(action_type=ActionType.CLICK, target_element_id="compose")
     decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.8, active_subgoal="open compose")
-    retry_key = f"{decision.active_subgoal}:{VerificationFailureType.ACTION_FAILED.value}"
+    # Key format: "{subgoal}:{target}:{failure_category}" — must match _retry_key() in recovery.py
+    retry_key = f"{decision.active_subgoal}:id:{action.target_element_id}:{FailureCategory.EXECUTION_ERROR.value}"
     state = AgentState(
         run_id="run-2",
         intent="Create draft",
         status=RunStatus.RUNNING,
-        retry_counts={retry_key: 2},
+        retry_counts={retry_key: RuleBasedRecoveryManager.MAX_RECOVERY_ATTEMPTS - 1},
     )
     executed = ExecutedAction(
         action=action,

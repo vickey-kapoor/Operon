@@ -37,6 +37,8 @@ async def test_close_session_finalizes_single_recorded_video(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+
     class FakePage:
         url = "about:blank"
 
@@ -46,6 +48,7 @@ async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, mon
             self.evaluate = AsyncMock()
             self.keyboard = SimpleNamespace(press=AsyncMock())
             self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
 
     class FakeContext:
         def __init__(self) -> None:
@@ -84,12 +87,11 @@ async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, mon
 
     executor = NativeBrowserExecutor(
         artifact_dir=tmp_path,
-        viewport_width=1440,
-        viewport_height=900,
+        viewport_width=1920,
+        viewport_height=1080,
         headless=False,
     )
     executor._bring_browser_to_foreground = AsyncMock()
-    executor._headed_launch_size = lambda: (1920, 1080)
     executor._detect_browser_pid = lambda *_args: 4321
 
     session = await executor._ensure_session("run-123")
@@ -99,7 +101,7 @@ async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, mon
     assert session.video_dir.exists()
     assert manager.playwright.browser.context_kwargs["viewport"] == {"width": 1920, "height": 1080}
     assert manager.playwright.browser.context_kwargs["record_video_dir"] == str(session.video_dir)
-    assert manager.playwright.browser.context_kwargs["record_video_size"] == {"width": 1440, "height": 900}
+    assert manager.playwright.browser.context_kwargs["record_video_size"] == {"width": 1920, "height": 1080}
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=False,
         args=["--window-size=1920,1080", "--window-position=0,0"],
@@ -120,6 +122,7 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
             self.evaluate = AsyncMock()
             self.keyboard = SimpleNamespace(press=AsyncMock())
             self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
 
     class FakeContext:
         def __init__(self) -> None:
@@ -151,14 +154,14 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
     fake_module = SimpleNamespace(async_playwright=lambda: manager)
     monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
 
-    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=False)
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=False, viewport_width=1440, viewport_height=900)
     executor.configure_run("run-override", headless=True)
 
     await executor._ensure_session("run-override")
 
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=True,
-        args=["--window-size=1440,900"],
+        args=["--window-size=1440,900", "--window-position=0,0"],
     )
 
 
@@ -166,6 +169,8 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
 async def test_ensure_session_closes_stale_sessions_before_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+
     class FakePage:
         url = "about:blank"
 
@@ -175,6 +180,7 @@ async def test_ensure_session_closes_stale_sessions_before_launch(
             self.evaluate = AsyncMock()
             self.keyboard = SimpleNamespace(press=AsyncMock())
             self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
 
     class FakeContext:
         def __init__(self) -> None:
@@ -243,6 +249,7 @@ async def test_ensure_session_forces_headless_in_test_safe_mode(
             self.evaluate = AsyncMock()
             self.keyboard = SimpleNamespace(press=AsyncMock())
             self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
 
     class FakeContext:
         def __init__(self) -> None:
@@ -277,13 +284,13 @@ async def test_ensure_session_forces_headless_in_test_safe_mode(
     monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
     monkeypatch.setenv("OPERON_TEST_SAFE_MODE", "true")
 
-    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=False)
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=False, viewport_width=1440, viewport_height=900)
 
     await executor._ensure_session("run-safe")
 
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=True,
-        args=["--window-size=1440,900"],
+        args=["--window-size=1440,900", "--window-position=0,0"],
     )
 
 
@@ -429,3 +436,77 @@ async def test_press_key_focuses_target_context_before_keypress(tmp_path: Path) 
     assert result.success is True
     mouse.click.assert_awaited_once_with(100, 80)
     keyboard.press.assert_awaited_once_with("Enter")
+
+
+@pytest.mark.asyncio
+async def test_type_enters_text_without_clear_before_typing(tmp_path: Path) -> None:
+    mouse = SimpleNamespace(click=AsyncMock())
+    keyboard = SimpleNamespace(type=AsyncMock(), press=AsyncMock())
+    page = SimpleNamespace(mouse=mouse, keyboard=keyboard, wait_for_load_state=AsyncMock())
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+
+    result = await executor.execute(
+        AgentAction(
+            action_type=ActionType.TYPE,
+            target_element_id="search_input",
+            text="MacBook under $2000",
+            press_enter=True,
+            target_context={
+                "intent": {"action": "type", "target_text": "Search", "expected_element_types": ["input"]},
+                "original_target": {
+                    "element_id": "search_input",
+                    "element_type": "input",
+                    "primary_name": "Search",
+                    "x": 50,
+                    "y": 60,
+                    "width": 100,
+                    "height": 40,
+                },
+                "selected_candidate_evidence": {
+                    "element_id": "search_input",
+                    "element_type": "input",
+                    "primary_name": "Search",
+                    "total_score": 1.0,
+                    "matched_signals": [],
+                    "rejected_by": [],
+                    "action_compatible": True,
+                    "exact_semantic_match": True,
+                    "uses_unlabeled_fallback": False,
+                    "nearest_matched_text_candidate_id": None,
+                    "spatial_grounding_contributed": False,
+                    "confidence_band": "high",
+                },
+            },
+        )
+    )
+
+    assert result.success is True
+    mouse.click.assert_awaited_once_with(100, 80)
+    keyboard.type.assert_awaited_once_with("MacBook under $2000")
+    keyboard.press.assert_awaited_once_with("Enter")
+
+
+@pytest.mark.asyncio
+async def test_type_clears_before_typing_when_requested(tmp_path: Path) -> None:
+    keyboard = SimpleNamespace(type=AsyncMock(), press=AsyncMock())
+    page = SimpleNamespace(mouse=SimpleNamespace(click=AsyncMock()), keyboard=keyboard, wait_for_load_state=AsyncMock())
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+
+    result = await executor.execute(
+        AgentAction(
+            action_type=ActionType.TYPE,
+            x=10,
+            y=20,
+            text="updated query",
+            clear_before_typing=True,
+        )
+    )
+
+    assert result.success is True
+    assert keyboard.press.await_args_list[0].args == ("Control+A",)
+    assert keyboard.press.await_args_list[1].args == ("Backspace",)
+    keyboard.type.assert_awaited_once_with("updated query")

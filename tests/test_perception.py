@@ -37,6 +37,9 @@ class StubGeminiClient:
     async def generate_policy(self, prompt: str) -> str:
         raise NotImplementedError
 
+    def latest_perception_scale_ratio(self) -> float:
+        return 1.0
+
 
 class SequencedGeminiClient:
     def __init__(self, responses: list[str]) -> None:
@@ -49,6 +52,9 @@ class SequencedGeminiClient:
 
     async def generate_policy(self, prompt: str) -> str:
         raise NotImplementedError
+
+    def latest_perception_scale_ratio(self) -> float:
+        return 1.0
 
 
 def test_google_sign_in_page_classification() -> None:
@@ -64,7 +70,7 @@ def test_google_sign_in_page_classification() -> None:
 
     perception = parse_perception_output(raw_output, "runs/run-1/step_1/before.png")
 
-    assert perception.page_hint is PageHint.GOOGLE_SIGN_IN
+    assert perception.page_hint == "google_sign_in"
 
 
 def test_form_page_classification() -> None:
@@ -112,7 +118,7 @@ def test_gmail_compose_classification() -> None:
 
     perception = parse_perception_output(raw_output, "runs/run-1/step_2/before.png")
 
-    assert perception.page_hint is PageHint.GMAIL_COMPOSE
+    assert perception.page_hint == "gmail_compose"
 
 
 def test_gmail_inbox_classification() -> None:
@@ -128,7 +134,7 @@ def test_gmail_inbox_classification() -> None:
 
     perception = parse_perception_output(raw_output, "runs/run-1/step_1/before.png")
 
-    assert perception.page_hint is PageHint.GMAIL_INBOX
+    assert perception.page_hint == "gmail_inbox"
 
 
 def test_missing_page_hint_uses_small_summary_fallback() -> None:
@@ -143,7 +149,8 @@ def test_missing_page_hint_uses_small_summary_fallback() -> None:
 
     perception = parse_perception_output(raw_output, "runs/run-1/step_1/before.png")
 
-    assert perception.page_hint is PageHint.GOOGLE_SIGN_IN
+    # Fallback classifier no longer detects app-specific pages; LLM provides page_hint.
+    assert perception.page_hint is PageHint.UNKNOWN
 
 
 def test_missing_page_hint_uses_form_summary_fallback() -> None:

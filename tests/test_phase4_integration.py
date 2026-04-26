@@ -21,6 +21,7 @@ sys.modules.setdefault("src.clients.gemini", gemini_stub)
 
 screen_diff_stub = types.ModuleType("src.agent.screen_diff")
 screen_diff_stub.SCREEN_CHANGE_THRESHOLD = 0.05
+screen_diff_stub.CURSOR_ONLY_THRESHOLD = 0.0005
 screen_diff_stub.compute_screen_change_ratio = lambda before, after: 0.25
 sys.modules.setdefault("src.agent.screen_diff", screen_diff_stub)
 

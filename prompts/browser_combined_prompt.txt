@@ -20,7 +20,7 @@ Return a single JSON object with this shape:
     ]
   }},
   "action": {{
-    "action_type": "click|type|select|press_key|navigate|wait|upload_file|stop",
+    "action_type": "click|type|select|press_key|navigate|wait|upload_file|upload_file_native|read_text|stop",
     "selector": "optional CSS selector or null",
     "target_element_id": "optional element id or null",
     "text": "optional string or null",
@@ -47,7 +47,9 @@ Action rules:
 - For input fields, do not choose type unless focus/editability is clearly established.
 - If focus is uncertain, choose click first, then type on the next step.
 - Use navigate to go to a specific URL directly.
-- Use upload_file when you need to attach or upload a file via a file-picker button. Set text to the absolute file path and target_element_id to the button that opens the file picker.
+- Use upload_file when you need to attach a file via a standard HTML file input. Set text to the absolute file path and target_element_id to the element that opens the file picker. Playwright handles the dialog invisibly.
+- Use upload_file_native when the intent explicitly requests the real OS file picker flow (e.g. "upload_file_native"). This triggers the OS dialog; subsequent steps will type the path and confirm it.
+- Use read_text to extract visible body text from the current page and save it to a file. ALWAYS use read_text (never press_key, hotkey, or clipboard tricks) when the intent asks to read, extract, save, or get article/page content. Set selector to scope the extraction: ".mw-parser-output" for Wikipedia articles, "article" for news sites, "main" as a general fallback. Set text to the absolute output file path provided in the intent. read_text is the LAST action — once it succeeds the task is complete.
 - Use stop when the task goal appears achieved or a terminal condition is reached.
 
 {advisory_hints}

@@ -8,15 +8,18 @@ Run with:
     GEMINI_API_KEY=fake-test-key .venv/Scripts/python -m pytest tests/test_e2e_quick_tasks.py -v -s
 
 For live execution against a running server:
+    $env:OPERON_RUN_LIVE_SERVER_TESTS='true'
     .venv/Scripts/python -m pytest tests/test_e2e_quick_tasks.py -v -s --live
 
-NOTE: Without --live marker the tests run against the actual live server
-but do NOT advance steps (Gemini calls would be needed). The intent-acceptance
-and structural tests run regardless.
+NOTE: These tests are now opt-in. Without `--live` or
+`OPERON_RUN_LIVE_SERVER_TESTS=true`, the module is skipped entirely so a
+running local server does not get exercised accidentally during normal pytest
+runs.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -26,10 +29,18 @@ import requests
 BASE_URL = "http://127.0.0.1:8080"
 SESSION = requests.Session()
 SESSION.headers["Content-Type"] = "application/json"
+_LIVE_SERVER_OPT_IN = os.getenv("OPERON_RUN_LIVE_SERVER_TESTS", "false").lower() == "true"
+
+pytestmark = pytest.mark.live_server
 
 
 @pytest.fixture(scope="session", autouse=True)
-def require_server():
+def require_server(request: pytest.FixtureRequest):
+    if not (request.config.getoption("--live") or _LIVE_SERVER_OPT_IN):
+        pytest.skip(
+            "Live-server tests are disabled by default. Use --live or "
+            "OPERON_RUN_LIVE_SERVER_TESTS=true to enable them."
+        )
     try:
         resp = SESSION.get(f"{BASE_URL}/health", timeout=10)
     except requests.RequestException as exc:
@@ -99,12 +110,22 @@ ALL_RESULTS: list[TaskTestResult] = []
 # Helpers
 # ---------------------------------------------------------------------------
 
-def post(path: str, body: dict) -> requests.Response:
-    return SESSION.post(f"{BASE_URL}{path}", json=body, timeout=15)
+_PATH_ALIASES = {
+    "/desktop/run-task": "/run-task",
+    "/desktop/step": "/step",
+    "/desktop/cleanup": "/cleanup",
+}
+
+def post(path: str, body: dict, timeout: int = 15) -> requests.Response:
+    aliased_path = _PATH_ALIASES.get(path, path)
+    return SESSION.post(f"{BASE_URL}{aliased_path}", json=body, timeout=timeout)
 
 
 def get(path: str, **params) -> requests.Response:
-    return SESSION.get(f"{BASE_URL}{path}", params=params, timeout=15)
+    aliased_path = path
+    if path.startswith("/desktop/run/"):
+        aliased_path = path.replace("/desktop/run/", "/run/", 1)
+    return SESSION.get(f"{BASE_URL}{aliased_path}", params=params, timeout=15)
 
 
 def cleanup(run_id: str) -> dict:
@@ -238,7 +259,7 @@ class TestRunTaskInputValidation:
 
     def test_malformed_json_returns_422(self):
         raw_resp = SESSION.post(
-            f"{BASE_URL}/desktop/run-task",
+            f"{BASE_URL}/run-task",
             data="not json at all",
             headers={"Content-Type": "application/json"},
             timeout=10,
@@ -624,7 +645,7 @@ class TestEdgeCases:
         resp = post("/desktop/run-task", {"intent": "Open Notepad"})
         assert resp.status_code == 202
         run_id = resp.json()["run_id"]
-        step_resp = post("/desktop/step", {"run_id": run_id})
+        step_resp = post("/desktop/step", {"run_id": run_id}, timeout=60)
         # Step might succeed (202/200) or fail gracefully — should not be 500
         assert step_resp.status_code != 500, (
             f"Step on fresh run returned 500: {step_resp.text}"

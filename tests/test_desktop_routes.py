@@ -27,21 +27,28 @@ def _mock_run_response(status: RunStatus = RunStatus.RUNNING) -> RunResponse:
     )
 
 
-def test_root_serves_task_console(client: TestClient) -> None:
-    """GET / should return the task console UI."""
+def test_root_serves_landing_page(client: TestClient) -> None:
+    """GET / should return the landing page."""
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "Task Console" in resp.text
+    assert "Command Center" in resp.text
     assert "text/html" in resp.headers["content-type"]
 
 
-def test_console_route_serves_same_content(client: TestClient) -> None:
-    """GET /console should serve the same HTML as GET /."""
-    root = client.get("/")
+def test_console_route_serves_command_center(client: TestClient) -> None:
+    """GET /console should serve the command center."""
     console = client.get("/console")
-    assert root.status_code == 200
     assert console.status_code == 200
-    assert root.text == console.text
+    assert "Command Center" in console.text
+    assert "btnRun" in console.text
+
+
+def test_dashboard_route_serves_dashboard(client: TestClient) -> None:
+    """GET /dashboard should serve the standalone usage dashboard."""
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    assert "Billing period" in resp.text
+    assert "Spend by model" in resp.text
 
 
 def test_desktop_run_task(client: TestClient) -> None:
@@ -217,13 +224,23 @@ def test_browser_cleanup_without_support(client: TestClient) -> None:
 def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
     """get_desktop_agent_loop should use CombinedPerceptionPolicyService with 120s timeout."""
     import src.api.routes as routes_module
+    from src.api.runtime_config import RuntimeModeConfig
 
     # Reset the singleton so it gets rebuilt
     original = routes_module._desktop_agent_loop
     routes_module._desktop_agent_loop = None
 
+    gemini_config = RuntimeModeConfig(
+        backend="json",
+        primary_model="gemini-3-flash-preview",
+        planner_provider="gemini",
+        verifier_provider="gemini",
+        verifier_model="gemini-3-flash-preview",
+    )
+
     try:
         with (
+            patch("src.api.routes.desktop_mode_config", return_value=gemini_config),
             patch("src.api.routes.DesktopExecutor"),
             patch("src.api.routes.FileBackedRunStore"),
             patch("src.api.routes.FileBackedMemoryStore"),
@@ -237,12 +254,103 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
         ):
             routes_module.get_desktop_agent_loop()
 
-            # Two GeminiHttpClients: combined + policy verifier, both with 120s timeout
+            # Gemini path creates two clients: one for the combined backend, one for the verifier.
             assert mock_gemini.call_count == 2
             calls = mock_gemini.call_args_list
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in calls)
     finally:
         routes_module._desktop_agent_loop = original
+
+
+def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
+    """Desktop Anthropic planner should split Gemini perception from planner selection."""
+    import src.api.routes as routes_module
+    from src.api.runtime_config import RuntimeModeConfig
+
+    original = routes_module._desktop_agent_loop
+    routes_module._desktop_agent_loop = None
+
+    try:
+        with (
+            patch(
+                "src.api.routes.desktop_mode_config",
+                return_value=RuntimeModeConfig(
+                    backend="json",
+                    primary_model="gemini-3-flash-preview",
+                    planner_provider="anthropic",
+                    planner_model="claude-sonnet-4-20250514",
+                    verifier_provider="anthropic",
+                    fallback_model="gemini-2.5-flash",
+                    verifier_model="claude-sonnet-4-20250514",
+                ),
+            ),
+            patch("src.api.routes.DesktopExecutor"),
+            patch("src.api.routes.FileBackedRunStore"),
+            patch("src.api.routes.FileBackedMemoryStore"),
+            patch("src.api.routes.GeminiHttpClient") as mock_gemini,
+            patch("src.api.routes.AnthropicHttpClient") as mock_anthropic,
+            patch("src.api.routes.ScreenCaptureService"),
+            patch("src.api.routes.GeminiPerceptionService"),
+            patch("src.api.routes.AnthropicPolicyService"),
+            patch("src.api.routes.PolicyCoordinator"),
+            patch("src.api.routes.DeterministicVerifierService"),
+            patch("src.api.routes.RuleBasedRecoveryManager"),
+            patch("src.api.routes.AgentLoop"),
+        ):
+            routes_module.get_desktop_agent_loop()
+
+            assert mock_gemini.call_count == 1
+            assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in mock_gemini.call_args_list)
+            assert mock_anthropic.call_count == 2
+            assert all(c.kwargs["model"] == "claude-sonnet-4-20250514" for c in mock_anthropic.call_args_list)
+    finally:
+        routes_module._desktop_agent_loop = original
+
+
+def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
+    """Browser JSON mode should support Gemini perception with Anthropic planner."""
+    import src.api.routes as routes_module
+    from src.api.runtime_config import RuntimeModeConfig
+
+    original = routes_module._agent_loop
+    routes_module._agent_loop = None
+
+    try:
+        with (
+            patch(
+                "src.api.routes.browser_mode_config",
+                return_value=RuntimeModeConfig(
+                    backend="json",
+                    primary_model="gemini-3-flash-preview",
+                    planner_provider="anthropic",
+                    planner_model="claude-sonnet-4-20250514",
+                    verifier_provider="anthropic",
+                    fallback_backend="json",
+                    fallback_model="gemini-3-flash-preview",
+                    verifier_model="claude-sonnet-4-20250514",
+                ),
+            ),
+            patch("src.api.routes.NativeBrowserExecutor"),
+            patch("src.api.routes.FileBackedRunStore"),
+            patch("src.api.routes.FileBackedMemoryStore"),
+            patch("src.api.routes.GeminiHttpClient") as mock_gemini,
+            patch("src.api.routes.AnthropicHttpClient") as mock_anthropic,
+            patch("src.api.routes.ScreenCaptureService"),
+            patch("src.api.routes.GeminiPerceptionService"),
+            patch("src.api.routes.AnthropicPolicyService"),
+            patch("src.api.routes.PolicyCoordinator"),
+            patch("src.api.routes.DeterministicVerifierService"),
+            patch("src.api.routes.RuleBasedRecoveryManager"),
+            patch("src.api.routes.AgentLoop"),
+        ):
+            routes_module.get_agent_loop()
+
+            assert mock_gemini.call_count == 1
+            assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in mock_gemini.call_args_list)
+            assert mock_anthropic.call_count == 2
+            assert all(c.kwargs["model"] == "claude-sonnet-4-20250514" for c in mock_anthropic.call_args_list)
+    finally:
+        routes_module._agent_loop = original
 
 
 # ── UIElementType._missing_ tests ──────────────────────────────

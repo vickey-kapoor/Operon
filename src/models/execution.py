@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 
 from src.models.common import FailureCategory, LoopStage, StrictModel
@@ -71,6 +73,17 @@ class ExecutionTrace(StrictModel):
     final_failure_category: FailureCategory | None = None
 
 
+class AnchorSnapInfo(StrictModel):
+    """Diagnostic record written when coordinate anchoring corrects perception jitter."""
+
+    element_id: str = Field(min_length=1)
+    original_x: int
+    original_y: int
+    anchored_x: int
+    anchored_y: int
+    drift_px: float
+
+
 class ExecutedAction(StrictModel):
     """Recorded outcome of executing a single agent action."""
 
@@ -83,3 +96,4 @@ class ExecutedAction(StrictModel):
     recording_path: str | None = Field(default=None, min_length=1)
     failure_category: FailureCategory | None = None
     failure_stage: LoopStage | None = None
+    anchor_snap: AnchorSnapInfo | None = None

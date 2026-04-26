@@ -13,8 +13,11 @@ class RecoveryStrategy(StrEnum):
     """Supported recovery policies for the MVP loop."""
 
     RETRY_SAME_STEP = "retry_same_step"
+    RETRY_DIFFERENT_TACTIC = "retry_different_tactic"
     WAIT_AND_RETRY = "wait_and_retry"
     BACKOFF = "backoff"
+    CONTEXT_RESET = "context_reset"
+    SESSION_RESET = "session_reset"
     STOP = "stop"
     ADVANCE = "advance"
 

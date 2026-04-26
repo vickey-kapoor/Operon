@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 
+from src.models.usage import ModelUsage, estimate_usage_cost
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +36,10 @@ class GeminiComputerUseClient(ABC):
         error: str | None = None,
     ) -> dict[str, Any]:
         """Build a function_response content block for the next user turn."""
+
+    def latest_usage(self) -> ModelUsage | None:
+        """Return provider-reported usage for the most recent turn, when available."""
+        return None
 
 
 class GeminiComputerUseHttpClient(GeminiComputerUseClient):
@@ -63,6 +69,7 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         self.environment = environment
         self.excluded_predefined_functions = excluded_predefined_functions or []
         self._client: httpx.AsyncClient | None = None
+        self._last_usage: ModelUsage | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -81,7 +88,11 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
     async def generate_turn(self, *, contents: list[dict[str, Any]]) -> dict[str, Any]:
         payload = self._build_payload(contents=contents)
         response_payload = await self._post_payload(payload)
+        self._last_usage = _extract_usage(payload=response_payload, model=self.model)
         return self._normalize_response(response_payload)
+
+    def latest_usage(self) -> ModelUsage | None:
+        return self._last_usage
 
     def _build_payload(self, *, contents: list[dict[str, Any]]) -> dict[str, Any]:
         tool: dict[str, Any] = {
@@ -283,3 +294,39 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
                 "function_names": [call.get("name") for call in function_calls],
             },
         }
+
+
+def _extract_usage(*, payload: dict[str, Any], model: str) -> ModelUsage | None:
+    usage = payload.get("usageMetadata")
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = _as_int(usage.get("promptTokenCount"))
+    output_tokens = _as_int(usage.get("candidatesTokenCount"))
+    total_tokens = _as_int(usage.get("totalTokenCount"))
+    cache_creation_input_tokens = _as_int(usage.get("cacheCreationInputTokens"))
+    cache_read_input_tokens = _as_int(usage.get("cachedContentTokenCount"))
+    thoughts_tokens = _as_int(usage.get("thoughtsTokenCount"))
+    input_cost, output_cost, total_cost = estimate_usage_cost(
+        provider="gemini",
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+    return ModelUsage(
+        provider="gemini",
+        model=model,
+        request_kind="computer_use",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+        thoughts_tokens=thoughts_tokens,
+        input_cost_usd=input_cost,
+        output_cost_usd=output_cost,
+        estimated_cost_usd=total_cost,
+    )
+
+
+def _as_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and value >= 0 else None

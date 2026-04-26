@@ -190,22 +190,24 @@ class LegacyOperonContractAdapter:
         planner: PlannerOutput,
         executed_action: ExecutedAction,
         attempt_index: int,
+        verification: VerificationResult | None = None,
     ) -> ActorOutput:
         executor = ExecutorChoice.BROWSER if self.environment is Environment.BROWSER else ExecutorChoice.DESKTOP
         status = ActorStatus.SUCCESS if executed_action.success else ActorStatus.FAILED
-        failure_type = _map_failure_type(executed_action, VerificationResult(
+        _verification_for_map = verification or VerificationResult(
             status=VerificationStatus.SUCCESS,
             expected_outcome_met=True,
             stop_condition_met=False,
             reason="placeholder",
-        )) if not executed_action.success else None
+        )
+        failure_type = _map_failure_type(executed_action, _verification_for_map) if not executed_action.success else None
         return ActorOutput(
             environment=self.environment,
             observation_id=planner.observation_id,
             plan_id=planner.plan_id,
             attempt_id=f"{planner.plan_id}:attempt:{attempt_index}",
             executor=executor,
-            action=ActorAction.model_validate(planner.action.model_dump()),
+            action=ActorAction.model_construct(**planner.action.model_dump()),
             status=status,
             failure_type=failure_type,
             details=executed_action.detail,
@@ -253,7 +255,7 @@ class LegacyOperonContractAdapter:
     ) -> LegacyContractBundle:
         perception_output = self.perception_output(state, perception, attempt_index)
         planner_output = self.planner_output(state, perception, decision, attempt_index)
-        actor_output = self.actor_output(planner_output, executed_action, attempt_index)
+        actor_output = self.actor_output(planner_output, executed_action, attempt_index, verification=verification)
         critic_output = self.critic_output(planner_output, actor_output, executed_action, verification)
         return LegacyContractBundle(
             perception=perception_output,

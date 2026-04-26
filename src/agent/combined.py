@@ -49,9 +49,9 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         self.gemini_client = gemini_client
         self.prompt_path = prompt_path or Path(__file__).resolve().parents[2] / "prompts" / "desktop_combined_prompt.txt"
         self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
-        self._cached_decision: PolicyDecision | None = None
+        self._cached_decision: dict[str, PolicyDecision] = {}
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
-        self._advisory_hints: list[str] = []
+        self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._perception_only: bool = False
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
@@ -95,7 +95,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
 
             # Cache decision only on primary calls, not retry-path perception
             if not self._perception_only:
-                self._cached_decision = decision
+                self._cached_decision[state.run_id] = decision
 
             bg_writer.enqueue(parsed_path, json.dumps({
                 "perception": perception.model_dump(mode="json"),
@@ -106,6 +106,8 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
                 prompt_artifact_path=str(prompt_path),
                 raw_response_artifact_path=str(raw_path),
                 parsed_artifact_path=str(parsed_path),
+                usage_artifact_path=str(step_dir / "combined_usage.json"),
+                usage=_latest_usage(self.gemini_client, step_dir / "combined_usage.json"),
             )
             return perception
 
@@ -118,17 +120,30 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         perception: ScreenPerception,
     ) -> PolicyDecision:
         """Return the cached policy decision from the combined call."""
-        if self._cached_decision is not None:
-            decision = self._cached_decision
-            self._cached_decision = None
+        decision = self._cached_decision.pop(state.run_id, None)
+        if decision is not None:
             return decision
         raise PolicyError("No cached decision available from combined call")
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
-        self._advisory_hints = [hint for hint in hints if hint]
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state. Test use only."""
+        self._advisory_hints = {"": [(h, "") for h in hints if h]}
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        """Append hints scoped to run_id so concurrent runs don't cross-contaminate."""
+        incoming = [(h, source) for h in hints if h]
+        bucket = self._advisory_hints.setdefault(run_id, [])
+        bucket.extend(incoming)
+        logger.debug(
+            "add_advisory_hints(%s): run=%r source=%r incoming=%d total=%d",
+            self.__class__.__name__, run_id, source, len(incoming), len(bucket),
+        )
+
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        self._advisory_hints.pop(run_id, None)
 
     def set_perception_only(self, value: bool) -> None:
         """When True, perceive() won't overwrite the cached policy decision."""
@@ -139,9 +154,14 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         # Build action history so the model knows what already happened
         action_log = self._format_action_history(state)
         hints_text = ""
-        if self._advisory_hints:
-            hints_text = "Advisory memory hints:\n" + "\n".join(f"- {hint}" for hint in self._advisory_hints)
-            self._advisory_hints = []
+        hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None)
+        if hints:
+            _counts: dict[str, int] = {}
+            for _, _src in hints:
+                _label = _src or "unknown"
+                _counts[_label] = _counts.get(_label, 0) + 1
+            logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
+            hints_text = "Advisory memory hints:\n" + "\n".join(f"- {h}" for h, _ in hints)
         if action_log:
             hints_text = f"Actions already completed this run:\n{action_log}\n\n{hints_text}"
         prompt = self._prompt_template.format(
@@ -209,3 +229,12 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         decision = parse_policy_output(json.dumps(decision_data))
 
         return perception, decision
+
+
+def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
+    if not hasattr(client, "latest_usage"):
+        return None
+    usage = client.latest_usage()
+    if usage is not None:
+        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
+    return usage

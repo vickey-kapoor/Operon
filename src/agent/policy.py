@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -10,10 +11,12 @@ from pydantic import ValidationError
 
 from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.logs import ModelDebugArtifacts
-from src.models.perception import ScreenPerception, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
+from src.models.perception import ScreenPerception
+from src.models.policy import ActionType, PolicyDecision
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
+
+logger = logging.getLogger(__name__)
 
 
 class PolicyError(RuntimeError):
@@ -42,7 +45,7 @@ class GeminiPolicyService(PolicyService):
         self.prompt_path = prompt_path or Path(__file__).resolve().parents[2] / "prompts" / "policy_prompt.txt"
         self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
-        self._advisory_hints: list[str] = []
+        self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
 
     async def choose_action(
         self,
@@ -59,69 +62,61 @@ class GeminiPolicyService(PolicyService):
             raise
         bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
         decision = parse_policy_output(raw_output)
-        decision = self._apply_focus_first_guardrail(state, perception, decision)
         bg_writer.enqueue(debug_artifacts.parsed_artifact_path, decision.model_dump_json())
         self._last_debug_artifacts = ModelDebugArtifacts(
             prompt_artifact_path=str(debug_artifacts.prompt_artifact_path),
             raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
             parsed_artifact_path=str(debug_artifacts.parsed_artifact_path),
+            usage_artifact_path=str(debug_artifacts.usage_artifact_path),
+            usage=_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
         )
         return decision
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
-    def set_advisory_hints(self, hints: list[str]) -> None:
-        self._advisory_hints = [hint for hint in hints if hint]
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state. Test use only."""
+        self._advisory_hints = {"": [(h, "") for h in hints if h]}
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        """Append hints scoped to run_id so concurrent runs don't cross-contaminate."""
+        incoming = [(h, source) for h in hints if h]
+        bucket = self._advisory_hints.setdefault(run_id, [])
+        bucket.extend(incoming)
+        logger.debug(
+            "add_advisory_hints(%s): run=%r source=%r incoming=%d total=%d",
+            self.__class__.__name__, run_id, source, len(incoming), len(bucket),
+        )
+
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        self._advisory_hints.pop(run_id, None)
 
     def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
+        last_verification = "none"
+        if state.verification_history:
+            last_vr = state.verification_history[-1]
+            parts = [f"status={last_vr.status}", f"reason={last_vr.reason!r}"]
+            if last_vr.recovery_hint:
+                parts.append(f"recovery_hint={last_vr.recovery_hint!r}")
+            last_verification = ", ".join(parts)
         prompt = self._prompt_template.format(
             intent=state.intent,
             current_subgoal=state.current_subgoal or "not set",
             step_count=state.step_count,
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             perception_json=perception.model_dump_json(),
+            last_verification=last_verification,
         )
-        if self._advisory_hints:
-            prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {hint}" for hint in self._advisory_hints)
-        self._advisory_hints = []
+        hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None)
+        if hints:
+            _counts: dict[str, int] = {}
+            for _, _src in hints:
+                _label = _src or "unknown"
+                _counts[_label] = _counts.get(_label, 0) + 1
+            logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
+            prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {h}" for h, _ in hints)
         return prompt
-
-    def _apply_focus_first_guardrail(
-        self,
-        state: AgentState,
-        perception: ScreenPerception,
-        decision: PolicyDecision,
-    ) -> PolicyDecision:
-        action = decision.action
-        if action.action_type is not ActionType.TYPE:
-            return decision
-        if action.selector is not None:
-            return decision
-
-        target_id = action.target_element_id
-        if target_id is None:
-            return decision
-
-        target = next((element for element in perception.visible_elements if element.element_id == target_id), None)
-        if target is None or target.element_type is not UIElementType.INPUT or not target.usable_for_targeting:
-            return decision
-
-        if perception.focused_element_id == target_id:
-            return decision
-
-        click_action = AgentAction(
-            action_type=ActionType.CLICK,
-            target_element_id=target_id,
-            x=target.x + max(1, target.width // 2),
-            y=target.y + max(1, target.height // 2),
-        )
-        return PolicyDecision(
-            action=click_action,
-            rationale=f"Focus {target.primary_name} before typing.",
-            confidence=min(decision.confidence, 0.8),
-            active_subgoal=f"focus {target_id}",
-        )
 
     @staticmethod
     def _artifact_paths(step_dir: Path) -> "_StageArtifactPaths":
@@ -130,14 +125,16 @@ class GeminiPolicyService(PolicyService):
             prompt_artifact_path=step_dir / "policy_prompt.txt",
             raw_response_artifact_path=step_dir / "policy_raw.txt",
             parsed_artifact_path=step_dir / "policy_decision.json",
+            usage_artifact_path=step_dir / "policy_usage.json",
         )
 
 
 class _StageArtifactPaths:
-    def __init__(self, prompt_artifact_path: Path, raw_response_artifact_path: Path, parsed_artifact_path: Path) -> None:
+    def __init__(self, prompt_artifact_path: Path, raw_response_artifact_path: Path, parsed_artifact_path: Path, usage_artifact_path: Path) -> None:
         self.prompt_artifact_path = prompt_artifact_path
         self.raw_response_artifact_path = raw_response_artifact_path
         self.parsed_artifact_path = parsed_artifact_path
+        self.usage_artifact_path = usage_artifact_path
 
 
 def parse_policy_output(raw_output: str) -> PolicyDecision:
@@ -187,6 +184,12 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
             normalized_payload["rationale"] = nested_rationale
         normalized_action.pop("rationale", None)
 
+    # STOP/WAIT_FOR_USER must not carry payload fields (LLMs sometimes put answer text in text=)
+    _PAYLOAD_FIELDS = {"text", "url", "key", "selector", "x", "y", "wait_ms", "scroll_amount"}
+    if action_type in (ActionType.STOP.value, ActionType.WAIT_FOR_USER.value):
+        for _f in _PAYLOAD_FIELDS:
+            normalized_action.pop(_f, None)
+
     wait_ms = normalized_action.get("wait_ms")
     if action_type == ActionType.WAIT.value:
         if isinstance(wait_ms, int) and wait_ms <= 0:
@@ -214,3 +217,12 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
         normalized_payload["action"] = normalized_action
         return normalized_payload
     return normalized_payload
+
+
+def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
+    if not hasattr(client, "latest_usage"):
+        return None
+    usage = client.latest_usage()
+    if usage is not None:
+        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
+    return usage

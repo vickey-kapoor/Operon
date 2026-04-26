@@ -13,11 +13,11 @@ from src.models.episode import Episode, EpisodeReplayState
 from src.models.logs import ModelDebugArtifacts
 from src.models.memory import MemoryHint
 from src.models.perception import ScreenPerception
-from src.models.policy import PolicyDecision
+from src.models.policy import ActionType, PolicyDecision
 from src.models.selector import SelectorTrace
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
-from src.store.memory import MemoryStore, benchmark_name_for_intent, normalize_intent
+from src.store.memory import MemoryStore, normalize_intent
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,26 @@ class PolicyCoordinator(PolicyService):
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._active_episode: Episode | None = None
         self._replay_state: EpisodeReplayState | None = None
+        # Single-step hint cache: avoids re-loading memory JSONL twice per step.
+        self._cached_hints: list[MemoryHint] | None = None
+        self._cached_hints_key: tuple | None = None
+
+    def _get_hints(self, state: AgentState, perception: ScreenPerception | None) -> list[MemoryHint]:
+        """Fetch hints, using a single-step in-memory cache to avoid double JSONL reads."""
+        benchmark = state.benchmark or "generic_task"
+        page_hint = perception.page_hint if perception else None
+        cache_key = (benchmark, page_hint, state.current_subgoal, self._recent_failure_category(state))
+        if self._cached_hints is not None and self._cached_hints_key == cache_key:
+            return self._cached_hints
+        hints = self.memory_store.get_hints(
+            benchmark=benchmark,
+            page_hint=page_hint,
+            subgoal=state.current_subgoal,
+            recent_failure_category=self._recent_failure_category(state),
+        )
+        self._cached_hints = hints
+        self._cached_hints_key = cache_key
+        return hints
 
     def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
         """Fetch memory hints and inject them into the delegate BEFORE perceive().
@@ -46,14 +66,12 @@ class PolicyCoordinator(PolicyService):
         must be set before that call.  In separate mode this is a harmless no-op
         because choose_action() will re-fetch and set hints anyway.
         """
-        memory_hints = self.memory_store.get_hints(
-            benchmark=benchmark_name_for_intent(state.intent),
-            page_hint=perception.page_hint if perception else None,
-            subgoal=state.current_subgoal,
-            recent_failure_category=self._recent_failure_category(state),
-        )
-        if hasattr(self.delegate, "set_advisory_hints"):
-            self.delegate.set_advisory_hints([hint.hint for hint in memory_hints])
+        # Clear the step cache so this step's hints are freshly loaded.
+        self._cached_hints = None
+        self._cached_hints_key = None
+        memory_hints = self._get_hints(state, perception)
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
 
     async def choose_action(
         self,
@@ -63,27 +81,169 @@ class PolicyCoordinator(PolicyService):
         # Inject episode advisory hint if a matching trajectory exists
         self._try_episode_hint(state, perception)
 
-        memory_hints = self.memory_store.get_hints(
-            benchmark=benchmark_name_for_intent(state.intent),
-            page_hint=perception.page_hint,
-            subgoal=state.current_subgoal,
-            recent_failure_category=self._recent_failure_category(state),
-        )
+        memory_hints = self._get_hints(state, perception)
+        benchmark = state.benchmark
 
-        decision = self.rule_engine.choose_action(state, perception, memory_hints)
+        decision = self.rule_engine.choose_action(state, perception, memory_hints, benchmark_name=benchmark)
         selector_traces = self.rule_engine.latest_selector_traces()
         if decision is not None:
+            if _is_rule_success_stop(decision):
+                confirmed = await self._confirm_success(state, perception, decision)
+                if confirmed is not decision:
+                    # LLM overrode — propagate its decision and its debug artifacts
+                    if hasattr(self.delegate, "latest_debug_artifacts"):
+                        self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
+                    return confirmed
             self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision, selector_traces)
             return decision
 
-        if hasattr(self.delegate, "set_advisory_hints"):
-            self.delegate.set_advisory_hints([hint.hint for hint in memory_hints])
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
 
         decision = await self.delegate.choose_action(state, perception)
+        decision = await self._reject_hallucinated_target(state, perception, decision)
+        decision = await self._reject_premature_stop(state, perception, decision)
         if hasattr(self.delegate, "latest_debug_artifacts"):
             self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
         self._last_debug_artifacts = self._attach_selector_trace(perception, self._last_debug_artifacts, selector_traces)
         return decision
+
+    async def _confirm_success(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        rule_stop: PolicyDecision,
+    ) -> PolicyDecision:
+        """Ask the delegate LLM to confirm or override a rule-sourced success stop.
+
+        Returns the original rule_stop when the LLM agrees (preserves rationale and
+        subgoal for the verifier). Returns the LLM's recovery decision when it
+        disagrees. Falls back to rule_stop on any LLM error so a transient API
+        failure never blocks task completion.
+        """
+        hint = (
+            "CONFIRMATION REQUIRED: The success-detection rule believes the task is "
+            f"complete (page_hint={perception.page_hint.value!r}, "
+            f"summary={perception.summary!r}). "
+            "Examine the current screen carefully. "
+            "If the task is genuinely complete, respond with STOP. "
+            "If this is an error message, a partial state, or the task is not done, "
+            "respond with the appropriate recovery action instead."
+        )
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([hint], source="success_confirm", run_id=state.run_id)
+
+        try:
+            llm_decision = await self.delegate.choose_action(state, perception)
+        except Exception as exc:
+            logger.warning(
+                "Success confirmation LLM call failed (%s: %s) — accepting rule stop.",
+                type(exc).__name__, exc,
+            )
+            return rule_stop
+
+        if llm_decision.action.action_type is ActionType.STOP:
+            logger.info(
+                "Success confirmed by LLM policy (page_hint=%r).",
+                perception.page_hint.value,
+            )
+            return rule_stop
+
+        logger.warning(
+            "LLM rejected rule-based success stop (page_hint=%r). Recovery: %s.",
+            perception.page_hint.value,
+            llm_decision.action.action_type.value,
+        )
+        return llm_decision
+
+    async def _reject_premature_stop(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision:
+        """Re-plan once if the LLM issues STOP before taking any meaningful action.
+
+        A STOP is premature when the agent has performed zero substantive actions
+        (TYPE, CLICK, NAVIGATE, HOTKEY, PRESS_KEY, LAUNCH_APP) in the current run.
+        This catches the pattern where the LLM reads information on an already-open
+        page and declares the task done without having done any work itself.
+
+        The re-plan hint is derived from the action history gap — no domain
+        knowledge or static keyword lists are used.
+        """
+        if decision.action.action_type is not ActionType.STOP:
+            return decision
+
+        substantive = {
+            ActionType.CLICK,
+            ActionType.DOUBLE_CLICK,
+            ActionType.TYPE,
+            ActionType.PRESS_KEY,
+            ActionType.HOTKEY,
+            ActionType.NAVIGATE,
+            ActionType.LAUNCH_APP,
+            ActionType.DRAG,
+            ActionType.SELECT,
+        }
+        actions_taken = [h.action.action_type for h in state.action_history]
+        if any(a in substantive for a in actions_taken):
+            return decision
+
+        logger.warning(
+            "Policy issued STOP with no prior substantive actions (history=%s). Re-planning.",
+            [a.value for a in actions_taken] or "[]",
+        )
+        correction = (
+            "CORRECTION: you issued STOP before performing any actions. "
+            "The task has not been started yet — you have not navigated, typed, clicked, "
+            "or taken any action to complete it. "
+            f"Original task: {state.intent!r}. "
+            "Plan and execute the next concrete step toward completing this task."
+        )
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([correction], source="validation", run_id=state.run_id)
+
+        replanned = await self.delegate.choose_action(state, perception)
+        return replanned
+
+    async def _reject_hallucinated_target(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision:
+        """Re-plan once if the LLM produced a target_element_id absent from perception."""
+        target_id = decision.action.target_element_id
+        if target_id is None:
+            return decision
+        known_ids = {e.element_id for e in perception.visible_elements}
+        if target_id in known_ids:
+            return decision
+
+        logger.warning(
+            "Policy hallucinated element_id %r (not in current perception). Re-planning.",
+            target_id,
+        )
+        known_list = ", ".join(sorted(known_ids)) if known_ids else "none"
+        correction = (
+            f"CORRECTION: element_id '{target_id}' does not exist on the current screen. "
+            f"You MUST use one of these actual element IDs: [{known_list}]. "
+            "Do not invent element IDs."
+        )
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([correction], source="validation", run_id=state.run_id)
+
+        replanned = await self.delegate.choose_action(state, perception)
+        if (
+            replanned.action.target_element_id is not None
+            and replanned.action.target_element_id not in known_ids
+        ):
+            logger.warning(
+                "Re-planned policy still references unknown element_id %r. Proceeding anyway.",
+                replanned.action.target_element_id,
+            )
+        return replanned
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
@@ -175,7 +335,7 @@ class PolicyCoordinator(PolicyService):
         """Inject an advisory hint from a matching episode trajectory."""
         # Initialize replay on first step
         if self._replay_state is None and state.step_count <= 1:
-            benchmark = benchmark_name_for_intent(state.intent)
+            benchmark = state.benchmark or "generic_task"
             norm = normalize_intent(state.intent)
             episode = self.memory_store.get_episode(norm, benchmark)
             if episode is not None:
@@ -224,8 +384,15 @@ class PolicyCoordinator(PolicyService):
         parts.append("Follow this if the screen matches.")
         hint = " ".join(parts)
 
-        if hasattr(self.delegate, "set_advisory_hints"):
-            existing = getattr(self.delegate, "_advisory_hints", []) or []
-            self.delegate.set_advisory_hints(list(existing) + [hint])
+        if hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([hint], source="episode", run_id=state.run_id)
 
         self._replay_state.current_step_index += 1
+
+
+def _is_rule_success_stop(decision: PolicyDecision) -> bool:
+    """True when a rule engine decision is a success-flagged STOP needing LLM confirmation."""
+    return (
+        decision.action.action_type is ActionType.STOP
+        and decision.active_subgoal == "verify_success"
+    )

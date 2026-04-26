@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -16,21 +17,9 @@ from src.models.recovery import RecoveryDecision
 from src.models.state import AgentState
 from src.models.verification import VerificationResult, VerificationStatus
 
-FORM_BENCHMARK = "auth_free_form"
-GMAIL_BENCHMARK = "gmail_draft_authenticated"
+logger = logging.getLogger(__name__)
+
 GENERIC_TASK = "generic_task"
-DEFAULT_BENCHMARK = FORM_BENCHMARK
-
-
-def benchmark_name_for_intent(intent: str) -> str:
-    """Map an intent string to a task category key for memory scoping."""
-
-    lowered = intent.lower()
-    if "gmail" in lowered:
-        return GMAIL_BENCHMARK
-    if "form" in lowered and ("submit" in lowered or "fill" in lowered or "complete" in lowered):
-        return FORM_BENCHMARK
-    return GENERIC_TASK
 
 
 def normalize_intent(intent: str) -> str:
@@ -91,6 +80,7 @@ class FileBackedMemoryStore(MemoryStore):
         self.episodes_path = self.memory_dir / "episodes.jsonl"
         self._cached_episodes: list[Episode] | None = None
         self._cached_episodes_mtime: float = 0.0
+        self._seeded_guardrail_keys: set[str] = set()
         self._seed_default_guardrails()
 
     def get_hints(
@@ -112,7 +102,7 @@ class FileBackedMemoryStore(MemoryStore):
             score = 0
             if record.outcome is MemoryOutcome.GUARDRAIL:
                 score += 1
-            if record.page_hint is page_hint:
+            if record.page_hint is not None and record.page_hint == page_hint:
                 score += 4
             elif record.page_hint is None:
                 score += 1
@@ -165,7 +155,7 @@ class FileBackedMemoryStore(MemoryStore):
         verification: VerificationResult,
         recovery: RecoveryDecision,
     ) -> list[MemoryRecord]:
-        benchmark = benchmark_name_for_intent(state.intent)
+        benchmark = state.benchmark or GENERIC_TASK
         records = self._build_step_records(
             benchmark=benchmark,
             state=state,
@@ -180,50 +170,11 @@ class FileBackedMemoryStore(MemoryStore):
         return records
 
     def _seed_default_guardrails(self) -> None:
+        from src.benchmarks.registry import BENCHMARK_REGISTRY
         existing = self._load_records()
-        existing_keys = {record.key for record in existing if record.outcome is MemoryOutcome.GUARDRAIL}
-        defaults = [
-            MemoryRecord(
-                key="click_before_type",
-                benchmark=FORM_BENCHMARK,
-                hint="When input focus is uncertain, click the input before typing.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
-            MemoryRecord(
-                key="avoid_identical_type_retry",
-                benchmark=FORM_BENCHMARK,
-                hint="Do not repeat the same type action after a focus or target failure; re-establish focus first.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
-            MemoryRecord(
-                key="click_before_type",
-                benchmark=GMAIL_BENCHMARK,
-                hint="When input focus is uncertain, click the input before typing.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
-            MemoryRecord(
-                key="avoid_identical_type_retry",
-                benchmark=GMAIL_BENCHMARK,
-                hint="Do not repeat the same type action after a focus or target failure; re-establish focus first.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
-            MemoryRecord(
-                key="authenticated_start_required",
-                benchmark=GMAIL_BENCHMARK,
-                hint="Login pages are out of scope for this benchmark; use an authenticated Gmail start state.",
-                outcome=MemoryOutcome.GUARDRAIL,
-                page_hint=PageHint.GOOGLE_SIGN_IN,
-                stage=LoopStage.CHOOSE_ACTION,
-                success=False,
-            ),
+        existing_keys = {(record.key, record.benchmark) for record in existing if record.outcome is MemoryOutcome.GUARDRAIL}
+        self._seeded_guardrail_keys = {k for k, _ in existing_keys}
+        generic_seeds = [
             MemoryRecord(
                 key="click_before_type",
                 benchmark=GENERIC_TASK,
@@ -241,9 +192,11 @@ class FileBackedMemoryStore(MemoryStore):
                 success=False,
             ),
         ]
-        for record in defaults:
-            if record.key not in existing_keys:
+        all_seeds = generic_seeds + BENCHMARK_REGISTRY.all_seeds()
+        for record in all_seeds:
+            if (record.key, record.benchmark) not in existing_keys:
                 self._append_record(record)
+                self._seeded_guardrail_keys.add(record.key)
 
     def _build_step_records(
         self,
@@ -336,21 +289,6 @@ class FileBackedMemoryStore(MemoryStore):
                 )
             )
 
-        if benchmark == GMAIL_BENCHMARK and perception.page_hint is PageHint.GOOGLE_SIGN_IN:
-            records.append(
-                MemoryRecord(
-                    key="authenticated_start_required",
-                    benchmark=GMAIL_BENCHMARK,
-                    hint="Login pages are out of scope for this benchmark; use an authenticated Gmail start state.",
-                    outcome=MemoryOutcome.FAILURE,
-                    page_hint=perception.page_hint,
-                    subgoal=state.current_subgoal,
-                    failure_category=recent_failure_category,
-                    stage=recovery.failure_stage or LoopStage.CHOOSE_ACTION,
-                    success=False,
-                )
-            )
-
         return records
 
     def _target_is_input_like(self, perception: ScreenPerception, target_element_id: str) -> bool:
@@ -369,19 +307,22 @@ class FileBackedMemoryStore(MemoryStore):
         if self._cached_records is not None and mtime == self._cached_mtime:
             return self._cached_records
         records: list[MemoryRecord] = []
-        for line in self.memory_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
+        for lineno, line in enumerate(self.memory_path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
                 records.append(MemoryRecord.model_validate_json(line))
+            except Exception as exc:
+                logger.warning("memory store: skipping corrupt line %d in %s: %s", lineno, self.memory_path, exc)
         self._cached_records = records
         self._cached_mtime = mtime
         return records
 
     def _append_record(self, record: MemoryRecord) -> None:
+        from src.store.background_writer import bg_writer
         self.memory_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.memory_path.open("a", encoding="utf-8") as handle:
-            handle.write(record.model_dump_json())
-            handle.write("\n")
-        # Append to in-memory cache instead of full invalidation
+        bg_writer.append(self.memory_path, record.model_dump_json() + "\n")
+        # Update in-memory cache immediately so get_hints() sees the new record.
         if self._cached_records is not None:
             self._cached_records.append(record)
             try:

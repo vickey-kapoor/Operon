@@ -206,7 +206,10 @@ def test_policy_decision_schema_rejects_invalid_action_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_policy_converts_unsafe_type_to_focus_click(tmp_path: Path) -> None:
+async def test_policy_passes_type_through_to_executor(tmp_path: Path) -> None:
+    # _apply_focus_first_guardrail was removed: TYPE actions are no longer
+    # intercepted by the policy layer. DesktopExecutor._exec_type clicks
+    # at the target coordinates before typing, making focus atomic.
     prompt_path = tmp_path / "policy_prompt.txt"
     prompt_path.write_text(
         "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nRetry: {retry_counts}\nPerception: {perception_json}",
@@ -228,9 +231,9 @@ async def test_policy_converts_unsafe_type_to_focus_click(tmp_path: Path) -> Non
 
     decision = await service.choose_action(state, perception)
 
-    assert decision.action.action_type is ActionType.CLICK
+    assert decision.action.action_type is ActionType.TYPE
     assert decision.action.target_element_id == "name-input"
-    assert decision.active_subgoal == "focus name-input"
+    assert decision.action.text == "Alice"
 
 
 @pytest.mark.asyncio

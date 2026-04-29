@@ -210,6 +210,11 @@ def get_agent_loop() -> AgentLoop:
         services = _build_browser_services(executor)
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
+        # Video verification always uses Gemini regardless of the verifier provider,
+        # because VideoVerifier calls generate_video_verification on a GeminiClient.
+        video_gemini_client = GeminiHttpClient(
+            model=browser_config.primary_model, timeout_seconds=120.0
+        )
         _agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
             perception_service=services.perception_service,
@@ -222,7 +227,7 @@ def get_agent_loop() -> AgentLoop:
             verifier_service=DeterministicVerifierService(gemini_client=verifier_client),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
-            gemini_client=verifier_client,
+            gemini_client=video_gemini_client,
             environment=UnifiedEnvironment.BROWSER,
         )
     return _agent_loop
@@ -243,6 +248,9 @@ def get_desktop_agent_loop() -> AgentLoop:
         executor = DesktopExecutor()
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
+        video_gemini_client = GeminiHttpClient(
+            model=desktop_config.primary_model, timeout_seconds=120.0
+        )
         _desktop_agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
             perception_service=services.perception_service,
@@ -255,7 +263,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             verifier_service=DeterministicVerifierService(gemini_client=verifier_client),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
-            gemini_client=verifier_client,
+            gemini_client=video_gemini_client,
             environment=UnifiedEnvironment.DESKTOP,
         )
     return _desktop_agent_loop
@@ -263,7 +271,7 @@ def get_desktop_agent_loop() -> AgentLoop:
 
 @router.post("/run-task", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_task(request: RunTaskRequest) -> RunResponse:
-    """Create a new run record for the Gmail draft workflow."""
+    """Create a new run record for the requested intent."""
     return await get_agent_loop().start_run(request)
 
 

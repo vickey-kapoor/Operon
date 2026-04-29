@@ -57,7 +57,7 @@ def test_replay_loader_reads_step_logs() -> None:
     recovery = RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="retry", retry_after_ms=1000)
     perception = ScreenPerception(
         summary="Inbox visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path=str(step_dir / "before.png"),
         visible_elements=[],
     )
@@ -107,7 +107,7 @@ def test_replay_renderer_lists_artifact_refs_and_outcomes() -> None:
     recovery = RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="continue")
     perception = ScreenPerception(
         summary="Compose button visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path=str(step_dir / "before.png"),
         visible_elements=[],
     )
@@ -164,7 +164,7 @@ def test_replay_renderer_shows_precondition_stop_reasons() -> None:
             policy_debug=_debug("policy", step_dir),
             perception=ScreenPerception(
                 summary="Login page visible",
-                page_hint="google_sign_in",
+                page_hint="unknown",
                 capture_artifact_path=str(step_dir / "before.png"),
                 visible_elements=[],
             ),

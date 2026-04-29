@@ -57,22 +57,6 @@ class SequencedGeminiClient:
         return 1.0
 
 
-def test_google_sign_in_page_classification() -> None:
-    raw_output = """
-    {
-      "summary": "Google Sign in page is visible with Email or phone input.",
-      "page_hint": "google_sign_in",
-      "focused_element_id": null,
-      "confidence": 0.95,
-      "visible_elements": []
-    }
-    """
-
-    perception = parse_perception_output(raw_output, "runs/run-1/step_1/before.png")
-
-    assert perception.page_hint == "google_sign_in"
-
-
 def test_form_page_classification() -> None:
     raw_output = """
     {
@@ -103,38 +87,6 @@ def test_form_success_classification() -> None:
     perception = parse_perception_output(raw_output, "runs/run-1/step_2/before.png")
 
     assert perception.page_hint is PageHint.FORM_SUCCESS
-
-
-def test_gmail_compose_classification() -> None:
-    raw_output = """
-    {
-      "summary": "Gmail compose draft dialog is visible.",
-      "page_hint": "gmail_compose",
-      "focused_element_id": "to-input",
-      "confidence": 0.91,
-      "visible_elements": []
-    }
-    """
-
-    perception = parse_perception_output(raw_output, "runs/run-1/step_2/before.png")
-
-    assert perception.page_hint == "gmail_compose"
-
-
-def test_gmail_inbox_classification() -> None:
-    raw_output = """
-    {
-      "summary": "Gmail inbox is visible with compose button.",
-      "page_hint": "gmail_inbox",
-      "focused_element_id": null,
-      "confidence": 0.93,
-      "visible_elements": []
-    }
-    """
-
-    perception = parse_perception_output(raw_output, "runs/run-1/step_1/before.png")
-
-    assert perception.page_hint == "gmail_inbox"
 
 
 def test_missing_page_hint_uses_small_summary_fallback() -> None:
@@ -314,7 +266,7 @@ def test_structurally_invalid_visible_element_still_fails_cleanly() -> None:
 async def test_gemini_perception_service_writes_debug_artifacts(tmp_path: Path) -> None:
     prompt_path = tmp_path / "perception_prompt.txt"
     prompt_path.write_text(
-        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nPrev: {previous_summary}",
+        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nPrev: {previous_page_hint}",
         encoding="utf-8",
     )
     screenshot_path = tmp_path / "run-123" / "step_1" / "before.png"
@@ -354,7 +306,7 @@ async def test_gemini_perception_service_writes_debug_artifacts(tmp_path: Path) 
 async def test_gemini_perception_service_retries_low_quality_once_and_recovers(tmp_path: Path) -> None:
     prompt_path = tmp_path / "perception_prompt.txt"
     prompt_path.write_text(
-        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nPrev: {previous_summary}",
+        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nPrev: {previous_page_hint}",
         encoding="utf-8",
     )
     screenshot_path = tmp_path / "run-retry" / "step_1" / "before.png"
@@ -393,7 +345,7 @@ async def test_gemini_perception_service_retries_low_quality_once_and_recovers(t
 async def test_gemini_perception_service_salvages_unlabeled_heavy_output_after_retry(tmp_path: Path) -> None:
     prompt_path = tmp_path / "perception_prompt.txt"
     prompt_path.write_text(
-        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nPrev: {previous_summary}",
+        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nPrev: {previous_page_hint}",
         encoding="utf-8",
     )
     screenshot_path = tmp_path / "run-retry-salvage" / "step_1" / "before.png"
@@ -434,7 +386,7 @@ async def test_gemini_perception_service_salvages_unlabeled_heavy_output_after_r
 async def test_gemini_perception_service_raises_low_quality_after_salvage_when_no_candidates_exist(tmp_path: Path) -> None:
     prompt_path = tmp_path / "perception_prompt.txt"
     prompt_path.write_text(
-        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nPrev: {previous_summary}",
+        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nPrev: {previous_page_hint}",
         encoding="utf-8",
     )
     screenshot_path = tmp_path / "run-retry-fail" / "step_1" / "before.png"

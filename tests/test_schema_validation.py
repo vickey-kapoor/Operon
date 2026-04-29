@@ -84,7 +84,7 @@ def test_policy_decision_confidence_bounds() -> None:
 
 def test_parse_policy_output_normalizes_zero_wait_ms() -> None:
     decision = parse_policy_output(
-        '{"action":{"action_type":"wait","wait_ms":0},"rationale":"Wait for the page to settle.","confidence":0.2,"active_subgoal":"wait"}'
+        '{"action":{"action_type":"wait","wait_ms":0},"rationale":"Wait for the page to settle.","confidence":0.2,"active_subgoal":"wait","expected_change":"none"}'
     )
     assert decision.action.action_type is ActionType.WAIT
     assert decision.action.wait_ms == 1
@@ -103,8 +103,8 @@ def test_executed_action_wraps_strict_agent_action() -> None:
 
 def test_screen_perception_and_agent_state_validate_nested_models() -> None:
     perception = ScreenPerception(
-        summary="Gmail inbox is visible.",
-        page_hint="gmail_inbox",
+        summary="Page is visible.",
+        page_hint="unknown",
         capture_artifact_path="artifacts/frame.png",
         visible_elements=[
             UIElement(
@@ -121,11 +121,11 @@ def test_screen_perception_and_agent_state_validate_nested_models() -> None:
     )
     state = AgentState(
         run_id="run-123",
-        intent="Create a Gmail draft and stop before send.",
+        intent="Complete the auth-free form and submit it successfully.",
         status=RunStatus.PENDING,
         observation_history=[perception],
     )
-    assert state.observation_history[0].summary == "Gmail inbox is visible."
+    assert state.observation_history[0].summary == "Page is visible."
     assert state.observation_history[0].visible_elements[0].primary_name == "Compose"
     assert state.observation_history[0].visible_elements[0].name_source is UIElementNameSource.LABEL
 
@@ -151,7 +151,7 @@ def test_verification_and_recovery_models_validate_ranges() -> None:
 
 def test_step_log_uses_debug_artifact_refs() -> None:
     action = AgentAction(action_type=ActionType.WAIT, wait_ms=1000)
-    decision = PolicyDecision(action=action, rationale="Wait for Gmail to settle.", confidence=0.2, active_subgoal="wait for inbox")
+    decision = PolicyDecision(action=action, rationale="Wait for the page to settle.", confidence=0.2, active_subgoal="wait for inbox")
     executed = ExecutedAction(action=action, success=True, detail="waited", artifact_path="runs/run-1/step_1/after.png")
     verification = VerificationResult(
         status=VerificationStatus.UNCERTAIN,
@@ -162,7 +162,7 @@ def test_step_log_uses_debug_artifact_refs() -> None:
     recovery = RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="retry", retry_after_ms=1000)
     perception = ScreenPerception(
         summary="Inbox visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path="runs/run-1/step_1/before.png",
         visible_elements=[],
     )

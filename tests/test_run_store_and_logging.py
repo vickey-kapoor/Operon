@@ -40,11 +40,11 @@ def _debug(stage: str) -> ModelDebugArtifacts:
 async def test_file_backed_run_store_persists_and_reloads_state() -> None:
     root_dir = _local_test_dir("test-file-backed-run-store") / "runs"
     store = FileBackedRunStore(root_dir=root_dir)
-    created = store.create_run("Create a Gmail draft and stop before send.")
+    created = store.create_run("Complete the auth-free form and submit it successfully.")
 
     perception = ScreenPerception(
         summary="Inbox visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path=store.before_artifact_path(created.run_id, 1),
         visible_elements=[],
     )
@@ -77,7 +77,7 @@ def test_jsonl_logging_appends_complete_step_entries() -> None:
     recovery = RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="retry", retry_after_ms=1000)
     perception = ScreenPerception(
         summary="Inbox visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path="runs/run-1/step_1/before.png",
         visible_elements=[],
     )
@@ -111,20 +111,20 @@ def test_jsonl_logging_appends_complete_step_entries() -> None:
 @pytest.mark.asyncio
 async def test_log_and_state_consistency_for_artifact_paths() -> None:
     store = FileBackedRunStore(root_dir=_local_test_dir("test-log-state-consistency") / "runs")
-    state = store.create_run("Create a Gmail draft and stop before send.")
+    state = store.create_run("Complete the auth-free form and submit it successfully.")
 
     before_path = store.before_artifact_path(state.run_id, 1)
     after_path = store.after_artifact_path(state.run_id, 1)
     perception = ScreenPerception(
         summary="Inbox visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path=before_path,
         visible_elements=[],
     )
     state = await store.update_state(state.run_id, perception)
 
     action = AgentAction(action_type=ActionType.WAIT, wait_ms=1000)
-    decision = PolicyDecision(action=action, rationale="Wait for Gmail.", confidence=0.3, active_subgoal="wait for inbox")
+    decision = PolicyDecision(action=action, rationale="Wait for the page.", confidence=0.3, active_subgoal="wait for inbox")
     executed = ExecutedAction(action=action, success=True, detail="waited", artifact_path=after_path)
     verification = VerificationResult(
         status=VerificationStatus.UNCERTAIN,

@@ -686,6 +686,7 @@ async def test_policy_llm_fallback_is_used_when_no_rule_fires() -> None:
         "rationale": "Submit the form.",
         "active_subgoal": "submit_form",
         "confidence": 0.85,
+        "expected_change": "content",
     })
 
     class _StubLLMClient:

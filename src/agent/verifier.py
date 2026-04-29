@@ -66,15 +66,13 @@ class DeterministicVerifierService(VerifierService):
         action = decision.action
         latest_perception = state.observation_history[-1] if state.observation_history else None
 
-        if latest_perception is not None and self._task_success_visible(latest_perception, state.benchmark):
-            return VerificationResult(
-                status=VerificationStatus.SUCCESS,
-                expected_outcome_met=True,
-                stop_condition_met=True,
-                reason="Task success state is visible.",
-                failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
-                stop_reason=StopReason.FORM_SUBMITTED_SUCCESS,
-            )
+        # Terminal-state check: look for visual evidence of the goal before checking
+        # action success. This means the loop ends as soon as the goal is visible —
+        # even if the triggering action was a WAIT or a mid-task CLICK.
+        if latest_perception is not None:
+            terminal = self.check_terminal_state(state, latest_perception)
+            if terminal is not None:
+                return terminal
 
         if action.action_type is ActionType.STOP:
             if self._suspicious_early_stop(state, decision, latest_perception):
@@ -92,7 +90,7 @@ class DeterministicVerifierService(VerifierService):
                     status=VerificationStatus.FAILURE,
                     expected_outcome_met=False,
                     stop_condition_met=True,
-                    reason="Benchmark precondition failed: authenticated Gmail start state was required.",
+                    reason="Benchmark precondition failed: authenticated start state was required.",
                     failure_type=VerificationFailureType.BENCHMARK_PRECONDITION_FAILED,
                     failure_category=FailureCategory.BENCHMARK_PRECONDITION_FAILED,
                     failure_stage=LoopStage.CHOOSE_ACTION,
@@ -365,6 +363,77 @@ class DeterministicVerifierService(VerifierService):
                 if key_lower in last_phrase.replace("+", "").replace("-", ""):
                     return True
         return False
+
+    def check_terminal_state(
+        self,
+        state: AgentState,
+        perception,
+    ) -> VerificationResult | None:
+        """Check whether the current screen shows visual evidence of goal completion.
+
+        Returns a terminal VerificationResult when the goal is confirmed, or None
+        when there is no conclusive evidence yet. This is a pure visual predicate —
+        it does not inspect whether the last action succeeded, only whether the
+        terminal state is now visually present.
+
+        Checks (in priority order):
+        1. Generic success page hint or benchmark success tokens
+        2. Goal-specific terminal signals extracted from the intent
+        """
+        if self._task_success_visible(perception, state.benchmark):
+            return VerificationResult(
+                status=VerificationStatus.SUCCESS,
+                expected_outcome_met=True,
+                stop_condition_met=True,
+                reason="Terminal state confirmed: task success is visually present on screen.",
+                failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
+                stop_reason=StopReason.FORM_SUBMITTED_SUCCESS,
+            )
+
+        # Intent-derived terminal signals: extract goal keywords and check visibility
+        terminal_signal = self._intent_terminal_signal(state.intent, perception)
+        if terminal_signal is not None:
+            return VerificationResult(
+                status=VerificationStatus.SUCCESS,
+                expected_outcome_met=True,
+                stop_condition_met=True,
+                reason=f"Terminal state confirmed: '{terminal_signal}' is visible — goal achieved.",
+                failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
+                stop_reason=StopReason.TASK_COMPLETED,
+            )
+
+        return None
+
+    @staticmethod
+    def _intent_terminal_signal(intent: str, perception) -> str | None:
+        """Return the matched terminal signal token if the intent's goal is visually confirmed."""
+        intent_lower = intent.lower()
+        summary_lower = perception.summary.lower()
+        element_names = " ".join(
+            e.primary_name.lower() for e in perception.visible_elements
+        )
+
+        # Build goal-specific terminal indicators from the intent
+        _TERMINAL_PATTERNS: list[tuple[str, list[str]]] = [
+            ("submitted", ["submitted", "submission received", "thank you", "success"]),
+            ("saved", ["saved", "changes saved", "save successful"]),
+            ("created", ["created", "issue created", "record created", "added"]),
+            ("deleted", ["deleted", "removed", "record deleted"]),
+            ("uploaded", ["uploaded", "upload complete", "file uploaded"]),
+            ("sent", ["sent", "message sent", "email sent"]),
+            ("logged in", ["dashboard", "welcome", "logged in", "sign out", "log out"]),
+            ("logged out", ["signed out", "logged out", "login", "sign in"]),
+            ("searched", ["search results", "results for", "no results"]),
+            ("found", ["found", "result", "match"]),
+        ]
+        for intent_keyword, visual_signals in _TERMINAL_PATTERNS:
+            if intent_keyword not in intent_lower:
+                continue
+            for signal in visual_signals:
+                if signal in summary_lower or signal in element_names:
+                    return signal
+
+        return None
 
     @staticmethod
     def _task_success_visible(perception, benchmark: str | None) -> bool:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
+from urllib.parse import quote_plus, urljoin
 
 from src.agent.hitl import HITL_PAGE_HINT_KEYWORDS
 from src.agent.selector import DeterministicTargetSelector
@@ -36,51 +37,6 @@ BenchmarkRulePlugin = Callable[
     [AgentState, ScreenPerception, list[MemoryHint]],
     PolicyDecision | None,
 ]
-
-
-# ---------------------------------------------------------------------------
-# Gmail-specific rules
-# ---------------------------------------------------------------------------
-
-def gmail_login_page_guardrail(
-    state: AgentState,
-    perception: ScreenPerception,
-    memory_hints: list[MemoryHint],
-) -> PolicyDecision | None:
-    if perception.page_hint != "google_sign_in":
-        return None
-    if _has_hint(memory_hints, "authenticated_start_required"):
-        return PolicyDecision(
-            action=AgentAction(action_type=ActionType.STOP),
-            rationale="Benchmark requires an authenticated Gmail start state; login/auth screens are out of scope.",
-            confidence=1.0,
-            active_subgoal="stop for benchmark setup",
-        )
-    return PolicyDecision(
-        action=AgentAction(
-            action_type=ActionType.WAIT_FOR_USER,
-            text="Login page detected. Please sign in using the browser window, then click Resume.",
-        ),
-        rationale="Login/auth page detected — requires user credentials that Operon cannot provide autonomously.",
-        confidence=1.0,
-        active_subgoal="wait for user authentication",
-    )
-
-
-def gmail_compose_already_visible_rule(
-    state: AgentState,
-    perception: ScreenPerception,
-    memory_hints: list[MemoryHint],
-) -> PolicyDecision | None:
-    current_subgoal = (state.current_subgoal or "").lower()
-    if "open compose" not in current_subgoal and "compose" not in current_subgoal:
-        return None
-    if perception.page_hint != "gmail_compose" and not _compose_form_visible(perception):
-        return None
-    target = _preferred_compose_input(perception)
-    if target is None:
-        return None
-    return _click_decision(target, "Compose form is already visible; move to the form instead of reopening compose.")
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +100,12 @@ class PolicyRuleEngine:
         # HITL only fires after HITL_DEBOUNCE_THRESHOLD consecutive matches to
         # prevent false positives from a single bad perception.
         self._hitl_consecutive: dict[str, int] = {}
+        # Tracks form option labels (lowercased) that this rule has already clicked,
+        # keyed by run_id. Survives page scrolls — coord-based tracking does not.
+        self._form_options_clicked: dict[str, set[str]] = {}
+        # Tracks which text field TYPES (name, email, password, message) have been
+        # filled by the rule this run. Keyed by run_id to prevent cross-run bleed.
+        self._form_fields_filled: dict[str, set[str]] = {}
 
     _HITL_DEBOUNCE_THRESHOLD: int = 2
 
@@ -155,6 +117,7 @@ class PolicyRuleEngine:
         benchmark_name: str | None = None,
     ) -> PolicyDecision | None:
         self._latest_selector_traces = []
+        self._last_fired_rule: str | None = None
         self._cached_intermediates = (
             self.selector._label_like_text_candidates(perception),
             self.selector._visual_groups(perception),
@@ -166,18 +129,30 @@ class PolicyRuleEngine:
             for plugin in BENCHMARK_REGISTRY.get_rules(benchmark_name) or self._plugins.get(benchmark_name, []):
                 decision = plugin(state, perception, memory_hints)
                 if decision is not None:
+                    self._last_fired_rule = getattr(plugin, "__name__", type(plugin).__name__)
                     return decision
 
-        # Engine primitives — always active
-        return (
-            self._human_intervention_rule(state, perception)
-            or self._task_success_stop_rule(perception)
-            or self._dropdown_menu_select_rule(state, perception)
-            or self._avoid_identical_type_retry(state, perception, memory_hints)
-            or self._no_progress_recovery_rule(state, perception)
-            or self._dismiss_blocking_overlay_rule(state, perception)
-            or self._search_query_rule(state, perception)
-        )
+        # Engine primitives — always active, checked in priority order
+        _primitives: list[tuple[str, object]] = [
+            ("_human_intervention_rule", lambda: self._human_intervention_rule(state, perception)),
+            ("_task_success_stop_rule", lambda: self._task_success_stop_rule(perception)),
+            ("_form_visible_field_fill_rule", lambda: self._form_visible_field_fill_rule(state, perception)),
+            ("_dropdown_menu_select_rule", lambda: self._dropdown_menu_select_rule(state, perception)),
+            ("_avoid_identical_type_retry", lambda: self._avoid_identical_type_retry(state, perception, memory_hints)),
+            ("_no_progress_recovery_rule", lambda: self._no_progress_recovery_rule(state, perception)),
+            ("_dismiss_blocking_overlay_rule", lambda: self._dismiss_blocking_overlay_rule(state, perception)),
+            ("_search_query_rule", lambda: self._search_query_rule(state, perception)),
+        ]
+        for rule_name, call in _primitives:
+            decision = call()  # type: ignore[operator]
+            if decision is not None:
+                self._last_fired_rule = rule_name
+                return decision
+        return None
+
+    def last_fired_rule_name(self) -> str | None:
+        """Return the name of the rule that fired in the most recent choose_action call."""
+        return getattr(self, "_last_fired_rule", None)
 
     def register_plugins(self, benchmark_name: str, plugins: list[BenchmarkRulePlugin]) -> None:
         """Register additional plugins for a benchmark at runtime."""
@@ -258,6 +233,11 @@ class PolicyRuleEngine:
         Chooses the best-matching child item by scoring against intent + subgoal keywords.
         This prevents the LLM from either re-clicking the parent or picking an unrelated element.
         """
+        # Form pages have always-present select elements whose IDs contain "dropdown" —
+        # these are not navigation overlay menus and must not trigger this rule.
+        if perception.page_hint is PageHint.FORM_PAGE:
+            return None
+
         if not state.action_history:
             return None
 
@@ -290,10 +270,16 @@ class PolicyRuleEngine:
             return sum(1 for t in all_tokens if t in text)
 
         best = max(child_items, key=_score)
+        best_score = _score(best)
+        # Don't fire if no child item matches any intent/subgoal token — this prevents
+        # the rule from accidentally selecting unrelated site menus (e.g. Wikipedia's
+        # "Tools" dropdown) whose element_ids happen to contain "dropdown".
+        if best_score == 0:
+            return None
         logger.info(
             "Dropdown-menu rule: last click was '%s', %d child items visible. "
             "Selecting best match '%s' (score=%d).",
-            last_id, len(child_items), best.element_id, _score(best),
+            last_id, len(child_items), best.element_id, best_score,
         )
         return PolicyDecision(
             action=AgentAction(
@@ -470,17 +456,85 @@ class PolicyRuleEngine:
         if query is None:
             return None
 
+        _POST_SEARCH_HINTS = {"article_page", "search_results", "form_success", "search_page"}
+        _hint_str = str(perception.page_hint)
+
+        # Compute _already_searched BEFORE the page-hint bail so we can distinguish
+        # "homepage mis-identified as article_page" (not searched yet → proceed)
+        # from "genuinely on post-search page after searching" (done → bail).
+        _last_trace = state.last_rule_trace or ""
+        _already_searched = any(
+            h.action.action_type is ActionType.TYPE
+            and h.action.text == query
+            and h.action.press_enter
+            and h.success
+            for h in state.action_history
+        )
+
+        # Don't re-issue a search if already on a known post-search page AND the
+        # search was already submitted. When the page_hint is article_page but we
+        # haven't searched yet (e.g. Wikipedia homepage mis-labelled), still fire.
+        if _hint_str in _POST_SEARCH_HINTS and _already_searched:
+            return None
+
+        if _already_searched:
+            # Search was already submitted but we're still not on a results/article page —
+            # keyboard Enter didn't navigate. This applies whether the rule or the LLM typed.
+            _needs_navigate = (
+                (_hint_str not in _POST_SEARCH_HINTS)
+                and (
+                    "_search_query_rule" in _last_trace and "action=type" in _last_trace
+                    or "_hint_str" not in _POST_SEARCH_HINTS  # LLM-typed: check page didn't change
+                )
+            )
+            if _hint_str not in _POST_SEARCH_HINTS:
+                # Build a site-aware search URL.
+                _base = state.start_url or ""
+                if "wikipedia.org" in _base:
+                    from urllib.parse import urlparse
+                    _origin = f"{urlparse(_base).scheme}://{urlparse(_base).netloc}"
+                    _search_url = f"{_origin}/w/index.php?search={quote_plus(query)}"
+                elif "github.com" in _base:
+                    # Translate common natural-language patterns to GitHub search syntax.
+                    _lang_m = re.search(r"\b(python|javascript|typescript|rust|go|java|c\+\+|ruby|swift|kotlin)\b", query, re.IGNORECASE)
+                    _star_m = re.search(r"(\d[\d,]*)\s*(?:k|,?000)?\s*\+?\s*stars?", query, re.IGNORECASE)
+                    _star_thresh_m = re.search(r"more than\s+(\d[\d,]*)", query, re.IGNORECASE)
+                    if _lang_m and (_star_m or _star_thresh_m):
+                        _lang = _lang_m.group(1).lower().replace("+", "%2B")
+                        _raw = (_star_thresh_m or _star_m).group(1).replace(",", "")
+                        _stars = int(_raw) if len(_raw) <= 6 else int(_raw)
+                        _search_url = f"https://github.com/search?q=language%3A{_lang}+stars%3A%3E{_stars}&type=repositories&s=stars&o=desc"
+                    elif _lang_m:
+                        _search_url = f"https://github.com/trending/{_lang_m.group(1).lower()}"
+                    else:
+                        _search_url = f"https://github.com/search?q={quote_plus(query)}&type=repositories"
+                else:
+                    _search_url = urljoin(_base, f"search?q={quote_plus(query)}")
+                return PolicyDecision(
+                    action=AgentAction(action_type=ActionType.NAVIGATE, url=_search_url),
+                    rationale=f"Search submitted but page did not navigate — using direct search URL for '{query}'.",
+                    confidence=0.92,
+                    active_subgoal=f"navigate to search results for {query}",
+                )
+            return None
+
         search_input = self._search_input_target(perception)
         if search_input is not None:
+            mid_x = search_input.x + max(1, search_input.width // 2)
+            mid_y = search_input.y + max(1, search_input.height // 2)
             if perception.focused_element_id != search_input.element_id:
                 return _click_decision(
                     search_input,
                     f"Focus {search_input.primary_name} so the search query can be entered.",
                 )
+            # Include coordinates so the executor clicks the input to guarantee
+            # focus before typing — prevents keyboard events going to document body.
             return PolicyDecision(
                 action=AgentAction(
                     action_type=ActionType.TYPE,
                     target_element_id=search_input.element_id,
+                    x=mid_x,
+                    y=mid_y,
                     text=query,
                     press_enter=True,
                 ),
@@ -492,6 +546,42 @@ class PolicyRuleEngine:
         search_trigger = _search_trigger_target(perception)
         if search_trigger is None:
             return None
+
+        # Multi-step search trigger flow: click → wait (overlay animation) → type.
+        # If that still fails, fall back to navigating directly to a search URL.
+        # Checking last_rule_trace tells us which step of the flow we're in.
+        _last_trace = state.last_rule_trace or ""
+        if "_search_query_rule" in _last_trace:
+            if "action=type" in _last_trace:
+                # TYPE didn't land in any focused input — navigate directly to search URL.
+                _search_url = urljoin(state.start_url or "", f"search?q={quote_plus(query)}")
+                return PolicyDecision(
+                    action=AgentAction(action_type=ActionType.NAVIGATE, url=_search_url),
+                    rationale=f"Search overlay TYPE failed — navigating directly to search URL for '{query}'.",
+                    confidence=0.92,
+                    active_subgoal=f"navigate to search results for {query}",
+                )
+            if "action=wait" in _last_trace:
+                # Waited for overlay — now type into the focused input.
+                return PolicyDecision(
+                    action=AgentAction(
+                        action_type=ActionType.TYPE,
+                        text=query,
+                        press_enter=True,
+                    ),
+                    rationale=f"Search overlay open after wait — typing '{query}' into focused input.",
+                    confidence=0.94,
+                    active_subgoal=f"search for {query}",
+                )
+            if "action=click" in _last_trace:
+                # Just clicked the trigger — wait 600ms for overlay to open and focus.
+                return PolicyDecision(
+                    action=AgentAction(action_type=ActionType.WAIT, wait_ms=600),
+                    rationale="Search trigger clicked — waiting for overlay to open and focus input.",
+                    confidence=0.94,
+                    active_subgoal="wait for search overlay",
+                )
+
         return PolicyDecision(
             action=AgentAction(
                 action_type=ActionType.CLICK,
@@ -503,6 +593,273 @@ class PolicyRuleEngine:
             confidence=0.94,
             active_subgoal=f"focus {search_trigger.element_id}",
         )
+
+    def _form_visible_field_fill_rule(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision | None:
+        """Deterministically fill visible form fields and click matching checkboxes/radios.
+
+        Fires on form_page when a visible input matches a field value or option
+        extracted from intent that has not yet been acted on this run. This
+        bypasses LLM confusion about stale subgoals after verification failures.
+        """
+        if perception.page_hint is not PageHint.FORM_PAGE:
+            return None
+
+        intent = state.intent or ""
+
+        # Extract structured values from intent
+        email_match = re.search(r"[\w.+\-]+@[\w.\-]+\.\w+", intent)
+        email = email_match.group() if email_match else None
+
+        name_match = re.search(
+            r"[Nn]ame(?:\s+as)?\s+['\"]?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)['\"]?",
+            intent,
+        )
+        name = name_match.group(1) if name_match else None
+
+        # Per-run field-type fill tracking: prevents re-filling the same FIELD TYPE
+        # even when the same value is used in multiple fields (e.g. email+password).
+        run_id = state.run_id
+        _fields_filled: set[str] = self._form_fields_filled.setdefault(run_id, set())
+
+        # Collect text values already typed this run
+        recently_typed: set[str] = {
+            a.action.text
+            for a in state.action_history
+            if a.action.action_type is ActionType.TYPE and a.action.text
+        }
+        # Coord-based type tracking was removed — form scrolling displaces elements
+        # by 100-200px between steps, making positional deduplication unreliable.
+        # Value-based deduplication (recently_typed) is the single source of truth.
+
+        intent_options: list[str] = re.findall(r"['\"]([^'\"]+)['\"]", intent)
+
+        # Also capture unquoted color/option mentions e.g. "set the color to blue"
+        color_match = re.search(r"(?:color|colour)(?:\s+to)?\s+(\w+)", intent, re.IGNORECASE)
+        if color_match:
+            color_val = color_match.group(1)
+            if color_val.lower() not in {o.lower() for o in intent_options}:
+                intent_options.append(color_val)
+
+        # Track which option labels have been clicked this run using the rule engine's
+        # per-run label set. This survives page scrolls (coord-based tracking does not).
+        run_id = state.run_id
+        _clicked_labels: set[str] = self._form_options_clicked.setdefault(run_id, set())
+
+        # Coord fallback for elements not yet in the label set (e.g. first-pass clicks).
+        click_coords: list[tuple[int, int]] = [
+            (a.action.x, a.action.y)
+            for a in state.action_history
+            if a.action.action_type is ActionType.CLICK
+            and a.action.x is not None
+            and a.action.y is not None
+        ]
+
+        def _coord_already_clicked(cx: int, cy: int) -> bool:
+            return any(abs(px - cx) < 60 and abs(py - cy) < 60 for px, py in click_coords)
+
+        def _option_already_handled(opt_lower: str, cx: int, cy: int) -> bool:
+            return opt_lower in _clicked_labels or _coord_already_clicked(cx, cy)
+
+        for element in perception.visible_elements:
+            if not element.is_interactable:
+                continue
+            label = element.primary_name.lower()
+            mid_x = element.x + max(1, element.width // 2)
+            mid_y = element.y + max(1, element.height // 2)
+
+            if element.element_type is UIElementType.INPUT:
+                # Text inputs: name first, then email (matches typical form top-to-bottom order)
+                if "name" in label and name and "name" not in _fields_filled:
+                    _fields_filled.add("name")
+                    return PolicyDecision(
+                        action=AgentAction(
+                            action_type=ActionType.TYPE,
+                            target_element_id=element.element_id,
+                            x=mid_x,
+                            y=mid_y,
+                            text=name,
+                            press_enter=False,
+                            clear_before_typing=True,
+                        ),
+                        rationale=f"Form name field visible — typing '{name}' per intent.",
+                        confidence=0.97,
+                        active_subgoal="fill name field",
+                    )
+
+                # Fill message/textarea field ONLY when the intent explicitly requests it.
+                # Filling a message field that's not required by intent can disrupt forms
+                # that validate all filled fields, causing unexpected form behavior.
+                _intent_wants_message = bool(re.search(r"\bmessage\b", intent, re.IGNORECASE))
+                _text_fields_partial_done = (name is None or "name" in _fields_filled) and (email is None or "email" in _fields_filled or "password" in _fields_filled)
+                _msg_match = re.search(r"message(?:\s+as)?\s+['\"]([^'\"]+)['\"]", intent, re.IGNORECASE)
+                _msg_text = _msg_match.group(1) if _msg_match else "Hello, I am filling out this form."
+                if "message" in label and _intent_wants_message and _text_fields_partial_done and (name or email) and "message" not in _fields_filled:
+                    _fields_filled.add("message")
+                    return PolicyDecision(
+                        action=AgentAction(
+                            action_type=ActionType.TYPE,
+                            target_element_id=element.element_id,
+                            x=mid_x,
+                            y=mid_y,
+                            text=_msg_text,
+                            press_enter=False,
+                            clear_before_typing=True,
+                        ),
+                        rationale=f"Form message field visible and intent requires it — typing message.",
+                        confidence=0.92,
+                        active_subgoal="fill message field",
+                    )
+
+                # Match email field by "email" label. Only fill "password" labeled fields
+                # with the email value when the intent explicitly mentions a password
+                # context (e.g., "login with password X"). For forms that just have a
+                # Password field that isn't required by the task, skip it — attempting
+                # to fill it with the email value can break form validation.
+                _intent_wants_password = bool(re.search(r"\bpassword\b", intent, re.IGNORECASE))
+                _field_type_for_email = None
+                if "email" in label:
+                    _field_type_for_email = "email"
+                elif "password" in label and _intent_wants_password and "name" not in label and "message" not in label:
+                    # Only fill a "password" field with the email value when the intent
+                    # explicitly references a password context.
+                    _field_type_for_email = "password"
+                _email_label_match = _field_type_for_email is not None
+                _email_needs_fill = email and _field_type_for_email not in _fields_filled
+                if _email_label_match and _email_needs_fill:
+                    _fields_filled.add(_field_type_for_email)
+                    return PolicyDecision(
+                        action=AgentAction(
+                            action_type=ActionType.TYPE,
+                            target_element_id=element.element_id,
+                            x=mid_x,
+                            y=mid_y,
+                            text=email,
+                            press_enter=False,
+                            clear_before_typing=True,
+                        ),
+                        rationale=f"Form {_field_type_for_email} field visible — typing email value per intent.",
+                        confidence=0.97,
+                        active_subgoal=f"fill {_field_type_for_email} field",
+                    )
+
+                # Checkboxes and radio buttons: click if label matches an intent option.
+                # Exclude structured values (email addresses, "First Last" names) — they
+                # appear in intent_options from the quoted-string regex but are not clickable.
+                _clickable_options = [
+                    opt for opt in intent_options
+                    if "@" not in opt and opt != name and opt != email
+                ]
+                for option in _clickable_options:
+                    if option.lower() in label and not _option_already_handled(option.lower(), mid_x, mid_y):
+                        _clicked_labels.add(option.lower())
+                        return PolicyDecision(
+                            action=AgentAction(
+                                action_type=ActionType.CLICK,
+                                target_element_id=element.element_id,
+                                x=mid_x,
+                                y=mid_y,
+                            ),
+                            rationale=f"Form option '{option}' visible and unclicked — clicking now.",
+                            confidence=0.96,
+                            active_subgoal=f"select {option}",
+                        )
+
+        text_fields_done = (
+            (name is None or "name" in _fields_filled)
+            and (email is None or "email" in _fields_filled or "password" in _fields_filled)
+        )
+
+        if text_fields_done and intent_options and (name or email):
+            # Check if all intent options have been coord-clicked already.
+            all_options_handled = all(
+                any(
+                    opt.lower() in el.primary_name.lower() and _coord_already_clicked(
+                        el.x + max(1, el.width // 2), el.y + max(1, el.height // 2)
+                    )
+                    for el in perception.visible_elements
+                    if el.is_interactable
+                )
+                for opt in intent_options
+            )
+            # Only count options that actually appear as labels on visible clickable
+            # elements. Quoted strings in intent like "Jane Doe" / "jane@example.com"
+            # are text values, not selectable options — they must not block submit.
+            interactable_elements = [el for el in perception.visible_elements if el.is_interactable]
+            clickable_options = [
+                opt for opt in intent_options
+                if "@" not in opt and opt != name and opt != email
+            ]
+            # An option is handled if its label was recorded in _clicked_labels (survives
+            # page scrolls) OR if a coord-proximate click exists in history.
+            all_options_handled = bool(clickable_options) and all(
+                opt.lower() in _clicked_labels or any(
+                    opt.lower() in el.primary_name.lower() and _coord_already_clicked(
+                        el.x + max(1, el.width // 2), el.y + max(1, el.height // 2)
+                    )
+                    for el in interactable_elements
+                )
+                for opt in clickable_options
+            )
+            if all_options_handled:
+                # All fields filled and all options clicked — fire submit.
+                submit_button = _submit_button(perception)
+                _viewport_h = 1080  # standard viewport height assumption
+                if submit_button is not None:
+                    _mid_y = submit_button.y + max(1, submit_button.height // 2)
+                    if _mid_y <= _viewport_h:
+                        return PolicyDecision(
+                            action=AgentAction(
+                                action_type=ActionType.CLICK,
+                                target_element_id=submit_button.element_id,
+                                x=submit_button.x + max(1, submit_button.width // 2),
+                                y=_mid_y,
+                            ),
+                            rationale="All form fields and options handled — submitting the form.",
+                            confidence=0.97,
+                            active_subgoal="submit_form",
+                        )
+                # Submit not visible or below viewport — scroll DOWN to reveal it.
+                # Do NOT use Press_Key End: when a form element has focus, End moves
+                # the cursor within the element instead of scrolling the page.
+                # Negative scroll_amount → wheel deltaY positive → scrolls DOWN.
+                return PolicyDecision(
+                    action=AgentAction(
+                        action_type=ActionType.SCROLL,
+                        x=960,
+                        y=540,
+                        scroll_amount=-3000,
+                    ),
+                    rationale="All fields and options done — scrolling to page bottom to reveal submit button.",
+                    confidence=0.95,
+                    active_subgoal="scroll to submit",
+                )
+
+            # Options not all handled but not visible — scroll up to find them.
+            # Use _clickable_options (filtered) so email/name values in the form don't
+            # falsely appear as "visible options" and block the scroll trigger.
+            any_option_visible = bool(clickable_options) and any(
+                any(opt.lower() in el.primary_name.lower() for opt in clickable_options)
+                for el in perception.visible_elements
+                if el.is_interactable
+            )
+            if not any_option_visible:
+                return PolicyDecision(
+                    action=AgentAction(
+                        action_type=ActionType.SCROLL,
+                        x=960,
+                        y=540,
+                        scroll_amount=800,
+                    ),
+                    rationale=f"Name/email filled; no option elements visible — scrolling up to find {clickable_options}.",
+                    confidence=0.95,
+                    active_subgoal="scroll to form options",
+                )
+
+        return None
 
     # ------------------------------------------------------------------
     # Selector helpers
@@ -592,6 +949,11 @@ def _has_success_signal(perception: ScreenPerception) -> bool:
         "submission successful",
         "submission complete",
         "task completed",
+        "message submitted",
+        "form submitted",
+        "successfully submitted",
+        "sent successfully",
+        "message sent",
     )
     for element in perception.visible_elements:
         if any(token in element.primary_name.lower() for token in success_tokens):
@@ -647,9 +1009,7 @@ def _input_target_intent(subgoal: str | None, target_element_id: str | None) -> 
                 target_text = canonical
                 break
 
-    if "compose" in lowered_subgoal or "gmail" in lowered_subgoal:
-        expected_section = "compose"
-    elif "form" in lowered_subgoal or "submit" in lowered_subgoal:
+    if "form" in lowered_subgoal or "submit" in lowered_subgoal:
         expected_section = "form"
 
     return TargetIntent(
@@ -682,6 +1042,10 @@ def _extract_search_query(state: AgentState) -> str | None:
         if match is None:
             continue
         query = match.group(1).strip(" .")
+        # Drop trailing " on <site>" qualifiers first (e.g. "'GPT-4' on Wikipedia")
+        query = re.sub(r"\s+on\s+\w[\w.]*$", "", query, flags=re.IGNORECASE).strip()
+        # Strip surrounding quotes (single or double) after site-qualifier removal
+        query = re.sub(r"^['\"](.+)['\"]$", r"\1", query)
         if query:
             return query
     return None
@@ -696,26 +1060,6 @@ def _search_trigger_target(perception: ScreenPerception) -> UIElement | None:
         if "search" in element.primary_name.lower():
             return element
     return None
-
-
-def _preferred_compose_input(perception: ScreenPerception) -> UIElement | None:
-    from src.agent.selector import DeterministicTargetSelector
-    selector = DeterministicTargetSelector()
-    intents = (
-        TargetIntent(action=TargetIntentAction.CLICK, target_text="recipient", expected_element_types=[UIElementType.INPUT], expected_section="compose"),
-        TargetIntent(action=TargetIntentAction.CLICK, target_text="to", expected_element_types=[UIElementType.INPUT], expected_section="compose"),
-        TargetIntent(action=TargetIntentAction.CLICK, target_text="subject", expected_element_types=[UIElementType.INPUT], expected_section="compose"),
-        TargetIntent(action=TargetIntentAction.CLICK, target_text="message", expected_element_types=[UIElementType.INPUT], expected_section="compose"),
-    )
-    for intent in intents:
-        result = selector.select(perception, intent)
-        if result.selected is not None:
-            return result.selected
-    return None
-
-
-def _compose_form_visible(perception: ScreenPerception) -> bool:
-    return _preferred_compose_input(perception) is not None
 
 
 def _blocking_overlay_elements(perception: ScreenPerception) -> list[UIElement]:
@@ -773,17 +1117,20 @@ def _best_dismiss_button(
 
 
 def _form_fields_completed(state: AgentState, perception: ScreenPerception) -> bool:
+    # Build a map of visible text input fields we can match to intent values.
+    # Accept "name", "email", "message", OR "password" (Gemini sometimes
+    # mis-labels email-type inputs as "password").
+    _FIELD_LABELS = {"name", "email", "message", "password"}
     required_targets: dict[str, str] = {}
     for element in _input_candidates(perception):
         label = element.primary_name.lower()
-        if "name" in label:
-            required_targets["name"] = element.element_id
-        elif "email" in label:
-            required_targets["email"] = element.element_id
-        elif "message" in label:
-            required_targets["message"] = element.element_id
+        for field in _FIELD_LABELS:
+            if field in label and field not in required_targets:
+                required_targets[field] = element.element_id
+                break
 
-    if len(required_targets) < 3:
+    # Need at least 1 identified field to evaluate (avoids firing on blank pages).
+    if not required_targets:
         return False
 
     completed_targets = {
@@ -793,4 +1140,28 @@ def _form_fields_completed(state: AgentState, perception: ScreenPerception) -> b
         and verification.status is VerificationStatus.SUCCESS
         and executed.action.target_element_id is not None
     }
-    return all(target_id in completed_targets for target_id in required_targets.values())
+    # Also accept typed-by-text: if the value was typed (regardless of element_id
+    # stability), count the field as completed.
+    typed_values: set[str] = {
+        executed.action.text
+        for executed in state.action_history
+        if executed.action.action_type is ActionType.TYPE and executed.action.text
+    }
+    intent = state.intent or ""
+    email_match = re.search(r"[\w.+\-]+@[\w.\-]+\.\w+", intent)
+    name_match = re.search(
+        r"[Nn]ame(?:\s+as)?\s+['\"]?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)['\"]?", intent
+    )
+    intent_email = email_match.group() if email_match else None
+    intent_name = name_match.group(1) if name_match else None
+
+    for field, target_id in required_targets.items():
+        if target_id in completed_targets:
+            continue
+        # Fallback: check if the expected value for this field was typed
+        if field in ("email", "password") and intent_email and intent_email in typed_values:
+            continue
+        if field == "name" and intent_name and intent_name in typed_values:
+            continue
+        return False
+    return True

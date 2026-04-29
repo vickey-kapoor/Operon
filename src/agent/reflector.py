@@ -44,7 +44,7 @@ class PostRunReflector:
         patterns.extend(self._detect_stuck_subgoal(steps, run_id))
         patterns.extend(self._detect_no_screen_change_actions(steps, run_id))
 
-        # Convert patterns to memory records
+        # Convert patterns to memory records — failure patterns are always useful
         memories_written = 0
         for pattern in patterns:
             record = MemoryRecord(
@@ -60,9 +60,13 @@ class PostRunReflector:
             self.memory_store._append_record(record)
             memories_written += 1
 
-        # Extract episode trajectory from successful runs
+        # Extract episode trajectory from successful runs.
+        # Shortest-path optimization: only compress steps that succeeded on the
+        # first attempt (no retries). Multi-attempt successes add noise — we want
+        # the memory to encode the optimal path, not historical struggle.
         if success:
-            episode = self._extract_episode(run_id, intent, benchmark, steps)
+            one_shot_steps = self._filter_one_shot_steps(steps)
+            episode = self._extract_episode(run_id, intent, benchmark, one_shot_steps)
             if episode is not None:
                 try:
                     self.memory_store.save_episode(episode)
@@ -236,6 +240,40 @@ class PostRunReflector:
     # ------------------------------------------------------------------
     # Episode extraction
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _filter_one_shot_steps(steps: list[dict]) -> list[dict]:
+        """Return only steps that succeeded on the first attempt with no retries.
+
+        A step is considered one-shot when:
+        - executed_action.success is True
+        - executed_action.failure_category is None (no execution failure)
+        - The step's retry_counts did not increase relative to the previous step
+
+        This filters out steps where the agent had to retry an action, keeping only
+        the direct-path steps that encode the shortest route to goal completion.
+        """
+        if not steps:
+            return []
+
+        one_shot: list[dict] = []
+        prev_retry_total = 0
+
+        for step in steps:
+            executed = step.get("executed_action", {})
+            # A step is successful when it has no failure_category (matches _extract_episode logic)
+            if executed.get("failure_category") is not None:
+                prev_retry_total = sum(step.get("retry_counts", {}).values()) if step.get("retry_counts") else 0
+                continue
+            # Check retry counts didn't grow this step (retries used = multi-attempt, not shortest path)
+            current_retry_total = sum(step.get("retry_counts", {}).values()) if step.get("retry_counts") else 0
+            if current_retry_total > prev_retry_total:
+                prev_retry_total = current_retry_total
+                continue
+            one_shot.append(step)
+            prev_retry_total = current_retry_total
+
+        return one_shot
 
     @staticmethod
     def _extract_episode(

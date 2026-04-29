@@ -16,9 +16,9 @@ def test_imports_and_app_startup() -> None:
 def test_run_task_endpoint_creates_placeholder_run() -> None:
     """Verify the placeholder run route is wired and returns a run identifier."""
     client = TestClient(app)
-    response = client.post("/run-task", json={"intent": "Create a Gmail draft", "headless": True})
+    response = client.post("/run-task", json={"intent": "Navigate and click a button.", "headless": True})
     body = response.json()
     assert response.status_code == 202
-    assert body["intent"] == "Create a Gmail draft"
+    assert body["intent"] == "Navigate and click a button."
     assert body["status"] == "pending"
     assert body["run_id"]

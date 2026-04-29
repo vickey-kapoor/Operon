@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from core.contracts.perception import Environment
-from runtime.orchestrator import UnifiedOrchestrator
+from src.core.contracts.perception import Environment
+from src.runtime.orchestrator import UnifiedOrchestrator
 
 
 def _attempt(

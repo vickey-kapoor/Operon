@@ -55,18 +55,18 @@ A run is triggered via `POST /run-task`, advanced via `POST /step`. Everything i
 After each execution attempt, `AgentLoop._record_unified_step()` translates the step's legacy objects into four typed Pydantic contracts and validates them through the unified orchestrator:
 
 ```
-LegacyOperonContractAdapter (runtime/legacy_adapter.py)
-  → PerceptionOutput  (core/contracts/perception.py)  — semantic, no coordinates
-  → PlannerOutput     (core/contracts/planner.py)     — action + rationale
-  → ActorOutput       (core/contracts/actor.py)       — execution result
-  → CriticOutput      (core/contracts/critic.py)      — success / retry / failure
+LegacyOperonContractAdapter (src/runtime/legacy_adapter.py)
+  → PerceptionOutput  (src/core/contracts/perception.py)  — semantic, no coordinates
+  → PlannerOutput     (src/core/contracts/planner.py)     — action + rationale
+  → ActorOutput       (src/core/contracts/actor.py)       — execution result
+  → CriticOutput      (src/core/contracts/critic.py)      — success / retry / failure
 
-UnifiedOrchestrator (runtime/orchestrator.py)
+UnifiedOrchestrator (src/runtime/orchestrator.py)
   → validates all four contracts for cross-field consistency
-  → checks routing rules via core/router.py (allowed action types per environment)
-  → updates AgentRuntimeState (runtime/state.py) per run
+  → checks routing rules via src/core/router.py (allowed action types per environment)
+  → updates AgentRuntimeState (src/runtime/state.py) per run
 
-executors/browser_executor.py / executors/desktop_executor.py
+src/executor/browser_adapter.py / src/executor/desktop_adapter.py
   → thin adapters that translate PlannerAction → legacy AgentAction
 ```
 

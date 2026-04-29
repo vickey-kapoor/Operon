@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.contracts.actor import ActorAction, ActorOutput
-from core.contracts.critic import CriticOutput, FailureType
-from core.contracts.perception import Environment, PerceptionOutput, VisibleTarget
-from core.contracts.planner import PlannerOutput
+from src.core.contracts.actor import ActorAction, ActorOutput
+from src.core.contracts.critic import CriticOutput, FailureType
+from src.core.contracts.perception import Environment, PerceptionOutput, VisibleTarget
+from src.core.contracts.planner import PlannerOutput
 
 
 class GoalProgressState(BaseModel):

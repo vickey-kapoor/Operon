@@ -8,13 +8,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.contracts.perception import Environment as UnifiedEnvironment
-from core.router import RoutingError
-from executors.browser_executor import BrowserExecutor as UnifiedBrowserExecutor
-from executors.desktop_executor import DesktopExecutor as UnifiedDesktopExecutor
-from runtime.legacy_adapter import LegacyOperonContractAdapter
-from runtime.orchestrator import UnifiedOrchestrator
-from runtime.state import AgentRuntimeState
 from src.agent.capture import CaptureService
 from src.agent.perception import PerceptionLowQualityError, PerceptionService
 from src.agent.policy import PolicyService
@@ -24,7 +17,11 @@ from src.agent.selector import DeterministicTargetSelector
 from src.agent.verifier import VerifierService
 from src.agent.video_verifier import VideoVerifier
 from src.clients.gemini import GeminiClient
+from src.core.contracts.perception import Environment as UnifiedEnvironment
+from src.core.router import RoutingError
 from src.executor.browser import Executor
+from src.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
+from src.executor.desktop_adapter import DesktopExecutor as UnifiedDesktopExecutor
 from src.models.capture import CaptureFrame
 from src.models.common import (
     FailureCategory,
@@ -56,6 +53,9 @@ from src.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
+from src.runtime.legacy_adapter import LegacyOperonContractAdapter
+from src.runtime.orchestrator import UnifiedOrchestrator
+from src.runtime.state import AgentRuntimeState
 from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log, append_step_log_critical

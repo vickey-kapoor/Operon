@@ -11,17 +11,16 @@ src/
                 backend.py, action_translation.py, fallback_backend.py
   api/          server.py, routes.py, runtime_config.py, benchmark_suite.py
   clients/      gemini.py, anthropic.py
-  executor/     desktop.py, browser_native.py, browser.py (ABC),
-                os_picker_macro.py
+  executor/     browser.py (ABC), browser_native.py, desktop.py,
+                browser_adapter.py, desktop_adapter.py, os_picker_macro.py
   models/       state.py, capture.py, perception.py, policy.py,
                 execution.py, verification.py, recovery.py, memory.py,
                 progress.py, common.py, logs.py, selector.py
   store/        run_store.py, memory.py, run_logger.py,
                 background_writer.py, replay.py, summary.py
   benchmarks/   (benchmark-specific plugin files)
-runtime/        orchestrator.py, state.py, legacy_adapter.py
-core/           contracts/, router.py
-executors/      browser_executor.py, desktop_executor.py
+  runtime/      orchestrator.py, state.py, legacy_adapter.py, benchmark_runner.py
+  core/         contracts/, router.py
 prompts/        browser_combined_prompt.txt, browser_computer_use_prompt.txt,
                 critic_prompt.txt, desktop_combined_prompt.txt,
                 desktop_perception_prompt.txt, desktop_policy_prompt.txt,
@@ -228,7 +227,7 @@ Default model: `claude-sonnet-4-20250514`. Methods: `generate_policy()` (text-on
 
 ---
 
-## Runtime / Phase 2 (`runtime/`)
+## Runtime / Phase 2 (`src/runtime/`)
 
 - `UnifiedOrchestrator.process_step(perception, planner, actor, critic, current_state) → StepState`
 - `AgentRuntimeState` — shared mutable state per run (subgoal, url, retry context, advisory hints)

@@ -182,9 +182,9 @@ class GeminiHttpClient(GeminiClient):
             auth_headers = {"Authorization": f"Bearer {token}"}
             model_ref = f"projects/{self.vertex_project}/locations/{self.vertex_location}/publishers/google/models/{self.model}"
         else:
-            api_key = self.api_key or os.getenv("GEMINI_API_KEY")
+            api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
             if not api_key:
-                raise GeminiClientError("GEMINI_API_KEY is not configured.")
+                raise GeminiClientError("Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured.")
             url = f"https://generativelanguage.googleapis.com/v1beta/cachedContents?key={api_key}"
             auth_headers = {}
             model_ref = f"models/{self.model}"
@@ -217,9 +217,9 @@ class GeminiHttpClient(GeminiClient):
             url = f"{self.api_base_url}/{self.model}:generateContent"
             auth_headers = {"Authorization": f"Bearer {token}"}
         else:
-            api_key = self.api_key or os.getenv("GEMINI_API_KEY")
+            api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
             if not api_key:
-                raise GeminiClientError("GEMINI_API_KEY is not configured.")
+                raise GeminiClientError("Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured.")
             url = f"{self.api_base_url}/{self.model}:generateContent?key={api_key}"
             auth_headers = {}
 

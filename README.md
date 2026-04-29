@@ -42,7 +42,7 @@ FastAPI  →  AgentLoop  →  Capture   (mss / Playwright screenshot)
 
 Unified Contract Layer  (observer on top of the loop)
     LegacyOperonContractAdapter → PerceptionOutput / PlannerOutput / ActorOutput / CriticOutput
-    UnifiedOrchestrator  →  core/router.py  →  AgentRuntimeState
+    UnifiedOrchestrator  →  src/core/router.py  →  AgentRuntimeState
 ```
 
 - Vision only — no DOM / a11y tree.
@@ -98,7 +98,8 @@ ruff check src tests
 - `src/api/` — FastAPI + Pilot/Console UIs
 - `src/store/` — run store, memory, episodes
 - `src/models/` — Pydantic schemas
-- `core/`, `runtime/`, `executors/` — unified contract layer (observer on top of the loop)
+- `src/core/`, `src/runtime/` — unified contract layer (observer on top of the loop)
+- `src/executor/browser_adapter.py`, `src/executor/desktop_adapter.py` — thin contract-to-legacy action adapters
 - `prompts/`, `docs/`, `examples/contracts/`
 - Artifacts: `runs/<run_id>/`, `.browser-artifacts/`
 

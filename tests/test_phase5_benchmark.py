@@ -6,14 +6,14 @@ from uuid import uuid4
 
 import pytest
 
-from core.contracts.critic import FailureType
-from core.contracts.perception import Environment as UnifiedEnvironment
-from runtime.benchmark_runner import (
+from src.core.contracts.critic import FailureType
+from src.core.contracts.perception import Environment as UnifiedEnvironment
+from src.models.common import RunResponse, RunStatus
+from src.runtime.benchmark_runner import (
     Phase5BenchmarkTask,
     run_phase5_benchmark_suite,
 )
-from runtime.state import AgentRuntimeState
-from src.models.common import RunResponse, RunStatus
+from src.runtime.state import AgentRuntimeState
 
 
 class _FakeLoop:

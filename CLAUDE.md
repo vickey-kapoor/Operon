@@ -144,9 +144,9 @@ Operon has two execution modes sharing the same loop, verifier, recovery, and pe
 
 Backend selection is handled by `src/agent/backend.py` based on env vars. `src/agent/action_translation.py` bridges Computer Use action formats to the internal `AgentAction` schema.
 
-### Runtime Package (`runtime/`)
+### Runtime Package (`src/runtime/`)
 
-A top-level `runtime/` package (not under `src/`) provides the unified contract layer:
+The `src/runtime/` package provides the unified contract layer:
 
 - `UnifiedOrchestrator` — receives `LegacyContractBundle` from `LegacyOperonContractAdapter` each step, runs adaptation strategy lookup, detects OS file pickers via perception, and advances `AgentRuntimeState`
 - `AgentRuntimeState` — structured per-run mutable state tracking subgoal progress, last perception summary, retry context, and advisory hints; separate from `AgentState` in `src/models/`

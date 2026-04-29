@@ -7,17 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from core.contracts.actor import ActorOutput
-from core.contracts.critic import CriticOutput
-from core.contracts.perception import Environment, PerceptionOutput
-from core.contracts.planner import PlannerOutput
-from core.router import (
+from src.core.contracts.actor import ActorOutput
+from src.core.contracts.critic import CriticOutput
+from src.core.contracts.perception import Environment, PerceptionOutput
+from src.core.contracts.planner import PlannerOutput
+from src.core.router import (
     RoutingError,
     route_plan,
     validate_actor_for_state,
     validate_plan_route,
 )
-from runtime.orchestrator import UnifiedOrchestrator
+from src.runtime.orchestrator import UnifiedOrchestrator
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples" / "contracts"
 

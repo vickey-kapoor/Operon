@@ -158,7 +158,7 @@ Triggers when `screen_diff` detects no visual change after an idempotent action 
 
 **What:** Every step wrapped in typed perception/planner/actor/critic bundles — clean separation of concerns between observation, planning, execution, and critique.
 
-**Contracts:** `PerceptionOutput`, `PlannerOutput`, `ActorOutput`, `CriticOutput` in `core/contracts/`.
+**Contracts:** `PerceptionOutput`, `PlannerOutput`, `ActorOutput`, `CriticOutput` in `src/core/contracts/`.
 
 **Router:** `BROWSER_ACTIONS` / `DESKTOP_ACTIONS` sets. `is_cross_environment_action()` flags actions (like `upload_file_native`) that cross environment boundaries. `validate_plan_route()` enforces this at plan time.
 
@@ -231,7 +231,7 @@ Input validation: `intent` 1–500 chars, stripped whitespace, strict Pydantic v
 | Benchmark | Entry point | What it measures |
 |---|---|---|
 | Form benchmark | `python -m src.agent.benchmark` | End-to-end web form fill success rate |
-| Native upload benchmark | `evaluation/benchmark_native_upload.py` | `upload_file_native` reliability in headed mode |
+| Native upload benchmark | `src/evaluation/benchmark_native_upload.py` | `upload_file_native` reliability in headed mode |
 
 ---
 

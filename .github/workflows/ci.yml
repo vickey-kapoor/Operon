@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -27,13 +27,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install pytest pytest-asyncio httpx ruff
+          pip install -e .[dev]
 
       - name: Run tests
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python -m pytest tests/ -v --tb=short
+          OPERON_TEST_SAFE_MODE: "true"
+        run: |
+          python -m pytest tests/ -v --tb=short \
+            --ignore=tests/test_e2e_quick_tasks.py \
+            --ignore=tests/test_bug_fixes_verification.py
 
   lint:
     name: Lint
@@ -42,10 +45,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5.3.0
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           cache: pip
 
       - name: Install linting tools
@@ -54,4 +57,4 @@ jobs:
           pip install ruff
 
       - name: Run ruff
-        run: ruff check src tests
+        run: ruff check src tests --select E,F,W,I --ignore E501

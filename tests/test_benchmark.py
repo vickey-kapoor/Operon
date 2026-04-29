@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from evaluation.benchmark_native_upload import (
+from src.evaluation.benchmark_native_upload import (
     BenchmarkRunResult,
     BenchmarkSummary,
     run_benchmark,

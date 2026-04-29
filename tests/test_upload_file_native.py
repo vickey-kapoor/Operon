@@ -6,22 +6,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.contracts.critic import FailureType
-from core.contracts.perception import Environment, PerceptionOutput
-from core.contracts.planner import ActionType as ContractActionType
-from core.contracts.planner import PlannerAction
-from core.router import (
+from src.core.contracts.critic import FailureType
+from src.core.contracts.perception import Environment, PerceptionOutput
+from src.core.contracts.planner import ActionType as ContractActionType
+from src.core.contracts.planner import PlannerAction
+from src.core.router import (
     BROWSER_ACTIONS,
     DESKTOP_ACTIONS,
     RoutingError,
     is_cross_environment_action,
     validate_plan_route,
 )
-from executors.browser_executor import BrowserExecutor
-from runtime.legacy_adapter import _map_action_type
-from runtime.orchestrator import UnifiedOrchestrator
+from src.executors.browser_executor import BrowserExecutor
 from src.models.common import FailureCategory
 from src.models.policy import ActionType, AgentAction
+from src.runtime.legacy_adapter import _map_action_type
+from src.runtime.orchestrator import UnifiedOrchestrator
 
 # ---------------------------------------------------------------------------
 # 1. Enum presence checks
@@ -65,8 +65,8 @@ def test_is_cross_environment_action_returns_false_for_click() -> None:
 
 def test_validate_plan_route_accepts_upload_file_native_in_browser() -> None:
     """validate_plan_route must not raise for upload_file_native in browser."""
-    from core.contracts.perception import ContractVersion
-    from core.contracts.planner import PlannerOutput
+    from src.core.contracts.perception import ContractVersion
+    from src.core.contracts.planner import PlannerOutput
 
     plan = PlannerOutput(
         contract_version=ContractVersion.PHASE1,
@@ -88,8 +88,8 @@ def test_validate_plan_route_accepts_upload_file_native_in_browser() -> None:
 
 def test_validate_plan_route_rejects_upload_file_native_in_desktop() -> None:
     """validate_plan_route must raise RoutingError for upload_file_native in desktop."""
-    from core.contracts.perception import ContractVersion
-    from core.contracts.planner import PlannerOutput
+    from src.core.contracts.perception import ContractVersion
+    from src.core.contracts.planner import PlannerOutput
 
     plan = PlannerOutput(
         contract_version=ContractVersion.PHASE1,

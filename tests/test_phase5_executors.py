@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.contracts.planner import ActionType as ContractActionType
-from core.contracts.planner import PlannerAction
-from executors.browser_executor import BrowserExecutor
-from executors.desktop_executor import DesktopExecutor
+from src.core.contracts.planner import ActionType as ContractActionType
+from src.core.contracts.planner import PlannerAction
+from src.executors.browser_executor import BrowserExecutor
+from src.executors.desktop_executor import DesktopExecutor
 from src.models.execution import ExecutedAction
 from src.models.policy import ActionType, AgentAction
 

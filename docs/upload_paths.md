@@ -48,7 +48,7 @@ This is a cross-environment action. The flow is:
 ### Routing
 
 `UPLOAD_FILE_NATIVE` belongs to `BROWSER_ACTIONS` and `CROSS_ENVIRONMENT_ACTIONS` in
-`core/router.py`. It is **not** in `DESKTOP_ACTIONS` — the desktop interaction with
+`src/core/router.py`. It is **not** in `DESKTOP_ACTIONS` — the desktop interaction with
 the picker is handled by ordinary `TYPE` / `PRESS_KEY` actions, not a separate entry
 point.
 

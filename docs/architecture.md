@@ -227,7 +227,7 @@ Default model: `claude-sonnet-4-20250514`. Methods: `generate_policy()` (text-on
 
 ---
 
-## Runtime / Phase 2 (`runtime/`)
+## Runtime / Phase 2 (`src/runtime/`)
 
 - `UnifiedOrchestrator.process_step(perception, planner, actor, critic, current_state) → StepState`
 - `AgentRuntimeState` — shared mutable state per run (subgoal, url, retry context, advisory hints)

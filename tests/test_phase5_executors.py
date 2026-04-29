@@ -9,8 +9,8 @@ import pytest
 
 from src.core.contracts.planner import ActionType as ContractActionType
 from src.core.contracts.planner import PlannerAction
-from src.executors.browser_executor import BrowserExecutor
-from src.executors.desktop_executor import DesktopExecutor
+from src.executor.browser_adapter import BrowserExecutor
+from src.executor.desktop_adapter import DesktopExecutor
 from src.models.execution import ExecutedAction
 from src.models.policy import ActionType, AgentAction
 

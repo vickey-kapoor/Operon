@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.core.contracts.perception import Environment as UnifiedEnvironment
-from src.executors.browser_executor import BrowserExecutor as UnifiedBrowserExecutor
+from src.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
 from src.runtime.state import AgentRuntimeState
 
 gemini_stub = types.ModuleType("src.clients.gemini")

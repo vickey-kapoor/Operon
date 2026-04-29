@@ -17,7 +17,7 @@ from src.core.router import (
     is_cross_environment_action,
     validate_plan_route,
 )
-from src.executors.browser_executor import BrowserExecutor
+from src.executor.browser_adapter import BrowserExecutor
 from src.models.common import FailureCategory
 from src.models.policy import ActionType, AgentAction
 from src.runtime.legacy_adapter import _map_action_type

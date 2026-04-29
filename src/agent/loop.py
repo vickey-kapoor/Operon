@@ -20,8 +20,8 @@ from src.clients.gemini import GeminiClient
 from src.core.contracts.perception import Environment as UnifiedEnvironment
 from src.core.router import RoutingError
 from src.executor.browser import Executor
-from src.executors.browser_executor import BrowserExecutor as UnifiedBrowserExecutor
-from src.executors.desktop_executor import DesktopExecutor as UnifiedDesktopExecutor
+from src.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
+from src.executor.desktop_adapter import DesktopExecutor as UnifiedDesktopExecutor
 from src.models.capture import CaptureFrame
 from src.models.common import (
     FailureCategory,

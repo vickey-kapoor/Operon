@@ -314,7 +314,7 @@ def test_get_episode_returns_none_for_wrong_benchmark(tmp_path: pytest.TempPathF
     ep = _make_episode(normalized_intent="fill the contact form", benchmark="auth_free_form")
     store.save_episode(ep)
 
-    result = store.get_episode("fill the contact form", "gmail_draft_authenticated")
+    result = store.get_episode("fill the contact form", "webarena_benchmark")
     assert result is None
 
 
@@ -370,9 +370,9 @@ def test_save_episode_does_not_increment_across_different_benchmarks(
 ) -> None:
     store = FileBackedMemoryStore(root_dir=tmp_path)
     ep_form = _make_episode(normalized_intent="fill the form", benchmark="auth_free_form")
-    ep_gmail = _make_episode(normalized_intent="fill the form", benchmark="gmail_draft_authenticated")
+    ep_other = _make_episode(normalized_intent="fill the form", benchmark="webarena_benchmark")
     store.save_episode(ep_form)
-    store.save_episode(ep_gmail)
+    store.save_episode(ep_other)
 
     result = store.get_episode("fill the form", "auth_free_form")
     assert result is not None
@@ -454,8 +454,8 @@ def test_episode_replay_deactivates_after_max_deviations_page_hint_mismatches(
     coordinator = PolicyCoordinator(delegate=mock_delegate, memory_store=mock_store)
     state = _make_state(step_count=1)
 
-    # First call triggers episode load; page_hint differs from episode (GMAIL_INBOX vs FORM_PAGE)
-    wrong_hint_perception = _make_perception(page_hint=PageHint("gmail_inbox"))
+    # First call triggers episode load; page_hint differs from episode (UNKNOWN vs FORM_PAGE)
+    wrong_hint_perception = _make_perception(page_hint=PageHint("unknown"))
     coordinator._try_episode_hint(state, wrong_hint_perception)
     assert coordinator._replay_state is not None
     assert coordinator._replay_state.deviations == 1
@@ -597,7 +597,7 @@ async def test_policy_coordinator_deactivates_episode_after_max_deviations() -> 
 
     coordinator = PolicyCoordinator(delegate=delegate, memory_store=mock_store)
     # Use a page hint that mismatches the episode's FORM_PAGE
-    wrong_perception = _make_perception(page_hint=PageHint("gmail_inbox"))
+    wrong_perception = _make_perception(page_hint=PageHint("unknown"))
 
     # First step initializes replay; wrong page_hint → first deviation
     await coordinator.choose_action(_make_state(step_count=1), wrong_perception)

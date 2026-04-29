@@ -96,6 +96,64 @@ _APP_ALIASES: dict[str, str] = {
 }
 
 
+class HardwareBaselineError(RuntimeError):
+    """Raised when the display hardware baseline check fails.
+
+    Coordinate targeting is geometry-sensitive: a sub-minimum resolution or
+    severely mismatched DPI scaling produces systematic drift that cannot be
+    corrected at runtime.  Stop early rather than execute hallucinated clicks.
+    """
+
+
+def validate_display_baseline(*, require_min_resolution: tuple[int, int] = (1280, 720)) -> None:
+    """Check DPI scaling and primary-monitor resolution against automation baseline.
+
+    DPI at 100% (96 DPI):  coordinates map 1:1 between logical and physical pixels.
+    DPI != 100%:            logs a CoordDriftWarning — many systems legitimately run
+                            at 125 % or 150 % with per-monitor DPI awareness enabled,
+                            so this is a warning, not a hard stop.
+    Resolution < minimum:   raises HardwareBaselineError — too little screen space for
+                            reliable element targeting.
+    """
+    if sys.platform != "win32":
+        return
+
+    # --- DPI scaling ---
+    try:
+        dpi = ctypes.windll.user32.GetDpiForSystem()  # type: ignore[attr-defined]
+        scale_pct = round(dpi / 96 * 100)
+        if scale_pct != 100:
+            logger.warning(
+                "CoordDriftWarning: DPI scaling is %d%% (expected 100%% / 96 DPI). "
+                "Logical↔physical pixel ratio is %.2fx — coordinate drift is possible "
+                "if per-monitor DPI awareness is not fully applied.",
+                scale_pct,
+                dpi / 96,
+            )
+    except (AttributeError, OSError) as exc:
+        logger.debug("validate_display_baseline: DPI check skipped: %s", exc)
+
+    # --- Resolution ---
+    try:
+        with mss.mss() as sct:
+            if not sct.monitors or len(sct.monitors) < 2:
+                return
+            primary = sct.monitors[1]
+            w, h = primary["width"], primary["height"]
+        min_w, min_h = require_min_resolution
+        if w < min_w or h < min_h:
+            raise HardwareBaselineError(
+                f"Primary display resolution {w}x{h} is below the required minimum "
+                f"{min_w}x{min_h}. Element targeting will be unreliable at this size. "
+                "Increase your display resolution before running Operon."
+            )
+        logger.debug("Display baseline OK: %dx%d @ %d%% DPI", w, h, scale_pct if "scale_pct" in dir() else "?")
+    except HardwareBaselineError:
+        raise
+    except Exception as exc:
+        logger.debug("validate_display_baseline: resolution check skipped: %s", exc)
+
+
 def _set_dpi_awareness() -> None:
     """Set per-monitor DPI awareness at process startup on Windows.
 
@@ -202,6 +260,8 @@ class DesktopExecutor(Executor):
         self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
 
         _set_dpi_awareness()
+        if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() != "true":
+            validate_display_baseline()
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0
 
@@ -233,6 +293,41 @@ class DesktopExecutor(Executor):
         except Exception:
             logger.debug("reset_desktop: Win+D failed, continuing anyway", exc_info=True)
             await asyncio.sleep(0.5)
+
+    async def context_reset(self) -> None:
+        """Dismiss open modals/dropdowns, clear focus traps, scroll to top."""
+        try:
+            await asyncio.to_thread(pyautogui.press, "escape")
+            await asyncio.sleep(0.2)
+            await asyncio.to_thread(pyautogui.press, "escape")
+            await asyncio.sleep(0.1)
+        except Exception:
+            logger.debug("context_reset: escape press failed", exc_info=True)
+        try:
+            with mss.mss() as sct:
+                mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                cx = mon["left"] + mon["width"] // 2
+                cy = mon["top"] + mon["height"] // 3  # upper-third: avoids taskbar
+            await asyncio.to_thread(pyautogui.click, cx, cy)
+            await asyncio.sleep(0.1)
+        except Exception:
+            logger.debug("context_reset: body click failed", exc_info=True)
+        try:
+            await asyncio.to_thread(pyautogui.hotkey, "ctrl", "home")
+        except Exception:
+            logger.debug("context_reset: ctrl+home failed", exc_info=True)
+
+    async def session_reset(self, start_url: str | None = None) -> None:
+        """Re-baseline window focus: dismiss stacked UI state and cycle focus."""
+        await self.context_reset()
+        await asyncio.sleep(0.3)
+        try:
+            await asyncio.to_thread(pyautogui.hotkey, "alt", "tab")
+            await asyncio.sleep(0.4)
+            await asyncio.to_thread(pyautogui.hotkey, "alt", "tab")
+            await asyncio.sleep(0.3)
+        except Exception:
+            logger.debug("session_reset: alt+tab cycle failed", exc_info=True)
 
     def cleanup_run(self, run_id: str) -> int:
         """Terminate all non-protected processes launched during *run_id*.
@@ -283,27 +378,47 @@ class DesktopExecutor(Executor):
         return closed
 
     async def capture(self) -> CaptureFrame:
-        """Take a full-screen screenshot using mss."""
-        return await asyncio.to_thread(self._capture_sync)
+        """Take a 3-frame burst screenshot and return the last frame with visual velocity."""
+        frame, velocity = await asyncio.to_thread(self._capture_burst_sync)
+        if velocity > 0.02:
+            # Screen is still animating — wait and re-capture once before perceiving
+            logger.debug("High visual velocity (%.3f) detected; waiting 300ms before re-capture", velocity)
+            await asyncio.sleep(0.3)
+            frame, _ = await asyncio.to_thread(self._capture_burst_sync)
+        return frame
 
-    def _capture_sync(self) -> CaptureFrame:
+    def _capture_burst_sync(self) -> tuple[CaptureFrame, float]:
+        """Capture t0, t+100ms, t+200ms frames; return (last_frame, visual_velocity)."""
+        import time as _time
         with mss.mss() as sct:
-            # Prefer the monitor that contains the active foreground window so
-            # coords are always in that monitor's pixel space. Falls back to
-            # monitors[1] (first physical display) when the Win32 call fails.
             monitor = _foreground_monitor() or sct.monitors[1]
-            shot = sct.grab(monitor)
+            sct.grab(monitor)  # t0 frame (discarded — used only to warm up the capture pipeline)
+            _time.sleep(0.1)
+            shot1 = sct.grab(monitor)
+            _time.sleep(0.1)
+            shot2 = sct.grab(monitor)
+
+            # Visual velocity: fraction of sampled pixels that changed between shot1→shot2
+            px1 = bytes(shot1.rgb)
+            px2 = bytes(shot2.rgb)
+            total_pixels = shot2.width * shot2.height
+            # Sample every 9th pixel (R channel only) for speed
+            changed = sum(1 for i in range(0, len(px1), 27) if abs(px1[i] - px2[i]) > 8)
+            sampled = max(1, total_pixels // 9)
+            velocity = changed / sampled
+
             filename = f"desktop_{uuid4().hex[:8]}.png"
             filepath = self._artifact_dir / filename
-            mss.tools.to_png(shot.rgb, shot.size, output=str(filepath))
+            mss.tools.to_png(shot2.rgb, shot2.size, output=str(filepath))
             return CaptureFrame(
                 artifact_path=str(filepath),
-                width=shot.width,
-                height=shot.height,
+                width=shot2.width,
+                height=shot2.height,
                 mime_type="image/png",
                 monitor_left=monitor.get("left", 0),
                 monitor_top=monitor.get("top", 0),
-            )
+                visual_velocity=min(velocity, 1.0),
+            ), velocity
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
         """Execute a desktop action using pyautogui."""
@@ -334,6 +449,16 @@ class DesktopExecutor(Executor):
 
     # ── action handlers ──────────────────────────────────────────
 
+    def _region_has_content(self, x: int, y: int, radius: int = 50) -> bool:
+        """Visual servo check: return False when the region around (x, y) is a uniform
+        blank area, which indicates the target element has shifted or disappeared."""
+        raw = self._sample_region(x, y, radius)
+        if not raw:
+            return True  # can't verify — proceed
+        mean = sum(raw) / len(raw)
+        variance = sum((b - mean) ** 2 for b in raw) / len(raw)
+        return variance > 20.0  # pixel² threshold — uniform solid regions score near 0
+
     async def _exec_click(self, action: AgentAction) -> ExecutedAction:
         if action.x is None or action.y is None:
             return self._fail(action, "click requires x,y coordinates on desktop", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
@@ -350,6 +475,24 @@ class DesktopExecutor(Executor):
                     action,
                     f"click skipped: coord ({action.x}, {action.y}) is outside all monitor bounds",
                     FailureCategory.EXECUTION_ERROR,
+                )
+            # Visual servo check: verify the target region has non-trivial content
+            # before committing the click. Catches elements that shifted mid-flight.
+            # Wrapped in try/except — a failed pixel grab should never block a click.
+            try:
+                has_content = await asyncio.to_thread(self._region_has_content, action.x, action.y)
+            except Exception as _servo_exc:
+                logger.debug("Visual servo check skipped (mss error): %s", _servo_exc)
+                has_content = True
+            if not has_content:
+                logger.warning(
+                    "CoordDriftWarning: uniform region at (%d, %d) — target likely shifted or element absent",
+                    action.x, action.y,
+                )
+                return self._fail(
+                    action,
+                    f"visual servo: blank region at ({action.x}, {action.y}); target may have shifted",
+                    FailureCategory.EXECUTION_TARGET_NOT_FOUND,
                 )
             await asyncio.to_thread(pyautogui.click, action.x, action.y)
             await asyncio.sleep(self._post_action_delay)

@@ -221,10 +221,17 @@ def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction
 
 
 def build_policy_decision(response_payload: dict[str, Any]) -> PolicyDecision:
+    from src.models.policy import ExpectedChange
     action = translate_computer_use_action(response_payload["action"])
+    raw_ec = response_payload.get("expected_change", "none")
+    try:
+        expected_change = ExpectedChange(raw_ec)
+    except ValueError:
+        expected_change = ExpectedChange.NONE
     return PolicyDecision(
         action=action,
         rationale=response_payload.get("rationale", "computer_use"),
         confidence=float(response_payload.get("confidence", 0.7)),
         active_subgoal=response_payload.get("active_subgoal", "browser step"),
+        expected_change=expected_change,
     )

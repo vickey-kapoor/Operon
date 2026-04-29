@@ -1,4 +1,4 @@
-"""Minimal local entry points for the active form benchmark and optional Gmail benchmark."""
+"""Minimal local entry points for the active form benchmark."""
 
 from __future__ import annotations
 
@@ -36,8 +36,6 @@ from src.store.summary import (
 
 DEFAULT_FORM_BENCHMARK_INTENT = "Complete the auth-free form and submit it successfully."
 DEFAULT_FORM_BENCHMARK_URL = "https://practice-automation.com/form-fields/"
-DEFAULT_GMAIL_BENCHMARK_INTENT = "Create a Gmail draft and stop before send."
-DEFAULT_GMAIL_BENCHMARK_URL = "https://mail.google.com/"
 
 DEFAULT_BENCHMARK_SUITE = BenchmarkSuiteSpec(
     suite_id="operon_v1_default_suite",
@@ -49,14 +47,6 @@ DEFAULT_BENCHMARK_SUITE = BenchmarkSuiteSpec(
             intent=DEFAULT_FORM_BENCHMARK_INTENT,
             expected_completion_signal="form success",
             difficulty_tags=["single_page", "placeholder_heavy"],
-        ),
-        BenchmarkTaskSpec(
-            task_id="gmail_draft_authenticated",
-            page_url=DEFAULT_GMAIL_BENCHMARK_URL,
-            task_type=BenchmarkTaskType.MULTI_STEP_FORM,
-            intent=DEFAULT_GMAIL_BENCHMARK_INTENT,
-            expected_completion_signal="draft created or intentional stop",
-            difficulty_tags=["multi_step", "dynamic_update"],
         ),
     ],
 )
@@ -118,24 +108,6 @@ async def run_form_benchmark(max_steps: int = 12, *, root_dir: str | Path = "run
         await executor.close()
 
 
-async def run_gmail_draft_benchmark(max_steps: int = 12, *, root_dir: str | Path = "runs"):
-    """Run the optional Gmail draft benchmark until a terminal condition is reached."""
-    load_dotenv(find_dotenv(usecwd=True), override=False)
-    loop, executor = _build_loop(root_dir=root_dir)
-    task_spec = DEFAULT_BENCHMARK_SUITE.tasks[1]
-    try:
-        response = await loop.run_live_benchmark(
-            intent=task_spec.intent,
-            benchmark_url=os.getenv("GMAIL_BENCHMARK_URL", task_spec.page_url),
-            max_steps=max_steps,
-        )
-        metrics = generate_run_metrics(response.run_id, root_dir=root_dir, task_spec=task_spec)
-        write_run_metrics(metrics, root_dir=root_dir)
-        return response
-    finally:
-        await executor.close()
-
-
 async def run_benchmark_suite(
     suite_spec: BenchmarkSuiteSpec = DEFAULT_BENCHMARK_SUITE,
     *,
@@ -181,8 +153,6 @@ async def run_benchmark_suite(
 def _task_url(task: BenchmarkTaskSpec) -> str:
     if task.page_url == DEFAULT_FORM_BENCHMARK_URL:
         return os.getenv("FORM_BENCHMARK_URL", task.page_url)
-    if task.page_url == DEFAULT_GMAIL_BENCHMARK_URL:
-        return os.getenv("GMAIL_BENCHMARK_URL", task.page_url)
     return task.page_url
 
 

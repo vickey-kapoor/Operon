@@ -10,6 +10,28 @@ from src.models.common import StrictModel
 from src.models.selector import TargetSelectionContext
 
 
+class ExpectedChange(StrEnum):
+    """What visual change the policy expects after the action executes.
+
+    Used by the video-verifier gate: video verification only fires when
+    the action was expected to produce visible change (content/navigation/dialog)
+    but no pixel change was detected. Actions with expectation=none or focus
+    are correct with low pixel delta — video-verifying them wastes Gemini calls.
+
+    none       — hover, scroll-into-view, no-op confirmations; low delta is correct
+    focus      — click into input, checkbox tick, radio select; low delta is correct
+    content    — click that should swap visible content (search submit, tab switch)
+    navigation — click that should change page or URL
+    dialog     — click that should open or close a modal/overlay
+    """
+
+    NONE = "none"
+    FOCUS = "focus"
+    CONTENT = "content"
+    NAVIGATION = "navigation"
+    DIALOG = "dialog"
+
+
 class ActionType(StrEnum):
     """Supported actions for browser and desktop automation."""
 
@@ -113,8 +135,7 @@ class AgentAction(StrictModel):
         elif self.action_type is ActionType.TYPE:
             if self.text is None:
                 raise ValueError("type requires text")
-            if self.selector is None and self.target_element_id is None and (self.x is None or self.y is None):
-                raise ValueError("type requires selector, coordinates, or target_element_id")
+            # Targetless TYPE is allowed: executor types into the currently focused element.
             if self.key is not None or self.url is not None or self.wait_ms is not None:
                 raise ValueError("type cannot include key, url, or wait_ms")
             if any(v is not None for v in _new_fields):
@@ -327,6 +348,14 @@ class PolicyDecision(StrictModel):
     rationale: str = Field(min_length=1)
     confidence: float = Field(ge=0.0, le=1.0)
     active_subgoal: str = Field(min_length=1)
+    # What visual change the planner expects after this action executes.
+    # Defaults to "none" so rule-generated decisions and old disk records deserialize
+    # without error. Live Gemini output is checked explicitly in parse_policy_output
+    # before model_validate — missing field there raises PolicyError loudly.
+    expected_change: ExpectedChange = ExpectedChange.NONE
+    # Set when a deterministic rule (not the LLM) produced this decision.
+    # The loop uses this to build the rule trace injected into the next LLM prompt.
+    rule_name: str | None = None
 
 
 AgentAction.model_rebuild()

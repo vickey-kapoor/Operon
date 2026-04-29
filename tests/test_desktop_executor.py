@@ -80,6 +80,7 @@ async def test_click_success() -> None:
     with (
         patch("src.executor.desktop.pyautogui.click") as mock_click,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_region_has_content", return_value=True),
     ):
         result = await executor.execute(action)
 

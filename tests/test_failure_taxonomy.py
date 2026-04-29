@@ -104,7 +104,7 @@ async def test_recovery_marks_retry_limit_as_terminal_failure() -> None:
 async def test_step_log_records_failure_taxonomy_for_failed_step() -> None:
     state = AgentState(run_id="run-3", intent="Create draft", status=RunStatus.PENDING)
     frame = CaptureFrame(artifact_path="runs/run-3/step_1/before.png", width=1280, height=800, mime_type="image/png")
-    perception = ScreenPerception(summary="Inbox visible", page_hint="gmail_inbox", capture_artifact_path=frame.artifact_path, visible_elements=[])
+    perception = ScreenPerception(summary="Inbox visible", page_hint="unknown", capture_artifact_path=frame.artifact_path, visible_elements=[])
     action = AgentAction(action_type=ActionType.CLICK, target_element_id="missing")
     decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.8, active_subgoal="open compose")
     executed = ExecutedAction(

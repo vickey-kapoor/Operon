@@ -72,7 +72,8 @@ def test_parse_policy_output_accepts_valid_json() -> None:
       },
       "rationale": "Submit the form.",
       "confidence": 0.91,
-      "active_subgoal": "submit_form"
+      "active_subgoal": "submit_form",
+      "expected_change": "content"
     }
     """
 
@@ -98,11 +99,29 @@ def test_parse_policy_output_rejects_schema_invalid_action() -> None:
       },
       "rationale": "Fill the name field",
       "confidence": 0.75,
-      "active_subgoal": "fill_name"
+      "active_subgoal": "fill_name",
+      "expected_change": "focus"
     }
     """
 
     with pytest.raises(PolicyError, match="strict schema"):
+        parse_policy_output(raw_output)
+
+
+def test_parse_policy_output_raises_when_expected_change_missing() -> None:
+    raw_output = """
+    {
+      "action": {
+        "action_type": "click",
+        "target_element_id": "submit-button"
+      },
+      "rationale": "Submit the form.",
+      "confidence": 0.91,
+      "active_subgoal": "submit_form"
+    }
+    """
+
+    with pytest.raises(PolicyError, match="expected_change"):
         parse_policy_output(raw_output)
 
 
@@ -117,7 +136,8 @@ def test_parse_policy_output_normalizes_type_enter_key_to_press_enter() -> None:
       },
       "rationale": "Search for the article.",
       "confidence": 1.0,
-      "active_subgoal": "search_for_markov_chain"
+      "active_subgoal": "search_for_markov_chain",
+      "expected_change": "content"
     }
     """
 
@@ -140,6 +160,7 @@ def test_parse_policy_output_normalizes_type_trailing_newline_to_press_enter() -
             "rationale": "submit search",
             "confidence": 0.9,
             "active_subgoal": "search for markov chain",
+            "expected_change": "content",
         }
     )
 
@@ -158,7 +179,8 @@ def test_parse_policy_output_lifts_nested_action_rationale() -> None:
         "rationale": "Submit the search after typing."
       },
       "confidence": 0.8,
-      "active_subgoal": "search_for_markov_chain"
+      "active_subgoal": "search_for_markov_chain",
+      "expected_change": "content"
     }
     """
 
@@ -179,7 +201,8 @@ def test_parse_policy_output_strips_nested_action_rationale_when_top_level_exist
       },
       "rationale": "Top-level rationale wins.",
       "confidence": 0.8,
-      "active_subgoal": "search_for_markov_chain"
+      "active_subgoal": "search_for_markov_chain",
+      "expected_change": "none"
     }
     """
 
@@ -216,7 +239,7 @@ async def test_policy_passes_type_through_to_executor(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     client = StubGeminiClient(
-        response='''{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.9,"active_subgoal":"fill_name"}'''
+        response='''{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.9,"active_subgoal":"fill_name","expected_change":"focus"}'''
     )
     service = GeminiPolicyService(gemini_client=client, prompt_path=prompt_path)
     state = AgentState(
@@ -244,7 +267,7 @@ async def test_policy_allows_type_when_input_is_focused(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     client = StubGeminiClient(
-        response='''{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.9,"active_subgoal":"fill_name"}'''
+        response='''{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.9,"active_subgoal":"fill_name","expected_change":"focus"}'''
     )
     service = GeminiPolicyService(gemini_client=client, prompt_path=prompt_path)
     state = AgentState(
@@ -276,7 +299,7 @@ async def test_gemini_policy_service_writes_debug_artifacts(tmp_path: Path) -> N
         encoding="utf-8",
     )
     client = StubGeminiClient(
-        response='''```json\n{"action":{"action_type":"click","target_element_id":"submit-button"},"rationale":"Submit the form.","confidence":0.89,"active_subgoal":"submit_form"}\n```'''
+        response='''```json\n{"action":{"action_type":"click","target_element_id":"submit-button"},"rationale":"Submit the form.","confidence":0.89,"active_subgoal":"submit_form","expected_change":"content"}\n```'''
     )
     service = GeminiPolicyService(gemini_client=client, prompt_path=prompt_path)
     state = AgentState(

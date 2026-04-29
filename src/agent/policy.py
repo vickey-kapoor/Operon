@@ -149,6 +149,12 @@ def parse_policy_output(raw_output: str) -> PolicyDecision:
 
     parsed = _normalize_policy_payload(parsed)
 
+    if "expected_change" not in parsed:
+        raise PolicyError(
+            "Gemini policy output is missing required field 'expected_change'. "
+            "Update the prompt to require this field."
+        )
+
     try:
         return PolicyDecision.model_validate(parsed)
     except ValidationError as exc:
@@ -188,6 +194,42 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
     _PAYLOAD_FIELDS = {"text", "url", "key", "selector", "x", "y", "wait_ms", "scroll_amount"}
     if action_type in (ActionType.STOP.value, ActionType.WAIT_FOR_USER.value):
         for _f in _PAYLOAD_FIELDS:
+            normalized_action.pop(_f, None)
+
+    # SCROLL: LLMs often put the scroll distance in y= instead of scroll_amount=,
+    # emit scroll_direction/direction="up"/"down" instead of a signed scroll_amount,
+    # use "pixels" instead of "scroll_amount", or omit x,y coordinates. Normalise all.
+    if action_type == ActionType.SCROLL.value:
+        # Accept both "scroll_direction" and bare "direction" as direction hints
+        direction = normalized_action.pop("scroll_direction", None) or normalized_action.pop("direction", None)
+        # Accept "pixels" as an alias for scroll_amount
+        if normalized_action.get("scroll_amount") is None:
+            pixels = normalized_action.pop("pixels", None)
+            if isinstance(pixels, int) and pixels != 0:
+                normalized_action["scroll_amount"] = pixels
+            else:
+                normalized_action.pop("pixels", None)
+                candidate = normalized_action.get("y")
+                if isinstance(candidate, int) and candidate != 0:
+                    normalized_action["scroll_amount"] = candidate
+                    normalized_action.pop("y", None)
+        else:
+            normalized_action.pop("pixels", None)
+        # Apply direction sign: "up" → negative, "down" → positive
+        if isinstance(direction, str) and normalized_action.get("scroll_amount") is not None:
+            amt = normalized_action["scroll_amount"]
+            if direction.lower() == "up" and isinstance(amt, int) and amt > 0:
+                normalized_action["scroll_amount"] = -amt
+        if normalized_action.get("x") is None:
+            normalized_action["x"] = 960
+        if normalized_action.get("y") is None:
+            normalized_action["y"] = 540
+
+    # CLICK/DOUBLE_CLICK/RIGHT_CLICK cannot carry text, key, url, or wait_ms.
+    # LLMs sometimes annotate a click with the label of the element being clicked
+    # (e.g. text="Water") — strip those fields before Pydantic validation rejects them.
+    if action_type in (ActionType.CLICK.value, ActionType.DOUBLE_CLICK.value, ActionType.RIGHT_CLICK.value):
+        for _f in ("text", "key", "url", "wait_ms"):
             normalized_action.pop(_f, None)
 
     wait_ms = normalized_action.get("wait_ms")

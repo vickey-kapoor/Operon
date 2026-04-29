@@ -172,12 +172,13 @@ class UIElement(StrictModel):
 class RawScreenPerception(StrictModel):
     """Strict model-facing screen perception with tolerant weak semantic fields."""
 
-    summary: str = Field(min_length=1)
+    summary: str = Field(default="", min_length=0)
     page_hint: PageHint
     visible_elements: list[RawUIElement] = Field(default_factory=list)
     focused_element_id: str | None = Field(default=None, min_length=1)
     capture_artifact_path: str = Field(min_length=1)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    low_confidence_reason: str | None = None
     # Virtual-desktop origin of the monitor this perception was captured from.
     # Coords in visible_elements are monitor-local; add this offset to get
     # virtual-desktop coords for pyautogui. Defaults to (0, 0) (primary display).
@@ -187,7 +188,7 @@ class RawScreenPerception(StrictModel):
 class ScreenPerception(StrictModel):
     """Canonical typed understanding of the current screen state."""
 
-    summary: str = Field(min_length=1)
+    summary: str = Field(default="", min_length=0)
     page_hint: PageHint
     visible_elements: list[UIElement] = Field(default_factory=list)
     focused_element_id: str | None = Field(default=None, min_length=1)

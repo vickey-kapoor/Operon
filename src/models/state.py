@@ -32,3 +32,6 @@ class AgentState(StrictModel):
     stop_reason: StopReason | None = None
     hitl_message: str | None = Field(default=None, description="LLM-generated message shown to the human when a run pauses for intervention")
     force_fresh_perception: bool = Field(default=False, description="When True the loop waits an extra settle delay before the next capture, then resets. Set by the no-progress recovery rule after a visual perturbation.")
+    # Carries the outcome of the most recent deterministic rule that fired.
+    # Injected into the next LLM prompt so the planner knows what the rule tried and whether it worked.
+    last_rule_trace: str | None = None

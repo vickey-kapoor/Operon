@@ -83,6 +83,8 @@ class FileBackedMemoryStore(MemoryStore):
         self._seeded_guardrail_keys: set[str] = set()
         self._seed_default_guardrails()
 
+    _WEIGHT_PRUNE_THRESHOLD = 0.1
+
     def get_hints(
         self,
         *,
@@ -125,13 +127,21 @@ class FileBackedMemoryStore(MemoryStore):
             bucket_key = (record.key, record.hint)
             bucket = ranked.setdefault(
                 bucket_key,
-                {"key": record.key, "hint": record.hint, "count": 0, "score": score, "source": "memory"},
+                {"key": record.key, "hint": record.hint, "count": 0, "score": score, "source": "memory",
+                 "weight_sum": 0.0, "weight_n": 0},
             )
             bucket["count"] = int(bucket["count"]) + record.count
             bucket["score"] = max(int(bucket["score"]), score) + record.count
+            bucket["weight_sum"] = float(bucket["weight_sum"]) + record.weight
+            bucket["weight_n"] = int(bucket["weight_n"]) + 1
 
+        # Compute effective weight per bucket (mean of all contributing records) and prune
+        pruned = {
+            k: v for k, v in ranked.items()
+            if (float(v["weight_sum"]) / max(1, int(v["weight_n"]))) >= self._WEIGHT_PRUNE_THRESHOLD
+        }
         ordered = sorted(
-            ranked.values(),
+            pruned.values(),
             key=lambda item: (int(item["score"]), int(item["count"]), str(item["key"])),
             reverse=True,
         )
@@ -167,7 +177,56 @@ class FileBackedMemoryStore(MemoryStore):
         )
         for record in records:
             self._append_record(record)
+
+        # Memory decay: when verification failed, halve the weight of hints that were
+        # active for this benchmark+page_hint+subgoal context (they were shown to the
+        # agent and correlated with a failing step).
+        if verification.status is VerificationStatus.FAILURE:
+            self._decay_active_hints(
+                benchmark=benchmark,
+                page_hint=perception.page_hint,
+                subgoal=state.current_subgoal,
+            )
+
         return records
+
+    def _decay_active_hints(
+        self,
+        *,
+        benchmark: str,
+        page_hint: PageHint,
+        subgoal: str | None,
+    ) -> None:
+        """Append decay records for hints active in this context after a verification failure."""
+        existing = self._load_records()
+        # Find the current effective weight per (key, hint) bucket for this context
+        bucket_weights: dict[tuple[str, str], list[float]] = {}
+        for record in existing:
+            if record.benchmark != benchmark:
+                continue
+            if record.page_hint is not None and record.page_hint != page_hint:
+                continue
+            bk = (record.key, record.hint)
+            bucket_weights.setdefault(bk, []).append(record.weight)
+
+        for (key, hint), weights in bucket_weights.items():
+            effective = sum(weights) / len(weights)
+            if effective < self._WEIGHT_PRUNE_THRESHOLD:
+                continue  # already pruned — no further decay needed
+            decayed = max(0.0, effective * 0.5)
+            self._append_record(
+                MemoryRecord(
+                    key=key,
+                    benchmark=benchmark,
+                    hint=hint,
+                    outcome=MemoryOutcome.FAILURE,
+                    page_hint=page_hint,
+                    subgoal=subgoal,
+                    success=False,
+                    weight=decayed,
+                )
+            )
+            logger.debug("Memory decay: key=%r effective_weight %.3f → %.3f", key, effective, decayed)
 
     def _seed_default_guardrails(self) -> None:
         from src.benchmarks.registry import BENCHMARK_REGISTRY

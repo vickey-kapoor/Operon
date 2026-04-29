@@ -10,11 +10,10 @@ Current run context:
 - intent: {intent}
 - current_subgoal: {current_subgoal}
 - step_count: {step_count}
-- previous_summary: {previous_summary}
+- previous_page_hint: {previous_page_hint}
 
 Return a single JSON object with exactly this shape:
 {{
-  "summary": "short factual summary of the visible desktop state",
   "page_hint": "short snake_case label for the current screen context",
   "focused_element_id": "optional focused element id or null",
   "confidence": 0.0,
@@ -22,7 +21,7 @@ Return a single JSON object with exactly this shape:
     {{
       "element_id": "stable local identifier you assign",
       "element_type": "button|input|link|text|dialog|icon|menu_item|window|unknown",
-      "label": "visible text or concise label",
+      "label": "≤5 words",
       "x": 0,
       "y": 0,
       "width": 1,
@@ -37,8 +36,10 @@ Rules:
 - Output valid JSON only.
 - page_hint is required. Use a short snake_case string that classifies the current desktop context. Common values: desktop, application_window, start_menu, taskbar, file_dialog, calculator, notepad, file_explorer, settings, context_menu, notification, login_screen, unknown. For other contexts, invent a descriptive snake_case label.
 - Use confidence values between 0.0 and 1.0.
-- Keep labels concise and factual.
+- Include ONLY interactable elements. Omit decorative text, icons, and non-interactable content.
+- Labels must be ≤5 words. Use the element's visible text verbatim when available; otherwise a minimal factual descriptor.
 - Report coordinates as absolute screen pixels (x, y are the top-left corner of the element bounding box).
+- Only provide detailed explanations if confidence is below 0.5. In that case, add a "low_confidence_reason" string field (≤20 words) at the top level. Otherwise remain strictly schematic — omit that field entirely.
 - Be precise with coordinates — the agent will click at these positions.
 - Use "unknown" if the element type is unclear.
 

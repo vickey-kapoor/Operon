@@ -120,36 +120,10 @@ def _search_perception(root: Path, *, focused_element_id: str | None = None) -> 
 
 
 @pytest.mark.asyncio
-async def test_rule_first_policy_takes_precedence_for_login_guardrail() -> None:
-    root = _local_test_dir("test-policy-coordinator-login")
-    client = StubGeminiClient(
-        response='{"action":{"action_type":"click","target_element_id":"submit-button"},"rationale":"Submit the form.","confidence":0.9,"active_subgoal":"submit_form"}'
-    )
-    coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
-        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
-    )
-    state = AgentState(
-        run_id="run-1",
-        intent="Create a Gmail draft and stop before send.",
-        benchmark="gmail_draft_authenticated",
-        status=RunStatus.RUNNING,
-        current_subgoal="open compose",
-    )
-    perception = _form_perception(root, page_hint="google_sign_in")
-
-    decision = await coordinator.choose_action(state, perception)
-
-    assert decision.action.action_type is ActionType.STOP
-    assert "authenticated Gmail start state" in decision.rationale
-    assert client.calls == 0
-
-
-@pytest.mark.asyncio
 async def test_llm_policy_used_only_when_no_rule_matches() -> None:
     root = _local_test_dir("test-policy-coordinator-llm-fallback")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"click","target_element_id":"help-link"},"rationale":"Inspect the help link.","confidence":0.9,"active_subgoal":"inspect page"}'
+        response='{"action":{"action_type":"click","target_element_id":"help-link"},"rationale":"Inspect the help link.","confidence":0.9,"active_subgoal":"inspect page","expected_change":"navigation"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -199,7 +173,7 @@ async def test_type_action_reaches_executor_without_rule_interception() -> None:
     # the returned TYPE decision is not intercepted by a pre-emptive CLICK rule.
     root = _local_test_dir("test-policy-coordinator-focus")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.8,"active_subgoal":"fill_name"}'
+        response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -225,7 +199,7 @@ async def test_type_action_reaches_executor_without_rule_interception() -> None:
 async def test_search_query_rule_clicks_search_input_before_typing() -> None:
     root = _local_test_dir("test-policy-coordinator-search-click")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused"}'
+        response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -249,7 +223,7 @@ async def test_search_query_rule_clicks_search_input_before_typing() -> None:
 async def test_search_query_rule_types_and_submits_when_search_input_focused() -> None:
     root = _local_test_dir("test-policy-coordinator-search-type")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused"}'
+        response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -278,7 +252,7 @@ async def test_search_query_rule_types_and_submits_when_search_input_focused() -
 async def test_no_identical_type_retry_is_enforced_after_failed_type() -> None:
     root = _local_test_dir("test-policy-coordinator-no-identical-retry")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Retry name.","confidence":0.8,"active_subgoal":"fill_name"}'
+        response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Retry name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -327,7 +301,7 @@ async def test_no_identical_type_retry_is_enforced_after_failed_type() -> None:
 async def test_failed_type_target_not_found_forces_click_on_next_step() -> None:
     root = _local_test_dir("test-policy-coordinator-target-not-found-click")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Retry name.","confidence":0.8,"active_subgoal":"fill_name"}'
+        response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Retry name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -376,7 +350,7 @@ async def test_form_success_stop_confirmed_when_llm_agrees() -> None:
     """Rule fires success stop; LLM also returns STOP → run terminates."""
     root = _local_test_dir("test-policy-coordinator-form-success-confirmed")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"stop"},"rationale":"Task complete.","confidence":1.0,"active_subgoal":"verify_success"}'
+        response='{"action":{"action_type":"stop"},"rationale":"Task complete.","confidence":1.0,"active_subgoal":"verify_success","expected_change":"none"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -403,7 +377,7 @@ async def test_form_success_stop_overridden_when_llm_sees_error() -> None:
     """Rule fires success stop; LLM returns a recovery action → stop is rejected."""
     root = _local_test_dir("test-policy-coordinator-form-success-override")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"wait","wait_ms":500},"rationale":"Error page visible, not success.","confidence":0.9,"active_subgoal":"reassess"}'
+        response='{"action":{"action_type":"wait","wait_ms":500},"rationale":"Error page visible, not success.","confidence":0.9,"active_subgoal":"reassess","expected_change":"none"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
@@ -429,7 +403,7 @@ async def test_form_success_stop_overridden_when_llm_sees_error() -> None:
 async def test_browser_navigation_summary_does_not_trigger_success_stop_rule() -> None:
     root = _local_test_dir("test-policy-coordinator-browser-navigation")
     client = StubGeminiClient(
-        response='{"action":{"action_type":"click","x":229,"y":257},"rationale":"Click the Learn more link.","confidence":0.8,"active_subgoal":"click_link"}'
+        response='{"action":{"action_type":"click","x":229,"y":257},"rationale":"Click the Learn more link.","confidence":0.8,"active_subgoal":"click_link","expected_change":"navigation"}'
     )
     coordinator = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),

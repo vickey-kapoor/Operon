@@ -34,6 +34,10 @@ class MemoryRecord(StrictModel):
     stage: LoopStage | None = None
     success: bool = False
     count: int = Field(default=1, ge=1)
+    # Advisory confidence weight [0, 1]. Halved each time this hint is used but the
+    # subsequent verification fails. Hints whose effective bucket weight drops below
+    # 0.1 are pruned from get_hints() results.
+    weight: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class MemoryHint(StrictModel):

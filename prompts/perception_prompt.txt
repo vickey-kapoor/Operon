@@ -10,11 +10,10 @@ Current run context:
 - intent: {intent}
 - current_subgoal: {current_subgoal}
 - step_count: {step_count}
-- previous_summary: {previous_summary}
+- previous_page_hint: {previous_page_hint}
 
 Return a single JSON object with exactly this shape:
 {{
-  "summary": "short factual summary of the visible screen",
   "page_hint": "short snake_case label for the page type (e.g. form_page, form_success, search_results, article_page, login_page, shopping_cart, unknown)",
   "focused_element_id": "optional focused element id or null",
   "confidence": 0.0,
@@ -22,7 +21,7 @@ Return a single JSON object with exactly this shape:
     {{
       "element_id": "stable local identifier you assign",
       "element_type": "button|input|link|text|dialog|icon|unknown",
-      "label": "visible text or concise label",
+      "label": "≤5 words",
       "x": 0,
       "y": 0,
       "width": 1,
@@ -37,12 +36,13 @@ Rules:
 - Output valid JSON only.
 - page_hint is required. Use a short snake_case string that classifies the current page. Use well-known values (form_page, form_success, login_page, unknown) when they apply. For other pages, invent a descriptive snake_case label.
 - Use confidence values between 0.0 and 1.0.
-- Include only elements that are actually visible.
-- Keep labels concise and factual.
+- Include ONLY interactable elements (buttons, inputs, links, dialogs). Omit decorative text, icons, and non-interactable content.
+- Labels must be ≤5 words. Use the element's visible text verbatim when available; otherwise a minimal factual descriptor.
 - Use "unknown" if the element type is unclear.
 - If no interactive elements are visible, return an empty visible_elements list.
 - Use form_page when a visible form with input fields is present.
 - Use form_success when a visible success, thank-you, or confirmation state is clearly shown.
+- Only provide detailed explanations if confidence is below 0.5. In that case, add a "low_confidence_reason" string field (≤20 words) at the top level. Otherwise remain strictly schematic — omit that field entirely.
 # LOAD-BEARING — do not change without updating the coordinate assertion in perception.py:
 # Coordinates (x, y, width, height) MUST be in the pixel space of the image provided.
 # Do not normalize, use percentages, or adjust for display DPI.

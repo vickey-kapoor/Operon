@@ -625,8 +625,8 @@ class PolicyRuleEngine:
         run_id = state.run_id
         _fields_filled: set[str] = self._form_fields_filled.setdefault(run_id, set())
 
-        # Collect text values already typed this run
-        recently_typed: set[str] = {
+        # Collect text values already typed this run (reserved for future duplicate-type detection)
+        _recently_typed: set[str] = {
             a.action.text
             for a in state.action_history
             if a.action.action_type is ActionType.TYPE and a.action.text
@@ -709,7 +709,7 @@ class PolicyRuleEngine:
                             press_enter=False,
                             clear_before_typing=True,
                         ),
-                        rationale=f"Form message field visible and intent requires it — typing message.",
+                        rationale="Form message field visible and intent requires it — typing message.",
                         confidence=0.92,
                         active_subgoal="fill message field",
                     )

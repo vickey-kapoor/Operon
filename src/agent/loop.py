@@ -992,7 +992,7 @@ class AgentLoop:
             return None
 
         if video_path is None:
-            _trace("  5b VIDEO_VERIFY SKIPPED", f"browser executor returned video_path=None (no screen recording)")
+            _trace("  5b VIDEO_VERIFY SKIPPED", "browser executor returned video_path=None (no screen recording)")
             return None
 
         # Update executed_action recording path (informational)

@@ -379,7 +379,6 @@ class DesktopExecutor(Executor):
 
     async def capture(self) -> CaptureFrame:
         """Take a 3-frame burst screenshot and return the last frame with visual velocity."""
-        import time as _time
         frame, velocity = await asyncio.to_thread(self._capture_burst_sync)
         if velocity > 0.02:
             # Screen is still animating — wait and re-capture once before perceiving
@@ -393,7 +392,7 @@ class DesktopExecutor(Executor):
         import time as _time
         with mss.mss() as sct:
             monitor = _foreground_monitor() or sct.monitors[1]
-            shot0 = sct.grab(monitor)
+            sct.grab(monitor)  # t0 frame (discarded — used only to warm up the capture pipeline)
             _time.sleep(0.1)
             shot1 = sct.grab(monitor)
             _time.sleep(0.1)

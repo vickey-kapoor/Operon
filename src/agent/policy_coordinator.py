@@ -59,6 +59,29 @@ class PolicyCoordinator(PolicyService):
         self._cached_hints_key = cache_key
         return hints
 
+    def reset_run_context(self, run_id: str) -> None:
+        """Reset per-run coordinator state for a new task.
+
+        Called at the start of each new run so episode replay and hint caches
+        from a previous task do not bleed into the new one.
+
+        Auth-related browser state (cookies, session tokens) is NOT cleared here —
+        that is managed at the browser-executor level and intentionally preserved
+        across runs of authenticated benchmarks (e.g. WebArena/GitLab).
+
+        Clears:
+        - Active episode and replay state (episodic memory is task-keyed)
+        - Hint cache (benchmark/page_hint context changes per run)
+        - Last rule trace (stale rule context from a prior run)
+        """
+        self._active_episode = None
+        self._replay_state = None
+        self._cached_hints = None
+        self._cached_hints_key = None
+        self.rule_engine._form_options_clicked.pop(run_id, None)
+        self.rule_engine._form_fields_filled.pop(run_id, None)
+        logger.debug("PolicyCoordinator: run context reset for run_id=%r", run_id)
+
     def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
         """Fetch memory hints and inject them into the delegate BEFORE perceive().
 
@@ -87,6 +110,10 @@ class PolicyCoordinator(PolicyService):
         decision = self.rule_engine.choose_action(state, perception, memory_hints, benchmark_name=benchmark)
         selector_traces = self.rule_engine.latest_selector_traces()
         if decision is not None:
+            # Stamp which rule fired so the loop can build a rule trace for the next LLM prompt
+            fired_rule = self.rule_engine.last_fired_rule_name()
+            if fired_rule and decision.rule_name is None:
+                decision = decision.model_copy(update={"rule_name": fired_rule})
             if _is_rule_success_stop(decision):
                 confirmed = await self._confirm_success(state, perception, decision)
                 if confirmed is not decision:
@@ -99,6 +126,11 @@ class PolicyCoordinator(PolicyService):
 
         if hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
+
+        # Rule-Augmented Generation: if a rule fired last step, inject its outcome
+        # so the LLM planner knows what was tried and whether it succeeded.
+        if state.last_rule_trace and hasattr(self.delegate, "add_advisory_hints"):
+            self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
 
         decision = await self.delegate.choose_action(state, perception)
         decision = await self._reject_hallucinated_target(state, perception, decision)

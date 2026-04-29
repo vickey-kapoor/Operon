@@ -254,8 +254,8 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
         ):
             routes_module.get_desktop_agent_loop()
 
-            # Gemini path creates two clients: one for the combined backend, one for the verifier.
-            assert mock_gemini.call_count == 2
+            # Gemini path: combined backend + verifier + dedicated video-verify client = 3
+            assert mock_gemini.call_count == 3
             calls = mock_gemini.call_args_list
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in calls)
     finally:
@@ -299,7 +299,8 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
         ):
             routes_module.get_desktop_agent_loop()
 
-            assert mock_gemini.call_count == 1
+            # Anthropic path: Gemini perception + dedicated video-verify client = 2 Gemini calls
+            assert mock_gemini.call_count == 2
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in mock_gemini.call_args_list)
             assert mock_anthropic.call_count == 2
             assert all(c.kwargs["model"] == "claude-sonnet-4-20250514" for c in mock_anthropic.call_args_list)
@@ -345,7 +346,8 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
         ):
             routes_module.get_agent_loop()
 
-            assert mock_gemini.call_count == 1
+            # Anthropic verifier path: Gemini perception (via fallback) + dedicated video client = 2
+            assert mock_gemini.call_count == 2
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in mock_gemini.call_args_list)
             assert mock_anthropic.call_count == 2
             assert all(c.kwargs["model"] == "claude-sonnet-4-20250514" for c in mock_anthropic.call_args_list)

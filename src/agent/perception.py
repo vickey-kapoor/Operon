@@ -97,6 +97,17 @@ class GeminiPerceptionService(PerceptionService):
                 usage_artifact_path=str(debug_artifacts.usage_artifact_path),
                 usage=_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
             )
+            usage = self._last_debug_artifacts.usage
+            if usage is not None:
+                logger.info(
+                    "perception_usage step=%d attempt=%d in=%d out=%d total=%d cost_usd=%.6f",
+                    state.step_count,
+                    attempt,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.input_tokens + usage.output_tokens,
+                    (usage.estimated_cost_usd or 0.0),
+                )
             scale_ratio = self.gemini_client.latest_perception_scale_ratio()
             perception = parse_perception_output(raw_output, screenshot.artifact_path, scale_ratio=scale_ratio)
             if screenshot.monitor_left or screenshot.monitor_top:
@@ -173,12 +184,16 @@ class GeminiPerceptionService(PerceptionService):
         return self._last_debug_artifacts
 
     def _render_prompt(self, state: AgentState, *, semantic_retry: bool = False) -> str:
-        previous_summary = state.observation_history[-1].summary if state.observation_history else "none"
+        previous_page_hint = (
+            state.observation_history[-1].page_hint.value
+            if state.observation_history
+            else "none"
+        )
         prompt = self._prompt_template.format(
             intent=state.intent,
             current_subgoal=state.current_subgoal or "not set",
             step_count=state.step_count,
-            previous_summary=previous_summary,
+            previous_page_hint=previous_page_hint,
         )
         if semantic_retry:
             prompt = (

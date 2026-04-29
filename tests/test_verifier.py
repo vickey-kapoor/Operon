@@ -92,7 +92,7 @@ async def test_verifier_distinguishes_benchmark_precondition_stop() -> None:
     action = AgentAction(action_type=ActionType.STOP)
     decision = PolicyDecision(
         action=action,
-        rationale="Benchmark requires an authenticated Gmail start state; login/auth screens are out of scope.",
+        rationale="Benchmark requires an authenticated start state; pre-auth screens are out of scope.",
         confidence=1.0,
         active_subgoal="stop for benchmark setup",
     )

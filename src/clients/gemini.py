@@ -15,6 +15,13 @@ from typing import Any
 import httpx
 from PIL import Image
 
+try:
+    import google.auth
+    import google.auth.transport.requests as google_auth_transport
+    _GOOGLE_AUTH_AVAILABLE = True
+except ImportError:
+    _GOOGLE_AUTH_AVAILABLE = False
+
 from src.models.usage import ModelUsage, estimate_usage_cost
 
 logger = logging.getLogger(__name__)
@@ -48,8 +55,21 @@ class GeminiClient(ABC):
         return 1.0
 
 
+_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT", "propane-cubist-479515-c5")
+_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
+_VERTEX_SYSTEM_INSTRUCTION = (
+    "You are the visual cortex of Operon. "
+    "Identify the element at (x,y) and describe the visual delta."
+)
+
+
 class GeminiHttpClient(GeminiClient):
-    """Async HTTP client for Gemini with connection pooling via httpx."""
+    """Async HTTP client for Gemini with connection pooling via httpx.
+
+    Set use_vertex=True to route calls through Vertex AI using Application
+    Default Credentials instead of an API key. Requires `gcloud auth
+    application-default login` to be run first.
+    """
 
     def __init__(
         self,
@@ -59,19 +79,36 @@ class GeminiHttpClient(GeminiClient):
         timeout_seconds: float = 30.0,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.5,
+        use_vertex: bool | None = None,
+        vertex_project: str | None = None,
+        vertex_location: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        self.api_base_url = api_base_url or os.getenv(
-            "GEMINI_API_BASE_URL",
-            "https://generativelanguage.googleapis.com/v1beta/models",
-        )
+        self.use_vertex = use_vertex if use_vertex is not None else os.getenv("OPERON_USE_VERTEX", "").lower() in ("1", "true", "yes")
+        self.vertex_project = vertex_project or _VERTEX_PROJECT
+        self.vertex_location = vertex_location or _VERTEX_LOCATION
+        if self.use_vertex:
+            self.api_base_url = (
+                f"https://{self.vertex_location}-aiplatform.googleapis.com/v1"
+                f"/projects/{self.vertex_project}/locations/{self.vertex_location}"
+                f"/publishers/google/models"
+            )
+            print(f"OPERON-INFRA: Targeting Vertex AI Project {self.vertex_project}")  # noqa: T201
+            logger.info("Using Vertex AI Project: %s  location: %s", self.vertex_project, self.vertex_location)
+        else:
+            self.api_base_url = api_base_url or os.getenv(
+                "GEMINI_API_BASE_URL",
+                "https://generativelanguage.googleapis.com/v1beta/models",
+            )
         self.timeout_seconds = timeout_seconds
         self.max_retries = max(0, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self._client: httpx.AsyncClient | None = None
         self._last_usage: ModelUsage | None = None
         self._last_perception_scale_ratio: float = 1.0
+        self._vertex_credentials: Any = None
+        self.cached_content_name: str | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazy-init a persistent async client with connection pooling."""
@@ -88,6 +125,8 @@ class GeminiHttpClient(GeminiClient):
         image_bytes, scale_ratio = await asyncio.to_thread(_optimize_screenshot, Path(screenshot_path))
         self._last_perception_scale_ratio = scale_ratio
         payload = self._build_perception_payload(prompt=prompt, image_bytes=image_bytes, mime_type="image/jpeg")
+        if self.use_vertex:
+            payload["systemInstruction"] = {"parts": [{"text": _VERTEX_SYSTEM_INSTRUCTION}]}
         return await self._post_json_payload(payload, request_kind="image")
 
     def latest_perception_scale_ratio(self) -> float:
@@ -109,24 +148,103 @@ class GeminiHttpClient(GeminiClient):
     def latest_usage(self) -> ModelUsage | None:
         return self._last_usage
 
-    async def _post_json_payload(self, payload: dict[str, Any], *, request_kind: str) -> str:
-        api_key = self.api_key or os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise GeminiClientError("GEMINI_API_KEY is not configured.")
+    def _vertex_auth_header(self) -> str:
+        """Fetch a fresh ADC bearer token for Vertex AI requests."""
+        if not _GOOGLE_AUTH_AVAILABLE:
+            raise GeminiClientError(
+                "google-auth is required for Vertex AI. Run: pip install google-auth"
+            )
+        if self._vertex_credentials is None:
+            self._vertex_credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+        req = google_auth_transport.Request()
+        self._vertex_credentials.refresh(req)
+        return self._vertex_credentials.token
 
-        url = f"{self.api_base_url}/{self.model}:generateContent?key={api_key}"
+    async def create_cache(self, system_prompt: str, ttl: str = "7200s") -> str:
+        """Create a Gemini cached content resource and store its name on this client.
+
+        Subsequent generate_* calls will automatically reference the cache,
+        cutting input token costs by ~90% for repeated requests with the same
+        static context. Requires the model to support caching (>=32k tokens
+        for Developer API; Vertex AI supports smaller minimums).
+
+        Returns the cache resource name (e.g. 'cachedContents/abc123').
+        """
+        if self.use_vertex:
+            token = await asyncio.to_thread(self._vertex_auth_header)
+            url = (
+                f"https://{self.vertex_location}-aiplatform.googleapis.com/v1"
+                f"/projects/{self.vertex_project}/locations/{self.vertex_location}"
+                f"/cachedContents"
+            )
+            auth_headers = {"Authorization": f"Bearer {token}"}
+            model_ref = f"projects/{self.vertex_project}/locations/{self.vertex_location}/publishers/google/models/{self.model}"
+        else:
+            api_key = self.api_key or os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise GeminiClientError("GEMINI_API_KEY is not configured.")
+            url = f"https://generativelanguage.googleapis.com/v1beta/cachedContents?key={api_key}"
+            auth_headers = {}
+            model_ref = f"models/{self.model}"
+
+        body = {
+            "model": model_ref,
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": [],
+            "ttl": ttl,
+        }
+        client = await self._get_client()
+        response = await client.post(
+            url,
+            content=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json", **auth_headers},
+        )
+        if response.status_code not in (200, 201):
+            raise GeminiClientError(f"Cache creation failed {response.status_code}: {response.text}")
+        data = response.json()
+        name = data.get("name", "")
+        if not name:
+            raise GeminiClientError(f"Cache creation response missing 'name': {data}")
+        self.cached_content_name = name
+        logger.info("Context cache created: %s  ttl=%s", name, ttl)
+        return name
+
+    async def _post_json_payload(self, payload: dict[str, Any], *, request_kind: str) -> str:
+        if self.use_vertex:
+            token = await asyncio.to_thread(self._vertex_auth_header)
+            url = f"{self.api_base_url}/{self.model}:generateContent"
+            auth_headers = {"Authorization": f"Bearer {token}"}
+        else:
+            api_key = self.api_key or os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise GeminiClientError("GEMINI_API_KEY is not configured.")
+            url = f"{self.api_base_url}/{self.model}:generateContent?key={api_key}"
+            auth_headers = {}
+
+        if self.cached_content_name:
+            payload = {**payload, "cachedContent": self.cached_content_name}
+
         client = await self._get_client()
         attempts = self.max_retries + 1
         last_error: GeminiClientError | None = None
         # Pre-serialize once — avoids re-encoding base64 payload on retries
         payload_bytes = json.dumps(payload).encode("utf-8")
 
+        # Hard asyncio timeout guards against slow-drip streaming responses
+        # that never trigger httpx's per-chunk read timeout.
+        hard_timeout = self.timeout_seconds + 30.0
+
         for attempt in range(1, attempts + 1):
             try:
-                response = await client.post(
-                    url,
-                    content=payload_bytes,
-                    headers={"Content-Type": "application/json"},
+                response = await asyncio.wait_for(
+                    client.post(
+                        url,
+                        content=payload_bytes,
+                        headers={"Content-Type": "application/json", **auth_headers},
+                    ),
+                    timeout=hard_timeout,
                 )
                 if response.status_code != 200:
                     detail = response.text
@@ -138,11 +256,11 @@ class GeminiHttpClient(GeminiClient):
                 else:
                     response_body = response.text
                     break
-            except httpx.TimeoutException as exc:
-                last_error = GeminiClientError(f"Gemini request timed out after {self.timeout_seconds} seconds.")
+            except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+                last_error = GeminiClientError(f"Gemini request timed out after {hard_timeout} seconds.")
                 if attempt >= attempts:
                     raise last_error from exc
-                self._log_retry(attempt, attempts, f"timeout after {self.timeout_seconds} seconds")
+                self._log_retry(attempt, attempts, f"timeout after {hard_timeout} seconds")
             except httpx.ConnectError as exc:
                 last_error = GeminiClientError(f"Gemini connection failed: {exc}")
                 if attempt >= attempts:
@@ -162,6 +280,17 @@ class GeminiHttpClient(GeminiClient):
         except json.JSONDecodeError as exc:
             raise GeminiClientError("Gemini response was not valid JSON.") from exc
         self._last_usage = _extract_usage(payload=response_payload, model=self.model, request_kind=request_kind)
+        if self._last_usage is not None:
+            logger.info(
+                "gemini_usage kind=%s model=%s in=%s out=%s total=%s cost_usd=%s vertex=%s",
+                request_kind,
+                self.model,
+                self._last_usage.input_tokens,
+                self._last_usage.output_tokens,
+                self._last_usage.total_tokens,
+                f"{self._last_usage.estimated_cost_usd:.6f}" if self._last_usage.estimated_cost_usd else "n/a",
+                self.use_vertex,
+            )
         return self.extract_text(response_payload)
 
     @staticmethod
@@ -182,6 +311,7 @@ class GeminiHttpClient(GeminiClient):
         return {
             "contents": [
                 {
+                    "role": "user",
                     "parts": [
                         {"text": prompt},
                         {
@@ -190,7 +320,7 @@ class GeminiHttpClient(GeminiClient):
                                 "data": base64.b64encode(image_bytes).decode("utf-8"),
                             }
                         },
-                    ]
+                    ],
                 }
             ],
             "generationConfig": {
@@ -205,9 +335,10 @@ class GeminiHttpClient(GeminiClient):
         return {
             "contents": [
                 {
+                    "role": "user",
                     "parts": [
                         {"text": prompt},
-                    ]
+                    ],
                 }
             ],
             "generationConfig": {

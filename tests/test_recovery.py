@@ -178,7 +178,7 @@ async def test_recovery_focus_subgoal_drives_next_policy_click(tmp_path: Path) -
     # a well-prompted LLM would choose given subgoal="focus subject-input".
     class _ClickStubClient:
         async def generate_policy(self, prompt: str) -> str:
-            return '{"action":{"action_type":"click","target_element_id":"subject-input","x":470,"y":194},"rationale":"Focus subject-input.","confidence":0.9,"active_subgoal":"focus subject-input"}'
+            return '{"action":{"action_type":"click","target_element_id":"subject-input","x":470,"y":194},"rationale":"Focus subject-input.","confidence":0.9,"active_subgoal":"focus subject-input","expected_change":"focus"}'
 
         async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
             raise NotImplementedError
@@ -193,7 +193,7 @@ async def test_recovery_focus_subgoal_drives_next_policy_click(tmp_path: Path) -
         state,
         ScreenPerception(
             summary="Compose form visible.",
-            page_hint="gmail_compose",
+            page_hint="unknown",
             visible_elements=[
                 UIElement(
                     element_id="subject-input",

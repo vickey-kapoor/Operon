@@ -73,6 +73,7 @@ class NativeBrowserExecutor(Executor):
         self,
         *,
         artifact_dir: str | Path = ".browser-artifacts",
+# ✅ Healed 2026-04-26T22:45:36Z | Added --disable-blink-features=AutomationControlled to prevent detection and add
         viewport_width: int | None = None,
         viewport_height: int | None = None,
         headless: bool | None = None,
@@ -94,6 +95,9 @@ class NativeBrowserExecutor(Executor):
         self._sessions: dict[str, _BrowserSession] = {}
         self._run_headless: dict[str, bool | None] = {}
         self._fresh_session_run_id: str | None = None
+        # Stores the last JavaScript dialog message per run_id so the loop can
+        # surface form-submit success alerts that headless mode auto-dismisses.
+        self._last_dialog_message: dict[str, str] = {}
 
     def set_current_run_id(self, run_id: str) -> None:
         self._current_run_id = run_id
@@ -185,6 +189,7 @@ class NativeBrowserExecutor(Executor):
                     if point is None:
                         return self._fail(action, "click requires selector or x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
                     await page.mouse.click(*point)
+                await self._adopt_new_tab_if_opened()
             elif at is ActionType.HOVER:
                 page = await self._current_page()
                 point = self._action_point(action)
@@ -196,12 +201,83 @@ class NativeBrowserExecutor(Executor):
                 if action.text is None:
                     return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
                 point = self._action_point(action)
+                _typed = False
                 if point is not None:
-                    await page.mouse.click(*point)
-                if action.clear_before_typing:
-                    await page.keyboard.press("Control+A")
-                    await page.keyboard.press("Backspace")
-                await page.keyboard.type(action.text)
+                    # Use elementFromPoint to target the exact element at the given
+                    # coordinates, then fill via ElementHandle.fill() which is more
+                    # reliable than click→keyboard.type() (avoids focus-stealing issues
+                    # where clicking coordinates A triggers focus on element B via JS).
+                    try:
+                        handle = await page.evaluate_handle(
+                            f"document.elementFromPoint({point[0]}, {point[1]})"
+                        )
+                        el = handle.as_element()
+                        if el is not None:
+                            tag = await page.evaluate("el => el.tagName.toLowerCase()", handle)
+                            # For email-address fills: always find the VISIBLE email input
+                            # by name/id (not type=email which often finds hidden WP fields),
+                            # scroll it into view, and type via keyboard (trusted events).
+                            # Also handles the textarea-mismatch case.
+                            if "@" in action.text:
+                                # elementFromPoint returned a textarea but we're filling
+                                # an email value — the form DOM layout differs from what
+                                # Gemini perceives. Use Playwright's ElementHandle to find
+                                # the actual email input, scroll it into view, click to
+                                # focus it, then type via keyboard so all native events
+                                # fire correctly (fixing form validation recognition).
+                                # After typing, clear any textarea that got contaminated.
+                                try:
+                                    import json as _json
+                                    # Target visible email input: prefer exact name/id match
+                                    # (input[type=email] often matches hidden contact-form
+                                    # inputs on WordPress pages; input[name=email] or #email
+                                    # finds the visible form field).
+                                    email_handle = await page.evaluate_handle(
+                                        "Array.from(document.querySelectorAll('input[name*=\"email\" i], input[id*=\"email\" i]'))"
+                                        ".find(el => {"
+                                        "  const r = el.getBoundingClientRect();"
+                                        "  return r.width > 0 && r.height > 0;"
+                                        "}) || null"
+                                    )
+                                    email_el = email_handle.as_element()
+                                    if email_el is not None:
+                                        await email_el.scroll_into_view_if_needed()
+                                        await email_el.click()
+                                        await page.keyboard.press("Control+A")
+                                        await page.keyboard.press("Backspace")
+                                        await page.keyboard.type(action.text)
+                                        # Clear any textarea that got contaminated by JS
+                                        await page.evaluate(
+                                            f"""document.querySelectorAll('textarea').forEach(t => {{
+                                                if (t.value === {_json.dumps(action.text)}) t.value = '';
+                                            }});"""
+                                        )
+                                        _typed = True
+                                        logger.info(
+                                            "Email redirect: found VISIBLE input[name*=email] "
+                                            "at (%s), typed via keyboard",
+                                            await page.evaluate("el => `${el.id||el.name}@(${Math.round(el.getBoundingClientRect().y)}px)`", email_el)
+                                        )
+                                except Exception as _email_err:
+                                    logger.debug("Email redirect via ElementHandle failed (%s)", _email_err)
+                            if not _typed and tag in ("input", "textarea"):
+                                # ElementHandle.fill() selects-all, fills, dispatches events.
+                                await el.fill(action.text)
+                                _typed = True
+                                logger.debug(
+                                    "elementFromPoint fill: tag=%s coords=(%d,%d) text=%r",
+                                    tag, point[0], point[1], action.text[:30],
+                                )
+                    except Exception as _efp_err:
+                        logger.debug("elementFromPoint fill failed (%s) — falling back", _efp_err)
+                    if not _typed:
+                        await page.mouse.click(*point)
+                        await asyncio.sleep(0.05)
+                if not _typed:
+                    if action.clear_before_typing:
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
+                    await page.keyboard.type(action.text)
                 if action.press_enter:
                     await page.keyboard.press("Enter")
             elif at is ActionType.PRESS_KEY:
@@ -262,7 +338,7 @@ class NativeBrowserExecutor(Executor):
                         if (!el) return "";
                         const paras = Array.from(el.querySelectorAll("p"))
                             .map(p => p.innerText.trim())
-                            .filter(t => t.length > 40);
+                            .filter(t => t.length > 20);
                         return paras.length > 0 ? paras.join("\\n\\n") : el.innerText.trim();
                     }""",
                     css,
@@ -367,6 +443,24 @@ class NativeBrowserExecutor(Executor):
         }
         return delays.get(action_type, self._post_action_delay)
 
+    async def _adopt_new_tab_if_opened(self) -> None:
+        """Switch session.page to a newly opened tab after a click, if any."""
+        if self._current_run_id is None:
+            return
+        session = self._sessions.get(self._current_run_id)
+        if session is None:
+            return
+        pages = session.context.pages
+        if len(pages) <= 1:
+            return
+        new_page = pages[-1]
+        try:
+            await new_page.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        session.page = new_page
+        logger.info("New tab detected after click — switched session to %s", new_page.url)
+
     @staticmethod
     def _action_point(action: AgentAction) -> tuple[int, int] | None:
         if action.x is not None and action.y is not None:
@@ -416,6 +510,10 @@ class NativeBrowserExecutor(Executor):
             last_artifact_path = result.artifact_path
         return self._ok(action, f"Executed batch: {', '.join(completed)}", last_artifact_path)
 
+    def pop_last_dialog_message(self, run_id: str) -> str | None:
+        """Return and clear the last JS dialog message for a run (or None)."""
+        return self._last_dialog_message.pop(run_id, None)
+
     async def get_current_url(self) -> str | None:
         page = await self._current_page()
         return page.url
@@ -431,6 +529,38 @@ class NativeBrowserExecutor(Executor):
     ) -> tuple[ExecutedAction, Path | None]:
         result = await self.execute(action)
         return result, None
+
+    async def context_reset(self) -> None:
+        """Dismiss open modals/dropdowns, clear focus traps, scroll to top."""
+        try:
+            page = await self._current_page(foreground=False)
+        except Exception:
+            return
+        try:
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.2)
+            await page.mouse.click(self._viewport_width // 2, self._viewport_height // 3)
+            await asyncio.sleep(0.1)
+            await page.keyboard.press("Home")
+        except Exception:
+            logger.debug("context_reset: browser reset failed", exc_info=True)
+
+    async def session_reset(self, start_url: str | None = None) -> None:
+        """Navigate to start URL (or current URL) to reset page context."""
+        try:
+            page = await self._current_page(foreground=False)
+        except Exception:
+            return
+        target_url = start_url or page.url
+        if not target_url:
+            await self.context_reset()
+            return
+        try:
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(0.5)
+        except Exception:
+            logger.debug("session_reset: goto %r failed, falling back to context_reset", target_url, exc_info=True)
+            await self.context_reset()
 
     async def _capture_after(self) -> str:
         frame = await self.capture()
@@ -495,6 +625,18 @@ class NativeBrowserExecutor(Executor):
             "NETWORK_FAIL: %s — %s", req.url, req.failure
         ))
 
+        # Auto-accept JavaScript dialogs (alert/confirm/prompt) and record the
+        # message so the loop can treat it as a success signal. Without this,
+        # headless Playwright silently dismisses alerts and the form-submit
+        # success message is never seen.
+        async def _on_dialog(dialog) -> None:
+            msg = dialog.message or ""
+            logger.info("BROWSER_DIALOG [%s]: %s", dialog.type, msg)
+            self._last_dialog_message[run_id] = msg
+            await dialog.accept()
+
+        page.on("dialog", _on_dialog)
+
         if foreground and hasattr(page, "bring_to_front"):
             await page.bring_to_front()
         if not launch_headless and foreground:
@@ -516,7 +658,10 @@ class NativeBrowserExecutor(Executor):
 
     async def focus_window(self) -> None:
         """Bring the active browser window to the foreground. No-op in headless mode."""
-        if self._current_run_id is None or self._headless:
+        if self._current_run_id is None:
+            return
+        run_headless = self._run_headless.get(self._current_run_id, self._headless)
+        if run_headless:
             return
         session = self._sessions.get(self._current_run_id)
         if session is None:
@@ -528,8 +673,9 @@ class NativeBrowserExecutor(Executor):
             return
         if self._fresh_session_run_id != self._current_run_id:
             return
+        run_headless = self._run_headless.get(self._current_run_id, self._headless)
         session = self._sessions.get(self._current_run_id)
-        if session is None or self._headless:
+        if session is None or run_headless:
             return
         await self._bring_browser_to_foreground(session.browser_pid)
         await asyncio.sleep(0.5)

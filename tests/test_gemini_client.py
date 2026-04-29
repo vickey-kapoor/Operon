@@ -16,7 +16,7 @@ def test_extract_text_returns_first_text_part() -> None:
             {
                 "content": {
                     "parts": [
-                        {"text": '{"summary":"Inbox visible","page_hint":"gmail_inbox","focused_element_id":null,"confidence":0.9,"visible_elements":[]}'},
+                        {"text": '{"summary":"Page visible","page_hint":"unknown","focused_element_id":null,"confidence":0.9,"visible_elements":[]}'},
                     ]
                 }
             }
@@ -25,7 +25,7 @@ def test_extract_text_returns_first_text_part() -> None:
 
     text = GeminiHttpClient.extract_text(payload)
 
-    assert '"summary":"Inbox visible"' in text
+    assert '"summary":"Page visible"' in text
 
 
 def test_extract_text_rejects_missing_candidates() -> None:

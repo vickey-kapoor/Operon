@@ -1,6 +1,7 @@
 """In-memory benchmark suite runner — runs WebArena/Mind2Web/Operon tasks sequentially."""
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -12,9 +13,20 @@ from src.models.common import RunStatus, RunTaskRequest, StepRequest
 
 _SUITES: dict[str, "SuiteState"] = {}
 
+# Global lock: only one browser task may execute at a time across all suites.
+# Concurrent suites share the same NativeBrowserExecutor; _close_other_sessions
+# would kill competing runs' browsers without this serialisation.
+_BROWSER_TASK_LOCK: asyncio.Lock | None = None
+
+
+def _get_browser_lock() -> asyncio.Lock:
+    global _BROWSER_TASK_LOCK
+    if _BROWSER_TASK_LOCK is None:
+        _BROWSER_TASK_LOCK = asyncio.Lock()
+    return _BROWSER_TASK_LOCK
+
 _DATASET_PATHS = [
-    Path("benchmarks/datasets/mind2web.json"),
-    Path("benchmarks/datasets/webarena.json"),
+    Path("benchmarks/datasets/remaining_tasks.json"),  # temp: m2w_008+ and WebArena only
 ]
 
 _SUCCESS_STOP_REASONS = {"form_submitted_success", "task_completed", "stop_before_send"}
@@ -201,40 +213,39 @@ async def run_suite_background(suite_id: str, max_steps: int, get_loop_fn: Calla
         task.status = "running"
         t_start = time.time()
         try:
-            loop = get_loop_fn()
-            req = RunTaskRequest(intent=task.intent, start_url=task.start_url, headless=headless)
-            init_resp = await loop.start_run(req)
-            task.run_id = init_resp.run_id
+            async with _get_browser_lock():
+                loop = get_loop_fn()
+                req = RunTaskRequest(intent=task.intent, start_url=task.start_url, headless=headless)
+                init_resp = await loop.start_run(req)
+                task.run_id = init_resp.run_id
 
-            last_resp = init_resp
-            for _ in range(max_steps):
-                last_resp = await loop.step_run(StepRequest(run_id=init_resp.run_id))
-                task.step_count = last_resp.step_count or 0
-                if last_resp.status not in (RunStatus.RUNNING, RunStatus.WAITING_FOR_USER):
-                    break
+                last_resp = init_resp
+                for _ in range(max_steps):
+                    last_resp = await loop.step_run(StepRequest(run_id=init_resp.run_id))
+                    task.step_count = last_resp.step_count or 0
+                    if last_resp.status not in (RunStatus.RUNNING, RunStatus.WAITING_FOR_USER):
+                        break
 
-            raw_stop = getattr(last_resp, "stop_reason", None)
-            task.stop_reason = raw_stop.value if hasattr(raw_stop, "value") else (str(raw_stop) if raw_stop else None)
+                raw_stop = getattr(last_resp, "stop_reason", None)
+                task.stop_reason = raw_stop.value if hasattr(raw_stop, "value") else (str(raw_stop) if raw_stop else None)
 
-            succeeded = last_resp.status == RunStatus.SUCCEEDED
-            if not succeeded and task.stop_reason:
-                succeeded = task.stop_reason in _SUCCESS_STOP_REASONS
-            task.status = "passed" if succeeded else "failed"
+                succeeded = last_resp.status == RunStatus.SUCCEEDED
+                if not succeeded and task.stop_reason:
+                    succeeded = task.stop_reason in _SUCCESS_STOP_REASONS
+                task.status = "passed" if succeeded else "failed"
 
-            # Step efficiency: optimal / actual (capped at 1.0; >1.0 impossible)
-            if task.step_count > 0:
-                task.step_efficiency = round(min(task.optimal_steps / task.step_count, 1.0), 2)
+                if task.step_count > 0:
+                    task.step_efficiency = round(min(task.optimal_steps / task.step_count, 1.0), 2)
 
-            # Infrastructure failure tag
-            failure_cat = getattr(last_resp, "failure_category", None)
-            failure_cat_str = failure_cat.value if hasattr(failure_cat, "value") else str(failure_cat) if failure_cat else None
-            task.infra_tag = _classify_infra_tag(task.stop_reason, failure_cat_str)
+                failure_cat = getattr(last_resp, "failure_category", None)
+                failure_cat_str = failure_cat.value if hasattr(failure_cat, "value") else str(failure_cat) if failure_cat else None
+                task.infra_tag = _classify_infra_tag(task.stop_reason, failure_cat_str)
 
-            if hasattr(loop.executor, "cleanup_run"):
-                try:
-                    loop.executor.cleanup_run(init_resp.run_id)
-                except Exception:
-                    pass
+                if hasattr(loop.executor, "cleanup_run"):
+                    try:
+                        loop.executor.cleanup_run(init_resp.run_id)
+                    except Exception:
+                        pass
 
         except Exception as exc:
             task.status = "failed"

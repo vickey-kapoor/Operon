@@ -97,7 +97,7 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
     retry_step.mkdir(parents=True, exist_ok=True)
     retry_state = AgentState(
         run_id="run-retry",
-        intent="Create a Gmail draft",
+        intent="Navigate and click a button.",
         status=RunStatus.FAILED,
         step_count=2,
         retry_counts={"open compose:action_failed": 3},
@@ -115,7 +115,7 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
             after_artifact_path=str(retry_step / "after.png"),
             perception_debug=_debug("perception", retry_step),
             policy_debug=_debug("policy", retry_step),
-            perception=ScreenPerception(summary="Inbox visible", page_hint="gmail_inbox", capture_artifact_path=str(retry_step / "before.png"), visible_elements=[]),
+            perception=ScreenPerception(summary="Inbox visible", page_hint="unknown", capture_artifact_path=str(retry_step / "before.png"), visible_elements=[]),
             policy_decision=PolicyDecision(action=retry_action, rationale="Open compose.", confidence=0.7, active_subgoal="open compose"),
             executed_action=ExecutedAction(action=retry_action, success=False, detail="Execution failed", failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND, failure_stage=LoopStage.EXECUTE),
             verification_result=VerificationResult(status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="action failed", failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND, failure_stage=LoopStage.EXECUTE),
@@ -144,7 +144,7 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
         precondition_run,
         AgentState(
             run_id="run-precondition",
-            intent="Create a Gmail draft",
+            intent="Navigate and click a button.",
             status=RunStatus.FAILED,
             step_count=1,
             retry_counts={},
@@ -162,7 +162,7 @@ def test_benchmark_summary_reports_fixture_runs() -> None:
             after_artifact_path=str(precondition_step / "after.png"),
             perception_debug=_debug("perception", precondition_step),
             policy_debug=_debug("policy", precondition_step),
-            perception=ScreenPerception(summary="Sign-in page", page_hint="google_sign_in", capture_artifact_path=str(precondition_step / "before.png"), visible_elements=[]),
+            perception=ScreenPerception(summary="Sign-in page", page_hint="unknown", capture_artifact_path=str(precondition_step / "before.png"), visible_elements=[]),
             policy_decision=PolicyDecision(action=precondition_action, rationale="Authenticated start required.", confidence=1.0, active_subgoal="stop for benchmark setup"),
             executed_action=ExecutedAction(action=precondition_action, success=True, detail="stopped"),
             verification_result=VerificationResult(status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=True, reason="benchmark precondition failed", stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED),

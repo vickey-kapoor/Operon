@@ -18,3 +18,6 @@ class CaptureFrame(StrictModel):
     # pyautogui virtual-desktop coordinates.
     monitor_left: int = Field(default=0)
     monitor_top: int = Field(default=0)
+    # Fraction of pixels that changed between the t+100ms and t+200ms burst frames.
+    # 0.0 means the screen was static; >0.02 means active animation/shift.
+    visual_velocity: float = Field(default=0.0, ge=0.0, le=1.0)

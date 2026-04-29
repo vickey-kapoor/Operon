@@ -55,7 +55,7 @@ async def test_agent_loop_calls_stages_in_required_order() -> None:
     frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
     perception = ScreenPerception(
         summary="Inbox visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path=frame.artifact_path,
         visible_elements=[],
     )
@@ -145,7 +145,7 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
     frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
     perception = ScreenPerception(
         summary="Compose button visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path=frame.artifact_path,
         visible_elements=[],
     )
@@ -241,7 +241,7 @@ async def test_agent_loop_does_not_cleanup_non_terminal_runs() -> None:
     frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
     perception = ScreenPerception(
         summary="Compose button visible",
-        page_hint="gmail_inbox",
+        page_hint="unknown",
         capture_artifact_path=frame.artifact_path,
         visible_elements=[],
     )
@@ -342,11 +342,11 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
     )
 
     response = await loop.start_run(
-        RunTaskRequest(intent="Create a Gmail draft and stop before send.", headless=True)
+        RunTaskRequest(intent="Complete the auth-free form and submit it successfully.", headless=True)
     )
 
     run_store.create_run.assert_called_once_with(
-        intent="Create a Gmail draft and stop before send.",
+        intent="Complete the auth-free form and submit it successfully.",
         start_url=None,
         headless=True,
         benchmark=None,
@@ -379,7 +379,7 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_test_safe_mode(
     )
 
     monkeypatch.setenv("OPERON_TEST_SAFE_MODE", "true")
-    response = await loop.start_run(RunTaskRequest(intent="Create a Gmail draft"))
+    response = await loop.start_run(RunTaskRequest(intent="Navigate and click a button."))
 
     executor.reset_desktop.assert_not_awaited()
     assert response.run_id == "run-safe"
@@ -393,14 +393,14 @@ async def test_agent_loop_marks_benchmark_precondition_stop_as_failed() -> None:
     frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
     perception = ScreenPerception(
         summary="Google sign in visible",
-        page_hint="google_sign_in",
+        page_hint="unknown",
         capture_artifact_path=frame.artifact_path,
         visible_elements=[],
     )
     action = AgentAction(action_type=ActionType.STOP)
     decision = PolicyDecision(
         action=action,
-        rationale="Benchmark requires an authenticated Gmail start state; login/auth screens are out of scope.",
+        rationale="Benchmark requires an authenticated start state; pre-auth screens are out of scope.",
         confidence=1.0,
         active_subgoal="stop for benchmark setup",
     )
@@ -409,7 +409,7 @@ async def test_agent_loop_marks_benchmark_precondition_stop_as_failed() -> None:
         status=VerificationStatus.FAILURE,
         expected_outcome_met=False,
         stop_condition_met=True,
-        reason="Benchmark precondition failed: authenticated Gmail start state was required.",
+        reason="Benchmark precondition failed: authenticated start state was required.",
         stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED,
     )
     recovery = RecoveryDecision(

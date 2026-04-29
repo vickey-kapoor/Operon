@@ -18,7 +18,7 @@ from runtime.state import AgentRuntimeState
 from src.agent.capture import CaptureService
 from src.agent.perception import PerceptionLowQualityError, PerceptionService
 from src.agent.policy import PolicyService
-from src.agent.recovery import RecoveryManager
+from src.agent.recovery import RecoveryManager, validate_benchmark_integrity
 from src.agent.reflector import PostRunReflector
 from src.agent.selector import DeterministicTargetSelector
 from src.agent.verifier import VerifierService
@@ -58,7 +58,7 @@ from src.models.verification import (
 )
 from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
-from src.store.run_logger import append_step_log
+from src.store.run_logger import append_step_log, append_step_log_critical
 from src.store.run_store import RunStore
 
 logger = logging.getLogger(__name__)
@@ -154,6 +154,11 @@ class AgentLoop:
             benchmark=request.benchmark,
         )
         _trace("START_RUN", f"run_id={record.run_id}")
+        # Benchmark-safe session management: wipe per-run coordinator state (episodic
+        # memory replay, hint cache, rule trace) so prior task context doesn't leak.
+        # Browser auth state (cookies/session tokens) is preserved at the executor level.
+        if hasattr(self.policy_service, "reset_run_context"):
+            self.policy_service.reset_run_context(record.run_id)
         if hasattr(self.executor, "set_current_run_id"):
             self.executor.set_current_run_id(record.run_id)
         if hasattr(self.executor, "configure_run"):
@@ -319,6 +324,34 @@ class AgentLoop:
                 after_artifact_path=after_artifact_path,
             )
 
+        # Retry Exhaustion / Coordinate Thrash guard: if this action targets a (x, y)
+        # that has already failed 3 times, escalate to HITL instead of attempting again.
+        if self._coordinate_thrash_detected(state, decision.action):
+            _trace("  3 POLICY -> COORDINATE_THRASH_HITL", "3 coord failures at same point — escalating to HITL")
+            thrash_x, thrash_y = decision.action.x, decision.action.y
+            hitl_decision = decision.model_copy(update={
+                "action": AgentAction(
+                    action_type=ActionType.WAIT_FOR_USER,
+                    text=(
+                        f"Coordinate thrashing detected: the target at ({thrash_x}, {thrash_y}) "
+                        "has failed 3 consecutive times. The element may have shifted, be obscured, "
+                        "or be unreachable at these coordinates. Please manually verify the target "
+                        "location and click Resume when ready."
+                    ),
+                )
+            })
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=hitl_decision,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+            )
+
         # Set run context on the executor so launched processes are tracked per run
         if hasattr(self.executor, "set_current_run_id"):
             self.executor.set_current_run_id(record.run_id)
@@ -347,6 +380,23 @@ class AgentLoop:
                 _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
                 executed_action = blocked_action
             executed_action = self._relocate_after_artifact(executed_action, after_artifact_path)
+
+            # If the executor intercepted a JS dialog (alert/confirm/prompt),
+            # inject the dialog message into the local perception summary so the
+            # verifier and success-stop rule can detect form-submission confirmations.
+            # Only updates in-memory state — avoids a second run_store.update_state call.
+            if hasattr(self.executor, "pop_last_dialog_message"):
+                _dialog_msg = self.executor.pop_last_dialog_message(record.run_id)
+                if _dialog_msg:
+                    logger.info("JS dialog captured: %r — injecting into perception summary", _dialog_msg)
+                    perception = perception.model_copy(
+                        update={"summary": (perception.summary or "") + f" {_dialog_msg}"}
+                    )
+                    if state.observation_history:
+                        _obs = list(state.observation_history)
+                        _obs[-1] = perception
+                        state = state.model_copy(update={"observation_history": _obs})
+
             _trace("  5 VERIFY", "DeterministicVerifierService checking outcome")
             verification = await self.verifier_service.verify(state, decision, executed_action)
             if verification.status is VerificationStatus.PENDING:
@@ -482,6 +532,9 @@ class AgentLoop:
             executed_action,
             verification,
         )
+        # Benchmark Integrity Check: reject recovery decisions that bypass verification
+        # or claim success without visual confirmation.
+        recovery = validate_benchmark_integrity(recovery, verification)
         _trace("  7 RECOVER OK", f"strategy={recovery.strategy.value!r}  stop_reason={recovery.stop_reason!r}")
         progress_trace = self._update_progress_state(
             state=state,
@@ -528,6 +581,17 @@ class AgentLoop:
             failure=failure,
         )
         append_step_log(self._run_log_path(record.run_id), step_log)
+
+        # Rule-Augmented Generation: record rule outcome so the next LLM prompt knows
+        # what the rule tried. Clear the trace when the LLM (not a rule) decided this step.
+        if decision.rule_name:
+            state.last_rule_trace = (
+                f"[RULE TRACE] Rule '{decision.rule_name}' fired at step {state.step_count} | "
+                f"action={decision.action.action_type.value} | "
+                f"outcome={verification.status.value}"
+            )
+        else:
+            state.last_rule_trace = None
 
         if self.memory_store is not None:
             self.memory_store.record_step(
@@ -578,6 +642,9 @@ class AgentLoop:
             state.stop_reason = recovery.stop_reason
         else:
             state.stop_reason = None
+
+        if final_status is RunStatus.RUNNING:
+            await self._apply_recovery_actions(state, recovery)
 
         _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
         updated = await self.run_store.set_status(record.run_id, final_status)
@@ -737,6 +804,10 @@ class AgentLoop:
                 return result
 
             if attempt == _LIVENESS_RETRY_MAX:
+                logger.error(
+                    "perception_low_quality: no visible elements after %d liveness retries — raising terminal signal",
+                    _LIVENESS_RETRY_MAX,
+                )
                 raise PerceptionLowQualityError(
                     f"no visible elements after {_LIVENESS_RETRY_MAX} liveness retries"
                 )
@@ -774,7 +845,7 @@ class AgentLoop:
             reason=str(error) or type(error).__name__,
             stop_reason=stop_reason,
         )
-        append_step_log(
+        append_step_log_critical(
             self._run_log_path(record.run_id),
             PreStepFailureLog(
                 run_id=record.run_id,
@@ -783,7 +854,7 @@ class AgentLoop:
                 before_artifact_path=before_artifact_path,
                 perception_debug=perception_debug,
                 failure=failure,
-                error_message=str(error),
+                error_message=str(error) or type(error).__name__,
             ),
         )
         record.artifact_paths.extend(
@@ -852,7 +923,13 @@ class AgentLoop:
         step_index: int,
         screen_change_ratio: float | None = None,
     ) -> VerificationResult | None:
-        """Record a video and verify with Gemini when screen_diff shows no change."""
+        """Record a video and verify with Gemini when screen_diff shows no change.
+
+        Gate: only fires when expected_change ∈ {content, navigation, dialog} AND
+        screen_change_ratio < SCREEN_CHANGE_THRESHOLD. Actions expected to produce
+        no pixel change (none, focus) are correct with low delta — video-verifying
+        them wastes Gemini calls.
+        """
         if not executed_action.success:
             return None
 
@@ -861,6 +938,7 @@ class AgentLoop:
             return None
 
         from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD
+        from src.models.policy import ExpectedChange
 
         if screen_change_ratio is None:
             from src.agent.screen_diff import compute_screen_change_ratio
@@ -870,9 +948,27 @@ class AgentLoop:
         if ratio >= SCREEN_CHANGE_THRESHOLD:
             return None  # Screen changed — no video needed
 
-        # Skip non-idempotent actions (re-execution could double-type, double-drag)
+        # Gate: video-verify only when the planner expected a visible change.
+        # none/focus are correct with low pixel delta — skip without recording.
+        _VIDEO_VERIFY_EXPECTATIONS = {
+            ExpectedChange.CONTENT, ExpectedChange.NAVIGATION, ExpectedChange.DIALOG,
+        }
+        expected_change = decision.expected_change
+        if expected_change not in _VIDEO_VERIFY_EXPECTATIONS:
+            _trace(
+                "  5b VIDEO_VERIFY SKIPPED",
+                f"expected_change={expected_change!r}  ratio={ratio:.4f}  "
+                "low-change expectation is correct — no Gemini call",
+            )
+            return None
+
+        # Belt-and-suspenders: re-execution of TYPE/DRAG/SELECT could double the action.
         action = decision.action
         if action.action_type in {ActionType.TYPE, ActionType.DRAG, ActionType.SELECT}:
+            _trace(
+                "  5b VIDEO_VERIFY SKIPPED",
+                f"action_type={action.action_type.value!r} is non-idempotent — skipping re-execution",
+            )
             return None
 
         if not hasattr(self.executor, "execute_with_recording"):
@@ -882,8 +978,9 @@ class AgentLoop:
 
         logger = logging.getLogger(__name__)
         logger.info(
-            "No screen change (ratio=%.4f) at step %d — recording video for verification",
+            "No screen change (ratio=%.4f, expected_change=%r) at step %d — recording video for verification",
             ratio,
+            expected_change,
             step_index,
         )
 
@@ -895,6 +992,7 @@ class AgentLoop:
             return None
 
         if video_path is None:
+            _trace("  5b VIDEO_VERIFY SKIPPED", "browser executor returned video_path=None (no screen recording)")
             return None
 
         # Update executed_action recording path (informational)
@@ -1069,6 +1167,27 @@ class AgentLoop:
             failure_stage=LoopStage.VERIFY,
             patience_retries=retries,
         )
+
+    async def _apply_recovery_actions(self, state, recovery: RecoveryDecision) -> None:
+        """Execute concrete side effects for CONTEXT_RESET and SESSION_RESET tiers.
+
+        Runs after the step is logged so the log accurately reflects the failure,
+        and before set_status so the next step's capture sees the cleaned state.
+        Failures are swallowed — a broken reset must never terminate a live run.
+        """
+        strategy = recovery.strategy
+        if strategy is RecoveryStrategy.CONTEXT_RESET:
+            _trace("  7b CONTEXT_RESET", "escape×2 + body-click + scroll-top")
+            try:
+                await self.executor.context_reset()
+            except Exception as exc:
+                logger.warning("context_reset executor call failed: %s", exc)
+        elif strategy is RecoveryStrategy.SESSION_RESET:
+            _trace("  7b SESSION_RESET", f"start_url={state.start_url!r}")
+            try:
+                await self.executor.session_reset(state.start_url)
+            except Exception as exc:
+                logger.warning("session_reset executor call failed: %s", exc)
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
         if not hasattr(self.executor, "aclose_run"):
@@ -1588,12 +1707,49 @@ class AgentLoop:
 
         return perception
 
+    # Minimum screen change ratio below which a prior step is classified as Stalled.
+    # 1% (0.01) is tighter than the existing 0.2% progress threshold — it means
+    # the screen was essentially static after the action.
+    _STALL_SCREEN_CHANGE_THRESHOLD = 0.01
+
     def _block_redundant_action(self, state, action, step_index: int):
         progress_state = state.progress_state
         page_signature = progress_state.latest_page_signature or "unknown_page"
         action_signature = self._action_signature(action)
         target_signature = self._target_signature(action)
         subgoal_signature = self._subgoal_signature(state.current_subgoal)
+
+        # Stalled State check: if the previous action produced < 1% screen change
+        # AND two or more consecutive no-progress steps have occurred, force a
+        # subgoal reset. Requiring streak >= 2 avoids false positives on the first
+        # quiet step where last_screen_change_ratio is at its default 0.0.
+        if (
+            progress_state.last_screen_change_ratio < self._STALL_SCREEN_CHANGE_THRESHOLD
+            and progress_state.no_progress_streak >= 2
+            and action.action_type in {
+                ActionType.CLICK, ActionType.DOUBLE_CLICK,
+                ActionType.TYPE, ActionType.PRESS_KEY, ActionType.HOTKEY,
+            }
+        ):
+            stale_subgoal = state.current_subgoal or "current step"
+            logger.warning(
+                "Stalled State: screen change ratio %.4f < %.2f threshold after %d no-progress steps. "
+                "Forcing subgoal reset from %r.",
+                progress_state.last_screen_change_ratio,
+                self._STALL_SCREEN_CHANGE_THRESHOLD,
+                progress_state.no_progress_streak,
+                stale_subgoal,
+            )
+            state.current_subgoal = f"Stalled — choose a completely different approach for: {stale_subgoal}"
+            return self._redundant_action_failure(
+                action=action,
+                category=FailureCategory.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS,
+                detail=(
+                    f"Stalled State detected: screen change ratio {progress_state.last_screen_change_ratio:.4f} "
+                    f"< 1% threshold after {progress_state.no_progress_streak} no-progress step(s). "
+                    "Subgoal reset forced — the agent must choose a different strategy."
+                ),
+            )
 
         if (
             target_signature is not None
@@ -1726,6 +1882,11 @@ class AgentLoop:
                 failure_signature=failure_signature,
             )
             progress_state.loop_detected = loop_failure_category is not None
+
+        # Persist the raw screen change ratio so _block_redundant_action can
+        # detect a Stalled State on the *next* step without recomputing it.
+        if screen_change_ratio is not None:
+            progress_state.last_screen_change_ratio = screen_change_ratio
 
         return ProgressTrace(
             step_index=step_index,
@@ -2019,13 +2180,42 @@ class AgentLoop:
     @staticmethod
     def _update_target_failure_signal(state, executed_action, verification) -> None:
         action = executed_action.action
-        if action.action_type is not ActionType.TYPE or action.target_element_id is None:
-            return
-
         failure_category = verification.failure_category or executed_action.failure_category
-        if failure_category in {
-            FailureCategory.EXECUTION_TARGET_NOT_FOUND,
-            FailureCategory.EXECUTION_TARGET_NOT_EDITABLE,
-        }:
-            key = f"type:{action.target_element_id}:{failure_category.value}"
-            state.target_failure_counts[key] = state.target_failure_counts.get(key, 0) + 1
+
+        # Track TYPE failures per element (existing logic)
+        if action.action_type is ActionType.TYPE and action.target_element_id is not None:
+            if failure_category in {
+                FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+                FailureCategory.EXECUTION_TARGET_NOT_EDITABLE,
+            }:
+                key = f"type:{action.target_element_id}:{failure_category.value}"
+                state.target_failure_counts[key] = state.target_failure_counts.get(key, 0) + 1
+
+        # Track CLICK failures per coordinate pair — feeds coordinate-thrash HITL detection.
+        # Visual servo failures (blank region) and target-not-found failures both count.
+        if action.action_type in {ActionType.CLICK, ActionType.DOUBLE_CLICK} and action.x is not None and action.y is not None:
+            if failure_category in {
+                FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+                FailureCategory.EXECUTION_ERROR,
+                FailureCategory.STALE_TARGET_BEFORE_ACTION,
+                FailureCategory.TARGET_SHIFTED_BEFORE_ACTION,
+                FailureCategory.TARGET_LOST_BEFORE_ACTION,
+            }:
+                coord_key = f"click:{action.x}:{action.y}"
+                state.target_failure_counts[coord_key] = state.target_failure_counts.get(coord_key, 0) + 1
+
+    _COORDINATE_THRASH_THRESHOLD = 3
+
+    def _coordinate_thrash_detected(self, state, action) -> bool:
+        """Return True when the same click coordinate has failed 3+ times this run.
+
+        Only applies to CLICK/DOUBLE_CLICK actions with explicit (x, y) coordinates.
+        Coordinate thrashing signals that the target is unreachable by automated
+        re-resolution — human intervention is required to verify the target location.
+        """
+        if action.action_type not in {ActionType.CLICK, ActionType.DOUBLE_CLICK}:
+            return False
+        if action.x is None or action.y is None:
+            return False
+        coord_key = f"click:{action.x}:{action.y}"
+        return state.target_failure_counts.get(coord_key, 0) >= self._COORDINATE_THRASH_THRESHOLD

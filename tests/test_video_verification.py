@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -30,7 +31,7 @@ from src.clients.gemini import (
 )
 from src.models.common import FailureCategory, LoopStage
 from src.models.execution import ExecutedAction
-from src.models.policy import ActionType, AgentAction, PolicyDecision
+from src.models.policy import ActionType, AgentAction, ExpectedChange, PolicyDecision
 from src.models.state import AgentState
 from src.models.verification import (
     VerificationFailureType,
@@ -77,7 +78,10 @@ def _make_executed(
     )
 
 
-def _make_decision(action: AgentAction | None = None) -> PolicyDecision:
+def _make_decision(
+    action: AgentAction | None = None,
+    expected_change: ExpectedChange = ExpectedChange.CONTENT,
+) -> PolicyDecision:
     if action is None:
         action = _make_action()
     return PolicyDecision(
@@ -85,6 +89,7 @@ def _make_decision(action: AgentAction | None = None) -> PolicyDecision:
         rationale="test",
         confidence=0.9,
         active_subgoal="click the button",
+        expected_change=expected_change,
     )
 
 
@@ -1147,3 +1152,107 @@ class TestExecutedActionRecordingPath:
 
         data = executed.model_dump()
         assert data["recording_path"] == "/tmp/clip.mp4"
+
+
+# ---------------------------------------------------------------------------
+# expected_change gate tests
+# ---------------------------------------------------------------------------
+
+@contextmanager
+def _low_change_context():
+    """Patch screen_diff so ratio=0.0 (below threshold=0.02), simulating no pixel change."""
+    with patch("src.agent.screen_diff.compute_screen_change_ratio", return_value=0.0), \
+         patch("src.agent.screen_diff.SCREEN_CHANGE_THRESHOLD", 0.02):
+        yield
+
+
+def _loop_with_recording_executor(video_path: Path | None = None) -> AgentLoop:
+    """Return a loop whose executor supports execute_with_recording."""
+    loop = _make_loop_with_video_verifier(_make_verifier())
+    loop.executor = _make_executor_with_recording(video_path)
+    return loop
+
+
+class TestExpectedChangeGate:
+    """_maybe_video_verify fires only for content/navigation/dialog expectations."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("expected_change", [ExpectedChange.NONE, ExpectedChange.FOCUS])
+    async def test_skips_when_low_change_is_correct(self, expected_change: ExpectedChange) -> None:
+        """none and focus expectations: low pixel delta is expected — skip video verify."""
+        loop = _loop_with_recording_executor()
+        action = AgentAction(action_type=ActionType.CLICK, target_element_id="btn")
+        executed = _make_executed(action=action, success=True, artifact_path="runs/r1/step_1/after.png")
+        decision = _make_decision(action=action, expected_change=expected_change)
+        state = _make_state()
+
+        with _low_change_context():
+            result = await loop._maybe_video_verify(
+                state=state,
+                decision=decision,
+                executed_action=executed,
+                before_artifact_path="runs/r1/step_1/before.png",
+                step_index=1,
+            )
+
+        assert result is None
+        loop.executor.execute_with_recording.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("expected_change", [
+        ExpectedChange.CONTENT, ExpectedChange.NAVIGATION, ExpectedChange.DIALOG,
+    ])
+    async def test_proceeds_when_change_expected_but_absent(
+        self, expected_change: ExpectedChange, tmp_path: Path
+    ) -> None:
+        """content/navigation/dialog expectations with no pixel change → video-verify fires."""
+        video_path = tmp_path / "clip.mp4"
+        video_path.write_bytes(b"\x00" * 8)  # minimal non-empty file
+        loop = _loop_with_recording_executor(video_path=video_path)
+        action = AgentAction(action_type=ActionType.CLICK, target_element_id="btn")
+        executed = _make_executed(action=action, success=True, artifact_path="runs/r1/step_1/after.png")
+        decision = _make_decision(action=action, expected_change=expected_change)
+        state = _make_state()
+
+        with _low_change_context():
+            result = await loop._maybe_video_verify(
+                state=state,
+                decision=decision,
+                executed_action=executed,
+                before_artifact_path="runs/r1/step_1/before.png",
+                step_index=1,
+            )
+
+        # execute_with_recording was called — gate did not skip
+        loop.executor.execute_with_recording.assert_called_once()
+        # result is a VerificationResult (not None)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action_type", [ActionType.TYPE, ActionType.DRAG, ActionType.SELECT])
+    async def test_belt_and_suspenders_skips_non_idempotent_even_with_content_expectation(
+        self, action_type: ActionType
+    ) -> None:
+        """TYPE/DRAG/SELECT skip even when expected_change=content — re-execution risk."""
+        loop = _loop_with_recording_executor()
+        if action_type is ActionType.TYPE:
+            action = AgentAction(action_type=action_type, target_element_id="field", text="hello")
+        elif action_type is ActionType.DRAG:
+            action = AgentAction(action_type=action_type, x=10, y=20, x_end=100, y_end=200)
+        else:
+            action = AgentAction(action_type=action_type, target_element_id="dd", text="option1")
+        executed = _make_executed(action=action, success=True, artifact_path="runs/r1/step_1/after.png")
+        decision = _make_decision(action=action, expected_change=ExpectedChange.CONTENT)
+        state = _make_state()
+
+        with _low_change_context():
+            result = await loop._maybe_video_verify(
+                state=state,
+                decision=decision,
+                executed_action=executed,
+                before_artifact_path="runs/r1/step_1/before.png",
+                step_index=1,
+            )
+
+        assert result is None
+        loop.executor.execute_with_recording.assert_not_called()

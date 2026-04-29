@@ -60,6 +60,7 @@ class BackgroundWriter:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 with p.open("a", encoding="utf-8") as fh:
                     fh.write(content)
+                    fh.flush()
             except Exception:
                 logger.debug("artifact append failed: %s", p, exc_info=True)
 

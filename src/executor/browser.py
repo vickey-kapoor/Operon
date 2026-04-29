@@ -20,6 +20,18 @@ class Executor(ABC):
     async def execute(self, action: AgentAction) -> ExecutedAction:
         """Execute a typed action."""
 
+    async def context_reset(self) -> None:
+        """Dismiss open modals/dropdowns, clear focus traps, scroll to top.
+
+        Concrete executors should override this. The default is a no-op so that
+        executors that cannot perform UI resets do not break the recovery ladder.
+        """
+
+    async def session_reset(self, start_url: str | None = None) -> None:
+        """Navigate back to the task start URL (browser) or re-baseline window
+        focus (desktop). Concrete executors should override this.
+        """
+
 
 # Backwards-compatible alias
 BrowserExecutor = Executor

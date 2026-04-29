@@ -9,11 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    load_dotenv(find_dotenv(usecwd=True), override=False)
+    load_dotenv(find_dotenv(usecwd=True), override=True)
 
     # Register benchmark plugins before any engine code runs.
     import src.benchmarks.form_plugin  # noqa: F401
-    import src.benchmarks.gmail_plugin  # noqa: F401
     from src.api.routes import router
 
     app = FastAPI(

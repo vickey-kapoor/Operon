@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from core.contracts.actor import ActorOutput, ExecutorChoice
-from core.contracts.perception import Environment
-from core.contracts.planner import ActionType, PlannerOutput
-from runtime.state import AgentRuntimeState
+from src.core.contracts.actor import ActorOutput, ExecutorChoice
+from src.core.contracts.perception import Environment
+from src.core.contracts.planner import ActionType, PlannerOutput
+from src.runtime.state import AgentRuntimeState
 
 BROWSER_ACTIONS = {
     ActionType.CLICK,

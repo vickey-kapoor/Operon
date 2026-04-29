@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from core.contracts.actor import ActorOutput
-from core.contracts.critic import CriticOutput
-from core.contracts.perception import PerceptionOutput
-from core.contracts.planner import PlannerOutput
-from core.router import route_plan, validate_plan_route
-from runtime.orchestrator import Phase1Orchestrator
+from src.core.contracts.actor import ActorOutput
+from src.core.contracts.critic import CriticOutput
+from src.core.contracts.perception import PerceptionOutput
+from src.core.contracts.planner import PlannerOutput
+from src.core.router import route_plan, validate_plan_route
+from src.runtime.orchestrator import Phase1Orchestrator
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples" / "contracts"
 

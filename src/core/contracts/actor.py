@@ -6,9 +6,9 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from core.contracts.critic import FailureType
-from core.contracts.perception import ContractModel, ContractVersion, Environment
-from core.contracts.planner import PlannerAction
+from src.core.contracts.critic import FailureType
+from src.core.contracts.perception import ContractModel, ContractVersion, Environment
+from src.core.contracts.planner import PlannerAction
 
 
 class ExecutorChoice(StrEnum):

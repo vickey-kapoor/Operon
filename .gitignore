@@ -38,6 +38,7 @@ ENV/
 coverage.xml
 htmlcov/
 *.log
+.*.log
 nosetests.xml
 test-results/
 runs/

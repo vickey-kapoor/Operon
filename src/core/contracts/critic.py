@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from pydantic import Field, model_validator
 
-from core.contracts.perception import ContractModel, ContractVersion, Environment
+from src.core.contracts.perception import ContractModel, ContractVersion, Environment
 
 
 class FailureType(StrEnum):

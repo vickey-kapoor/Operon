@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.contracts.actor import ActorAction, ActorOutput, ActorStatus, ExecutorChoice
-from core.contracts.critic import CriticOutcome, CriticOutput, FailureType
-from core.contracts.perception import Environment, PerceptionOutput, VisibleTarget
-from core.contracts.planner import ActionType as ContractActionType
-from core.contracts.planner import PlannerAction, PlannerOutput
+from src.core.contracts.actor import (
+    ActorAction,
+    ActorOutput,
+    ActorStatus,
+    ExecutorChoice,
+)
+from src.core.contracts.critic import CriticOutcome, CriticOutput, FailureType
+from src.core.contracts.perception import Environment, PerceptionOutput, VisibleTarget
+from src.core.contracts.planner import ActionType as ContractActionType
+from src.core.contracts.planner import PlannerAction, PlannerOutput
 from src.models.common import FailureCategory
 from src.models.execution import ExecutedAction
 from src.models.perception import ScreenPerception, UIElement

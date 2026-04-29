@@ -1,8 +1,12 @@
 # Migration Cleanup Audit
 
+> **Historical document** — path references below reflect the pre-2026-04-29 layout.
+> These packages have since been consolidated under `src/`:
+> `runtime/` → `src/runtime/`, `core/` → `src/core/`, `executors/` → `src/executor/` (adapters).
+
 **Date:** 2026-04-11
 **Scope:** Classify all files relative to the unified architecture introduced in
-`runtime/`, `core/`, and `executors/`. Determine what is active, what is
+`src/runtime/`, `src/core/`, and `src/executor/` (adapters). Determine what is active, what is
 transitional, and what can be removed in a future pass.
 
 ---

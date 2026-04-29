@@ -11,7 +11,6 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
-from core.contracts.perception import Environment as UnifiedEnvironment
 from src.agent.anthropic_policy import AnthropicPolicyService
 from src.agent.backend import AgentBackend
 from src.agent.browser_computer_use import BrowserComputerUseBackend
@@ -45,6 +44,7 @@ from src.api.runtime_config import browser_mode_config, desktop_mode_config
 from src.clients.anthropic import AnthropicHttpClient
 from src.clients.gemini import GeminiHttpClient
 from src.clients.gemini_computer_use import GeminiComputerUseHttpClient
+from src.core.contracts.perception import Environment as UnifiedEnvironment
 from src.models.common import (
     CleanupRequest,
     CleanupResponse,

@@ -32,15 +32,15 @@ This phase does not include:
 ## File Layout
 
 - `docs/agent_contract.md`
-- `core/contracts/perception.py`
-- `core/contracts/planner.py`
-- `core/contracts/actor.py`
-- `core/contracts/critic.py`
-- `core/router.py`
-- `runtime/state.py`
-- `runtime/orchestrator.py`
-- `executors/browser_executor.py`
-- `executors/desktop_executor.py`
+- `src/core/contracts/perception.py`
+- `src/core/contracts/planner.py`
+- `src/core/contracts/actor.py`
+- `src/core/contracts/critic.py`
+- `src/core/router.py`
+- `src/runtime/state.py`
+- `src/runtime/orchestrator.py`
+- `src/executor/browser_adapter.py`
+- `src/executor/desktop_adapter.py`
 - `examples/contracts/`
 - `tests/test_contracts.py`
 

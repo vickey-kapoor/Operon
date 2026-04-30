@@ -15,8 +15,9 @@ class VerificationStatus(StrEnum):
     SUCCESS = "success"
     FAILURE = "failure"
     UNCERTAIN = "uncertain"
-    PENDING = "pending"  # page is mid-transition; wait before re-verifying
-    PROGRESSING_STABLE = "progressing_stable"  # UI reacted but page has not fully changed; advance
+    PENDING = "pending"  # page is mid-transition (loading); wait 2–8s before re-verifying
+    PROGRESSING_STABLE = "progressing_stable"  # UI reacted (Gemini-confirmed); advance immediately
+    STABLE_WAIT = "stable_wait"  # screen actively changing post-action; wait 200ms and re-verify once
 
 
 class VerificationFailureType(StrEnum):

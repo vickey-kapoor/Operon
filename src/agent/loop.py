@@ -275,6 +275,21 @@ class AgentLoop:
         _t0 = time.perf_counter()
         frame = await self.capture_service.capture(record)
         _trace("  1 CAPTURE OK", f"{time.perf_counter()-_t0:.2f}s  frame={type(frame).__name__}")
+
+        # High-velocity guard: if the screen changed by >5% since the last burst
+        # capture, the UI underwent a major transition (app switch, navigation, modal
+        # opening). Stale element coordinates in the rolling buffer would produce
+        # ghost elements from the previous context — clear it now to prevent
+        # cross-app state contamination.
+        if frame.visual_velocity > 0.05:
+            _element_buffer = getattr(self.perception_service, "element_buffer", None)
+            if _element_buffer is not None:
+                _element_buffer.clear()
+                logger.info(
+                    "element_buffer cleared: visual_velocity=%.3f > 0.05 — "
+                    "major UI transition detected, stale ghost elements purged (run=%s)",
+                    frame.visual_velocity, record.run_id[:8],
+                )
         # Inject memory hints before perceive() so combined mode includes them
         if hasattr(self.policy_service, "prepare_hints"):
             self.policy_service.prepare_hints(record, None)
@@ -406,6 +421,13 @@ class AgentLoop:
                     decision=decision,
                     executed_action=executed_action,
                     before_artifact_path=before_artifact_path,
+                )
+            elif verification.status is VerificationStatus.STABLE_WAIT:
+                verification = await self._wait_for_ui_stable(
+                    record=record,
+                    state=state,
+                    decision=decision,
+                    executed_action=executed_action,
                 )
             _trace("  5 VERIFY OK", f"status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
             verification_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "verification", self.verifier_service)
@@ -1101,6 +1123,71 @@ class AgentLoop:
         if latest.visible_elements:
             return False
         return str(latest.page_hint) == "unknown"
+
+    async def _wait_for_ui_stable(
+        self,
+        *,
+        record,
+        state,
+        decision,
+        executed_action,
+    ) -> VerificationResult:
+        """Single 200ms re-verify for STABLE_WAIT (UI actively transitioning post-action).
+
+        Waits 200ms, re-captures, re-perceives, and calls verify() once more.
+        If the screen has settled the verifier will return its normal verdict.
+        If the UI is still moving (STABLE_WAIT again) or the outcome is still
+        uncertain, we downgrade to UNCERTAIN so the recovery ladder can decide.
+        """
+        from src.agent.perception import PerceptionLowQualityError
+
+        _trace("  5-STABLE_WAIT", "UI still transitioning — waiting 200ms before re-verify")
+        logger.info("stable_wait: UI in motion — waiting 200ms before re-verifying (run=%s)", record.run_id[:8])
+        await asyncio.sleep(0.2)
+
+        try:
+            frame = await self.capture_service.capture(record)
+            fresh_perception = await self._perceive_with_liveness_retry(record, frame)
+        except PerceptionLowQualityError:
+            logger.info("stable_wait: perception still unstable after 200ms — downgrading to UNCERTAIN")
+            return VerificationResult(
+                status=VerificationStatus.UNCERTAIN,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason="UI still transitioning after 200ms stability wait; perception quality too low.",
+                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+                failure_stage=LoopStage.VERIFY,
+            )
+        except Exception as exc:
+            logger.warning("stable_wait: re-capture/perceive failed: %s", exc)
+            return VerificationResult(
+                status=VerificationStatus.UNCERTAIN,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason=f"UI stability wait failed during re-capture: {exc}",
+                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+                failure_stage=LoopStage.VERIFY,
+            )
+
+        fresh_perception = self._infer_focused_element(record, fresh_perception)
+        state.observation_history.append(fresh_perception)
+        self._sync_progress_state_with_perception(state, fresh_perception)
+        _trace("  5-STABLE_WAIT re-verify", f"elements={len(fresh_perception.visible_elements)} hint={fresh_perception.page_hint.value!r}")
+
+        verification = await self.verifier_service.verify(state, decision, executed_action)
+        if verification.status is VerificationStatus.STABLE_WAIT:
+            # Still moving after one retry — downgrade to UNCERTAIN, let recovery decide.
+            logger.info("stable_wait: still transitioning after re-verify — downgrading to UNCERTAIN")
+            return verification.model_copy(update={
+                "status": VerificationStatus.UNCERTAIN,
+                "reason": "UI still transitioning after 200ms stability wait; treating as uncertain.",
+            })
+
+        _trace("  5-STABLE_WAIT resolved", f"status={verification.status.value!r}")
+        logger.info("stable_wait: resolved to %s after re-verify", verification.status.value)
+        return verification
 
     _PENDING_BACKOFF_DELAYS: tuple[float, ...] = (2.0, 4.0, 8.0)
 

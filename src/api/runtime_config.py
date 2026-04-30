@@ -19,12 +19,12 @@ class RuntimeModeConfig:
 def desktop_mode_config() -> RuntimeModeConfig:
     return RuntimeModeConfig(
         backend=os.getenv("OPERON_DESKTOP_BACKEND", "json"),
-        primary_model=os.getenv("OPERON_DESKTOP_MODEL", "gemini-3-flash-preview"),
+        primary_model=os.getenv("OPERON_DESKTOP_MODEL", "gemini-2.5-flash"),
         planner_provider=os.getenv("OPERON_DESKTOP_PLANNER_PROVIDER", "gemini"),
         planner_model=os.getenv("OPERON_DESKTOP_PLANNER_MODEL"),
         verifier_provider=os.getenv("OPERON_DESKTOP_VERIFIER_PROVIDER", "gemini"),
         fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-2.5-flash"),
-        verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-3-flash-preview"),
+        verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-2.5-flash"),
     )
 
 
@@ -39,6 +39,6 @@ def browser_mode_config() -> RuntimeModeConfig:
         planner_model=os.getenv("OPERON_BROWSER_PLANNER_MODEL"),
         verifier_provider=os.getenv("OPERON_BROWSER_VERIFIER_PROVIDER", "gemini"),
         fallback_backend=os.getenv("OPERON_BROWSER_FALLBACK_BACKEND", "json"),
-        fallback_model=os.getenv("OPERON_BROWSER_FALLBACK_MODEL", "gemini-3-flash-preview"),
-        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL", "gemini-3-flash-preview"),
+        fallback_model=os.getenv("OPERON_BROWSER_FALLBACK_MODEL", "gemini-2.5-flash"),
+        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL", "gemini-2.5-flash"),
     )

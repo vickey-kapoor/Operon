@@ -44,7 +44,7 @@ from src.models.logs import (
     StepLog,
 )
 from src.models.perception import UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction
+from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.selector import TargetIntent, TargetIntentAction
@@ -65,7 +65,8 @@ logger = logging.getLogger(__name__)
 
 _TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
 _LIVENESS_RETRY_MAX = 3
-_LIVENESS_RETRY_SLEEP_S = 1.5
+_LIVENESS_RETRY_FIRST_SLEEP_S = 0.5   # fast recovery for brief UI transitions (e.g. search overlay animating in)
+_LIVENESS_RETRY_SLEEP_S = 1.5         # subsequent retries give slower loads more time
 
 
 def _trace(stage: str, detail: str = "") -> None:
@@ -163,6 +164,11 @@ class AgentLoop:
             self.executor.set_current_run_id(record.run_id)
         if hasattr(self.executor, "configure_run"):
             self.executor.configure_run(record.run_id, headless=request.headless)
+        if hasattr(self.executor, "start_run_recording"):
+            try:
+                await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
+            except Exception as exc:
+                logger.warning("start_run_recording failed for %s: %s", record.run_id, exc)
         if request.start_url:
             _trace("START_RUN -> NAVIGATE", request.start_url)
             await self.executor.execute(
@@ -323,6 +329,7 @@ class AgentLoop:
         state.current_subgoal = decision.active_subgoal
         _anchor_snap_info: AnchorSnapInfo | None = None
         decision, _anchor_snap_info = self._apply_coord_anchor(record.run_id, decision)
+        decision = self._tag_input_zone(decision, perception)
 
         # Human-in-the-loop: pause the run and wait for user input
         if decision.action.action_type is ActionType.WAIT_FOR_USER:
@@ -838,13 +845,14 @@ class AgentLoop:
                 raise PerceptionLowQualityError(
                     f"no visible elements after {_LIVENESS_RETRY_MAX} liveness retries"
                 )
+            _sleep_s = _LIVENESS_RETRY_FIRST_SLEEP_S if attempt == 1 else _LIVENESS_RETRY_SLEEP_S
             logger.warning(
-                "liveness_retry=%d/%d: zero elements detected — waiting %.1fs to recapture",
+                "liveness_retry=%d/%d: zero elements — waiting %.1fs before recapture",
                 attempt,
                 _LIVENESS_RETRY_MAX,
-                _LIVENESS_RETRY_SLEEP_S,
+                _sleep_s,
             )
-            await asyncio.sleep(_LIVENESS_RETRY_SLEEP_S)
+            await asyncio.sleep(_sleep_s)
             frame = await self.capture_service.capture(state)
         raise PerceptionLowQualityError("no visible elements after all liveness retries")  # pragma: no cover
 
@@ -1282,7 +1290,13 @@ class AgentLoop:
                 logger.warning("session_reset executor call failed: %s", exc)
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
+        if hasattr(self.executor, "stop_run_recording"):
+            try:
+                await self.executor.stop_run_recording(run_id)
+            except Exception as exc:
+                logger.warning("stop_run_recording failed for %s: %s", run_id, exc)
         if not hasattr(self.executor, "aclose_run"):
+            await self._persist_cleanup_artifacts(run_id)
             return
         try:
             await self.executor.aclose_run(run_id)
@@ -1438,6 +1452,43 @@ class AgentLoop:
     # ------------------------------------------------------------------
 
     _ANCHOR_SNAP_THRESHOLD_PX: int = 50
+
+    # Element-id substrings and element_type values that indicate a valid but
+    # blank interactive surface (text editors, input fields, search boxes).
+    _INPUT_ZONE_ID_TOKENS: frozenset[str] = frozenset({
+        "text_area", "text_field", "text_input", "notepad_text_area",
+        "input", "textarea", "editor", "search_input",
+    })
+
+    def _tag_input_zone(self, decision, perception) -> "PolicyDecision":
+        """Mark the action as is_input_zone=True if the target is a blank input surface.
+
+        The visual servo rejects clicks on uniform (low-variance) regions — but a
+        blank Notepad text area or empty input field is intentionally white/blank and
+        must still accept clicks.  This method detects that case and sets the bypass
+        flag so _region_has_content skips the variance gate.
+        """
+        from src.models.perception import UIElementType
+        action = decision.action
+        if action.action_type not in (ActionType.CLICK, ActionType.TYPE):
+            return decision
+        if action.is_input_zone:
+            return decision  # already flagged
+
+        target_id = (action.target_element_id or "").lower()
+        # Check element_id substrings
+        if any(tok in target_id for tok in self._INPUT_ZONE_ID_TOKENS):
+            return decision.model_copy(update={"action": action.model_copy(update={"is_input_zone": True})})
+
+        # Check element_type from current perception
+        if action.target_element_id and perception is not None:
+            for el in perception.visible_elements:
+                if el.element_id == action.target_element_id:
+                    if el.element_type is UIElementType.INPUT:
+                        return decision.model_copy(update={"action": action.model_copy(update={"is_input_zone": True})})
+                    break
+
+        return decision
 
     def _update_coord_anchor(self, run_id: str, action: AgentAction) -> None:
         """Record the click coordinates for an element as the known-good anchor.

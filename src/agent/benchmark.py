@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 import os
+import time
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
@@ -35,6 +36,70 @@ from src.store.summary import (
     write_run_metrics,
     write_suite_summary,
 )
+
+_PREFLIGHT_VELOCITY_THRESHOLD = 0.01   # 1% pixel change — screen still animating
+_PREFLIGHT_SETTLE_DURATION_S = 0.30    # must stay below threshold continuously for 300ms
+_PREFLIGHT_MAX_WAIT_S = 10.0           # hard ceiling; give up rather than block forever
+_PREFLIGHT_POLL_INTERVAL_S = 0.05      # 50ms poll cadence
+
+
+async def pre_flight_settle(
+    executor,
+    *,
+    velocity_threshold: float = _PREFLIGHT_VELOCITY_THRESHOLD,
+    settle_duration_s: float = _PREFLIGHT_SETTLE_DURATION_S,
+    max_wait_s: float = _PREFLIGHT_MAX_WAIT_S,
+) -> float:
+    """Wait until the screen has been visually stable for `settle_duration_s` seconds.
+
+    Polls ``executor.capture()`` at 50ms intervals and inspects ``visual_velocity``.
+    Returns the total seconds spent waiting so the caller can exclude OS animation
+    lag from benchmark wall-clock timings — keeping ``ReliabilityScore`` a measure
+    of agent logic rather than display settling time.
+
+    Gives up and returns after ``max_wait_s`` without raising, so a permanently
+    animating screen (e.g. live wallpaper) never blocks the suite indefinitely.
+    """
+    t_start = time.monotonic()
+    stable_since: float | None = None
+
+    while True:
+        elapsed = time.monotonic() - t_start
+        if elapsed >= max_wait_s:
+            _log.warning(
+                "pre_flight_settle: screen did not settle within %.1fs — proceeding anyway",
+                max_wait_s,
+            )
+            break
+
+        try:
+            frame = await executor.capture()
+        except Exception as exc:
+            _log.debug("pre_flight_settle: capture failed (%s) — assuming settled", exc)
+            break
+
+        if frame.visual_velocity < velocity_threshold:
+            if stable_since is None:
+                stable_since = time.monotonic()
+            elif (time.monotonic() - stable_since) >= settle_duration_s:
+                _log.debug(
+                    "pre_flight_settle: settled in %.3fs (velocity=%.4f)",
+                    time.monotonic() - t_start,
+                    frame.visual_velocity,
+                )
+                break
+        else:
+            if stable_since is not None:
+                _log.debug(
+                    "pre_flight_settle: velocity spike %.4f — reset stable window",
+                    frame.visual_velocity,
+                )
+            stable_since = None
+
+        await asyncio.sleep(_PREFLIGHT_POLL_INTERVAL_S)
+
+    return round(time.monotonic() - t_start, 3)
+
 
 DEFAULT_FORM_BENCHMARK_INTENT = "Complete the auth-free form and submit it successfully."
 DEFAULT_FORM_BENCHMARK_URL = "https://practice-automation.com/form-fields/"
@@ -307,6 +372,7 @@ async def run_stress_benchmark(
         max_steps=max_steps,
         get_loop_fn=_get_loop_fn,
         root_dir=root,
+        settle_fn=pre_flight_settle,
     )
 
     # Compute drift and call reflector for each task

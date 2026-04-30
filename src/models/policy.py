@@ -79,6 +79,9 @@ class AgentAction(StrictModel):
     scroll_amount: int | None = Field(default=None)
     actions: list["AgentAction"] | None = None
     target_context: TargetSelectionContext | None = None
+    # Internal servo flag: skip variance check for known blank-but-valid input regions
+    # (e.g. Notepad text area). Set by the loop after target element type lookup.
+    is_input_zone: bool = False
 
     @model_validator(mode="after")
     def validate_payload(self) -> "AgentAction":  # noqa: C901

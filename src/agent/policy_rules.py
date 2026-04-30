@@ -345,8 +345,13 @@ class PolicyRuleEngine:
         if not state.action_history:
             return None
 
-        last = state.action_history[-1].action
+        last_entry = state.action_history[-1]
+        last = last_entry.action
         if last.action_type is not ActionType.CLICK:
+            return None
+        # Only fire when the preceding click actually succeeded — a failed click
+        # leaves the screen unchanged, so there is no open dropdown to select from.
+        if not last_entry.success:
             return None
         last_id = last.target_element_id
         if last_id is None:
@@ -357,11 +362,17 @@ class PolicyRuleEngine:
         if any(sig in last_id.lower() for sig in self._DROPDOWN_ID_SIGNALS):
             return None
 
-        # Collect visible child items — elements whose IDs signal secondary menu membership.
+        # Collect visible child items — elements whose IDs signal secondary menu membership
+        # AND whose element_type is consistent with a real menu item (not a text area,
+        # window chrome, or input field that Gemini mis-labelled with "dropdown" in its id).
+        _MENU_TYPES: frozenset[UIElementType] = frozenset({
+            UIElementType.BUTTON, UIElementType.LINK, UIElementType.ICON,
+        })
         child_items = [
             e for e in perception.visible_elements
             if any(sig in e.element_id.lower() for sig in self._DROPDOWN_ID_SIGNALS)
             and e.usable_for_targeting
+            and e.element_type in _MENU_TYPES
         ]
         if not child_items:
             return None

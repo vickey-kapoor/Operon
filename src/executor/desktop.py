@@ -544,6 +544,7 @@ class DesktopExecutor(Executor):
         y: int,
         radius: int = 50,
         baseline_variance: float | None = None,
+        is_input_zone: bool = False,
     ) -> tuple[bool, float]:
         """Visual servo check: return (has_content, variance).
 
@@ -555,7 +556,17 @@ class DesktopExecutor(Executor):
             radius:            Half-side of the square crop in pixels.
             baseline_variance: Override for the adaptive threshold (pixel²).
                                Defaults to self._servo_threshold (calibrated at init).
+            is_input_zone:     When True, skip the variance gate entirely. Valid for
+                               known blank-but-interactable areas such as an empty text
+                               editor or input field whose background is solid white.
         """
+        if is_input_zone:
+            logger.info(
+                "[SERVO] Bypassing variance check for confirmed input zone at (%d, %d)",
+                x, y,
+            )
+            return True, 0.0
+
         threshold = baseline_variance if baseline_variance is not None else self._servo_threshold
         raw = self._sample_region(x, y, radius)
         if not raw:
@@ -591,7 +602,10 @@ class DesktopExecutor(Executor):
             # before committing the click. Catches elements that shifted mid-flight.
             # Wrapped in try/except — a failed pixel grab should never block a click.
             try:
-                has_content, variance = await asyncio.to_thread(self._region_has_content, action.x, action.y)
+                has_content, variance = await asyncio.to_thread(
+                    self._region_has_content, action.x, action.y,
+                    50, None, action.is_input_zone,
+                )
             except Exception as _servo_exc:
                 logger.debug("Visual servo check skipped (mss error): %s", _servo_exc)
                 has_content = True

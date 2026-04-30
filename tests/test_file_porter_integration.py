@@ -14,7 +14,7 @@ or application default credentials.
 
 Optional:
 
-    OPERON_DRIVE_TEST_URL=https://example.com/robots.txt
+    OPERON_DRIVE_TEST_URL=https://example.com/
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from src.tools.file_porter import run_porter
 
 _RUN_DRIVE_INTEGRATION = os.getenv("OPERON_RUN_DRIVE_INTEGRATION", "false").lower() == "true"
 _TEST_FOLDER_ID = os.getenv("OPERON_DRIVE_TEST_FOLDER_ID", "")
-_TEST_URL = os.getenv("OPERON_DRIVE_TEST_URL", "https://example.com/robots.txt")
+_TEST_URL = os.getenv("OPERON_DRIVE_TEST_URL", "https://example.com/")
 _HAS_SERVICE_ACCOUNT = bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON"))
 
 pytestmark = [

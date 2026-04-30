@@ -265,6 +265,8 @@ class DesktopExecutor(Executor):
         self._current_run_id: str | None = None
         self._launched_processes: dict[str, list[subprocess.Popen]] = {}
         self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
+        self._run_recorders: dict[str, object] = {}   # run_id → ScreenRecorder
+        self._run_video_paths: dict[str, Path] = {}   # run_id → final video path
 
         _set_dpi_awareness()
         if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() != "true":
@@ -918,6 +920,48 @@ class DesktopExecutor(Executor):
             failure_category=failure_category,
             failure_stage=LoopStage.EXECUTE,
         )
+
+    async def start_run_recording(self, run_id: str, root_dir: str | Path = "runs") -> None:
+        """Start a full-run screen recording for *run_id*.
+
+        Uses streaming mode so frames are written directly to disk — no in-memory
+        buffer regardless of run length.  The video is saved to
+        ``runs/<run_id>/run_recording.mp4`` at 8 fps, half native resolution.
+        Safe to call multiple times for the same run_id (no-op if already recording).
+        """
+        if run_id in self._run_recorders:
+            return
+        from src.agent.screen_recorder import ScreenRecorder
+
+        video_path = Path(root_dir) / run_id / "run_recording.mp4"
+        recorder = ScreenRecorder(
+            output_path=video_path,
+            fps=8,
+            max_duration=1800.0,  # 30-min hard cap; stop() ends it sooner
+            streaming=True,
+        )
+        self._run_recorders[run_id] = recorder
+        self._run_video_paths[run_id] = video_path
+        await recorder.start()
+        logger.info("run_recording started: run=%s path=%s", run_id, video_path)
+
+    async def stop_run_recording(self, run_id: str) -> Path | None:
+        """Stop the full-run recording for *run_id* and return the video path."""
+        recorder = self._run_recorders.pop(run_id, None)
+        if recorder is None:
+            return self._run_video_paths.get(run_id)
+        final_path = await recorder.stop()
+        if final_path:
+            self._run_video_paths[run_id] = final_path
+            logger.info("run_recording saved: run=%s path=%s", run_id, final_path)
+        else:
+            logger.warning("run_recording: no output produced for run=%s", run_id)
+            self._run_video_paths.pop(run_id, None)
+        return final_path
+
+    def recorded_video_path_for_run(self, run_id: str) -> Path | None:
+        """Return the saved full-run video path, or None if not recorded."""
+        return self._run_video_paths.get(run_id)
 
     async def execute_with_recording(
         self, action: AgentAction, step_dir: Path,

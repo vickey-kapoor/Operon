@@ -163,6 +163,11 @@ class AgentLoop:
             self.executor.set_current_run_id(record.run_id)
         if hasattr(self.executor, "configure_run"):
             self.executor.configure_run(record.run_id, headless=request.headless)
+        if hasattr(self.executor, "start_run_recording"):
+            try:
+                await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
+            except Exception as exc:
+                logger.warning("start_run_recording failed for %s: %s", record.run_id, exc)
         if request.start_url:
             _trace("START_RUN -> NAVIGATE", request.start_url)
             await self.executor.execute(
@@ -1282,7 +1287,13 @@ class AgentLoop:
                 logger.warning("session_reset executor call failed: %s", exc)
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
+        if hasattr(self.executor, "stop_run_recording"):
+            try:
+                await self.executor.stop_run_recording(run_id)
+            except Exception as exc:
+                logger.warning("stop_run_recording failed for %s: %s", run_id, exc)
         if not hasattr(self.executor, "aclose_run"):
+            await self._persist_cleanup_artifacts(run_id)
             return
         try:
             await self.executor.aclose_run(run_id)

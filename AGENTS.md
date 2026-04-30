@@ -30,6 +30,7 @@ Live-server and real-environment tests are opt-in. Do not include `tests/test_e2
 `tests/test_upload_file_native_integration.py` is a headed Windows-only manual gate for the native OS file picker path.
 `tests/test_browserbase_integration.py` is an env-gated smoke test for the real Browserbase backend.
 `tests/test_file_porter_integration.py` is an env-gated smoke test for real Google Drive upload via `FILE_PORTER`.
+GitHub Actions exposes these as a separate manual workflow in `.github/workflows/integration.yml`; keep them out of the default PR CI path.
 
 ## Commit & Pull Request Guidelines
 Recent commits use short imperative subjects with prefixes like `Fix:`, `Docs:`, `CI:`, `Chore:`, and `Refactor:`. Keep commit titles specific and one line. PRs should summarize the behavioral change, list validation performed, link related issues, and include screenshots only for UI or desktop-behavior changes.

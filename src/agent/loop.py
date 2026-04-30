@@ -65,7 +65,8 @@ logger = logging.getLogger(__name__)
 
 _TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
 _LIVENESS_RETRY_MAX = 3
-_LIVENESS_RETRY_SLEEP_S = 1.5
+_LIVENESS_RETRY_FIRST_SLEEP_S = 0.5   # fast recovery for brief UI transitions (e.g. search overlay animating in)
+_LIVENESS_RETRY_SLEEP_S = 1.5         # subsequent retries give slower loads more time
 
 
 def _trace(stage: str, detail: str = "") -> None:
@@ -843,13 +844,14 @@ class AgentLoop:
                 raise PerceptionLowQualityError(
                     f"no visible elements after {_LIVENESS_RETRY_MAX} liveness retries"
                 )
+            _sleep_s = _LIVENESS_RETRY_FIRST_SLEEP_S if attempt == 1 else _LIVENESS_RETRY_SLEEP_S
             logger.warning(
-                "liveness_retry=%d/%d: zero elements detected — waiting %.1fs to recapture",
+                "liveness_retry=%d/%d: zero elements — waiting %.1fs before recapture",
                 attempt,
                 _LIVENESS_RETRY_MAX,
-                _LIVENESS_RETRY_SLEEP_S,
+                _sleep_s,
             )
-            await asyncio.sleep(_LIVENESS_RETRY_SLEEP_S)
+            await asyncio.sleep(_sleep_s)
             frame = await self.capture_service.capture(state)
         raise PerceptionLowQualityError("no visible elements after all liveness retries")  # pragma: no cover
 

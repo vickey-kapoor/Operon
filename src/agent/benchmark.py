@@ -80,7 +80,7 @@ def _build_loop(*, root_dir: str | Path = "runs") -> tuple[AgentLoop, DesktopExe
     policy_service = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=gemini_client),
         memory_store=memory_store,
-        spatial_cache=perception_service.spatial_cache,
+        element_buffer=perception_service.element_buffer,
     )
     loop = AgentLoop(
         capture_service=ScreenCaptureService(executor=executor),

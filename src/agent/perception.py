@@ -16,7 +16,7 @@ from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, StopReason
 from src.models.logs import ModelDebugArtifacts
-from src.models.memory import SpatialCache
+from src.models.memory import RollingElementBuffer
 from src.models.perception import (
     GhostElement,
     PageHint,
@@ -74,7 +74,7 @@ class GeminiPerceptionService(PerceptionService):
         self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._max_semantic_retries = 1
-        self.spatial_cache = SpatialCache(max_frames=3)
+        self.element_buffer = RollingElementBuffer(max_frames=3)
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
         step_dir = Path(screenshot.artifact_path).resolve().parent
@@ -186,24 +186,49 @@ class GeminiPerceptionService(PerceptionService):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
-    def reset_spatial_cache(self) -> None:
-        """Discard all cached frames. Called at the start of every new run."""
-        self.spatial_cache.clear()
+    def reset_element_buffer(self) -> None:
+        """Discard all cached frames and active ghosts. Called at the start of every new run."""
+        self.element_buffer.clear()
 
     def _with_spatial_persistence(self, perception: ScreenPerception, screenshot: CaptureFrame) -> ScreenPerception:
-        """Detect ghost elements, update the spatial cache, and return an augmented perception.
+        """Apply coordinate smoothing, detect ghost elements, update the spatial cache.
 
-        A GhostElement is an element from the previous frame that has no spatial
-        match in the current frame, sampled only when visual_velocity < 2% (screen
-        was stable). These elements are likely occluded rather than gone.
+        When visual_velocity is low (< 2%) and a previous frame exists:
+
+        1. Coordinate smoothing — per-element (x, y) that shifted by fewer than
+           _COORD_SNAP_THRESHOLD_PX pixels on both axes are snapped back to the
+           previous frame's values, eliminating Gemini sub-pixel jitter that would
+           otherwise cause the executor to "vibrate" between slightly different
+           click targets on consecutive steps.
+
+        2. Ghost detection — elements present in T-1 but absent after smoothing are
+           marked as GhostElements (likely occluded rather than gone).
+
+        Smoothing is applied before ghost detection so that coord-snapped elements
+        still register as matched (suppressing false ghost entries).
         """
-        prev_elements = self.spatial_cache.prev_frame()
-        ghost_elements: list[GhostElement] = []
+        prev_elements = self.element_buffer.prev_frame()
+        stable = screenshot.visual_velocity < 0.02
 
-        if prev_elements and screenshot.visual_velocity < 0.02:
+        # Step 1: coordinate smoothing (low-velocity frames only)
+        current_elements = perception.visible_elements
+        if prev_elements and stable:
+            current_elements, snap_count = _smooth_element_coords(current_elements, prev_elements)
+            if snap_count:
+                logger.debug(
+                    "coord_smoothing: snapped %d element(s) back to previous-frame coordinates "
+                    "(visual_velocity=%.4f < 0.02)",
+                    snap_count, screenshot.visual_velocity,
+                )
+
+        # Step 2: ghost detection — build new_ghosts from elements absent in current frame,
+        # then delegate TTL tracking to element_buffer.update_ghosts so stale ghosts from
+        # closed windows are automatically purged after _GHOST_TTL_FRAMES frames.
+        new_ghosts: list[GhostElement] = []
+        if prev_elements and stable:
             for prev in prev_elements:
-                if not any(_elements_match(prev, curr) for curr in perception.visible_elements):
-                    ghost_elements.append(
+                if not any(_elements_match(prev, curr) for curr in current_elements):
+                    new_ghosts.append(
                         GhostElement(
                             element_id=prev.element_id,
                             element_type=prev.element_type,
@@ -216,12 +241,19 @@ class GeminiPerceptionService(PerceptionService):
                         )
                     )
 
-        self.spatial_cache.push(perception.visible_elements)
+        ghost_elements = self.element_buffer.update_ghosts(new_ghosts, current_elements)
+        self.element_buffer.push(current_elements)
 
+        updates: dict[str, object] = {}
+        if current_elements is not perception.visible_elements:
+            updates["visible_elements"] = current_elements
         if ghost_elements:
-            logger.debug("spatial_persistence: %d ghost element(s) detected", len(ghost_elements))
-            return perception.model_copy(update={"ghost_elements": ghost_elements})
-        return perception
+            logger.debug(
+                "spatial_persistence: %d ghost element(s) active (ttl≤%d frames)",
+                len(ghost_elements), RollingElementBuffer._GHOST_TTL_FRAMES,
+            )
+            updates["ghost_elements"] = ghost_elements
+        return perception.model_copy(update=updates) if updates else perception
 
     def _render_prompt(self, state: AgentState, *, semantic_retry: bool = False) -> str:
         previous_page_hint = (
@@ -701,6 +733,42 @@ def _infer_nearby_label(target: UIElement, text_candidates: list[UIElement]) -> 
 
 
 _GHOST_SPATIAL_TOLERANCE_PX = 30
+
+# Maximum per-axis coordinate shift (px) that is treated as perception jitter.
+# Shifts strictly below this value on both axes are snapped back to the previous
+# frame's coordinates when visual velocity is low, preventing targets from
+# "vibrating" between steps due to sub-pixel Gemini output variance.
+_COORD_SNAP_THRESHOLD_PX = 3
+
+
+def _smooth_element_coords(
+    current_elements: list[UIElement],
+    prev_elements: list[UIElement],
+) -> tuple[list[UIElement], int]:
+    """Snap per-element (x, y) that jittered by fewer than _COORD_SNAP_THRESHOLD_PX pixels.
+
+    For each current element, find its counterpart in the previous frame using
+    the existing spatial-match logic.  When the two positions differ by less than
+    the threshold on *both* axes the current element's coordinates are replaced
+    with the previous frame's values, eliminating sub-pixel drift that would
+    otherwise cause the executor to click slightly different pixels each step.
+
+    Returns (smoothed_elements, snap_count) where snap_count is the number of
+    elements whose coordinates were stabilised.
+    """
+    smoothed: list[UIElement] = []
+    snapped = 0
+    for curr in current_elements:
+        prev_match = next((p for p in prev_elements if _elements_match(p, curr)), None)
+        if prev_match is not None:
+            dx = abs(curr.x - prev_match.x)
+            dy = abs(curr.y - prev_match.y)
+            if (dx > 0 or dy > 0) and dx < _COORD_SNAP_THRESHOLD_PX and dy < _COORD_SNAP_THRESHOLD_PX:
+                smoothed.append(curr.model_copy(update={"x": prev_match.x, "y": prev_match.y}))
+                snapped += 1
+                continue
+        smoothed.append(curr)
+    return smoothed, snapped
 
 
 def _elements_match(a: UIElement, b: UIElement, tol: int = _GHOST_SPATIAL_TOLERANCE_PX) -> bool:

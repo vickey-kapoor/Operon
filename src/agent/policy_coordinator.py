@@ -7,13 +7,18 @@ import logging
 from pathlib import Path
 
 from src.agent.policy import PolicyService
-from src.agent.policy_rules import PolicyRuleEngine
+from src.agent.policy_rules import (
+    _ANCHOR_DISTANCE_THRESHOLD,
+    _COORD_ANCHOR_ACTION_TYPES,
+    PolicyRuleEngine,
+    _nearest_element_by_box,
+)
 from src.models.common import FailureCategory
 from src.models.episode import Episode, EpisodeReplayState
 from src.models.logs import ModelDebugArtifacts
-from src.models.memory import MemoryHint, SpatialCache
+from src.models.memory import MemoryHint, RollingElementBuffer
 from src.models.perception import ScreenPerception
-from src.models.policy import ActionType, PolicyDecision
+from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.selector import SelectorTrace
 from src.models.state import AgentState
 from src.store.background_writer import bg_writer
@@ -31,7 +36,7 @@ class PolicyCoordinator(PolicyService):
         delegate: PolicyService,
         memory_store: MemoryStore,
         rule_engine: PolicyRuleEngine | None = None,
-        spatial_cache: SpatialCache | None = None,
+        element_buffer: RollingElementBuffer | None = None,
     ) -> None:
         self.delegate = delegate
         self.memory_store = memory_store
@@ -42,7 +47,7 @@ class PolicyCoordinator(PolicyService):
         # Single-step hint cache: avoids re-loading memory JSONL twice per step.
         self._cached_hints: list[MemoryHint] | None = None
         self._cached_hints_key: tuple | None = None
-        self._spatial_cache: SpatialCache | None = spatial_cache
+        self._element_buffer: RollingElementBuffer | None = element_buffer
 
     def _get_hints(self, state: AgentState, perception: ScreenPerception | None) -> list[MemoryHint]:
         """Fetch hints, using a single-step in-memory cache to avoid double JSONL reads."""
@@ -82,8 +87,8 @@ class PolicyCoordinator(PolicyService):
         self._cached_hints_key = None
         self.rule_engine._form_options_clicked.pop(run_id, None)
         self.rule_engine._form_fields_filled.pop(run_id, None)
-        if self._spatial_cache is not None:
-            self._spatial_cache.clear()
+        if self._element_buffer is not None:
+            self._element_buffer.clear()
         logger.debug("PolicyCoordinator: run context reset for run_id=%r", run_id)
 
     def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
@@ -141,7 +146,7 @@ class PolicyCoordinator(PolicyService):
         # Semantic anchor check (highest-priority post-LLM guard): if the LLM targeted
         # empty space (coordinate > 15px from every visible element), intercept and
         # inject an anchor hint for the next step before re-perceiving.
-        anchor_intercept = self.rule_engine._semantic_anchor_check(state, perception, decision)
+        anchor_intercept = self._semantic_anchor_check(state, perception, decision)
         if anchor_intercept is not None:
             if hasattr(self.delegate, "add_advisory_hints"):
                 self.delegate.add_advisory_hints(
@@ -160,6 +165,64 @@ class PolicyCoordinator(PolicyService):
             self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
         self._last_debug_artifacts = self._attach_selector_trace(perception, self._last_debug_artifacts, selector_traces)
         return decision
+
+    def _semantic_anchor_check(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision | None:
+        """Post-LLM guard: intercept hallucinated coordinates that target empty space.
+
+        Fires when the LLM produced a CLICK/DOUBLE_CLICK/RIGHT_CLICK/TYPE action whose
+        (x, y) is more than _ANCHOR_DISTANCE_THRESHOLD pixels from the bounding box of
+        every visible element in the current perception.
+
+        Returns a WAIT(300ms) decision with force_fresh_perception=True and an anchor
+        hint injected into the advisory-hints buffer for the next step.
+        Returns None when the coordinates look plausible.
+        """
+        action = decision.action
+        if action.action_type not in _COORD_ANCHOR_ACTION_TYPES:
+            return None
+        if action.x is None or action.y is None:
+            return None
+        if not perception.visible_elements:
+            return None
+
+        nearest_result = _nearest_element_by_box(action.x, action.y, perception.visible_elements)
+        if nearest_result is None:
+            return None
+        nearest_elem, min_dist = nearest_result
+
+        if min_dist <= _ANCHOR_DISTANCE_THRESHOLD:
+            return None
+
+        anchor_cx = nearest_elem.x + nearest_elem.width // 2
+        anchor_cy = nearest_elem.y + nearest_elem.height // 2
+        anchor_hint = (
+            f"You targeted empty space at ({action.x}, {action.y}) — "
+            f"the nearest element is '{nearest_elem.primary_name}' "
+            f"({nearest_elem.element_id}) at approximately ({anchor_cx}, {anchor_cy}), "
+            f"{min_dist:.0f} px away. "
+            "Please refine your coordinates to target this element or another visible element directly."
+        )
+
+        logger.warning(
+            "semantic_anchor_check: coord (%d, %d) is %.1f px from nearest element "
+            "'%s' (%s) — intercepting and requesting re-perceive",
+            action.x, action.y, min_dist,
+            nearest_elem.primary_name, nearest_elem.element_id,
+        )
+
+        state.force_fresh_perception = True
+        return PolicyDecision(
+            action=AgentAction(action_type=ActionType.WAIT, wait_ms=300),
+            rationale=anchor_hint,
+            confidence=0.99,
+            active_subgoal=f"anchor_recheck:({action.x},{action.y})→{nearest_elem.element_id}",
+            rule_name="_semantic_anchor_check",
+        )
 
     async def _confirm_success(
         self,

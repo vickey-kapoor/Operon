@@ -171,6 +171,22 @@ class DeterministicVerifierService(VerifierService):
             if reaction_result is not None:
                 return reaction_result
 
+        # STABLE_WAIT: deterministic motion check — if the screen is actively changing
+        # post-action but the reaction check didn't fire (or wasn't applicable), wait
+        # 200ms and re-verify rather than asking the model critic on a mid-animation
+        # frame. No Gemini call; falls through to the model critic on re-verify once
+        # the UI has settled.
+        if executed_action.success and self._screen_is_in_motion(executed_action):
+            return VerificationResult(
+                status=VerificationStatus.STABLE_WAIT,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason="UI is actively transitioning after action; waiting 200ms before re-verifying.",
+                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+                failure_stage=LoopStage.VERIFY,
+            )
+
         model_result = await self._model_verify(state, decision, executed_action)
         if model_result is not None:
             return model_result
@@ -194,6 +210,36 @@ class DeterministicVerifierService(VerifierService):
             reason="Executed action succeeded and the expected outcome is treated as met.",
             critic_fallback_reason="critic_unavailable_or_unusable",
         )
+
+    def _screen_is_in_motion(self, executed_action: ExecutedAction) -> bool:
+        """Return True when the before→after screenshot delta shows real UI motion.
+
+        Uses the step-directory convention (before.png / after.png sit in the same
+        folder as the action artifact) to compute a pixel-change ratio without any
+        additional captures.  Returns False on any I/O error so the check degrades
+        gracefully rather than blocking verification.
+
+        Threshold: any change above CURSOR_ONLY_THRESHOLD (0.05%) counts as real
+        motion.  The PENDING path already handles the case where the page is
+        mostly blank; this check fires for non-blank in-progress transitions.
+        """
+        from src.agent.screen_diff import (
+            CURSOR_ONLY_THRESHOLD,
+            compute_screen_change_ratio,
+        )
+
+        after_path = executed_action.artifact_path
+        if not after_path:
+            return False
+        before_path = Path(after_path).resolve().parent / "before.png"
+        if not before_path.exists():
+            return False
+        ratio = compute_screen_change_ratio(str(before_path), after_path)
+        logger.debug(
+            "stable_wait_check: screen_change_ratio=%.5f cursor_only_threshold=%.5f in_motion=%s",
+            ratio, CURSOR_ONLY_THRESHOLD, ratio > CURSOR_ONLY_THRESHOLD,
+        )
+        return ratio > CURSOR_ONLY_THRESHOLD
 
     async def _reaction_verify(
         self,
@@ -558,7 +604,7 @@ def _normalize_verification_result(result: VerificationResult) -> VerificationRe
             updates["failure_stage"] = LoopStage.VERIFY
     elif result.status is VerificationStatus.SUCCESS and result.stop_condition_met and result.stop_reason is None:
         updates["stop_reason"] = StopReason.TASK_COMPLETED
-    # PROGRESSING_STABLE is not a failure — no normalization needed; leave as-is.
+    # PROGRESSING_STABLE and STABLE_WAIT are not failures — no normalization needed.
     return result.model_copy(update=updates) if updates else result
 
 

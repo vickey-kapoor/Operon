@@ -224,7 +224,7 @@ def get_agent_loop() -> AgentLoop:
             policy_service=PolicyCoordinator(
                 delegate=services.policy_delegate,
                 memory_store=memory_store,
-                spatial_cache=getattr(services.perception_service, "spatial_cache", None),
+                element_buffer=getattr(services.perception_service, "element_buffer", None),
             ),
             executor=executor,
             verifier_service=DeterministicVerifierService(
@@ -265,7 +265,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             policy_service=PolicyCoordinator(
                 delegate=services.policy_delegate,
                 memory_store=memory_store,
-                spatial_cache=getattr(services.perception_service, "spatial_cache", None),
+                element_buffer=getattr(services.perception_service, "element_buffer", None),
             ),
             executor=executor,
             verifier_service=DeterministicVerifierService(

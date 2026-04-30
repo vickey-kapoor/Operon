@@ -310,7 +310,8 @@ class StressAttempt:
     stop_reason: str | None
     window_x: int            # intended window position x
     window_y: int            # intended window position y
-    duration_seconds: float
+    duration_seconds: float  # agent execution time (excludes pre-flight settling)
+    settle_seconds: float = 0.0  # seconds spent waiting for screen to stabilise
     error: str | None = None
 
 
@@ -359,6 +360,7 @@ class StressTaskResult:
                     "window_x": a.window_x,
                     "window_y": a.window_y,
                     "duration_seconds": a.duration_seconds,
+                    "settle_seconds": a.settle_seconds,
                     "error": a.error,
                 }
                 for a in self.attempts
@@ -458,8 +460,15 @@ class StressRunner:
         get_loop_fn: Callable,
         headless: bool = False,
         seed: int | None = None,
+        settle_fn: Callable | None = None,
     ) -> StressTaskResult:
-        """Run one task k times and return the aggregated StressTaskResult."""
+        """Run one task k times and return the aggregated StressTaskResult.
+
+        If ``settle_fn`` is provided it must be an async callable with signature
+        ``settle_fn(executor) -> float`` that blocks until the screen is visually
+        stable and returns seconds spent waiting.  The agent clock starts *after*
+        settling completes so ``duration_seconds`` reflects agent logic time only.
+        """
         rng = random.Random(seed)
         positions = list(_WINDOW_POSITIONS)
         rng.shuffle(positions)
@@ -476,7 +485,10 @@ class StressRunner:
 
         for rep in range(1, self.k + 1):
             wx, wy = positions[rep - 1]
-            t_start = time.time()
+            # t_run_start is set after pre-flight settling so duration_seconds
+            # reflects only the agent's execution time, not OS animation lag.
+            t_run_start = time.time()
+            settle_s = 0.0
             attempt = StressAttempt(
                 repetition=rep,
                 run_id=None,
@@ -496,6 +508,18 @@ class StressRunner:
 
                 async with _get_browser_lock():
                     loop = get_loop_fn()
+
+                    # Pre-flight settling: wait for visual_velocity < 1% for 300ms
+                    # before the run clock starts.
+                    if settle_fn is not None:
+                        settle_s = await settle_fn(loop.executor)
+                        if settle_s > 0.05:
+                            logger.info(
+                                "stress pre_flight rep=%d/%d task=%s settled in %.3fs",
+                                rep, self.k, task_data["task_id"], settle_s,
+                            )
+                    t_run_start = time.time()  # agent clock starts here
+
                     req = RunTaskRequest(
                         intent=task_data["intent"],
                         start_url=task_data["start_url"],
@@ -530,7 +554,8 @@ class StressRunner:
                 attempt.error = str(exc)
                 logger.warning("stress rep=%d task=%s error: %s", rep, task_data["task_id"], exc)
             finally:
-                attempt.duration_seconds = round(time.time() - t_start, 1)
+                attempt.duration_seconds = round(time.time() - t_run_start, 1)
+                attempt.settle_seconds = round(settle_s, 3)
                 result.attempts.append(attempt)
 
             logger.info(
@@ -550,6 +575,7 @@ class StressRunner:
         get_loop_fn: Callable,
         headless: bool = False,
         root_dir: str | Path = "runs",
+        settle_fn: Callable | None = None,
     ) -> StressRunResult:
         """Run all tasks k times each and return a StressRunResult with reliability scores."""
         suite_result = StressRunResult(suite_id=uuid.uuid4().hex[:8], k=self.k)
@@ -561,6 +587,7 @@ class StressRunner:
                 get_loop_fn=get_loop_fn,
                 headless=headless,
                 seed=hash(task_data["task_id"]) & 0xFFFFFFFF,
+                settle_fn=settle_fn,
             )
             drift = compute_trajectory_drift(
                 run_ids=([a.run_id for a in task_result.attempts if a.run_id]),

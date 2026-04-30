@@ -40,6 +40,42 @@ _COORD_ANCHOR_ACTION_TYPES: frozenset[ActionType] = frozenset({
     ActionType.TYPE,
 })
 
+# Intent patterns that indicate the user wants to open/launch a desktop app.
+_LAUNCH_INTENT_RE = re.compile(
+    r"(?:open|launch|start|run|use)\s+([a-zA-Z0-9][a-zA-Z0-9 _\-]*?)(?:\s+and\b|\s+then\b|\s+to\b|\s+write\b|\s+in\b|$)",
+    re.IGNORECASE,
+)
+
+# Canonical app name → argument passed to launch_app executor.
+# Mirrors _APP_ALIASES in desktop.py but lives here so policy_rules has no
+# circular dependency on the executor layer.
+_LAUNCH_APP_NAMES: dict[str, str] = {
+    "notepad": "notepad",
+    "calculator": "calc",
+    "calc": "calc",
+    "paint": "mspaint",
+    "mspaint": "mspaint",
+    "explorer": "explorer",
+    "file explorer": "explorer",
+    "vs code": "code",
+    "vscode": "code",
+    "visual studio code": "code",
+    "word": "winword",
+    "excel": "excel",
+    "powerpoint": "powerpnt",
+    "chrome": "chrome",
+    "google chrome": "chrome",
+    "edge": "msedge",
+    "microsoft edge": "msedge",
+    "terminal": "wt",
+    "windows terminal": "wt",
+    "powershell": "powershell",
+    "cmd": "cmd",
+    "command prompt": "cmd",
+    "task manager": "taskmgr",
+    "settings": "ms-settings:",
+}
+
 # Labels that suggest a button dismisses / rejects rather than accepts.
 _DISMISS_TOKENS: frozenset[str] = frozenset({
     "don't", "dont", "dismiss", "close", "cancel", "no thanks", "skip",
@@ -151,6 +187,7 @@ class PolicyRuleEngine:
         _primitives: list[tuple[str, object]] = [
             ("_human_intervention_rule", lambda: self._human_intervention_rule(state, perception)),
             ("_task_success_stop_rule", lambda: self._task_success_stop_rule(perception)),
+            ("_prefer_launch_app_rule", lambda: self._prefer_launch_app_rule(state, perception)),
             ("_form_visible_field_fill_rule", lambda: self._form_visible_field_fill_rule(state, perception)),
             ("_dropdown_menu_select_rule", lambda: self._dropdown_menu_select_rule(state, perception)),
             ("_avoid_identical_type_retry", lambda: self._avoid_identical_type_retry(state, perception, memory_hints)),
@@ -179,6 +216,58 @@ class PolicyRuleEngine:
     # ------------------------------------------------------------------
     # Engine primitives
     # ------------------------------------------------------------------
+
+    def _prefer_launch_app_rule(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision | None:
+        """Force LAUNCH_APP when the intent is to open a known desktop application.
+
+        Fires at higher priority than _search_query_rule so the agent never wastes
+        steps typing an app name into the Windows Search bar.  Only triggers when:
+        - The intent matches 'open/launch/start/run/use <app>'
+        - The app name maps to a known launch_app command
+        - A successful LAUNCH_APP for this app has not already been recorded
+        """
+        # Don't fire if we've already launched an app this run
+        if any(
+            h.action.action_type is ActionType.LAUNCH_APP and h.success
+            for h in state.action_history
+        ):
+            return None
+
+        intent = state.intent or ""
+        m = _LAUNCH_INTENT_RE.search(intent)
+        if m is None:
+            return None
+
+        raw_name = m.group(1).strip().lower()
+        app_cmd = _LAUNCH_APP_NAMES.get(raw_name)
+        if app_cmd is None:
+            # Partial-match fallback: "open vs code" → matches "vs code" key
+            for alias, cmd in _LAUNCH_APP_NAMES.items():
+                if alias in raw_name or raw_name.startswith(alias):
+                    app_cmd = cmd
+                    raw_name = alias
+                    break
+        if app_cmd is None:
+            return None
+
+        logger.info(
+            "_prefer_launch_app_rule: intent=%r → launch_app(%r)",
+            intent[:80], app_cmd,
+        )
+        return PolicyDecision(
+            action=AgentAction(action_type=ActionType.LAUNCH_APP, text=app_cmd),
+            rationale=(
+                f"Intent requires '{raw_name}' — using launch_app directly "
+                "instead of searching to avoid screen-state churn."
+            ),
+            confidence=0.98,
+            active_subgoal=f"launch {raw_name}",
+            expected_change="content",
+        )
 
     def _avoid_identical_type_retry(
         self,
@@ -256,8 +345,13 @@ class PolicyRuleEngine:
         if not state.action_history:
             return None
 
-        last = state.action_history[-1].action
+        last_entry = state.action_history[-1]
+        last = last_entry.action
         if last.action_type is not ActionType.CLICK:
+            return None
+        # Only fire when the preceding click actually succeeded — a failed click
+        # leaves the screen unchanged, so there is no open dropdown to select from.
+        if not last_entry.success:
             return None
         last_id = last.target_element_id
         if last_id is None:
@@ -268,11 +362,17 @@ class PolicyRuleEngine:
         if any(sig in last_id.lower() for sig in self._DROPDOWN_ID_SIGNALS):
             return None
 
-        # Collect visible child items — elements whose IDs signal secondary menu membership.
+        # Collect visible child items — elements whose IDs signal secondary menu membership
+        # AND whose element_type is consistent with a real menu item (not a text area,
+        # window chrome, or input field that Gemini mis-labelled with "dropdown" in its id).
+        _MENU_TYPES: frozenset[UIElementType] = frozenset({
+            UIElementType.BUTTON, UIElementType.LINK, UIElementType.ICON,
+        })
         child_items = [
             e for e in perception.visible_elements
             if any(sig in e.element_id.lower() for sig in self._DROPDOWN_ID_SIGNALS)
             and e.usable_for_targeting
+            and e.element_type in _MENU_TYPES
         ]
         if not child_items:
             return None
@@ -578,6 +678,25 @@ class PolicyRuleEngine:
                 )
             if "action=wait" in _last_trace:
                 # Waited for overlay — now type into the focused input.
+                # Derive coordinates from perception so the executor can click-to-focus
+                # before dispatching keystrokes; without coords the TYPE lands nowhere.
+                _overlay_input = self._search_input_target(perception)
+                if _overlay_input is not None:
+                    _mid_x = _overlay_input.x + max(1, _overlay_input.width // 2)
+                    _mid_y = _overlay_input.y + max(1, _overlay_input.height // 2)
+                    return PolicyDecision(
+                        action=AgentAction(
+                            action_type=ActionType.TYPE,
+                            target_element_id=_overlay_input.element_id,
+                            x=_mid_x,
+                            y=_mid_y,
+                            text=query,
+                            press_enter=True,
+                        ),
+                        rationale=f"Search overlay open — typing '{query}' at ({_mid_x},{_mid_y}).",
+                        confidence=0.94,
+                        active_subgoal=f"search for {query}",
+                    )
                 return PolicyDecision(
                     action=AgentAction(
                         action_type=ActionType.TYPE,
@@ -585,7 +704,7 @@ class PolicyRuleEngine:
                         press_enter=True,
                     ),
                     rationale=f"Search overlay open after wait — typing '{query}' into focused input.",
-                    confidence=0.94,
+                    confidence=0.90,
                     active_subgoal=f"search for {query}",
                 )
             if "action=click" in _last_trace:

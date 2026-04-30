@@ -30,11 +30,20 @@ Return a single JSON object with exactly this shape:
   }},
   "rationale": "short factual reason for the single chosen action",
   "confidence": 0.0,
-  "active_subgoal": "short current subgoal"
+  "active_subgoal": "short current subgoal",
+  "expected_change": "none|focus|content|navigation|dialog"
 }}
+
+expected_change semantics (required — choose exactly one):
+- "none"       — hover, scroll, wait, no-op; low pixel delta is expected
+- "focus"      — click into input, checkbox tick, radio select; cursor/state changes but layout stays
+- "content"    — action that should swap visible content: key press that inserts text, app launch result appearing
+- "navigation" — action that changes the visible window or loads a new app/document
+- "dialog"     — action that should open or close a modal, menu, dropdown, or dialog box
 
 Rules:
 - Output valid JSON only.
+- Always include expected_change — it is required by the verifier.
 - Choose exactly one next action.
 - Stay within the existing action schema.
 - Do not include fields that do not belong to the chosen action type.
@@ -68,6 +77,12 @@ STOP CRITERIA (highest priority):
 - If the screen already shows the desired outcome (e.g. the app is already open, the file is already visible), stop immediately without taking any action.
 - When in doubt about whether the task is complete, prefer stopping over continuing. It is better to stop one step early than to take unnecessary actions.
 - NEVER repeat the same action type more than twice in a row. If you have performed the same action twice and the task is not complete, stop and report.
+
+LAUNCH_APP MANDATORY (highest priority after task completion):
+- If the intent is to open, launch, start, run, or use a desktop application — ALWAYS use launch_app with the application name.
+- NEVER use Windows Search, the taskbar search bar, Win+S, the Start menu, or any search input to find or open applications.
+- Using a search bar to open an app when launch_app is available is a CRITICAL ERROR: it wastes steps, destabilises the screen, and causes blank-perception failures.
+- Examples: "open notepad" → launch_app("notepad"). "launch calculator" → launch_app("calc"). No exceptions.
 
 WINDOW SAFETY (critical):
 - NEVER use alt+f4 or any hotkey that closes windows. The agent does not own the desktop — closing windows may destroy the user's work (VS Code, terminals, etc.).

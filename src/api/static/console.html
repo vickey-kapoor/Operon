@@ -292,6 +292,8 @@
   }
   .log-line  { display: flex; gap: 10px; min-width: 0; }
   .log-event { color: var(--blue); flex-shrink: 0; min-width: 148px; font-size: 11px; }
+  .log-event.rule { color: var(--green); font-weight: 700; }
+  .log-event.llm  { color: var(--blue);  font-weight: 700; }
   .log-detail{ color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
   .log-empty {
     margin: 12px; padding: 28px 16px; text-align: center; font-style: italic; font-size: 12px;
@@ -634,10 +636,13 @@ function renderLog(events) {
     return;
   }
   body.innerHTML = events.slice(-200).map(function(e) {
+    var evtClass = e.event && e.event.startsWith('[RULE]') ? 'log-event rule'
+                 : e.event && e.event.startsWith('[LLM]')  ? 'log-event llm'
+                 : 'log-event';
     return '<div class="log-entry">' +
       '<span class="log-step">' + esc(e.step_index) + '</span>' +
       '<span class="log-line">' +
-        '<span class="log-event">' + esc(e.event) + '</span>' +
+        '<span class="' + evtClass + '">' + esc(e.event) + '</span>' +
         '<span class="log-detail" title="' + esc(e.detail) + '">' + esc(e.detail) + '</span>' +
       '</span>' +
     '</div>';

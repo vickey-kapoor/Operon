@@ -18,6 +18,7 @@ from src.models.policy import AgentAction
 logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "video_verification_prompt.txt"
+_REACTION_PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "reaction_check_prompt.txt"
 
 # Confidence thresholds for interpreting combined saliency + Gemini results.
 _CONFIDENCE_SUCCESS = 0.5   # ≥ this → action succeeded
@@ -37,12 +38,21 @@ class VideoVerificationResult(StrictModel):
     motion_class: str = "unknown"  # "hung" | "spinner" | "progressing" | "unknown"
 
 
+class ReactionCheckResult(StrictModel):
+    """Structured result from a UI reaction check."""
+
+    ui_reacted: bool
+    reaction_description: str
+    confidence: float = 0.5
+
+
 class VideoVerifier:
     """Verify an action using pixel-velocity temporal saliency and Gemini video analysis."""
 
     def __init__(self, gemini_client: GeminiClient) -> None:
         self.gemini_client = gemini_client
         self._prompt_template = _PROMPT_PATH.read_text(encoding="utf-8")
+        self._reaction_prompt_template = _REACTION_PROMPT_PATH.read_text(encoding="utf-8")
 
     async def verify_action(
         self,
@@ -109,6 +119,70 @@ class VideoVerifier:
             suggested_next_action=gemini_result.suggested_next_action,
             confidence_score=confidence,
             motion_class=motion_class,
+        )
+
+    async def verify_reaction(
+        self,
+        *,
+        frame_paths: list[str],
+        action: AgentAction,
+        intent: str,
+    ) -> ReactionCheckResult:
+        """Ask Gemini whether the UI produced a visible reaction between the provided frames.
+
+        Sends all frames in a single multi-image request so the model can reason
+        about the before→after pixel delta. Returns a low-confidence non-reaction
+        result on any error so callers can fall through gracefully.
+        """
+        if not frame_paths:
+            return ReactionCheckResult(
+                ui_reacted=False,
+                reaction_description="no frames provided",
+                confidence=0.0,
+            )
+
+        detail_parts: list[str] = []
+        if action.target_element_id:
+            detail_parts.append(f"target={action.target_element_id}")
+        if action.text:
+            detail_parts.append(f"text={action.text!r}")
+        if action.x is not None and action.y is not None:
+            detail_parts.append(f"at ({action.x}, {action.y})")
+
+        prompt = self._reaction_prompt_template.format(
+            action_type=action.action_type.value,
+            intent=intent,
+            frame_count=len(frame_paths),
+        )
+
+        try:
+            raw = await self.gemini_client.generate_reaction_check(prompt, frame_paths)
+        except (GeminiClientError, NotImplementedError, Exception) as exc:
+            logger.debug("Reaction check Gemini call failed: %s", exc)
+            return ReactionCheckResult(
+                ui_reacted=False,
+                reaction_description=f"call failed: {exc}",
+                confidence=0.0,
+            )
+
+        return self._parse_reaction_response(raw)
+
+    @staticmethod
+    def _parse_reaction_response(raw: str) -> ReactionCheckResult:
+        cleaned = _strip_json_fence(raw)
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            logger.debug("Reaction check response was not valid JSON: %s", raw[:200])
+            return ReactionCheckResult(
+                ui_reacted=False,
+                reaction_description="unparseable response",
+                confidence=0.0,
+            )
+        return ReactionCheckResult(
+            ui_reacted=bool(parsed.get("ui_reacted", False)),
+            reaction_description=str(parsed.get("reaction_description", "unknown")),
+            confidence=float(parsed.get("confidence", 0.5)),
         )
 
     @staticmethod

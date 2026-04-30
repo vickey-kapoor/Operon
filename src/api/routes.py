@@ -24,6 +24,7 @@ from src.agent.policy import GeminiPolicyService, PolicyService
 from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
+from src.agent.video_verifier import VideoVerifier
 from src.api.benchmark_suite import (
     create_single_task_suite,
     create_suite,
@@ -215,6 +216,7 @@ def get_agent_loop() -> AgentLoop:
         video_gemini_client = GeminiHttpClient(
             model=browser_config.primary_model, timeout_seconds=120.0
         )
+        video_verifier = VideoVerifier(video_gemini_client)
         _agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
             perception_service=services.perception_service,
@@ -222,9 +224,13 @@ def get_agent_loop() -> AgentLoop:
             policy_service=PolicyCoordinator(
                 delegate=services.policy_delegate,
                 memory_store=memory_store,
+                spatial_cache=getattr(services.perception_service, "spatial_cache", None),
             ),
             executor=executor,
-            verifier_service=DeterministicVerifierService(gemini_client=verifier_client),
+            verifier_service=DeterministicVerifierService(
+                gemini_client=verifier_client,
+                video_verifier=video_verifier,
+            ),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
             gemini_client=video_gemini_client,
@@ -251,6 +257,7 @@ def get_desktop_agent_loop() -> AgentLoop:
         video_gemini_client = GeminiHttpClient(
             model=desktop_config.primary_model, timeout_seconds=120.0
         )
+        desktop_video_verifier = VideoVerifier(video_gemini_client)
         _desktop_agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
             perception_service=services.perception_service,
@@ -258,9 +265,13 @@ def get_desktop_agent_loop() -> AgentLoop:
             policy_service=PolicyCoordinator(
                 delegate=services.policy_delegate,
                 memory_store=memory_store,
+                spatial_cache=getattr(services.perception_service, "spatial_cache", None),
             ),
             executor=executor,
-            verifier_service=DeterministicVerifierService(gemini_client=verifier_client),
+            verifier_service=DeterministicVerifierService(
+                gemini_client=verifier_client,
+                video_verifier=desktop_video_verifier,
+            ),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
             gemini_client=video_gemini_client,

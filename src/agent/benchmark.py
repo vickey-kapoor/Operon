@@ -16,6 +16,7 @@ from src.agent.policy import GeminiPolicyService
 from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
+from src.agent.video_verifier import VideoVerifier
 from src.clients.gemini import GeminiHttpClient
 from src.executor.desktop import DesktopExecutor
 from src.models.benchmark import (
@@ -74,17 +75,23 @@ def _build_loop(*, root_dir: str | Path = "runs") -> tuple[AgentLoop, DesktopExe
     executor = DesktopExecutor()
     run_store = FileBackedRunStore(root_dir=root_dir)
     memory_store = FileBackedMemoryStore(root_dir=root_dir)
+    perception_service = GeminiPerceptionService(gemini_client=gemini_client)
+    video_verifier = VideoVerifier(gemini_client)
     policy_service = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=gemini_client),
         memory_store=memory_store,
+        spatial_cache=perception_service.spatial_cache,
     )
     loop = AgentLoop(
         capture_service=ScreenCaptureService(executor=executor),
-        perception_service=GeminiPerceptionService(gemini_client=gemini_client),
+        perception_service=perception_service,
         run_store=run_store,
         policy_service=policy_service,
         executor=executor,
-        verifier_service=DeterministicVerifierService(gemini_client=gemini_client),
+        verifier_service=DeterministicVerifierService(
+            gemini_client=gemini_client,
+            video_verifier=video_verifier,
+        ),
         recovery_manager=RuleBasedRecoveryManager(),
         memory_store=memory_store,
     )

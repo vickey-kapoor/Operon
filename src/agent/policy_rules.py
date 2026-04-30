@@ -25,6 +25,21 @@ from src.models.verification import VerificationStatus
 
 logger = logging.getLogger(__name__)
 
+# Distance threshold (px) for the semantic anchor check.
+# A targeted coordinate more than this many pixels from every visible element's
+# bounding box is treated as empty-space hallucination and intercepted.
+_ANCHOR_DISTANCE_THRESHOLD: float = 15.0
+
+# Action types whose (x, y) coordinates represent intended element targets.
+# Excluded: SCROLL (viewport centre), HOVER (may target empty space), DRAG (start/end
+# coords are often off-element), SCREENSHOT_REGION (bounding box endpoints).
+_COORD_ANCHOR_ACTION_TYPES: frozenset[ActionType] = frozenset({
+    ActionType.CLICK,
+    ActionType.DOUBLE_CLICK,
+    ActionType.RIGHT_CLICK,
+    ActionType.TYPE,
+})
+
 # Labels that suggest a button dismisses / rejects rather than accepts.
 _DISMISS_TOKENS: frozenset[str] = frozenset({
     "don't", "dont", "dismiss", "close", "cancel", "no thanks", "skip",
@@ -919,6 +934,67 @@ class PolicyRuleEngine:
         candidates = [e for e in _input_candidates(perception) if "search" in e.primary_name.lower()]
         return candidates[0] if candidates else None
 
+    def _semantic_anchor_check(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision | None:
+        """Intercept hallucinated coordinates that target empty space.
+
+        Fires when ALL of the following hold:
+        - The action type is CLICK, DOUBLE_CLICK, RIGHT_CLICK, or TYPE.
+        - The action has explicit (x, y) coordinates.
+        - There are visible elements in the current perception to compare against.
+        - The targeted coordinate is more than _ANCHOR_DISTANCE_THRESHOLD pixels
+          from the bounding box of every visible element.
+
+        Returns a WAIT decision with force_fresh_perception=True and an anchor
+        hint so the next LLM prompt knows what went wrong and where to look.
+        Returns None when the coordinates look plausible (i.e., do not fire).
+        """
+        action = decision.action
+        if action.action_type not in _COORD_ANCHOR_ACTION_TYPES:
+            return None
+        if action.x is None or action.y is None:
+            return None
+        if not perception.visible_elements:
+            return None
+
+        nearest_result = _nearest_element_by_box(action.x, action.y, perception.visible_elements)
+        if nearest_result is None:
+            return None
+        nearest_elem, min_dist = nearest_result
+
+        if min_dist <= _ANCHOR_DISTANCE_THRESHOLD:
+            return None
+
+        anchor_cx = nearest_elem.x + nearest_elem.width // 2
+        anchor_cy = nearest_elem.y + nearest_elem.height // 2
+        anchor_hint = (
+            f"You targeted empty space at ({action.x}, {action.y}) — "
+            f"the nearest element is '{nearest_elem.primary_name}' "
+            f"({nearest_elem.element_id}) at approximately ({anchor_cx}, {anchor_cy}), "
+            f"{min_dist:.0f} px away. "
+            "Please refine your coordinates to target this element or another visible element directly."
+        )
+
+        logger.warning(
+            "semantic_anchor_check: coord (%d, %d) is %.1f px from nearest element "
+            "'%s' (%s) — intercepting and requesting re-perceive",
+            action.x, action.y, min_dist,
+            nearest_elem.primary_name, nearest_elem.element_id,
+        )
+
+        state.force_fresh_perception = True
+        return PolicyDecision(
+            action=AgentAction(action_type=ActionType.WAIT, wait_ms=300),
+            rationale=anchor_hint,
+            confidence=0.99,
+            active_subgoal=f"anchor_recheck:({action.x},{action.y})→{nearest_elem.element_id}",
+            rule_name="_semantic_anchor_check",
+        )
+
     def _select_target(self, perception: ScreenPerception, intent: TargetIntent) -> UIElement | None:
         result = self.selector.select(perception, intent, _cached_intermediates=self._cached_intermediates)
         self._latest_selector_traces.append(result.trace)
@@ -1114,6 +1190,29 @@ def _best_dismiss_button(
     # Prefer highest dismiss-token score; break ties by shorter label (X > "No thanks")
     candidates.sort(key=lambda item: (-item[0], len(item[1].primary_name)))
     return candidates[0][1]
+
+
+def _nearest_element_by_box(
+    px: int,
+    py: int,
+    elements: list[UIElement],
+) -> tuple[UIElement, float] | None:
+    """Return the (element, distance) pair where distance is the minimum pixel gap
+    from point (px, py) to the nearest edge of each element's bounding box.
+
+    A point inside a bounding box has distance 0.  The box includes the full
+    width×height extent reported by perception — no padding applied.
+    """
+    import math
+    best: tuple[UIElement, float] | None = None
+    for elem in elements:
+        # Clamp point to the box, then measure straight-line distance to that clamped point.
+        cx = max(elem.x, min(px, elem.x + elem.width))
+        cy = max(elem.y, min(py, elem.y + elem.height))
+        dist = math.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+        if best is None or dist < best[1]:
+            best = (elem, dist)
+    return best
 
 
 def _form_fields_completed(state: AgentState, perception: ScreenPerception) -> bool:

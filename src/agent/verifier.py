@@ -6,6 +6,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
@@ -23,6 +24,9 @@ from src.models.verification import (
     VerificationStatus,
 )
 from src.store.background_writer import bg_writer
+
+if TYPE_CHECKING:
+    from src.agent.video_verifier import VideoVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +47,20 @@ class VerifierService(ABC):
 class DeterministicVerifierService(VerifierService):
     """Deterministic verifier for general-purpose agent tasks."""
 
+    # Action types that may show micro-reactions worth detecting via VideoVerifier.
+    _REACTION_CHECK_ACTION_TYPES = frozenset([ActionType.CLICK, ActionType.TYPE])
+
     def __init__(
         self,
         gemini_client: GeminiClient,
         prompt_path: Path | None = None,
+        video_verifier: VideoVerifier | None = None,
     ) -> None:
         self.gemini_client = gemini_client
         self.prompt_path = prompt_path or Path(__file__).resolve().parents[2] / "prompts" / "critic_prompt.txt"
         self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
+        self._video_verifier: VideoVerifier | None = video_verifier
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
@@ -149,6 +158,19 @@ class DeterministicVerifierService(VerifierService):
                 failure_stage=LoopStage.VERIFY,
             )
 
+        # Reaction check: for CLICK/TYPE actions with no terminal state, ask Gemini
+        # whether the UI produced a visible micro-reaction (ripple, focus ring, loading
+        # state). If confirmed, return PROGRESSING_STABLE to prevent the recovery
+        # manager from retrying or stopping on what is actually forward motion.
+        if (
+            self._video_verifier is not None
+            and action.action_type in self._REACTION_CHECK_ACTION_TYPES
+            and executed_action.success
+        ):
+            reaction_result = await self._reaction_verify(state, decision, executed_action)
+            if reaction_result is not None:
+                return reaction_result
+
         model_result = await self._model_verify(state, decision, executed_action)
         if model_result is not None:
             return model_result
@@ -171,6 +193,54 @@ class DeterministicVerifierService(VerifierService):
             stop_condition_met=False,
             reason="Executed action succeeded and the expected outcome is treated as met.",
             critic_fallback_reason="critic_unavailable_or_unusable",
+        )
+
+    async def _reaction_verify(
+        self,
+        state: AgentState,
+        decision: PolicyDecision,
+        executed_action: ExecutedAction,
+    ) -> VerificationResult | None:
+        """Capture the before/after frame pair and ask VideoVerifier whether the UI reacted.
+
+        Returns a PROGRESSING_STABLE result when the UI produced a visible micro-reaction
+        (ripple, focus ring, loading state) but the page has not yet fully changed.
+        Returns None on any error or when confidence is too low, letting the caller
+        fall through to the model critic.
+        """
+        after_path = executed_action.artifact_path
+        if not after_path:
+            return None
+        step_dir = Path(after_path).resolve().parent
+        before_path = step_dir / "before.png"
+        if not before_path.exists():
+            return None
+
+        assert self._video_verifier is not None
+        reaction = await self._video_verifier.verify_reaction(
+            frame_paths=[str(before_path), after_path],
+            action=decision.action,
+            intent=state.intent,
+        )
+
+        if not reaction.ui_reacted or reaction.confidence < 0.5:
+            return None
+
+        logger.info(
+            "reaction_check: UI reacted (confidence=%.2f) — %s",
+            reaction.confidence,
+            reaction.reaction_description,
+        )
+        return VerificationResult(
+            status=VerificationStatus.PROGRESSING_STABLE,
+            expected_outcome_met=False,
+            stop_condition_met=False,
+            reason=f"UI reacted to {decision.action.action_type.value}: {reaction.reaction_description}",
+            failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+            failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+            failure_stage=LoopStage.VERIFY,
+            video_verified=True,
+            video_detail=reaction.reaction_description,
         )
 
     async def _model_verify(
@@ -488,6 +558,7 @@ def _normalize_verification_result(result: VerificationResult) -> VerificationRe
             updates["failure_stage"] = LoopStage.VERIFY
     elif result.status is VerificationStatus.SUCCESS and result.stop_condition_met and result.stop_reason is None:
         updates["stop_reason"] = StopReason.TASK_COMPLETED
+    # PROGRESSING_STABLE is not a failure — no normalization needed; leave as-is.
     return result.model_copy(update=updates) if updates else result
 
 

@@ -150,10 +150,8 @@ def parse_policy_output(raw_output: str) -> PolicyDecision:
     parsed = _normalize_policy_payload(parsed)
 
     if "expected_change" not in parsed:
-        raise PolicyError(
-            "Gemini policy output is missing required field 'expected_change'. "
-            "Update the prompt to require this field."
-        )
+        logger.warning("[PLANNER] Response missing expected_change; defaulting to empty string")
+        parsed["expected_change"] = "none"
 
     try:
         return PolicyDecision.model_validate(parsed)

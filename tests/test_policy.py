@@ -108,7 +108,9 @@ def test_parse_policy_output_rejects_schema_invalid_action() -> None:
         parse_policy_output(raw_output)
 
 
-def test_parse_policy_output_raises_when_expected_change_missing() -> None:
+def test_parse_policy_output_defaults_expected_change_when_missing(caplog) -> None:
+    # Planners that don't include expected_change (e.g. Anthropic on desktop_policy_prompt)
+    # should get a silent default of "" and a WARNING log rather than a hard crash.
     raw_output = """
     {
       "action": {
@@ -120,9 +122,13 @@ def test_parse_policy_output_raises_when_expected_change_missing() -> None:
       "active_subgoal": "submit_form"
     }
     """
+    import logging
+    with caplog.at_level(logging.WARNING, logger="src.agent.policy"):
+        decision = parse_policy_output(raw_output)
 
-    with pytest.raises(PolicyError, match="expected_change"):
-        parse_policy_output(raw_output)
+    assert decision.action.action_type.value == "click"
+    assert decision.expected_change == "none"
+    assert any("[PLANNER] Response missing expected_change" in r.message for r in caplog.records)
 
 
 def test_parse_policy_output_normalizes_type_enter_key_to_press_enter() -> None:

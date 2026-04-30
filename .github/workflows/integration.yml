@@ -1,0 +1,109 @@
+name: Integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_browserbase:
+        description: "Run Browserbase integration smoke tests"
+        required: true
+        default: true
+        type: boolean
+      run_drive:
+        description: "Run Drive/FilePorter integration smoke tests"
+        required: true
+        default: true
+        type: boolean
+      browserbase_smoke_url:
+        description: "URL for Browserbase smoke navigation"
+        required: false
+        default: "https://example.com"
+        type: string
+      drive_test_url:
+        description: "URL for FilePorter smoke download"
+        required: false
+        default: "https://example.com/robots.txt"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  browserbase:
+    name: Browserbase Integration
+    if: ${{ inputs.run_browserbase }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev,browserbase]
+
+      - name: Validate Browserbase secrets
+        env:
+          BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
+          BROWSERBASE_PROJECT_ID: ${{ secrets.BROWSERBASE_PROJECT_ID }}
+        run: |
+          test -n "$BROWSERBASE_API_KEY" || { echo "Missing secret: BROWSERBASE_API_KEY"; exit 1; }
+          test -n "$BROWSERBASE_PROJECT_ID" || { echo "Missing secret: BROWSERBASE_PROJECT_ID"; exit 1; }
+
+      - name: Run Browserbase integration tests
+        env:
+          OPERON_RUN_BROWSERBASE_INTEGRATION: "true"
+          OPERON_BROWSERBASE_SMOKE_URL: ${{ inputs.browserbase_smoke_url }}
+          BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
+          BROWSERBASE_PROJECT_ID: ${{ secrets.BROWSERBASE_PROJECT_ID }}
+          OPERON_TEST_SAFE_MODE: "true"
+        run: |
+          python -m pytest tests/test_browserbase_integration.py -v --tb=short
+
+  drive:
+    name: Drive Integration
+    if: ${{ inputs.run_drive }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev,drive]
+
+      - name: Validate Drive secrets
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          OPERON_DRIVE_TEST_FOLDER_ID: ${{ secrets.OPERON_DRIVE_TEST_FOLDER_ID }}
+        run: |
+          test -n "$GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT" || { echo "Missing secret: GOOGLE_SERVICE_ACCOUNT_JSON"; exit 1; }
+          test -n "$OPERON_DRIVE_TEST_FOLDER_ID" || { echo "Missing secret: OPERON_DRIVE_TEST_FOLDER_ID"; exit 1; }
+
+      - name: Materialize service account key
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          printf '%s' "$GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT" > "$RUNNER_TEMP/google-service-account.json"
+
+      - name: Run Drive integration tests
+        env:
+          OPERON_RUN_DRIVE_INTEGRATION: "true"
+          OPERON_DRIVE_TEST_FOLDER_ID: ${{ secrets.OPERON_DRIVE_TEST_FOLDER_ID }}
+          OPERON_DRIVE_TEST_URL: ${{ inputs.drive_test_url }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ runner.temp }}/google-service-account.json
+          OPERON_TEST_SAFE_MODE: "true"
+        run: |
+          python -m pytest tests/test_file_porter_integration.py -v --tb=short

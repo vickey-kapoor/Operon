@@ -60,6 +60,8 @@ class StepLog(StrictModel):
     progress_state: ProgressState | None = None
     progress_trace_artifact_path: str | None = Field(default=None, min_length=1)
     failure: FailureRecord | None = None
+    decision_source: str | None = None
+    visual_variance: float | None = None
 
 
 class PreStepFailureLog(StrictModel):

@@ -46,6 +46,14 @@ class GeminiClient(ABC):
     async def generate_video_verification(self, prompt: str, video_path: str) -> str:
         """Send a video clip with a verification prompt and return raw JSON."""
 
+    @abstractmethod
+    async def generate_reaction_check(self, prompt: str, frame_paths: list[str]) -> str:
+        """Send multiple screenshots as a temporal sequence and return raw JSON.
+
+        Used by VideoVerifier.verify_reaction to ask Gemini whether the UI produced
+        a visible reaction (ripple, focus ring, loading state) between frames.
+        """
+
     def latest_usage(self) -> ModelUsage | None:
         """Return provider-reported usage for the most recent call, when available."""
         return None
@@ -144,6 +152,27 @@ class GeminiHttpClient(GeminiClient):
             prompt=prompt, image_bytes=video_bytes, mime_type="video/mp4",
         )
         return await self._post_json_payload(payload, request_kind="video")
+
+    async def generate_reaction_check(self, prompt: str, frame_paths: list[str]) -> str:
+        """Send multiple screenshots as a temporal sequence and return raw JSON.
+
+        Builds a single Gemini request with one image part per frame so the model
+        can reason about the before→after pixel delta for UI reaction detection.
+        """
+        parts: list[dict[str, Any]] = [{"text": prompt}]
+        for path in frame_paths:
+            image_bytes, _ = await asyncio.to_thread(_optimize_screenshot, Path(path))
+            parts.append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": base64.b64encode(image_bytes).decode("utf-8"),
+                }
+            })
+        payload: dict[str, Any] = {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+        }
+        return await self._post_json_payload(payload, request_kind="image")
 
     def latest_usage(self) -> ModelUsage | None:
         return self._last_usage
@@ -410,6 +439,10 @@ class PlaceholderGeminiClient(GeminiClient):
     async def generate_video_verification(self, prompt: str, video_path: str) -> str:
         """Placeholder model interface; external API calls are intentionally disabled."""
         raise NotImplementedError("Gemini video verification is not configured for this client.")
+
+    async def generate_reaction_check(self, prompt: str, frame_paths: list[str]) -> str:
+        """Placeholder model interface; external API calls are intentionally disabled."""
+        raise NotImplementedError("Gemini reaction check is not configured for this client.")
 
 
 def _extract_usage(*, payload: dict[str, Any], model: str, request_kind: str) -> ModelUsage | None:

@@ -242,6 +242,13 @@ def _normalize_key_pyautogui(key: str) -> str:
 class DesktopExecutor(Executor):
     """Desktop executor using pyautogui/mss for full-screen automation."""
 
+    # Hard floor/ceiling for the adaptive servo threshold (pixel²).
+    # Floor prevents the threshold from collapsing so low that every click aborts.
+    # Ceiling prevents it from growing so high that genuinely blank regions pass.
+    _SERVO_THRESHOLD_MIN: float = 8.0
+    _SERVO_THRESHOLD_MAX: float = 80.0
+    _SERVO_THRESHOLD_DEFAULT: float = 20.0
+
     def __init__(
         self,
         *,
@@ -262,12 +269,92 @@ class DesktopExecutor(Executor):
         _set_dpi_awareness()
         if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() != "true":
             validate_display_baseline()
+            self._noise_floor, self._servo_threshold = self._calibrate_servo_threshold()
+        else:
+            self._noise_floor = 0.0
+            self._servo_threshold = self._SERVO_THRESHOLD_DEFAULT
+        logger.debug(
+            "servo_threshold calibrated: noise_floor=%.2f threshold=%.2f",
+            self._noise_floor, self._servo_threshold,
+        )
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0
 
     def set_current_run_id(self, run_id: str) -> None:
         """Set the active run ID so launched processes are tracked per run."""
         self._current_run_id = run_id
+
+    def _calibrate_servo_threshold(self) -> tuple[float, float]:
+        """Sample 5 random 100×100 px desktop crops to establish the Idle Noise Floor.
+
+        The noise floor is the mean pixel variance of a visually 'idle' desktop —
+        i.e., textured wallpaper, taskbar icons, or anti-aliased text that create
+        genuine non-zero variance even in regions with no interactive elements.
+
+        Threshold scaling rules:
+        - High-contrast / very low noise floor (< 5 px²): desktop is mostly flat
+          solid colours.  The default 20 px² threshold is fine — return as-is.
+        - Normal noise floor (5–40 px²): scale the threshold to noise_floor × 0.75
+          so the guard adapts to ambient texture density.
+        - High noise floor (> 40 px²): desktop is heavily textured (e.g. live
+          wallpaper, HDR).  Cap at _SERVO_THRESHOLD_MAX to avoid false aborts.
+
+        Returns (noise_floor, threshold) both in pixel² units.
+        """
+        noise_floor = self._sample_noise_floor(num_crops=5, crop_radius=50)
+        if noise_floor < 5.0:
+            # High-contrast or flat desktop — default threshold is already generous
+            threshold = self._SERVO_THRESHOLD_DEFAULT
+        elif noise_floor <= 40.0:
+            # Scale threshold proportionally to ambient texture
+            threshold = noise_floor * 0.75
+        else:
+            # Very noisy desktop — cap to avoid making the guard useless
+            threshold = self._SERVO_THRESHOLD_MAX
+        threshold = max(self._SERVO_THRESHOLD_MIN, min(self._SERVO_THRESHOLD_MAX, threshold))
+        logger.info(
+            "servo_calibration: noise_floor=%.2f px² → threshold=%.2f px²",
+            noise_floor, threshold,
+        )
+        return noise_floor, threshold
+
+    def _sample_noise_floor(self, num_crops: int = 5, crop_radius: int = 50) -> float:
+        """Capture num_crops random 100×100 px regions and return their mean variance.
+
+        Crops are spread across the primary monitor using a seeded random so the
+        sampling is reproducible across calibration calls within the same session.
+        Falls back to 0.0 (high-contrast safe default) if mss is unavailable.
+        """
+        import random
+        try:
+            with mss.mss() as sct:
+                if len(sct.monitors) < 2:
+                    return 0.0
+                mon = sct.monitors[1]
+                mon_w, mon_h = mon["width"], mon["height"]
+                mon_l, mon_t = mon["left"], mon["top"]
+
+            rng = random.Random(42)  # reproducible seed for calibration
+            margin = crop_radius + 2
+            variances: list[float] = []
+            with mss.mss() as sct:
+                for _ in range(num_crops):
+                    cx = rng.randint(margin, max(margin + 1, mon_w - margin)) + mon_l
+                    cy = rng.randint(margin, max(margin + 1, mon_h - margin)) + mon_t
+                    raw = self._sample_region(cx, cy, radius=crop_radius)
+                    if not raw:
+                        continue
+                    mean = sum(raw) / len(raw)
+                    var = sum((b - mean) ** 2 for b in raw) / len(raw)
+                    variances.append(var)
+                    logger.debug(
+                        "noise_floor_sample: crop=(%d,%d) variance=%.2f",
+                        cx, cy, var,
+                    )
+            return sum(variances) / len(variances) if variances else 0.0
+        except Exception as exc:
+            logger.debug("noise_floor_sample: failed, defaulting to 0.0: %s", exc)
+            return 0.0
 
     def _coord_in_monitor_bounds(self, virt_x: int, virt_y: int) -> tuple[bool, list[dict]]:
         """Return (in_bounds, physical_monitors) for the given virtual-desktop coord."""
@@ -449,19 +536,41 @@ class DesktopExecutor(Executor):
 
     # ── action handlers ──────────────────────────────────────────
 
-    def _region_has_content(self, x: int, y: int, radius: int = 50) -> bool:
-        """Visual servo check: return False when the region around (x, y) is a uniform
-        blank area, which indicates the target element has shifted or disappeared."""
+    def _region_has_content(
+        self,
+        x: int,
+        y: int,
+        radius: int = 50,
+        baseline_variance: float | None = None,
+    ) -> tuple[bool, float]:
+        """Visual servo check: return (has_content, variance).
+
+        has_content is False when the region around (x, y) is a uniform blank area,
+        which indicates the target element has shifted or disappeared.
+
+        Args:
+            x, y:              Center of the region to sample.
+            radius:            Half-side of the square crop in pixels.
+            baseline_variance: Override for the adaptive threshold (pixel²).
+                               Defaults to self._servo_threshold (calibrated at init).
+        """
+        threshold = baseline_variance if baseline_variance is not None else self._servo_threshold
         raw = self._sample_region(x, y, radius)
         if not raw:
-            return True  # can't verify — proceed
+            return True, 0.0  # can't verify — proceed
         mean = sum(raw) / len(raw)
         variance = sum((b - mean) ** 2 for b in raw) / len(raw)
-        return variance > 20.0  # pixel² threshold — uniform solid regions score near 0
+        has_content = variance > threshold
+        logger.debug(
+            "servo_check: coord=(%d,%d) region_variance=%.2f noise_floor=%.2f threshold=%.2f has_content=%s",
+            x, y, variance, self._noise_floor, threshold, has_content,
+        )
+        return has_content, variance
 
     async def _exec_click(self, action: AgentAction) -> ExecutedAction:
         if action.x is None or action.y is None:
             return self._fail(action, "click requires x,y coordinates on desktop", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
+        variance: float | None = None
         try:
             # action.x/y are already virtual-desktop coords — the loop applies
             # monitor_origin via _apply_monitor_origin before calling the executor.
@@ -480,7 +589,7 @@ class DesktopExecutor(Executor):
             # before committing the click. Catches elements that shifted mid-flight.
             # Wrapped in try/except — a failed pixel grab should never block a click.
             try:
-                has_content = await asyncio.to_thread(self._region_has_content, action.x, action.y)
+                has_content, variance = await asyncio.to_thread(self._region_has_content, action.x, action.y)
             except Exception as _servo_exc:
                 logger.debug("Visual servo check skipped (mss error): %s", _servo_exc)
                 has_content = True
@@ -493,11 +602,11 @@ class DesktopExecutor(Executor):
                     action,
                     f"visual servo: blank region at ({action.x}, {action.y}); target may have shifted",
                     FailureCategory.EXECUTION_TARGET_NOT_FOUND,
-                )
+                ).model_copy(update={"visual_variance": variance})
             await asyncio.to_thread(pyautogui.click, action.x, action.y)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
-            return self._ok(action, f"Clicked at ({action.x}, {action.y})", after_path)
+            return self._ok(action, f"Clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
         except Exception as exc:
             return self._fail(action, f"Click failed: {exc}", FailureCategory.EXECUTION_ERROR)
 

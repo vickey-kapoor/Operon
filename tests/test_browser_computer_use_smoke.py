@@ -52,7 +52,9 @@ class StubComputerUseClient:
 
     @staticmethod
     def _tool_response() -> dict:
-        _btn = {"element_id": "btn-1", "element_type": "button", "name": "Click me", "x": 500, "y": 250, "width": 80, "height": 30, "is_interactable": True}
+        # Grid coords (500, 250) scale to native ~(599, 200) on a 1200×800 screen.
+        # Element is placed so its bounding box contains the scaled click target.
+        _btn = {"element_id": "btn-1", "element_type": "button", "name": "Click me", "x": 560, "y": 175, "width": 80, "height": 50, "is_interactable": True}
         return {
             "perception": {
                 "summary": "Example page visible",

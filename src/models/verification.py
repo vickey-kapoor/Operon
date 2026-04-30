@@ -16,6 +16,7 @@ class VerificationStatus(StrEnum):
     FAILURE = "failure"
     UNCERTAIN = "uncertain"
     PENDING = "pending"  # page is mid-transition; wait before re-verifying
+    PROGRESSING_STABLE = "progressing_stable"  # UI reacted but page has not fully changed; advance
 
 
 class VerificationFailureType(StrEnum):

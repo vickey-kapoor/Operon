@@ -160,6 +160,18 @@ class RuleBasedRecoveryManager(RecoveryManager):
                 recoverable=True,
             )
 
+        if verification.status is VerificationStatus.PROGRESSING_STABLE:
+            # UI reacted to the action (ripple, focus ring, loading state) but the
+            # page has not fully changed. This is forward motion — advance to let the
+            # next perception decide whether the task goal is now visible.
+            state.retry_counts[retry_key] = 0
+            return RecoveryDecision(
+                strategy=RecoveryStrategy.ADVANCE,
+                message="UI reacted to the action; advancing — interaction confirmed, awaiting full page update.",
+                terminal=False,
+                recoverable=True,
+            )
+
         if (
             verification.failure_type is VerificationFailureType.ACTION_FAILED
             and decision.action.action_type is ActionType.TYPE

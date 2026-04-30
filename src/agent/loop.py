@@ -419,8 +419,9 @@ class AgentLoop:
                 else None
             )
 
-            # Video verification: when screen didn't change, record and ask Gemini
-            if not verification.stop_condition_met and self.video_verifier is not None:
+            # Video verification: when screen didn't change, record and ask Gemini.
+            # Skipped when the verifier's reaction check already set video_verified=True.
+            if not verification.stop_condition_met and not verification.video_verified and self.video_verifier is not None:
                 video_result = await self._maybe_video_verify(
                     state=state,
                     decision=decision,
@@ -562,6 +563,7 @@ class AgentLoop:
 
         failure = self._build_failure_record(state, decision, executed_action, verification, recovery)
 
+        _decision_source = f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini"
         step_log = StepLog(
             run_id=record.run_id,
             step_id=f"step_{step_index}",
@@ -579,6 +581,8 @@ class AgentLoop:
             progress_state=state.progress_state,
             progress_trace_artifact_path=progress_trace_artifact_path,
             failure=failure,
+            decision_source=_decision_source,
+            visual_variance=executed_action.visual_variance,
         )
         append_step_log(self._run_log_path(record.run_id), step_log)
 
@@ -734,6 +738,7 @@ class AgentLoop:
                 executed_action=executed_action,
                 verification_result=verification,
                 recovery_decision=recovery,
+                decision_source=f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini",
             ),
         )
         state.stop_reason = StopReason.WAITING_FOR_USER

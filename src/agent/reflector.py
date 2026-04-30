@@ -28,8 +28,17 @@ class PostRunReflector:
         self.memory_store = memory_store
         self.root_dir = Path(root_dir)
 
-    def reflect(self, run_id: str) -> RunReflection:
-        """Analyze a completed run and generate memory records from failure patterns."""
+    def reflect(self, run_id: str, *, reliability_score: float = 1.0) -> RunReflection:
+        """Analyze a completed run and generate memory records from failure patterns.
+
+        Args:
+            run_id: The completed run to analyze.
+            reliability_score: Fraction of stress-test repetitions that succeeded
+                (0.0–1.0). Defaults to 1.0 for single-run calls. Episodes are only
+                written to episodes.jsonl when this is 1.0 — i.e. the task passed
+                every repetition of a k-run stress test — ensuring the Golden Path
+                encodes a trajectory that is reproducible, not a lucky one-off.
+        """
         state, steps = self._load_run(run_id)
         if state is None or not steps:
             return RunReflection(run_id=run_id, success=False, total_steps=0)
@@ -64,14 +73,29 @@ class PostRunReflector:
         # Shortest-path optimization: only compress steps that succeeded on the
         # first attempt (no retries). Multi-attempt successes add noise — we want
         # the memory to encode the optimal path, not historical struggle.
-        if success:
+        #
+        # Golden Path gate: episodes are only persisted when reliability_score == 1.0,
+        # meaning every repetition of a stress-test run succeeded. A single-run
+        # success with reliability_score=1.0 (the default) also qualifies so that
+        # non-stress callers keep the existing behaviour.
+        if success and reliability_score >= 1.0:
             one_shot_steps = self._filter_one_shot_steps(steps)
             episode = self._extract_episode(run_id, intent, benchmark, one_shot_steps)
             if episode is not None:
                 try:
                     self.memory_store.save_episode(episode)
+                    logger.info(
+                        "golden_path saved: run=%s reliability=%.2f steps=%d",
+                        run_id, reliability_score, len(episode.steps),
+                    )
                 except Exception:
                     logger.debug("Failed to save episode for %s", run_id, exc_info=True)
+        elif success and reliability_score < 1.0:
+            logger.info(
+                "golden_path suppressed: run=%s succeeded but reliability=%.2f < 1.0 — "
+                "episode not written to memory",
+                run_id, reliability_score,
+            )
 
         reflection = RunReflection(
             run_id=run_id,

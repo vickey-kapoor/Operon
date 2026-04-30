@@ -492,10 +492,13 @@ def _build_event_log(
         {"step_index": 0, "event": "run_started", "detail": state.intent},
     ]
     for entry in completed_steps:
+        _variance_str = f" | variance={entry.visual_variance:.1f}" if entry.visual_variance is not None else ""
+        _action_detail = entry.policy_decision.action.action_type.value + _variance_str
         events.extend(
             [
                 {"step_index": entry.step_index, "event": "screenshot_captured", "detail": entry.before_artifact_path},
                 {"step_index": entry.step_index, "event": "perception_requested", "detail": entry.perception.summary},
+                {"step_index": entry.step_index, "event": entry.decision_source or "action_decided", "detail": _action_detail},
             ]
         )
         retry_log = _read_text(entry.perception_debug.retry_log_artifact_path) or ""

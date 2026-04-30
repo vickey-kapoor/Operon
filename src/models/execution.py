@@ -95,3 +95,4 @@ class ExecutedAction(StrictModel):
     failure_category: FailureCategory | None = None
     failure_stage: LoopStage | None = None
     anchor_snap: AnchorSnapInfo | None = None
+    visual_variance: float | None = None

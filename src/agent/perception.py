@@ -16,7 +16,9 @@ from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.capture import CaptureFrame
 from src.models.common import FailureCategory, StopReason
 from src.models.logs import ModelDebugArtifacts
+from src.models.memory import SpatialCache
 from src.models.perception import (
+    GhostElement,
     PageHint,
     RawScreenPerception,
     RawUIElement,
@@ -72,6 +74,7 @@ class GeminiPerceptionService(PerceptionService):
         self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._max_semantic_retries = 1
+        self.spatial_cache = SpatialCache(max_frames=3)
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
         step_dir = Path(screenshot.artifact_path).resolve().parent
@@ -130,7 +133,7 @@ class GeminiPerceptionService(PerceptionService):
                 )
                 if retry_log_lines:
                     bg_writer.enqueue(debug_artifacts.retry_log_artifact_path, "\n".join(retry_log_lines))
-                return perception
+                return self._with_spatial_persistence(perception, screenshot)
 
             retry_log_lines.append(_format_quality_log_line(attempt + 1, low_quality_reason, quality_metrics, salvage_mode=False))
             bg_writer.enqueue(debug_artifacts.retry_log_artifact_path, "\n".join(retry_log_lines))
@@ -177,11 +180,48 @@ class GeminiPerceptionService(PerceptionService):
                     salvaged_perception=salvaged,
                 )
                 if salvage_reason is None:
-                    return salvaged
+                    return self._with_spatial_persistence(salvaged, screenshot)
                 raise PerceptionLowQualityError(f"Gemini perception output was low quality: {salvage_reason}")
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
+
+    def reset_spatial_cache(self) -> None:
+        """Discard all cached frames. Called at the start of every new run."""
+        self.spatial_cache.clear()
+
+    def _with_spatial_persistence(self, perception: ScreenPerception, screenshot: CaptureFrame) -> ScreenPerception:
+        """Detect ghost elements, update the spatial cache, and return an augmented perception.
+
+        A GhostElement is an element from the previous frame that has no spatial
+        match in the current frame, sampled only when visual_velocity < 2% (screen
+        was stable). These elements are likely occluded rather than gone.
+        """
+        prev_elements = self.spatial_cache.prev_frame()
+        ghost_elements: list[GhostElement] = []
+
+        if prev_elements and screenshot.visual_velocity < 0.02:
+            for prev in prev_elements:
+                if not any(_elements_match(prev, curr) for curr in perception.visible_elements):
+                    ghost_elements.append(
+                        GhostElement(
+                            element_id=prev.element_id,
+                            element_type=prev.element_type,
+                            primary_name=prev.primary_name,
+                            x=prev.x,
+                            y=prev.y,
+                            width=prev.width,
+                            height=prev.height,
+                            is_interactable=prev.is_interactable,
+                        )
+                    )
+
+        self.spatial_cache.push(perception.visible_elements)
+
+        if ghost_elements:
+            logger.debug("spatial_persistence: %d ghost element(s) detected", len(ghost_elements))
+            return perception.model_copy(update={"ghost_elements": ghost_elements})
+        return perception
 
     def _render_prompt(self, state: AgentState, *, semantic_retry: bool = False) -> str:
         previous_page_hint = (
@@ -658,6 +698,22 @@ def _infer_nearby_label(target: UIElement, text_candidates: list[UIElement]) -> 
         return None
     ranked.sort(key=lambda item: (item[0], item[1].element_id))
     return ranked[0][1].primary_name
+
+
+_GHOST_SPATIAL_TOLERANCE_PX = 30
+
+
+def _elements_match(a: UIElement, b: UIElement, tol: int = _GHOST_SPATIAL_TOLERANCE_PX) -> bool:
+    """Return True if two elements occupy approximately the same screen region.
+
+    Matches on element_id equality OR center-point proximity within `tol` pixels.
+    Proximity matching tolerates small Gemini perception jitter across frames.
+    """
+    if a.element_id == b.element_id:
+        return True
+    cx_a, cy_a = a.x + a.width // 2, a.y + a.height // 2
+    cx_b, cy_b = b.x + b.width // 2, b.y + b.height // 2
+    return abs(cx_a - cx_b) <= tol and abs(cy_a - cy_b) <= tol
 
 
 def _strip_json_fence(raw_output: str) -> str:

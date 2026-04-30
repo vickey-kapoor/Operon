@@ -26,6 +26,10 @@ Follow existing Python conventions: 4-space indentation, type hints, `snake_case
 Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs Python 3.11 and 3.12 plus Ruff. There is no fixed coverage threshold in the repo today, so aim for targeted regression coverage.
 
 Live-server and real-environment tests are opt-in. Do not include `tests/test_e2e_quick_tasks.py` or `tests/test_bug_fixes_verification.py` in broad local runs unless you intend to validate against a live server.
+`tests/test_live_execution.py` is also opt-in and is intended to fail on real capability regressions, not to act as a smoke-only demo.
+`tests/test_upload_file_native_integration.py` is a headed Windows-only manual gate for the native OS file picker path.
+`tests/test_browserbase_integration.py` is an env-gated smoke test for the real Browserbase backend.
+`tests/test_file_porter_integration.py` is an env-gated smoke test for real Google Drive upload via `FILE_PORTER`.
 
 ## Commit & Pull Request Guidelines
 Recent commits use short imperative subjects with prefixes like `Fix:`, `Docs:`, `CI:`, `Chore:`, and `Refactor:`. Keep commit titles specific and one line. PRs should summarize the behavioral change, list validation performed, link related issues, and include screenshots only for UI or desktop-behavior changes.

@@ -94,6 +94,12 @@ Interaction with Menus and Popovers:
 - TOC ANCHOR ONE-CLICK: When clicking a table of contents link or section anchor (e.g., Wikipedia "History" link), click it exactly ONCE. After one click, do NOT click it again. Instead, scroll down to find the section content, then read what is visible and stop with the answer.
 - SECTION ANCHOR FALLBACK: If you have clicked a table of contents section link and in the NEXT step the same ToC links are still visible (target section content NOT confirmed), do NOT click the ToC link again. Instead, navigate directly to the page URL with the section name as an anchor. For Wikipedia articles: append '#SectionName' to the article URL replacing spaces with underscores (e.g., if start URL is https://en.wikipedia.org/wiki/Artificial_intelligence and intent says 'History section', navigate to https://en.wikipedia.org/wiki/Artificial_intelligence#History). After that navigation, scroll down slightly and stop with the first relevant content you can see.
 
+### Spatial Persistence — Ghost Elements
+- The perception JSON may include a `ghost_elements` array. Each entry is a UI element that was present in the previous frame but is absent from the current frame, despite the screen being visually stable (low motion).
+- GhostElements are NOT gone — they are likely occluded by a modal, overlay, or popover that appeared on top of them. They still exist at their last known coordinates.
+- If you need to interact with a GhostElement (e.g., a form field or button now covered by an overlay), first dismiss the overlay using the element that opened it, then target the ghost element at its recorded (x, y).
+- Never assume a GhostElement has disappeared permanently. Treat it as temporarily hidden.
+
 ### Autonomic Repair — Perception Failure Guardrail
 - If the previous step produced no visible elements (perception_low_quality), do not retry the same action. Instead, issue a navigate action back to the last known good URL, or issue a wait action of 2000ms to allow the page to stabilize before re-perceiving.
 - When interacting with dropdowns or select elements: always click the parent container to confirm it is open before clicking any child option. Never click a child element unless the parent is visibly expanded. If the parent appears to toggle without navigating (opened then closed), stop clicking the parent and directly target the child item that became visible.

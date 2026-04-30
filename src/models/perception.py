@@ -185,6 +185,23 @@ class RawScreenPerception(StrictModel):
     monitor_origin: tuple[int, int] = Field(default=(0, 0))
 
 
+class GhostElement(StrictModel):
+    """A UI element present in the previous frame but absent in the current one.
+
+    Emitted when visual_velocity < 2%, meaning the screen was stable — the element
+    likely still exists at these coordinates but is occluded by an overlay or modal.
+    """
+
+    element_id: str = Field(min_length=1)
+    element_type: UIElementType
+    primary_name: str = Field(min_length=1)
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    is_interactable: bool
+
+
 class ScreenPerception(StrictModel):
     """Canonical typed understanding of the current screen state."""
 
@@ -201,3 +218,5 @@ class ScreenPerception(StrictModel):
     # Stamped with the number of zero-element liveness retries that occurred before
     # a usable frame was captured. Appears in run.jsonl for observability.
     liveness_retries: int = 0
+    # Elements from T-1 absent in T-0 with low visual velocity — likely occluded.
+    ghost_elements: list[GhostElement] = Field(default_factory=list)

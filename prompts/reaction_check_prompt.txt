@@ -1,0 +1,23 @@
+You are analyzing whether a UI interaction produced a visible micro-reaction.
+
+Action performed: {action_type}
+Task intent: {intent}
+
+You are shown {frame_count} screenshot(s) taken immediately before and after the action.
+Examine the frames for subtle visual feedback that confirms the UI registered the input:
+
+- Click ripple or press animation on a button
+- Focus ring appearing around a button, input, or link
+- Loading indicator, spinner, or skeleton screen appearing
+- Button or element state change (color shift, scale change, opacity change)
+- Cursor appearing or blinking in a newly focused text input
+- Tooltip appearing on hover
+- Dropdown or menu beginning to open
+- Any micro-animation confirming the interaction was received
+
+Do NOT report as "reacted" if the only change is the mouse cursor position.
+Do NOT report as "reacted" if the screenshots look identical.
+
+Return JSON only. Do not wrap in markdown. Do not include commentary.
+
+{{"ui_reacted": true, "reaction_description": "describe the exact visual feedback observed between frames", "confidence": 0.85}}

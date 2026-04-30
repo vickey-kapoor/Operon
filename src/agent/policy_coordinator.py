@@ -11,7 +11,7 @@ from src.agent.policy_rules import PolicyRuleEngine
 from src.models.common import FailureCategory
 from src.models.episode import Episode, EpisodeReplayState
 from src.models.logs import ModelDebugArtifacts
-from src.models.memory import MemoryHint
+from src.models.memory import MemoryHint, SpatialCache
 from src.models.perception import ScreenPerception
 from src.models.policy import ActionType, PolicyDecision
 from src.models.selector import SelectorTrace
@@ -31,6 +31,7 @@ class PolicyCoordinator(PolicyService):
         delegate: PolicyService,
         memory_store: MemoryStore,
         rule_engine: PolicyRuleEngine | None = None,
+        spatial_cache: SpatialCache | None = None,
     ) -> None:
         self.delegate = delegate
         self.memory_store = memory_store
@@ -41,6 +42,7 @@ class PolicyCoordinator(PolicyService):
         # Single-step hint cache: avoids re-loading memory JSONL twice per step.
         self._cached_hints: list[MemoryHint] | None = None
         self._cached_hints_key: tuple | None = None
+        self._spatial_cache: SpatialCache | None = spatial_cache
 
     def _get_hints(self, state: AgentState, perception: ScreenPerception | None) -> list[MemoryHint]:
         """Fetch hints, using a single-step in-memory cache to avoid double JSONL reads."""
@@ -80,6 +82,8 @@ class PolicyCoordinator(PolicyService):
         self._cached_hints_key = None
         self.rule_engine._form_options_clicked.pop(run_id, None)
         self.rule_engine._form_fields_filled.pop(run_id, None)
+        if self._spatial_cache is not None:
+            self._spatial_cache.clear()
         logger.debug("PolicyCoordinator: run context reset for run_id=%r", run_id)
 
     def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
@@ -133,6 +137,23 @@ class PolicyCoordinator(PolicyService):
             self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
 
         decision = await self.delegate.choose_action(state, perception)
+
+        # Semantic anchor check (highest-priority post-LLM guard): if the LLM targeted
+        # empty space (coordinate > 15px from every visible element), intercept and
+        # inject an anchor hint for the next step before re-perceiving.
+        anchor_intercept = self.rule_engine._semantic_anchor_check(state, perception, decision)
+        if anchor_intercept is not None:
+            if hasattr(self.delegate, "add_advisory_hints"):
+                self.delegate.add_advisory_hints(
+                    [anchor_intercept.rationale],
+                    source="anchor_check",
+                    run_id=state.run_id,
+                )
+            self._last_debug_artifacts = self._write_rule_debug_artifacts(
+                state, perception, memory_hints, anchor_intercept, selector_traces
+            )
+            return anchor_intercept
+
         decision = await self._reject_hallucinated_target(state, perception, decision)
         decision = await self._reject_premature_stop(state, perception, decision)
         if hasattr(self.delegate, "latest_debug_artifacts"):

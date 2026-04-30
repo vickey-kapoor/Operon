@@ -134,6 +134,17 @@ def create_browser_run(intent: str, start_url: str) -> str:
     return run_id
 
 
+def assert_live_success(result: dict, *, label: str) -> None:
+    status = result.get("status")
+    if status == "running":
+        pytest.fail(f"{label} did not reach a terminal state within the step budget")
+    if status == "waiting_for_user":
+        pytest.fail(f"{label} paused for human input: {result.get('hitl_message') or 'no reason provided'}")
+    assert status == "succeeded", (
+        f"{label} failed with status={status!r} stop_reason={result.get('stop_reason')!r}"
+    )
+
+
 # ===========================================================================
 # TIER 1 — SIMPLE DESKTOP: single-app tasks
 # ===========================================================================
@@ -150,9 +161,7 @@ class TestDesktopSimple:
             label="Open Notepad",
             max_steps=8,
         )
-        assert result["status"] in ("succeeded", "running", "failed"), (
-            f"Unexpected terminal status: {result['status']}"
-        )
+        assert_live_success(result, label="Open Notepad")
 
     def test_open_calculator(self):
         """CAPABILITY: launch Calculator via desktop automation."""
@@ -163,7 +172,7 @@ class TestDesktopSimple:
             label="Open Calculator",
             max_steps=8,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Open Calculator")
 
     def test_describe_desktop(self):
         """CAPABILITY: describe what is currently visible on screen."""
@@ -174,7 +183,7 @@ class TestDesktopSimple:
             label="Describe desktop",
             max_steps=5,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Describe desktop")
 
 
 # ===========================================================================
@@ -195,7 +204,7 @@ class TestDesktopModerate:
             label="Notepad type sentence",
             max_steps=12,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Notepad type sentence")
 
     def test_calculator_compute_42x17(self):
         """CAPABILITY: open Calculator, compute 42 × 17 by clicking buttons."""
@@ -208,7 +217,7 @@ class TestDesktopModerate:
             label="Calculator 42 × 17",
             max_steps=15,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Calculator 42 × 17")
 
     def test_win_r_open_calc(self):
         """CAPABILITY: use Win+R dialog to launch Calculator."""
@@ -221,7 +230,7 @@ class TestDesktopModerate:
             label="Win+R → calc",
             max_steps=8,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Win+R → calc")
 
     def test_notepad_meeting_notes(self):
         """CAPABILITY: structured note-taking in Notepad."""
@@ -234,7 +243,7 @@ class TestDesktopModerate:
             label="Meeting notes in Notepad",
             max_steps=15,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Meeting notes in Notepad")
 
 
 # ===========================================================================
@@ -256,7 +265,7 @@ class TestBrowserSimple:
             label="Browser: example.com",
             max_steps=6,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Browser: example.com")
 
     def test_navigate_wikipedia_python(self):
         """CAPABILITY: navigate to Wikipedia and read the intro."""
@@ -270,7 +279,7 @@ class TestBrowserSimple:
             label="Browser: Wikipedia Python",
             max_steps=8,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Browser: Wikipedia Python")
 
 
 # ===========================================================================
@@ -303,13 +312,7 @@ class TestBrowserForm:
             label="Browser: Contact form fill + submit",
             max_steps=MAX_STEPS,
         )
-        assert result["status"] in ("succeeded", "running", "failed"), (
-            f"Unexpected status: {result['status']}"
-        )
-        # A successful form fill should not end in failed
-        if result["status"] == "failed":
-            stop = result.get("stop_reason", "unknown")
-            pytest.xfail(f"Form fill failed — stop_reason={stop}. Check agent logs.")
+        assert_live_success(result, label="Browser: Contact form fill + submit")
 
     def test_fill_simple_search(self):
         """CAPABILITY: type a search query and submit."""
@@ -323,4 +326,4 @@ class TestBrowserForm:
             label="Browser: DuckDuckGo search",
             max_steps=8,
         )
-        assert result["status"] in ("succeeded", "running", "failed")
+        assert_live_success(result, label="Browser: DuckDuckGo search")

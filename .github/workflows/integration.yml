@@ -21,7 +21,7 @@ on:
       drive_test_url:
         description: "URL for FilePorter smoke download"
         required: false
-        default: "https://example.com/robots.txt"
+        default: "https://example.com/"
         type: string
 
 permissions:

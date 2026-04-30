@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -353,6 +354,67 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
             assert all(c.kwargs["model"] == "claude-sonnet-4-20250514" for c in mock_anthropic.call_args_list)
     finally:
         routes_module._agent_loop = original
+
+
+def test_build_browser_executor_uses_browserbase_when_configured() -> None:
+    """Browserbase backend should instantiate the remote Browserbase executor."""
+    import src.api.routes as routes_module
+    from src.api.runtime_config import RuntimeModeConfig
+
+    fake_instance = object()
+
+    with (
+        patch(
+            "src.api.routes.browser_mode_config",
+            return_value=RuntimeModeConfig(
+                backend="browserbase",
+                primary_model="gemini-2.5-computer-use-preview-10-2025",
+                fallback_backend="json",
+                fallback_model="gemini-3-flash-preview",
+            ),
+        ),
+        patch(
+            "src.api.routes.importlib.import_module",
+            return_value=SimpleNamespace(BrowserbaseNativeBrowserExecutor=lambda: fake_instance),
+        ) as mock_import,
+    ):
+        executor = routes_module._build_browser_executor()
+
+    assert executor is fake_instance
+    mock_import.assert_called_once_with("src.executor.browserbase_native")
+
+
+def test_browserbase_services_use_computer_use_with_json_fallback() -> None:
+    """Browserbase mode should wrap computer-use in FallbackBackend when JSON fallback is configured."""
+    import src.api.routes as routes_module
+    from src.api.runtime_config import RuntimeModeConfig
+
+    fake_executor = object()
+    fake_primary = object()
+    fake_secondary = object()
+    fake_fallback = object()
+
+    with (
+        patch(
+            "src.api.routes.browser_mode_config",
+            return_value=RuntimeModeConfig(
+                backend="browserbase",
+                primary_model="gemini-2.5-computer-use-preview-10-2025",
+                fallback_backend="json",
+                fallback_model="gemini-3-flash-preview",
+            ),
+        ),
+        patch("src.api.routes.BrowserComputerUseBackend", return_value=fake_primary) as mock_primary,
+        patch("src.api.routes.BrowserJsonBackend", return_value=fake_secondary) as mock_secondary,
+        patch("src.api.routes.FallbackBackend", return_value=fake_fallback) as mock_fallback,
+    ):
+        services = routes_module._build_browser_services(fake_executor)
+
+    assert services.perception_service is fake_fallback
+    assert services.policy_delegate is fake_fallback
+    mock_primary.assert_called_once()
+    mock_secondary.assert_called_once()
+    mock_fallback.assert_called_once_with(primary=fake_primary, secondary=fake_secondary)
 
 
 # ── UIElementType._missing_ tests ──────────────────────────────

@@ -182,10 +182,16 @@ class FileBackedMemoryStore(MemoryStore):
         # active for this benchmark+page_hint+subgoal context (they were shown to the
         # agent and correlated with a failing step).
         if verification.status is VerificationStatus.FAILURE:
+            # Defensive truncation: state.current_subgoal can grow past 200
+            # chars if upstream code (recovery, stalled-state) wraps it in a
+            # prefix without using the wrap_subgoal helper. The MemoryRecord
+            # schema enforces 200 chars and ValidationError here would crash
+            # the run mid-task. Truncate at this boundary as a safety net.
+            from src.agent.subgoal_utils import truncate_subgoal
             self._decay_active_hints(
                 benchmark=benchmark,
                 page_hint=perception.page_hint,
-                subgoal=state.current_subgoal,
+                subgoal=truncate_subgoal(state.current_subgoal),
             )
 
         return records
@@ -268,10 +274,14 @@ class FileBackedMemoryStore(MemoryStore):
         verification: VerificationResult,
         recovery: RecoveryDecision,
     ) -> list[MemoryRecord]:
+        from src.agent.subgoal_utils import truncate_subgoal
         records: list[MemoryRecord] = []
         action = decision.action
         recent_failure_category = verification.failure_category or executed_action.failure_category
         recent_failure_stage = verification.failure_stage or executed_action.failure_stage
+        # Defensive: a recovery/stalled-state path that didn't go through
+        # wrap_subgoal could have grown current_subgoal past the 200-char cap.
+        safe_subgoal = truncate_subgoal(state.current_subgoal)
 
         if (
             action.action_type is ActionType.TYPE
@@ -287,7 +297,7 @@ class FileBackedMemoryStore(MemoryStore):
                     hint="Do not repeat the same type action after a focus or target failure; re-establish focus first.",
                     outcome=MemoryOutcome.FAILURE,
                     page_hint=perception.page_hint,
-                    subgoal=state.current_subgoal,
+                    subgoal=safe_subgoal,
                     action_type=ActionType.TYPE,
                     target_element_id=action.target_element_id,
                     failure_category=recent_failure_category,
@@ -302,7 +312,7 @@ class FileBackedMemoryStore(MemoryStore):
                     hint="A type action recently failed on this input-like target; click to re-establish focus before typing again.",
                     outcome=MemoryOutcome.FAILURE,
                     page_hint=perception.page_hint,
-                    subgoal=state.current_subgoal,
+                    subgoal=safe_subgoal,
                     action_type=ActionType.TYPE,
                     target_element_id=action.target_element_id,
                     failure_category=recent_failure_category,
@@ -324,7 +334,7 @@ class FileBackedMemoryStore(MemoryStore):
                     hint="Click-before-type was successful for an input-like target.",
                     outcome=MemoryOutcome.SUCCESS,
                     page_hint=perception.page_hint,
-                    subgoal=state.current_subgoal,
+                    subgoal=safe_subgoal,
                     action_type=ActionType.CLICK,
                     target_element_id=action.target_element_id,
                     stage=LoopStage.CHOOSE_ACTION,
@@ -340,7 +350,7 @@ class FileBackedMemoryStore(MemoryStore):
                     hint=f"Successful {action.action_type.value} pattern on {perception.page_hint.value}.",
                     outcome=MemoryOutcome.SUCCESS,
                     page_hint=perception.page_hint,
-                    subgoal=state.current_subgoal,
+                    subgoal=safe_subgoal,
                     action_type=action.action_type,
                     target_element_id=action.target_element_id,
                     stage=LoopStage.EXECUTE,

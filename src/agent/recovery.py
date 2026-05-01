@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
+from src.agent.subgoal_utils import wrap_subgoal
 from src.models.common import FailureCategory, LoopStage, StopReason
 from src.models.execution import ExecutedAction
 from src.models.policy import ActionType, PolicyDecision
@@ -251,7 +252,7 @@ class RuleBasedRecoveryManager(RecoveryManager):
             )
 
         if attempt == 2:
-            state.current_subgoal = f"Try a different tactic for: {subgoal}"
+            state.current_subgoal = wrap_subgoal("Try a different tactic for: ", subgoal)
             return RecoveryDecision(
                 strategy=override_strategy or RecoveryStrategy.RETRY_DIFFERENT_TACTIC,
                 message=override_message or "Repeated failure detected; choose a different tactic instead of repeating the same action.",
@@ -263,7 +264,7 @@ class RuleBasedRecoveryManager(RecoveryManager):
             )
 
         if attempt == 3:
-            state.current_subgoal = f"Reset the local page context, then continue: {subgoal}"
+            state.current_subgoal = wrap_subgoal("Reset the local page context, then continue: ", subgoal)
             return RecoveryDecision(
                 strategy=override_strategy or RecoveryStrategy.CONTEXT_RESET,
                 message=override_message or "Repeated failure persists; reset the local context before continuing.",
@@ -274,7 +275,7 @@ class RuleBasedRecoveryManager(RecoveryManager):
                 recoverable=True,
             )
 
-        state.current_subgoal = f"Restart the session context, then continue: {subgoal}"
+        state.current_subgoal = wrap_subgoal("Restart the session context, then continue: ", subgoal)
         return RecoveryDecision(
             strategy=override_strategy or RecoveryStrategy.SESSION_RESET,
             message=override_message or "Context reset was insufficient; restart the session context before continuing.",

@@ -516,12 +516,20 @@ class NativeBrowserExecutor(Executor):
         playwright = await async_playwright().start()
         try:
             chromium_executable = getattr(playwright.chromium, "executable_path", None)
-            before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
             launch_headless = self._run_headless.get(run_id)
             if launch_headless is None:
                 launch_headless = self._headless
             if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
                 launch_headless = True
+            # browser_pid is only consumed by _bring_browser_to_foreground (gated
+            # to non-headless runs). Skip the WMI/CIM PowerShell calls entirely
+            # when launching headless — they fire twice per session, each can
+            # briefly grab focus on some Windows configs even with
+            # CREATE_NO_WINDOW (WMI initialization side-effect).
+            if launch_headless:
+                before_pids: set[int] = set()
+            else:
+                before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
             # Homeostasis baseline: lock to 1920x1080 in all modes.
             # --start-maximized caused clipping inconsistency → perception_low_quality.
             launch_args = [
@@ -579,7 +587,13 @@ class NativeBrowserExecutor(Executor):
             context=context,
             page=page,
             video_dir=video_dir,
-            browser_pid=self._detect_browser_pid(chromium_executable, before_pids) if chromium_executable else None,
+            # Only resolve browser_pid for non-headless launches — it is solely
+            # consumed by _bring_browser_to_foreground, which is a no-op headless.
+            browser_pid=(
+                self._detect_browser_pid(chromium_executable, before_pids)
+                if (chromium_executable and not launch_headless)
+                else None
+            ),
         )
         self._sessions[run_id] = session
         self._fresh_session_run_id = run_id

@@ -177,8 +177,16 @@ class AgentLoop:
 
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
         _trace("START_RUN", f"intent={request.intent!r}  url={request.start_url!r}")
-        # Minimize all windows (including the Pilot UI browser) for a clean desktop
-        if hasattr(self.executor, "reset_desktop") and not self._test_safe_mode_enabled():
+        # Minimize all windows (Win+D) only in desktop mode. Browser-mode runs
+        # use Playwright in its own window — issuing Win+D would minimize the
+        # USER's foreground app on every task start, which yanks focus during
+        # multi-task benchmark sweeps (especially headless runs where the
+        # browser is invisible and there's nothing to "clear" anyway).
+        if (
+            self.environment is not UnifiedEnvironment.BROWSER
+            and hasattr(self.executor, "reset_desktop")
+            and not self._test_safe_mode_enabled()
+        ):
             await self.executor.reset_desktop()
         record = self.run_store.create_run(
             intent=request.intent,

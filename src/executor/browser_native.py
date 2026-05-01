@@ -181,14 +181,14 @@ class NativeBrowserExecutor(Executor):
                 detail = "Opened browser session" if not existing else "Browser session already active"
                 return self._ok(action, detail, None)
             elif at is ActionType.CLICK:
+                # Vision-only: coords from the perception layer are the single source
+                # of truth. CSS-selector fallbacks are a CLAUDE.md contract violation
+                # ("no DOM, no selectors, no XPaths in policy/perception").
                 page = await self._current_page()
-                if action.selector:
-                    await page.locator(action.selector).first.click(timeout=5000)
-                else:
-                    point = self._action_point(action)
-                    if point is None:
-                        return self._fail(action, "click requires selector or x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
-                    await page.mouse.click(*point)
+                point = self._action_point(action)
+                if point is None:
+                    return self._fail(action, "click requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
+                await page.mouse.click(*point)
                 await self._adopt_new_tab_if_opened()
             elif at is ActionType.HOVER:
                 page = await self._current_page()
@@ -197,87 +197,21 @@ class NativeBrowserExecutor(Executor):
                     return self._fail(action, "hover requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
                 await page.mouse.move(*point)
             elif at is ActionType.TYPE:
+                # Atomic Focus+Type (CLAUDE.md system invariant): when coordinates
+                # are present, click then type in a single executor call so no
+                # intervening state can steal focus. No DOM, no selectors, no
+                # element-name heuristics — vision-only.
                 page = await self._current_page()
                 if action.text is None:
                     return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
                 point = self._action_point(action)
-                _typed = False
                 if point is not None:
-                    # Use elementFromPoint to target the exact element at the given
-                    # coordinates, then fill via ElementHandle.fill() which is more
-                    # reliable than click→keyboard.type() (avoids focus-stealing issues
-                    # where clicking coordinates A triggers focus on element B via JS).
-                    try:
-                        handle = await page.evaluate_handle(
-                            f"document.elementFromPoint({point[0]}, {point[1]})"
-                        )
-                        el = handle.as_element()
-                        if el is not None:
-                            tag = await page.evaluate("el => el.tagName.toLowerCase()", handle)
-                            # For email-address fills: always find the VISIBLE email input
-                            # by name/id (not type=email which often finds hidden WP fields),
-                            # scroll it into view, and type via keyboard (trusted events).
-                            # Also handles the textarea-mismatch case.
-                            if "@" in action.text:
-                                # elementFromPoint returned a textarea but we're filling
-                                # an email value — the form DOM layout differs from what
-                                # Gemini perceives. Use Playwright's ElementHandle to find
-                                # the actual email input, scroll it into view, click to
-                                # focus it, then type via keyboard so all native events
-                                # fire correctly (fixing form validation recognition).
-                                # After typing, clear any textarea that got contaminated.
-                                try:
-                                    import json as _json
-                                    # Target visible email input: prefer exact name/id match
-                                    # (input[type=email] often matches hidden contact-form
-                                    # inputs on WordPress pages; input[name=email] or #email
-                                    # finds the visible form field).
-                                    email_handle = await page.evaluate_handle(
-                                        "Array.from(document.querySelectorAll('input[name*=\"email\" i], input[id*=\"email\" i]'))"
-                                        ".find(el => {"
-                                        "  const r = el.getBoundingClientRect();"
-                                        "  return r.width > 0 && r.height > 0;"
-                                        "}) || null"
-                                    )
-                                    email_el = email_handle.as_element()
-                                    if email_el is not None:
-                                        await email_el.scroll_into_view_if_needed()
-                                        await email_el.click()
-                                        await page.keyboard.press("Control+A")
-                                        await page.keyboard.press("Backspace")
-                                        await page.keyboard.type(action.text)
-                                        # Clear any textarea that got contaminated by JS
-                                        await page.evaluate(
-                                            f"""document.querySelectorAll('textarea').forEach(t => {{
-                                                if (t.value === {_json.dumps(action.text)}) t.value = '';
-                                            }});"""
-                                        )
-                                        _typed = True
-                                        logger.info(
-                                            "Email redirect: found VISIBLE input[name*=email] "
-                                            "at (%s), typed via keyboard",
-                                            await page.evaluate("el => `${el.id||el.name}@(${Math.round(el.getBoundingClientRect().y)}px)`", email_el)
-                                        )
-                                except Exception as _email_err:
-                                    logger.debug("Email redirect via ElementHandle failed (%s)", _email_err)
-                            if not _typed and tag in ("input", "textarea"):
-                                # ElementHandle.fill() selects-all, fills, dispatches events.
-                                await el.fill(action.text)
-                                _typed = True
-                                logger.debug(
-                                    "elementFromPoint fill: tag=%s coords=(%d,%d) text=%r",
-                                    tag, point[0], point[1], action.text[:30],
-                                )
-                    except Exception as _efp_err:
-                        logger.debug("elementFromPoint fill failed (%s) — falling back", _efp_err)
-                    if not _typed:
-                        await page.mouse.click(*point)
-                        await asyncio.sleep(0.05)
-                if not _typed:
-                    if action.clear_before_typing:
-                        await page.keyboard.press("Control+A")
-                        await page.keyboard.press("Backspace")
-                    await page.keyboard.type(action.text)
+                    await page.mouse.click(*point)
+                    await asyncio.sleep(0.05)
+                if action.clear_before_typing:
+                    await page.keyboard.press("Control+A")
+                    await page.keyboard.press("Backspace")
+                await page.keyboard.type(action.text)
                 if action.press_enter:
                     await page.keyboard.press("Enter")
             elif at is ActionType.PRESS_KEY:
@@ -330,6 +264,10 @@ class NativeBrowserExecutor(Executor):
                 file_chooser = await fc_info.value
                 await file_chooser.set_files(file_path)
             elif at is ActionType.READ_TEXT:
+                # READ_TEXT is the explicit escape hatch from vision-only mode:
+                # extracting paragraph innerText has no pixel equivalent, so this
+                # path uses DOM selectors by design. All OTHER browser action paths
+                # are pure mouse/keyboard primitives over coordinates.
                 page = await self._current_page()
                 css = action.selector or "main, article, #content, body"
                 extracted: str = await page.evaluate(
@@ -374,20 +312,17 @@ class NativeBrowserExecutor(Executor):
                     )
 
                 # Click the upload control to trigger the native OS file picker.
+                # Vision-only: coordinates are required; selector/element-id fallbacks
+                # are CLAUDE.md contract violations.
                 page = await self._current_page()
                 point = self._action_point(action)
-                if point is not None:
-                    await page.mouse.click(*point)
-                elif action.selector is not None:
-                    await page.locator(action.selector).first.click()
-                elif action.target_element_id is not None:
-                    await page.locator(self._target_element_locator(action.target_element_id)).first.click()
-                else:
+                if point is None:
                     return self._fail(
                         action,
-                        "upload_file_native requires coordinates, CSS selector, target context, or target_element_id",
+                        "upload_file_native requires x,y coordinates",
                         FailureCategory.EXECUTION_TARGET_NOT_FOUND,
                     )
+                await page.mouse.click(*point)
 
                 # Wait for OS picker to appear, then run deterministic macro.
                 await asyncio.sleep(1.0)
@@ -478,16 +413,6 @@ class NativeBrowserExecutor(Executor):
         if not all(isinstance(value, int) for value in (x, y, width, height)):
             return None
         return x + max(1, width // 2), y + max(1, height // 2)
-
-    @staticmethod
-    def _target_element_locator(target_element_id: str) -> str:
-        escaped = target_element_id.replace("\\", "\\\\").replace('"', '\\"')
-        return (
-            f'[id="{escaped}"], '
-            f'[data-element-id="{escaped}"], '
-            f'[data-testid="{escaped}"], '
-            f'[name="{escaped}"]'
-        )
 
     async def _execute_batch(self, action: AgentAction) -> ExecutedAction:
         if not action.actions:

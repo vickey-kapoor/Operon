@@ -63,7 +63,7 @@ class GeminiClient(ABC):
         return 1.0
 
 
-_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT", "propane-cubist-479515-c5")
+_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT")
 _VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
 _VERTEX_SYSTEM_INSTRUCTION = (
     "You are the visual cortex of Operon. "
@@ -90,6 +90,7 @@ class GeminiHttpClient(GeminiClient):
         use_vertex: bool | None = None,
         vertex_project: str | None = None,
         vertex_location: str | None = None,
+        cacheable_system_prompt: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -97,13 +98,17 @@ class GeminiHttpClient(GeminiClient):
         self.vertex_project = vertex_project or _VERTEX_PROJECT
         self.vertex_location = vertex_location or _VERTEX_LOCATION
         if self.use_vertex:
+            if not self.vertex_project:
+                raise ValueError(
+                    "OPERON_USE_VERTEX is enabled but VERTEX_PROJECT is not set. "
+                    "Set VERTEX_PROJECT to your GCP project ID, or pass vertex_project=...",
+                )
             self.api_base_url = (
                 f"https://{self.vertex_location}-aiplatform.googleapis.com/v1"
                 f"/projects/{self.vertex_project}/locations/{self.vertex_location}"
                 f"/publishers/google/models"
             )
-            print(f"OPERON-INFRA: Targeting Vertex AI Project {self.vertex_project}")  # noqa: T201
-            logger.info("Using Vertex AI Project: %s  location: %s", self.vertex_project, self.vertex_location)
+            logger.info("OPERON-INFRA: Targeting Vertex AI Project %s (location=%s)", self.vertex_project, self.vertex_location)
         else:
             self.api_base_url = api_base_url or os.getenv(
                 "GEMINI_API_BASE_URL",
@@ -117,6 +122,11 @@ class GeminiHttpClient(GeminiClient):
         self._last_perception_scale_ratio: float = 1.0
         self._vertex_credentials: Any = None
         self.cached_content_name: str | None = None
+        # Lazy cache priming — see _maybe_prime_cache(). On Vertex AI the static
+        # system prompt is cached once on first call; on the public API this is
+        # a no-op (prompts are too small for the >=32k token minimum).
+        self._cacheable_system_prompt: str | None = cacheable_system_prompt
+        self._cache_primed: bool = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazy-init a persistent async client with connection pooling."""
@@ -130,6 +140,7 @@ class GeminiHttpClient(GeminiClient):
 
     async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
         """Send the screenshot and prompt to Gemini and return raw JSON text."""
+        await self._maybe_prime_cache()
         image_bytes, scale_ratio = await asyncio.to_thread(_optimize_screenshot, Path(screenshot_path))
         self._last_perception_scale_ratio = scale_ratio
         payload = self._build_perception_payload(prompt=prompt, image_bytes=image_bytes, mime_type="image/jpeg")
@@ -142,6 +153,7 @@ class GeminiHttpClient(GeminiClient):
 
     async def generate_policy(self, prompt: str) -> str:
         """Send the policy prompt to Gemini and return raw JSON text."""
+        await self._maybe_prime_cache()
         payload = self._build_text_payload(prompt=prompt)
         return await self._post_json_payload(payload, request_kind="text")
 
@@ -190,6 +202,40 @@ class GeminiHttpClient(GeminiClient):
         req = google_auth_transport.Request()
         self._vertex_credentials.refresh(req)
         return self._vertex_credentials.token
+
+    async def _maybe_prime_cache(self) -> None:
+        """Prime the prompt cache on first generate_* call. No-op if already
+        primed, no static prompt was supplied, or we're on the public API."""
+        if self._cache_primed or not self._cacheable_system_prompt:
+            return
+        self._cache_primed = True  # set first so a failure doesn't keep retrying
+        await self.try_enable_prompt_cache(self._cacheable_system_prompt)
+
+    async def try_enable_prompt_cache(self, system_prompt: str, ttl: str = "7200s") -> bool:
+        """Best-effort prompt caching. Returns True if a cache was created.
+
+        Behavior:
+        - Vertex AI: creates a cache (Vertex supports small minimums). Returns True.
+        - Public Gemini API: no-op (the public API requires >=32k tokens and our
+          prompt prefixes don't qualify). Returns False with an info-level log.
+        - Cache already enabled: returns True without re-creating.
+        - Any failure: returns False; the error is logged but not raised so callers
+          can continue without caching.
+        """
+        if self.cached_content_name:
+            return True
+        if not self.use_vertex:
+            logger.info(
+                "Prompt cache not enabled: public Gemini API requires >=32k tokens. "
+                "Set OPERON_USE_VERTEX=true and VERTEX_PROJECT to enable caching.",
+            )
+            return False
+        try:
+            await self.create_cache(system_prompt, ttl=ttl)
+            return True
+        except Exception as exc:
+            logger.warning("Prompt cache creation failed (continuing without): %s", exc)
+            return False
 
     async def create_cache(self, system_prompt: str, ttl: str = "7200s") -> str:
         """Create a Gemini cached content resource and store its name on this client.

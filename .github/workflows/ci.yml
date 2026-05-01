@@ -8,12 +8,19 @@ on:
 
 jobs:
   test:
-    name: Test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12"]
+        include:
+          # Desktop loop (pyautogui/mss/baseline) is Windows-first per CLAUDE.md.
+          # Run the desktop-executor + upload-macro tests on a Windows runner so
+          # platform-specific regressions surface in CI rather than at runtime.
+          - os: windows-latest
+            python-version: "3.11"
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -33,10 +40,21 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPERON_TEST_SAFE_MODE: "true"
-        run: |
-          python -m pytest tests/ -v --tb=short \
-            --ignore=tests/test_e2e_quick_tasks.py \
-            --ignore=tests/test_bug_fixes_verification.py
+        # Live-server suites are auto-deselected by the `live_server` marker
+        # (configured via addopts in pyproject.toml).
+        run: python -m pytest tests/ -v --tb=short --junitxml=test-results.xml
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts-py${{ matrix.python-version }}
+          path: |
+            test-results.xml
+            runs/
+            .browser-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
 
   lint:
     name: Lint
@@ -52,9 +70,10 @@ jobs:
           cache: pip
 
       - name: Install linting tools
+        # Use the dev extra so ruff is pinned to the same range as pyproject.toml.
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
+          pip install -e .[dev]
 
       - name: Run ruff
         run: ruff check src tests --select E,F,W,I --ignore E501

@@ -341,13 +341,14 @@ async def test_launch_app_ms_settings() -> None:
 
 @pytest.mark.asyncio
 async def test_double_click_success() -> None:
-    """Double-click at coordinates should succeed."""
+    """Double-click at coordinates should succeed (visual servo gate satisfied)."""
     executor = _make_executor()
     action = AgentAction(action_type=ActionType.DOUBLE_CLICK, x=500, y=300)
 
     with (
         patch("src.executor.desktop.pyautogui.doubleClick") as mock_dclick,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_region_has_content", return_value=(True, 100.0)),
     ):
         result = await executor.execute(action)
 
@@ -373,13 +374,14 @@ async def test_double_click_without_coords_fails() -> None:
 
 @pytest.mark.asyncio
 async def test_right_click_success() -> None:
-    """Right-click at coordinates should succeed."""
+    """Right-click at coordinates should succeed (visual servo gate satisfied)."""
     executor = _make_executor()
     action = AgentAction(action_type=ActionType.RIGHT_CLICK, x=400, y=250)
 
     with (
         patch("src.executor.desktop.pyautogui.rightClick") as mock_rclick,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_region_has_content", return_value=(True, 100.0)),
     ):
         result = await executor.execute(action)
 
@@ -398,6 +400,127 @@ async def test_right_click_without_coords_fails() -> None:
 
     assert result.success is False
     assert result.failure_category == FailureCategory.EXECUTION_TARGET_NOT_FOUND
+
+
+# ── visual servo invariant tests ────────────────────────────────
+#
+# Per CLAUDE.md, visual servo is a non-negotiable system invariant: every
+# click goes through `_region_has_content`, which aborts on a uniform region.
+# These tests lock the abort path and the mss-error fallback path so that
+# future refactors cannot silently bypass the gate.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_type,pyautogui_attr",
+    [
+        (ActionType.CLICK, "click"),
+        (ActionType.DOUBLE_CLICK, "doubleClick"),
+        (ActionType.RIGHT_CLICK, "rightClick"),
+    ],
+)
+async def test_visual_servo_aborts_uniform_region(action_type, pyautogui_attr) -> None:
+    """Uniform region (variance below threshold) must abort with EXECUTION_TARGET_NOT_FOUND
+    and NEVER call the underlying pyautogui primitive."""
+    executor = _make_executor()
+    action = AgentAction(action_type=action_type, x=500, y=300)
+
+    with (
+        patch(f"src.executor.desktop.pyautogui.{pyautogui_attr}") as mock_prim,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_region_has_content", return_value=(False, 5.0)),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is False
+    assert result.failure_category == FailureCategory.EXECUTION_TARGET_NOT_FOUND
+    assert "visual servo" in result.detail.lower()
+    assert result.visual_variance == pytest.approx(5.0)
+    mock_prim.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_visual_servo_resilient_to_mss_failure() -> None:
+    """A pixel-grab exception in the servo check must NEVER block the click —
+    when mss is unavailable we proceed with the action rather than fail closed."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.CLICK, x=500, y=300)
+
+    with (
+        patch("src.executor.desktop.pyautogui.click") as mock_click,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_region_has_content", side_effect=RuntimeError("mss unavailable")),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    mock_click.assert_called_once_with(500, 300)
+
+
+@pytest.mark.asyncio
+async def test_region_has_content_bypasses_variance_for_input_zone() -> None:
+    """Confirmed input zones (empty text fields) must skip the variance gate
+    entirely — a blank input is not a shifted element."""
+    executor = _make_executor()
+
+    # Make _sample_region observable so we can confirm it is not consulted.
+    with patch.object(executor, "_sample_region", side_effect=AssertionError("must not sample")):
+        has_content, variance = executor._region_has_content(100, 200, is_input_zone=True)
+
+    assert has_content is True
+    assert variance == 0.0
+
+
+@pytest.mark.asyncio
+async def test_capture_re_bursts_on_high_visual_velocity() -> None:
+    """`capture()` must re-burst once when the first burst returns velocity > 0.02
+    so perception never sees an animating frame."""
+    from src.models.capture import CaptureFrame
+
+    executor = _make_executor()
+
+    stable_frame = CaptureFrame(
+        artifact_path="stable.png",
+        width=100,
+        height=100,
+        mime_type="image/png",
+        monitor_left=0,
+        monitor_top=0,
+        visual_velocity=0.0,
+    )
+    moving_frame = stable_frame.model_copy(update={"visual_velocity": 0.05})
+
+    with patch.object(
+        executor,
+        "_capture_burst_sync",
+        side_effect=[(moving_frame, 0.05), (stable_frame, 0.0)],
+    ) as mock_burst:
+        with patch("src.executor.desktop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            frame = await executor.capture()
+
+    assert mock_burst.call_count == 2
+    assert frame is stable_frame
+    # First sleep (300ms) is between the two bursts.
+    mock_sleep.assert_any_await(0.3)
+
+
+@pytest.mark.asyncio
+async def test_capture_no_reburst_on_low_velocity() -> None:
+    """When the first burst is already stable, capture() must NOT re-burst."""
+    from src.models.capture import CaptureFrame
+
+    executor = _make_executor()
+    stable = CaptureFrame(
+        artifact_path="stable.png",
+        width=100, height=100, mime_type="image/png",
+        monitor_left=0, monitor_top=0, visual_velocity=0.0,
+    )
+
+    with patch.object(executor, "_capture_burst_sync", return_value=(stable, 0.01)) as mock_burst:
+        frame = await executor.capture()
+
+    assert mock_burst.call_count == 1
+    assert frame is stable
 
 
 # ── drag tests ──────────────────────────────────────────────────

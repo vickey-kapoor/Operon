@@ -580,45 +580,63 @@ class DesktopExecutor(Executor):
         )
         return has_content, variance
 
-    async def _exec_click(self, action: AgentAction) -> ExecutedAction:
+    async def _click_preamble(
+        self, action: AgentAction, kind: str,
+    ) -> tuple[ExecutedAction | None, float | None]:
+        """Bounds + visual-servo gate shared by all click variants.
+
+        Returns (failure_action, variance) — failure_action is non-None when the
+        caller should return early. Visual Servo is a system invariant: every
+        click goes through this gate.
+        """
         if action.x is None or action.y is None:
-            return self._fail(action, "click requires x,y coordinates on desktop", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
+            return (
+                self._fail(action, f"{kind} requires x,y coordinates on desktop", FailureCategory.EXECUTION_TARGET_NOT_FOUND),
+                None,
+            )
+        in_bounds, monitors = self._coord_in_monitor_bounds(action.x, action.y)
+        if not in_bounds:
+            logger.warning(
+                "%s skipped: coord (%d, %d) is outside all monitor bounds [monitors=%s]",
+                kind, action.x, action.y, monitors,
+            )
+            return (
+                self._fail(
+                    action,
+                    f"{kind} skipped: coord ({action.x}, {action.y}) is outside all monitor bounds",
+                    FailureCategory.EXECUTION_ERROR,
+                ),
+                None,
+            )
         variance: float | None = None
         try:
-            # action.x/y are already virtual-desktop coords — the loop applies
-            # monitor_origin via _apply_monitor_origin before calling the executor.
-            in_bounds, monitors = self._coord_in_monitor_bounds(action.x, action.y)
-            if not in_bounds:
-                logger.warning(
-                    "click skipped: coord (%d, %d) is outside all monitor bounds [monitors=%s]",
-                    action.x, action.y, monitors,
-                )
-                return self._fail(
-                    action,
-                    f"click skipped: coord ({action.x}, {action.y}) is outside all monitor bounds",
-                    FailureCategory.EXECUTION_ERROR,
-                )
-            # Visual servo check: verify the target region has non-trivial content
-            # before committing the click. Catches elements that shifted mid-flight.
-            # Wrapped in try/except — a failed pixel grab should never block a click.
-            try:
-                has_content, variance = await asyncio.to_thread(
-                    self._region_has_content, action.x, action.y,
-                    50, None, action.is_input_zone,
-                )
-            except Exception as _servo_exc:
-                logger.debug("Visual servo check skipped (mss error): %s", _servo_exc)
-                has_content = True
-            if not has_content:
-                logger.warning(
-                    "CoordDriftWarning: uniform region at (%d, %d) — target likely shifted or element absent",
-                    action.x, action.y,
-                )
-                return self._fail(
+            has_content, variance = await asyncio.to_thread(
+                self._region_has_content, action.x, action.y,
+                50, None, action.is_input_zone,
+            )
+        except Exception as _servo_exc:
+            logger.debug("Visual servo check skipped (mss error): %s", _servo_exc)
+            has_content = True
+        if not has_content:
+            logger.warning(
+                "CoordDriftWarning: uniform region at (%d, %d) — target likely shifted or element absent",
+                action.x, action.y,
+            )
+            return (
+                self._fail(
                     action,
                     f"visual servo: blank region at ({action.x}, {action.y}); target may have shifted",
                     FailureCategory.EXECUTION_TARGET_NOT_FOUND,
-                ).model_copy(update={"visual_variance": variance})
+                ).model_copy(update={"visual_variance": variance}),
+                variance,
+            )
+        return (None, variance)
+
+    async def _exec_click(self, action: AgentAction) -> ExecutedAction:
+        gate, variance = await self._click_preamble(action, "click")
+        if gate is not None:
+            return gate
+        try:
             await asyncio.to_thread(pyautogui.click, action.x, action.y)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
@@ -627,39 +645,57 @@ class DesktopExecutor(Executor):
             return self._fail(action, f"Click failed: {exc}", FailureCategory.EXECUTION_ERROR)
 
     async def _exec_double_click(self, action: AgentAction) -> ExecutedAction:
-        if action.x is None or action.y is None:
-            return self._fail(action, "double_click requires x,y coordinates on desktop", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
+        gate, variance = await self._click_preamble(action, "double_click")
+        if gate is not None:
+            return gate
         try:
             await asyncio.to_thread(pyautogui.doubleClick, action.x, action.y)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
-            return self._ok(action, f"Double-clicked at ({action.x}, {action.y})", after_path)
+            return self._ok(action, f"Double-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
         except Exception as exc:
             return self._fail(action, f"Double-click failed: {exc}", FailureCategory.EXECUTION_ERROR)
 
     async def _exec_right_click(self, action: AgentAction) -> ExecutedAction:
-        if action.x is None or action.y is None:
-            return self._fail(action, "right_click requires x,y coordinates on desktop", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
+        gate, variance = await self._click_preamble(action, "right_click")
+        if gate is not None:
+            return gate
         try:
             await asyncio.to_thread(pyautogui.rightClick, action.x, action.y)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
-            return self._ok(action, f"Right-clicked at ({action.x}, {action.y})", after_path)
+            return self._ok(action, f"Right-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
         except Exception as exc:
             return self._fail(action, f"Right-click failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
+    @staticmethod
+    def _region_mean(raw: bytes) -> float:
+        if not raw:
+            return 0.0
+        return sum(raw) / len(raw)
 
     async def _exec_type(self, action: AgentAction) -> ExecutedAction:
         if action.text is None:
             return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
         try:
             if action.x is not None and action.y is not None:
+                # Atomic focus+type: click then verify focus by mean-pixel delta.
+                # Cursor blink and antialiasing make raw byte equality unreliable
+                # (bytes always differ); compare region means with a tolerance.
                 pre_pixels = await asyncio.to_thread(self._sample_region, action.x, action.y)
                 await asyncio.to_thread(pyautogui.click, action.x, action.y)
                 await asyncio.sleep(0.15)
                 post_pixels = await asyncio.to_thread(self._sample_region, action.x, action.y)
-                if pre_pixels == post_pixels:
-                    # No visual change — focus likely stolen; retry click once
-                    logger.debug("Focus verification: no visual change at (%d, %d), retrying click", action.x, action.y)
+                pre_mean = self._region_mean(pre_pixels)
+                post_mean = self._region_mean(post_pixels)
+                # Threshold: 1.5 mean intensity units (out of 255). Cursor blink
+                # alone moves the mean by ~3-5; a focus-stealing transition is
+                # much larger. Below 1.5 means nothing meaningful changed.
+                if abs(post_mean - pre_mean) < 1.5:
+                    logger.debug(
+                        "Focus verification: no visual change at (%d, %d) (mean delta=%.2f), retrying click",
+                        action.x, action.y, abs(post_mean - pre_mean),
+                    )
                     await asyncio.to_thread(pyautogui.click, action.x, action.y)
                     await asyncio.sleep(0.25)
             if action.clear_before_typing:

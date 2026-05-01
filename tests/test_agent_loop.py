@@ -1103,7 +1103,10 @@ def test_infer_focused_element_from_matching_label_after_control_click() -> None
     assert inferred.focused_element_id == "search-input"
 
 
-def test_attach_target_context_normalizes_click_to_target_center() -> None:
+def test_attach_target_context_preserves_planner_supplied_click_coords() -> None:
+    """Planner-supplied coordinates must be respected; the loop should only fall
+    back to the target's bbox center when x/y are missing. Overwriting valid
+    coords forces every click to the geometric center and amplifies jitter."""
     loop = _loop()
     perception = ScreenPerception(
         summary="GitHub homepage with search button",
@@ -1132,8 +1135,8 @@ def test_attach_target_context_normalizes_click_to_target_center() -> None:
 
     normalized = loop._attach_target_context(action, perception)
 
-    assert normalized.x == 849
-    assert normalized.y == 58
+    assert normalized.x == 835
+    assert normalized.y == 44
     assert normalized.target_context is not None
 
 
@@ -1497,3 +1500,135 @@ async def test_no_progress_across_consecutive_steps_terminates_deterministically
     assert payload["recovery_decision"]["stop_reason"] == StopReason.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS.value
     assert payload["progress_trace_artifact_path"].endswith("progress_trace.json")
     assert payload["progress_state"]["no_progress_streak"] == 3
+
+
+# ── force_fresh_perception ordering test ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_consume_force_fresh_perception_sleeps_before_reset() -> None:
+    """The settle delay must complete BEFORE the flag is reset.
+    Otherwise an early return between the reset and the await loses the wait.
+    Browser environment uses 1.0s; desktop uses 0.5s."""
+    from unittest.mock import patch as _patch
+
+    from src.core.contracts.perception import Environment as UnifiedEnvironment
+
+    desktop_loop = _loop()
+    desktop_loop.environment = UnifiedEnvironment.DESKTOP
+    state = AgentState(run_id="r1", intent="x", status=RunStatus.RUNNING, force_fresh_perception=True)
+
+    flag_when_sleeping: list[bool] = []
+
+    async def _spy_sleep(_seconds):
+        # Capture the flag's value at the moment of sleep — must still be True,
+        # proving sleep happens BEFORE reset.
+        flag_when_sleeping.append(state.force_fresh_perception)
+
+    with _patch("src.agent.loop.asyncio.sleep", side_effect=_spy_sleep) as mock_sleep:
+        await desktop_loop._consume_force_fresh_perception(state)
+
+    assert flag_when_sleeping == [True], "sleep must run while the flag is still True"
+    assert state.force_fresh_perception is False, "flag must be reset after the sleep returns"
+    mock_sleep.assert_awaited_once_with(0.5)
+
+
+@pytest.mark.asyncio
+async def test_consume_force_fresh_perception_uses_longer_delay_for_browser() -> None:
+    from unittest.mock import patch as _patch
+
+    from src.core.contracts.perception import Environment as UnifiedEnvironment
+
+    browser_loop = _loop()
+    browser_loop.environment = UnifiedEnvironment.BROWSER
+    state = AgentState(run_id="r1", intent="x", status=RunStatus.RUNNING, force_fresh_perception=True)
+
+    with _patch("src.agent.loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await browser_loop._consume_force_fresh_perception(state)
+
+    mock_sleep.assert_awaited_once_with(1.0)
+    assert state.force_fresh_perception is False
+
+
+@pytest.mark.asyncio
+async def test_consume_force_fresh_perception_noop_when_flag_clear() -> None:
+    from unittest.mock import patch as _patch
+
+    loop = _loop()
+    state = AgentState(run_id="r1", intent="x", status=RunStatus.RUNNING, force_fresh_perception=False)
+
+    with _patch("src.agent.loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await loop._consume_force_fresh_perception(state)
+
+    mock_sleep.assert_not_awaited()
+
+
+# ── stable-frame perception bypass tests ─────────────────────────
+
+
+def test_maybe_reuse_prior_perception_returns_none_when_velocity_nonzero() -> None:
+    """Any non-zero velocity must prevent the cache from firing — even tiny motion."""
+    loop = _loop()
+    frame = CaptureFrame(artifact_path="x.png", width=100, height=100, mime_type="image/png", visual_velocity=0.001)
+    state = AgentState(run_id="r1", intent="x", status=RunStatus.RUNNING)
+    assert loop._maybe_reuse_prior_perception(state, frame) is None
+
+
+def test_maybe_reuse_prior_perception_requires_last_action_wait() -> None:
+    """Cache fires only when the last action was idempotent (WAIT)."""
+    from src.models.execution import ExecutedAction
+    from src.models.policy import ActionType, AgentAction
+    loop = _loop()
+    frame = CaptureFrame(artifact_path="x.png", width=100, height=100, mime_type="image/png", visual_velocity=0.0)
+    perception = ScreenPerception(summary="x", page_hint="unknown", capture_artifact_path="prev.png", visible_elements=[])
+    state = AgentState(
+        run_id="r1", intent="x", status=RunStatus.RUNNING,
+        observation_history=[perception],
+        action_history=[ExecutedAction(action=AgentAction(action_type=ActionType.CLICK, x=10, y=20), success=True, detail="ok")],
+    )
+    # Last action was CLICK, not WAIT — cache must NOT fire.
+    assert loop._maybe_reuse_prior_perception(state, frame) is None
+
+
+def test_maybe_reuse_prior_perception_fires_when_all_conditions_met() -> None:
+    """All four gates green → reuse the prior perception with updated artifact path."""
+    from src.models.execution import ExecutedAction
+    from src.models.policy import ActionType, AgentAction
+    from src.models.verification import VerificationResult, VerificationStatus
+    loop = _loop()
+    frame = CaptureFrame(artifact_path="current.png", width=100, height=100, mime_type="image/png", visual_velocity=0.0)
+    prior = ScreenPerception(summary="prev frame", page_hint="form_page", capture_artifact_path="prev.png", visible_elements=[])
+    state = AgentState(
+        run_id="r1", intent="x", status=RunStatus.RUNNING,
+        observation_history=[prior],
+        action_history=[ExecutedAction(action=AgentAction(action_type=ActionType.WAIT, wait_ms=500), success=True, detail="waited")],
+        verification_history=[VerificationResult(status=VerificationStatus.UNCERTAIN, expected_outcome_met=False, stop_condition_met=False, reason="x")],
+    )
+
+    cached = loop._maybe_reuse_prior_perception(state, frame)
+
+    assert cached is not None
+    assert cached.summary == "prev frame"
+    assert cached.capture_artifact_path == "current.png"
+
+
+def test_maybe_reuse_prior_perception_blocks_back_to_back_reuse() -> None:
+    """A second consecutive call (same run_id) must NOT reuse — forces a fresh
+    perception every other step to catch slow renders the first skip might have missed."""
+    from src.models.execution import ExecutedAction
+    from src.models.policy import ActionType, AgentAction
+    from src.models.verification import VerificationResult, VerificationStatus
+    loop = _loop()
+    frame = CaptureFrame(artifact_path="current.png", width=100, height=100, mime_type="image/png", visual_velocity=0.0)
+    prior = ScreenPerception(summary="prev", page_hint="form_page", capture_artifact_path="prev.png", visible_elements=[])
+    state = AgentState(
+        run_id="r1", intent="x", status=RunStatus.RUNNING,
+        observation_history=[prior],
+        action_history=[ExecutedAction(action=AgentAction(action_type=ActionType.WAIT, wait_ms=500), success=True, detail="waited")],
+        verification_history=[VerificationResult(status=VerificationStatus.UNCERTAIN, expected_outcome_met=False, stop_condition_met=False, reason="x")],
+    )
+
+    # First call should reuse.
+    assert loop._maybe_reuse_prior_perception(state, frame) is not None
+    # Second consecutive call must NOT reuse — force a fresh look.
+    assert loop._maybe_reuse_prior_perception(state, frame) is None

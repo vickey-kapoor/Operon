@@ -23,6 +23,10 @@ on:
         required: false
         default: "https://example.com/"
         type: string
+  # Nightly run so external-service regressions are caught within 24h rather
+  # than only when someone manually dispatches the workflow.
+  schedule:
+    - cron: "17 4 * * *"  # 04:17 UTC daily
 
 permissions:
   contents: read
@@ -30,7 +34,8 @@ permissions:
 jobs:
   browserbase:
     name: Browserbase Integration
-    if: ${{ inputs.run_browserbase }}
+    # Run when manually requested OR on the nightly schedule (no inputs).
+    if: ${{ github.event_name == 'schedule' || inputs.run_browserbase }}
     runs-on: ubuntu-latest
 
     steps:
@@ -58,7 +63,7 @@ jobs:
       - name: Run Browserbase integration tests
         env:
           OPERON_RUN_BROWSERBASE_INTEGRATION: "true"
-          OPERON_BROWSERBASE_SMOKE_URL: ${{ inputs.browserbase_smoke_url }}
+          OPERON_BROWSERBASE_SMOKE_URL: ${{ inputs.browserbase_smoke_url || 'https://example.com' }}
           BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
           BROWSERBASE_PROJECT_ID: ${{ secrets.BROWSERBASE_PROJECT_ID }}
           OPERON_TEST_SAFE_MODE: "true"
@@ -67,7 +72,7 @@ jobs:
 
   drive:
     name: Drive Integration
-    if: ${{ inputs.run_drive }}
+    if: ${{ github.event_name == 'schedule' || inputs.run_drive }}
     runs-on: ubuntu-latest
 
     steps:
@@ -102,7 +107,7 @@ jobs:
         env:
           OPERON_RUN_DRIVE_INTEGRATION: "true"
           OPERON_DRIVE_TEST_FOLDER_ID: ${{ secrets.OPERON_DRIVE_TEST_FOLDER_ID }}
-          OPERON_DRIVE_TEST_URL: ${{ inputs.drive_test_url }}
+          OPERON_DRIVE_TEST_URL: ${{ inputs.drive_test_url || 'https://example.com/' }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ runner.temp }}/google-service-account.json
           OPERON_TEST_SAFE_MODE: "true"
         run: |

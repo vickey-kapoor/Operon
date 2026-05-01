@@ -198,15 +198,21 @@ class AgentAction(StrictModel):
                 raise ValueError("wait_for_user cannot include action payload fields other than text")
 
         elif self.action_type is ActionType.STOP:
+            # text is permitted on STOP as the answer payload for information-
+            # retrieval tasks (e.g. intent "find the year X was released" -> stop
+            # with text="1991"). The downstream WebArena runner reads this field
+            # to feed the string_match evaluator. All other payload fields stay
+            # forbidden so STOP remains a control-flow signal, not a generic
+            # action carrier.
             if any(
                 value is not None
                 for value in (
-                    self.selector, self.target_element_id, self.text, self.key,
+                    self.selector, self.target_element_id, self.key,
                     self.url, self.wait_ms, self.x, self.y, self.target_context,
                     *_new_fields, *_typing_flags,
                 )
             ):
-                raise ValueError("stop cannot include action payload fields")
+                raise ValueError("stop cannot include action payload fields other than text")
 
         elif self.action_type is ActionType.LAUNCH_APP:
             if self.text is None:

@@ -8,6 +8,7 @@ an explicit argument — no hidden coupling to a god-object self.
 
 from __future__ import annotations
 
+from src.agent.subgoal_utils import wrap_subgoal
 from src.models.common import FailureCategory, LoopStage, StopReason
 from src.models.execution import ExecutedAction
 from src.models.policy import ActionType, AgentAction
@@ -251,7 +252,10 @@ class ProgressTracker:
                 progress_state.no_progress_streak,
                 stale_subgoal,
             )
-            state.current_subgoal = f"Stalled — choose a completely different approach for: {stale_subgoal}"
+            state.current_subgoal = wrap_subgoal(
+                "Stalled — choose a completely different approach for: ",
+                stale_subgoal,
+            )
             return redundant_action_failure(
                 action=action,
                 category=FailureCategory.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS,

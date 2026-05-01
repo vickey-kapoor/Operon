@@ -3,17 +3,42 @@
 import asyncio
 import logging
 import os
-import shutil
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
+from src.agent.anchor_cache import AnchorCache, tag_input_zone
 from src.agent.capture import CaptureService
 from src.agent.perception import PerceptionLowQualityError, PerceptionService
 from src.agent.policy import PolicyService
+from src.agent.progress_tracker import (
+    ProgressTracker,
+    action_signature,
+    alternating_action_loop,
+    append_window,
+    apply_no_progress_detection,
+    failure_signature,
+    meaningful_progress,
+    page_signature,
+    redundant_action_failure,
+    should_mark_subgoal_complete,
+    stop_reason_for_failure,
+    subgoal_signature,
+    target_signature,
+)
 from src.agent.recovery import RecoveryManager, validate_benchmark_integrity
 from src.agent.reflector import PostRunReflector
+from src.agent.retry_hardening import (
+    RetryHardening,
+    apply_reresolution_failure,
+    merge_execution_retry,
+    refresh_action_coordinates,
+    should_retry,
+)
+from src.agent.retry_hardening import (
+    RetryResolution as _RetryResolution,
+)
 from src.agent.selector import DeterministicTargetSelector
+from src.agent.step_artifacts import StepArtifactsManager
 from src.agent.verifier import VerifierService
 from src.agent.video_verifier import VideoVerifier
 from src.clients.gemini import GeminiClient
@@ -44,7 +69,7 @@ from src.models.logs import (
     StepLog,
 )
 from src.models.perception import UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
+from src.models.policy import ActionType, AgentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.selector import TargetIntent, TargetIntentAction
@@ -56,7 +81,6 @@ from src.models.verification import (
 from src.runtime.legacy_adapter import LegacyOperonContractAdapter
 from src.runtime.orchestrator import UnifiedOrchestrator
 from src.runtime.state import AgentRuntimeState
-from src.store.background_writer import bg_writer
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log, append_step_log_critical
 from src.store.run_store import RunStore
@@ -80,20 +104,27 @@ def _trace(stage: str, detail: str = "") -> None:
         print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
 
 
-@dataclass(slots=True)
-class _RetryResolution:
-    action: AgentAction | None
-    trace: ExecutionReresolutionTrace | None
+def run_logger(run_id: str, step: int | None = None) -> logging.LoggerAdapter:
+    """Return a logger that binds run_id (and optionally step) to every record.
+
+    Lets oncall grep across many concurrent runs by run-id — without hand-threading
+    the field through every call site. Use as a drop-in replacement for `logger`
+    inside per-run code paths.
+    """
+    extra = {"run_id": run_id[:8] if run_id else "-", "step": step if step is not None else "-"}
+    return logging.LoggerAdapter(logger, extra)
 
 
 class AgentLoop:
     """Coordinates the MVP control loop and terminal benchmark boundaries."""
 
-    MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS = 2
-    MAX_REPEAT_SAME_TARGET_WITHOUT_PROGRESS = 2
-    MAX_NO_PROGRESS_STEPS = 3
-    MAX_REPEAT_SAME_FAILURE = 2
-    RECENT_WINDOW_SIZE = 6
+    # Loop-progress thresholds: kept here as compatibility aliases for any
+    # external readers; ProgressTracker is the source of truth.
+    MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS = ProgressTracker.MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS
+    MAX_REPEAT_SAME_TARGET_WITHOUT_PROGRESS = ProgressTracker.MAX_REPEAT_SAME_TARGET_WITHOUT_PROGRESS
+    MAX_NO_PROGRESS_STEPS = ProgressTracker.MAX_NO_PROGRESS_STEPS
+    MAX_REPEAT_SAME_FAILURE = ProgressTracker.MAX_REPEAT_SAME_FAILURE
+    RECENT_WINDOW_SIZE = 6  # used only by tests; ProgressTracker has its own constant
 
     SUCCESS_STOP_REASONS = {
         StopReason.STOP_BEFORE_SEND,
@@ -125,6 +156,7 @@ class AgentLoop:
         self.memory_store = memory_store
         self.gemini_client = gemini_client
         self.target_selector = DeterministicTargetSelector()
+        self._retry = RetryHardening(self.target_selector)
         self.video_verifier: VideoVerifier | None = (
             VideoVerifier(gemini_client) if isinstance(gemini_client, GeminiClient) else None
         )
@@ -135,9 +167,9 @@ class AgentLoop:
         self.unified_orchestrator = unified_orchestrator or UnifiedOrchestrator()
         self.legacy_contract_adapter = LegacyOperonContractAdapter(environment=environment)
         self.unified_states: dict[str, AgentRuntimeState] = {}
-        # Per-run anchor cache: element_id → (cx, cy) of the last successful click.
-        # Used by _apply_coord_anchor to suppress small perception jitter on TYPE actions.
-        self._coord_anchors: dict[str, dict[str, tuple[int, int]]] = {}
+        self._anchor_cache = AnchorCache()
+        self._artifacts = StepArtifactsManager(run_store)
+        self._progress = ProgressTracker()
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -194,6 +226,56 @@ class AgentLoop:
     @staticmethod
     def _test_safe_mode_enabled() -> bool:
         return os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true"
+
+    def _maybe_reuse_prior_perception(self, state, frame: CaptureFrame):
+        """Return a reused ScreenPerception when conditions are safe, else None.
+
+        Conservative gates:
+        - The previous action was WAIT (idempotent — agent expected no change).
+        - The frame's visual_velocity is exactly 0.0 (no pixel movement at all).
+        - The previous verification was UNCERTAIN (not SUCCESS, not FAILURE).
+        - There IS a previous perception in observation_history.
+        - We did NOT already reuse on the previous step (no back-to-back skips —
+          forces a fresh look at least every other step to catch slow renders).
+        """
+        if frame.visual_velocity != 0.0:
+            return None
+        if not state.observation_history or not state.action_history:
+            return None
+        # Avoid back-to-back reuse: track per-run via a small set on self.
+        run_id = state.run_id
+        prev_skipped = getattr(self, "_perception_skipped_runs", set())
+        if run_id in prev_skipped:
+            prev_skipped.discard(run_id)
+            self._perception_skipped_runs = prev_skipped
+            return None
+        last_action = state.action_history[-1].action
+        if last_action.action_type is not ActionType.WAIT:
+            return None
+        if state.verification_history:
+            from src.models.verification import VerificationStatus as _VS
+            if state.verification_history[-1].status is not _VS.UNCERTAIN:
+                return None
+        prior = state.observation_history[-1]
+        # Mark this run as having just skipped — next step must re-perceive.
+        prev_skipped.add(run_id)
+        self._perception_skipped_runs = prev_skipped
+        # Update the artifact path so step records reflect the current frame.
+        return prior.model_copy(update={"capture_artifact_path": frame.artifact_path})
+
+    async def _consume_force_fresh_perception(self, record) -> None:
+        """When force_fresh_perception is set, wait for the UI to settle THEN
+        reset the flag. The order matters: an early return between the reset
+        and the wait would silently drop the settle delay.
+
+        Browser DOM hydration commonly takes longer than desktop, so use 1.0s
+        there vs 0.5s on desktop.
+        """
+        if not record.force_fresh_perception:
+            return
+        settle_delay = 1.0 if self.environment is UnifiedEnvironment.BROWSER else 0.5
+        await asyncio.sleep(settle_delay)
+        record.force_fresh_perception = False
 
     async def run_live_benchmark(
         self,
@@ -256,6 +338,16 @@ class AgentLoop:
         step_index = record.step_count + 1
         _trace("─" * 60)
         _trace("STEP", f"step={step_index}  run_id={record.run_id}")
+
+        # Per-stage timing — written to step_timing.json at end-of-step for
+        # tail-latency analysis. Values are accumulated in milliseconds.
+        stage_timings: dict[str, float] = {}
+
+        def _record_stage(name: str, t0: float) -> float:
+            elapsed = time.perf_counter() - t0
+            stage_timings[name] = stage_timings.get(name, 0.0) + elapsed * 1000.0
+            return elapsed
+
         before_artifact_path = self._before_artifact_path(record.run_id, step_index)
         after_artifact_path = self._after_artifact_path(record.run_id, step_index)
         self._prepare_step_artifacts(record.run_id, step_index, before_artifact_path, after_artifact_path)
@@ -273,14 +365,12 @@ class AgentLoop:
                 )
             await asyncio.sleep(2.5)
 
-        if record.force_fresh_perception:
-            record.force_fresh_perception = False
-            await asyncio.sleep(0.5)  # let UI settle after visual perturbation
+        await self._consume_force_fresh_perception(record)
 
         _trace("  1 CAPTURE", "taking screenshot via CaptureService")
         _t0 = time.perf_counter()
         frame = await self.capture_service.capture(record)
-        _trace("  1 CAPTURE OK", f"{time.perf_counter()-_t0:.2f}s  frame={type(frame).__name__}")
+        _trace("  1 CAPTURE OK", f"{_record_stage('capture', _t0):.2f}s  frame={type(frame).__name__}")
 
         # High-velocity guard: if the screen changed by >5% since the last burst
         # capture, the UI underwent a major transition (app switch, navigation, modal
@@ -313,7 +403,7 @@ class AgentLoop:
                 before_artifact_path=before_artifact_path,
                 error=exc,
             )
-        _trace("  2 PERCEIVE OK", f"{time.perf_counter()-_t0:.2f}s  page_hint={perception.page_hint.value!r}  elements={len(perception.visible_elements)}")
+        _trace("  2 PERCEIVE OK", f"{_record_stage('perceive', _t0):.2f}s  page_hint={perception.page_hint.value!r}  elements={len(perception.visible_elements)}")
         perception = self._infer_focused_element(record, perception)
         perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
         state = await self.run_store.update_state(record.run_id, perception)
@@ -324,7 +414,7 @@ class AgentLoop:
         _enriched = self._attach_target_context(decision.action, perception, state.benchmark)
         if _enriched is not decision.action:
             decision = decision.model_copy(update={"action": _enriched})
-        _trace("  3 POLICY OK", f"{time.perf_counter()-_t0:.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
+        _trace("  3 POLICY OK", f"{_record_stage('policy', _t0):.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
         _anchor_snap_info: AnchorSnapInfo | None = None
@@ -395,7 +485,7 @@ class AgentLoop:
                     step_index=step_index,
                     use_unified_executor=True,
                 )
-                _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{time.perf_counter()-_t0:.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
+                _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{_record_stage('execute', _t0):.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
                 if executed_action.success and decision.action.action_type is ActionType.CLICK:
                     self._update_coord_anchor(record.run_id, executed_action.action)
             else:
@@ -420,6 +510,7 @@ class AgentLoop:
                         state = state.model_copy(update={"observation_history": _obs})
 
             _trace("  5 VERIFY", "DeterministicVerifierService checking outcome")
+            _t0 = time.perf_counter()
             verification = await self.verifier_service.verify(state, decision, executed_action)
             if verification.status is VerificationStatus.PENDING:
                 verification = await self._wait_for_page_load(
@@ -436,7 +527,7 @@ class AgentLoop:
                     decision=decision,
                     executed_action=executed_action,
                 )
-            _trace("  5 VERIFY OK", f"status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
+            _trace("  5 VERIFY OK", f"{_record_stage('verify', _t0):.2f}s  status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
             verification_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "verification", self.verifier_service)
 
             # Compute screen change ratio once; reused by video verify and progress tracking.
@@ -463,7 +554,21 @@ class AgentLoop:
                     _trace("  5b VIDEO_VERIFY OK", f"status={video_result.status.value!r}")
                     verification = video_result
 
-            _trace("  6 UNIFIED_CONTRACT", "translating step -> contracts via LegacyOperonContractAdapter -> UnifiedOrchestrator")
+            # Native retry decision (no longer routed through the unified contract).
+            # The unified contract conversion below is now observability-only — kept
+            # so benchmark_runner can read retry_count/last_failure_type via
+            # unified_state_for_run(). Retry strategy comes from a direct
+            # FailureCategory→strategy lookup.
+            from src.agent.adaptation import strategy_for_failure
+            recent_failure = verification.failure_category or executed_action.failure_category
+            strategy = strategy_for_failure(
+                recent_failure,
+                verification_failure=verification.status is VerificationStatus.FAILURE,
+                verification_uncertain=verification.status is VerificationStatus.UNCERTAIN,
+            )
+
+            # Best-effort unified contract conversion for observability/benchmarks.
+            unified_step = None
             try:
                 unified_step = self._record_unified_step(
                     record=record,
@@ -477,22 +582,15 @@ class AgentLoop:
                 )
                 unified_state = unified_step.after
                 self.unified_states[record.run_id] = unified_state
-                strategy = self.unified_orchestrator.adaptation_strategy_for(unified_step.critic.failure_type)
-                _trace("  6 UNIFIED_CONTRACT OK", f"critic={unified_step.critic.outcome.value!r}  failure={unified_step.critic.failure_type!r}  strategy={strategy!r}")
+                _trace("  6 OBSERVABILITY OK", f"failure_category={recent_failure!r}  strategy={strategy!r}")
             except (RoutingError, ValueError) as _exc:
-                # RoutingError: policy returned an action that violates environment routing rules.
-                # ValueError: terminal actions (stop, etc.) not representable in the unified contract.
-                # Degrade gracefully: keep the current unified_state and break the retry loop.
-                _trace("  6 UNIFIED_CONTRACT skipped", f"{type(_exc).__name__}: {_exc}")
-                strategy = None
-                unified_step = None
-            # The unified layer may request an in-step adaptation retry, but only
-            # when (a) verification produced a hard FAILURE — not merely UNCERTAIN,
-            # which the outer recovery stage handles — and (b) the legacy hardening
-            # path did not already retry this action (e.g. stale-target
-            # re-resolution, successful or failed). Looping capture/perceive/choose
-            # inside a single step on UNCERTAIN verifications breaks the single-
-            # iteration contract that legacy tests rely on.
+                # Conversion failure must not affect the retry decision — that's
+                # decoupled now. Just log and continue.
+                _trace("  6 OBSERVABILITY skipped", f"{type(_exc).__name__}: {_exc}")
+
+            # In-step retry only when (a) verification produced a hard FAILURE —
+            # not merely UNCERTAIN, which the outer recovery stage handles — and
+            # (b) the legacy hardening path did not already retry this action.
             legacy_retry_attempted = bool(
                 executed_action.execution_trace is not None
                 and executed_action.execution_trace.retry_attempted
@@ -501,24 +599,19 @@ class AgentLoop:
                 verification.status is VerificationStatus.FAILURE
                 and not legacy_retry_attempted
             )
-            if (
-                unified_step is None
-                or unified_step.critic.outcome.value != "retry"
-                or strategy is None
-                or not allow_adaptation_retry
-            ):
+            if strategy is None or not allow_adaptation_retry:
                 if retries_used > 0 and unified_step is not None:
                     unified_state = unified_state.model_copy(
                         update={
                             "retry_count": retries_used,
                             "last_strategy": adaptation_trace[-1],
                             "last_failure_type": None
-                            if unified_step.critic.outcome.value == "success"
+                            if verification.status is VerificationStatus.SUCCESS
                             else unified_step.critic.failure_type,
                         }
                     )
                     self.unified_states[record.run_id] = unified_state
-                _trace("  RETRY_LOOP -> break", f"outcome={unified_step.critic.outcome.value if unified_step else 'n/a'}  retries_used={retries_used}")
+                _trace("  RETRY_LOOP -> break", f"strategy={strategy!r}  retries_used={retries_used}  allow_retry={allow_adaptation_retry}")
                 break
             if retries_used >= self.unified_orchestrator.max_retries:
                 _trace("  RETRY_LOOP -> max_retries", f"retries_used={retries_used}")
@@ -527,15 +620,16 @@ class AgentLoop:
             retries_used += 1
             adaptation_trace.append(strategy)
             _trace("  RETRY_LOOP -> retry", f"retries_used={retries_used}  strategy={strategy!r}")
-            unified_state = unified_state.apply_retry_feedback(
-                perception=unified_step.perception,
-                planner=unified_step.planner,
-                actor=unified_step.actor,
-                critic=unified_step.critic,
-                retry_count=retries_used,
-                strategy=strategy,
-            )
-            self.unified_states[record.run_id] = unified_state
+            if unified_step is not None:
+                unified_state = unified_state.apply_retry_feedback(
+                    perception=unified_step.perception,
+                    planner=unified_step.planner,
+                    actor=unified_step.actor,
+                    critic=unified_step.critic,
+                    retry_count=retries_used,
+                    strategy=strategy,
+                )
+                self.unified_states[record.run_id] = unified_state
 
             frame = await self.capture_service.capture(state)
             if hasattr(self.policy_service, "prepare_hints"):
@@ -556,6 +650,7 @@ class AgentLoop:
             attempt_index += 1
 
         _trace("  7 RECOVER", f"RuleBasedRecoveryManager  verification={verification.status.value!r}")
+        _t0 = time.perf_counter()
         recovery: RecoveryDecision = await self.recovery_manager.recover(
             state,
             decision,
@@ -565,7 +660,7 @@ class AgentLoop:
         # Benchmark Integrity Check: reject recovery decisions that bypass verification
         # or claim success without visual confirmation.
         recovery = validate_benchmark_integrity(recovery, verification)
-        _trace("  7 RECOVER OK", f"strategy={recovery.strategy.value!r}  stop_reason={recovery.stop_reason!r}")
+        _trace("  7 RECOVER OK", f"{_record_stage('recover', _t0):.2f}s  strategy={recovery.strategy.value!r}  stop_reason={recovery.stop_reason!r}")
         progress_trace = self._update_progress_state(
             state=state,
             decision=decision,
@@ -682,7 +777,7 @@ class AgentLoop:
         _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
         updated = await self.run_store.set_status(record.run_id, final_status)
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
-            self._coord_anchors.pop(record.run_id, None)
+            self._anchor_cache.discard_run(record.run_id)
             try:
                 await self._cleanup_completed_run(record.run_id)
             except Exception as exc:
@@ -697,6 +792,10 @@ class AgentLoop:
             except Exception as exc:
                 logger.warning("post-run reflection failed for %s: %s", record.run_id, exc)
                 _trace("  9 REFLECT ERROR", str(exc))
+
+        # Persist per-stage durations for tail-latency analysis. Best-effort —
+        # the step has already completed by this point.
+        self._persist_step_timing(record.run_id, step_index, stage_timings)
 
         _trace("STEP DONE", f"step={step_index}  status={final_status.value!r}")
         return RunResponse(
@@ -827,6 +926,18 @@ class AgentLoop:
         The liveness_retries count is stamped onto the returned ScreenPerception so it
         appears in run.jsonl for observability.
         """
+        # Stable-frame perception bypass: when the previous action was WAIT (idempotent),
+        # the screen hasn't moved at all (visual_velocity exactly 0), and verification
+        # was UNCERTAIN (not terminal), re-perceiving an unchanged frame returns the
+        # same answer modulo Gemini noise. Reuse the prior perception object with the
+        # current capture path.
+        cached = self._maybe_reuse_prior_perception(state, initial_frame)
+        if cached is not None:
+            logger.info(
+                "perception_skip: reusing prior perception (last_action=WAIT, velocity=0.0, status=UNCERTAIN)",
+            )
+            return cached
+
         frame = initial_frame
         for attempt in range(1, _LIVENESS_RETRY_MAX + 1):
             result = await self.perception_service.perceive(frame, state)
@@ -917,36 +1028,19 @@ class AgentLoop:
         )
 
     def _prepare_step_artifacts(self, run_id: str, step_index: int, before_artifact_path: str, after_artifact_path: str) -> None:
-        Path(before_artifact_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(after_artifact_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(self._run_log_path(run_id)).parent.mkdir(parents=True, exist_ok=True)
-        Path(self._run_log_path(run_id)).touch(exist_ok=True)
+        self._artifacts.prepare(run_id, step_index, before_artifact_path, after_artifact_path)
 
     def _before_artifact_path(self, run_id: str, step_index: int) -> str:
-        if hasattr(self.run_store, "before_artifact_path"):
-            return str(self.run_store.before_artifact_path(run_id, step_index))
-        return str(Path("runs") / run_id / f"step_{step_index}" / "before.png")
+        return self._artifacts.before_path(run_id, step_index)
 
     def _after_artifact_path(self, run_id: str, step_index: int) -> str:
-        if hasattr(self.run_store, "after_artifact_path"):
-            return str(self.run_store.after_artifact_path(run_id, step_index))
-        return str(Path("runs") / run_id / f"step_{step_index}" / "after.png")
+        return self._artifacts.after_path(run_id, step_index)
 
     def _run_log_path(self, run_id: str) -> str:
-        if hasattr(self.run_store, "run_log_path"):
-            return str(self.run_store.run_log_path(run_id))
-        return str(Path("runs") / run_id / "run.jsonl")
+        return self._artifacts.run_log_path(run_id)
 
     def _relocate_after_artifact(self, executed_action, planned_path: str):
-        if executed_action.artifact_path is None:
-            return executed_action.model_copy(update={"artifact_path": planned_path})
-
-        current_path = Path(executed_action.artifact_path)
-        target_path = Path(planned_path)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        if current_path != target_path and current_path.exists():
-            shutil.move(str(current_path), str(target_path))
-        return executed_action.model_copy(update={"artifact_path": str(target_path)})
+        return self._artifacts.relocate_after_artifact(executed_action, planned_path)
 
     async def _maybe_video_verify(
         self,
@@ -1427,163 +1521,37 @@ class AgentLoop:
 
     @staticmethod
     def _should_retry_execution(executed_action) -> bool:
-        return executed_action.failure_category in {
-            FailureCategory.STALE_TARGET_BEFORE_ACTION,
-            FailureCategory.TARGET_SHIFTED_BEFORE_ACTION,
-            FailureCategory.TARGET_LOST_BEFORE_ACTION,
-            FailureCategory.FOCUS_VERIFICATION_FAILED,
-            FailureCategory.CLICK_BEFORE_TYPE_FAILED,
-            FailureCategory.CLICK_NO_EFFECT,
-            FailureCategory.CHECKBOX_VERIFICATION_FAILED,
-            FailureCategory.SELECT_VERIFICATION_FAILED,
-        }
+        return should_retry(executed_action)
 
     def _resolve_retry_action(self, *, action, perception, retry_reason: FailureCategory | None) -> _RetryResolution:
-        if retry_reason in {
-            FailureCategory.STALE_TARGET_BEFORE_ACTION,
-            FailureCategory.TARGET_SHIFTED_BEFORE_ACTION,
-            FailureCategory.TARGET_LOST_BEFORE_ACTION,
-        }:
-            return self._intent_reresolve_action(action, perception, retry_reason)
-        return _RetryResolution(action=self._refresh_action_coordinates(action, perception), trace=None)
+        return self._retry.resolve_retry_action(action=action, perception=perception, retry_reason=retry_reason)
 
     # ------------------------------------------------------------------
-    # Coordinate anchor cache
+    # Coordinate anchor cache (delegated to src.agent.anchor_cache)
     # ------------------------------------------------------------------
 
-    _ANCHOR_SNAP_THRESHOLD_PX: int = 50
-
-    # Element-id substrings and element_type values that indicate a valid but
-    # blank interactive surface (text editors, input fields, search boxes).
-    _INPUT_ZONE_ID_TOKENS: frozenset[str] = frozenset({
-        "text_area", "text_field", "text_input", "notepad_text_area",
-        "input", "textarea", "editor", "search_input",
-    })
-
-    def _tag_input_zone(self, decision, perception) -> "PolicyDecision":
-        """Mark the action as is_input_zone=True if the target is a blank input surface.
-
-        The visual servo rejects clicks on uniform (low-variance) regions — but a
-        blank Notepad text area or empty input field is intentionally white/blank and
-        must still accept clicks.  This method detects that case and sets the bypass
-        flag so _region_has_content skips the variance gate.
-        """
-        from src.models.perception import UIElementType
-        action = decision.action
-        if action.action_type not in (ActionType.CLICK, ActionType.TYPE):
-            return decision
-        if action.is_input_zone:
-            return decision  # already flagged
-
-        target_id = (action.target_element_id or "").lower()
-        # Check element_id substrings
-        if any(tok in target_id for tok in self._INPUT_ZONE_ID_TOKENS):
-            return decision.model_copy(update={"action": action.model_copy(update={"is_input_zone": True})})
-
-        # Check element_type from current perception
-        if action.target_element_id and perception is not None:
-            for el in perception.visible_elements:
-                if el.element_id == action.target_element_id:
-                    if el.element_type is UIElementType.INPUT:
-                        return decision.model_copy(update={"action": action.model_copy(update={"is_input_zone": True})})
-                    break
-
-        return decision
+    def _tag_input_zone(self, decision, perception):
+        return tag_input_zone(decision, perception)
 
     def _update_coord_anchor(self, run_id: str, action: AgentAction) -> None:
-        """Record the click coordinates for an element as the known-good anchor.
+        self._anchor_cache.update(run_id, action)
 
-        Called after every successful CLICK so subsequent TYPE actions on the same
-        element can snap back to this position if perception jitter shifts the
-        reported coordinates by a small amount.
-        """
-        target_id = action.target_element_id
-        if target_id is None or action.x is None or action.y is None:
-            return
-        self._coord_anchors.setdefault(run_id, {})[target_id] = (action.x, action.y)
-        logger.debug("coord_anchor: stored %r → (%d, %d) for run %s", target_id, action.x, action.y, run_id[:8])
-
-    def _apply_coord_anchor(
-        self,
-        run_id: str,
-        decision,
-    ) -> tuple:
-        """Snap TYPE action coordinates to the post-click anchor when drift is small.
-
-        Returns (possibly-modified decision, AnchorSnapInfo | None).  The snap only
-        fires when all of the following hold:
-        - Action is TYPE with a target_element_id and x/y coordinates.
-        - An anchor exists for that element_id in this run.
-        - Euclidean distance between fresh perception coords and the anchor is
-          strictly less than _ANCHOR_SNAP_THRESHOLD_PX (small jitter, not a
-          genuine element move).
-        """
-        action = decision.action
-        if action.action_type is not ActionType.TYPE:
-            return decision, None
-        target_id = action.target_element_id
-        if target_id is None or action.x is None or action.y is None:
-            return decision, None
-        anchors = self._coord_anchors.get(run_id, {})
-        anchor = anchors.get(target_id)
-        if anchor is None:
-            return decision, None
-        ax, ay = anchor
-        drift = ((action.x - ax) ** 2 + (action.y - ay) ** 2) ** 0.5
-        if drift >= self._ANCHOR_SNAP_THRESHOLD_PX:
-            logger.debug(
-                "coord_anchor: %r drift=%.1fpx ≥ threshold — trusting fresh perception",
-                target_id, drift,
-            )
-            return decision, None
-        logger.info(
-            "snap_to_anchor: %r drift=%.1fpx original=(%d,%d) anchor=(%d,%d) run=%s",
-            target_id, drift, action.x, action.y, ax, ay, run_id[:8],
-        )
-        snapped_action = action.model_copy(update={"x": ax, "y": ay})
-        snap_info = AnchorSnapInfo(
-            element_id=target_id,
-            original_x=action.x,
-            original_y=action.y,
-            anchored_x=ax,
-            anchored_y=ay,
-            drift_px=round(drift, 1),
-        )
-        return decision.model_copy(update={"action": snapped_action}), snap_info
+    def _apply_coord_anchor(self, run_id: str, decision) -> tuple:
+        return self._anchor_cache.apply(run_id, decision)
 
     @staticmethod
     def _refresh_action_coordinates(action, perception):
-        target_id = action.target_element_id
-        if target_id is None:
-            return action
-        target = next((element for element in perception.visible_elements if element.element_id == target_id), None)
-        if target is None:
-            return action
-        return action.model_copy(
-            update={
-                "x": target.x + max(1, target.width // 2),
-                "y": target.y + max(1, target.height // 2),
-            }
-        )
+        return refresh_action_coordinates(action, perception)
 
     @staticmethod
     def _merge_execution_retry(*, original, retried, retry_reason, target_reresolved, reresolution_trace):
-        original_trace = original.execution_trace
-        retried_trace = retried.execution_trace
-        if original_trace is None or retried_trace is None:
-            return retried
-        merged_trace = original_trace.model_copy(
-            update={
-                "attempts": [*original_trace.attempts, *retried_trace.attempts],
-                "target_reresolved": target_reresolved,
-                "retry_attempted": True,
-                "retry_reason": retry_reason,
-                "reresolution_trace": reresolution_trace,
-                "final_outcome": retried_trace.final_outcome,
-                "final_failure_category": retried_trace.final_failure_category,
-            }
+        return merge_execution_retry(
+            original=original,
+            retried=retried,
+            retry_reason=retry_reason,
+            target_reresolved=target_reresolved,
+            reresolution_trace=reresolution_trace,
         )
-        return retried.model_copy(update={"execution_trace": merged_trace})
 
     def _attach_target_context(self, action: AgentAction, perception, benchmark: str | None = None) -> AgentAction:
         target = self._resolve_action_target(action, perception)
@@ -1633,15 +1601,19 @@ class AgentLoop:
     def _normalize_action_target_coordinates(action: AgentAction, target: UIElement | None) -> AgentAction:
         if target is None:
             return action
-        center_x = target.x + max(1, target.width // 2)
-        center_y = target.y + max(1, target.height // 2)
+        # Respect planner-supplied coordinates: only fall back to the bbox center
+        # when x/y are missing. Overwriting valid coords forces every click to the
+        # geometric center and amplifies perception jitter.
+        if action.x is not None and action.y is not None:
+            return action
         if action.action_type in {
             ActionType.CLICK,
             ActionType.HOVER,
             ActionType.UPLOAD_FILE_NATIVE,
+            ActionType.TYPE,
         }:
-            return action.model_copy(update={"x": center_x, "y": center_y})
-        if action.action_type is ActionType.TYPE and (action.x is None or action.y is None):
+            center_x = target.x + max(1, target.width // 2)
+            center_y = target.y + max(1, target.height // 2)
             return action.model_copy(update={"x": center_x, "y": center_y})
         return action
 
@@ -1651,71 +1623,11 @@ class AgentLoop:
         perception,
         retry_reason: FailureCategory,
     ) -> _RetryResolution:
-        if action.target_context is None:
-            return _RetryResolution(action=self._refresh_action_coordinates(action, perception), trace=None)
-
-        result = self.target_selector.reresolve(perception, action.target_context)
-        selected = result.selected
-        trace = ExecutionReresolutionTrace(
-            trigger_reason=retry_reason,
-            original_target_element_id=action.target_context.original_target.element_id,
-            original_intent=action.target_context.intent,
-            original_target_signature=action.target_context.original_target,
-            original_page_signature=action.target_context.original_page_signature,
-            selector_trace=result.trace,
-            reused_original_element_id=(
-                selected is not None and selected.element_id == action.target_context.original_target.element_id
-            ),
-            final_target_element_id=selected.element_id if selected is not None else None,
-            succeeded=selected is not None,
-            detail=(
-                f"Re-resolved target to {selected.element_id} from original intent."
-                if selected is not None
-                else "Intent-based target re-resolution did not find a safe deterministic match."
-            ),
-        )
-        if selected is None:
-            return _RetryResolution(action=None, trace=trace)
-
-        return _RetryResolution(
-            action=action.model_copy(
-                update={
-                    "target_element_id": selected.element_id,
-                    "x": selected.x + max(1, selected.width // 2),
-                    "y": selected.y + max(1, selected.height // 2),
-                }
-            ),
-            trace=trace,
-        )
+        return self._retry.intent_reresolve_action(action, perception, retry_reason)
 
     @staticmethod
     def _apply_reresolution_failure(original, reresolution_trace: ExecutionReresolutionTrace | None):
-        trace = original.execution_trace
-        if trace is None or reresolution_trace is None:
-            return original
-        failure_category = (
-            FailureCategory.TARGET_RERESOLUTION_AMBIGUOUS
-            if reresolution_trace.selector_trace.rejection_reason is FailureCategory.AMBIGUOUS_TARGET_CANDIDATES
-            else FailureCategory.TARGET_RERESOLUTION_FAILED
-        )
-        merged_trace = trace.model_copy(
-            update={
-                "retry_attempted": True,
-                "retry_reason": reresolution_trace.trigger_reason,
-                "reresolution_trace": reresolution_trace,
-                "final_outcome": "failure",
-                "final_failure_category": failure_category,
-            }
-        )
-        return original.model_copy(
-            update={
-                "success": False,
-                "detail": f"Execution failed: {failure_category.value.replace('_', ' ')}.",
-                "failure_category": failure_category,
-                "failure_stage": LoopStage.EXECUTE,
-                "execution_trace": merged_trace,
-            }
-        )
+        return apply_reresolution_failure(original, reresolution_trace)
 
     @staticmethod
     def _resolve_action_target(action: AgentAction, perception) -> UIElement | None:
@@ -1758,20 +1670,13 @@ class AgentLoop:
         )
 
     def _persist_execution_trace(self, run_id: str, step_index: int, executed_action):
-        if executed_action.execution_trace is None:
-            return executed_action
-        # Step dir already created by _prepare_step_artifacts — no mkdir needed.
-        step_dir = Path(self._before_artifact_path(run_id, step_index)).resolve().parent
-        trace_path = step_dir / "execution_trace.json"
-        bg_writer.enqueue(trace_path, executed_action.execution_trace.model_dump_json())
-        return executed_action.model_copy(update={"execution_trace_artifact_path": str(trace_path)})
+        return self._artifacts.persist_execution_trace(run_id, step_index, executed_action)
 
     def _persist_progress_trace(self, run_id: str, step_index: int, progress_trace: ProgressTrace) -> str:
-        # Step dir already created by _prepare_step_artifacts — no mkdir needed.
-        step_dir = Path(self._before_artifact_path(run_id, step_index)).resolve().parent
-        trace_path = step_dir / "progress_trace.json"
-        bg_writer.enqueue(trace_path, progress_trace.model_dump_json())
-        return str(trace_path)
+        return self._artifacts.persist_progress_trace(run_id, step_index, progress_trace)
+
+    def _persist_step_timing(self, run_id: str, step_index: int, stage_timings: dict[str, float]) -> None:
+        self._artifacts.persist_step_timing(run_id, step_index, stage_timings)
 
     def _inject_stagnation_hint(self, state) -> None:
         """If the same subgoal persists for 3+ steps without progress, inject a hint."""
@@ -1786,20 +1691,7 @@ class AgentLoop:
             self.perception_service.add_advisory_hints([hint], source="no_progress")
 
     def _sync_progress_state_with_perception(self, state, perception) -> None:
-        page_signature = self._page_signature(perception)
-        progress_state = state.progress_state
-        previous_signature = progress_state.latest_page_signature
-        # Track previous for page-change detection in _meaningful_progress
-        progress_state.previous_page_signature = previous_signature
-        progress_state.latest_page_signature = page_signature
-        if previous_signature is None or previous_signature == page_signature:
-            return
-        # Page changed — reset action/target repeat counters (but NOT no_progress_streak,
-        # which is managed by _meaningful_progress based on actual screen change detection)
-        progress_state.repeated_action_count.clear()
-        progress_state.repeated_target_count.clear()
-        progress_state.recent_failures = []
-        progress_state.loop_detected = False
+        self._progress.sync_with_perception(state, perception)
 
     def _infer_focused_element(self, state, perception):
         if perception.focused_element_id is not None:
@@ -1850,113 +1742,16 @@ class AgentLoop:
 
         return perception
 
-    # Minimum screen change ratio below which a prior step is classified as Stalled.
-    # 1% (0.01) is tighter than the existing 0.2% progress threshold — it means
-    # the screen was essentially static after the action.
-    _STALL_SCREEN_CHANGE_THRESHOLD = 0.01
+    # ------------------------------------------------------------------
+    # Progress-tracking and signatures (delegated to src.agent.progress_tracker)
+    # ------------------------------------------------------------------
 
     def _block_redundant_action(self, state, action, step_index: int):
-        progress_state = state.progress_state
-        page_signature = progress_state.latest_page_signature or "unknown_page"
-        action_signature = self._action_signature(action)
-        target_signature = self._target_signature(action)
-        subgoal_signature = self._subgoal_signature(state.current_subgoal)
-
-        # Stalled State check: if the previous action produced < 1% screen change
-        # AND two or more consecutive no-progress steps have occurred, force a
-        # subgoal reset. Requiring streak >= 2 avoids false positives on the first
-        # quiet step where last_screen_change_ratio is at its default 0.0.
-        if (
-            progress_state.last_screen_change_ratio < self._STALL_SCREEN_CHANGE_THRESHOLD
-            and progress_state.no_progress_streak >= 2
-            and action.action_type in {
-                ActionType.CLICK, ActionType.DOUBLE_CLICK,
-                ActionType.TYPE, ActionType.PRESS_KEY, ActionType.HOTKEY,
-            }
-        ):
-            stale_subgoal = state.current_subgoal or "current step"
-            logger.warning(
-                "Stalled State: screen change ratio %.4f < %.2f threshold after %d no-progress steps. "
-                "Forcing subgoal reset from %r.",
-                progress_state.last_screen_change_ratio,
-                self._STALL_SCREEN_CHANGE_THRESHOLD,
-                progress_state.no_progress_streak,
-                stale_subgoal,
-            )
-            state.current_subgoal = f"Stalled — choose a completely different approach for: {stale_subgoal}"
-            return self._redundant_action_failure(
-                action=action,
-                category=FailureCategory.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS,
-                detail=(
-                    f"Stalled State detected: screen change ratio {progress_state.last_screen_change_ratio:.4f} "
-                    f"< 1% threshold after {progress_state.no_progress_streak} no-progress step(s). "
-                    "Subgoal reset forced — the agent must choose a different strategy."
-                ),
-            )
-
-        if (
-            target_signature is not None
-            and action.action_type in {ActionType.TYPE, ActionType.SELECT}
-            and action.text is not None
-            and progress_state.target_value_history.get(target_signature) == action.text
-            and progress_state.target_completion_page_signatures.get(target_signature) == page_signature
-        ):
-            return self._redundant_action_failure(
-                action=action,
-                category=FailureCategory.SUBGOAL_ALREADY_COMPLETED,
-                detail="Action blocked: target already has the verified value on the current page.",
-            )
-
-        if (
-            subgoal_signature in progress_state.completed_subgoals
-            and progress_state.subgoal_completion_page_signatures.get(subgoal_signature) == page_signature
-            and action.action_type is not ActionType.CLICK
-        ):
-            return self._redundant_action_failure(
-                action=action,
-                category=FailureCategory.SUBGOAL_ALREADY_COMPLETED,
-                detail="Action blocked: subgoal is already completed on the current page.",
-            )
-
-        repeated_action_count = progress_state.repeated_action_count.get(action_signature, 0)
-        _REPEATABLE_ACTIONS = {
-            ActionType.CLICK, ActionType.DOUBLE_CLICK, ActionType.RIGHT_CLICK,
-            ActionType.PRESS_KEY, ActionType.HOTKEY, ActionType.TYPE,
-            ActionType.HOVER, ActionType.SCROLL, ActionType.LAUNCH_APP,
-        }
-        if (
-            action.action_type in _REPEATABLE_ACTIONS
-            and repeated_action_count >= self.MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS
-            and progress_state.no_progress_streak > 0
-        ):
-            return self._redundant_action_failure(
-                action=action,
-                category=FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS,
-                detail=f"Action blocked: repeated {action.action_type.value} without meaningful progress.",
-            )
-
-        if (
-            target_signature is not None
-            and progress_state.repeated_target_count.get(target_signature, 0) >= self.MAX_REPEAT_SAME_TARGET_WITHOUT_PROGRESS
-            and progress_state.no_progress_streak > 0
-        ):
-            return self._redundant_action_failure(
-                action=action,
-                category=FailureCategory.REPEATED_TARGET_WITHOUT_PROGRESS,
-                detail="Action blocked: repeated targeting without meaningful progress.",
-            )
-
-        return None
+        return self._progress.block_redundant_action(state, action, step_index, logger)
 
     @staticmethod
     def _redundant_action_failure(*, action, category: FailureCategory, detail: str):
-        return ExecutedAction(
-            action=action,
-            success=False,
-            detail=detail,
-            failure_category=category,
-            failure_stage=LoopStage.EXECUTE,
-        )
+        return redundant_action_failure(action=action, category=category, detail=detail)
 
     def _update_progress_state(
         self,
@@ -1970,109 +1765,19 @@ class AgentLoop:
         before_artifact_path: str | None = None,
         screen_change_ratio: float | None = None,
     ) -> ProgressTrace:
-        progress_state = state.progress_state
-        action_signature = self._action_signature(executed_action.action)
-        target_signature = self._target_signature(executed_action.action)
-        subgoal_signature = self._subgoal_signature(decision.active_subgoal)
-        failure_signature = self._failure_signature(executed_action, verification, recovery, target_signature)
-
-        # Subgoal-based progress signal
-        previous_subgoal = progress_state.latest_subgoal_signature
-        subgoal_changed = previous_subgoal is None or subgoal_signature != previous_subgoal
-        progress_state.latest_subgoal_signature = subgoal_signature
-
-        # Use pre-computed ratio if available; compute only as fallback.
-        if screen_change_ratio is None:
-            after_path = executed_action.artifact_path if hasattr(executed_action, "artifact_path") else None
-            if before_artifact_path and after_path:
-                from src.agent.screen_diff import compute_screen_change_ratio
-                screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
-
-        # An action is "novel" if its signature hasn't been seen before in this run
-        is_novel_action = action_signature not in progress_state.repeated_action_count
-
-        progress_made = self._meaningful_progress(
-            executed_action, verification,
-            subgoal_changed=subgoal_changed,
-            screen_change_ratio=screen_change_ratio,
-            is_novel_action=is_novel_action,
-        )
-
-        progress_state.recent_actions = self._append_window(progress_state.recent_actions, action_signature)
-        loop_failure_category = None
-        loop_pattern = None
-
-        if progress_made:
-            progress_state.no_progress_streak = 0
-            progress_state.loop_detected = False
-            progress_state.repeated_action_count.clear()
-            progress_state.repeated_target_count.clear()
-            progress_state.recent_failures = []
-            progress_state.last_meaningful_progress_step = step_index
-            self._mark_completed_progress(state, decision, executed_action, verification)
-        else:
-            progress_state.no_progress_streak += 1
-            progress_state.repeated_action_count[action_signature] = progress_state.repeated_action_count.get(action_signature, 0) + 1
-            if target_signature is not None:
-                progress_state.repeated_target_count[target_signature] = progress_state.repeated_target_count.get(target_signature, 0) + 1
-            if failure_signature is not None:
-                progress_state.recent_failures = self._append_window(progress_state.recent_failures, failure_signature)
-
-            loop_failure_category, loop_pattern = self._detect_loop_failure(
-                progress_state=progress_state,
-                action_signature=action_signature,
-                target_signature=target_signature,
-                failure_signature=failure_signature,
-            )
-            progress_state.loop_detected = loop_failure_category is not None
-
-        # Persist the raw screen change ratio so _block_redundant_action can
-        # detect a Stalled State on the *next* step without recomputing it.
-        if screen_change_ratio is not None:
-            progress_state.last_screen_change_ratio = screen_change_ratio
-
-        return ProgressTrace(
+        return self._progress.update_progress_state(
+            state=state,
+            decision=decision,
+            executed_action=executed_action,
+            verification=verification,
+            recovery=recovery,
             step_index=step_index,
-            page_signature=progress_state.latest_page_signature or "unknown_page",
-            action_signature=action_signature,
-            target_signature=target_signature,
-            subgoal_signature=subgoal_signature,
-            failure_signature=failure_signature,
-            blocked_as_redundant=executed_action.failure_category
-            in {
-                FailureCategory.SUBGOAL_ALREADY_COMPLETED,
-                FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS,
-                FailureCategory.REPEATED_TARGET_WITHOUT_PROGRESS,
-            },
-            redundancy_reason=executed_action.failure_category
-            if executed_action.failure_category
-            in {
-                FailureCategory.SUBGOAL_ALREADY_COMPLETED,
-                FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS,
-                FailureCategory.REPEATED_TARGET_WITHOUT_PROGRESS,
-            }
-            else None,
-            loop_pattern_detected=loop_pattern,
-            progress_made=progress_made,
+            before_artifact_path=before_artifact_path,
             screen_change_ratio=screen_change_ratio,
-            no_progress_streak=progress_state.no_progress_streak,
-            final_failure_category=loop_failure_category,
-            final_stop_reason=self._stop_reason_for_failure(loop_failure_category),
         )
 
     def _apply_progress_stop_guard(self, recovery: RecoveryDecision, progress_trace: ProgressTrace) -> RecoveryDecision:
-        if progress_trace.final_failure_category is None:
-            return recovery
-        stop_reason = progress_trace.final_stop_reason or self._stop_reason_for_failure(progress_trace.final_failure_category)
-        return RecoveryDecision(
-            strategy=RecoveryStrategy.STOP,
-            message=f"Loop suppressed: {progress_trace.final_failure_category.value}.",
-            failure_category=progress_trace.final_failure_category,
-            failure_stage=LoopStage.ORCHESTRATE,
-            terminal=True,
-            recoverable=False,
-            stop_reason=stop_reason,
-        )
+        return self._progress.apply_progress_stop_guard(recovery, progress_trace)
 
     def _detect_loop_failure(
         self,
@@ -2082,84 +1787,23 @@ class AgentLoop:
         target_signature: str | None,
         failure_signature: str | None,
     ) -> tuple[FailureCategory | None, str | None]:
-        if progress_state.repeated_action_count.get(action_signature, 0) > self.MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS:
-            return FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS, "same_action_repeated_without_progress"
-
-        if (
-            target_signature is not None
-            and progress_state.repeated_target_count.get(target_signature, 0) > self.MAX_REPEAT_SAME_TARGET_WITHOUT_PROGRESS
-        ):
-            return FailureCategory.REPEATED_TARGET_WITHOUT_PROGRESS, "same_target_repeated_without_progress"
-
-        if failure_signature is not None and progress_state.recent_failures.count(failure_signature) > self.MAX_REPEAT_SAME_FAILURE:
-            return FailureCategory.REPEATED_FAILURE_LOOP, "repeated_identical_failure_signature"
-
-        if self._alternating_action_loop(progress_state.recent_actions):
-            return FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS, "alternating_action_pattern_without_progress"
-
-        if progress_state.no_progress_streak >= self.MAX_NO_PROGRESS_STEPS:
-            return FailureCategory.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS, "no_meaningful_progress_threshold_reached"
-
-        return None, None
+        return self._progress.detect_loop_failure(
+            progress_state=progress_state,
+            action_signature=action_signature,
+            target_signature=target_signature,
+            failure_signature=failure_signature,
+        )
 
     @staticmethod
     def _alternating_action_loop(recent_actions: list[str]) -> bool:
-        # Period-2: abab
-        if len(recent_actions) >= 4:
-            a, b, c, d = recent_actions[-4:]
-            if a == c and b == d and a != b:
-                return True
-        # Period-3: abcabc
-        if len(recent_actions) >= 6:
-            tail = recent_actions[-6:]
-            if tail[:3] == tail[3:] and len(set(tail[:3])) > 1:
-                return True
-        return False
+        return alternating_action_loop(recent_actions)
 
     def _mark_completed_progress(self, state, decision, executed_action, verification) -> None:
-        progress_state = state.progress_state
-        target_signature = self._target_signature(executed_action.action)
-        subgoal_signature = self._subgoal_signature(decision.active_subgoal)
-        page_signature = progress_state.latest_page_signature or "unknown_page"
-
-        if target_signature is not None:
-            if target_signature not in progress_state.completed_targets:
-                progress_state.completed_targets.append(target_signature)
-            progress_state.target_completion_page_signatures[target_signature] = page_signature
-            if executed_action.action.action_type in {ActionType.TYPE, ActionType.SELECT} and executed_action.action.text is not None:
-                progress_state.target_value_history[target_signature] = executed_action.action.text
-
-        if self._should_mark_subgoal_complete(progress_state, executed_action, verification):
-            if subgoal_signature not in progress_state.completed_subgoals:
-                progress_state.completed_subgoals.append(subgoal_signature)
-            progress_state.subgoal_completion_page_signatures[subgoal_signature] = page_signature
+        self._progress._mark_completed_progress(state, decision, executed_action, verification)
 
     @staticmethod
     def _should_mark_subgoal_complete(progress_state, executed_action, verification) -> bool:
-        if not executed_action.success:
-            return False
-        if verification.stop_condition_met:
-            return True
-
-        action = executed_action.action
-        previous_page = progress_state.previous_page_signature
-        current_page = progress_state.latest_page_signature
-        page_changed = previous_page is not None and current_page is not None and previous_page != current_page
-
-        if action.action_type is ActionType.NAVIGATE:
-            return True
-        if action.action_type in {ActionType.TYPE, ActionType.SELECT}:
-            return page_changed or not bool(action.press_enter)
-        if action.action_type in {
-            ActionType.CLICK,
-            ActionType.DOUBLE_CLICK,
-            ActionType.RIGHT_CLICK,
-            ActionType.PRESS_KEY,
-            ActionType.HOTKEY,
-            ActionType.LAUNCH_APP,
-        }:
-            return page_changed
-        return page_changed
+        return should_mark_subgoal_complete(progress_state, executed_action, verification)
 
     @staticmethod
     def _meaningful_progress(
@@ -2170,110 +1814,45 @@ class AgentLoop:
         screen_change_ratio: float | None = None,
         is_novel_action: bool = True,
     ) -> bool:
-        """Progress requires visual change AND a novel action.
-
-        Signals:
-        - screen_change_ratio: did the screen actually change?
-        - is_novel_action: is this a new action signature (not seen before)?
-        - subgoal_changed: did the model advance its subgoal?
-
-        Screen change + novel action = progress (typing text in Notepad).
-        Screen change + repeated action = NOT progress (launch_app Notepad 5x).
-        No screen change = NOT progress regardless.
-        Subgoal change always counts as progress (model advancing intentionally).
-        """
-        if not executed_action.success:
-            return False
-        if verification.stop_condition_met:
-            return True
-        if subgoal_changed:
-            return True
-
-        if screen_change_ratio is not None:
-            from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD
-            screen_changed = screen_change_ratio >= SCREEN_CHANGE_THRESHOLD
-            return screen_changed and is_novel_action
-
-        # Screenshots unavailable — require novelty but don't treat as confirmed progress;
-        # return False so the no-progress streak is not reset without visual evidence.
-        return False
+        return meaningful_progress(
+            executed_action,
+            verification,
+            subgoal_changed=subgoal_changed,
+            screen_change_ratio=screen_change_ratio,
+            is_novel_action=is_novel_action,
+        )
 
     @classmethod
-    def _failure_signature(cls, executed_action, verification, recovery, target_signature: str | None) -> str | None:
-        category = recovery.failure_category or verification.failure_category or executed_action.failure_category
-        if category is None:
-            return None
-        target_part = target_signature or "no_target"
-        return f"{category.value}|{target_part}"
+    def _failure_signature(cls, executed_action, verification, recovery, target_sig: str | None) -> str | None:
+        return failure_signature(executed_action, verification, recovery, target_sig)
 
     @staticmethod
     def _stop_reason_for_failure(category: FailureCategory | None) -> StopReason | None:
-        if category is None:
-            return None
-        return StopReason(category.value)
+        return stop_reason_for_failure(category)
 
     @classmethod
     def _page_signature(cls, perception) -> str:
-        top_elements = perception.visible_elements[:15]
-        element_part = "|".join(f"{element.element_id}:{element.primary_name}" for element in top_elements) or "none"
-        focused = perception.focused_element_id or "none"
-        return f"{perception.page_hint.value}|{focused}|{element_part}"
+        return page_signature(perception)
 
     @staticmethod
     def _append_window(entries: list[str], value: str) -> list[str]:
-        return [*entries, value][-AgentLoop.RECENT_WINDOW_SIZE :]
+        return append_window(entries, value)
 
     @classmethod
     def _action_signature(cls, action: AgentAction) -> str:
-        target = cls._target_signature(action) or "no_target"
-        payload = action.text or action.key or action.url or (str(action.wait_ms) if action.wait_ms is not None else "")
-        return f"{action.action_type.value}|{target}|{payload.strip().lower()}"
+        return action_signature(action)
 
     @staticmethod
     def _target_signature(action: AgentAction) -> str | None:
-        if action.target_element_id is not None:
-            return f"id:{action.target_element_id}"
-        if action.selector is not None:
-            return f"selector:{action.selector}"
-        if action.x is not None and action.y is not None:
-            # Bucket coordinates to 50px grid so nearby clicks are detected as repeats
-            bx, by = action.x // 50 * 50, action.y // 50 * 50
-            return f"xy:{bx}:{by}"
-        return None
+        return target_signature(action)
 
     @classmethod
     def _subgoal_signature(cls, subgoal: str | None) -> str:
-        if not subgoal:
-            return "unknown_subgoal"
-        normalized = "".join(character.lower() if character.isalnum() else "_" for character in subgoal)
-        return "_".join(part for part in normalized.split("_") if part) or "unknown_subgoal"
+        return subgoal_signature(subgoal)
 
     @staticmethod
     def _apply_no_progress_detection(state, executed_action):
-        trace = executed_action.execution_trace
-        if trace is None or not trace.attempts:
-            return executed_action
-        latest_attempt = trace.attempts[-1]
-        if not latest_attempt.no_progress_detected:
-            return executed_action
-        if not state.action_history:
-            return executed_action
-        previous = state.action_history[-1]
-        previous_trace = previous.execution_trace
-        if previous.action.target_element_id != executed_action.action.target_element_id:
-            return executed_action
-        if previous_trace is None or not previous_trace.attempts or not previous_trace.attempts[-1].no_progress_detected:
-            return executed_action
-        merged_trace = trace.model_copy(update={"final_failure_category": FailureCategory.EXECUTION_NO_PROGRESS})
-        return executed_action.model_copy(
-            update={
-                "success": False,
-                "detail": "Execution failed: repeated no-progress detected on the same target.",
-                "failure_category": FailureCategory.EXECUTION_NO_PROGRESS,
-                "failure_stage": LoopStage.EXECUTE,
-                "execution_trace": merged_trace,
-            }
-        )
+        return apply_no_progress_detection(state, executed_action)
 
     def _build_failure_record(self, state, decision, executed_action, verification, recovery) -> FailureRecord | None:
         retry_count = self._retry_count(state, decision, verification)

@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -23,6 +24,12 @@ from src.models.execution import ExecutedAction, ExecutionAttemptTrace, Executio
 from src.models.policy import ActionType, AgentAction
 
 logger = logging.getLogger(__name__)
+
+# Windows-only: pass to subprocess.run/Popen so the spawned process does NOT
+# allocate a conhost.exe console window — that flash steals focus from the
+# user's foreground app on every PowerShell/taskkill call. 0 on non-Windows
+# is a no-op (creationflags is ignored outside win32).
+_NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 # Playwright expects PascalCase key names. Normalise common variants the LLM may emit.
@@ -741,6 +748,7 @@ class NativeBrowserExecutor(Executor):
                 text=True,
                 check=False,
                 timeout=5,
+                creationflags=_NO_CONSOLE,
             )
         except Exception:
             return False
@@ -763,6 +771,8 @@ class NativeBrowserExecutor(Executor):
                     "powershell",
                     "-NoProfile",
                     "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
                     "-Command",
                     command,
                 ],
@@ -770,6 +780,7 @@ class NativeBrowserExecutor(Executor):
                 text=True,
                 check=False,
                 timeout=5,
+                creationflags=_NO_CONSOLE,
             )
         except Exception:
             return set()

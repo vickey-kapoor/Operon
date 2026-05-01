@@ -52,6 +52,12 @@ from .browser import Executor
 
 logger = logging.getLogger(__name__)
 
+# Windows-only: pass to subprocess.run/Popen so the spawned process does NOT
+# allocate a conhost.exe console window — that flash steals focus from the
+# user's foreground app on every taskkill / app-launch invocation. 0 on
+# non-Windows is a no-op (creationflags is ignored outside win32).
+_NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 if not hasattr(os, "startfile"):
     def _missing_startfile(_path: str) -> None:
         raise NotImplementedError("os.startfile is only available on Windows")
@@ -457,6 +463,7 @@ class DesktopExecutor(Executor):
                 result = subprocess.run(
                     ["taskkill", "/IM", app_exe, "/F"],
                     capture_output=True, timeout=5,
+                    creationflags=_NO_CONSOLE,
                 )
                 if result.returncode == 0:
                     closed += 1
@@ -772,6 +779,7 @@ class DesktopExecutor(Executor):
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    creationflags=_NO_CONSOLE,
                 )
                 # Track process for cleanup
                 if self._current_run_id is not None:

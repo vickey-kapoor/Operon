@@ -510,3 +510,96 @@ async def test_type_clears_before_typing_when_requested(tmp_path: Path) -> None:
     assert keyboard.press.await_args_list[0].args == ("Control+A",)
     assert keyboard.press.await_args_list[1].args == ("Backspace",)
     keyboard.type.assert_awaited_once_with("updated query")
+
+
+# ── vision-only contract tests ────────────────────────────────────
+#
+# Per CLAUDE.md, the executor's action paths must NOT consult the DOM
+# (no selectors, no elementFromPoint, no element-name heuristics). These
+# tests lock the contract so future regressions are caught.
+
+
+@pytest.mark.asyncio
+async def test_click_rejects_selector_only_action(tmp_path: Path) -> None:
+    """A CLICK with only a CSS selector and no coordinates must fail —
+    the executor no longer falls back to page.locator()."""
+    from src.models.common import FailureCategory
+
+    locator_called: list[str] = []
+    page = SimpleNamespace(
+        mouse=SimpleNamespace(click=AsyncMock()),
+        wait_for_load_state=AsyncMock(),
+        locator=lambda sel: locator_called.append(sel) or Mock(),
+    )
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+
+    result = await executor.execute(
+        AgentAction(action_type=ActionType.CLICK, selector="#submit-button")
+    )
+
+    assert result.success is False
+    assert result.failure_category is FailureCategory.EXECUTION_TARGET_NOT_FOUND
+    assert "x,y coordinates" in result.detail
+    assert locator_called == [], "page.locator must NOT be called in vision-only CLICK path"
+    page.mouse.click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_type_does_not_consult_dom_via_element_from_point(tmp_path: Path) -> None:
+    """The TYPE path must not call page.evaluate_handle('document.elementFromPoint(...)')
+    or page.evaluate. A clean atomic mouse.click + keyboard.type sequence is the
+    only allowed primitive."""
+    mouse = SimpleNamespace(click=AsyncMock())
+    keyboard = SimpleNamespace(type=AsyncMock(), press=AsyncMock())
+    evaluate = AsyncMock()
+    evaluate_handle = AsyncMock()
+    page = SimpleNamespace(
+        mouse=mouse,
+        keyboard=keyboard,
+        evaluate=evaluate,
+        evaluate_handle=evaluate_handle,
+        wait_for_load_state=AsyncMock(),
+    )
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+
+    result = await executor.execute(
+        AgentAction(action_type=ActionType.TYPE, x=200, y=300, text="alice@example.com"),
+    )
+
+    assert result.success is True
+    mouse.click.assert_awaited_once_with(200, 300)
+    keyboard.type.assert_awaited_once_with("alice@example.com")
+    # No DOM consultation, even though the text contains "@" (the old email heuristic).
+    evaluate.assert_not_awaited()
+    evaluate_handle.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_type_no_coords_uses_bare_keyboard_type(tmp_path: Path) -> None:
+    """When TYPE arrives without coordinates the executor must NOT click anywhere
+    (relying on prior focus) and must NOT consult the DOM."""
+    mouse = SimpleNamespace(click=AsyncMock())
+    keyboard = SimpleNamespace(type=AsyncMock(), press=AsyncMock())
+    evaluate_handle = AsyncMock()
+    page = SimpleNamespace(
+        mouse=mouse,
+        keyboard=keyboard,
+        evaluate_handle=evaluate_handle,
+        wait_for_load_state=AsyncMock(),
+    )
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+
+    result = await executor.execute(
+        AgentAction(action_type=ActionType.TYPE, text="hello"),
+    )
+
+    assert result.success is True
+    mouse.click.assert_not_awaited()
+    keyboard.type.assert_awaited_once_with("hello")
+    evaluate_handle.assert_not_awaited()

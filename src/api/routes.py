@@ -105,10 +105,34 @@ def _build_policy_delegate(*, config, prompt_name: str) -> PolicyService:
             anthropic_client=AnthropicHttpClient(model=planner_model, timeout_seconds=120.0),
             prompt_path=_PROMPTS_DIR / prompt_name,
         )
+    # Pass the static prompt template as cacheable system prompt. On Vertex AI
+    # this primes a context cache on first call, cutting input tokens by ~90%
+    # for the static prefix. On the public Gemini API this is a no-op.
+    prompt_path = _PROMPTS_DIR / prompt_name
+    cacheable = _read_static_prefix(prompt_path)
     return GeminiPolicyService(
-        gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
-        prompt_path=_PROMPTS_DIR / prompt_name,
+        gemini_client=GeminiHttpClient(
+            model=config.primary_model,
+            timeout_seconds=120.0,
+            cacheable_system_prompt=cacheable,
+        ),
+        prompt_path=prompt_path,
     )
+
+
+def _read_static_prefix(prompt_path: Path) -> str | None:
+    """Read the static prefix of a prompt template (everything up to the first
+    `{` placeholder). This is the portion that doesn't change per-request and
+    is the only piece worth caching."""
+    try:
+        text = prompt_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    idx = text.find("{")
+    if idx <= 0:
+        return None
+    prefix = text[:idx].rstrip()
+    return prefix or None
 
 
 def _build_verifier_client(*, config):

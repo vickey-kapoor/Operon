@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from src.models.common import FailureCategory, LoopStage, RunStatus
 from src.models.execution import ExecutedAction
-from src.models.perception import ScreenPerception, UIElement, UIElementType
+from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction, PolicyDecision
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
 from src.models.state import AgentState
@@ -172,3 +172,130 @@ def test_memory_retrieval_returns_relevant_hints() -> None:
     keys = {hint.key for hint in hints}
     assert "click_before_type" in keys
     assert "avoid_identical_type_retry" in keys
+
+
+# ── memory decay invariant tests ─────────────────────────────────
+#
+# Per CLAUDE.md, on verification failure the store appends a decay record
+# with weight = current_effective_weight × 0.5. Buckets whose mean weight
+# drops below 0.1 are excluded from get_hints() — this is the self-healing
+# mechanism that stops bad advice from persisting forever.
+
+
+def _failing_inputs(run_id: str = "decay-run") -> dict:
+    state = AgentState(
+        run_id=run_id,
+        intent="Complete the form.",
+        status=RunStatus.RUNNING,
+        current_subgoal="fill_name",
+    )
+    decision = PolicyDecision(
+        action=AgentAction(action_type=ActionType.TYPE, target_element_id="name-input", text="Alice"),
+        rationale="Fill name",
+        confidence=0.8,
+        active_subgoal="fill_name",
+    )
+    executed = ExecutedAction(
+        action=decision.action,
+        success=False,
+        detail="Execution failed: target not found.",
+        failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+        failure_stage=LoopStage.EXECUTE,
+    )
+    verification = VerificationResult(
+        status=VerificationStatus.FAILURE,
+        expected_outcome_met=False,
+        stop_condition_met=False,
+        reason="Type failed.",
+        failure_type=VerificationFailureType.ACTION_FAILED,
+        failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+        failure_stage=LoopStage.EXECUTE,
+    )
+    return dict(
+        state=state,
+        perception=_perception(),
+        decision=decision,
+        executed_action=executed,
+        verification=verification,
+        recovery=RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="Retry"),
+    )
+
+
+def test_memory_geometric_decay_halves_weight_on_failure(tmp_path: Path) -> None:
+    """A verification failure must append a decay record whose weight is
+    half the current effective weight."""
+    store = FileBackedMemoryStore(root_dir=tmp_path / "runs")
+    inputs = _failing_inputs()
+
+    # First failed step seeds records at weight 1.0 (default) and appends decay records.
+    initial_records = store.record_step(**inputs)
+    assert any(r.weight == 1.0 for r in initial_records), "expected default-weight seed records"
+
+    # Open the JSONL and find a decay record (success=False from _decay_active_hints).
+    lines = Path(store.memory_path).read_text(encoding="utf-8").splitlines()
+    weights_per_key: dict[str, list[float]] = {}
+    import json as _json
+    for line in lines:
+        rec = _json.loads(line)
+        weights_per_key.setdefault(rec["key"], []).append(rec.get("weight", 1.0))
+
+    # At least one key should have a decay record at weight ≤ 0.5 (geometric halving).
+    decayed_keys = [k for k, ws in weights_per_key.items() if any(w <= 0.5 for w in ws)]
+    assert decayed_keys, "expected at least one key to have a decayed (≤0.5) record"
+
+
+def test_memory_get_hints_prunes_buckets_below_threshold(tmp_path: Path) -> None:
+    """A bucket whose mean weight is below the prune threshold (0.1) must be
+    excluded from get_hints() — this is the self-healing mechanism that stops
+    bad advice from persisting forever."""
+    from src.models.memory import MemoryOutcome, MemoryRecord
+
+    store = FileBackedMemoryStore(root_dir=tmp_path / "runs")
+
+    # Manually inject a decayed-to-near-zero record. We bypass record_step so
+    # the failure path doesn't re-seed the bucket at weight 1.0.
+    decayed = MemoryRecord(
+        key="custom_dead_hint",
+        benchmark="generic_task",
+        hint="A hint that has been decayed to irrelevance.",
+        outcome=MemoryOutcome.FAILURE,
+        page_hint=PageHint.FORM_PAGE,
+        subgoal="fill_name",
+        success=False,
+        weight=0.05,  # below the 0.1 prune threshold
+    )
+    store._append_record(decayed)
+    # Force cache invalidation so the next read reflects what we just wrote.
+    store._cached_records = None
+
+    hints = store.get_hints(
+        benchmark="generic_task",
+        page_hint=PageHint.FORM_PAGE,
+        subgoal="fill_name",
+        recent_failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+    )
+    keys = {h.key for h in hints}
+    assert "custom_dead_hint" not in keys, (
+        f"expected pruned hint to be excluded from get_hints, got {keys}"
+    )
+
+    # Sanity: a fresh full-weight record with the same key+context IS surfaced.
+    fresh = MemoryRecord(
+        key="custom_live_hint",
+        benchmark="generic_task",
+        hint="A hint that is still active.",
+        outcome=MemoryOutcome.FAILURE,
+        page_hint=PageHint.FORM_PAGE,
+        subgoal="fill_name",
+        success=False,
+        weight=1.0,
+    )
+    store._append_record(fresh)
+    store._cached_records = None
+    hints = store.get_hints(
+        benchmark="generic_task",
+        page_hint=PageHint.FORM_PAGE,
+        subgoal="fill_name",
+        recent_failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+    )
+    assert "custom_live_hint" in {h.key for h in hints}

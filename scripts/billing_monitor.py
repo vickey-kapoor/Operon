@@ -5,9 +5,9 @@ Tails run.jsonl log files and parses `gemini_usage` INFO lines emitted by
 GeminiHttpClient to track spend, image count, and remaining Vertex AI credit.
 
 Usage:
-    python tools/billing_monitor.py                     # watches all runs/
-    python tools/billing_monitor.py runs/<run_id>/run.jsonl
-    python tools/billing_monitor.py --credit 1000.00    # override starting credit
+    python scripts/billing_monitor.py                     # watches all runs/
+    python scripts/billing_monitor.py runs/<run_id>/run.jsonl
+    python scripts/billing_monitor.py --credit 1000.00    # override starting credit
 """
 
 from __future__ import annotations

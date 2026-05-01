@@ -1,9 +1,10 @@
-"""Delete run artifact directories that are not from today.
+"""Delete old run artifact directories (default: keep the last 7 days).
 
 Usage:
-    python -m src.store.cleanup           # dry-run: show what would be deleted
-    python -m src.store.cleanup --delete  # actually delete
-    python -m src.store.cleanup --days 3  # keep runs from the last N days (default: today only)
+    python -m src.store.cleanup            # dry-run: show what would be deleted
+    python -m src.store.cleanup --delete   # actually delete (keeps last 7 days)
+    python -m src.store.cleanup --days 3   # keep runs from the last 3 days
+    python -m src.store.cleanup --days 0   # keep ONLY today's runs
 """
 
 from __future__ import annotations
@@ -70,9 +71,9 @@ def main() -> None:
     parser.add_argument(
         "--days",
         type=int,
-        default=0,
+        default=7,
         metavar="N",
-        help="Keep runs from the last N days inclusive (default: 0 = today only).",
+        help="Keep runs from the last N days inclusive (default: 7). Use --days 0 to delete all but today's runs.",
     )
     parser.add_argument(
         "--runs-dir",

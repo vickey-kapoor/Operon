@@ -315,31 +315,15 @@ async def test_browser_native_executor_upload_file_native_clicks_and_runs_macro(
 
 
 @pytest.mark.asyncio
-async def test_browser_native_executor_upload_file_native_uses_selector_fallback() -> None:
-    """upload_file_native falls back to selector-based click when no coordinates given."""
-    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
-
+async def test_browser_native_executor_upload_file_native_rejects_selector_only() -> None:
+    """Vision-only contract: a CSS selector is NOT enough. Without coordinates,
+    upload_file_native must fail rather than fall back to a DOM locator."""
     executor, mock_page = _make_executor_and_page(run_id="run_test2")
 
     async def _fake_current_page(**_kw):
         return mock_page
 
-    async def _fake_capture_after():
-        return "after.png"
-
-    mock_macro_result = PickerMacroResult(
-        outcome=PickerOutcome.SUCCESS,
-        detail="os_picker_macro typed file path and confirmed: C:\\tmp\\test.txt",
-    )
-
-    with (
-        patch.object(executor, "_current_page", side_effect=_fake_current_page),
-        patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
-        patch(
-            "src.executor.browser_native.run_os_picker_macro",
-            return_value=mock_macro_result,
-        ),
-    ):
+    with patch.object(executor, "_current_page", side_effect=_fake_current_page):
         action = AgentAction(
             action_type=ActionType.UPLOAD_FILE_NATIVE,
             selector="#upload-btn",
@@ -347,9 +331,10 @@ async def test_browser_native_executor_upload_file_native_uses_selector_fallback
         )
         result = await executor.execute(action)
 
-    assert result.success is True
-    mock_page.locator.assert_called_once_with("#upload-btn")
-    mock_page.locator.return_value.first.click.assert_called_once()
+    assert result.success is False
+    assert result.failure_category is FailureCategory.EXECUTION_TARGET_NOT_FOUND
+    assert "x,y coordinates" in result.detail
+    mock_page.locator.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -466,31 +451,15 @@ async def test_browser_native_executor_upload_file_native_file_not_reflected() -
 
 
 @pytest.mark.asyncio
-async def test_browser_native_executor_upload_file_native_no_coordinates_or_selector() -> None:
-    """upload_file_native may fall back to target_element_id-based lookup."""
+async def test_browser_native_executor_upload_file_native_rejects_target_element_id_only() -> None:
+    """Vision-only contract: target_element_id is NOT enough either. Coordinates
+    are the only valid input — no DOM locator construction."""
     executor, mock_page = _make_executor_and_page()
 
     async def _fake_current_page(**_kw):
         return mock_page
 
-    async def _fake_capture_after():
-        return "after.png"
-
-    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
-
-    mock_macro_result = PickerMacroResult(
-        outcome=PickerOutcome.SUCCESS,
-        detail="os_picker_macro typed file path and confirmed: C:\\tmp\\test.txt",
-    )
-
-    with (
-        patch.object(executor, "_current_page", side_effect=_fake_current_page),
-        patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
-        patch(
-            "src.executor.browser_native.run_os_picker_macro",
-            return_value=mock_macro_result,
-        ),
-    ):
+    with patch.object(executor, "_current_page", side_effect=_fake_current_page):
         action = AgentAction(
             action_type=ActionType.UPLOAD_FILE_NATIVE,
             target_element_id="some_id",
@@ -498,11 +467,10 @@ async def test_browser_native_executor_upload_file_native_no_coordinates_or_sele
         )
         result = await executor.execute(action)
 
-    assert result.success is True
-    mock_page.locator.assert_called_once_with(
-        '[id="some_id"], [data-element-id="some_id"], [data-testid="some_id"], [name="some_id"]'
-    )
-    mock_page.locator.return_value.first.click.assert_called_once()
+    assert result.success is False
+    assert result.failure_category is FailureCategory.EXECUTION_TARGET_NOT_FOUND
+    assert "x,y coordinates" in result.detail
+    mock_page.locator.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

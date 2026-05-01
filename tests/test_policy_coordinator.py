@@ -429,3 +429,84 @@ async def test_browser_navigation_summary_does_not_trigger_success_stop_rule() -
 
     assert decision.action.action_type is ActionType.CLICK
     assert client.calls == 1
+
+
+# ── coordinator invariant tests ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reset_run_context_clears_episode_and_hint_cache() -> None:
+    """Per CLAUDE.md: reset_run_context must clear active_episode, replay_state,
+    and the hint cache so context from a previous task does not bleed across runs.
+    Auth state is intentionally preserved at the executor layer — not asserted here."""
+    root = _local_test_dir("test-reset-run-context")
+    client = StubGeminiClient(response='{"action":{"action_type":"wait"},"rationale":"x","confidence":0.1,"active_subgoal":"x","expected_change":"none"}')
+    coordinator = PolicyCoordinator(
+        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
+    )
+
+    # Simulate state populated during a prior run. Sentinel objects are sufficient
+    # — we only assert the fields are cleared back to None / empty.
+    coordinator._active_episode = object()  # type: ignore[assignment]
+    coordinator._replay_state = object()  # type: ignore[assignment]
+    coordinator._cached_hints = []
+    coordinator._cached_hints_key = ("benchmark-prior", "form_page", None, None)
+    coordinator.rule_engine._form_options_clicked["run-prior"] = {"x"}
+    coordinator.rule_engine._form_fields_filled["run-prior"] = {"y"}
+
+    coordinator.reset_run_context("run-prior")
+
+    assert coordinator._active_episode is None
+    assert coordinator._replay_state is None
+    assert coordinator._cached_hints is None
+    assert coordinator._cached_hints_key is None
+    assert "run-prior" not in coordinator.rule_engine._form_options_clicked
+    assert "run-prior" not in coordinator.rule_engine._form_fields_filled
+
+
+@pytest.mark.asyncio
+async def test_last_rule_trace_injected_as_advisory_hint_to_llm() -> None:
+    """Rule-Augmented Generation: when a rule fired in the previous step,
+    state.last_rule_trace must be injected into the next LLM call so the
+    planner knows what was tried and whether it worked."""
+    root = _local_test_dir("test-rule-trace-injection")
+    client = StubGeminiClient(
+        response='{"action":{"action_type":"click","target_element_id":"help-link"},"rationale":"x","confidence":0.9,"active_subgoal":"y","expected_change":"none"}'
+    )
+    delegate = GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root))
+    coordinator = PolicyCoordinator(
+        delegate=delegate,
+        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
+    )
+    rule_trace = "[RULE TRACE] Rule 'task_success_stop_rule' fired at step 3 | action=stop | outcome=success"
+    state = AgentState(
+        run_id="run-1",
+        intent="A bare-LLM task with no rule match.",
+        status=RunStatus.RUNNING,
+        current_subgoal="explore",
+        step_count=4,
+        last_rule_trace=rule_trace,
+    )
+    perception = ScreenPerception(
+        summary="A page with a help link is visible.",
+        page_hint="unknown",
+        visible_elements=[
+            UIElement(
+                element_id="help-link",
+                element_type=UIElementType.LINK,
+                label="Help",
+                x=24, y=116, width=108, height=36,
+                is_interactable=True, confidence=0.97,
+            )
+        ],
+        capture_artifact_path=str(root / "run-1" / "step_4" / "before.png"),
+        confidence=0.92,
+    )
+    Path(perception.capture_artifact_path).parent.mkdir(parents=True, exist_ok=True)
+
+    await coordinator.choose_action(state, perception)
+
+    # The rule trace must have been rendered into the prompt sent to the LLM.
+    assert client.last_prompt is not None
+    assert rule_trace in client.last_prompt

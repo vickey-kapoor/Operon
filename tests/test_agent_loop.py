@@ -386,6 +386,76 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_test_safe_mode(
 
 
 @pytest.mark.asyncio
+async def test_agent_loop_start_run_skips_reset_desktop_in_browser_mode() -> None:
+    """Browser-mode runs must not issue Win+D — Playwright runs in its own
+    window and minimizing the user's foreground app on every task start steals
+    focus during multi-task benchmark sweeps. Especially harmful in headless
+    runs where there's no visible browser to give space to."""
+    from src.core.contracts.perception import Environment as UnifiedEnvironment
+
+    created = AgentState(run_id="run-browser", intent="Browser task", status=RunStatus.PENDING)
+    run_store = Mock()
+    run_store.create_run = Mock(return_value=created)
+
+    executor = Mock()
+    executor.reset_desktop = AsyncMock()
+    executor.configure_run = Mock()
+
+    loop = AgentLoop(
+        capture_service=Mock(),
+        perception_service=Mock(),
+        run_store=run_store,
+        policy_service=Mock(),
+        executor=executor,
+        verifier_service=Mock(),
+        recovery_manager=Mock(),
+        environment=UnifiedEnvironment.BROWSER,
+    )
+
+    await loop.start_run(RunTaskRequest(intent="Navigate to a site."))
+
+    executor.reset_desktop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_start_run_runs_reset_desktop_in_desktop_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Desktop mode still gets a clean slate at the start of each run.
+
+    conftest sets OPERON_TEST_SAFE_MODE=true globally to suppress real
+    side-effects during the suite — disable it here so we can verify the
+    real desktop-mode reset_desktop dispatch.
+    """
+    from src.core.contracts.perception import Environment as UnifiedEnvironment
+
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+
+    created = AgentState(run_id="run-desktop", intent="Desktop task", status=RunStatus.PENDING)
+    run_store = Mock()
+    run_store.create_run = Mock(return_value=created)
+
+    executor = Mock()
+    executor.reset_desktop = AsyncMock()
+    executor.configure_run = Mock()
+
+    loop = AgentLoop(
+        capture_service=Mock(),
+        perception_service=Mock(),
+        run_store=run_store,
+        policy_service=Mock(),
+        executor=executor,
+        verifier_service=Mock(),
+        recovery_manager=Mock(),
+        environment=UnifiedEnvironment.DESKTOP,
+    )
+
+    await loop.start_run(RunTaskRequest(intent="Open Notepad."))
+
+    executor.reset_desktop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_agent_loop_marks_benchmark_precondition_stop_as_failed() -> None:
     initial_state = AgentState(run_id="run-setup", intent="Create draft", status=RunStatus.PENDING)
     updated_state = initial_state.model_copy(update={"step_count": 1, "status": RunStatus.RUNNING})

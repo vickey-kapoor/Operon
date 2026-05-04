@@ -318,6 +318,21 @@ class AgentLoop:
         perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
         state = await self.run_store.update_state(record.run_id, perception)
         self._sync_progress_state_with_perception(state, perception)
+
+        # Consume any override hint the user sent during a HITL pause.
+        # Inject it as a rule trace so the LLM policy sees it this step.
+        try:
+            from src.api import ws_stream as _ws_mod_hint
+            _override_hint = _ws_mod_hint.consume_override_hint()
+            if _override_hint:
+                state.last_rule_trace = (
+                    f"[USER OVERRIDE HINT] The user provided this correction at step {step_index}: "
+                    f"'{_override_hint}'. Incorporate it into your next action decision."
+                )
+                logger.info("Consumed user override hint for step %d: %r", step_index, _override_hint)
+        except ImportError:
+            pass
+
         _trace("  3 POLICY", "PolicyCoordinator -> rule engine first, then LLM fallback")
         _t0 = time.perf_counter()
         decision = await self.policy_service.choose_action(state, perception)
@@ -367,6 +382,50 @@ class AgentLoop:
                 state=state,
                 perception=perception,
                 decision=hitl_decision,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+            )
+
+        # Confidence-gated autonomy: if the user has set a threshold via the Cockpit
+        # slider and this decision's confidence is below it, pause and ask for approval.
+        # Skips WAIT_FOR_USER and STOP (those already pause/terminate the run).
+        _conf_threshold = 0.0
+        _ws_mod = None
+        try:
+            from src.api import (
+                ws_stream as _ws_mod,  # local import avoids circular at module load
+            )
+            _conf_threshold = _ws_mod.get_confidence_threshold()
+        except ImportError:
+            pass
+        if (
+            _conf_threshold > 0.0
+            and decision.action.action_type is not ActionType.WAIT_FOR_USER
+            and decision.action.action_type is not ActionType.STOP
+            and decision.confidence < _conf_threshold
+        ):
+            _trace(
+                "  3 POLICY -> CONFIDENCE_GATE",
+                f"confidence={decision.confidence:.2f} < threshold={_conf_threshold:.2f}",
+            )
+            gate_decision = decision.model_copy(update={
+                "action": AgentAction(
+                    action_type=ActionType.WAIT_FOR_USER,
+                    text=(
+                        f"Confidence {decision.confidence:.0%} is below your threshold {_conf_threshold:.0%}. "
+                        f"Planned action: {decision.action.action_type.value}. "
+                        "Click Proceed to approve or enter a correction hint."
+                    ),
+                ),
+            })
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=gate_decision,
                 perception_debug=perception_debug,
                 policy_debug=policy_debug,
                 step_index=step_index,
@@ -1468,7 +1527,6 @@ class AgentLoop:
         must still accept clicks.  This method detects that case and sets the bypass
         flag so _region_has_content skips the variance gate.
         """
-        from src.models.perception import UIElementType
         action = decision.action
         if action.action_type not in (ActionType.CLICK, ActionType.TYPE):
             return decision
@@ -1480,13 +1538,16 @@ class AgentLoop:
         if any(tok in target_id for tok in self._INPUT_ZONE_ID_TOKENS):
             return decision.model_copy(update={"action": action.model_copy(update={"is_input_zone": True})})
 
-        # Check element_type from current perception
+        # If the target element was explicitly identified in current perception by
+        # element_id, bypass the servo entirely — perception already confirmed the
+        # element exists at these coordinates, so a blank variance reading means the
+        # element has a solid/uniform surface (button, dialog sidebar, icon), not that
+        # the coordinate is empty space.  This covers Save-dialog buttons, navigation
+        # links, toolbar icons, and other elements with low pixel variance.
         if action.target_element_id and perception is not None:
             for el in perception.visible_elements:
                 if el.element_id == action.target_element_id:
-                    if el.element_type is UIElementType.INPUT:
-                        return decision.model_copy(update={"action": action.model_copy(update={"is_input_zone": True})})
-                    break
+                    return decision.model_copy(update={"action": action.model_copy(update={"is_input_zone": True})})
 
         return decision
 
@@ -1866,8 +1927,12 @@ class AgentLoop:
         # AND two or more consecutive no-progress steps have occurred, force a
         # subgoal reset. Requiring streak >= 2 avoids false positives on the first
         # quiet step where last_screen_change_ratio is at its default 0.0.
+        # Skip for perception-confirmed elements (is_input_zone=True): dialog sidebar
+        # navigation and small UI interactions can produce < 1% screen change without
+        # being stuck — the element was confirmed present by perception this step.
         if (
-            progress_state.last_screen_change_ratio < self._STALL_SCREEN_CHANGE_THRESHOLD
+            not action.is_input_zone
+            and progress_state.last_screen_change_ratio < self._STALL_SCREEN_CHANGE_THRESHOLD
             and progress_state.no_progress_streak >= 2
             and action.action_type in {
                 ActionType.CLICK, ActionType.DOUBLE_CLICK,

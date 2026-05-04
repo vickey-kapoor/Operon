@@ -28,6 +28,7 @@ from src.models.perception import (
     UIElementType,
 )
 from src.models.state import AgentState
+from src.agent._agent_utils import collect_latest_usage
 from src.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ class GeminiPerceptionService(PerceptionService):
                 retry_log_artifact_path=str(debug_artifacts.retry_log_artifact_path),
                 diagnostics_artifact_path=str(debug_artifacts.diagnostics_artifact_path),
                 usage_artifact_path=str(debug_artifacts.usage_artifact_path),
-                usage=_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
+                usage=collect_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
             )
             usage = self._last_debug_artifacts.usage
             if usage is not None:
@@ -797,10 +798,3 @@ def _strip_json_fence(raw_output: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
-    if not hasattr(client, "latest_usage"):
-        return None
-    usage = client.latest_usage()
-    if usage is not None:
-        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
-    return usage

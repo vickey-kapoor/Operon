@@ -23,6 +23,7 @@ from src.models.logs import ModelDebugArtifacts
 from src.models.perception import ScreenPerception
 from src.models.policy import PolicyDecision
 from src.models.state import AgentState
+from src.agent._agent_utils import collect_latest_usage
 from src.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
                 raw_response_artifact_path=str(raw_path),
                 parsed_artifact_path=str(parsed_path),
                 usage_artifact_path=str(step_dir / "combined_usage.json"),
-                usage=_latest_usage(self.gemini_client, step_dir / "combined_usage.json"),
+                usage=collect_latest_usage(self.gemini_client, step_dir / "combined_usage.json"),
             )
             return perception
 
@@ -119,11 +120,27 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         state: AgentState,
         perception: ScreenPerception,
     ) -> PolicyDecision:
-        """Return the cached policy decision from the combined call."""
+        """Return the cached policy decision; re-plan via a fresh combined call on cache miss.
+
+        The combined service bakes perception+policy into one call and caches the
+        decision in `perceive()`. The first `choose_action()` of a step pops it.
+        A second `choose_action()` (e.g., from `PolicyCoordinator._reject_premature_stop`
+        or `_reject_hallucinated_target`) finds the cache empty — for split
+        services that's fine because they re-call the policy LLM, but combined
+        has nothing to fall back on. We re-issue the combined LLM call against
+        the same screenshot. Any advisory hint the coordinator just appended
+        (e.g., the premature-stop correction) is picked up by `_render_prompt`.
+        """
         decision = self._cached_decision.pop(state.run_id, None)
         if decision is not None:
             return decision
-        raise PolicyError("No cached decision available from combined call")
+        screenshot_path = perception.capture_artifact_path
+        if not screenshot_path:
+            raise PolicyError("No cached decision and no screenshot path to re-plan from")
+        prompt = self._render_prompt(state, semantic_retry=False)
+        raw_output = await self.gemini_client.generate_perception(prompt, screenshot_path)
+        _, replanned_decision = self._parse_combined_output(raw_output, screenshot_path)
+        return replanned_decision
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
@@ -231,10 +248,3 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         return perception, decision
 
 
-def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
-    if not hasattr(client, "latest_usage"):
-        return None
-    usage = client.latest_usage()
-    if usage is not None:
-        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
-    return usage

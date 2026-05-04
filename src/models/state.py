@@ -35,3 +35,7 @@ class AgentState(StrictModel):
     # Carries the outcome of the most recent deterministic rule that fired.
     # Injected into the next LLM prompt so the planner knows what the rule tried and whether it worked.
     last_rule_trace: str | None = None
+    # Set to True by the loop when a native desktop menu was explicitly opened
+    # (e.g. after a successful right-click or menu-bar click). Guards the
+    # _dropdown_menu_select_rule from misfiring on desktop app toolbars.
+    menu_is_active: bool = False

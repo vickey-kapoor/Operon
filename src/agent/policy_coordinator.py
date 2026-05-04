@@ -205,7 +205,8 @@ class PolicyCoordinator(PolicyService):
             f"the nearest element is '{nearest_elem.primary_name}' "
             f"({nearest_elem.element_id}) at approximately ({anchor_cx}, {anchor_cy}), "
             f"{min_dist:.0f} px away. "
-            "Please refine your coordinates to target this element or another visible element directly."
+            "Refind the target within the active application window and use coordinates "
+            "that land on a visible element — do NOT click the taskbar or system tray."
         )
 
         logger.warning(

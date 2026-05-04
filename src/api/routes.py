@@ -25,6 +25,7 @@ from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
 from src.agent.video_verifier import VideoVerifier
+from src.api import ws_stream as _ws_stream
 from src.api.benchmark_suite import (
     create_single_task_suite,
     create_suite,
@@ -260,6 +261,8 @@ def get_agent_loop() -> AgentLoop:
             gemini_client=video_gemini_client,
             environment=UnifiedEnvironment.BROWSER,
         )
+        _ws_stream.set_executor(executor)
+        _ws_stream.set_agent_loop(_agent_loop)
     return _agent_loop
 
 
@@ -304,10 +307,64 @@ def get_desktop_agent_loop() -> AgentLoop:
     return _desktop_agent_loop
 
 
+class _CdpConnectRequest(StrictModel):
+    port: int = 9222
+    fps: int = 15
+
+
+_browser_manager_instance = None
+
+
+@router.post("/connect-cdp")
+async def connect_cdp(body: _CdpConnectRequest) -> dict:
+    """Attach to the user's Chrome via CDP and start the live screencast stream."""
+    global _browser_manager_instance
+
+    from src.browser.manager import BrowserManager
+
+    # Tear down any existing BrowserManager before re-connecting.
+    if _browser_manager_instance is not None:
+        try:
+            await _browser_manager_instance.disconnect()
+        except Exception:
+            pass
+
+    manager = BrowserManager()
+    try:
+        await manager.connect(body.port)
+        await manager.start_screencast(fps=body.fps)
+    except Exception as exc:
+        return {"connected": False, "detail": str(exc)}
+
+    _browser_manager_instance = manager
+    _ws_stream.set_browser_manager(manager)
+    return {"connected": True, "port": body.port, "fps": body.fps}
+
+
+@router.post("/disconnect-cdp")
+async def disconnect_cdp() -> dict:
+    """Stop the screencast and release the CDP connection."""
+    global _browser_manager_instance
+    if _browser_manager_instance is None:
+        return {"disconnected": False, "detail": "No active CDP connection"}
+    await _browser_manager_instance.disconnect()
+    _browser_manager_instance = None
+    _ws_stream.set_browser_manager(None)
+    return {"disconnected": True}
+
+
 @router.post("/run-task", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_task(request: RunTaskRequest) -> RunResponse:
     """Create a new run record for the requested intent."""
-    return await get_agent_loop().start_run(request)
+    response = await get_agent_loop().start_run(request)
+    _ws_stream.set_active_run(response.run_id)
+    _ws_stream.publish_event({
+        "type": "run_started",
+        "run_id": response.run_id,
+        "intent": request.intent,
+        "status": response.status.value,
+    })
+    return response
 
 
 @router.post("/step", response_model=RunResponse)
@@ -317,7 +374,91 @@ async def step_run(request: StepRequest) -> RunResponse:
     _step_log = _logging.getLogger(__name__)
     _validate_run_id(request.run_id)
     try:
-        return await get_agent_loop().step_run(request)
+        loop = get_agent_loop()
+        response = await loop.step_run(request)
+
+        # Build the step event, enriched with policy decision details from the step artifact.
+        _step_event: dict = {
+            "type": "step",
+            "run_id": response.run_id,
+            "step": response.step_count,
+            "status": response.status.value,
+        }
+        _pd_path = (
+            Path(loop.run_store.root_dir)
+            / response.run_id
+            / f"step_{response.step_count}"
+            / "policy_decision.json"
+        )
+        if _pd_path.exists():
+            try:
+                import json as _json
+                _pd = _json.loads(_pd_path.read_text(encoding="utf-8"))
+                _step_event["confidence"] = _pd.get("confidence")
+                _step_event["subgoal"] = _pd.get("active_subgoal")
+                _step_event["action_type"] = _pd.get("action", {}).get("action_type")
+                _step_event["rule_name"] = _pd.get("rule_name")
+                _step_event["rationale"] = _pd.get("rationale")
+                # Perception summary from the sibling artifact
+                _perc_path = _pd_path.parent / "perception_parsed.json"
+                if _perc_path.exists():
+                    try:
+                        _perc = _json.loads(_perc_path.read_text(encoding="utf-8"))
+                        _page_hint = _perc.get("page_hint", "")
+                        _elem_count = len(_perc.get("elements", []))
+                        _focused = _perc.get("focused_element") or {}
+                        _focused_text = str(_focused.get("text", ""))[:40] if _focused else ""
+                        _parts: list[str] = []
+                        if _page_hint:
+                            _parts.append(_page_hint)
+                        if _focused_text:
+                            _parts.append(f"focus: {_focused_text}")
+                        elif _elem_count:
+                            _parts.append(f"{_elem_count} elements")
+                        _step_event["perception"] = " · ".join(_parts) if _parts else None
+                    except Exception:
+                        pass
+                # Publish a dedicated action_intent event when coordinates are known.
+                _action = _pd.get("action", {})
+                if _action.get("x") is not None and _action.get("y") is not None:
+                    _ws_stream.publish_event({
+                        "type": "action_intent",
+                        "action_type": _action.get("action_type", "unknown"),
+                        "x": _action["x"],
+                        "y": _action["y"],
+                        "viewport_w": 1920,
+                        "viewport_h": 1080,
+                        "confidence": _pd.get("confidence", 0.0),
+                        "rule_name": _pd.get("rule_name"),
+                        "subgoal": _pd.get("active_subgoal"),
+                        "rationale": _pd.get("rationale", ""),
+                    })
+            except Exception:
+                pass
+        _ws_stream.publish_event(_step_event)
+
+        if response.status.value == "waiting_for_user":
+            # Publish hitl_required so the Cockpit left pane shows the approval card.
+            _hitl_state = await loop.run_store.get_run(response.run_id)
+            _ws_stream.publish_event({
+                "type": "hitl_required",
+                "run_id": response.run_id,
+                "message": _hitl_state.hitl_message if _hitl_state else None,
+                "confidence": _step_event.get("confidence"),
+                "threshold": _ws_stream.get_confidence_threshold(),
+                "pending_action": _step_event.get("action_type"),
+                "subgoal": _step_event.get("subgoal"),
+                "rationale": _step_event.get("rationale"),
+            })
+
+        if response.status.value in ("succeeded", "failed", "cancelled"):
+            _ws_stream.set_active_run(None)
+            _ws_stream.publish_event({
+                "type": "run_completed",
+                "run_id": response.run_id,
+                "status": response.status.value,
+            })
+        return response
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except Exception as exc:

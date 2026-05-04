@@ -27,7 +27,7 @@ Copy `.env.example` to `.env` and set your Gemini key (`GOOGLE_API_KEY` or `GEMI
 
 Runtime backend and model selection (env vars):
 
-- `OPERON_DESKTOP_BACKEND=json` (default desktop path)
+- `OPERON_DESKTOP_BACKEND=json` (default desktop path — selects the combined JSON perception+policy backend via `GeminiHttpClient`; `json` is the backend identifier, not a data-format flag)
 - `OPERON_BROWSER_BACKEND=computer_use` (Gemini Computer Use)
 - `OPERON_BROWSER_FALLBACK_BACKEND=json` (JSON fallback for browser)
 - `BROWSER_HEADLESS=true` (headless Playwright)

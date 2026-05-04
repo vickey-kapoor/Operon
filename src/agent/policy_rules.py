@@ -195,7 +195,15 @@ class PolicyRuleEngine:
             ("_dismiss_blocking_overlay_rule", lambda: self._dismiss_blocking_overlay_rule(state, perception)),
             ("_search_query_rule", lambda: self._search_query_rule(state, perception)),
         ]
+        try:
+            from src.api import ws_stream as _ws_mod
+            _disabled = _ws_mod.get_disabled_rules()
+        except ImportError:
+            _disabled = frozenset()
+
         for rule_name, call in _primitives:
+            if rule_name in _disabled:
+                continue
             decision = call()  # type: ignore[operator]
             if decision is not None:
                 self._last_fired_rule = rule_name
@@ -321,6 +329,13 @@ class PolicyRuleEngine:
         "dropdown", "submenu", "menu_item", "menuitem", "popover", "flyout", "child",
     })
 
+    # Page hint substrings that indicate a web-browser context.
+    # Any hint not matching these tokens is treated as a native-desktop context,
+    # where the dropdown rule is gated on AgentState.menu_is_active.
+    _BROWSER_HINT_TOKENS: frozenset[str] = frozenset({
+        "page", "browser", "search", "form", "article", "login", "web", "site",
+    })
+
     def _dropdown_menu_select_rule(
         self,
         state: AgentState,
@@ -334,12 +349,23 @@ class PolicyRuleEngine:
           known dropdown-child signal substring (dropdown, submenu, menu_item, etc.).
         - The last-clicked element is still visible (meaning no navigation occurred — same page).
 
+        On browser pages (page_hint contains browser-like tokens) the rule fires freely.
+        On native desktop pages it only fires when AgentState.menu_is_active is True —
+        preventing toolbar buttons in desktop apps (Notepad format bar, etc.) from
+        being misidentified as open dropdown menus.
+
         Chooses the best-matching child item by scoring against intent + subgoal keywords.
         This prevents the LLM from either re-clicking the parent or picking an unrelated element.
         """
         # Form pages have always-present select elements whose IDs contain "dropdown" —
         # these are not navigation overlay menus and must not trigger this rule.
         if perception.page_hint is PageHint.FORM_PAGE:
+            return None
+
+        # Desktop-context guard: only fire when a menu is explicitly active.
+        hint_val = perception.page_hint.value.lower()
+        _is_browser_context = any(tok in hint_val for tok in self._BROWSER_HINT_TOKENS)
+        if not _is_browser_context and not getattr(state, "menu_is_active", False):
             return None
 
         if not state.action_history:
@@ -537,7 +563,26 @@ class PolicyRuleEngine:
             return None
         stuck_target = next(iter(stuck_ids))
 
+        intent_lower = (state.intent or "").lower()
+
         for overlay in dialogs:
+            # Skip overlays whose name OR element_id matches the target application in the
+            # intent. e.g. if intent is "open Notepad and write code", the Notepad window
+            # is not a blocking overlay — it is the application we are operating in.
+            # Check element_id too because the window title can change (e.g. "package main"
+            # after code is typed) while the element_id stays as "notepad_window".
+            _overlay_words = (
+                overlay.primary_name.lower().split()
+                + overlay.element_id.lower().replace("_", " ").split()
+            )
+            overlay_tokens = {tok for tok in _overlay_words if len(tok) > 3}
+            if overlay_tokens and any(tok in intent_lower for tok in overlay_tokens):
+                logger.debug(
+                    "dismiss_overlay rule: skipping overlay %r — its name matches the intent target",
+                    overlay.element_id,
+                )
+                continue
+
             btn = _best_dismiss_button(overlay, perception, exclude_id=stuck_target)
             if btn is None:
                 continue

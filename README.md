@@ -114,7 +114,8 @@ src/
   agent/      loop.py, perception.py, policy_coordinator.py, policy_rules.py,
               policy.py, verifier.py, video_verifier.py, recovery.py,
               reflector.py, selector.py, capture.py, hitl.py,
-              screen_diff.py, action_translation.py, backend.py
+              screen_diff.py, action_translation.py, backend.py,
+              benchmark.py, screen_recorder.py
   executor/   desktop.py, browser_native.py, browser_adapter.py,
               desktop_adapter.py, os_picker_macro.py
   api/        server.py, routes.py, observer.py, runtime_config.py,
@@ -123,7 +124,8 @@ src/
   models/     state.py, perception.py, policy.py, execution.py,
               verification.py, recovery.py, memory.py, logs.py, common.py
   store/      run_store.py, memory.py, run_logger.py, background_writer.py
-  runtime/    orchestrator.py, state.py, legacy_adapter.py
+  runtime/    orchestrator.py, state.py, legacy_adapter.py, benchmark_runner.py
+  benchmarks/ registry.py, form_plugin.py, webarena.py, …
   core/       contracts/, router.py
 prompts/      policy_prompt.txt, perception_prompt.txt, critic_prompt.txt,
               video_verification_prompt.txt, reaction_check_prompt.txt, …

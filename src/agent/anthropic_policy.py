@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.agent._agent_utils import collect_latest_usage
 from src.agent.policy import GeminiPolicyService
 from src.clients.anthropic import AnthropicClientError, AnthropicHttpClient
 from src.models.perception import ScreenPerception
@@ -47,7 +48,7 @@ class AnthropicPolicyService(GeminiPolicyService):
             raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
             parsed_artifact_path=str(debug_artifacts.parsed_artifact_path),
             usage_artifact_path=str(debug_artifacts.usage_artifact_path),
-            usage=_latest_usage(self.anthropic_client, debug_artifacts.usage_artifact_path),
+            usage=collect_latest_usage(self.anthropic_client, debug_artifacts.usage_artifact_path),
         )
         return decision
 
@@ -58,12 +59,3 @@ class AnthropicPolicyService(GeminiPolicyService):
         return parse_policy_output(raw_output)
 
 
-def _latest_usage(client: AnthropicHttpClient, usage_artifact_path: Path):
-    if not hasattr(client, "latest_usage"):
-        return None
-    usage = client.latest_usage()
-    if usage is not None:
-        from src.store.background_writer import bg_writer
-
-        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
-    return usage

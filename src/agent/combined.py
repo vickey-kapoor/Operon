@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from src.agent._agent_utils import collect_latest_usage
 from src.agent.perception import (
     PerceptionError,
     PerceptionService,
@@ -107,7 +108,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
                 raw_response_artifact_path=str(raw_path),
                 parsed_artifact_path=str(parsed_path),
                 usage_artifact_path=str(step_dir / "combined_usage.json"),
-                usage=_latest_usage(self.gemini_client, step_dir / "combined_usage.json"),
+                usage=collect_latest_usage(self.gemini_client, step_dir / "combined_usage.json"),
             )
             return perception
 
@@ -247,10 +248,3 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         return perception, decision
 
 
-def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
-    if not hasattr(client, "latest_usage"):
-        return None
-    usage = client.latest_usage()
-    if usage is not None:
-        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
-    return usage

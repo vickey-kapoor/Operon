@@ -177,19 +177,27 @@ ruff check src tests --select E,F,W,I --ignore E501
 
 ```
 src/
-  agent/      Core loop, perception, policy, verifier, rules, memory, HITL
-  executor/   Desktop (pyautogui + mss) and browser (Playwright) executors
-  api/        FastAPI server, WebSocket stream, routes, observer, benchmark suite
-  clients/    Gemini, Anthropic, Gemini Computer Use HTTP clients
-  models/     Pydantic v2 models for all state boundaries
-  store/      Run store, memory store, episode store, background writer
-  runtime/    Unified contract layer and orchestrator
-  benchmarks/ WebArena, Mind2Web, form benchmark plugins
-  core/       Unified perception/policy/actor/critic contracts
+  agent/      loop.py, perception.py, policy_coordinator.py, policy_rules.py,
+              policy.py, verifier.py, video_verifier.py, recovery.py,
+              reflector.py, selector.py, capture.py, hitl.py,
+              screen_diff.py, action_translation.py, backend.py,
+              benchmark.py, screen_recorder.py
+  executor/   desktop.py, browser_native.py, browser_adapter.py,
+              desktop_adapter.py, os_picker_macro.py
+  api/        server.py, routes.py, observer.py, runtime_config.py,
+              static/ (landing, console, dashboard, benchmarks)
+  clients/    gemini.py, anthropic.py, gemini_computer_use.py
+  models/     state.py, perception.py, policy.py, execution.py,
+              verification.py, recovery.py, memory.py, logs.py, common.py
+  store/      run_store.py, memory.py, run_logger.py, background_writer.py
+  runtime/    orchestrator.py, state.py, legacy_adapter.py, benchmark_runner.py
+  benchmarks/ registry.py, form_plugin.py, webarena.py, …
+  core/       contracts/, router.py
 ui/           React 19 Command Center (Vite + Zustand 5 + react-resizable-panels)
-prompts/      Gemini prompt templates (perception, policy, critic, video verification)
-runs/         Per-run artifacts: state.json, run.jsonl, step_N/ (screenshots + model I/O)
-memory/       memory.jsonl (decaying hints), episodes.jsonl (compressed trajectories)
+prompts/      policy_prompt.txt, perception_prompt.txt, critic_prompt.txt,
+              video_verification_prompt.txt, reaction_check_prompt.txt, …
+runs/<run_id>/   state.json, run.jsonl, step_N/ (screenshots + all model I/O)
+memory/          memory.jsonl, episodes.jsonl
 ```
 
 ---

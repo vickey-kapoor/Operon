@@ -75,16 +75,18 @@ Backend selection via env vars: `OPERON_DESKTOP_BACKEND`, `OPERON_BROWSER_BACKEN
 ## 5. Policy Layer (3-tier)
 
 ### Tier 1 — Deterministic Rule Engine
-`PolicyRuleEngine` (`src/agent/policy_rules.py`). 6 rules in priority order:
+`PolicyRuleEngine` (`src/agent/policy_rules.py`). 8 engine primitives in priority order, plus benchmark-specific plugins registered via `BENCHMARK_REGISTRY` that run first:
 
-| Rule | Type | Trigger |
-|---|---|---|
-| `_login_page_guardrail` | Benchmark-specific | `page_hint == GOOGLE_SIGN_IN` + memory hint |
-| `_form_success_stop_rule` | Engine primitive | `page_hint == FORM_SUCCESS` or success keywords in elements |
-| `_avoid_identical_type_retry` | Engine primitive | Memory hint + repeated TYPE failure on same element |
-| `_compose_already_visible_rule` | Benchmark-specific | Subgoal contains "compose" + compose input visible |
-| `_submit_form_when_ready_rule` | Benchmark-specific | `page_hint == FORM_PAGE` + all required fields typed |
-| `_focus_before_type_rule` | Engine primitive | Memory hint `click_before_type` + target not focused |
+| Rule | Trigger |
+|---|---|
+| `_human_intervention_rule` | page_hint contains HITL keyword × 2 consecutive steps (debounced) |
+| `_task_success_stop_rule` | `page_hint == FORM_SUCCESS` or success tokens visible |
+| `_dropdown_menu_select_rule` | Dropdown open + unselected option visible |
+| `_avoid_identical_type_retry` | Memory hint `avoid_identical_type_retry` + repeated TYPE failure on same element |
+| `_no_progress_recovery_rule` | No-progress streak > threshold (issues Escape + `force_fresh_perception`) |
+| `_dismiss_blocking_overlay_rule` | Blocking dialog/banner + stuck signal |
+| `_search_query_rule` | Intent contains search query + search input visible |
+| `_focus_before_type_rule` | Memory hint `click_before_type` + target not focused (memory-gated) |
 
 ### Tier 2 — LLM Fallback
 `GeminiPolicyService` (`src/agent/policy.py`). Renders prompt template + memory hints → Gemini. Prompts: `prompts/policy_prompt.txt`, `prompts/browser_combined_prompt.txt`.
@@ -166,7 +168,25 @@ Triggers when `screen_diff` detects no visual change after an idempotent action 
 
 ---
 
-## 13. Persistence & Observability
+## 13. Command Center UI
+
+**What:** React 19 + Zustand 5 web UI served by the FastAPI backend. Single-page, three-pane layout. Real-time over WebSocket (port 9001).
+
+**Panes:**
+
+| Pane | Content |
+|---|---|
+| **Task Intelligence** (35%) | SubgoalTree with status icons (pending/active/complete/failed), Thought Cards reasoning log (timestamp, perception, confidence badge, rationale), ThinkingPulse SVG animation, HITL approval card |
+| **Live Execution** (50%) | Canvas browser mirror (zero-render JPEG frame delivery), element bounds SVG overlay, ConfidenceSlider (autonomy threshold), HITL dim overlay |
+| **Moat Builder / Settings** | Rule Manager (toggle engine primitives on/off via `set_disabled_rules`), CDP Configuration (port + Test Connection), Session Persistence (Fresh / CDP Attach) |
+
+**Confidence-Gated Autonomy:** Slider in Live Execution pane sets confidence floor. When `PolicyDecision.confidence` drops below it, the run pauses. UI shows approval card with Proceed and Correction Hint options.
+
+**Tech:** `ui/` — Vite + TypeScript, `react-resizable-panels` v4 (Group/Panel/Separator), inline styles only, `useAgentStream` hook owns WS connection, `registerFrameCallback` pattern for zero-render frame delivery.
+
+---
+
+## 14. Persistence & Observability
 
 ### Run Store
 `FileBackedRunStore` — in-memory dict + `runs/<run_id>/state.json`. No database.
@@ -210,17 +230,29 @@ FastAPI app (`src/api/server.py`). All routes in `src/api/routes.py`.
 | POST | `/run-task` | Create browser run |
 | POST | `/step` | Advance browser run one step |
 | POST | `/resume` | Resume paused browser run |
+| POST | `/stop` | Cancel active run |
 | GET | `/run/{id}` | Read browser run state |
 | POST | `/desktop/run-task` | Create desktop run |
 | POST | `/desktop/step` | Advance desktop run one step |
 | POST | `/desktop/resume` | Resume paused desktop run |
 | GET | `/desktop/run/{id}` | Read desktop run state |
 | POST | `/desktop/cleanup` | Close apps launched by a run |
+| POST | `/connect-cdp` | Attach to running Chrome via CDP + start screencast |
+| POST | `/disconnect-cdp` | Detach CDP session |
 | GET | `/observer/api/runs` | List all runs |
 | GET | `/observer/api/run/{id}` | Full run snapshot |
+| GET | `/observer/api/usage` | Token usage summary |
 | GET | `/observer/api/artifact` | Serve step artifact (png, json, txt) |
+| GET | `/observer/api/export/{id}` | Export run as ZIP |
+| GET | `/observer/api/live-browser/{id}` | Live browser URL for run |
+| POST | `/benchmark/run-suite` | Start benchmark suite |
+| POST | `/benchmark/stop-suite/{id}` | Stop benchmark suite |
+| GET | `/benchmark/tasks` | List available benchmark tasks |
+| GET | `/benchmark/suite/{id}` | Read suite run state |
 | GET | `/health` | Health check |
-| GET | `/` | Operon Pilot UI |
+| GET | `/` or `/desktop-pilot` | Command Center UI |
+
+**WebSocket:** `ws://127.0.0.1:9001` — live step events, binary JPEG frames, and control messages. Control messages: `set_confidence_threshold`, `set_disabled_rules`, `override`, `resume`, `pause`, `snapshot_ax`, `inject_input`.
 
 Input validation: `intent` 1–500 chars, stripped whitespace, strict Pydantic v2 models — no extra fields.
 
@@ -252,9 +284,8 @@ All model choices are env-configurable at runtime:
 
 ## 17. Known Gaps & Hardening Opportunities
 
-- **Rule engine domain bleed** — 3 of 6 rules are Gmail/form benchmark-specific. A third benchmark is the forcing function to split into a base engine rule set + per-benchmark rule registrations.
-- **`PageHint` enum** — 4 of 6 values are Gmail-specific. Should generalise.
 - **`upload_file_native` integration test** — no test against a real headed browser with a live OS picker. CI-only coverage is unit-level.
 - **Critic integration** — `critic_prompt.txt` exists but critic is not fully wired into the recovery loop.
-- **Episodic memory retrieval** — episodes are written but retrieval/injection into prompt is not yet implemented.
-- **Single benchmark default** — `benchmark_name_for_intent()` defaults unknown intents to `FORM_BENCHMARK`.
+- **WebArena medium/hard benchmarks** — easy suite at 100%; medium not yet run at scale.
+- **Prompt caching** — Vertex AI context cache for static prompt prefixes not yet implemented.
+- **Multi-monitor support** — single primary display assumed; `DesktopExecutor` captures monitor index 0.

@@ -18,7 +18,7 @@ Run the API locally with `python -m uvicorn src.api.server:app --host 127.0.0.1 
 Run the default test suite (no live server required):
 ```powershell
 $env:GEMINI_API_KEY = "fake-test-key"
-python -m pytest tests -q --ignore=tests/test_e2e_quick_tasks.py --ignore=tests/test_bug_fixes_verification.py
+.venv\Scripts\python -m pytest tests\ -q --ignore=tests/test_e2e_quick_tasks.py --ignore=tests/test_bug_fixes_verification.py
 ```
 
 Lint with `ruff check src tests --select E,F,W,I --ignore E501`.

@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from src.agent._agent_utils import collect_latest_usage
 from src.agent.perception import (
     PerceptionError,
     PerceptionService,
@@ -23,7 +24,6 @@ from src.models.logs import ModelDebugArtifacts
 from src.models.perception import ScreenPerception
 from src.models.policy import PolicyDecision
 from src.models.state import AgentState
-from src.agent._agent_utils import collect_latest_usage
 from src.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)

@@ -9,12 +9,12 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from src.agent._agent_utils import collect_latest_usage
 from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.logs import ModelDebugArtifacts
 from src.models.perception import ScreenPerception
 from src.models.policy import ActionType, PolicyDecision
 from src.models.state import AgentState
-from src.agent._agent_utils import collect_latest_usage
 from src.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)

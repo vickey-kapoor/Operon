@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from src.agent._agent_utils import collect_latest_usage
 from src.clients.anthropic import AnthropicClientError
 from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.common import FailureCategory, LoopStage, StopReason
@@ -23,7 +24,6 @@ from src.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
-from src.agent._agent_utils import collect_latest_usage
 from src.store.background_writer import bg_writer
 
 if TYPE_CHECKING:

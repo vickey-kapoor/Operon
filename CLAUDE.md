@@ -91,6 +91,19 @@ python -m src.store.summary <run_id>
 python -m src.store.summary runs
 ```
 
+**Clean up old run artifacts (default: keep last 7 days):**
+
+```powershell
+python -m src.store.cleanup           # dry-run
+python -m src.store.cleanup --delete  # actually delete
+```
+
+**UI dev server (hot-reload at http://localhost:5173):**
+
+```powershell
+cd ui && npm run dev
+```
+
 ## Architecture
 
 ### Core Loop (`src/agent/loop.py`)
@@ -111,6 +124,18 @@ python -m src.store.summary runs
 12. **Log** — `StepLog` is appended to `runs/<run_id>/run.jsonl`; every artifact goes under `runs/<run_id>/step_N/`.
 
 Terminal conditions: `FORM_SUBMITTED_SUCCESS`, `STOP_BEFORE_SEND`, `TASK_COMPLETED` (success); retry limit, max step limit, repeated loop detection (failure). `WAITING_FOR_USER` is a non-terminal pause — the run resumes when `POST /resume` is called.
+
+`AgentLoop` delegates to focused helper modules (all in `src/agent/`):
+
+| Module | Role |
+|---|---|
+| `progress_tracker.py` — `ProgressTracker` | Redundancy detection, action-signature novelty, alternating-pattern detection |
+| `retry_hardening.py` | Per-step retry decision tree for executor failures |
+| `step_artifacts.py` — `StepArtifactsManager` | Artifact path layout under `runs/<run_id>/step_N/`; decouples filesystem from loop |
+| `anchor_cache.py` | Per-run click-coordinate cache; snaps TYPE targets back to last confirmed click anchor when drift < 5px |
+| `adaptation.py` | Direct `FailureCategory → RecoveryStrategy` mapping (replaces runtime contract indirection) |
+| `subgoal_utils.py` | Subgoal-mutation helpers shared between recovery and progress tracking |
+| `_agent_utils.py` | `collect_latest_usage()` — reads token-usage from any client and enqueues for disk write |
 
 ### Strict Baseline Requirements
 
@@ -141,6 +166,7 @@ Operon has two execution modes sharing the same loop, verifier, recovery, and pe
 
 - **Desktop mode** — full-screen automation via `pyautogui` + `mss`. Uses combined JSON perception+policy through `GeminiHttpClient`.
 - **Browser mode** — Playwright-based. Primary backend is `BrowserComputerUseBackend` (Gemini Computer Use with coordinate normalization and multi-call turns); fallback is `BrowserJsonBackend`. `NativeBrowserExecutor` translates actions to Playwright calls. Browser sessions are video-recorded under `.browser-artifacts/` and linked into the run snapshot for the observer UI.
+- **CDP attach mode** — `BrowserManager` (`src/browser/manager.py`) connects to an already-running Chrome via Playwright's `connect_over_cdp`, streams JPEG frames via CDP `Page.startScreencast`, and publishes them to all WebSocket clients. Activated via `POST /connect-cdp`; teardown via `POST /disconnect-cdp`.
 
 Backend selection is handled by `src/agent/backend.py` based on env vars. `src/agent/action_translation.py` bridges Computer Use action formats to the internal `AgentAction` schema.
 
@@ -246,18 +272,21 @@ Operon's memory system is self-pruning. It optimizes for the shortest path, not 
 - `FileBackedMemoryStore` — append-only JSONL; weight-aware `get_hints()`; decays on failure; 1-step-filtered episode extraction.
 - `run_logger.py` — appends `StepLog` / `PreStepFailureLog` as JSONL.
 - `replay.py`, `summary.py` — read-only analysis tools.
+- `cleanup.py` — prunes `runs/` directories older than 7 days; `--delete` flag required to actually delete.
 
 ### API (`src/api/`)
 
 FastAPI app at `src/api/server.py`. Routes in `src/api/routes.py`:
 
-- `POST /run-task` — create a run record
-- `POST /step` — advance a run one step
-- `POST /resume` — resume a `WAITING_FOR_USER` run
-- `GET /run/{id}` — read run state
-- `GET /health`
-- `GET /` or `GET /desktop-pilot` — Operon Pilot UI (unified desktop + browser)
-- `GET /observer/api/runs`, `GET /observer/api/run/{id}`, `GET /observer/api/artifact` — run data endpoints
+- `POST /run-task`, `/step`, `/resume`, `/stop` — browser run lifecycle
+- `POST /desktop/run-task`, `/desktop/step`, `/desktop/resume` — desktop run lifecycle
+- `POST /connect-cdp`, `POST /disconnect-cdp` — attach/detach Chrome via CDP
+- `GET /run/{id}`, `GET /desktop/run/{id}`, `GET /health`
+- `GET /`, `/desktop-pilot` — Command Center UI (React 19)
+- `GET /observer/api/runs`, `/observer/api/run/{id}`, `/observer/api/usage`, `/observer/api/artifact`, `/observer/api/export/{id}`
+- `POST /benchmark/run-suite`, `GET /benchmark/tasks`, `GET /benchmark/suite/{id}`
+
+**WebSocket** (`src/api/ws_stream.py`) on port 9001 — live step events, binary JPEG frames, control messages. Control message types: `set_confidence_threshold`, `set_disabled_rules`, `override`, `resume`, `pause`, `inject_input`.
 
 The `AgentLoop` singleton is built lazily on first request via `get_agent_loop()`.
 
@@ -276,6 +305,16 @@ When the agent encounters a page it cannot handle autonomously (CAPTCHA, login w
 ### OS File Picker Macro (`src/executor/os_picker_macro.py`)
 
 `run_os_picker_macro()` is a deterministic, LLM-free primitive invoked by `NativeBrowserExecutor` after clicking an upload control that opens a native OS file dialog. It polls for a picker window via `pygetwindow` keyword matching, types the absolute file path with `pyautogui.write`, presses Enter, then polls for the window to close. Returns `PickerMacroResult` with `PickerOutcome` enum (`SUCCESS`, `PICKER_NOT_DETECTED`, `FILE_NOT_REFLECTED`, `UNAVAILABLE`).
+
+### Command Center UI (`ui/`)
+
+React 19 + TypeScript + Zustand 5, served by the FastAPI backend. Three-pane layout via `react-resizable-panels` v4 (`Group`/`Panel`/`Separator`/`orientation` — note v4 renames from v2's API).
+
+- **Task Intelligence** — `SubgoalTree` (status icons per subgoal), `ReasoningLog` Thought Cards (timestamp, perception summary, confidence badge, rationale), `ThinkingPulse` SVG animation
+- **Live Execution** — canvas JPEG frame mirror (`registerFrameCallback` pattern, zero React re-renders), `ConfidenceSlider` (sends `set_confidence_threshold` over WS), HITL dim overlay
+- **Settings / Moat Builder** — `SettingsPane`: rule toggles (`set_disabled_rules`), CDP port config, session persistence mode
+
+All CSS is inline (no CSS files). `ui/CLAUDE.md` has full UI-specific guidance. `src-tauri/` contains the in-progress Tauri desktop packaging wrapper.
 
 ### Clients (`src/clients/gemini.py`, `src/clients/anthropic.py`)
 

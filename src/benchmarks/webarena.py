@@ -45,14 +45,39 @@ def _filter_tasks(
 
 
 def _extract_final_text(agent_state) -> str:
-    if not agent_state or not agent_state.observation_history:
+    """Build the answer-search corpus that the string_match evaluator greps.
+
+    Priority order:
+    1. The text payload of the final stop action, when present. This is the
+       agent's explicit answer (per the ANSWER ON STOP prompt directive).
+    2. The last perception's summary plus all visible-element labels/text,
+       as a fallback for tasks where the answer is read off the screen
+       rather than committed via stop.text.
+
+    Both are concatenated so a stop.text answer is never lost even if the
+    final perception happens to lack the same string.
+    """
+    if not agent_state:
         return ""
-    last = agent_state.observation_history[-1]
-    parts = [last.summary]
-    for el in last.visible_elements:
-        for field in (el.label, el.text):
-            if field:
-                parts.append(field)
+    parts: list[str] = []
+
+    # Pull the last stop action's text first — this is the agent's explicit answer.
+    from src.models.policy import ActionType
+    if agent_state.action_history:
+        last_action = agent_state.action_history[-1].action
+        if last_action.action_type is ActionType.STOP and last_action.text:
+            parts.append(last_action.text)
+
+    # Then perception fallback.
+    if agent_state.observation_history:
+        last = agent_state.observation_history[-1]
+        if last.summary:
+            parts.append(last.summary)
+        for el in last.visible_elements:
+            for field in (el.label, el.text):
+                if field:
+                    parts.append(field)
+
     return " ".join(parts)
 
 

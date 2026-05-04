@@ -17,9 +17,6 @@ from src.store.memory import GENERIC_TASK, MemoryStore, normalize_intent
 
 logger = logging.getLogger(__name__)
 
-# Taskbar is typically in the bottom ~60px of a 1080p screen.
-_TASKBAR_Y_THRESHOLD = 1000
-
 
 class PostRunReflector:
     """Analyze completed runs and write learnings to the memory store."""
@@ -49,7 +46,6 @@ class PostRunReflector:
         patterns: list[ReflectionPattern] = []
 
         patterns.extend(self._detect_repeated_key_press(steps, run_id))
-        patterns.extend(self._detect_taskbar_clicking(steps, run_id))
         patterns.extend(self._detect_stuck_subgoal(steps, run_id))
         patterns.extend(self._detect_no_screen_change_actions(steps, run_id))
 
@@ -164,30 +160,6 @@ class PostRunReflector:
             ))
 
         return patterns
-
-    @staticmethod
-    def _detect_taskbar_clicking(steps: list[dict], run_id: str) -> list[ReflectionPattern]:
-        """Detect repeated clicks near the taskbar area to open apps."""
-        taskbar_clicks = []
-        for step in steps:
-            action = step.get("policy_decision", {}).get("action", {})
-            atype = action.get("action_type", "")
-            y = action.get("y")
-            step_idx = step.get("step_index", 0)
-            if atype == "click" and y is not None and y >= _TASKBAR_Y_THRESHOLD:
-                taskbar_clicks.append(step_idx)
-
-        if len(taskbar_clicks) >= 3:
-            return [ReflectionPattern(
-                pattern_key="taskbar_clicking_instead_of_launch",
-                description=f"Clicked the taskbar {len(taskbar_clicks)} times trying to open an app",
-                trigger_context="clicks near y>=1000 (taskbar region)",
-                suggested_action="Always use launch_app action to open applications. Never click the taskbar — coordinates are unreliable for small icons.",
-                confidence=0.9,
-                source_run_id=run_id,
-                source_steps=taskbar_clicks,
-            )]
-        return []
 
     @staticmethod
     def _detect_stuck_subgoal(steps: list[dict], run_id: str) -> list[ReflectionPattern]:

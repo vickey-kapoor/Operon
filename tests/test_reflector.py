@@ -134,45 +134,6 @@ def test_detect_repeated_key_final_streak_detected() -> None:
 
 
 # ===========================================================================
-# SIMPLE: _detect_taskbar_clicking
-# ===========================================================================
-
-def test_detect_taskbar_no_clicks_below_threshold() -> None:
-    """Fewer than 3 taskbar clicks produces no pattern."""
-    steps = [_click_step(i, x=400, y=1050) for i in range(1, 3)]
-    patterns = PostRunReflector._detect_taskbar_clicking(steps, "run-1")
-    assert patterns == []
-
-
-def test_detect_taskbar_exactly_three_fires_pattern() -> None:
-    """Exactly 3 clicks at y >= 1000 produces the taskbar pattern."""
-    steps = [_click_step(i, x=200, y=1020) for i in range(1, 4)]
-    patterns = PostRunReflector._detect_taskbar_clicking(steps, "run-1")
-    assert len(patterns) == 1
-    assert "taskbar" in patterns[0].pattern_key
-
-
-def test_detect_taskbar_ignores_clicks_above_threshold() -> None:
-    """Clicks above the taskbar Y threshold (y < 1000) are ignored."""
-    steps = [_click_step(i, x=400, y=800) for i in range(1, 6)]
-    patterns = PostRunReflector._detect_taskbar_clicking(steps, "run-1")
-    assert patterns == []
-
-
-def test_detect_taskbar_mixed_clicks_counts_correctly() -> None:
-    """Only the taskbar-region clicks count toward the threshold."""
-    steps = [
-        _click_step(1, y=300),   # normal
-        _click_step(2, y=1050),  # taskbar
-        _click_step(3, y=400),   # normal
-        _click_step(4, y=1010),  # taskbar
-        _click_step(5, y=1030),  # taskbar
-    ]
-    patterns = PostRunReflector._detect_taskbar_clicking(steps, "run-1")
-    assert len(patterns) == 1  # 3 taskbar clicks
-
-
-# ===========================================================================
 # SIMPLE: _detect_stuck_subgoal
 # ===========================================================================
 

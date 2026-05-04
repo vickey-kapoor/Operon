@@ -72,6 +72,28 @@ def test_agent_action_stop_rejects_payload_fields() -> None:
         )
 
 
+def test_agent_action_stop_allows_text_as_answer_payload() -> None:
+    """STOP with text is the answer-extraction protocol for information-retrieval
+    tasks (intent: 'find the year X' -> stop with text='1991'). The downstream
+    benchmark runner reads action.text to feed the string_match evaluator."""
+    action = AgentAction(action_type=ActionType.STOP, text="1991")
+    assert action.action_type is ActionType.STOP
+    assert action.text == "1991"
+
+
+def test_agent_action_stop_still_rejects_non_text_payload_fields() -> None:
+    """Allowing text on STOP must not relax other payload restrictions."""
+    for forbidden_kwargs in (
+        {"selector": "button.submit"},
+        {"key": "enter"},
+        {"url": "https://example.com"},
+        {"wait_ms": 1000},
+        {"x": 10, "y": 20},
+    ):
+        with pytest.raises(ValidationError):
+            AgentAction(action_type=ActionType.STOP, **forbidden_kwargs)
+
+
 
 def test_policy_decision_confidence_bounds() -> None:
     action = AgentAction(

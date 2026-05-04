@@ -48,7 +48,10 @@ Action rules:
 - press_key: requires key (e.g. "enter", "tab", "escape"). hotkey: requires key with "+" separators (e.g. "win+r", "ctrl+a").
 - launch_app: requires text (app name). No coordinates.
 - drag: requires x, y, x_end, y_end. May include target_element_id. scroll: requires scroll_amount, x, y.
-- stop: task is complete. No fields needed.
+- stop: task is complete. Set text to the answer string when the task asks you to find, state, report, or return information (see ANSWER ON STOP below).
+
+ANSWER ON STOP:
+- When the task asks you to FIND, STATE, REPORT, IDENTIFY, or otherwise return a piece of information (a year, a name, a number, a value), you MUST set "text" on the stop action to the answer itself — nothing else, no preamble. Example: intent "Find the year Python was first released" → stop with text="1991". The downstream evaluator reads this field literally; if you put the answer only in your rationale, the task will fail even when you found it correctly.
 
 STOP CONDITIONS (highest priority):
 - STOP immediately after the task goal is visibly achieved. Do NOT take extra actions.

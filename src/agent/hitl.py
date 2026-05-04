@@ -17,6 +17,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Windows-only: pass to subprocess.Popen so the spawned PowerShell does NOT
+# allocate a conhost.exe console window — that flash steals focus from the
+# user's foreground app on every notification. 0 on non-Windows is a no-op
+# (creationflags is ignored outside win32).
+_NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 # -------------------------------------------------------------------
 # Page-hint keywords that require a human to unblock the agent.
 # These are matched as substrings of the page_hint value.
@@ -115,6 +121,7 @@ def _notify_windows(title: str, message: str) -> None:
         ["powershell", "-WindowStyle", "Hidden", "-Command", script],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        creationflags=_NO_CONSOLE,
     )
 
 

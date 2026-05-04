@@ -51,7 +51,11 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "asyncio: mark a test as using asyncio",
+    "live_server: requires a running uvicorn server at localhost:8080 (opt-in via OPERON_RUN_LIVE_SERVER_TESTS=true)",
 ]
+# CI runs only fast/safe tests by default. Use `pytest -m live_server` to opt into
+# the server-required suites (or set OPERON_RUN_LIVE_SERVER_TESTS=true).
+addopts = "-m 'not live_server'"
 
 [tool.ruff]
 target-version = "py311"

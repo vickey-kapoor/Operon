@@ -9,6 +9,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from src.agent._agent_utils import collect_latest_usage
 from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.logs import ModelDebugArtifacts
 from src.models.perception import ScreenPerception
@@ -68,7 +69,7 @@ class GeminiPolicyService(PolicyService):
             raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
             parsed_artifact_path=str(debug_artifacts.parsed_artifact_path),
             usage_artifact_path=str(debug_artifacts.usage_artifact_path),
-            usage=_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
+            usage=collect_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
         )
         return decision
 
@@ -259,10 +260,3 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
     return normalized_payload
 
 
-def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
-    if not hasattr(client, "latest_usage"):
-        return None
-    usage = client.latest_usage()
-    if usage is not None:
-        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
-    return usage

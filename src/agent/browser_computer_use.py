@@ -7,6 +7,7 @@ import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.agent._agent_utils import collect_latest_usage
 from src.agent.action_translation import (
     build_policy_decision,
     normalize_computer_use_actions,
@@ -108,7 +109,7 @@ class BrowserComputerUseBackend(AgentBackend):
             raw_response_artifact_path=str(raw_path),
             parsed_artifact_path=str(parsed_path),
             usage_artifact_path=str(step_dir / "computer_use_usage.json"),
-            usage=_latest_usage(self.client, step_dir / "computer_use_usage.json"),
+            usage=collect_latest_usage(self.client, step_dir / "computer_use_usage.json"),
         )
         return perception
 
@@ -313,10 +314,3 @@ class BrowserComputerUseBackend(AgentBackend):
         return {"role": "user", "parts": parts}
 
 
-def _latest_usage(client: GeminiComputerUseClient, usage_artifact_path: Path):
-    if not hasattr(client, "latest_usage"):
-        return None
-    usage = client.latest_usage()
-    if usage is not None:
-        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
-    return usage

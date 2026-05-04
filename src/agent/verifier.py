@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
+from src.agent._agent_utils import collect_latest_usage
 from src.clients.anthropic import AnthropicClientError
 from src.clients.gemini import GeminiClient, GeminiClientError
 from src.models.common import FailureCategory, LoopStage, StopReason
@@ -333,7 +334,7 @@ class DeterministicVerifierService(VerifierService):
         self._last_debug_artifacts = debug_artifacts.model_copy(
             update={
                 "usage_artifact_path": str(Path(debug_artifacts.parsed_artifact_path).resolve().parent / "verification_usage.json"),
-                "usage": _latest_usage(self.gemini_client, Path(debug_artifacts.parsed_artifact_path).resolve().parent / "verification_usage.json"),
+                "usage": collect_latest_usage(self.gemini_client, Path(debug_artifacts.parsed_artifact_path).resolve().parent / "verification_usage.json"),
             }
         )
         return normalized
@@ -608,10 +609,3 @@ def _normalize_verification_result(result: VerificationResult) -> VerificationRe
     return result.model_copy(update=updates) if updates else result
 
 
-def _latest_usage(client: GeminiClient, usage_artifact_path: Path):
-    if not hasattr(client, "latest_usage"):
-        return None
-    usage = client.latest_usage()
-    if usage is not None:
-        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
-    return usage

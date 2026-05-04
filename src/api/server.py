@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
     # Register benchmark plugins before any engine code runs.
     import src.benchmarks.form_plugin  # noqa: F401
     from src.api.routes import router
+    from src.api.ws_stream import router as ws_router
 
     app = FastAPI(
         title="Operon",
@@ -59,14 +60,18 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     origins = os.getenv("CORS_ORIGINS", "").strip()
+    # Always allow the Tauri WS bridge and local dev origins.
+    allowed = {"http://localhost:9001", "http://127.0.0.1:9001", "http://localhost:5173"}
     if origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=[o.strip() for o in origins.split(",")],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        allowed.update(o.strip() for o in origins.split(","))
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(allowed),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(router)
+    app.include_router(ws_router)
     return app
 
 

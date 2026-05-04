@@ -49,6 +49,8 @@ Both share the same loop, verifier, recovery, persistence, and memory layers.
 | **Persistence** | `src/store/` | File-backed run store + memory store, JSONL logging |
 | **API** | `src/api/` | FastAPI server, Pilot UI, observer (live log with `[RULE]`/`[LLM]` colouring) |
 | **Gemini clients** | `src/clients/gemini.py`, `gemini_computer_use.py` | HTTP calls: single image, video, multi-image (reaction check) |
+| **Command Center UI** | `ui/` | React 19 + Zustand 5 + react-resizable-panels; SubgoalTree, Thought Cards, ConfidenceSlider, SettingsPane (Moat Builder) |
+| **WebSocket stream** | `src/api/ws_stream.py` (port 9001) | Live step events, JPEG frame delivery, control messages (set_disabled_rules, set_confidence_threshold, resume, override) |
 
 ## Spatial Persistence in Detail
 

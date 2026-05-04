@@ -1,5 +1,7 @@
 # Unified Agent Contract (Phase 1)
 
+> **Status:** Implemented. The Phase 1 contracts are live in `src/core/contracts/`, `src/runtime/`, and `src/executor/`. `AgentLoop` produces these contracts via `LegacyOperonContractAdapter` on every step; `UnifiedOrchestrator` validates them. This doc describes the design intent and contract shapes — see `docs/architecture.md` for the current runtime details.
+
 ## Scope
 
 Phase 1 defines the contract layer only for a shared browser + desktop agent.

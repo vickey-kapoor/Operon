@@ -1,5 +1,5 @@
 # Operon Architecture Reference
-_Last refreshed: 2026-04-29 · Updated: 2026-05-01_
+_Last refreshed: 2026-05-04_
 
 ## Directory Layout
 
@@ -9,7 +9,7 @@ src/
                 policy_rules.py, verifier.py, video_verifier.py, recovery.py,
                 reflector.py, benchmark.py, capture.py, selector.py, hitl.py,
                 screen_diff.py, backend.py, action_translation.py,
-                fallback_backend.py, combined.py
+                fallback_backend.py, combined.py, _agent_utils.py
   api/          server.py, routes.py, observer.py, runtime_config.py,
                 benchmark_suite.py, static/
   clients/      gemini.py, anthropic.py, gemini_computer_use.py
@@ -324,14 +324,20 @@ memory/memory.jsonl, episodes.jsonl
 ### Desktop
 `POST /desktop/run-task`, `POST /desktop/step`, `POST /desktop/resume`, `POST /desktop/cleanup`, `GET /desktop/run/{id}`
 
+### CDP / Browser attach
+`POST /connect-cdp` — attach to a running Chrome instance via CDP + start screencast  
+`POST /disconnect-cdp` — detach CDP session
+
 ### Observer / Telemetry
 `GET /observer/api/runs`, `/observer/api/run/{id}`, `/observer/api/usage`, `/observer/api/artifact`, `/observer/api/export/{id}`, `/observer/api/live-browser/{id}`
 
 ### Benchmarks
 `POST /benchmark/run-suite`, `POST /benchmark/stop-suite/{id}`, `POST /benchmark/run-task`, `GET /benchmark/tasks`, `GET /benchmark/suite/{id}`
 
-### Static UI
-`/` → landing.html, `/console` → console.html (live log with `[RULE]`/`[LLM]` event colouring), `/dashboard` → dashboard.html, `/benchmarks` → benchmarks.html
+### Command Center UI (React 19)
+`GET /` or `/desktop-pilot` → Operon Pilot UI (unified desktop + browser Command Center)  
+WebSocket stream on port 9001 (`ws://127.0.0.1:9001`) — live step events, JPEG frames, control messages  
+`/console`, `/dashboard`, `/benchmarks` → static HTML observer pages
 
 ### Loop builders
 Both `get_agent_loop()` and `get_desktop_agent_loop()` create a `VideoVerifier` instance and pass it to both `AgentLoop` (for `_maybe_video_verify`) and `DeterministicVerifierService` (for reaction checking). Dedicated `video_gemini_client` independent of verifier provider.
@@ -349,7 +355,7 @@ Default model: `gemini-2.5-flash` (env: `GEMINI_MODEL`). Methods:
 - `generate_verification(prompt, screenshot_path)` — image+text critic (via AnthropicHttpClient when using Anthropic verifier)
 
 ### `AnthropicHttpClient` (`src/clients/anthropic.py`)
-Default model: `claude-sonnet-4-20250514`. Methods: `generate_policy()` (text), `generate_verification()` (image+text).
+Default model: `claude-sonnet-4-20250514` (env: `OPERON_DESKTOP_PLANNER_MODEL` / `OPERON_BROWSER_PLANNER_MODEL`). Methods: `generate_policy()` (text), `generate_verification()` (image+text).
 
 ---
 

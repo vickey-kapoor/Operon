@@ -9,7 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 
 from src.agent.anthropic_policy import AnthropicPolicyService
 from src.agent.backend import AgentBackend
@@ -78,10 +84,11 @@ def _validate_run_id(run_id: str) -> None:
     if len(run_id) > _MAX_RUN_ID_LENGTH or not _RUN_ID_RE.match(run_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
-_LANDING_HTML_PATH = _STATIC_DIR / "landing.html"
+_RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
 _CONSOLE_HTML_PATH = _STATIC_DIR / "console.html"
 _DASHBOARD_HTML_PATH = _STATIC_DIR / "dashboard.html"
 _BENCHMARKS_HTML_PATH = _STATIC_DIR / "benchmarks.html"
+_COMMAND_CENTER_HTML_PATH = _STATIC_DIR / "command-center.html"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
@@ -399,6 +406,24 @@ async def step_run(request: StepRequest) -> RunResponse:
                 _step_event["action_type"] = _pd.get("action", {}).get("action_type")
                 _step_event["rule_name"] = _pd.get("rule_name")
                 _step_event["rationale"] = _pd.get("rationale")
+                _step_event["action_expected_change"] = _pd.get("expected_change")
+                # Derive a display target for the command-center step stream
+                _a = _pd.get("action", {})
+                _atype = _a.get("action_type", "")
+                if _atype == "navigate":
+                    _step_event["action_target"] = (_a.get("url") or "").replace("https://", "").replace("http://", "").split("?")[0][:70]
+                elif _atype in ("type", "select"):
+                    _step_event["action_target"] = _a.get("selector") or _a.get("target_element_id") or ""
+                    _step_event["action_value"] = _a.get("text")
+                elif _atype in ("press_key", "hotkey"):
+                    _step_event["action_target"] = _a.get("key") or ""
+                elif _atype == "launch_app":
+                    _step_event["action_target"] = _a.get("text") or ""
+                elif _atype == "scroll":
+                    _amt = _a.get("scroll_amount", 0) or 0
+                    _step_event["action_target"] = "down" if _amt > 0 else "up"
+                else:
+                    _step_event["action_target"] = _a.get("selector") or _a.get("target_element_id") or ""
                 # Perception summary from the sibling artifact
                 _perc_path = _pd_path.parent / "perception_parsed.json"
                 if _perc_path.exists():
@@ -628,14 +653,20 @@ async def observer_live_browser(run_id: str) -> Response:
 
 @router.get("/console", response_class=HTMLResponse)
 async def task_console_ui() -> str:
-    """Serve the task console UI."""
-    return _CONSOLE_HTML_PATH.read_text(encoding="utf-8")
+    """Serve the command center UI (legacy /console path)."""
+    return _COMMAND_CENTER_HTML_PATH.read_text(encoding="utf-8")
 
 
-@router.get("/", response_class=HTMLResponse)
-async def landing_ui() -> str:
-    """Serve the landing page linking to app surfaces."""
-    return _LANDING_HTML_PATH.read_text(encoding="utf-8")
+@router.get("/")
+async def root_ui() -> RedirectResponse:
+    """Redirect root to the command center."""
+    return RedirectResponse(url="/command-center", status_code=307)
+
+
+@router.get("/command-center", response_class=HTMLResponse)
+async def command_center_root_ui() -> str:
+    """Serve the command center UI."""
+    return _COMMAND_CENTER_HTML_PATH.read_text(encoding="utf-8")
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -648,6 +679,164 @@ async def dashboard_ui() -> str:
 async def benchmarks_ui() -> str:
     """Serve the WebArena benchmark suite runner UI."""
     return _BENCHMARKS_HTML_PATH.read_text(encoding="utf-8")
+
+
+def _step_log_to_event(record: dict) -> dict | None:
+    """Map a StepLog or PreStepFailureLog JSONL record to the SSE step event shape."""
+    import json as _json  # noqa: F401 — local import avoids module-level shadowing
+
+    if record.get("record_type") == "pre_step_failure":
+        return {
+            "n": record.get("step_index", 0),
+            "action": "error",
+            "target": (record.get("error_message") or "")[:70],
+            "value": None,
+            "source": "system",
+            "conf": None,
+            "expects": None,
+            "status": "failed",
+        }
+    pd = record.get("policy_decision") or {}
+    action = pd.get("action") or {}
+    atype = action.get("action_type", "unknown")
+    target = ""
+    value = None
+    if atype == "navigate":
+        url = action.get("url") or ""
+        target = url.replace("https://", "").replace("http://", "").split("?")[0][:70]
+    elif atype in ("type", "select"):
+        target = action.get("selector") or action.get("target_element_id") or ""
+        text = action.get("text") or ""
+        if text and len(text) <= 80:
+            value = text
+    elif atype in ("press_key", "hotkey"):
+        target = action.get("key") or ""
+    elif atype == "launch_app":
+        target = action.get("text") or ""
+    elif atype == "scroll":
+        amt = action.get("scroll_amount") or 0
+        target = "down" if amt > 0 else "up"
+    elif atype == "wait":
+        target = f"{action.get('wait_ms') or 0}ms"
+    else:
+        target = action.get("selector") or action.get("target_element_id") or ""
+    failure = record.get("failure")
+    expected = pd.get("expected_change") or "none"
+    return {
+        "n": record.get("step_index", 0),
+        "action": atype,
+        "target": target or (pd.get("active_subgoal") or "")[:70],
+        "value": value,
+        "source": pd.get("rule_name") or "LLM",
+        "conf": pd.get("confidence"),
+        "expects": expected if expected != "none" else None,
+        "status": "failed" if failure else "done",
+    }
+
+
+@router.get("/command-center/api/run/{run_id}/stream")
+async def command_center_run_stream(run_id: str) -> StreamingResponse:
+    """SSE: replay existing run.jsonl steps, then tail new ones at 200 ms. Heartbeat every 15 s."""
+    import json as _json
+    _validate_run_id(run_id)
+    jsonl_path = _RUNS_DIR / run_id / "run.jsonl"
+
+    async def _generate():
+        offset = 0
+        if jsonl_path.exists():
+            raw = jsonl_path.read_bytes()
+            for line in raw.decode("utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    ev = _step_log_to_event(_json.loads(line))
+                    if ev:
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                except Exception:
+                    pass
+            offset = len(raw)
+        ticks = 0
+        while True:
+            await asyncio.sleep(0.2)
+            ticks += 1
+            if ticks >= 75:  # 75 × 200 ms = 15 s
+                yield ": heartbeat\n\n"
+                ticks = 0
+            if not jsonl_path.exists():
+                continue
+            size = jsonl_path.stat().st_size
+            if size <= offset:
+                continue
+            with jsonl_path.open("rb") as fh:
+                fh.seek(offset)
+                chunk = fh.read()
+            offset += len(chunk)
+            for line in chunk.decode("utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    ev = _step_log_to_event(_json.loads(line))
+                    if ev:
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/command-center/api/run/{run_id}/screenshot")
+async def command_center_screenshot(run_id: str) -> Response:
+    """Return the current browser viewport as PNG for 2 Hz screenshot polling."""
+    _validate_run_id(run_id)
+    executor = get_agent_loop().executor
+    if not hasattr(executor, "live_frame_png"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screenshot not available")
+    png_bytes = await executor.live_frame_png(run_id)
+    if png_bytes is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active browser session")
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/run/{run_id}/stop")
+async def stop_run_by_id(run_id: str) -> dict:
+    """Stop a run by path parameter. Idempotent on already-terminal runs."""
+    _validate_run_id(run_id)
+    run_store = get_agent_loop().run_store
+    run = await run_store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    terminal = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
+    if run.status not in terminal:
+        run = await run_store.set_status(run_id, RunStatus.CANCELLED)
+    return {"run_id": run_id, "status": run.status.value}
+
+
+@router.post("/run/{run_id}/pause")
+async def pause_run(run_id: str) -> dict:
+    """Pause an active run by transitioning it to waiting_for_user."""
+    _validate_run_id(run_id)
+    run_store = get_agent_loop().run_store
+    run = await run_store.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    if run.status == RunStatus.RUNNING:
+        run = await run_store.set_status(run_id, RunStatus.WAITING_FOR_USER)
+    return {"run_id": run_id, "status": run.status.value}
+
+
+@router.get("/command-center/{run_id}", response_class=HTMLResponse)
+async def command_center_ui(run_id: str) -> str:
+    """Serve the live command center for a specific run."""
+    _validate_run_id(run_id)
+    return _COMMAND_CENTER_HTML_PATH.read_text(encoding="utf-8")
 
 
 # ── Benchmark suite ─────────────────────────────────────────────

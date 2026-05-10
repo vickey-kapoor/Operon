@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Operon — Command Center</title>
+<title>Operon</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232563eb'/><text x='16' y='23' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'>O</text></svg>">
 <style>
   :root {
@@ -179,6 +179,11 @@
     background: rgba(37,99,235,0.08); color: var(--blue);
     border: 1px solid rgba(37,99,235,0.20);
   }
+  .btn-watch {
+    background: rgba(15,23,42,0.04); color: var(--muted);
+    border: 1px solid var(--line); font-size: 12px;
+  }
+  .btn-watch:hover:not(:disabled) { color: var(--ink); border-color: rgba(15,23,42,0.22); }
 
   .hidden { display: none !important; }
 
@@ -387,7 +392,6 @@
       </div>
     </div>
     <nav class="nav">
-      <a href="/">Home</a>
       <a href="/console" class="active">Command Center</a>
       <a href="/dashboard">Dashboard</a>
       <a href="/benchmarks">Benchmarks</a>
@@ -416,6 +420,7 @@
         <button id="btnRun"    class="btn btn-run"            type="button" onclick="startRun()">▶ Run Task</button>
         <button id="btnStop"   class="btn btn-stop"           type="button" onclick="stopRun()" disabled>■ Stop</button>
         <button id="btnResume" class="btn btn-resume hidden"  type="button" onclick="resumeRun()">↻ Resume</button>
+        <button id="btnWatch"  class="btn btn-watch hidden"   type="button" onclick="watchLive()">⬡ Watch live</button>
       </div>
     </div>
   </section>
@@ -532,6 +537,11 @@ function setRunning(isRunning) {
   document.getElementById('startUrl').disabled = isRunning || mode !== 'browser';
   document.getElementById('modeBrowser').disabled = isRunning;
   document.getElementById('modeDesktop').disabled = isRunning;
+  document.getElementById('btnWatch').classList.toggle('hidden', !isRunning || !runId);
+}
+
+function watchLive() {
+  if (runId) window.open('/command-center/' + encodeURIComponent(runId), '_blank');
 }
 
 function showStatusBar(label, meta, dotClass) {
@@ -715,6 +725,7 @@ async function startRun() {
     });
     runId = resp.run_id;
     showStatusBar('Running', 'Run ' + runId + ' started.', 'running');
+    document.getElementById('btnWatch').classList.remove('hidden');
     startPoller();
     await runLoop();
   } catch (e) {

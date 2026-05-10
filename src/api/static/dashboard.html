@@ -4,499 +4,459 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Operon — Dashboard</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232563eb'/><text x='16' y='23' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'>O</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #f4f7fb;
-    --panel: #ffffff;
-    --border: rgba(15,23,42,0.10);
-    --line: rgba(15,23,42,0.08);
-    --text: #0f172a;
-    --muted: #5f7188;
-    --blue: #2563eb;
-    --green: #059669;
-    --danger: #dc2626;
-    --shadow: 0 4px 24px rgba(15,23,42,0.07);
-    --radius: 16px;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
-    min-height: 100vh;
-    color: var(--text);
-    background:
-      radial-gradient(circle at top left, rgba(37,99,235,0.08), transparent 28%),
-      radial-gradient(circle at 80% 10%, rgba(5,150,105,0.06), transparent 22%),
-      linear-gradient(180deg, #fbfdff, #f3f7fc 58%, #eef3f9);
-    font-size: 14px;
-    line-height: 1.5;
-  }
-  .page { max-width: 1280px; margin: 0 auto; padding: 28px 28px 60px; }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* ── Topbar ── */
+  :root {
+    --bg:        #0e0d0c;
+    --bg-panel:  #161412;
+    --bg-hover:  #1a1816;
+    --border:    #252321;
+    --border-sub:#1a1816;
+    --text:      #e8e4dc;
+    --muted:     #7a756c;
+    --dim:       #4a453e;
+    --neutral:   #a8a29a;
+    --amber:     #d97706;
+    --amber-bg:  #1f1408;
+    --amber-bdr: #3a2a14;
+    --green:     #84cc16;
+    --red:       #dc2626;
+    --sans:      'IBM Plex Sans', system-ui, sans-serif;
+    --mono:      'IBM Plex Mono', ui-monospace, monospace;
+    --cond:      'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.4;
+    min-height: 100vh;
+  }
+  * { scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
+  *::-webkit-scrollbar { width: 4px; }
+  *::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 99px; }
+
+  /* ── Header ─────────────────────────────────────────────────────────────── */
   .topbar {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 18px; margin-bottom: 30px;
+    padding: 0 32px; height: 48px;
+    border-bottom: 1px solid var(--border);
   }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand-mark {
-    width: 42px; height: 42px; border-radius: 14px;
-    background: linear-gradient(135deg, #2563eb, #059669);
-    display: grid; place-items: center;
-    color: white; font-weight: 900; font-size: 17px;
-    box-shadow: 0 8px 20px rgba(37,99,235,0.22);
+  .topbar-left { display: flex; align-items: center; gap: 10px; }
+  .logo-sq {
+    width: 26px; height: 26px; border-radius: 5px;
+    background: linear-gradient(135deg, #d97706, #f59e0b);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--cond); font-weight: 700; font-size: 13px; color: #0e0d0c;
   }
-  .brand-name { font-size: 18px; font-weight: 800; letter-spacing: -0.03em; }
-  .brand-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
-  .nav { display: flex; gap: 8px; flex-wrap: wrap; }
-  .nav a {
-    text-decoration: none; color: var(--muted);
-    border: 1px solid var(--line); background: rgba(255,255,255,0.6);
-    padding: 9px 14px; border-radius: 999px; font-size: 13px; font-weight: 700;
-    transition: color 0.1s, border-color 0.1s;
+  .brand { font-family: var(--cond); font-weight: 700; font-size: 15px; letter-spacing: 0.04em; }
+  .nav-btn {
+    padding: 5px 12px; font-size: 13px; font-family: var(--sans);
+    background: transparent; border: none; border-radius: 4px;
+    color: var(--muted); cursor: pointer; transition: all 0.1s; font-weight: 400;
   }
-  .nav a:hover { color: var(--text); border-color: rgba(15,23,42,0.22); }
-  .nav a.active { background: linear-gradient(135deg, #dbeafe, #d1fae5); color: var(--text); border-color: transparent; }
+  .nav-btn:hover { color: var(--text); background: var(--bg-hover); }
+  .nav-btn.active { background: var(--bg-hover); color: var(--text); font-weight: 500; }
 
-  /* ── KPI row ── */
-  .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 14px;
-    margin-bottom: 18px;
-  }
-  .kpi-card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 22px 20px;
-    box-shadow: var(--shadow);
-  }
-  .kpi-label {
-    font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.08em; color: var(--muted); margin-bottom: 10px;
-  }
-  .kpi-value {
-    font-size: 26px; font-weight: 900; letter-spacing: -0.04em;
-    line-height: 1; margin-bottom: 6px; word-break: break-all;
-  }
-  .kpi-value.green { color: var(--green); }
-  .kpi-note { font-size: 12px; color: var(--muted); }
+  /* ── Page content ───────────────────────────────────────────────────────── */
+  .page { max-width: 1400px; margin: 0 auto; padding: 24px 32px 60px; }
 
-  /* ── Panels grid ── */
-  .grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-    margin-bottom: 14px;
+  .period-row { margin-bottom: 20px; }
+  .period-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 4px;
   }
+  .period-val {
+    font-family: var(--mono); font-size: 14px; color: var(--text);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .period-sub { font-size: 11px; color: var(--muted); }
+
+  /* ── Stat cards ─────────────────────────────────────────────────────────── */
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+
+  .stat-card {
+    padding: 18px 20px; border-radius: 6px;
+    background: var(--bg-panel); border: 1px solid var(--border);
+  }
+  .stat-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+  }
+  .stat-value {
+    font-family: var(--cond); font-weight: 700; font-size: 28px;
+    line-height: 1; margin-bottom: 8px; letter-spacing: -0.02em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .stat-value.mono { font-family: var(--mono); font-size: 17px; font-weight: 500; letter-spacing: 0; }
+  .stat-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+  /* ── Grid 2-col ─────────────────────────────────────────────────────────── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+
+  /* ── Panel ──────────────────────────────────────────────────────────────── */
   .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    overflow: hidden;
+    padding: 18px 20px; border-radius: 6px;
+    background: var(--bg-panel); border: 1px solid var(--border);
   }
   .panel-head {
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(248,250,252,0.80);
+    display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px;
   }
-  .panel-title { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
-  .panel-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
-  .panel-body { padding: 18px 20px; }
+  .panel-title {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--neutral);
+  }
+  .panel-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
-  /* ── Model cards ── */
-  .model-list, .trend-list, .run-cards { display: flex; flex-direction: column; gap: 10px; }
-  .model-card, .run-card {
-    background: #f8fafc;
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 14px;
+  /* ── Outcome bar ────────────────────────────────────────────────────────── */
+  .outcome-bar {
+    display: flex; height: 7px; border-radius: 3px; overflow: hidden;
+    background: var(--border-sub); margin: 12px 0 20px;
   }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .model-name, .run-title {
-    font-size: 13px; font-weight: 700;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .amount { font-size: 13px; font-weight: 800; color: var(--green); flex-shrink: 0; }
-  .subrow {
-    display: flex; justify-content: space-between; gap: 12px;
-    margin-top: 7px; color: var(--muted); font-size: 11px; align-items: center;
-  }
-  .bar { height: 6px; border-radius: 999px; background: rgba(15,23,42,0.07); margin-top: 10px; overflow: hidden; }
-  .fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2563eb, #059669); }
+  .ob-succ { background: var(--green); }
+  .ob-fail { background: var(--red); }
 
-  /* ── Status badges ── */
-  .status {
+  .outcome-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 0;
+  }
+  .or-left { display: flex; align-items: center; gap: 10px; }
+  .or-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .or-label { font-size: 13px; }
+  .or-count { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .or-right { display: flex; align-items: baseline; gap: 12px; }
+  .or-avg { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .or-total { font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 500; }
+
+  .outcome-insight {
+    margin-top: 16px; padding-top: 12px;
+    border-top: 1px dashed var(--border-sub);
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  /* ── Model spend ────────────────────────────────────────────────────────── */
+  .model-row { margin-top: 14px; }
+  .model-row + .model-row { margin-top: 14px; }
+  .model-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  .model-name { font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+  .model-cost { font-family: var(--mono); font-size: 13px; color: var(--amber); font-variant-numeric: tabular-nums; font-weight: 500; }
+  .model-bar-wrap { display: flex; align-items: center; gap: 12px; }
+  .model-bar-track { flex: 1; height: 5px; border-radius: 2px; overflow: hidden; background: var(--border-sub); }
+  .model-bar-fill { height: 100%; background: linear-gradient(90deg, #d97706, #f59e0b); }
+  .model-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); width: 140px; text-align: right; white-space: nowrap; }
+
+  /* ── Run ledger ─────────────────────────────────────────────────────────── */
+  .filter-row { display: flex; gap: 6px; margin: 12px 0 16px; }
+  .filter-btn {
+    padding: 4px 10px; font-family: var(--mono); font-size: 12px;
+    border-radius: 4px; border: 1px solid var(--border);
+    background: transparent; color: var(--neutral); cursor: pointer; transition: all 0.1s;
+  }
+  .filter-btn.active {
+    border-color: var(--amber-bdr); background: var(--amber-bg); color: var(--amber);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); }
+  thead tr { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  th { padding: 6px 0; font-weight: 500; text-align: left; }
+  th.r { text-align: right; }
+  tbody tr {
+    font-size: 12.5px; border-top: 1px dashed var(--border-sub);
+    cursor: pointer; transition: background 0.1s;
+  }
+  tbody tr:hover { background: var(--bg-hover); }
+  td { padding: 9px 0; }
+  td.r { text-align: right; }
+
+  .run-id-chip { font-size: 10px; color: var(--dim); }
+  .run-intent { font-family: var(--sans); color: var(--text); }
+
+  .pill {
     display: inline-flex; align-items: center; gap: 5px;
-    padding: 3px 8px; border-radius: 999px;
-    background: #f1f5f9; border: 1px solid var(--border);
-    color: var(--muted); font-size: 11px; font-weight: 600;
+    font-family: var(--mono); font-size: 11px;
   }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; flex-shrink: 0; }
-  .dot.running { background: var(--green); }
-  .dot.succeeded { background: var(--green); }
-  .dot.failed, .dot.cancelled { background: var(--danger); }
-  .dot.waiting_for_user { background: #d97706; }
-
-  /* ── Trend ── */
-  .trend-row {
-    display: grid; grid-template-columns: 72px 1fr 84px;
-    gap: 12px; align-items: center;
-    padding: 6px 0; border-bottom: 1px solid rgba(15,23,42,0.05);
-  }
-  .trend-row:last-child { border-bottom: none; }
-  .trend-date { font-size: 12px; font-weight: 700; color: var(--text); }
-  .trend-bar { height: 8px; border-radius: 999px; overflow: hidden; background: rgba(15,23,42,0.07); }
-  .trend-value { text-align: right; font-size: 12px; font-weight: 800; color: var(--green); }
-
-  /* ── Ledger ── */
-  .ledger { width: 100%; border-collapse: collapse; }
-  .ledger th, .ledger td {
-    text-align: left; padding: 10px 0;
-    border-bottom: 1px solid rgba(15,23,42,0.06);
-    font-size: 12px; vertical-align: middle;
-  }
-  .ledger tr:last-child td { border-bottom: none; }
-  .ledger th {
-    color: var(--muted); text-transform: uppercase;
-    letter-spacing: 0.07em; font-size: 11px; font-weight: 700;
-  }
-  .ledger th:last-child, .ledger td:last-child { text-align: right; }
-  .ledger-title {
-    font-weight: 700; margin-bottom: 3px;
-    max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .ledger-meta { color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 5px; }
-
-  /* ── Empty ── */
-  .empty {
-    padding: 32px 18px; border-radius: 14px; text-align: center;
-    color: var(--muted); border: 1px dashed rgba(15,23,42,0.12); background: #f8fafc;
-    font-size: 13px;
-  }
-
-  @media (max-width: 1040px) {
-    .kpi-row { grid-template-columns: repeat(2, 1fr); }
-    .grid { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 600px) {
-    .kpi-row { grid-template-columns: 1fr 1fr; }
-  }
+  .pill-dot { width: 5px; height: 5px; border-radius: 50%; }
 </style>
 </head>
 <body>
-<main class="page">
 
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-mark">O</div>
-      <div>
-        <div class="brand-name">Operon</div>
-        <div class="brand-sub">Dashboard</div>
-      </div>
-    </div>
-    <nav class="nav">
-      <a href="/">Home</a>
-      <a href="/console">Command Center</a>
-      <a href="/dashboard" class="active">Dashboard</a>
-      <a href="/benchmarks">Benchmarks</a>
-    </nav>
-  </header>
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="logo-sq">o</div>
+    <div class="brand">OPERON</div>
+  </div>
+  <nav style="display:flex;align-items:center;gap:2px;">
+    <button class="nav-btn" onclick="location.href='/command-center'">Command Center</button>
+    <button class="nav-btn active">Dashboard</button>
+    <button class="nav-btn" onclick="location.href='/benchmarks'">Benchmarks</button>
+  </nav>
+</header>
 
-  <!-- Billing period header -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <span style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.10em;color:var(--muted);">Billing period</span>
-      <span style="font-size:12px;font-weight:700;color:var(--text);background:#fff;border:1px solid var(--border);border-radius:999px;padding:4px 12px;" id="billingPeriodLabel">—</span>
-    </div>
-    <span style="font-size:12px;color:var(--muted);" id="billingRunCount">Loading…</span>
+<div class="page">
+
+  <div class="period-row">
+    <div class="period-label">billing period</div>
+    <div class="period-val" id="periodVal">—</div>
   </div>
 
-  <!-- KPI row -->
-  <section class="kpi-row">
-    <div class="kpi-card">
-      <div class="kpi-label">MTD Spend</div>
-      <div class="kpi-value green" id="statSpend">$0.000000</div>
-      <div class="kpi-note" id="statSpendNote">Current month to date</div>
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">mtd spend</div>
+      <div class="stat-value" id="statSpend" style="color:var(--amber)">—</div>
+      <div class="stat-sub" id="statSpendSub">— runs</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Requests</div>
-      <div class="kpi-value" id="statRequests">0</div>
-      <div class="kpi-note">Billable model calls</div>
+    <div class="stat-card">
+      <div class="stat-label">requests</div>
+      <div class="stat-value" id="statReqs">—</div>
+      <div class="stat-sub">billable model calls</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Tokens</div>
-      <div class="kpi-value" id="statTokens">0</div>
-      <div class="kpi-note">Prompt + completion</div>
+    <div class="stat-card">
+      <div class="stat-label">tokens</div>
+      <div class="stat-value" id="statTok">—</div>
+      <div class="stat-sub">prompt + completion</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Top Model</div>
-      <div class="kpi-value" style="font-size:16px;line-height:1.3;" id="statTopModel">—</div>
-      <div class="kpi-note" id="statTopModelNote">No priced models yet</div>
+    <div class="stat-card">
+      <div class="stat-label">top model</div>
+      <div class="stat-value mono" id="statTopModel">—</div>
+      <div class="stat-sub" id="statTopModelSub">—</div>
     </div>
-  </section>
+  </div>
 
-  <!-- Row 1 -->
-  <section class="grid">
+  <div class="two-col">
     <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">Spend by model</div>
-        <div class="panel-sub">Sorted by estimated cost</div>
+        <div class="panel-title">cost by outcome</div>
+        <div class="panel-sub" id="outcomeSub">— runs</div>
       </div>
-      <div class="panel-body">
-        <div id="modelList" class="model-list">
-          <div class="empty">No usage data yet.</div>
-        </div>
+      <div class="outcome-bar">
+        <div class="ob-succ" id="obSucc" style="width:0%"></div>
+        <div class="ob-fail" id="obFail" style="width:0%"></div>
       </div>
-    </div>
-    <div class="panel">
-      <div class="panel-head">
-        <div class="panel-title">Recent runs</div>
-        <div class="panel-sub">Cost, tokens, and status per run</div>
-      </div>
-      <div class="panel-body">
-        <div id="runCards" class="run-cards">
-          <div class="empty">Run usage appears here after model calls.</div>
-        </div>
+      <div id="outcomeRows"></div>
+      <div class="outcome-insight" id="outcomeInsight" style="display:none">
+        <span style="color:var(--red)">●</span>
+        <span id="insightText"></span>
       </div>
     </div>
-  </section>
 
-  <!-- Row 2 -->
-  <section class="grid">
     <div class="panel">
       <div class="panel-head">
-        <div class="panel-title">Daily spend trend</div>
-        <div class="panel-sub">Grouped by run date</div>
+        <div class="panel-title">spend by model</div>
+        <div class="panel-sub">sorted by cost</div>
       </div>
-      <div class="panel-body">
-        <div id="trendList" class="trend-list">
-          <div class="empty">Daily spend appears here after runs are logged.</div>
-        </div>
-      </div>
+      <div id="modelRows"></div>
     </div>
-    <div class="panel">
-      <div class="panel-head">
-        <div class="panel-title">Run ledger</div>
-        <div class="panel-sub">Requests, tokens, and cost per run</div>
-      </div>
-      <div class="panel-body">
-        <div id="ledgerWrap">
-          <div class="empty">Recent usage runs will populate here.</div>
-        </div>
-      </div>
-    </div>
-  </section>
+  </div>
 
-</main>
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">run ledger</div>
+      <div class="panel-sub">most recent first</div>
+    </div>
+    <div class="filter-row" id="filterRow"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>intent</th>
+          <th style="width:120px">model</th>
+          <th style="width:90px">status</th>
+          <th class="r" style="width:60px">steps</th>
+          <th class="r" style="width:100px">tokens</th>
+          <th class="r" style="width:100px">cost</th>
+          <th class="r" style="width:80px">when</th>
+        </tr>
+      </thead>
+      <tbody id="runTable"></tbody>
+    </table>
+  </div>
+
+</div>
 
 <script>
 'use strict';
 
+let allRuns = [];
+let filter  = 'all';
+
+function fmtCost(n, d=6) { return n == null ? '—' : '$' + n.toFixed(d); }
+function fmtNum(n)  { return n == null ? '—' : n.toLocaleString('en-US'); }
+function fmtAge(ts) {
+  const s = (Date.now() / 1000) - ts;
+  if (s < 120)  return 'just now';
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+function topModel(byModel) {
+  if (!byModel || !Object.keys(byModel).length) return null;
+  return Object.entries(byModel).sort((a,b)=>b[1].estimated_cost_usd-a[1].estimated_cost_usd)[0];
+}
+
+function pillHtml(status) {
+  const map = {
+    succeeded: { color: '#84cc16', label: 'succeeded' },
+    failed:    { color: '#dc2626', label: 'failed' },
+    running:   { color: '#d97706', label: 'running' },
+    cancelled: { color: '#7a756c', label: 'cancelled' },
+    pending:   { color: '#7a756c', label: 'pending' },
+  };
+  const s = map[status] || { color: '#7a756c', label: status };
+  return `<span class="pill" style="color:${s.color}">
+    <span class="pill-dot" style="background:${s.color}"></span>${s.label}</span>`;
+}
+
+function render(data) {
+  const s = data.summary;
+  const runs = data.runs || [];
+  allRuns = runs;
+
+  // Period row
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('periodVal').innerHTML =
+    `<span style="font-family:var(--mono);font-size:14px">${months[m]} 1 — ${months[m]} ${now.getDate()}, ${y}</span>
+     <span class="period-sub">· ${runs.length} runs this period</span>`;
+
+  // Stat cards
+  document.getElementById('statSpend').textContent = fmtCost(s.estimated_cost_usd, 2);
+  document.getElementById('statSpendSub').textContent = `${runs.length} runs`;
+  document.getElementById('statReqs').textContent = fmtNum(s.request_count);
+  document.getElementById('statTok').textContent = fmtNum(s.total_tokens);
+  const top = topModel(s.by_model);
+  if (top) {
+    document.getElementById('statTopModel').textContent = top[0];
+    document.getElementById('statTopModelSub').textContent =
+      `${fmtCost(top[1].estimated_cost_usd, 2)} · ${top[1].request_count} req`;
+  }
+
+  // Outcome panel
+  const done = runs.filter(r => r.status === 'succeeded' || r.status === 'failed');
+  const succ = runs.filter(r => r.status === 'succeeded');
+  const fail = runs.filter(r => r.status === 'failed');
+  const succCost = succ.reduce((a,r)=>a+(r.usage?.estimated_cost_usd||0), 0);
+  const failCost = fail.reduce((a,r)=>a+(r.usage?.estimated_cost_usd||0), 0);
+  const totalCost = succCost + failCost;
+  const succPct = totalCost > 0 ? (succCost / totalCost * 100) : 0;
+  const failPct = totalCost > 0 ? (failCost / totalCost * 100) : 0;
+
+  document.getElementById('outcomeSub').textContent = `${runs.length} runs`;
+  document.getElementById('obSucc').style.width = succPct + '%';
+  document.getElementById('obFail').style.width = failPct + '%';
+
+  const succAvg = succ.length > 0 ? succCost / succ.length : 0;
+  const failAvg = fail.length > 0 ? failCost / fail.length : 0;
+
+  document.getElementById('outcomeRows').innerHTML = [
+    outcomeRowHtml('succeeded', succ.length, succCost, succAvg, '#84cc16'),
+    outcomeRowHtml('failed',    fail.length, failCost, failAvg, '#dc2626'),
+  ].join('');
+
+  if (succ.length > 0 && fail.length > 0) {
+    const ratio = (failAvg / succAvg).toFixed(1);
+    document.getElementById('insightText').innerHTML =
+      `failed runs cost <span style="color:var(--text);font-family:var(--mono)">${ratio}×</span> successful runs on average`;
+    document.getElementById('outcomeInsight').style.display = '';
+  }
+
+  // Model spend panel
+  const byModel = s.by_model || {};
+  const models = Object.entries(byModel).sort((a,b)=>b[1].estimated_cost_usd-a[1].estimated_cost_usd);
+  const maxCost = models.length > 0 ? models[0][1].estimated_cost_usd : 1;
+  document.getElementById('modelRows').innerHTML = models.map(([name, ms]) => {
+    const pct = maxCost > 0 ? (ms.estimated_cost_usd / maxCost * 100) : 0;
+    const tok  = ms.total_tokens >= 1e6 ? `${(ms.total_tokens/1e6).toFixed(2)}M` : fmtNum(ms.total_tokens);
+    return `<div class="model-row">
+      <div class="model-head">
+        <div class="model-name">${esc(name)}</div>
+        <div class="model-cost">${fmtCost(ms.estimated_cost_usd, 2)}</div>
+      </div>
+      <div class="model-bar-wrap">
+        <div class="model-bar-track"><div class="model-bar-fill" style="width:${pct}%"></div></div>
+        <div class="model-meta">${ms.request_count} req · ${tok} tok</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  renderFilter();
+}
+
+function outcomeRowHtml(label, count, cost, avg, color) {
+  return `<div class="outcome-row">
+    <div class="or-left">
+      <div class="or-dot" style="background:${color}"></div>
+      <span class="or-label">${label}</span>
+      <span class="or-count">${count}</span>
+    </div>
+    <div class="or-right">
+      <span class="or-avg">avg ${fmtCost(avg, 4)}</span>
+      <span class="or-total" style="color:var(--text)">${fmtCost(cost, 2)}</span>
+    </div>
+  </div>`;
+}
+
+function renderFilter() {
+  const counts = { all: allRuns.length };
+  allRuns.forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; });
+  const opts = [
+    ['all', `all ${counts.all}`],
+    ['succeeded', `succeeded ${counts.succeeded || 0}`],
+    ['failed', `failed ${counts.failed || 0}`],
+  ];
+  document.getElementById('filterRow').innerHTML = opts.map(([k, lbl]) =>
+    `<button class="filter-btn${filter === k ? ' active' : ''}" onclick="setFilter('${k}')">${lbl}</button>`
+  ).join('');
+  renderTable();
+}
+
+function setFilter(f) { filter = f; renderFilter(); }
+
+function renderTable() {
+  const rows = filter === 'all' ? allRuns : allRuns.filter(r => r.status === filter);
+  document.getElementById('runTable').innerHTML = rows.map(r => {
+    const cost    = r.usage?.estimated_cost_usd;
+    const tokens  = r.usage?.total_tokens;
+    const byM = r.usage?.by_model || {};
+    const model = Object.keys(byM).length > 0 ? Object.keys(byM).sort((a,b)=>(byM[b].estimated_cost_usd||0)-(byM[a].estimated_cost_usd||0))[0] : '—';
+    const costCol = r.status === 'failed' ? 'var(--red)' : 'var(--amber)';
+    return `<tr onclick="location.href='/command-center/${esc(r.run_id)}'">
+      <td style="padding-right:16px">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0">
+          <span class="run-id-chip">${esc(r.run_id.slice(0,8))}</span>
+          <span class="run-intent" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.intent||'—')}</span>
+        </div>
+      </td>
+      <td style="color:var(--neutral)">${esc(model)}</td>
+      <td>${pillHtml(r.status)}</td>
+      <td class="r" style="color:var(--neutral);font-variant-numeric:tabular-nums">${r.step_count ?? '—'}</td>
+      <td class="r" style="color:var(--neutral);font-variant-numeric:tabular-nums">${fmtNum(tokens)}</td>
+      <td class="r" style="color:${costCol};font-variant-numeric:tabular-nums;font-weight:500">${fmtCost(cost, 4)}</td>
+      <td class="r" style="color:var(--muted)">${fmtAge(r.updated_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
 function esc(v) {
   if (v == null) return '';
-  const d = document.createElement('div');
-  d.textContent = String(v);
-  return d.innerHTML;
+  const d = document.createElement('div'); d.textContent = String(v); return d.innerHTML;
 }
 
-async function fetchJson(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Request failed');
-  return r.json();
+async function load() {
+  try {
+    const r = await fetch('/observer/api/usage?limit=100');
+    if (r.ok) render(await r.json());
+  } catch (_) {}
 }
 
-function formatInt(v) {
-  if (v == null || Number.isNaN(Number(v))) return '0';
-  return Number(v).toLocaleString();
-}
-
-function formatUsd(v) {
-  const n = Number(v || 0);
-  if (Number.isNaN(n)) return '$0.000000';
-  return '$' + n.toFixed(6);
-}
-
-function formatShortDate(value) {
-  if (!value || value === 'Unknown') return 'Unknown';
-  const dt = new Date(value + 'T00:00:00');
-  if (Number.isNaN(dt.getTime())) return value;
-  return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function getMtdStart() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000;
-}
-
-function formatBillingPeriod() {
-  const now = new Date();
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const m = months[now.getMonth()];
-  const y = now.getFullYear();
-  const d = now.getDate();
-  return m + ' 1 – ' + m + ' ' + d + ', ' + y;
-}
-
-function buildSummaryFromRuns(runs) {
-  const byModel = {};
-  let totalCost = 0, totalRequests = 0, totalTokens = 0;
-  runs.forEach(function(run) {
-    const u = run.usage || {};
-    totalCost += Number(u.estimated_cost_usd || 0);
-    totalRequests += Number(u.request_count || 0);
-    totalTokens += Number(u.total_tokens || 0);
-    const bm = u.by_model || {};
-    Object.entries(bm).forEach(function(entry) {
-      const model = entry[0];
-      const mb = entry[1] || {};
-      if (!byModel[model]) byModel[model] = { estimated_cost_usd: 0, request_count: 0, total_tokens: 0 };
-      byModel[model].estimated_cost_usd += Number(mb.estimated_cost_usd || 0);
-      byModel[model].request_count += Number(mb.request_count || 0);
-      byModel[model].total_tokens += Number(mb.total_tokens || 0);
-    });
-  });
-  return { estimated_cost_usd: totalCost, request_count: totalRequests, total_tokens: totalTokens, by_model: byModel };
-}
-
-function renderDashboard(payload) {
-  const allRuns = payload && payload.runs ? payload.runs : [];
-
-  // Filter to current month (MTD). Fall back to all runs if none match
-  // (can happen if file mtimes are stale or server clock differs).
-  const mtdStart = getMtdStart();
-  let runs = allRuns.filter(function(r) { return (r.updated_at || 0) >= mtdStart; });
-  let isMtd = true;
-  if (runs.length === 0 && allRuns.length > 0) {
-    runs = allRuns;
-    isMtd = false;
-  }
-
-  // Recompute summary from filtered runs only
-  const summary = buildSummaryFromRuns(runs);
-  const byModel = summary.by_model || {};
-  const models = Object.entries(byModel).sort(function(a, b) {
-    return (b[1].estimated_cost_usd || 0) - (a[1].estimated_cost_usd || 0);
-  });
-  const topModel = models.length ? models[0] : null;
-
-  document.getElementById('billingPeriodLabel').textContent = isMtd ? formatBillingPeriod() : 'All time';
-  document.getElementById('billingRunCount').textContent = runs.length + ' run' + (runs.length !== 1 ? 's' : '') + (isMtd ? ' this month' : ' total');
-  document.getElementById('statSpend').textContent = formatUsd(summary.estimated_cost_usd || 0);
-  document.getElementById('statRequests').textContent = formatInt(summary.request_count || 0);
-  document.getElementById('statTokens').textContent = formatInt(summary.total_tokens || 0);
-  document.getElementById('statTopModel').textContent = topModel ? topModel[0] : '—';
-  document.getElementById('statTopModelNote').textContent = topModel
-    ? (formatUsd(topModel[1].estimated_cost_usd || 0) + ' · ' + formatInt(topModel[1].request_count || 0) + ' requests')
-    : 'No priced models yet';
-
-  renderModels(models);
-  renderRunCards(runs);
-  renderTrend(runs);
-  renderLedger(runs);
-}
-
-function showDashboardError(msg) {
-  document.getElementById('billingPeriodLabel').textContent = 'Error';
-  document.getElementById('billingRunCount').textContent = msg;
-  ['modelList','runCards','trendList'].forEach(function(id) {
-    document.getElementById(id).innerHTML = '<div class="empty">' + msg + '</div>';
-  });
-  document.getElementById('ledgerWrap').innerHTML = '<div class="empty">' + msg + '</div>';
-}
-
-function renderModels(models) {
-  const container = document.getElementById('modelList');
-  if (!models.length) {
-    container.innerHTML = '<div class="empty">No usage data yet.</div>';
-    return;
-  }
-  const maxCost = Math.max.apply(null, models.map(function(e) { return e[1].estimated_cost_usd || 0; }).concat([0]));
-  container.innerHTML = models.map(function(entry) {
-    const model = entry[0];
-    const b = entry[1] || {};
-    const width = maxCost > 0 ? Math.max(6, Math.round(((b.estimated_cost_usd || 0) / maxCost) * 100)) : 6;
-    return '<div class="model-card">' +
-      '<div class="row"><div class="model-name" title="' + esc(model) + '">' + esc(model) + '</div><div class="amount">' + esc(formatUsd(b.estimated_cost_usd || 0)) + '</div></div>' +
-      '<div class="subrow"><span>' + esc(b.request_count || 0) + ' requests</span><span>' + esc(formatInt(b.total_tokens || 0)) + ' tokens</span></div>' +
-      '<div class="bar"><div class="fill" style="width:' + width + '%"></div></div>' +
-    '</div>';
-  }).join('');
-}
-
-function renderRunCards(runs) {
-  const container = document.getElementById('runCards');
-  if (!runs.length) {
-    container.innerHTML = '<div class="empty">Run usage appears here after model calls.</div>';
-    return;
-  }
-  container.innerHTML = runs.slice(0, 6).map(function(run) {
-    const usage = run.usage || {};
-    const status = run.status || 'unknown';
-    return '<div class="run-card">' +
-      '<div class="row"><div class="run-title">' + esc(run.intent || run.run_id) + '</div><div class="amount">' + esc(formatUsd(usage.estimated_cost_usd || 0)) + '</div></div>' +
-      '<div class="subrow"><span class="status"><span class="dot ' + esc(status) + '"></span>' + esc(status.replace(/_/g, ' ')) + '</span><span>' + esc(formatInt(usage.total_tokens || 0)) + ' tokens</span></div>' +
-    '</div>';
-  }).join('');
-}
-
-function renderTrend(runs) {
-  const container = document.getElementById('trendList');
-  if (!runs.length) {
-    container.innerHTML = '<div class="empty">Daily spend appears here after runs are logged.</div>';
-    return;
-  }
-  const buckets = {};
-  runs.forEach(function(run) {
-    const usage = run.usage || {};
-    const stamp = run.updated_at ? new Date(run.updated_at * 1000) : null;
-    const key = stamp && !Number.isNaN(stamp.getTime()) ? stamp.toISOString().slice(0, 10) : 'Unknown';
-    if (!buckets[key]) buckets[key] = { date: key, cost: 0, requests: 0 };
-    buckets[key].cost += Number(usage.estimated_cost_usd || 0);
-    buckets[key].requests += Number(usage.request_count || 0);
-  });
-  const rows = Object.values(buckets).sort(function(a, b) { return a.date < b.date ? 1 : -1; }).slice(0, 7);
-  const maxCost = Math.max.apply(null, rows.map(function(r) { return r.cost; }).concat([0]));
-  container.innerHTML = rows.map(function(row) {
-    const width = maxCost > 0 ? Math.max(6, Math.round((row.cost / maxCost) * 100)) : 6;
-    return '<div class="trend-row">' +
-      '<div class="trend-date">' + esc(formatShortDate(row.date)) + '</div>' +
-      '<div class="trend-bar"><div class="fill" style="width:' + width + '%"></div></div>' +
-      '<div class="trend-value">' + esc(formatUsd(row.cost)) + '</div>' +
-    '</div>';
-  }).join('');
-}
-
-function renderLedger(runs) {
-  const wrap = document.getElementById('ledgerWrap');
-  if (!runs.length) {
-    wrap.innerHTML = '<div class="empty">Recent usage runs will populate here.</div>';
-    return;
-  }
-  wrap.innerHTML =
-    '<table class="ledger">' +
-      '<thead><tr><th>Run</th><th>Req</th><th>Tokens</th><th>Cost</th></tr></thead>' +
-      '<tbody>' +
-        runs.slice(0, 12).map(function(run) {
-          const usage = run.usage || {};
-          const status = run.status || 'unknown';
-          return '<tr>' +
-            '<td><div class="ledger-title">' + esc(run.intent || run.run_id) + '</div>' +
-            '<div class="ledger-meta"><span class="dot ' + esc(status) + '"></span>' + esc(status.replace(/_/g, ' ')) + '</div></td>' +
-            '<td>' + esc(usage.request_count || 0) + '</td>' +
-            '<td>' + esc(formatInt(usage.total_tokens || 0)) + '</td>' +
-            '<td style="font-weight:700;color:#059669;">' + esc(formatUsd(usage.estimated_cost_usd || 0)) + '</td>' +
-          '</tr>';
-        }).join('') +
-      '</tbody>' +
-    '</table>';
-}
-
-fetchJson('/observer/api/usage?limit=200').then(renderDashboard).catch(function(e) {
-  showDashboardError('Unable to load usage data — ' + (e && e.message ? e.message : 'check server'));
-});
+document.addEventListener('DOMContentLoaded', load);
 </script>
 </body>
 </html>

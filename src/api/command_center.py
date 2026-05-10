@@ -22,7 +22,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from src.models.logs import PreStepFailureLog, StepLog
+from src.models.logs import StepLog
 from src.models.policy import ActionType
 from src.models.verification import VerificationStatus
 

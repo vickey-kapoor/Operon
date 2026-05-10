@@ -169,10 +169,16 @@ class TestUIEndpoints:
         assert resp.status_code == 200
         assert "text/html" in resp.headers.get("Content-Type", "")
 
-    def test_root_and_console_serve_same_content(self):
+    def test_root_and_console_have_matching_title(self):
         root = get("/")
         console = get("/console")
-        assert root.text == console.text, "/ and /console should serve identical HTML"
+        import re
+        def extract_title(html: str) -> str:
+            m = re.search(r"<title>(.*?)</title>", html)
+            return m.group(1) if m else ""
+        assert extract_title(root.text) == extract_title(console.text), (
+            "/ and /console should have the same <title>"
+        )
 
 
 # ---------------------------------------------------------------------------

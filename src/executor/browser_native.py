@@ -536,6 +536,8 @@ class NativeBrowserExecutor(Executor):
                 f"--window-size={self._viewport_width},{self._viewport_height}",
                 "--window-position=0,0",
             ]
+            if os.getenv("OPERON_COMMAND_CENTER_MODE", "false").lower() == "true":
+                launch_args.append("--remote-debugging-port=9222")
             browser = await playwright.chromium.launch(
                 headless=launch_headless,
                 args=launch_args,

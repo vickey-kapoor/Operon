@@ -234,6 +234,7 @@ def _step_payload(entry: StepLog) -> dict[str, Any]:
             "rationale": entry.policy_decision.rationale,
             "confidence": entry.policy_decision.confidence,
             "active_subgoal": entry.policy_decision.active_subgoal,
+            "rule_name": entry.policy_decision.rule_name,
             "proposed_action": entry.policy_decision.action.model_dump(mode="json"),
             "usage": entry.policy_debug.usage.model_dump(mode="json") if entry.policy_debug.usage is not None else None,
         },

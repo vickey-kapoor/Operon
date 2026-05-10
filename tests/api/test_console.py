@@ -39,14 +39,14 @@ def test_console_page_served(client: TestClient) -> None:
 def test_console_has_run_button(client: TestClient) -> None:
     """Console HTML should contain a Run and a Stop button."""
     resp = client.get("/console")
-    assert "btnRun" in resp.text
+    assert "modalRunBtn" in resp.text or "btnRun" in resp.text
     assert "btnStop" in resp.text
 
 
 def test_console_has_log_panel(client: TestClient) -> None:
-    """Console HTML should include the live log panel."""
+    """Console HTML should include the live step/log panel."""
     resp = client.get("/console")
-    assert "logBody" in resp.text or "Live Log" in resp.text
+    assert "stepsBody" in resp.text or "logBody" in resp.text or "Live Log" in resp.text
 
 
 def test_root_redirects_to_command_center(client: TestClient) -> None:

@@ -41,15 +41,15 @@ def test_console_route_serves_command_center(client: TestClient) -> None:
     console = client.get("/console")
     assert console.status_code == 200
     assert "Command Center" in console.text
-    assert "btnRun" in console.text
+    assert "btnStop" in console.text
 
 
 def test_dashboard_route_serves_dashboard(client: TestClient) -> None:
     """GET /dashboard should serve the standalone usage dashboard."""
     resp = client.get("/dashboard")
     assert resp.status_code == 200
-    assert "Billing period" in resp.text
-    assert "Spend by model" in resp.text
+    assert "cost by outcome" in resp.text
+    assert "spend by model" in resp.text
 
 
 def test_desktop_run_task(client: TestClient) -> None:

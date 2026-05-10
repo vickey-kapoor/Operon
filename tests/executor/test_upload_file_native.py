@@ -20,7 +20,7 @@ from src.core.router import (
 from src.executor.browser_adapter import BrowserExecutor
 from src.models.common import FailureCategory
 from src.models.policy import ActionType, AgentAction
-from src.runtime.legacy_adapter import _map_action_type
+from src.runtime.adapter import _map_action_type
 from src.runtime.orchestrator import UnifiedOrchestrator
 
 # ---------------------------------------------------------------------------

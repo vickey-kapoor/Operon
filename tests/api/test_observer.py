@@ -216,7 +216,7 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
 
     dashboard = client.get("/dashboard")
     assert dashboard.status_code == 200
-    assert "Billing period" in dashboard.text
+    assert "cost by outcome" in dashboard.text
 
     runs = client.get("/observer/api/runs")
     assert runs.status_code == 200

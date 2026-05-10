@@ -626,6 +626,7 @@ def _make_fake_playwright_manager(monkeypatch: pytest.MonkeyPatch, viewport_widt
     class FakeContext:
         def __init__(self) -> None:
             self.page = FakePage()
+            self.close = AsyncMock()
 
         async def new_page(self):
             return self.page
@@ -633,6 +634,7 @@ def _make_fake_playwright_manager(monkeypatch: pytest.MonkeyPatch, viewport_widt
     class FakeBrowser:
         def __init__(self) -> None:
             self.new_context = AsyncMock(return_value=FakeContext())
+            self.close = AsyncMock()
 
     class FakePlaywright:
         def __init__(self) -> None:
@@ -641,6 +643,7 @@ def _make_fake_playwright_manager(monkeypatch: pytest.MonkeyPatch, viewport_widt
                 launch=AsyncMock(return_value=self.browser),
                 executable_path="C:\\playwright\\chrome.exe",
             )
+            self.stop = AsyncMock()
 
     class FakeManager:
         def __init__(self) -> None:
@@ -709,3 +712,59 @@ async def test_second_local_browser_launch_inherits_same_port(
         "Both launches must request the same port so a port-conflict error is "
         "surfaced immediately rather than one run silently getting an unbound port."
     )
+
+
+# ── Observable mode tests ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_observable_mode_launches_browser_once_then_reuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Second observable run must NOT call chromium.launch again — it reuses _obs_browser."""
+    manager, executor = _make_fake_playwright_manager(monkeypatch)
+
+    executor.configure_run("run-obs-1", mode="observable")
+    await executor._ensure_session("run-obs-1")
+    first_launch_count = manager.playwright.chromium.launch.call_count
+
+    executor.configure_run("run-obs-2", mode="observable")
+    await executor._ensure_session("run-obs-2")
+    second_launch_count = manager.playwright.chromium.launch.call_count
+
+    assert first_launch_count == 1, "first observable run must launch once"
+    assert second_launch_count == 1, "second observable run must NOT launch again — reuses persistent browser"
+
+
+@pytest.mark.asyncio
+async def test_observable_mode_close_session_keeps_browser_alive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closing an observable session must close the context but NOT the browser or playwright."""
+    manager, executor = _make_fake_playwright_manager(monkeypatch)
+
+    executor.configure_run("run-obs", mode="observable")
+    session = await executor._ensure_session("run-obs")
+
+    await executor._close_session(session, observable=True)
+
+    session.context.close.assert_awaited_once()
+    session.browser.close.assert_not_awaited()
+    session.playwright.stop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_batch_mode_close_session_kills_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closing a batch session must fully tear down browser and playwright."""
+    manager, executor = _make_fake_playwright_manager(monkeypatch)
+
+    executor.configure_run("run-batch", mode="batch")
+    session = await executor._ensure_session("run-batch")
+
+    await executor._close_session(session, observable=False)
+
+    session.context.close.assert_awaited_once()
+    session.browser.close.assert_awaited_once()
+    session.playwright.stop.assert_awaited_once()

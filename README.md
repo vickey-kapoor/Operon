@@ -73,7 +73,7 @@ FastAPI  ──▶  AgentLoop
                 │               └── PENDING         (page loading, 2–8s backoff)
                 ├── Recover    RuleBasedRecoveryManager
                 ├── Reflect    PostRunReflector  (terminal only)
-                └── Persist    FileBackedRunStore + MemoryStore
+                └── Persist    FileBackedRunStore + RollingElementBuffer + MemoryStore
 
 SSE  /command-center/api/run/{id}/stream ──▶ Command Center (split-pane HTML+JS)
 WebSocket (port 9001)                    ──▶ Control messages + binary CDP frames

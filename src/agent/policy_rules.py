@@ -682,6 +682,38 @@ class PolicyRuleEngine:
         if search_input is not None:
             mid_x = search_input.x + max(1, search_input.width // 2)
             mid_y = search_input.y + max(1, search_input.height // 2)
+
+            # If this rule already fired a TYPE on the previous step and the page
+            # hasn't advanced, Enter didn't navigate — go straight to the URL fallback
+            # rather than typing the same query again.
+            if "_search_query_rule" in _last_trace and "action=type" in _last_trace:
+                _base = state.start_url or ""
+                if "wikipedia.org" in _base:
+                    from urllib.parse import urlparse
+                    _origin = f"{urlparse(_base).scheme}://{urlparse(_base).netloc}"
+                    _search_url = f"{_origin}/w/index.php?search={quote_plus(query)}"
+                elif "github.com" in _base:
+                    _lang_m = re.search(r"\b(python|javascript|typescript|rust|go|java|c\+\+|ruby|swift|kotlin)\b", query, re.IGNORECASE)
+                    _star_thresh_m = re.search(r"more than\s+(\d[\d,]*)", query, re.IGNORECASE)
+                    _star_m = re.search(r"(\d[\d,]*)\s*(?:k|,?000)?\s*\+?\s*stars?", query, re.IGNORECASE)
+                    if _lang_m and (_star_thresh_m or _star_m):
+                        _lang = _lang_m.group(1).lower().replace("+", "%2B")
+                        _raw = (_star_thresh_m or _star_m).group(1).replace(",", "")
+                        _stars = int(_raw) if len(_raw) <= 6 else int(_raw)
+                        _search_url = f"https://github.com/search?q=language%3A{_lang}+stars%3A%3E{_stars}&type=repositories&s=stars&o=desc"
+                    elif _lang_m:
+                        _search_url = f"https://github.com/trending/{_lang_m.group(1).lower()}"
+                    else:
+                        _search_url = f"https://github.com/search?q={quote_plus(query)}&type=repositories"
+                else:
+                    _search_url = urljoin(_base, f"search?q={quote_plus(query)}")
+                return PolicyDecision(
+                    action=AgentAction(action_type=ActionType.NAVIGATE, url=_search_url),
+                    rationale=f"Search typed but Enter did not navigate — using direct search URL for '{query}'.",
+                    confidence=0.92,
+                    active_subgoal=f"navigate to search results for {query}",
+                )
+
             if perception.focused_element_id != search_input.element_id:
                 return _click_decision(
                     search_input,

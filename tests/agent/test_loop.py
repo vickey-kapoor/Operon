@@ -352,7 +352,7 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
         benchmark=None,
         mode="batch",
     )
-    executor.configure_run.assert_called_once_with("run-3", headless=True)
+    executor.configure_run.assert_called_once_with("run-3", headless=True, mode="batch")
     assert response.run_id == "run-3"
     assert response.status is RunStatus.PENDING
 

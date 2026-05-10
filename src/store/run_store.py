@@ -23,6 +23,8 @@ class RunStore(ABC):
         *,
         start_url: str | None = None,
         headless: bool | None = None,
+        benchmark: str | None = None,
+        mode: str = "batch",
     ) -> AgentState:
         """Create and store a new run."""
 
@@ -59,6 +61,7 @@ class FileBackedRunStore(RunStore):
         start_url: str | None = None,
         headless: bool | None = None,
         benchmark: str | None = None,
+        mode: str = "batch",
     ) -> AgentState:
         """Create and store a new run record."""
         run_id = str(uuid4())
@@ -68,6 +71,7 @@ class FileBackedRunStore(RunStore):
             start_url=start_url,
             headless=headless,
             benchmark=benchmark,
+            mode=mode,
             status=RunStatus.PENDING,
         )
         self._runs[run_id] = record

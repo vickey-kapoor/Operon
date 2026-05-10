@@ -193,6 +193,7 @@ class AgentLoop:
             start_url=request.start_url,
             headless=request.headless,
             benchmark=request.benchmark,
+            mode=request.mode,
         )
         _trace("START_RUN", f"run_id={record.run_id}")
         # Benchmark-safe session management: wipe per-run coordinator state (episodic

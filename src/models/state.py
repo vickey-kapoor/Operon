@@ -39,3 +39,9 @@ class AgentState(StrictModel):
     # (e.g. after a successful right-click or menu-bar click). Guards the
     # _dropdown_menu_select_rule from misfiring on desktop app toolbars.
     menu_is_active: bool = False
+    # Signals whether this run originated from the Command Center frontend
+    # ("observable") or was launched programmatically/via benchmark ("batch").
+    # The frontend uses this to decide whether to auto-attach the live CDP view.
+    # Not related to whether the debug port is open — port 9222 is always
+    # exposed for all local browser runs regardless of this value.
+    mode: str = Field(default="batch", pattern=r"^(observable|batch)$")

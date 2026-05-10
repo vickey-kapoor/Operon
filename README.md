@@ -64,7 +64,7 @@ FastAPI  ──▶  AgentLoop
                 ├── Decide     PolicyCoordinator
                 │               ├── PolicyRuleEngine   (deterministic, named rules)
                 │               ├── GeminiPolicyService (LLM fallback)
-                │               └── SemanticAnchorCheck (15px post-LLM guard)
+                │               └── Rule-Augmented Generation trace injected into next prompt
                 ├── Execute    DesktopExecutor (adaptive servo) │ NativeBrowserExecutor
                 ├── Verify     DeterministicVerifier
                 │               ├── Terminal state check (visual predicate, fires first)
@@ -73,9 +73,10 @@ FastAPI  ──▶  AgentLoop
                 │               └── PENDING         (page loading, 2–8s backoff)
                 ├── Recover    RuleBasedRecoveryManager
                 ├── Reflect    PostRunReflector  (terminal only)
-                └── Persist    FileBackedRunStore + RollingElementBuffer + MemoryStore
+                └── Persist    FileBackedRunStore + MemoryStore
 
-WebSocket (port 9001) ──▶ Command Center UI (React 19 + Zustand 5)
+SSE  /command-center/api/run/{id}/stream ──▶ Command Center (split-pane HTML+JS)
+WebSocket (port 9001)                    ──▶ Control messages + binary CDP frames
 ```
 
 ---
@@ -101,23 +102,45 @@ copy .env.example .env
 python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
 ```
 
-Open **http://localhost:8080** — the Command Center UI loads automatically.
+Open **http://localhost:8080** — redirects automatically to the split-pane Command Center.
 
 ---
 
 ## Command Center UI
 
-The UI streams live over WebSocket and gives you full control of every run.
+Open **http://localhost:8080** — redirects automatically to the split-pane Command Center.
 
-| Pane | Purpose |
+```
+┌─────────────────────────────┬──────────────────────────────────────────┐
+│  STEP STREAM  42%           │  LIVE BROWSER  58%                       │
+│                             │                                          │
+│  ● step 1  click  0.92 ──   │  ┌──────────────────────────────────┐   │
+│  ● step 2  type   0.87 ──   │  │                                  │   │
+│  ● step 3  nav    0.95 ──   │  │   live 2Hz screenshot            │   │
+│  ◌ step 4  …               │  │   (CDP screencast / polling)     │   │
+│                             │  │                                  │   │
+│  source: LLM │ Rule         │  └──────────────────────────────────┘   │
+│  conf: ████░  0.87          │                                          │
+│  expects: content           │  ● WS  0.0 fps  ■ pause               │
+└─────────────────────────────┴──────────────────────────────────────────┘
+         [+ new task]   run: abc12345 · 00:32 · running
+```
+
+| Pane | What's in it |
 |---|---|
-| **Task Intelligence** (35%) | Subgoal tree, reasoning log (Thought Cards), HITL approval card |
-| **Live Execution** (50%) | Real-time browser mirror, element bounds overlay, autonomy controls |
-| **Moat Builder** | Toggle engine rules on/off, configure CDP port, set session mode |
+| **Step Stream** (42%) | Live SSE feed of every agent step — action type, source (LLM or rule name), confidence, expected change, pass/fail status |
+| **Live Browser** (58%) | 2Hz screenshot polling at `/command-center/api/run/{id}/screenshot`; switches to CDP screencast when `OPERON_COMMAND_CENTER_MODE=true` |
 
-### Autonomy Threshold
+### New Task Modal
 
-Drag the slider in the Live Execution pane to set a confidence floor. When the agent's confidence drops below it, the run pauses — you see the pending action and can either **Proceed** or inject a **Correction Hint** that flows into the next LLM call.
+Click **+ new task** in the topbar (or any recent-run row to retry with pre-filled intent).
+
+| State | What you see |
+|---|---|
+| **Default** | Browser / Desktop toggle, instruction textarea, optional start URL (browser only) |
+| **Loading** | Spinner + Cancel button (AbortController wired) |
+| **Error** | Inline banner with server message; URL field highlighted if URL-related |
+| **Blocked** | Run already active — shows active run ID + elapsed time, **Stop current run** button to unblock |
 
 ---
 
@@ -132,6 +155,7 @@ Drag the slider in the Live Execution pane to set a confidence floor. When the a
 | `OPERON_BROWSER_PLANNER_PROVIDER` | `gemini` | `gemini` or `anthropic` |
 | `OPERON_DESKTOP_PLANNER_PROVIDER` | `gemini` | `gemini` or `anthropic` |
 | `BROWSER_HEADLESS` | `false` | Headless Playwright |
+| `OPERON_COMMAND_CENTER_MODE` | `false` | Adds `--remote-debugging-port=9222` for CDP attach |
 | `OPERON_TRACE` | — | `1` enables `[TRACE]` loop events |
 | `OPERON_TEST_SAFE_MODE` | `false` | Skip display baseline in tests |
 
@@ -140,17 +164,32 @@ Drag the slider in the Live Execution pane to set a confidence floor. When the a
 ## API
 
 ```
-POST /run-task        Start a new run
-POST /step            Advance one step
-POST /resume          Resume a HITL-paused run
-POST /stop            Cancel an active run
-GET  /run/{id}        Read run state
-POST /connect-cdp     Attach to Chrome via CDP + start screencast
-GET  /health          Health check
+# Run lifecycle
+POST /run-task                                    Start a browser run
+POST /desktop/run-task                            Start a desktop run
+POST /step                                        Advance one step
+POST /resume                                      Resume a HITL-paused run
+POST /stop                                        Cancel (body: run_id)
+POST /run/{id}/stop                               Cancel by path
+POST /run/{id}/pause                              Pause by path (→ WAITING_FOR_USER)
+GET  /run/{id}                                    Read run state
+GET  /health                                      Health check
 
-GET  /observer/api/runs         Recent runs list
-GET  /observer/api/run/{id}     Full run snapshot
-GET  /observer/api/artifact     Serve step artifact files
+# CDP attach
+POST /connect-cdp                                 Attach to Chrome via CDP + start screencast
+POST /disconnect-cdp                              Detach CDP
+
+# Command Center
+GET  /command-center                              Split-pane UI (HTML)
+GET  /command-center/{run_id}                     Same UI, run_id is client-side state
+GET  /command-center/api/run/{id}/stream          SSE step stream (tails run.jsonl)
+GET  /command-center/api/run/{id}/screenshot      Latest step screenshot (2Hz polling target)
+
+# Observer
+GET  /observer/api/runs                           Recent runs list
+GET  /observer/api/run/{id}                       Full run snapshot + artifacts
+GET  /observer/api/artifact                       Serve step artifact files
+GET  /observer/api/usage                          Token usage dashboard
 ```
 
 ---
@@ -184,8 +223,8 @@ src/
               benchmark.py, screen_recorder.py
   executor/   desktop.py, browser_native.py, browser_adapter.py,
               desktop_adapter.py, os_picker_macro.py
-  api/        server.py, routes.py, observer.py, runtime_config.py,
-              static/ (landing, console, dashboard, benchmarks)
+  api/        server.py, routes.py, observer.py, command_center.py, runtime_config.py,
+              static/ (command-center, console, dashboard, benchmarks)
   clients/    gemini.py, anthropic.py, gemini_computer_use.py
   models/     state.py, perception.py, policy.py, execution.py,
               verification.py, recovery.py, memory.py, logs.py, common.py

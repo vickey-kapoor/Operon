@@ -203,7 +203,7 @@ def get_all_tasks(difficulty: str = "all", source: str = "all") -> list[dict[str
     return _load_tasks_filtered(difficulty, source)
 
 
-async def run_suite_background(suite_id: str, max_steps: int, get_loop_fn: Callable, headless: bool = False) -> None:
+async def run_suite_background(suite_id: str, max_steps: int, get_loop_fn: Callable, headless: bool = False, mode: str = "batch") -> None:
     """Run all tasks in the suite sequentially, updating state in place."""
     suite = _SUITES.get(suite_id)
     if suite is None:
@@ -220,7 +220,7 @@ async def run_suite_background(suite_id: str, max_steps: int, get_loop_fn: Calla
         try:
             async with _get_browser_lock():
                 loop = get_loop_fn()
-                req = RunTaskRequest(intent=task.intent, start_url=task.start_url, headless=headless)
+                req = RunTaskRequest(intent=task.intent, start_url=task.start_url, headless=headless, mode=mode)
                 init_resp = await loop.start_run(req)
                 task.run_id = init_resp.run_id
 

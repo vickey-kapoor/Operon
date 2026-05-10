@@ -903,12 +903,14 @@ class _SuiteRequest(StrictModel):
     source: str = "all"
     max_steps: int = 15
     headless: bool = False
+    mode: str = "batch"
 
 
 class _SingleTaskRequest(StrictModel):
     task_id: str
     max_steps: int = 15
     headless: bool = False
+    mode: str = "batch"
 
 
 @router.post("/benchmark/run-suite")
@@ -919,7 +921,7 @@ async def benchmark_run_suite(body: _SuiteRequest) -> dict:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"difficulty must be one of {sorted(_VALID_DIFFICULTIES)}")
     max_steps = max(5, min(body.max_steps, 40))
     suite = create_suite(difficulty, source=body.source)
-    asyncio.create_task(run_suite_background(suite.suite_id, max_steps, get_agent_loop, headless=body.headless))
+    asyncio.create_task(run_suite_background(suite.suite_id, max_steps, get_agent_loop, headless=body.headless, mode=body.mode))
     return {"suite_id": suite.suite_id, "status": suite.status, "total": suite.total, "difficulty": suite.difficulty}
 
 
@@ -940,7 +942,7 @@ async def benchmark_run_task(body: _SingleTaskRequest) -> dict:
         suite = create_single_task_suite(body.task_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    asyncio.create_task(run_suite_background(suite.suite_id, max_steps, get_agent_loop, headless=body.headless))
+    asyncio.create_task(run_suite_background(suite.suite_id, max_steps, get_agent_loop, headless=body.headless, mode=body.mode))
     return {"suite_id": suite.suite_id, "task_id": body.task_id, "status": "running"}
 
 

@@ -13,7 +13,7 @@ from src.runtime.benchmark_runner import (
     Phase5BenchmarkTask,
     run_phase5_benchmark_suite,
 )
-from src.runtime.state import AgentRuntimeState
+from src.runtime.runtime_state import AgentRuntimeState
 
 
 class _FakeLoop:

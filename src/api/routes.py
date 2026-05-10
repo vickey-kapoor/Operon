@@ -86,9 +86,9 @@ def _validate_run_id(run_id: str) -> None:
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
 _CONSOLE_HTML_PATH = _STATIC_DIR / "console.html"
-_DASHBOARD_HTML_PATH = _STATIC_DIR / "dashboard.html"
-_BENCHMARKS_HTML_PATH = _STATIC_DIR / "benchmarks.html"
-_COMMAND_CENTER_HTML_PATH = _STATIC_DIR / "command-center.html"
+_DASHBOARD_HTML_PATH = _STATIC_DIR / "dashboard" / "index.html"
+_BENCHMARKS_HTML_PATH = _STATIC_DIR / "benchmarks" / "index.html"
+_COMMAND_CENTER_HTML_PATH = _STATIC_DIR / "command-center" / "index.html"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 

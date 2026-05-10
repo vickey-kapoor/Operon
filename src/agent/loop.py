@@ -78,9 +78,9 @@ from src.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
-from src.runtime.legacy_adapter import LegacyOperonContractAdapter
+from src.runtime.adapter import LegacyOperonContractAdapter
 from src.runtime.orchestrator import UnifiedOrchestrator
-from src.runtime.state import AgentRuntimeState
+from src.runtime.runtime_state import AgentRuntimeState
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log, append_step_log_critical
 from src.store.run_store import RunStore

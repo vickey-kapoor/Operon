@@ -12,7 +12,7 @@ import pytest
 
 from src.core.contracts.perception import Environment as UnifiedEnvironment
 from src.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
-from src.runtime.state import AgentRuntimeState
+from src.runtime.runtime_state import AgentRuntimeState
 
 gemini_stub = types.ModuleType("src.clients.gemini")
 gemini_stub.GeminiClient = object

@@ -160,6 +160,36 @@
   .run-btn:hover { background: var(--bg-hover); }
 
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+  /* ── Confirm modal ──────────────────────────────────────────────────────── */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 100;
+    background: rgba(14,13,12,0.75); backdrop-filter: blur(2px);
+    align-items: center; justify-content: center;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal-box {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 28px 28px 22px; width: 360px;
+    font-family: var(--mono);
+  }
+  .modal-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+  .modal-body  { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 22px; }
+  .modal-body strong { color: var(--text); }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .modal-cancel {
+    padding: 6px 14px; border-radius: 4px; border: 1px solid var(--border);
+    background: transparent; color: var(--neutral); cursor: pointer;
+    font-family: var(--mono); font-size: 12px; transition: background 0.1s;
+  }
+  .modal-cancel:hover { background: var(--bg-hover); }
+  .modal-confirm {
+    padding: 6px 14px; border-radius: 4px; border: none;
+    background: var(--amber); color: #0e0d0c; cursor: pointer;
+    font-family: var(--mono); font-size: 12px; font-weight: 500;
+    transition: opacity 0.1s;
+  }
+  .modal-confirm:hover { opacity: 0.88; }
 </style>
 </head>
 <body>
@@ -222,6 +252,18 @@
     </table>
   </div>
 
+</div>
+
+<!-- Run Suite confirmation modal -->
+<div class="modal-backdrop" id="confirmBackdrop">
+  <div class="modal-box">
+    <div class="modal-title" id="confirmTitle">Run suite?</div>
+    <div class="modal-body" id="confirmBody"></div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeConfirm()">cancel</button>
+      <button class="modal-confirm" id="confirmBtn" onclick="confirmRunSuite()">run</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -345,33 +387,72 @@ function renderTable() {
   }).join('');
 }
 
+function _normaliseTask(t) {
+  return {
+    id:         t.task_id || t.id,
+    source:     t.source || 'operon',
+    diff:       t.difficulty || t.diff || '',
+    category:   t.category || '',
+    site:       t.site || '',
+    intent:     t.intent || '',
+    status:     t.status || 'pending',
+    steps:      t.step_count    ?? t.steps    ?? null,
+    optSteps:   t.optimal_steps ?? t.optSteps ?? null,
+    efficiency: t.step_efficiency ?? t.efficiency ?? null,
+    duration:   t.duration_seconds ?? t.duration ?? null,
+    run_id:     t.run_id || null,
+  };
+}
+
 async function load() {
   try {
     const r = await fetch('/benchmark/tasks');
-    if (r.ok) {
-      // Normalise raw task fields to the shape the UI expects
-      allTasks = (await r.json()).map(t => ({
-        id:         t.task_id || t.id,
-        source:     t.source || 'operon',
-        diff:       t.difficulty || t.diff || '',
-        category:   t.category || '',
-        site:       t.site || '',
-        intent:     t.intent || '',
-        status:     t.status || 'pending',
-        steps:      t.step_count    ?? t.steps    ?? null,
-        optSteps:   t.optimal_steps ?? t.optSteps ?? null,
-        efficiency: t.step_efficiency ?? t.efficiency ?? null,
-        duration:   t.duration_seconds ?? t.duration ?? null,
-        run_id:     t.run_id || null,
-      }));
+    if (r.ok) allTasks = (await r.json()).map(_normaliseTask);
+  } catch (_) {}
+
+  // Restore last suite results from localStorage so the page doesn't open all-pending
+  try {
+    const lastId = localStorage.getItem('operon_last_suite_id');
+    if (lastId) {
+      const sr = await fetch('/benchmark/suite/' + encodeURIComponent(lastId));
+      if (sr.ok) {
+        const sd = await sr.json();
+        const byId = Object.fromEntries((sd.tasks || []).map(t => [t.task_id, t]));
+        allTasks = allTasks.map(t => {
+          const saved = byId[t.id];
+          return saved ? _normaliseTask({ ...t, ...saved }) : t;
+        });
+      }
     }
   } catch (_) {}
+
   rebuildFilters();
   renderStats();
   renderTable();
 }
 
-async function runSuite() {
+// ── Run Suite with confirmation ────────────────────────────────────────────
+
+function runSuite() {
+  const tasks = filteredTasks();
+  if (tasks.length > 5) {
+    const mins = Math.round(tasks.length * 2);
+    const cost = (tasks.length * 0.18).toFixed(2);
+    document.getElementById('confirmTitle').textContent = `Run ${tasks.length} tasks?`;
+    document.getElementById('confirmBody').innerHTML =
+      `This will run <strong>${tasks.length}</strong> tasks sequentially.<br>` +
+      `Estimated time: <strong>~${mins} minutes</strong> · cost: <strong>~$${cost}</strong> at recent rates.`;
+    document.getElementById('confirmBtn').textContent = `run ${tasks.length} tasks`;
+    document.getElementById('confirmBackdrop').classList.add('open');
+  } else {
+    _doRunSuite();
+  }
+}
+
+function closeConfirm() { document.getElementById('confirmBackdrop').classList.remove('open'); }
+function confirmRunSuite() { closeConfirm(); _doRunSuite(); }
+
+async function _doRunSuite() {
   const maxSteps = parseInt(document.getElementById('maxSteps').value) || 15;
   const btn = document.getElementById('runSuiteBtn');
   btn.disabled = true; btn.textContent = 'starting…';
@@ -386,13 +467,14 @@ async function runSuite() {
     });
     if (r.ok) {
       const d = await r.json();
+      try { localStorage.setItem('operon_last_suite_id', d.suite_id); } catch(_) {}
       btn.textContent = 'suite started';
-      setTimeout(() => { btn.disabled = false; btn.textContent = 'run suite'; }, 3000);
+      setTimeout(() => { btn.disabled = false; btn.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,1 9,5 1,9"/></svg> run suite'; }, 3000);
       setTimeout(load, 2000);
     } else {
-      btn.disabled = false; btn.textContent = 'run suite';
+      btn.disabled = false; btn.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,1 9,5 1,9"/></svg> run suite';
     }
-  } catch (_) { btn.disabled = false; btn.textContent = 'run suite'; }
+  } catch (_) { btn.disabled = false; btn.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="1,1 9,5 1,9"/></svg> run suite'; }
 }
 
 async function runTask(e, taskId) {
@@ -440,6 +522,7 @@ async function runTask(e, taskId) {
 }
 
 document.addEventListener('DOMContentLoaded', load);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeConfirm(); });
 
 setInterval(() => {
   if (allTasks.some(t => t.status === 'running')) load();

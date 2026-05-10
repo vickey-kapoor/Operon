@@ -1,4 +1,4 @@
-"""Comprehensive tests for the video verification feature.
+﻿"""Comprehensive tests for the video verification feature.
 
 Covers:
 - ScreenRecorder (start/stop, capture loop, encode, edge cases)
@@ -109,7 +109,7 @@ class TestScreenRecorderStopWithNoFrames:
     async def test_stop_returns_none_when_no_frames_captured(self, tmp_path: Path) -> None:
         recorder = ScreenRecorder(output_path=tmp_path / "clip.mp4")
 
-        # Don't start — _frames is empty, _thread is None
+        # Don't start â€” _frames is empty, _thread is None
         result = await recorder.stop()
 
         assert result is None
@@ -148,7 +148,7 @@ class TestScreenRecorderEncoding:
     async def test_stop_returns_output_path_after_encoding(self, tmp_path: Path) -> None:
         output = tmp_path / "clip.mp4"
         recorder = ScreenRecorder(output_path=output)
-        # Inject pre-captured frames directly — bypass real mss capture
+        # Inject pre-captured frames directly â€” bypass real mss capture
         fake_frame = np.zeros((50, 80, 3), dtype=np.uint8)
         recorder._frames = [fake_frame, fake_frame]
         recorder._width = 80
@@ -217,7 +217,7 @@ class TestScreenRecorderCaptureLoop:
 
     def test_capture_loop_stops_at_max_frames(self, tmp_path: Path) -> None:
         fps = 4
-        max_duration = 1.0  # → 4 frames max
+        max_duration = 1.0  # â†’ 4 frames max
         recorder = ScreenRecorder(
             output_path=tmp_path / "clip.mp4",
             fps=fps,
@@ -288,7 +288,7 @@ def _make_verifier(raw_response: str = "{}") -> VideoVerifier:
     verifier = VideoVerifier.__new__(VideoVerifier)
     verifier.gemini_client = mock_client
     from pathlib import Path as _Path
-    prompt_path = _Path(__file__).resolve().parents[1] / "prompts" / "video_verification_prompt.txt"
+    prompt_path = _Path(__file__).resolve().parents[2] / "prompts" / "video_verification_prompt.txt"
     verifier._prompt_template = prompt_path.read_text(encoding="utf-8")
     return verifier
 
@@ -335,7 +335,7 @@ class TestVideoVerifierPromptRendering:
 
     def test_render_prompt_uses_fallback_when_no_details(self) -> None:
         verifier = _make_verifier()
-        # key is present, so detail won't be empty — use WAIT with wait_ms as no-detail action
+        # key is present, so detail won't be empty â€” use WAIT with wait_ms as no-detail action
         action_wait = AgentAction(action_type=ActionType.WAIT, wait_ms=500)
         prompt = verifier._render_prompt(action_wait, intent="pause")
 
@@ -459,7 +459,7 @@ class TestVideoVerifierVerifyAction:
         verifier = VideoVerifier.__new__(VideoVerifier)
         verifier.gemini_client = mock_client
         from pathlib import Path as _Path
-        prompt_path = _Path(__file__).resolve().parents[1] / "prompts" / "video_verification_prompt.txt"
+        prompt_path = _Path(__file__).resolve().parents[2] / "prompts" / "video_verification_prompt.txt"
         verifier._prompt_template = prompt_path.read_text(encoding="utf-8")
 
         action = AgentAction(action_type=ActionType.CLICK, target_element_id="btn")
@@ -763,7 +763,7 @@ class TestMaybeVideoVerifySuccess:
             })
         )
         from pathlib import Path as _Path
-        prompt_path = _Path(__file__).resolve().parents[1] / "prompts" / "video_verification_prompt.txt"
+        prompt_path = _Path(__file__).resolve().parents[2] / "prompts" / "video_verification_prompt.txt"
         verifier = VideoVerifier.__new__(VideoVerifier)
         verifier.gemini_client = mock_gemini
         verifier._prompt_template = prompt_path.read_text(encoding="utf-8")
@@ -815,7 +815,7 @@ class TestMaybeVideoVerifySuccess:
             })
         )
         from pathlib import Path as _Path
-        prompt_path = _Path(__file__).resolve().parents[1] / "prompts" / "video_verification_prompt.txt"
+        prompt_path = _Path(__file__).resolve().parents[2] / "prompts" / "video_verification_prompt.txt"
         verifier = VideoVerifier.__new__(VideoVerifier)
         verifier.gemini_client = mock_gemini
         verifier._prompt_template = prompt_path.read_text(encoding="utf-8")
@@ -860,7 +860,7 @@ class TestMaybeVideoVerifyFailure:
             })
         )
         from pathlib import Path as _Path
-        prompt_path = _Path(__file__).resolve().parents[1] / "prompts" / "video_verification_prompt.txt"
+        prompt_path = _Path(__file__).resolve().parents[2] / "prompts" / "video_verification_prompt.txt"
         verifier = VideoVerifier.__new__(VideoVerifier)
         verifier.gemini_client = mock_gemini
         verifier._prompt_template = prompt_path.read_text(encoding="utf-8")
@@ -909,7 +909,7 @@ class TestMaybeVideoVerifyFailure:
             })
         )
         from pathlib import Path as _Path
-        prompt_path = _Path(__file__).resolve().parents[1] / "prompts" / "video_verification_prompt.txt"
+        prompt_path = _Path(__file__).resolve().parents[2] / "prompts" / "video_verification_prompt.txt"
         verifier = VideoVerifier.__new__(VideoVerifier)
         verifier.gemini_client = mock_gemini
         verifier._prompt_template = prompt_path.read_text(encoding="utf-8")
@@ -950,7 +950,7 @@ class TestMaybeVideoVerifyFailure:
             })
         )
         from pathlib import Path as _Path
-        prompt_path = _Path(__file__).resolve().parents[1] / "prompts" / "video_verification_prompt.txt"
+        prompt_path = _Path(__file__).resolve().parents[2] / "prompts" / "video_verification_prompt.txt"
         verifier = VideoVerifier.__new__(VideoVerifier)
         verifier.gemini_client = mock_gemini
         verifier._prompt_template = prompt_path.read_text(encoding="utf-8")
@@ -1179,7 +1179,7 @@ class TestExpectedChangeGate:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("expected_change", [ExpectedChange.NONE, ExpectedChange.FOCUS])
     async def test_skips_when_low_change_is_correct(self, expected_change: ExpectedChange) -> None:
-        """none and focus expectations: low pixel delta is expected — skip video verify."""
+        """none and focus expectations: low pixel delta is expected â€” skip video verify."""
         loop = _loop_with_recording_executor()
         action = AgentAction(action_type=ActionType.CLICK, target_element_id="btn")
         executed = _make_executed(action=action, success=True, artifact_path="runs/r1/step_1/after.png")
@@ -1205,7 +1205,7 @@ class TestExpectedChangeGate:
     async def test_proceeds_when_change_expected_but_absent(
         self, expected_change: ExpectedChange, tmp_path: Path
     ) -> None:
-        """content/navigation/dialog expectations with no pixel change → video-verify fires."""
+        """content/navigation/dialog expectations with no pixel change â†’ video-verify fires."""
         video_path = tmp_path / "clip.mp4"
         video_path.write_bytes(b"\x00" * 8)  # minimal non-empty file
         loop = _loop_with_recording_executor(video_path=video_path)
@@ -1223,7 +1223,7 @@ class TestExpectedChangeGate:
                 step_index=1,
             )
 
-        # execute_with_recording was called — gate did not skip
+        # execute_with_recording was called â€” gate did not skip
         loop.executor.execute_with_recording.assert_called_once()
         # result is a VerificationResult (not None)
         assert result is not None
@@ -1233,7 +1233,7 @@ class TestExpectedChangeGate:
     async def test_belt_and_suspenders_skips_non_idempotent_even_with_content_expectation(
         self, action_type: ActionType
     ) -> None:
-        """TYPE/DRAG/SELECT skip even when expected_change=content — re-execution risk."""
+        """TYPE/DRAG/SELECT skip even when expected_change=content â€” re-execution risk."""
         loop = _loop_with_recording_executor()
         if action_type is ActionType.TYPE:
             action = AgentAction(action_type=action_type, target_element_id="field", text="hello")
@@ -1256,3 +1256,4 @@ class TestExpectedChangeGate:
 
         assert result is None
         loop.executor.execute_with_recording.assert_not_called()
+

@@ -258,7 +258,7 @@
   <div class="panel">
     <div class="panel-head">
       <div class="panel-title">run ledger</div>
-      <div class="panel-sub">most recent first</div>
+      <div class="panel-sub">terminal runs · most recent first</div>
     </div>
     <div class="filter-row" id="filterRow"></div>
     <table>
@@ -313,10 +313,13 @@ function pillHtml(status) {
     <span class="pill-dot" style="background:${s.color}"></span>${s.label}</span>`;
 }
 
+const TERMINAL = new Set(['succeeded', 'failed']);
+
 function render(data) {
   const s = data.summary;
-  const runs = data.runs || [];
-  allRuns = runs;
+  const allLoaded = data.runs || [];
+  // Dashboard shows terminal runs only; pending/running are excluded
+  allRuns = allLoaded.filter(r => TERMINAL.has(r.status));
 
   // Period row
   const now = new Date();
@@ -324,11 +327,13 @@ function render(data) {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   document.getElementById('periodVal').innerHTML =
     `<span style="font-family:var(--mono);font-size:14px">${months[m]} 1 — ${months[m]} ${now.getDate()}, ${y}</span>
-     <span class="period-sub">· ${runs.length} runs this period</span>`;
+     <span class="period-sub">· ${allRuns.length} runs this period</span>`;
 
   // Stat cards
+  const succ = allRuns.filter(r => r.status === 'succeeded');
+  const passRate = allRuns.length > 0 ? Math.round(succ.length / allRuns.length * 100) : 0;
   document.getElementById('statSpend').textContent = fmtCost(s.estimated_cost_usd, 2);
-  document.getElementById('statSpendSub').textContent = `${runs.length} runs`;
+  document.getElementById('statSpendSub').textContent = `${allRuns.length} runs · ${passRate}% pass`;
   document.getElementById('statReqs').textContent = fmtNum(s.request_count);
   document.getElementById('statTok').textContent = fmtNum(s.total_tokens);
   const top = topModel(s.by_model);
@@ -338,17 +343,15 @@ function render(data) {
       `${fmtCost(top[1].estimated_cost_usd, 2)} · ${top[1].request_count} req`;
   }
 
-  // Outcome panel
-  const done = runs.filter(r => r.status === 'succeeded' || r.status === 'failed');
-  const succ = runs.filter(r => r.status === 'succeeded');
-  const fail = runs.filter(r => r.status === 'failed');
+  // Outcome panel (allRuns is already terminal-only)
+  const fail = allRuns.filter(r => r.status === 'failed');
   const succCost = succ.reduce((a,r)=>a+(r.usage?.estimated_cost_usd||0), 0);
   const failCost = fail.reduce((a,r)=>a+(r.usage?.estimated_cost_usd||0), 0);
   const totalCost = succCost + failCost;
   const succPct = totalCost > 0 ? (succCost / totalCost * 100) : 0;
   const failPct = totalCost > 0 ? (failCost / totalCost * 100) : 0;
 
-  document.getElementById('outcomeSub').textContent = `${runs.length} runs`;
+  document.getElementById('outcomeSub').textContent = `${allRuns.length} runs`;
   document.getElementById('obSucc').style.width = succPct + '%';
   document.getElementById('obFail').style.width = failPct + '%';
 
@@ -404,12 +407,12 @@ function outcomeRowHtml(label, count, cost, avg, color) {
 }
 
 function renderFilter() {
-  const counts = { all: allRuns.length };
-  allRuns.forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; });
+  const succCount = allRuns.filter(r => r.status === 'succeeded').length;
+  const failCount = allRuns.filter(r => r.status === 'failed').length;
   const opts = [
-    ['all', `all ${counts.all}`],
-    ['succeeded', `succeeded ${counts.succeeded || 0}`],
-    ['failed', `failed ${counts.failed || 0}`],
+    ['all', `all ${allRuns.length}`],
+    ['succeeded', `succeeded ${succCount}`],
+    ['failed', `failed ${failCount}`],
   ];
   document.getElementById('filterRow').innerHTML = opts.map(([k, lbl]) =>
     `<button class="filter-btn${filter === k ? ' active' : ''}" onclick="setFilter('${k}')">${lbl}</button>`

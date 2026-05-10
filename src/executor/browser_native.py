@@ -532,12 +532,18 @@ class NativeBrowserExecutor(Executor):
                 before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
             # Homeostasis baseline: lock to 1920x1080 in all modes.
             # --start-maximized caused clipping inconsistency → perception_low_quality.
+            # Port 9222 is always exposed so BrowserManager.connect() can attach
+            # for live CDP streaming regardless of how the run was started.
+            # Playwright continues using its internal --remote-debugging-pipe
+            # channel; the TCP port coexists safely, localhost-bound only.
+            # Constraint: only one local browser run at a time — a second run
+            # would fail to bind 9222. Sequential benchmark suites are fine.
+            # Parallel local runs require port 0 + persisting the chosen port.
             launch_args = [
                 f"--window-size={self._viewport_width},{self._viewport_height}",
                 "--window-position=0,0",
+                "--remote-debugging-port=9222",
             ]
-            if os.getenv("OPERON_COMMAND_CENTER_MODE", "false").lower() == "true":
-                launch_args.append("--remote-debugging-port=9222")
             browser = await playwright.chromium.launch(
                 headless=launch_headless,
                 args=launch_args,

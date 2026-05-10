@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -104,7 +105,7 @@ async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, mon
     assert manager.playwright.browser.context_kwargs["record_video_size"] == {"width": 1920, "height": 1080}
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=False,
-        args=["--window-size=1920,1080", "--window-position=0,0"],
+        args=["--window-size=1920,1080", "--window-position=0,0", "--remote-debugging-port=9222"],
     )
     session.page.bring_to_front.assert_awaited_once()
     session.page.keyboard.press.assert_awaited_once_with("Control+0")
@@ -161,7 +162,7 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
 
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=True,
-        args=["--window-size=1440,900", "--window-position=0,0"],
+        args=["--window-size=1440,900", "--window-position=0,0", "--remote-debugging-port=9222"],
     )
 
 
@@ -290,7 +291,7 @@ async def test_ensure_session_forces_headless_in_test_safe_mode(
 
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=True,
-        args=["--window-size=1440,900", "--window-position=0,0"],
+        args=["--window-size=1440,900", "--window-position=0,0", "--remote-debugging-port=9222"],
     )
 
 
@@ -603,3 +604,108 @@ async def test_type_no_coords_uses_bare_keyboard_type(tmp_path: Path) -> None:
     mouse.click.assert_not_awaited()
     keyboard.type.assert_awaited_once_with("hello")
     evaluate_handle.assert_not_awaited()
+
+
+# ── CDP port invariant tests ─────────────────────────────────────────────────
+
+
+def _make_fake_playwright_manager(monkeypatch: pytest.MonkeyPatch, viewport_width: int = 1920, viewport_height: int = 1080):
+    """Return a (manager, executor) pair wired up with a fake Playwright."""
+
+    class FakePage:
+        url = "about:blank"
+
+        def __init__(self) -> None:
+            self.bring_to_front = AsyncMock()
+            self.goto = AsyncMock()
+            self.evaluate = AsyncMock()
+            self.keyboard = SimpleNamespace(press=AsyncMock())
+            self.wait_for_load_state = AsyncMock()
+            self.on = lambda *_args, **_kwargs: None
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.page = FakePage()
+
+        async def new_page(self):
+            return self.page
+
+    class FakeBrowser:
+        def __init__(self) -> None:
+            self.new_context = AsyncMock(return_value=FakeContext())
+
+    class FakePlaywright:
+        def __init__(self) -> None:
+            self.browser = FakeBrowser()
+            self.chromium = SimpleNamespace(
+                launch=AsyncMock(return_value=self.browser),
+                executable_path="C:\\playwright\\chrome.exe",
+            )
+
+    class FakeManager:
+        def __init__(self) -> None:
+            self.playwright = FakePlaywright()
+
+        async def start(self):
+            return self.playwright
+
+    manager = FakeManager()
+    fake_module = SimpleNamespace(async_playwright=lambda: manager)
+    monkeypatch.setitem(__import__("sys").modules, "playwright.async_api", fake_module)
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+
+    tmp = Path(tempfile.mkdtemp())
+    executor = NativeBrowserExecutor(
+        artifact_dir=tmp, headless=False, viewport_width=viewport_width, viewport_height=viewport_height
+    )
+    executor._bring_browser_to_foreground = AsyncMock()
+    executor._detect_browser_pid = lambda *_args: 1234
+    return manager, executor
+
+
+@pytest.mark.asyncio
+async def test_cdp_port_9222_always_present_regardless_of_env_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--remote-debugging-port=9222 must appear in launch args whether
+    OPERON_COMMAND_CENTER_MODE is set or not — the env-var gate was removed."""
+    for env_value in ("true", "false", None):
+        monkeypatch.delenv("OPERON_COMMAND_CENTER_MODE", raising=False)
+        if env_value is not None:
+            monkeypatch.setenv("OPERON_COMMAND_CENTER_MODE", env_value)
+
+        manager, executor = _make_fake_playwright_manager(monkeypatch)
+        await executor._ensure_session(f"run-cdp-{env_value}")
+
+        call_kwargs = manager.playwright.chromium.launch.call_args
+        assert call_kwargs is not None, f"launch not called for env={env_value}"
+        launch_args: list[str] = call_kwargs.kwargs.get("args", [])
+        assert "--remote-debugging-port=9222" in launch_args, (
+            f"Expected --remote-debugging-port=9222 in launch args but got {launch_args} "
+            f"(OPERON_COMMAND_CENTER_MODE={env_value!r})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_second_local_browser_launch_inherits_same_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every local browser launch always requests port 9222 — a second concurrent
+    launch would fail at the OS level (address in use), not silently bind a random
+    port. This test confirms the port is hardcoded so the failure is deterministic."""
+    manager, executor = _make_fake_playwright_manager(monkeypatch)
+
+    await executor._ensure_session("run-first")
+    first_args = manager.playwright.chromium.launch.call_args.kwargs.get("args", [])
+
+    manager.playwright.chromium.launch.reset_mock()
+    manager2, executor2 = _make_fake_playwright_manager(monkeypatch)
+    await executor2._ensure_session("run-second")
+    second_args = manager2.playwright.chromium.launch.call_args.kwargs.get("args", [])
+
+    assert "--remote-debugging-port=9222" in first_args
+    assert "--remote-debugging-port=9222" in second_args
+    assert first_args == second_args, (
+        "Both launches must request the same port so a port-conflict error is "
+        "surfaced immediately rather than one run silently getting an unbound port."
+    )

@@ -1,0 +1,218 @@
+"""Tests for the new-task modal submission paths and related API endpoints."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from src.models.common import RunResponse, RunStatus
+
+
+@pytest.fixture
+def client():
+    from src.api.server import app
+    return TestClient(app)
+
+
+def _run_response(run_id: str = "modal-run-1", status: RunStatus = RunStatus.PENDING) -> RunResponse:
+    return RunResponse(run_id=run_id, status=status, intent="Navigate to example.com", step_count=0)
+
+
+# ── Submit success ───────────────────────────────────────────────────────────
+
+
+def test_submit_browser_task_success(client: TestClient) -> None:
+    """POST /run-task with valid intent returns 202 with run_id."""
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.start_run = AsyncMock(return_value=_run_response())
+        resp = client.post("/run-task", json={"intent": "Navigate to example.com"})
+
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["run_id"] == "modal-run-1"
+    assert data["status"] == "pending"
+
+
+def test_submit_desktop_task_success(client: TestClient) -> None:
+    """POST /desktop/run-task with valid intent returns 202 with run_id."""
+    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+        mock_loop.return_value.start_run = AsyncMock(return_value=_run_response("desktop-run-1"))
+        resp = client.post("/desktop/run-task", json={"intent": "Open Calculator"})
+
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["run_id"] == "desktop-run-1"
+
+
+# ── Submit failure ───────────────────────────────────────────────────────────
+
+
+def test_submit_missing_intent_returns_422(client: TestClient) -> None:
+    """POST /run-task without intent returns 422 (validation error)."""
+    resp = client.post("/run-task", json={})
+    assert resp.status_code == 422
+
+
+def test_submit_empty_intent_returns_422(client: TestClient) -> None:
+    """POST /run-task with empty-string intent returns 422."""
+    resp = client.post("/run-task", json={"intent": ""})
+    assert resp.status_code == 422
+
+
+def test_submit_task_server_error_propagates(client: TestClient) -> None:
+    """When start_run raises an unhandled RuntimeError, the TestClient re-raises it."""
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.start_run = AsyncMock(side_effect=RuntimeError("storage failure"))
+        with pytest.raises(RuntimeError, match="storage failure"):
+            client.post("/run-task", json={"intent": "Do something"})
+
+
+# ── 409 conflict ─────────────────────────────────────────────────────────────
+
+
+def test_submit_task_conflict_returns_409(client: TestClient) -> None:
+    """POST /run-task when a run is already active returns 409."""
+    from fastapi import HTTPException
+
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.start_run = AsyncMock(
+            side_effect=HTTPException(status_code=409, detail="A run is already in progress")
+        )
+        resp = client.post("/run-task", json={"intent": "Do something"})
+    assert resp.status_code == 409
+
+
+# ── Blocked stop-current-run flow ────────────────────────────────────────────
+
+
+def test_stop_current_run_before_new_task(client: TestClient) -> None:
+    """POST /run/{id}/stop cancels a running task so modal can unblock."""
+    running_state_cls = __import__(
+        "src.models.state", fromlist=["AgentState"]
+    ).AgentState
+    running = running_state_cls(
+        run_id="old-run-1", intent="old task", status=RunStatus.RUNNING
+    )
+    cancelled = running_state_cls(
+        run_id="old-run-1", intent="old task", status=RunStatus.CANCELLED
+    )
+
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        store = mock_loop.return_value.run_store
+        store.get_run = AsyncMock(return_value=running)
+        store.set_status = AsyncMock(return_value=cancelled)
+
+        resp = client.post("/run/old-run-1/stop")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "cancelled"
+    store.set_status.assert_awaited_once_with("old-run-1", RunStatus.CANCELLED)
+
+
+def test_stop_run_by_path_not_found_returns_404(client: TestClient) -> None:
+    """POST /run/{id}/stop with unknown run_id returns 404."""
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.run_store.get_run = AsyncMock(return_value=None)
+        resp = client.post("/run/no-such-run/stop")
+    assert resp.status_code == 404
+
+
+def test_stop_run_by_path_already_done_is_noop(client: TestClient) -> None:
+    """POST /run/{id}/stop on a completed run preserves status and does not call set_status."""
+    running_state_cls = __import__(
+        "src.models.state", fromlist=["AgentState"]
+    ).AgentState
+    done = running_state_cls(
+        run_id="done-run", intent="done task", status=RunStatus.SUCCEEDED
+    )
+
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        store = mock_loop.return_value.run_store
+        store.get_run = AsyncMock(return_value=done)
+        store.set_status = AsyncMock()
+
+        resp = client.post("/run/done-run/stop")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "succeeded"
+    store.set_status.assert_not_called()
+
+
+# ── Instruction validation (server-side) ─────────────────────────────────────
+
+
+def test_run_task_accepts_long_intent(client: TestClient) -> None:
+    """POST /run-task accepts intents up to a reasonable length."""
+    long_intent = "Search for the best restaurants near downtown " * 5
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.start_run = AsyncMock(
+            return_value=_run_response(run_id="long-run")
+        )
+        resp = client.post("/run-task", json={"intent": long_intent})
+    assert resp.status_code == 202
+
+
+# ── URL validation (server-side) ─────────────────────────────────────────────
+
+
+def test_run_task_with_valid_start_url(client: TestClient) -> None:
+    """POST /run-task with a valid https start_url succeeds."""
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.start_run = AsyncMock(return_value=_run_response())
+        resp = client.post(
+            "/run-task",
+            json={"intent": "Navigate to example.com", "start_url": "https://example.com"},
+        )
+    assert resp.status_code == 202
+
+
+def test_run_task_with_http_start_url(client: TestClient) -> None:
+    """POST /run-task with http:// start_url is also accepted."""
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        mock_loop.return_value.start_run = AsyncMock(return_value=_run_response())
+        resp = client.post(
+            "/run-task",
+            json={"intent": "Navigate to example.com", "start_url": "http://example.com"},
+        )
+    assert resp.status_code == 202
+
+
+# ── Modal HTML elements present ───────────────────────────────────────────────
+
+
+def test_command_center_html_has_modal_elements(client: TestClient) -> None:
+    """The command center HTML includes all required modal elements."""
+    resp = client.get("/command-center")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "modalBackdrop" in html
+    assert "intentInput" in html
+    assert "modalRunBtn" in html
+    assert "btnNewTask" in html
+    assert "modalBlocked" in html
+    assert "modalErrBanner" in html
+
+
+def test_command_center_html_has_mode_toggle(client: TestClient) -> None:
+    """The modal HTML contains browser/desktop mode toggle buttons."""
+    resp = client.get("/command-center")
+    html = resp.text
+    assert "modeBrowser" in html
+    assert "modeDesktop" in html
+
+
+def test_command_center_html_has_url_input(client: TestClient) -> None:
+    """The modal HTML contains the start URL input (browser-only field)."""
+    resp = client.get("/command-center")
+    html = resp.text
+    assert "urlInput" in html
+
+
+def test_command_center_html_stop_and_reset_present(client: TestClient) -> None:
+    """The blocked state within the modal has a stop-and-reset button."""
+    resp = client.get("/command-center")
+    html = resp.text
+    assert "stopAndReset" in html

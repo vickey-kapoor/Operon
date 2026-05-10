@@ -49,12 +49,17 @@ def test_console_has_log_panel(client: TestClient) -> None:
     assert "logBody" in resp.text or "Live Log" in resp.text
 
 
-def test_root_page_has_links_to_console_and_dashboard(client: TestClient) -> None:
-    """Landing page should link to both primary UI surfaces."""
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert 'href="/console"' in resp.text
-    assert 'href="/dashboard"' in resp.text
+def test_root_redirects_to_command_center(client: TestClient) -> None:
+    """GET / should 307-redirect to /command-center."""
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/command-center"
+
+
+def test_home_route_does_not_exist(client: TestClient) -> None:
+    """There is no /home route — it should return 404."""
+    resp = client.get("/home")
+    assert resp.status_code == 404
 
 
 

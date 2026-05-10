@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+
+  :root {
+    --bg:        #0e0d0c;
+    --bg-alt:    #0a0908;
+    --bg-panel:  #161412;
+    --bg-hover:  #1a1816;
+    --border:    #252321;
+    --border-sub:#1a1816;
+    --text:      #e8e4dc;
+    --muted:     #7a756c;
+    --dim:       #4a453e;
+    --dimmer:    #3a352e;
+    --neutral:   #a8a29a;
+    --amber:     #d97706;
+    --amber-bg:  #1f1408;
+    --amber-bdr: #3a2a14;
+    --green:     #84cc16;
+    --red:       #dc2626;
+    --red-bg:    #1a0c0c;
+    --red-bdr:   #3a1414;
+    --sans:      'IBM Plex Sans', system-ui, sans-serif;
+    --mono:      'IBM Plex Mono', ui-monospace, monospace;
+    --cond:      'IBM Plex Sans Condensed', 'IBM Plex Sans', sans-serif;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; line-height: 1.4; }
+  * { scrollbar-width: thin; scrollbar-color: var(--dim) transparent; }
+  *::-webkit-scrollbar { width: 3px; }
+  *::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 99px; }
+
+  /* ── Layout ─────────────────────────────────────────────────────────────── */
+  .shell { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ── Topbar ─────────────────────────────────────────────────────────────── */
+  .topbar {
+    flex-shrink: 0; height: 44px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .topbar-left  { display: flex; align-items: center; gap: 10px; }
+  .topbar-right { display: flex; align-items: center; gap: 6px; }
+  .logo-sq {
+    width: 26px; height: 26px; border-radius: 5px; flex-shrink: 0;
+    background: linear-gradient(135deg, #d97706, #f59e0b);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--cond); font-weight: 700; font-size: 13px; color: #0e0d0c;
+  }
+  .brand { font-family: var(--cond); font-weight: 700; font-size: 15px; letter-spacing: 0.04em; }
+  .ws-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dimmer); transition: background 0.3s; }
+  .ws-dot.ok  { background: var(--green); }
+  .ws-dot.err { background: var(--red); }
+  .nav-btn {
+    padding: 5px 12px; font-size: 13px; font-family: var(--sans);
+    background: transparent; border: none; border-radius: 4px;
+    color: var(--muted); cursor: pointer; transition: all 0.1s; font-weight: 400;
+  }
+  .nav-btn:hover { color: var(--text); background: var(--bg-hover); }
+  .nav-btn.active { background: var(--bg-hover); color: var(--text); font-weight: 500; }
+  .ctrl-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px; font-family: var(--mono); font-size: 11px;
+    color: var(--neutral); background: transparent;
+    border: 1px solid var(--border); border-radius: 4px;
+    cursor: pointer; transition: background 0.1s;
+  }
+  .ctrl-btn:hover:not(:disabled) { background: var(--bg-hover); }
+  .ctrl-btn:disabled { opacity: 0.3; cursor: default; }
+
+  /* ── Active run bar ─────────────────────────────────────────────────────── */
+  .run-bar {
+    flex-shrink: 0; height: 36px;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: 11px;
+  }
+  .run-bar-label {
+    letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); font-size: 10px;
+  }
+  .run-bar-id   { color: var(--neutral); }
+  .run-bar-time { color: var(--muted); }
+  .run-bar-status { display: flex; align-items: center; gap: 5px; }
+  .rbs-idle { color: var(--dim); }
+  .rbs-live { color: var(--amber); }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); animation: blink 1.5s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+  /* ── Main area ──────────────────────────────────────────────────────────── */
+  .main { flex: 1; overflow: hidden; display: flex; }
+
+  /* ── Empty state ────────────────────────────────────────────────────────── */
+  .empty-shell { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .empty-cta {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .empty-center { text-align: center; max-width: 480px; }
+  .empty-eyebrow {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 16px;
+  }
+  .empty-heading {
+    font-family: var(--cond); font-weight: 700; font-size: 44px;
+    letter-spacing: -0.02em; line-height: 1.05;
+    color: var(--text); margin-bottom: 16px;
+  }
+  .empty-desc {
+    font-size: 14px; line-height: 1.65; color: var(--neutral);
+    margin-bottom: 32px;
+  }
+  .new-task-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 10px 20px; font-size: 14px; font-weight: 500;
+    color: #0e0d0c; background: var(--amber); border: none; border-radius: 5px;
+    cursor: pointer; transition: transform 0.1s, opacity 0.1s;
+  }
+  .new-task-btn:hover { transform: scale(1.02); opacity: 0.92; }
+
+  /* ── Recent runs ────────────────────────────────────────────────────────── */
+  .recent-runs {
+    flex-shrink: 0; padding: 0 24px 20px;
+    max-width: 760px; width: 100%; margin: 0 auto;
+  }
+  .recent-head {
+    display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px;
+  }
+  .recent-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .view-all-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--mono); font-size: 11px; color: var(--neutral);
+    background: none; border: none; cursor: pointer;
+  }
+  .view-all-btn:hover { color: var(--text); }
+  .recent-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: 4px; border: 1px solid var(--border-sub);
+    cursor: pointer; transition: background 0.1s; margin-bottom: 4px;
+  }
+  .recent-row:hover { background: rgba(22,20,18,0.5); }
+  .recent-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .recent-id  { font-family: var(--mono); font-size: 10px; color: var(--dim); flex-shrink: 0; }
+  .recent-intent { font-size: 13px; color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recent-when { font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
+  .recent-arrow { color: var(--dim); opacity: 0; transition: opacity 0.12s; flex-shrink: 0; }
+  .recent-row:hover .recent-arrow { opacity: 1; }
+
+  /* ── Split-pane (active run) ────────────────────────────────────────────── */
+  .pane { display: flex; flex-direction: column; min-height: 0; }
+  .pane-left  { width: 42%; flex-shrink: 0; border-right: 1px solid var(--border); }
+  .pane-right { flex: 1; background: var(--bg-alt); }
+  .pane-head {
+    flex-shrink: 0; height: 34px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; border-bottom: 1px solid var(--border-sub);
+    font-family: var(--cond); font-weight: 700;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
+  }
+  .pane-head-right { font-family: var(--mono); font-weight: 400; font-size: 10px; letter-spacing: 0.04em; text-transform: none; }
+  .pane-foot {
+    flex-shrink: 0; height: 28px;
+    display: flex; align-items: center; gap: 8px; padding: 0 20px;
+    border-top: 1px solid var(--border-sub);
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+  }
+  .foot-sep { color: var(--dimmer); }
+
+  /* ── Step stream ────────────────────────────────────────────────────────── */
+  .steps-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 0; }
+  .step-entry {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 7px 20px; border-bottom: 1px dashed var(--border-sub); font-family: var(--mono);
+  }
+  .step-entry:last-of-type { border-bottom: none; }
+  .step-icon { flex-shrink: 0; margin-top: 1px; font-size: 11px; line-height: 1; }
+  .si-done    { color: var(--green); }
+  .si-running { color: var(--amber); animation: blink 1s ease-in-out infinite; }
+  .si-failed  { color: var(--red); }
+  .si-pending { color: var(--dimmer); }
+  .step-body  { flex: 1; min-width: 0; }
+  .step-l1    { display: flex; align-items: baseline; gap: 7px; font-size: 13px; line-height: 1.4; }
+  .step-n     { color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .step-action { font-weight: 500; }
+  .step-arrow  { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .step-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dim-text   { color: var(--dim) !important; }
+  .step-value { margin-top: 2px; margin-left: 26px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step-meta  { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .src-llm  { color: var(--muted); }
+  .src-rule { color: var(--amber); font-weight: 500; }
+  .meta-sep { color: var(--dimmer); }
+  .step-awaiting {
+    display: flex; align-items: center; gap: 8px; padding: 9px 20px;
+    font-family: var(--mono); font-size: 12px; color: var(--dim);
+  }
+  .aw-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--amber); opacity: 0.5; animation: blink 1s ease-in-out infinite;
+  }
+
+  /* ── Browser pane ───────────────────────────────────────────────────────── */
+  .browser-wrap { flex: 1; display: flex; padding: 16px; }
+  .browser-frame {
+    flex: 1; background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 6px; overflow: hidden; display: flex; flex-direction: column;
+  }
+  .browser-bar {
+    flex-shrink: 0; display: flex; align-items: center; gap: 10px;
+    padding: 7px 12px; background: var(--bg-hover); border-bottom: 1px solid var(--border);
+  }
+  .chrome-dots { display: flex; gap: 5px; }
+  .chrome-dot  { width: 10px; height: 10px; border-radius: 50%; }
+  .cd-r { background: var(--amber-bdr); } .cd-y { background: var(--dimmer); } .cd-g { background: var(--dimmer); }
+  .browser-url { flex: 1; padding: 3px 10px; border-radius: 3px; background: var(--bg); color: var(--muted); font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .frame-area  { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+  #screenshotImg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: none; }
+  .placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 32px; }
+  .ph-label { font-family: var(--cond); font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); margin-bottom: 10px; }
+  .ph-title { font-family: var(--mono); font-size: 13px; color: var(--neutral); margin-bottom: 8px; }
+  .ph-desc  { font-size: 12px; color: var(--muted); line-height: 1.65; max-width: 340px; }
+  .ph-port  { color: var(--amber); font-family: var(--mono); }
+  .cdp-form { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
+  .cdp-input { width: 76px; padding: 5px 8px; font-family: var(--mono); font-size: 12px; background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; outline: none; transition: border-color 0.12s; }
+  .cdp-input:focus { border-color: var(--amber); }
+  .cdp-btn { padding: 5px 14px; font-family: var(--mono); font-size: 12px; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bdr); border-radius: 4px; cursor: pointer; transition: opacity 0.1s; }
+  .cdp-btn:hover { opacity: 0.8; } .cdp-btn:disabled { opacity: 0.3; cursor: default; }
+  .cdp-err { font-family: var(--mono); font-size: 11px; color: var(--red); margin-top: 8px; }
+  .vel-bars { display: flex; gap: 2px; align-items: flex-end; height: 11px; }
+  .vbar { width: 3px; border-radius: 1px; background: var(--dim); transition: background 0.3s, height 0.3s; }
+  .vbar.lit { background: var(--amber); } .vbar.hot { background: var(--red); }
+
+  /* ── Modal ──────────────────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(8,7,6,0.78); backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.15s;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: all; }
+  .modal {
+    width: 100%; max-width: 672px; border-radius: 8px; overflow: hidden;
+    background: var(--bg-panel); border: 1px solid var(--border);
+    box-shadow: 0 25px 80px rgba(0,0,0,0.5);
+    transform: translateY(10px); transition: transform 0.15s;
+  }
+  .modal-backdrop.open .modal { transform: translateY(0); }
+
+  /* modal header */
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+  }
+  .modal-title { font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--neutral); }
+  .modal-close { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px; display: flex; align-items: center; }
+  .modal-close:hover { color: var(--text); }
+
+  /* blocked banner */
+  .modal-blocked {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px; background: var(--amber-bg); border-bottom: 1px solid var(--amber-bdr);
+  }
+  .mb-info { flex: 1; }
+  .mb-title { font-size: 12.5px; font-weight: 500; color: var(--text); }
+  .mb-sub   { font-family: var(--mono); font-size: 11.5px; color: var(--neutral); margin-top: 2px; }
+  .mb-stop  {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--amber); background: var(--bg); border: 1px solid var(--amber-bdr); border-radius: 4px;
+    cursor: pointer; white-space: nowrap; transition: opacity 0.1s;
+  }
+  .mb-stop:hover { opacity: 0.8; }
+
+  /* body */
+  .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+  .modal-body.disabled { opacity: 0.5; pointer-events: none; }
+  .field-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 8px;
+  }
+  .field-label-opt { color: var(--dim); text-transform: none; letter-spacing: 0; }
+  .mode-row { display: flex; gap: 6px; }
+  .mode-btn {
+    padding: 6px 14px; font-family: var(--mono); font-size: 12.5px;
+    border-radius: 4px; border: 1px solid var(--border);
+    color: var(--neutral); background: transparent; cursor: pointer; transition: all 0.1s;
+  }
+  .mode-btn:hover { color: var(--text); border-color: var(--neutral); }
+  .mode-btn.active { color: var(--amber); background: var(--amber-bg); border-color: var(--amber-bdr); }
+  .modal-textarea {
+    width: 100%; padding: 10px 12px; font-family: var(--sans); font-size: 13px; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    outline: none; resize: none; transition: border-color 0.12s;
+  }
+  .modal-textarea:focus { border-color: var(--amber); }
+  .modal-textarea::placeholder { color: var(--muted); }
+  .modal-input {
+    width: 100%; padding: 8px 12px; font-family: var(--mono); font-size: 13px; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    outline: none; transition: border-color 0.12s;
+  }
+  .modal-input:focus { border-color: var(--amber); }
+  .modal-input::placeholder { color: var(--muted); }
+  .modal-input.err { border-color: var(--red-bdr); }
+
+  /* error banner */
+  .modal-err-banner {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 14px; border-radius: 4px;
+    background: var(--red-bg); border: 1px solid var(--red-bdr);
+  }
+  .meb-title { font-size: 12.5px; font-weight: 500; color: var(--text); }
+  .meb-sub   { font-family: var(--mono); font-size: 11.5px; color: var(--neutral); margin-top: 3px; }
+
+  /* footer */
+  .modal-footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 20px; border-top: 1px solid var(--border); background: var(--bg);
+  }
+  .modal-status { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .modal-footer-btns { display: flex; align-items: center; gap: 8px; }
+  .modal-cancel {
+    padding: 6px 12px; font-family: var(--mono); font-size: 12.5px;
+    color: var(--neutral); background: transparent;
+    border: 1px solid var(--border); border-radius: 4px; cursor: pointer; transition: background 0.1s;
+  }
+  .modal-cancel:hover { background: var(--bg-hover); }
+  .modal-run {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 6px 16px; font-family: var(--mono); font-size: 13px; font-weight: 500;
+    color: #0e0d0c; background: var(--amber); border: none; border-radius: 4px;
+    cursor: pointer; transition: opacity 0.1s;
+  }
+  .modal-run:hover { opacity: 0.88; }
+  .modal-run:disabled { opacity: 0.4; cursor: default; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo-sq">o</div>
+      <div class="brand">OPERON</div>
+      <div class="ws-dot" id="wsDot" title="WebSocket"></div>
+    </div>
+    <nav style="display:flex;align-items:center;gap:2px;">
+      <button class="nav-btn active">Command Center</button>
+      <button class="nav-btn" onclick="location.href='/dashboard'">Dashboard</button>
+      <button class="nav-btn" onclick="location.href='/benchmarks'">Benchmarks</button>
+    </nav>
+    <div class="topbar-right">
+      <button class="ctrl-btn" id="btnNewTask" onclick="openModal()"
+        style="color:var(--amber);border-color:var(--amber-bdr);background:var(--amber-bg);">
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M5.5 1v9M1 5.5h9"/>
+        </svg>
+        new task
+      </button>
+      <button class="ctrl-btn" id="btnPause" onclick="togglePause()" disabled>
+        <svg width="10" height="10" fill="currentColor" viewBox="0 0 10 10">
+          <rect x="1.5" y="1" width="2.5" height="8" rx=".5"/>
+          <rect x="6"   y="1" width="2.5" height="8" rx=".5"/>
+        </svg>
+        <span id="pauseLabel">pause</span>
+      </button>
+      <button class="ctrl-btn" id="btnStop" onclick="stopRun()" disabled>
+        <svg width="9" height="9" fill="currentColor" viewBox="0 0 9 9">
+          <rect x=".5" y=".5" width="8" height="8" rx=".5"/>
+        </svg>
+        stop
+      </button>
+    </div>
+  </header>
+
+  <!-- Active run bar -->
+  <div class="run-bar">
+    <span class="run-bar-label">active run</span>
+    <span class="run-bar-id"  id="barRunId">—</span>
+    <span class="run-bar-time" id="barElapsed">00:00</span>
+    <span class="run-bar-status rbs-idle" id="barStatus">
+      <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="4.5" cy="4.5" r="3.5"/>
+      </svg>
+      idle
+    </span>
+  </div>
+
+  <!-- Main -->
+  <div class="main" id="main">
+
+    <!-- ── Empty state ──────────────────────────────────────────────────── -->
+    <div class="empty-shell" id="emptyShell">
+      <div class="empty-cta">
+        <div class="empty-center">
+          <div class="empty-eyebrow">command center</div>
+          <h1 class="empty-heading">Start a new task</h1>
+          <p class="empty-desc">
+            Describe what you want Operon to do — browse, click, type, scroll. The agent perceives, plans, and executes step by step. You watch every decision.
+          </p>
+          <button class="new-task-btn" onclick="openModal()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <path d="M7 1v12M1 7h12"/>
+            </svg>
+            new task
+          </button>
+        </div>
+      </div>
+
+      <div class="recent-runs">
+        <div class="recent-head">
+          <div class="recent-label">recent runs</div>
+          <button class="view-all-btn" onclick="location.href='/dashboard'">
+            view all
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <path d="M2 5h6M5.5 2.5L8 5l-2.5 2.5"/>
+            </svg>
+          </button>
+        </div>
+        <div id="recentList"></div>
+      </div>
+    </div>
+
+    <!-- ── Active run: split panes ──────────────────────────────────────── -->
+    <section class="pane pane-left hidden" id="paneLeft">
+      <div class="pane-head">
+        <span>Step Stream</span>
+        <span class="pane-head-right" id="stepCounter">—</span>
+      </div>
+      <div class="steps-body" id="stepsBody"></div>
+      <div class="pane-foot">
+        <span id="fSteps">0 steps</span>
+        <span class="foot-sep">·</span>
+        <span id="fRules">0 rules</span>
+        <span class="foot-sep">·</span>
+        <span id="fLlm">0 llm</span>
+      </div>
+    </section>
+
+    <section class="pane pane-right hidden" id="paneRight">
+      <div class="pane-head">
+        <span>Live Execution</span>
+        <span class="pane-head-right" id="cdpStatus" style="color:var(--dim)">disconnected</span>
+      </div>
+      <div class="browser-wrap">
+        <div class="browser-frame">
+          <div class="browser-bar">
+            <div class="chrome-dots">
+              <div class="chrome-dot cd-r"></div>
+              <div class="chrome-dot cd-y"></div>
+              <div class="chrome-dot cd-g"></div>
+            </div>
+            <div class="browser-url" id="browserUrl">about:blank</div>
+          </div>
+          <div class="frame-area">
+            <!-- TODO: CDP Page.screencast WebSocket slots in here for lower-latency streaming -->
+            <img id="screenshotImg" alt="">
+            <div class="placeholder" id="placeholder">
+              <div class="ph-label">Live Browser Stream</div>
+              <div class="ph-title">[ CDP-attached headed chrome renders here ]</div>
+              <div class="ph-desc">
+                The actual page mirror streams from
+                <span class="ph-port" id="portChip">:9222</span>
+                via Chrome DevTools Protocol.
+              </div>
+              <div class="cdp-form">
+                <input class="cdp-input" id="cdpPortInput" type="number" value="9222" min="1024" max="65535">
+                <button class="cdp-btn" id="cdpBtn" onclick="connectCdp()">connect</button>
+              </div>
+              <div class="cdp-err hidden" id="cdpErr"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pane-foot">
+        <span>headed chrome</span>
+        <span style="flex:1"></span>
+        <span style="color:var(--dim)">velocity</span>
+        <div class="vel-bars">
+          <div class="vbar" id="vb0" style="height:3px"></div>
+          <div class="vbar" id="vb1" style="height:5px"></div>
+          <div class="vbar" id="vb2" style="height:4px"></div>
+          <div class="vbar" id="vb3" style="height:7px"></div>
+          <div class="vbar" id="vb4" style="height:4px"></div>
+        </div>
+        <span id="velLabel" style="color:var(--dim)">idle</span>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ── Task Modal ─────────────────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="modalBackdrop" onclick="backdropClick(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+
+    <!-- Header -->
+    <div class="modal-header">
+      <div class="modal-title">new task</div>
+      <button class="modal-close" onclick="closeModal()" title="close">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M3 3l10 10M13 3L3 13"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Blocked banner (shown when a run is active) -->
+    <div class="modal-blocked hidden" id="modalBlocked">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#d97706" stroke-width="1.6" stroke-linecap="round" style="flex-shrink:0">
+        <path d="M7 1L13 12H1L7 1z"/><path d="M7 5.5v3M7 10.5v.5"/>
+      </svg>
+      <div class="mb-info">
+        <div class="mb-title">An active run is in progress</div>
+        <div class="mb-sub" id="blockedSub">—</div>
+      </div>
+      <button class="mb-stop" onclick="stopAndReset()">
+        <svg width="10" height="10" fill="currentColor" viewBox="0 0 9 9"><rect x=".5" y=".5" width="8" height="8" rx=".5"/></svg>
+        stop current run
+      </button>
+    </div>
+
+    <!-- Body -->
+    <div class="modal-body" id="modalBody">
+      <div>
+        <label class="field-label">environment</label>
+        <div class="mode-row">
+          <button class="mode-btn active" id="modeBrowser" onclick="setMode('browser')">Browser</button>
+          <button class="mode-btn"        id="modeDesktop" onclick="setMode('desktop')">Desktop</button>
+        </div>
+      </div>
+      <div>
+        <label class="field-label" for="intentInput">instruction</label>
+        <textarea class="modal-textarea" id="intentInput" rows="4"
+          placeholder="Describe what you want Operon to do…"
+          oninput="syncRunBtn()"></textarea>
+      </div>
+      <div id="urlField">
+        <label class="field-label" for="urlInput">
+          start url <span class="field-label-opt">· optional</span>
+        </label>
+        <input class="modal-input" id="urlInput" type="text" placeholder="https://…">
+      </div>
+      <!-- Error banner (shown on API error) -->
+      <div class="modal-err-banner hidden" id="modalErrBanner">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-linecap="round" style="flex-shrink:0;margin-top:2px">
+          <circle cx="7" cy="7" r="6"/><path d="M7 4.5v3M7 9.5v.5"/>
+        </svg>
+        <div>
+          <div class="meb-title">Failed to start run</div>
+          <div class="meb-sub" id="modalErrText">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer">
+      <div class="modal-status" id="modalStatus"></div>
+      <div class="modal-footer-btns">
+        <button class="modal-cancel" onclick="closeModal()">cancel</button>
+        <button class="modal-run" id="modalRunBtn" onclick="submitTask()">
+          <svg id="runIcon" width="11" height="11" viewBox="0 0 11 11" fill="currentColor">
+            <polygon points="1,1 10,5.5 1,10"/>
+          </svg>
+          <span id="runLabel">run task</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ── Path → run_id ──────────────────────────────────────────────────────────────
+const _pp = location.pathname.split('/').filter(Boolean);
+let runId = (_pp.length >= 2 && _pp[0] === 'command-center') ? _pp[_pp.length - 1] : null;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let ws = null, wsRetry = 2000;
+let sseSource = null;
+let screenshotPollId = null;
+let running = false, paused = false;
+let steps = [], totalSteps = 0;
+let startEpoch = null, elapsedId = null;
+let frameTimes = [];
+let modalMode = 'browser';
+let modalLoading = false;
+let modalAbortCtrl = null;
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function esc(v) {
+  if (v == null) return '';
+  const d = document.createElement('div'); d.textContent = String(v); return d.innerHTML;
+}
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtSec(s) { return `${pad2(Math.floor(s/60))}:${pad2(s%60)}`; }
+function trunc(s, n) { if (!s) return ''; return s.length > n ? s.slice(0,n)+'…' : s; }
+function stripUrl(u) { if (!u) return ''; return u.replace(/^https?:\/\//,'').split('?')[0].slice(0,70); }
+function fmtAge(ts) {
+  const s = (Date.now()/1000) - ts;
+  if (s < 120) return 'just now';
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+// ── Run bar ───────────────────────────────────────────────────────────────────
+function updateRunBar(on, rid, status) {
+  const idEl  = document.getElementById('barRunId');
+  const stEl  = document.getElementById('barStatus');
+  idEl.textContent = rid ? rid.slice(0,8) : '—';
+  if (on) {
+    stEl.className = 'run-bar-status rbs-live';
+    stEl.innerHTML = '<div class="live-dot"></div> live';
+  } else {
+    stEl.className = 'run-bar-status rbs-idle';
+    stEl.innerHTML = '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="4.5" cy="4.5" r="3.5"/></svg> idle';
+  }
+}
+
+// ── View switch (empty ↔ split panes) ─────────────────────────────────────────
+function showPanes() {
+  document.getElementById('emptyShell').classList.add('hidden');
+  document.getElementById('paneLeft').classList.remove('hidden');
+  document.getElementById('paneRight').classList.remove('hidden');
+}
+function showEmpty() {
+  document.getElementById('emptyShell').classList.remove('hidden');
+  document.getElementById('paneLeft').classList.add('hidden');
+  document.getElementById('paneRight').classList.add('hidden');
+}
+
+// ── Step normalizers ──────────────────────────────────────────────────────────
+function normalizeObs(step) {
+  const act = step.plan?.proposed_action || step.execution?.action || {};
+  const atype = step.execution?.action?.action_type || act.action_type || 'unknown';
+  let target = '', value = null;
+  switch (atype) {
+    case 'navigate': target = stripUrl(act.url); break;
+    case 'type': case 'select':
+      target = act.selector || act.target_element_id || trunc(step.plan?.rationale, 50);
+      value  = (act.text && act.text.length <= 80) ? act.text : null; break;
+    case 'press_key': case 'hotkey': target = act.key; break;
+    case 'launch_app': target = act.text; break;
+    case 'scroll': target = (act.scroll_amount||0) > 0 ? 'down' : 'up'; break;
+    case 'wait': target = `${act.wait_ms}ms`; break;
+    default: target = act.selector || act.target_element_id || trunc(step.plan?.rationale, 50);
+  }
+  return {
+    n: step.step_index + 1, action: atype,
+    target: target || trunc(step.plan?.rationale, 50) || '',
+    value, source: step.plan?.rule_name || 'LLM',
+    conf: step.plan?.confidence ?? null,
+    expects: act.expected_change && act.expected_change !== 'none' ? act.expected_change : null,
+    status: step.failure ? 'failed' : 'done',
+  };
+}
+function normalizeWs(ev) {
+  if ('n' in ev) return { n: ev.n, action: ev.action||'unknown', target: ev.target||'', value: ev.value, source: ev.source||'LLM', conf: ev.conf??null, expects: ev.expects||null, status: ev.status||'done' };
+  return {
+    n: ev.step, action: ev.action_type||'unknown',
+    target: ev.action_target || trunc(ev.rationale, 50) || '',
+    value: (ev.action_value && ev.action_value.length <= 80) ? ev.action_value : null,
+    source: ev.rule_name || 'LLM', conf: ev.confidence??null,
+    expects: (ev.action_expected_change && ev.action_expected_change !== 'none') ? ev.action_expected_change : null,
+    status: ev.status === 'failed' ? 'failed' : 'done',
+  };
+}
+
+// ── Step rendering ─────────────────────────────────────────────────────────────
+function iconHtml(s) {
+  if (s==='done')    return '<span class="step-icon si-done">✓</span>';
+  if (s==='running') return '<span class="step-icon si-running">○</span>';
+  if (s==='failed')  return '<span class="step-icon si-failed">✗</span>';
+  return '<span class="step-icon si-pending">○</span>';
+}
+function stepHtml(s) {
+  const isRule = s.source && s.source.startsWith('_');
+  return `<div class="step-entry">
+  ${iconHtml(s.status)}
+  <div class="step-body">
+    <div class="step-l1">
+      <span class="step-n">${pad2(s.n)}</span>
+      <span class="step-action">${esc(s.action)}</span>
+      <span class="step-arrow">›</span>
+      <span class="step-target" title="${esc(s.target)}">${esc(s.target)}</span>
+    </div>
+    ${s.value ? `<div class="step-value">"${esc(s.value)}"</div>` : ''}
+    <div class="step-meta">
+      <span class="${isRule?'src-rule':'src-llm'}">${esc(s.source)}</span>
+      ${s.conf!=null?`<span class="meta-sep">·</span><span>conf ${s.conf.toFixed(2)}</span>`:''}
+      ${s.expects?`<span class="meta-sep">·</span><span>expects ${esc(s.expects)}</span>`:''}
+    </div>
+  </div>
+</div>`;
+}
+function renderSteps() {
+  const body = document.getElementById('stepsBody');
+  let html = steps.map(stepHtml).join('');
+  if (running && !paused) html += '<div class="step-awaiting"><div class="aw-dot"></div>awaiting next step…</div>';
+  body.innerHTML = html;
+  body.scrollTop = body.scrollHeight;
+  const rules = steps.filter(s=>s.source&&s.source.startsWith('_')).length;
+  const llm   = steps.filter(s=>s.source==='LLM').length;
+  document.getElementById('fSteps').textContent   = `${steps.length} steps`;
+  document.getElementById('fRules').textContent   = `${rules} rules`;
+  document.getElementById('fLlm').textContent     = `${llm} llm`;
+  document.getElementById('stepCounter').textContent = steps.length > 0 ? `${steps.length}/${totalSteps||steps.length}` : '—';
+}
+function upsertStep(norm) {
+  const i = steps.findIndex(s=>s.n===norm.n);
+  if (i>=0) steps[i]=norm; else steps.push(norm);
+  steps.sort((a,b)=>a.n-b.n);
+  renderSteps();
+}
+
+// ── Screenshot polling (2 Hz) ─────────────────────────────────────────────────
+// TODO: Replace with CDP Page.screencast WebSocket for lower-latency streaming
+function startScreenshotPoll(rid) {
+  stopScreenshotPoll();
+  const img = document.getElementById('screenshotImg');
+  img.onload = () => { showScreenshot(); frameTimes.push(Date.now()); tickVelocity(); };
+  screenshotPollId = setInterval(() => {
+    img.src = `/command-center/api/run/${rid}/screenshot?t=${Date.now()}`;
+  }, 500); // 2 Hz
+}
+function stopScreenshotPoll() {
+  if (screenshotPollId) { clearInterval(screenshotPollId); screenshotPollId = null; }
+}
+function showScreenshot()  { document.getElementById('screenshotImg').style.display='block'; document.getElementById('placeholder').style.display='none'; }
+function showPlaceholder() { document.getElementById('screenshotImg').style.display='none'; document.getElementById('placeholder').style.display=''; }
+
+function tickVelocity() {
+  const now=Date.now(); frameTimes=frameTimes.filter(t=>now-t<5000);
+  const fps=frameTimes.length/5; const level=Math.min(5,Math.round(fps));
+  ['vb0','vb1','vb2','vb3','vb4'].forEach((id,i)=>{
+    const el=document.getElementById(id);
+    el.style.height=`${[3,5,7,9,11][i]}px`;
+    el.className='vbar'+(i<level?(fps>10?' hot':' lit'):'');
+  });
+  const lbl=document.getElementById('velLabel');
+  if (fps>8)      {lbl.textContent='live';   lbl.style.color='var(--green)';}
+  else if (fps>3) {lbl.textContent='stable'; lbl.style.color='var(--muted)';}
+  else if (fps>0) {lbl.textContent='slow';   lbl.style.color='var(--amber)';}
+  else            {lbl.textContent='idle';   lbl.style.color='var(--dim)';}
+}
+
+// ── Run state ─────────────────────────────────────────────────────────────────
+function setRunning(on, status) {
+  running = on;
+  document.getElementById('btnPause').disabled = !on;
+  document.getElementById('btnStop').disabled  = !on;
+  updateRunBar(on && status !== 'succeeded' && status !== 'failed' && status !== 'cancelled', runId, status);
+  if (on) {
+    showPanes();
+    if (runId) { connectSse(runId); startScreenshotPoll(runId); }
+    if (!elapsedId) {
+      startEpoch = startEpoch || Date.now();
+      elapsedId = setInterval(()=>{
+        document.getElementById('barElapsed').textContent = fmtSec(Math.floor((Date.now()-startEpoch)/1000));
+      }, 1000);
+    }
+  } else {
+    stopScreenshotPoll();
+    if (sseSource) { sseSource.close(); sseSource = null; }
+    if (elapsedId) { clearInterval(elapsedId); elapsedId=null; }
+    if (!steps.length) showEmpty();
+  }
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+async function togglePause() {
+  if (!runId) return;
+  if (paused) {
+    paused = false;
+    document.getElementById('pauseLabel').textContent = 'pause';
+    document.getElementById('btnPause').querySelector('svg').innerHTML =
+      '<rect x="1.5" y="1" width="2.5" height="8" rx=".5"/><rect x="6" y="1" width="2.5" height="8" rx=".5"/>';
+    try { await fetch('/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:runId})}); } catch(_){}
+  } else {
+    paused = true;
+    document.getElementById('pauseLabel').textContent = 'resume';
+    document.getElementById('btnPause').querySelector('svg').innerHTML =
+      '<polygon points="1,1 9,5 1,9"/>';
+    try { await fetch(`/run/${runId}/pause`,{method:'POST'}); } catch(_){}
+  }
+  renderSteps();
+}
+async function stopRun() {
+  if (!runId) return;
+  try { await fetch('/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:runId})}); } catch(_){}
+  setRunning(false,'cancelled');
+}
+
+// ── SSE step stream ───────────────────────────────────────────────────────────
+function connectSse(rid) {
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  sseSource = new EventSource(`/command-center/api/run/${rid}/stream`);
+  sseSource.onmessage = (e) => {
+    try { upsertStep(JSON.parse(e.data)); } catch(_){}
+  };
+  sseSource.onerror = () => {
+    document.getElementById('wsDot').className = 'ws-dot err';
+  };
+  sseSource.onopen = () => {
+    document.getElementById('wsDot').className = 'ws-dot ok';
+  };
+}
+
+// ── CDP manual connect (fallback for external CDP sessions) ───────────────────
+async function connectCdp() {
+  const port=parseInt(document.getElementById('cdpPortInput').value)||9222;
+  const btn=document.getElementById('cdpBtn'); const err=document.getElementById('cdpErr');
+  btn.disabled=true; btn.textContent='connecting…'; err.classList.add('hidden');
+  try {
+    const r=await fetch('/connect-cdp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port,fps:15})});
+    const d=await r.json();
+    if (d.connected) {
+      document.getElementById('portChip').textContent=':'+port;
+      document.getElementById('cdpStatus').textContent=`● cdp · :${port} · attached`;
+      document.getElementById('cdpStatus').style.color='var(--green)';
+    } else { err.textContent=d.detail||'connection failed'; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='retry'; }
+  } catch(e) { err.textContent=e.message; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='retry'; }
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+function syncRunBtn() {
+  const val = document.getElementById('intentInput').value.trim();
+  document.getElementById('modalRunBtn').disabled = !val || modalLoading;
+}
+
+function openModal(opts = {}) {
+  // Pre-fill from opts (e.g. clicking a recent run row)
+  if (opts.intent != null)    document.getElementById('intentInput').value = opts.intent;
+  if (opts.start_url != null) document.getElementById('urlInput').value    = opts.start_url;
+  setMode(opts.mode || modalMode || 'browser');
+
+  const blocked = running;
+  document.getElementById('modalBlocked').classList.toggle('hidden', !blocked);
+  document.getElementById('modalBody').classList.toggle('disabled', blocked);
+  if (blocked) {
+    document.getElementById('blockedSub').textContent =
+      runId ? `${runId.slice(0,8)} · running for ${document.getElementById('barElapsed').textContent}` : '—';
+  }
+  document.getElementById('modalErrBanner').classList.add('hidden');
+  document.getElementById('modalStatus').textContent = '';
+  setModalLoading(false);
+  syncRunBtn();
+  document.getElementById('modalBackdrop').classList.add('open');
+  if (!blocked) setTimeout(()=>document.getElementById('intentInput').focus(), 50);
+}
+
+function closeModal() {
+  // Abort any in-flight fetch when user cancels during loading
+  if (modalAbortCtrl) { modalAbortCtrl.abort(); modalAbortCtrl = null; }
+  setModalLoading(false);
+  document.getElementById('modalBackdrop').classList.remove('open');
+}
+
+function backdropClick(e) {
+  if (e.target===document.getElementById('modalBackdrop')) closeModal();
+}
+
+function setMode(m) {
+  modalMode=m;
+  document.getElementById('modeBrowser').classList.toggle('active', m==='browser');
+  document.getElementById('modeDesktop').classList.toggle('active', m==='desktop');
+  document.getElementById('urlField').style.display = m==='browser' ? '' : 'none';
+}
+
+function setModalLoading(on) {
+  modalLoading=on;
+  document.getElementById('modalBody').classList.toggle('disabled', on || running);
+  document.getElementById('modalStatus').textContent=on?'creating run…':'';
+  const lbl=document.getElementById('runLabel');
+  const runBtn=document.getElementById('modalRunBtn');
+  if (on) {
+    document.getElementById('runIcon').outerHTML =
+      `<svg id="runIcon" class="spin" width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5.5 1A4.5 4.5 0 1 1 1 5.5"/></svg>`;
+    lbl.textContent='starting…';
+    runBtn.disabled=true;
+  } else {
+    const icon=document.getElementById('runIcon');
+    if (icon) icon.outerHTML =
+      `<svg id="runIcon" width="11" height="11" viewBox="0 0 11 11" fill="currentColor"><polygon points="1,1 10,5.5 1,10"/></svg>`;
+    lbl.textContent='run task';
+    syncRunBtn();
+  }
+}
+
+function _showBlockedFromConflict(activeRunId, elapsed) {
+  // 409: another run is active — flip modal into blocked state
+  setModalLoading(false);
+  document.getElementById('modalBlocked').classList.remove('hidden');
+  document.getElementById('modalBody').classList.add('disabled');
+  document.getElementById('blockedSub').textContent =
+    activeRunId ? `${String(activeRunId).slice(0,8)} · ${elapsed||'running'}` : 'a run is in progress';
+}
+
+async function stopAndReset() {
+  if (runId) {
+    try { await fetch(`/run/${runId}/stop`,{method:'POST'}); } catch(_){}
+    setRunning(false,'cancelled'); renderSteps();
+  }
+  document.getElementById('modalBlocked').classList.add('hidden');
+  document.getElementById('modalBody').classList.remove('disabled');
+  syncRunBtn();
+  setTimeout(()=>document.getElementById('intentInput').focus(), 50);
+}
+
+async function submitTask() {
+  const intent=document.getElementById('intentInput').value.trim();
+  if (!intent) { document.getElementById('intentInput').focus(); return; }
+  const url=(document.getElementById('urlInput')?.value||'').trim();
+
+  // Client-side URL validation
+  if (modalMode==='browser' && url && !/^https?:\/\//i.test(url)) {
+    document.getElementById('urlInput').classList.add('err');
+    document.getElementById('modalErrText').textContent = 'start_url: must begin with http:// or https://';
+    document.getElementById('modalErrBanner').classList.remove('hidden');
+    return;
+  }
+
+  document.getElementById('modalErrBanner').classList.add('hidden');
+  document.getElementById('urlInput')?.classList.remove('err');
+  setModalLoading(true);
+
+  modalAbortCtrl = new AbortController();
+  try {
+    const endpoint=modalMode==='browser'?'/run-task':'/desktop/run-task';
+    const body={intent};
+    if (modalMode==='browser'&&url) body.start_url=url;
+    const r=await fetch(endpoint,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body), signal:modalAbortCtrl.signal,
+    });
+    modalAbortCtrl=null;
+
+    if (r.status===409) {
+      const d=await r.json().catch(()=>({}));
+      _showBlockedFromConflict(d.active_run_id||d.run_id, d.elapsed);
+      return;
+    }
+    if (!r.ok) {
+      const d=await r.json().catch(()=>({}));
+      const msg=d.detail||`Error ${r.status}`;
+      document.getElementById('modalErrText').textContent=msg;
+      document.getElementById('modalErrBanner').classList.remove('hidden');
+      if (url && (msg.toLowerCase().includes('url')||msg.toLowerCase().includes('start_url')))
+        document.getElementById('urlInput').classList.add('err');
+      setModalLoading(false);
+      return;
+    }
+    const data=await r.json();
+    runId=data.run_id;
+    steps=[]; totalSteps=0; startEpoch=Date.now(); paused=false;
+    history.pushState(null,'','/command-center/'+encodeURIComponent(runId));
+    setRunning(true,'running'); renderSteps();
+    connectSse(runId); startScreenshotPoll(runId);
+    document.getElementById('intentInput').value='';
+    document.getElementById('urlInput').value='';
+    setModalLoading(false);
+    closeModal();
+  } catch(e) {
+    modalAbortCtrl=null;
+    if (e.name==='AbortError') return; // user cancelled — modal already closed
+    document.getElementById('modalErrText').textContent=e.message;
+    document.getElementById('modalErrBanner').classList.remove('hidden');
+    setModalLoading(false);
+  }
+}
+
+// ── WebSocket ──────────────────────────────────────────────────────────────────
+function connectWs() {
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(`${proto}://${location.host}/ws/stream`);
+  ws.binaryType='arraybuffer';
+  ws.onopen=()=>{ wsRetry=2000; document.getElementById('wsDot').className='ws-dot ok'; };
+  ws.onclose=()=>{ document.getElementById('wsDot').className='ws-dot'; setTimeout(connectWs,wsRetry); wsRetry=Math.min(wsRetry*2,30000); };
+  ws.onerror=()=>{ document.getElementById('wsDot').className='ws-dot err'; };
+  ws.onmessage=ev=>{
+    if (ev.data instanceof ArrayBuffer) return; // frames handled by screenshot polling
+    let msg; try{msg=JSON.parse(ev.data);}catch(_){return;}
+    if (msg.type==='run_started'&&(!runId||msg.run_id===runId)) {
+      startEpoch=Date.now(); steps=[]; totalSteps=0; runId=msg.run_id;
+      connectSse(runId); startScreenshotPoll(runId);
+      setRunning(true,'running'); renderSteps();
+    } else if (msg.type==='run_completed'&&(!runId||msg.run_id===runId)) {
+      setRunning(false,msg.status); renderSteps();
+    }
+  };
+}
+
+// ── Recent runs ───────────────────────────────────────────────────────────────
+async function loadRecentRuns() {
+  try {
+    const r=await fetch('/observer/api/runs?limit=5');
+    if (!r.ok) return;
+    const data=await r.json();
+    const runs=(data.runs||data||[]);
+    const map={'succeeded':'#84cc16','failed':'#dc2626','running':'#d97706','cancelled':'#7a756c'};
+    document.getElementById('recentList').innerHTML=runs.map(run=>{
+      const intentJs=JSON.stringify(run.intent||'');
+      return `<div class="recent-row" onclick="openModal({intent:${intentJs}})">
+        <span class="recent-dot" style="background:${map[run.status]||'#7a756c'}"></span>
+        <span class="recent-id">${esc(run.run_id.slice(0,8))}</span>
+        <span class="recent-intent">${esc(run.intent||'—')}</span>
+        <span class="recent-when">${fmtAge(run.updated_at)}</span>
+        <svg class="recent-arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <path d="M2.5 6h7M6.5 3L9.5 6l-3 3"/>
+        </svg>
+      </div>`;
+    }).join('');
+  } catch(_){}
+}
+
+// ── Load run on mount ─────────────────────────────────────────────────────────
+async function loadRun() {
+  if (!runId) return;
+  try {
+    const r=await fetch('/observer/api/run/'+encodeURIComponent(runId));
+    if (!r.ok) return;
+    const data=await r.json();
+    if (data.run) {
+      totalSteps=data.run.step_count||0;
+      startEpoch=startEpoch||Date.now();
+      setRunning(data.run.status==='running',data.run.status);
+    }
+    if (Array.isArray(data.steps)&&data.steps.length>0) steps=data.steps.map(normalizeObs);
+    if (steps.length) { showPanes(); renderSteps(); }
+  } catch(_){}
+}
+
+// ── Keyboard ──────────────────────────────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  if (e.key==='Escape') closeModal();
+  if ((e.key==='n'||e.key==='N')&&!e.ctrlKey&&!e.metaKey&&
+      document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA') openModal();
+  if ((e.key==='Enter')&&(e.ctrlKey||e.metaKey)) {
+    if (document.getElementById('modalBackdrop').classList.contains('open')) submitTask();
+  }
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', ()=>{
+  showPlaceholder();
+  showEmpty();
+  setMode('browser');
+  loadRecentRuns();
+  if (runId) {
+    loadRun();
+    connectSse(runId);
+    startScreenshotPoll(runId);
+  } else {
+    updateRunBar(false, null, 'idle');
+  }
+  connectWs();
+  setInterval(tickVelocity, 3000);
+});
+</script>
+</body>
+</html>

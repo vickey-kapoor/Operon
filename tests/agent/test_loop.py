@@ -350,6 +350,7 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
         start_url=None,
         headless=True,
         benchmark=None,
+        mode="batch",
     )
     executor.configure_run.assert_called_once_with("run-3", headless=True)
     assert response.run_id == "run-3"

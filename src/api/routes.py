@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,6 +68,8 @@ from src.models.common import (
 )
 from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _agent_loop: AgentLoop | None = None
@@ -350,20 +353,24 @@ async def connect_cdp(body: _CdpConnectRequest) -> dict:
 
 @router.post("/disconnect-cdp")
 async def disconnect_cdp() -> dict:
-    """Stop the screencast and release the CDP connection."""
+    """Stop the screencast, release the CDP connection, and tear down the observable-mode browser."""
     global _browser_manager_instance
     if _browser_manager_instance is None:
         return {"disconnected": False, "detail": "No active CDP connection"}
     await _browser_manager_instance.disconnect()
     _browser_manager_instance = None
     _ws_stream.set_browser_manager(None)
+    executor = getattr(get_agent_loop(), "executor", None)
+    if executor is not None and hasattr(executor, "close_persistent_browser"):
+        await executor.close_persistent_browser()
     return {"disconnected": True}
 
 
 @router.post("/run-task", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_task(request: RunTaskRequest) -> RunResponse:
     """Create a new run record for the requested intent."""
-    response = await get_agent_loop().start_run(request)
+    loop = get_agent_loop()
+    response = await loop.start_run(request)
     _ws_stream.set_active_run(response.run_id)
     _ws_stream.publish_event({
         "type": "run_started",
@@ -371,7 +378,53 @@ async def run_task(request: RunTaskRequest) -> RunResponse:
         "intent": request.intent,
         "status": response.status.value,
     })
+    if request.mode == "observable":
+        asyncio.create_task(_auto_attach_cdp(loop))
     return response
+
+
+async def _auto_attach_cdp(loop) -> None:
+    """Auto-connect BrowserManager to port 9222 for observable-mode runs.
+
+    Waits up to 15 s for the browser to open (first step hasn't run yet when
+    start_run returns), then wires up the CDP screencast.  Silently no-ops if
+    the port is not reachable — the user can always call POST /connect-cdp
+    manually as a fallback.
+    """
+    global _browser_manager_instance
+    import httpx
+
+    from src.browser.manager import BrowserManager
+
+    deadline = asyncio.get_event_loop().time() + 15
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            async with httpx.AsyncClient(timeout=1.0) as client:
+                r = await client.get("http://localhost:9222/json/version")
+            if r.status_code == 200:
+                break
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+    else:
+        logger.warning("_auto_attach_cdp: port 9222 not reachable after 15 s — skipping auto-attach")
+        return
+
+    if _browser_manager_instance is not None:
+        try:
+            await _browser_manager_instance.disconnect()
+        except Exception:
+            pass
+    manager = BrowserManager()
+    try:
+        await manager.connect(9222)
+        await manager.start_screencast(fps=10)
+    except Exception as exc:
+        logger.warning("_auto_attach_cdp: connect failed — %s", exc)
+        return
+    _browser_manager_instance = manager
+    _ws_stream.set_browser_manager(manager)
+    logger.info("_auto_attach_cdp: CDP screencast live on port 9222")
 
 
 @router.post("/step", response_model=RunResponse)

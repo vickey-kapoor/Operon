@@ -101,16 +101,22 @@ class NativeBrowserExecutor(Executor):
         self._current_run_id: str | None = None
         self._sessions: dict[str, _BrowserSession] = {}
         self._run_headless: dict[str, bool | None] = {}
+        self._run_mode: dict[str, str] = {}
         self._fresh_session_run_id: str | None = None
         # Stores the last JavaScript dialog message per run_id so the loop can
         # surface form-submit success alerts that headless mode auto-dismisses.
         self._last_dialog_message: dict[str, str] = {}
+        # Shared Playwright+Browser instance kept alive across observable-mode tasks.
+        # Batch-mode runs always launch and close their own isolated instances.
+        self._obs_playwright: object | None = None
+        self._obs_browser: object | None = None
 
     def set_current_run_id(self, run_id: str) -> None:
         self._current_run_id = run_id
 
-    def configure_run(self, run_id: str, *, headless: bool | None = None) -> None:
+    def configure_run(self, run_id: str, *, headless: bool | None = None, mode: str = "batch") -> None:
         self._run_headless[run_id] = headless
+        self._run_mode[run_id] = mode
 
     async def reset_desktop(self) -> None:
         """No-op for native browser control."""
@@ -119,18 +125,21 @@ class NativeBrowserExecutor(Executor):
     async def aclose_run(self, run_id: str) -> int:
         session = self._sessions.pop(run_id, None)
         self._run_headless.pop(run_id, None)
+        mode = self._run_mode.pop(run_id, "batch")
         if session is None:
             return 0
-        await self._close_session(session)
+        await self._close_session(session, observable=mode == "observable")
         return 1
 
     def cleanup_run(self, run_id: str) -> int:
         session = self._sessions.pop(run_id, None)
         self._run_headless.pop(run_id, None)
+        mode = self._run_mode.pop(run_id, "batch")
         if session is None:
             return 0
+        observable = mode == "observable"
         try:
-            asyncio.run(self._close_session(session))
+            asyncio.run(self._close_session(session, observable=observable))
         except RuntimeError:
             # Already inside a running event loop — schedule and keep a reference
             # so the task is not garbage-collected before completion.
@@ -138,7 +147,7 @@ class NativeBrowserExecutor(Executor):
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 return 0
-            task = loop.create_task(self._close_session(session))
+            task = loop.create_task(self._close_session(session, observable=observable))
             # Prevent silent discard: log any unexpected error from the background close.
             task.add_done_callback(
                 lambda t: logger.warning("cleanup_run background close error: %s", t.exception())
@@ -508,6 +517,77 @@ class NativeBrowserExecutor(Executor):
         existing = self._sessions.get(run_id)
         if existing is not None:
             return existing
+
+        mode = self._run_mode.get(run_id, "batch")
+        if mode == "observable":
+            return await self._ensure_session_observable(run_id, foreground=foreground)
+        return await self._ensure_session_batch(run_id, foreground=foreground)
+
+    async def _ensure_session_observable(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:
+        """Observable mode: reuse the persistent browser across tasks; only context+page are new."""
+        await self._close_other_sessions(run_id)
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as exc:
+            raise RuntimeError("playwright is not installed for native browser execution.") from exc
+
+        launch_headless = self._run_headless.get(run_id)
+        if launch_headless is None:
+            launch_headless = self._headless
+        if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
+            launch_headless = True
+
+        # First observable run: launch Chromium and keep it alive.
+        # Subsequent runs skip launch entirely and reuse _obs_browser.
+        if self._obs_browser is None:
+            obs_playwright = await async_playwright().start()
+            try:
+                launch_args = [
+                    f"--window-size={self._viewport_width},{self._viewport_height}",
+                    "--window-position=0,0",
+                    "--remote-debugging-port=9222",
+                ]
+                obs_browser = await obs_playwright.chromium.launch(
+                    headless=launch_headless,
+                    args=launch_args,
+                )
+            except Exception:
+                await obs_playwright.stop()
+                raise
+            self._obs_playwright = obs_playwright
+            self._obs_browser = obs_browser
+            logger.info("Observable mode: persistent browser launched (port 9222)")
+        else:
+            obs_playwright = self._obs_playwright
+            obs_browser = self._obs_browser
+            logger.info("Observable mode: reusing persistent browser for run %s", run_id)
+
+        context = await obs_browser.new_context(
+            viewport={"width": self._viewport_width, "height": self._viewport_height},
+            device_scale_factor=1,
+        )
+        page = await context.new_page()
+        self._attach_page_listeners(page, run_id)
+
+        if foreground and hasattr(page, "bring_to_front"):
+            await page.bring_to_front()
+        if not launch_headless and foreground:
+            await self._reset_browser_zoom(page)
+
+        session = _BrowserSession(
+            playwright=obs_playwright,
+            browser=obs_browser,
+            context=context,
+            page=page,
+            video_dir=None,
+            browser_pid=None,
+        )
+        self._sessions[run_id] = session
+        self._fresh_session_run_id = run_id
+        return session
+
+    async def _ensure_session_batch(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:
+        """Batch mode: launch an isolated Chromium per task, close it when the task ends."""
         await self._close_other_sessions(run_id)
         try:
             from playwright.async_api import async_playwright
@@ -530,15 +610,8 @@ class NativeBrowserExecutor(Executor):
                 before_pids: set[int] = set()
             else:
                 before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
-            # Homeostasis baseline: lock to 1920x1080 in all modes.
-            # --start-maximized caused clipping inconsistency → perception_low_quality.
             # Port 9222 is always exposed so BrowserManager.connect() can attach
             # for live CDP streaming regardless of how the run was started.
-            # Playwright continues using its internal --remote-debugging-pipe
-            # channel; the TCP port coexists safely, localhost-bound only.
-            # Constraint: only one local browser run at a time — a second run
-            # would fail to bind 9222. Sequential benchmark suites are fine.
-            # Parallel local runs require port 0 + persisting the chosen port.
             launch_args = [
                 f"--window-size={self._viewport_width},{self._viewport_height}",
                 "--window-position=0,0",
@@ -552,7 +625,7 @@ class NativeBrowserExecutor(Executor):
             await playwright.stop()
             raise
         video_dir = self._video_dir_for_run(run_id) if self._record_video else None
-        context_kwargs = {
+        context_kwargs: dict = {
             "viewport": {"width": self._viewport_width, "height": self._viewport_height},
             "device_scale_factor": 1,
         }
@@ -565,25 +638,7 @@ class NativeBrowserExecutor(Executor):
             }
         context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
-
-        # Diagnostic listeners — surface browser console output and network
-        # failures to the Python log so blank-screen causes are visible.
-        page.on("console", lambda msg: logger.debug("BROWSER_LOG [%s]: %s", msg.type, msg.text))
-        page.on("requestfailed", lambda req: logger.warning(
-            "NETWORK_FAIL: %s — %s", req.url, req.failure
-        ))
-
-        # Auto-accept JavaScript dialogs (alert/confirm/prompt) and record the
-        # message so the loop can treat it as a success signal. Without this,
-        # headless Playwright silently dismisses alerts and the form-submit
-        # success message is never seen.
-        async def _on_dialog(dialog) -> None:
-            msg = dialog.message or ""
-            logger.info("BROWSER_DIALOG [%s]: %s", dialog.type, msg)
-            self._last_dialog_message[run_id] = msg
-            await dialog.accept()
-
-        page.on("dialog", _on_dialog)
+        self._attach_page_listeners(page, run_id)
 
         if foreground and hasattr(page, "bring_to_front"):
             await page.bring_to_front()
@@ -609,6 +664,21 @@ class NativeBrowserExecutor(Executor):
             await self._bring_browser_to_foreground(session.browser_pid)
             await asyncio.sleep(1.5)
         return session
+
+    def _attach_page_listeners(self, page: object, run_id: str) -> None:
+        """Wire console/network/dialog listeners onto a newly created page."""
+        page.on("console", lambda msg: logger.debug("BROWSER_LOG [%s]: %s", msg.type, msg.text))
+        page.on("requestfailed", lambda req: logger.warning(
+            "NETWORK_FAIL: %s — %s", req.url, req.failure
+        ))
+
+        async def _on_dialog(dialog) -> None:
+            msg = dialog.message or ""
+            logger.info("BROWSER_DIALOG [%s]: %s", dialog.type, msg)
+            self._last_dialog_message[run_id] = msg
+            await dialog.accept()
+
+        page.on("dialog", _on_dialog)
 
     async def focus_window(self) -> None:
         """Bring the active browser window to the foreground. No-op in headless mode."""
@@ -848,11 +918,27 @@ class NativeBrowserExecutor(Executor):
             self._fresh_session_run_id = None
         return was_fresh
 
-    async def _close_session(self, session: _BrowserSession) -> None:
+    async def _close_session(self, session: _BrowserSession, *, observable: bool = False) -> None:
         await session.context.close()
-        await session.browser.close()
-        await session.playwright.stop()
+        if not observable:
+            await session.browser.close()
+            await session.playwright.stop()
         self._finalize_recorded_video(session)
+
+    async def close_persistent_browser(self) -> None:
+        """Tear down the shared observable-mode browser (call at server shutdown or disconnect-cdp)."""
+        if self._obs_browser is not None:
+            try:
+                await self._obs_browser.close()
+            except Exception:
+                pass
+            self._obs_browser = None
+        if self._obs_playwright is not None:
+            try:
+                await self._obs_playwright.stop()
+            except Exception:
+                pass
+            self._obs_playwright = None
 
     def _video_dir_for_run(self, run_id: str) -> Path:
         return self._artifact_dir / run_id / "session_video"

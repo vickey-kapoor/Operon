@@ -167,18 +167,21 @@
     border-color: var(--amber-bdr); background: var(--amber-bg); color: var(--amber);
   }
 
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-family: var(--mono); }
+  .table-wrap { width: 100%; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); table-layout: fixed; }
+  col.col-intent { width: 40%; }
+  col.col-sm     { width: 10%; }
+  col.col-md     { width: 13%; }
   thead tr { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
-  th { padding: 6px 8px 6px 0; font-weight: 500; text-align: left; }
-  th.r { text-align: right; padding-left: 12px; }
+  th { padding: 6px 8px 6px 0; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  th.r { text-align: right; padding-left: 8px; padding-right: 0; }
   tbody tr {
     font-size: 12.5px; border-top: 1px dashed var(--border-sub);
     cursor: pointer; transition: background 0.1s;
   }
   tbody tr:hover { background: var(--bg-hover); }
-  td { padding: 9px 8px 9px 0; }
-  td.r { text-align: right; padding-left: 12px; }
+  td { padding: 9px 8px 9px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.r { text-align: right; padding-left: 8px; padding-right: 0; }
 
   .run-id-chip { font-size: 10px; color: var(--dim); }
   .run-intent { font-family: var(--sans); color: var(--text); }
@@ -286,15 +289,24 @@
     <div class="filter-row" id="filterRow"></div>
     <div class="table-wrap">
     <table>
+      <colgroup>
+        <col class="col-intent">
+        <col class="col-md">
+        <col class="col-md">
+        <col class="col-sm">
+        <col class="col-md">
+        <col class="col-md">
+        <col class="col-sm">
+      </colgroup>
       <thead>
         <tr>
           <th>intent</th>
-          <th style="width:120px">model</th>
-          <th style="width:90px">status</th>
-          <th class="r" style="width:60px">steps</th>
-          <th class="r" style="width:100px">tokens</th>
-          <th class="r" style="width:100px">cost</th>
-          <th class="r" style="width:80px">when</th>
+          <th>model</th>
+          <th>status</th>
+          <th class="r">steps</th>
+          <th class="r">tokens</th>
+          <th class="r">cost</th>
+          <th class="r">when</th>
         </tr>
       </thead>
       <tbody id="runTable"></tbody>

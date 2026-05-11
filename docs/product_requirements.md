@@ -31,15 +31,18 @@ Desktop (pyautogui + mss) and browser (Playwright + Gemini Computer Use) share o
 
 ## 2. Dual Execution Modes
 
-| | Desktop | Browser |
-|---|---|---|
-| Executor | `DesktopExecutor` (pyautogui) | `NativeBrowserExecutor` (Playwright Chromium) |
-| Capture | `mss` full-screen | `page.screenshot()` |
-| Primary backend | `CombinedPerceptionPolicyService` (Gemini JSON) | `BrowserComputerUseBackend` (Gemini Computer Use) |
-| Fallback backend | — | `BrowserJsonBackend` |
-| Video recording | — | `.browser-artifacts/<run_id>/session_video/session.webm` |
+| | Desktop | Browser | Observable |
+|---|---|---|---|
+| Executor | `DesktopExecutor` (pyautogui) | `NativeBrowserExecutor` (Playwright) | `NativeBrowserExecutor` + `BrowserManager` |
+| Capture | `mss` full-screen | `page.screenshot()` | CDP `Page.startScreencast` (~15fps JPEG) |
+| Primary backend | `CombinedPerceptionPolicyService` (Gemini JSON) | `BrowserComputerUseBackend` (Gemini Computer Use) | Same as Browser |
+| Fallback backend | — | `BrowserJsonBackend` | `BrowserJsonBackend` |
+| Live stream | — | — | WebSocket port 9001, binary JPEG frames |
+| Video recording | — | `.browser-artifacts/<run_id>/session_video/session.webm` | Same |
 
 Backend selection via env vars: `OPERON_DESKTOP_BACKEND`, `OPERON_BROWSER_BACKEND`, `OPERON_BROWSER_FALLBACK_BACKEND`.
+
+**Observable mode** is activated when `RunTaskRequest.thread == "observable"`. `NativeBrowserExecutor` launches Chromium with `--remote-debugging-port=9222`. `BrowserManager` (`src/browser/manager.py`) attaches via `connect_over_cdp`, starts `Page.startScreencast`, and publishes JPEG frames to all connected WebSocket clients. Element bounding boxes are published every ~2s so the Command Center UI can render interactive overlays.
 
 ---
 
@@ -260,8 +263,14 @@ Input validation: `intent` 1–500 chars, stripped whitespace, strict Pydantic v
 
 | Benchmark | Entry point | What it measures |
 |---|---|---|
+| WebArena easy (13 tasks) | `/benchmarks` UI or `POST /benchmark/run-suite` | Web task success rate across form fill, search, navigation |
 | Form benchmark | `python -m src.agent.benchmark` | End-to-end web form fill success rate |
 | Native upload benchmark | `src/evaluation/benchmark_native_upload.py` | `upload_file_native` reliability in headed mode |
+
+WebArena tasks are defined in `src/benchmarks/registry.py` and include: form filling (practice-automation.com), GitHub search, Wikipedia lookup, and multi-step web workflows. Task schema: `{task_id, source, difficulty, category, site, intent, start_url, optimal_steps}`.
+
+`POST /benchmark/run-task` body: `{"task_id": "<id>", "max_steps": 25, "headless": false, "mode": "batch"}`.  
+`GET /benchmark/suite/{suite_id}` returns per-task `status`, `step_count`, `stop_reason`, `step_efficiency`, and `pass_rate`.
 
 ---
 
@@ -284,6 +293,7 @@ All model choices are env-configurable at runtime:
 
 - **`upload_file_native` integration test** — no test against a real headed browser with a live OS picker. CI-only coverage is unit-level.
 - **Critic integration** — `critic_prompt.txt` exists but critic is not fully wired into the recovery loop.
-- **WebArena medium/hard benchmarks** — easy suite at 100%; medium not yet run at scale.
+- **WebArena medium/hard benchmarks** — easy tasks running; medium/hard not yet run at scale.
 - **Prompt caching** — Vertex AI context cache for static prompt prefixes not yet implemented.
 - **Multi-monitor support** — single primary display assumed; `DesktopExecutor` captures monitor index 0.
+- **`_search_query_rule` GitHub fix** — `_already_tried_search` (no `h.success` requirement) triggers URL fallback after any TYPE attempt; addresses JS-search sites that don't confirm success via Playwright.

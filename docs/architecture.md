@@ -1,5 +1,5 @@
 # Operon Architecture Reference
-_Last refreshed: 2026-05-04_
+_Last refreshed: 2026-05-11_
 
 ## Directory Layout
 
@@ -9,8 +9,10 @@ src/
                 policy_rules.py, verifier.py, video_verifier.py, recovery.py,
                 reflector.py, benchmark.py, capture.py, selector.py, hitl.py,
                 screen_diff.py, backend.py, action_translation.py,
-                fallback_backend.py, combined.py, _agent_utils.py
-  api/          server.py, routes.py, observer.py, runtime_config.py,
+                browser_computer_use.py, browser_json.py, fallback_backend.py,
+                combined.py, screen_recorder.py, _agent_utils.py
+  browser/      manager.py  ← BrowserManager: CDP attach + Page.startScreencast
+  api/          server.py, routes.py, observer.py, ws_stream.py, runtime_config.py,
                 benchmark_suite.py, static/
   clients/      gemini.py, anthropic.py, gemini_computer_use.py
   executor/     browser.py (ABC), browser_native.py, desktop.py,
@@ -19,8 +21,8 @@ src/
                 execution.py, verification.py, recovery.py, memory.py,
                 progress.py, common.py, logs.py, selector.py, usage.py
   store/        run_store.py, memory.py, run_logger.py,
-                background_writer.py, replay.py, summary.py
-  benchmarks/   (benchmark-specific plugin files + registry)
+                background_writer.py, replay.py, summary.py, cleanup.py
+  benchmarks/   registry.py  (BENCHMARK_REGISTRY + plugin rule registration)
   runtime/      orchestrator.py, state.py, legacy_adapter.py, benchmark_runner.py
   core/         contracts/, router.py
 prompts/        browser_combined_prompt.txt, browser_computer_use_prompt.txt,
@@ -28,10 +30,11 @@ prompts/        browser_combined_prompt.txt, browser_computer_use_prompt.txt,
                 desktop_perception_prompt.txt, desktop_policy_prompt.txt,
                 perception_prompt.txt, policy_prompt.txt,
                 video_verification_prompt.txt, reaction_check_prompt.txt
+ui/             React 19 + Zustand 5 Command Center (Vite, inline styles)
 tests/          60+ test files
 docs/           architecture.md, agents.md, codebase_overview.md,
                 product_requirements.md, agent_contract.md,
-                migration_cleanup.md, upload_paths.md
+                recovery-ladder.md, migration_cleanup.md, upload_paths.md
 ```
 
 ---
@@ -141,14 +144,14 @@ Wraps `PolicyRuleEngine` + LLM delegate. Call order in `choose_action()`:
 |---|---|
 | `_human_intervention_rule` | page_hint contains HITL keyword × 2 consecutive steps (debounced) |
 | `_task_success_stop_rule` | page_hint==FORM_SUCCESS or success tokens visible |
-| `_form_visible_field_fill_rule` | form page + visible unfilled field matching intent |
+| `_form_visible_field_fill_rule` | form page + visible unfilled field matching intent; scrolls –500px (not –3000px) to reveal submit without overshooting to next form |
 | `_dropdown_menu_select_rule` | dropdown open + unselected option visible |
 | `_avoid_identical_type_retry` | memory hint `avoid_identical_type_retry` + repeated TYPE failure |
 | `_no_progress_recovery_rule` | no-progress streak > threshold (issues Escape + `force_fresh_perception`) |
 | `_dismiss_blocking_overlay_rule` | blocking dialog/banner + stuck signal |
-| `_search_query_rule` | intent has search query + search input visible |
+| `_search_query_rule` | intent has search query + search input visible; `_already_tried_search` (no `h.success` requirement) triggers URL fallback after one failed TYPE — catches sites like GitHub where JS search doesn't set success=True |
 
-Benchmark-specific rules registered via `BENCHMARK_REGISTRY`, run before engine primitives.
+Benchmark-specific rules registered via `BENCHMARK_REGISTRY` (`src/benchmarks/registry.py`), run before engine primitives.
 
 ### Rule-Augmented Generation
 After each step, if `decision.rule_name` is set → `state.last_rule_trace = "[RULE TRACE] Rule 'X' fired at step N | action=Y | outcome=Z"`. Injected into next LLM prompt via `add_advisory_hints(source="rule_trace")`. Cleared when LLM decides.
@@ -210,6 +213,18 @@ Buffer cleared via `reset_element_buffer()` when `visual_velocity > 5%` in `loop
 - `context_reset()` — clear cookies, reset zoom, focus window
 - `session_reset(start_url)` — close tab, open fresh session, navigate to start_url
 - `current_url_for_run(run_id)` — live URL for observer
+- In **observable mode**: launches Chromium with `--remote-debugging-port=9222` and notifies `BrowserManager` to attach via CDP
+
+### BrowserManager (`src/browser/manager.py`)
+Module-level singleton (`_active_manager`) — discoverable by the executor without circular imports.
+
+- `connect(port)` — `async_playwright().chromium.connect_over_cdp(f"http://localhost:{port}")`. Grabs the first existing page; queries viewport dimensions via `page.viewport_size` or JS fallback.
+- `new_task_context()` — opens a new tab in the user's existing Chrome window (reuses `browser.contexts[0]`), closes any leftover task page, switches screencast to the new tab, calls `_focus_and_maximize()` via CDP `Browser.setWindowBounds`.
+- `start_screencast(fps=15)` — `Page.startScreencast` (JPEG, quality 75, `everyNthFrame` tuned to target fps). ACKs each frame immediately. Publishes decoded JPEG bytes via `ws_stream.publish_frame()`. Every 30 frames (~2s) triggers `_publish_element_bounds()`.
+- `stop_screencast()` — sends `Page.stopScreencast`, sets `_screencast_running = False`.
+- `inject_input(x_ratio, y_ratio, input_type, **kwargs)` — translates normalised 0–1 frontend coordinates to real browser mouse/keyboard events. Supports `click`, `dblclick`, `hover`, `type`, `scroll`, `key`.
+- `_publish_element_bounds()` — evaluates `_BOUNDS_JS` on the live page, publishes `element_bounds` event via `ws_stream.publish_event()`. Frontend renders SVG overlays from this.
+- `disconnect()` — stops screencast, calls `playwright.stop()`. Does **not** close the user's Chrome.
 
 ### Executor ABC (`src/executor/browser.py`)
 - `capture()` → `CaptureFrame` (3-frame burst in desktop, single in browser)
@@ -330,10 +345,25 @@ memory/memory.jsonl, episodes.jsonl
 ### Benchmarks
 `POST /benchmark/run-suite`, `POST /benchmark/stop-suite/{id}`, `POST /benchmark/run-task`, `GET /benchmark/tasks`, `GET /benchmark/suite/{id}`
 
-### Command Center UI (React 19)
-`GET /` or `/desktop-pilot` → Operon Pilot UI (unified desktop + browser Command Center)  
-WebSocket stream on port 9001 (`ws://127.0.0.1:9001`) — live step events, JPEG frames, control messages  
+### Command Center / UI
+`GET /` or `/desktop-pilot` → Operon Pilot UI (React 19 three-pane: Task Intelligence / Live Execution / Settings)  
+`GET /command-center` → HTML+SSE Command Center (step stream + screenshot polling)  
+`GET /command-center/api/run/{id}/stream` → SSE step stream (tails `run.jsonl`)  
+`GET /command-center/api/run/{id}/screenshot` → latest step screenshot  
 `/console`, `/dashboard`, `/benchmarks` → static HTML observer pages
+
+### WebSocket (`src/api/ws_stream.py`, port 9001)
+Binary JPEG frames (from `BrowserManager.start_screencast`), JSON step events, and control messages:
+
+| Control message type | Effect |
+|---|---|
+| `set_confidence_threshold` | Pause run when `PolicyDecision.confidence` drops below floor |
+| `set_disabled_rules` | Disable named `PolicyRuleEngine` rules for this session |
+| `override` | Inject a manual `PolicyDecision` into the next step |
+| `resume` | Resume a `WAITING_FOR_USER` run |
+| `pause` | Pause the active run |
+| `inject_input` | Forward mouse/keyboard event to `BrowserManager.inject_input()` |
+| `snapshot_ax` | Request accessibility tree snapshot from the active page |
 
 ### Loop builders
 Both `get_agent_loop()` and `get_desktop_agent_loop()` create a `VideoVerifier` instance and pass it to both `AgentLoop` (for `_maybe_video_verify`) and `DeterministicVerifierService` (for reaction checking). Dedicated `video_gemini_client` independent of verifier provider.

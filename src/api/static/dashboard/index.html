@@ -11,19 +11,19 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:        #0e0d0c;
-    --bg-panel:  #161412;
-    --bg-hover:  #1a1816;
-    --border:    #252321;
-    --border-sub:#1a1816;
-    --text:      #e8e4dc;
-    --muted:     #7a756c;
-    --dim:       #4a453e;
-    --neutral:   #a8a29a;
-    --amber:     #d97706;
-    --amber-bg:  #1f1408;
-    --amber-bdr: #3a2a14;
-    --green:     #84cc16;
+    --bg:        #f5f4f2;
+    --bg-panel:  #ffffff;
+    --bg-hover:  #f0eeeb;
+    --border:    #e2deda;
+    --border-sub:#ede9e4;
+    --text:      #1a1714;
+    --muted:     #8c8680;
+    --dim:       #c4bfb8;
+    --neutral:   #5a554f;
+    --amber:     #b45309;
+    --amber-bg:  #fef9ee;
+    --amber-bdr: #fde68a;
+    --green:     #16a34a;
     --red:       #dc2626;
     --sans:      'IBM Plex Sans', system-ui, sans-serif;
     --mono:      'IBM Plex Mono', ui-monospace, monospace;
@@ -42,18 +42,22 @@
   *::-webkit-scrollbar { width: 4px; }
   *::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 99px; }
 
-  /* ── Header ─────────────────────────────────────────────────────────────── */
+  /* ── Header (inside container) ───────────────────────────────────────────── */
+  .topbar-wrap {
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+  }
   .topbar {
     display: flex; align-items: center; justify-content: space-between;
+    max-width: 1400px; margin: 0 auto;
     padding: 0 32px; height: 48px;
-    border-bottom: 1px solid var(--border);
   }
   .topbar-left { display: flex; align-items: center; gap: 10px; }
   .logo-sq {
     width: 26px; height: 26px; border-radius: 5px;
     background: linear-gradient(135deg, #d97706, #f59e0b);
     display: flex; align-items: center; justify-content: center;
-    font-family: var(--cond); font-weight: 700; font-size: 13px; color: #0e0d0c;
+    font-family: var(--cond); font-weight: 700; font-size: 13px; color: #fff;
   }
   .brand { font-family: var(--cond); font-weight: 700; font-size: 15px; letter-spacing: 0.04em; }
   .nav-btn {
@@ -149,7 +153,7 @@
   .model-cost { font-family: var(--mono); font-size: 13px; color: var(--amber); font-variant-numeric: tabular-nums; font-weight: 500; }
   .model-bar-wrap { display: flex; align-items: center; gap: 12px; }
   .model-bar-track { flex: 1; height: 5px; border-radius: 2px; overflow: hidden; background: var(--border-sub); }
-  .model-bar-fill { height: 100%; background: linear-gradient(90deg, #d97706, #f59e0b); }
+  .model-bar-fill { height: 100%; background: linear-gradient(90deg, #b45309, #d97706); }
   .model-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); width: 140px; text-align: right; white-space: nowrap; }
 
   /* ── Run ledger ─────────────────────────────────────────────────────────── */
@@ -187,17 +191,19 @@
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-left">
-    <div class="logo-sq">o</div>
-    <div class="brand">OPERON</div>
-  </div>
-  <nav style="display:flex;align-items:center;gap:2px;">
-    <button class="nav-btn" onclick="location.href='/command-center'">Command Center</button>
-    <button class="nav-btn active">Dashboard</button>
-    <button class="nav-btn" onclick="location.href='/benchmarks'">Benchmarks</button>
-  </nav>
-</header>
+<div class="topbar-wrap">
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo-sq">o</div>
+      <div class="brand">OPERON</div>
+    </div>
+    <nav style="display:flex;align-items:center;gap:2px;">
+      <button class="nav-btn" onclick="location.href='/command-center'">Command Center</button>
+      <button class="nav-btn active">Dashboard</button>
+      <button class="nav-btn" onclick="location.href='/benchmarks'">Benchmarks</button>
+    </nav>
+  </header>
+</div>
 
 <div class="page">
 

@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import type { ActionIntentEvent, ElementBoundsEvent } from "../hooks/useAgentStream";
 import type { RunState } from "../App";
 import { LiveMirror } from "./LiveMirror";
@@ -26,40 +25,12 @@ export function LiveExecution({
   const [inputMode, setInputMode] = useState<InputMode>("click");
   const [typeText, setTypeText] = useState("");
   const [showOverlay, setShowOverlay] = useState(true);
-  const [cdpPort, setCdpPort] = useState("9222");
-  const [cdpFps, setCdpFps] = useState("15");
-  const [cdpStatus, setCdpStatus] = useState<string | null>(null);
   const [threshold, setThreshold] = useState(0);
-  const [currentUrl, setCurrentUrl] = useState<string | null>(null);
-
-  const attachBrowser = useCallback(async () => {
-    setCdpStatus("connecting…");
-    try {
-      await invoke<string>("attach_to_browser", { port: parseInt(cdpPort, 10) });
-      const res = await fetch(`${API}/connect-cdp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ port: parseInt(cdpPort, 10), fps: parseInt(cdpFps, 10) }),
-      });
-      const data = await res.json();
-      setCdpStatus(data.connected ? `${data.fps}fps` : `failed: ${data.detail}`);
-    } catch (e) {
-      setCdpStatus(`error: ${String(e).slice(0, 30)}`);
-    }
-  }, [cdpPort, cdpFps]);
-
-  const detachBrowser = useCallback(async () => {
-    await fetch(`${API}/disconnect-cdp`, { method: "POST" });
-    setCdpStatus(null);
-    setCurrentUrl(null);
-  }, []);
 
   const onThresholdChange = (v: number) => {
     setThreshold(v);
     sendControl({ type: "set_confidence_threshold", threshold: v });
   };
-
-  const isStreaming = cdpStatus !== null && cdpStatus !== "connecting…" && !cdpStatus.startsWith("error") && !cdpStatus.startsWith("failed");
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#f0f2f5" }}>
@@ -84,23 +55,9 @@ export function LiveExecution({
               fontSize: 10, color: "#6b7280", flex: 1, overflow: "hidden",
               textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
-              {currentUrl ?? (actionIntent ? "about:blank" : "No browser connected")}
+              {actionIntent ? "about:blank" : "No browser connected"}
             </span>
           </div>
-        </div>
-
-        {/* CDP controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-          <input value={cdpPort} onChange={(e) => setCdpPort(e.target.value)} style={miniInput("52px")} placeholder="port" />
-          <input value={cdpFps}  onChange={(e) => setCdpFps(e.target.value)}  style={miniInput("36px")} placeholder="fps" />
-          {isStreaming ? (
-            <HeaderBtn onClick={detachBrowser} color="#ef4444" label="Detach" />
-          ) : (
-            <HeaderBtn onClick={attachBrowser} color="#10b981" label="⬡ Attach" />
-          )}
-          {cdpStatus && (
-            <span style={{ fontSize: 9, color: isStreaming ? "#10b981" : "#9ca3af" }}>{cdpStatus}</span>
-          )}
         </div>
       </div>
 
@@ -147,10 +104,6 @@ export function LiveExecution({
           inputMode={inputMode}
           typeText={typeText}
         />
-        {/* Floating labels from mockup */}
-        {isStreaming && (
-          <OverlayLabels />
-        )}
         {/* HITL dim overlay — blocks interaction and signals agent is paused */}
         {hitlActive && (
           <div style={{
@@ -200,29 +153,6 @@ export function LiveExecution({
   );
 }
 
-/** Floating info labels overlaid on the mirror — matches the mockup's callout labels. */
-function OverlayLabels() {
-  return (
-    <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-      <div style={floatingLabel(12, 10)}>Browser Mirror</div>
-      <div style={floatingLabel(12, 36)}>Action Overlay</div>
-      <div style={{ ...floatingLabel(undefined, undefined), top: 10, right: 12 }}>Ghost Trail</div>
-    </div>
-  );
-}
-
-function floatingLabel(top?: number, left?: number): React.CSSProperties {
-  return {
-    position: "absolute",
-    top, left,
-    fontSize: 9, fontWeight: 700, letterSpacing: "0.07em",
-    color: "#f59e0b",
-    background: "rgba(0,0,0,0.45)",
-    padding: "2px 6px", borderRadius: 3,
-    backdropFilter: "blur(4px)",
-  };
-}
-
 // ── Small style helpers ───────────────────────────────────────────────────────
 
 function miniInput(width: string): React.CSSProperties {
@@ -241,20 +171,4 @@ function modeBtn(active: boolean): React.CSSProperties {
     fontSize: 10, fontWeight: active ? 600 : 400,
     cursor: "pointer", fontFamily: "inherit", outline: "none",
   };
-}
-
-function HeaderBtn({ onClick, color, label }: { onClick: () => void; color: string; label: string }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        padding: "4px 10px", border: `1px solid ${color}44`,
-        borderRadius: 4, background: `${color}11`, color,
-        fontSize: 10, fontWeight: 600, cursor: "pointer",
-        fontFamily: "inherit", outline: "none", whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </button>
-  );
 }

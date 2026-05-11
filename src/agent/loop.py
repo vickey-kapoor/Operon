@@ -1022,7 +1022,7 @@ class AgentLoop:
             if attempt == 1 and hasattr(self.executor, "current_url_for_run"):
                 try:
                     current_url = await self.executor.current_url_for_run(state.run_id)
-                    if current_url in ("about:blank", "chrome://newtab/", ""):
+                    if current_url in ("about:blank", "chrome://newtab/", "", None):
                         logger.info(
                             "liveness_retry: page is %r — passing blank perception to policy for navigation",
                             current_url,

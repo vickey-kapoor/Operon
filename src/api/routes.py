@@ -317,58 +317,6 @@ def get_desktop_agent_loop() -> AgentLoop:
     return _desktop_agent_loop
 
 
-class _CdpConnectRequest(StrictModel):
-    port: int = 9222
-    fps: int = 15
-
-
-_browser_manager_instance = None
-
-
-@router.post("/connect-cdp")
-async def connect_cdp(body: _CdpConnectRequest) -> dict:
-    """Attach to the user's Chrome via CDP and start the live screencast stream."""
-    global _browser_manager_instance
-
-    from src.browser.manager import BrowserManager
-
-    # Tear down any existing BrowserManager before re-connecting.
-    if _browser_manager_instance is not None:
-        try:
-            await _browser_manager_instance.disconnect()
-        except Exception:
-            pass
-
-    manager = BrowserManager()
-    try:
-        await manager.connect(body.port)
-        await manager.start_screencast(fps=body.fps)
-    except Exception as exc:
-        return {"connected": False, "detail": str(exc)}
-
-    _browser_manager_instance = manager
-    _ws_stream.set_browser_manager(manager)
-    from src.browser.manager import set_active_manager
-    set_active_manager(manager)
-    return {"connected": True, "port": body.port, "fps": body.fps}
-
-
-@router.post("/disconnect-cdp")
-async def disconnect_cdp() -> dict:
-    """Stop the screencast, release the CDP connection, and tear down the observable-mode browser."""
-    global _browser_manager_instance
-    if _browser_manager_instance is None:
-        return {"disconnected": False, "detail": "No active CDP connection"}
-    await _browser_manager_instance.disconnect()
-    _browser_manager_instance = None
-    _ws_stream.set_browser_manager(None)
-    from src.browser.manager import set_active_manager
-    set_active_manager(None)
-    executor = getattr(get_agent_loop(), "executor", None)
-    if executor is not None and hasattr(executor, "close_persistent_browser"):
-        await executor.close_persistent_browser()
-    return {"disconnected": True}
-
 
 @router.post("/run-task", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_task(request: RunTaskRequest) -> RunResponse:
@@ -416,8 +364,6 @@ async def _ensure_cdp_ready(mode: str = "batch") -> None:
         get_active_manager,
         set_active_manager,
     )
-
-    global _browser_manager_instance
 
     # Already connected — nothing to do.
     bm = get_active_manager()
@@ -483,9 +429,10 @@ async def _ensure_cdp_ready(mode: str = "batch") -> None:
             return
 
     # Connect BrowserManager.
-    if _browser_manager_instance is not None:
+    existing = get_active_manager()
+    if existing is not None:
         try:
-            await _browser_manager_instance.disconnect()
+            await existing.disconnect()
         except Exception:
             pass
 
@@ -497,7 +444,6 @@ async def _ensure_cdp_ready(mode: str = "batch") -> None:
         logger.warning("_ensure_cdp_ready: connect failed — %s", exc)
         return
 
-    _browser_manager_instance = manager
     _ws_stream.set_browser_manager(manager)
     set_active_manager(manager)
     logger.info("_ensure_cdp_ready: CDP browser connected and screencast live")
@@ -539,51 +485,6 @@ async def _auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
         logger.info("[loop] run %s entering step %d", run_id, state.step_count + 1)
         await loop.step_run(StepRequest(run_id=run_id))
 
-
-async def _auto_attach_cdp(loop) -> None:
-    """Auto-connect BrowserManager to port 9222 for observable-mode runs.
-
-    Waits up to 15 s for the browser to open (first step hasn't run yet when
-    start_run returns), then wires up the CDP screencast.  Silently no-ops if
-    the port is not reachable — the user can always call POST /connect-cdp
-    manually as a fallback.
-    """
-    global _browser_manager_instance
-    import httpx
-
-    from src.browser.manager import BrowserManager
-
-    deadline = asyncio.get_event_loop().time() + 15
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
-                r = await client.get("http://localhost:9222/json/version")
-            if r.status_code == 200:
-                break
-        except Exception:
-            pass
-        await asyncio.sleep(0.5)
-    else:
-        logger.warning("_auto_attach_cdp: port 9222 not reachable after 15 s — skipping auto-attach")
-        return
-
-    if _browser_manager_instance is not None:
-        try:
-            await _browser_manager_instance.disconnect()
-        except Exception:
-            pass
-    manager = BrowserManager()
-    try:
-        await manager.connect(9222)
-        await manager.start_screencast(fps=10)
-    except Exception as exc:
-        logger.warning("_auto_attach_cdp: connect failed — %s", exc)
-        return
-    _browser_manager_instance = manager
-    _ws_stream.set_browser_manager(manager)
-    from src.browser.manager import set_active_manager
-    set_active_manager(manager)
-    logger.info("_auto_attach_cdp: CDP screencast live on port 9222")
 
 
 @router.post("/step", response_model=RunResponse)

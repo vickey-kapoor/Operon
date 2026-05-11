@@ -213,12 +213,6 @@
   .ph-title { font-family: var(--mono); font-size: 13px; color: var(--neutral); margin-bottom: 8px; }
   .ph-desc  { font-size: 12px; color: var(--muted); line-height: 1.65; max-width: 340px; }
   .ph-port  { color: var(--amber); font-family: var(--mono); }
-  .cdp-form { display: flex; align-items: center; gap: 8px; margin-top: 18px; }
-  .cdp-input { width: 76px; padding: 5px 8px; font-family: var(--mono); font-size: 12px; background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); border-radius: 4px; outline: none; transition: border-color 0.12s; }
-  .cdp-input:focus { border-color: var(--amber); }
-  .cdp-btn { padding: 5px 14px; font-family: var(--mono); font-size: 12px; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bdr); border-radius: 4px; cursor: pointer; transition: opacity 0.1s; }
-  .cdp-btn:hover { opacity: 0.8; } .cdp-btn:disabled { opacity: 0.3; cursor: default; }
-  .cdp-err { font-family: var(--mono); font-size: 11px; color: var(--red); margin-top: 8px; }
 
   /* ── Empty state content (inside browser frame) ─────────────────────────── */
   .browser-empty-content {
@@ -541,11 +535,6 @@
             <span class="ph-port" id="portChip">:9222</span>
             via Chrome DevTools Protocol.
           </div>
-          <div class="cdp-form">
-            <input class="cdp-input" id="cdpPortInput" type="number" value="9222" min="1024" max="65535">
-            <button class="cdp-btn" id="cdpBtn" onclick="connectCdp()">connect</button>
-          </div>
-          <div class="cdp-err hidden" id="cdpErr"></div>
         </div>
 
       </div>
@@ -1010,23 +999,6 @@ function connectSse(rid) {
   sseSource.onopen = () => {
     document.getElementById('wsDot').className = 'ws-dot ok';
   };
-}
-
-// ── CDP manual connect ────────────────────────────────────────────────────────
-async function connectCdp() {
-  const port=parseInt(document.getElementById('cdpPortInput').value)||9222;
-  const btn=document.getElementById('cdpBtn'); const err=document.getElementById('cdpErr');
-  btn.disabled=true; btn.textContent='connecting…'; err.classList.add('hidden');
-  try {
-    const r=await fetch('/connect-cdp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port,fps:15})});
-    const d=await r.json();
-    if (d.connected) {
-      document.getElementById('portChip').textContent=':'+port;
-      document.getElementById('cdpStatus').textContent=`● cdp · :${port} · attached`;
-      document.getElementById('cdpStatus').style.color='var(--green)';
-      document.getElementById('browserUrlBar').textContent = `localhost:${port}`;
-    } else { err.textContent=d.detail||'connection failed'; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='retry'; }
-  } catch(e) { err.textContent=e.message; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='retry'; }
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────

@@ -2,15 +2,11 @@
  * SettingsPane — shown in the Task Intelligence slot when "Moat Builder" is active.
  *
  * Sections:
- *   1. Rule Manager      — toggle engine primitives on/off
- *   2. CDP Configuration — remote debug port + Test/Connect buttons
- *   3. Session Persistence — Fresh Playwright vs CDP Attach
+ *   1. Rule Manager       — toggle engine primitives on/off
+ *   2. Session Persistence — Fresh Playwright vs observable
  */
 
-import { useState } from "react";
 import { useAgentStore } from "../store/agentStore";
-
-const API = "http://127.0.0.1:8080";
 
 type Props = {
   sendControl: (msg: object) => void;
@@ -205,152 +201,6 @@ function RuleManager({ sendControl }: { sendControl: (msg: object) => void }) {
   );
 }
 
-// ── CDP Configuration section ─────────────────────────────────────────────────
-
-type CdpStatus = "idle" | "testing" | "reachable" | "unreachable" | "connecting" | "connected" | "error";
-
-function CdpConfiguration() {
-  const cdpPort = useAgentStore((s) => s.cdpPort);
-  const setCdpPort = useAgentStore((s) => s.setCdpPort);
-  const [testStatus, setTestStatus] = useState<CdpStatus>("idle");
-  const [testBrowser, setTestBrowser] = useState<string | null>(null);
-
-  const testConnection = async () => {
-    setTestStatus("testing");
-    setTestBrowser(null);
-    try {
-      const res = await fetch(`http://127.0.0.1:${cdpPort}/json/version`, {
-        signal: AbortSignal.timeout(3000),
-      });
-      if (!res.ok) { setTestStatus("unreachable"); return; }
-      const json = await res.json();
-      setTestBrowser(json.Browser ?? null);
-      setTestStatus("reachable");
-    } catch {
-      setTestStatus("unreachable");
-    }
-  };
-
-  const connectCdp = async () => {
-    setTestStatus("connecting");
-    try {
-      const res = await fetch(`${API}/connect-cdp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ port: cdpPort, fps: 15 }),
-      });
-      const json = await res.json();
-      setTestStatus(json.connected ? "connected" : "error");
-    } catch {
-      setTestStatus("error");
-    }
-  };
-
-  const statusEl = (() => {
-    switch (testStatus) {
-      case "testing":     return <StatusPill color="#6366f1" label="Testing…" dot="#818cf8" />;
-      case "connecting":  return <StatusPill color="#f59e0b" label="Connecting…" dot="#fbbf24" />;
-      case "reachable":   return <StatusPill color="#15803d" label={testBrowser ?? "Chrome reachable"} dot="#22c55e" />;
-      case "unreachable": return <StatusPill color="#b91c1c" label="Not reachable" dot="#ef4444" />;
-      case "connected":   return <StatusPill color="#15803d" label="Screencast active" dot="#22c55e" />;
-      case "error":       return <StatusPill color="#b91c1c" label="Connect failed" dot="#ef4444" />;
-      default:            return null;
-    }
-  })();
-
-  return (
-    <div>
-      <SectionHeader
-        icon="🔌"
-        title="CDP CONFIGURATION"
-        subtitle="Point at Chrome's remote debugging port to attach a live session."
-      />
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 10, color: "#6b7280", display: "block", marginBottom: 4 }}>
-              Remote Debug Port
-            </label>
-            <input
-              type="number"
-              min={1024}
-              max={65535}
-              value={cdpPort}
-              onChange={(e) => {
-                const v = parseInt(e.target.value, 10);
-                if (!isNaN(v) && v > 0) { setCdpPort(v); setTestStatus("idle"); }
-              }}
-              style={{
-                width: "100%", padding: "6px 8px", fontSize: 12,
-                border: "1px solid #d1d5db", borderRadius: 6,
-                outline: "none", fontFamily: "monospace", color: "#1e2030",
-                background: "#fafafa",
-              }}
-            />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingTop: 18 }}>
-            <SmallBtn
-              label="Test"
-              onClick={testConnection}
-              disabled={testStatus === "testing"}
-              color="#6b7280"
-            />
-            <SmallBtn
-              label="Connect"
-              onClick={connectCdp}
-              disabled={testStatus === "connecting" || testStatus === "connected"}
-              color="#6366f1"
-            />
-          </div>
-        </div>
-
-        {statusEl && (
-          <div style={{ paddingLeft: 2 }}>{statusEl}</div>
-        )}
-
-        <p style={{ margin: 0, fontSize: 10, color: "#9ca3af", lineHeight: 1.5 }}>
-          Start Chrome with{" "}
-          <code style={{ background: "#f3f4f6", padding: "1px 5px", borderRadius: 3, fontFamily: "monospace" }}>
-            --remote-debugging-port={cdpPort}
-          </code>
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function StatusPill({ color, label, dot }: { color: string; label: string; dot: string }) {
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-      <span style={{ width: 7, height: 7, borderRadius: "50%", background: dot, display: "inline-block" }} />
-      <span style={{ fontSize: 11, color, fontWeight: 600 }}>{label}</span>
-    </div>
-  );
-}
-
-function SmallBtn({ label, onClick, disabled, color }: {
-  label: string; onClick: () => void; disabled: boolean; color: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: "5px 12px", fontSize: 10, fontWeight: 700, fontFamily: "inherit",
-        border: `1px solid ${disabled ? "#e5e7eb" : color + "66"}`,
-        borderRadius: 5, cursor: disabled ? "not-allowed" : "pointer",
-        background: disabled ? "#f9fafb" : `${color}11`,
-        color: disabled ? "#d1d5db" : color,
-        letterSpacing: "0.04em",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
 // ── Session Persistence section ───────────────────────────────────────────────
 
 const SESSION_MODES = [
@@ -360,9 +210,9 @@ const SESSION_MODES = [
     desc: "Operon launches and manages its own browser instance. Isolated, reproducible.",
   },
   {
-    id: "cdp" as const,
-    label: "CDP Attach (Live Session)",
-    desc: "Attaches to your already-running Chrome. Preserves auth cookies and open tabs.",
+    id: "observable" as const,
+    label: "Observable Mode",
+    desc: "Persistent headed browser — runs are visible on screen and streamed to the Command Center.",
   },
 ];
 
@@ -454,9 +304,6 @@ export function SettingsPane({ sendControl }: Props) {
       {/* Scrollable body */}
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 14px", display: "flex", flexDirection: "column", gap: 24 }}>
         <RuleManager sendControl={sendControl} />
-
-        <Divider />
-        <CdpConfiguration />
 
         <Divider />
         <SessionPersistence />

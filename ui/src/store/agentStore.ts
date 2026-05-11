@@ -38,8 +38,7 @@ interface AgentState {
 
   // Settings / Moat Builder
   disabledRules: string[];
-  cdpPort: number;
-  sessionMode: "fresh" | "cdp";
+  sessionMode: "fresh" | "observable";
 }
 
 interface AgentActions {
@@ -62,8 +61,7 @@ interface AgentActions {
 
   // Settings
   setDisabledRules: (rules: string[]) => void;
-  setCdpPort: (port: number) => void;
-  setSessionMode: (mode: "fresh" | "cdp") => void;
+  setSessionMode: (mode: "fresh" | "observable") => void;
 
   // Reset
   reset: () => void;
@@ -83,7 +81,6 @@ const IDLE: AgentState = {
   pendingDecision: null,
   activeNav: "tasks",
   disabledRules: [],
-  cdpPort: 9222,
   sessionMode: "fresh",
 };
 
@@ -162,7 +159,6 @@ export const useAgentStore = create<AgentState & AgentActions>()((set) => ({
   setPendingDecision: (d) => set({ pendingDecision: d }),
 
   setDisabledRules: (rules) => set({ disabledRules: rules }),
-  setCdpPort: (port) => set({ cdpPort: port }),
   setSessionMode: (mode) => set({ sessionMode: mode }),
 
   reset: () => set(IDLE),

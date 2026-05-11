@@ -68,7 +68,7 @@ from src.models.logs import (
     PreStepFailureLog,
     StepLog,
 )
-from src.models.perception import UIElement, UIElementType
+from src.models.perception import ScreenPerception, UIElement, UIElementType
 from src.models.policy import ActionType, AgentAction
 from src.models.progress import ProgressTrace
 from src.models.recovery import RecoveryDecision, RecoveryStrategy
@@ -1015,6 +1015,28 @@ class AgentLoop:
                     logger.info("liveness_retry: resolved after %d retries", liveness_retries)
                     return result.model_copy(update={"liveness_retries": liveness_retries})
                 return result
+
+            # CDP/observable mode: a brand-new tab starts at about:blank with zero
+            # elements. Retrying is pointless — nothing navigates the page until the
+            # policy acts. Return a blank perception so the policy can issue NAVIGATE.
+            if attempt == 1 and hasattr(self.executor, "current_url_for_run"):
+                try:
+                    current_url = await self.executor.current_url_for_run(state.run_id)
+                    if current_url in ("about:blank", "chrome://newtab/", ""):
+                        logger.info(
+                            "liveness_retry: page is %r — passing blank perception to policy for navigation",
+                            current_url,
+                        )
+                        return ScreenPerception(
+                            summary="",
+                            page_hint="unknown",
+                            visible_elements=[],
+                            capture_artifact_path=frame.artifact_path,
+                            confidence=0.0,
+                            is_empty_frame=False,
+                        )
+                except Exception:
+                    pass
 
             if attempt == _LIVENESS_RETRY_MAX:
                 logger.error(

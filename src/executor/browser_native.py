@@ -128,7 +128,7 @@ class NativeBrowserExecutor(Executor):
         mode = self._run_mode.pop(run_id, "batch")
         if session is None:
             return 0
-        await self._close_session(session, observable=mode == "observable")
+        await self._close_session(session, observable=mode in {"observable", "cdp"})
         return 1
 
     def cleanup_run(self, run_id: str) -> int:
@@ -137,7 +137,7 @@ class NativeBrowserExecutor(Executor):
         mode = self._run_mode.pop(run_id, "batch")
         if session is None:
             return 0
-        observable = mode == "observable"
+        observable = mode in {"observable", "cdp"}
         try:
             asyncio.run(self._close_session(session, observable=observable))
         except RuntimeError:
@@ -519,9 +519,40 @@ class NativeBrowserExecutor(Executor):
             return existing
 
         mode = self._run_mode.get(run_id, "batch")
+
+        # Observable runs own their Chromium process (--headless=new via Playwright).
+        # Batch runs prefer an existing CDP connection, else launch their own browser.
         if mode == "observable":
             return await self._ensure_session_observable(run_id, foreground=foreground)
+
+        from src.browser.manager import get_active_manager
+        bm = get_active_manager()
+        if bm is not None and bm.is_connected:
+            return await self._ensure_session_cdp(run_id, bm)
         return await self._ensure_session_batch(run_id, foreground=foreground)
+
+    async def _ensure_session_cdp(self, run_id: str, bm: object) -> _BrowserSession:
+        """CDP mode: create a new context+page in the Command Center browser.
+
+        No Chromium is launched. The BrowserManager switches its live screencast
+        to follow this page automatically.
+        """
+        await self._close_other_sessions(run_id)
+        ctx, page = await bm.new_task_context()
+        self._attach_page_listeners(page, run_id)
+        self._run_mode[run_id] = "cdp"
+        session = _BrowserSession(
+            playwright=None,
+            browser=None,
+            context=ctx,
+            page=page,
+            video_dir=None,
+            browser_pid=None,
+        )
+        self._sessions[run_id] = session
+        self._fresh_session_run_id = run_id
+        logger.info("CDP mode: task %s routed through Command Center browser", run_id)
+        return session
 
     async def _ensure_session_observable(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:
         """Observable mode: reuse the persistent browser across tasks; only context+page are new."""
@@ -531,24 +562,29 @@ class NativeBrowserExecutor(Executor):
         except ImportError as exc:
             raise RuntimeError("playwright is not installed for native browser execution.") from exc
 
-        launch_headless = self._run_headless.get(run_id)
-        if launch_headless is None:
-            launch_headless = self._headless
-        if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
-            launch_headless = True
-
         # First observable run: launch Chromium and keep it alive.
         # Subsequent runs skip launch entirely and reuse _obs_browser.
         if self._obs_browser is None:
             obs_playwright = await async_playwright().start()
             try:
+                # --headless=new renders to an off-screen surface that CDP
+                # Page.startScreencast CAN capture — no OS window appears.
+                # headless=False tells Playwright not to inject its own --headless
+                # flag (which would force old headless mode); we manage it ourselves.
+                # Caveat: some sites detect headless via JS fingerprinting.
+                # --headless=new is far less detectable than old headless but not
+                # invisible. If specific benchmarks regress with anti-bot blocks
+                # after this change, browser fingerprint masking is the fix, not
+                # reverting this flag.
                 launch_args = [
+                    "--headless=new",
                     f"--window-size={self._viewport_width},{self._viewport_height}",
-                    "--window-position=0,0",
                     "--remote-debugging-port=9222",
+                    "--no-first-run",
+                    "--no-default-browser-check",
                 ]
                 obs_browser = await obs_playwright.chromium.launch(
-                    headless=launch_headless,
+                    headless=False,  # Playwright must not inject --headless; we own it
                     args=launch_args,
                 )
             except Exception:
@@ -556,7 +592,8 @@ class NativeBrowserExecutor(Executor):
                 raise
             self._obs_playwright = obs_playwright
             self._obs_browser = obs_browser
-            logger.info("Observable mode: persistent browser launched (port 9222)")
+            logger.info("Observable mode: persistent Chromium launched (port 9222, --headless=new)")
+            await self._connect_browser_manager_to_port(9222)
         else:
             obs_playwright = self._obs_playwright
             obs_browser = self._obs_browser
@@ -571,8 +608,6 @@ class NativeBrowserExecutor(Executor):
 
         if foreground and hasattr(page, "bring_to_front"):
             await page.bring_to_front()
-        if not launch_headless and foreground:
-            await self._reset_browser_zoom(page)
 
         session = _BrowserSession(
             playwright=obs_playwright,
@@ -664,6 +699,30 @@ class NativeBrowserExecutor(Executor):
             await self._bring_browser_to_foreground(session.browser_pid)
             await asyncio.sleep(1.5)
         return session
+
+    async def _connect_browser_manager_to_port(self, port: int) -> None:
+        """Wire BrowserManager to the Playwright Chromium on port for CDP screencast.
+
+        Called once after the persistent observable browser is first launched.
+        No-op if a BrowserManager is already connected.
+        """
+        from src.browser.manager import BrowserManager, get_active_manager, set_active_manager
+        from src.api import ws_stream as _ws
+
+        bm = get_active_manager()
+        if bm is not None and bm.is_connected:
+            return
+        try:
+            manager = BrowserManager()
+            await manager.connect(port)
+            await manager.start_screencast(fps=15)
+            set_active_manager(manager)
+            _ws.set_browser_manager(manager)
+            logger.info("Observable mode: BrowserManager connected to Playwright Chromium on port %d", port)
+        except Exception as exc:
+            logger.warning(
+                "Observable mode: BrowserManager connect failed (screencast unavailable) — %s", exc
+            )
 
     def _attach_page_listeners(self, page: object, run_id: str) -> None:
         """Wire console/network/dialog listeners onto a newly created page."""
@@ -903,10 +962,14 @@ class NativeBrowserExecutor(Executor):
         for stale_run_id in stale_run_ids:
             session = self._sessions.pop(stale_run_id, None)
             self._run_headless.pop(stale_run_id, None)
+            stale_mode = self._run_mode.pop(stale_run_id, "batch")
             if session is None:
                 continue
+            # Observable and CDP sessions must not close the shared browser —
+            # only the context is owned by the session.
+            is_obs = stale_mode in {"observable", "cdp"} or session.browser is self._obs_browser
             try:
-                await self._close_session(session)
+                await self._close_session(session, observable=is_obs)
             except Exception:
                 continue
 
@@ -921,8 +984,10 @@ class NativeBrowserExecutor(Executor):
     async def _close_session(self, session: _BrowserSession, *, observable: bool = False) -> None:
         await session.context.close()
         if not observable:
-            await session.browser.close()
-            await session.playwright.stop()
+            if session.browser is not None:
+                await session.browser.close()
+            if session.playwright is not None:
+                await session.playwright.stop()
         self._finalize_recorded_video(session)
 
     async def close_persistent_browser(self) -> None:

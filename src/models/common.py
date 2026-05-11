@@ -128,6 +128,7 @@ class RunTaskRequest(StrictModel):
     headless: bool | None = None
     benchmark: str | None = Field(default=None, min_length=1)
     mode: str = Field(default="batch", pattern=r"^(observable|batch)$")
+    max_steps: int = Field(default=25, ge=1, le=200)
 
     @field_validator("intent", mode="before")
     @classmethod

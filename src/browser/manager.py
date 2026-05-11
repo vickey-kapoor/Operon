@@ -64,6 +64,22 @@ _BOUNDS_JS = f"""
 """
 
 
+# Module-level singleton so NativeBrowserExecutor can discover the active CDP
+# connection without importing from src.api (which would invert the dependency).
+_active_manager: "BrowserManager | None" = None
+
+
+def get_active_manager() -> "BrowserManager | None":
+    """Return the currently connected BrowserManager, or None."""
+    return _active_manager
+
+
+def set_active_manager(manager: "BrowserManager | None") -> None:
+    """Register (or clear) the active BrowserManager singleton."""
+    global _active_manager
+    _active_manager = manager
+
+
 class BrowserManager:
     """Manages a CDP-attached Chrome session with live screencast streaming."""
 
@@ -77,7 +93,30 @@ class BrowserManager:
         self._viewport_w: int = 1920
         self._viewport_h: int = 1080
 
+    @property
+    def is_connected(self) -> bool:
+        return self._browser is not None
+
     # ── Connection ──────────────────────────────────────────────────────────
+
+    async def new_task_context(self) -> "tuple[Any, Any]":
+        """Open a new context + page in the attached browser for an Operon task.
+
+        Restarts the live screencast on the new page so Command Center follows
+        the agent. Returns (context, page); caller closes context when done.
+        """
+        if self._browser is None:
+            raise RuntimeError("BrowserManager is not connected — call connect() first")
+        ctx = await self._browser.new_context()
+        page = await ctx.new_page()
+        # Switch screencast to follow the new task page.
+        was_running = self._screencast_running
+        if was_running:
+            await self.stop_screencast()
+        self._page = page
+        if was_running:
+            await self.start_screencast()
+        return ctx, page
 
     async def connect(self, port: int) -> None:
         """Attach to an existing Chrome instance via CDP on the given port."""

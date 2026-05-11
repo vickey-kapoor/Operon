@@ -141,9 +141,10 @@ def test_command_center_empty_state_renders(client: TestClient):
     # Empty state CTA
     assert "Start a new task" in resp.text
     assert "new task" in resp.text
-    # Split panes present but hidden
-    assert "paneLeft" in resp.text
-    assert "paneRight" in resp.text
+    # Browser-dominant layout landmarks
+    assert "emptyContent" in resp.text
+    assert "sidebar" in resp.text
+    assert "browserSection" in resp.text
 
 
 def test_command_center_with_run_id_serves_same_html(client: TestClient):

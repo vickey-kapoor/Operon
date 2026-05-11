@@ -6,7 +6,7 @@
 <title>Operon</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; }
@@ -80,100 +80,65 @@
   .ctrl-btn:hover:not(:disabled) { background: var(--bg-hover); }
   .ctrl-btn:disabled { opacity: 0.3; cursor: default; }
 
-  /* ── Active run bar ─────────────────────────────────────────────────────── */
+  /* ── Run bar ─────────────────────────────────────────────────────────────── */
   .run-bar {
     flex-shrink: 0; height: 36px;
-    display: flex; align-items: center; gap: 14px;
+    display: flex; align-items: center; justify-content: space-between;
     padding: 0 24px;
     border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .run-bar-meta {
+    display: flex; align-items: center; gap: 14px;
     font-family: var(--mono); font-size: 11px;
+    flex: 1; min-width: 0; overflow: hidden;
   }
-  .run-bar-label {
-    letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); font-size: 10px;
-  }
-  .run-bar-id   { color: var(--neutral); }
-  .run-bar-time { color: var(--muted); }
-  .run-bar-status { display: flex; align-items: center; gap: 5px; }
+  .run-bar-label { letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .run-bar-id    { color: var(--neutral); flex-shrink: 0; }
+  .run-bar-time  { color: var(--muted); flex-shrink: 0; }
+  .run-bar-status { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
   .rbs-idle { color: var(--dim); }
   .rbs-live { color: var(--amber); }
   .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); animation: blink 1.5s ease-in-out infinite; }
+  .run-bar-divider { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+  .run-bar-intent {
+    color: var(--text); font-family: var(--sans); font-size: 13px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+  .run-bar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .log-toggle-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; font-family: var(--mono); font-size: 11px;
+    color: var(--neutral); background: transparent;
+    border: 1px solid var(--border); border-radius: 4px;
+    cursor: pointer; transition: color 0.12s, background 0.12s, border-color 0.12s;
+  }
+  .log-toggle-btn.open { background: var(--amber-bg); border-color: var(--amber-bdr); color: var(--amber); }
+  .log-toggle-btn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
 
   /* ── Main area ──────────────────────────────────────────────────────────── */
-  .main { flex: 1; overflow: hidden; display: flex; }
+  .main { flex: 1; overflow: hidden; display: flex; min-height: 0; }
 
-  /* ── Empty state ────────────────────────────────────────────────────────── */
-  .empty-shell { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-  .empty-cta {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    padding: 24px;
+  /* ── Sidebar (collapsible step log) ─────────────────────────────────────── */
+  .sidebar {
+    flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
+    width: 0; overflow: hidden;
+    transition: width 200ms ease-out, border-color 200ms ease-out;
+    background: var(--bg);
+    border-right: 1px solid transparent;
   }
-  .empty-center { text-align: center; max-width: 480px; }
-  .empty-eyebrow {
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
-    text-transform: uppercase; color: var(--muted); margin-bottom: 16px;
-  }
-  .empty-heading {
-    font-family: var(--cond); font-weight: 700; font-size: 44px;
-    letter-spacing: -0.02em; line-height: 1.05;
-    color: var(--text); margin-bottom: 16px;
-  }
-  .empty-desc {
-    font-size: 14px; line-height: 1.65; color: var(--neutral);
-    margin-bottom: 32px;
-  }
-  .new-task-btn {
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 10px 20px; font-size: 14px; font-weight: 500;
-    color: #0e0d0c; background: var(--amber); border: none; border-radius: 5px;
-    cursor: pointer; transition: transform 0.1s, opacity 0.1s;
-  }
-  .new-task-btn:hover { transform: scale(1.02); opacity: 0.92; }
-
-  /* ── Recent runs ────────────────────────────────────────────────────────── */
-  .recent-runs {
-    flex-shrink: 0; padding: 0 24px 20px;
-    max-width: 760px; width: 100%; margin: 0 auto;
-  }
-  .recent-head {
-    display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px;
-  }
-  .recent-label {
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em;
-    text-transform: uppercase; color: var(--muted);
-  }
-  .view-all-btn {
-    display: inline-flex; align-items: center; gap: 4px;
-    font-family: var(--mono); font-size: 11px; color: var(--neutral);
-    background: none; border: none; cursor: pointer;
-  }
-  .view-all-btn:hover { color: var(--text); }
-  .recent-row {
-    display: flex; align-items: center; gap: 10px;
-    padding: 9px 12px; border-radius: 4px; border: 1px solid var(--border-sub);
-    cursor: pointer; transition: background 0.1s; margin-bottom: 4px;
-  }
-  .recent-row:hover { background: rgba(22,20,18,0.5); }
-  .recent-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-  .recent-id  { font-family: var(--mono); font-size: 10px; color: var(--dim); flex-shrink: 0; }
-  .recent-intent { font-size: 13px; color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .recent-when { font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
-  .recent-arrow { color: var(--dim); opacity: 0; transition: opacity 0.12s; flex-shrink: 0; }
-  .recent-row:hover .recent-arrow { opacity: 1; }
-
-  /* ── Split-pane (active run) ────────────────────────────────────────────── */
-  .pane { display: flex; flex-direction: column; min-height: 0; }
-  .pane-left  { width: 42%; flex-shrink: 0; border-right: 1px solid var(--border); }
-  .pane-right { flex: 1; background: var(--bg-alt); }
-  .pane-head {
+  .sidebar.open { width: 360px; border-right-color: var(--border); }
+  .sidebar-inner { min-width: 360px; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .sidebar-head {
     flex-shrink: 0; height: 34px;
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 20px; border-bottom: 1px solid var(--border-sub);
-    font-family: var(--cond); font-weight: 700;
-    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--muted);
   }
-  .pane-head-right { font-family: var(--mono); font-weight: 400; font-size: 10px; letter-spacing: 0.04em; text-transform: none; }
-  .pane-foot {
+  .sidebar-head-right { letter-spacing: 0.04em; text-transform: none; font-size: 10px; }
+  .sidebar-foot {
     flex-shrink: 0; height: 28px;
     display: flex; align-items: center; gap: 8px; padding: 0 20px;
     border-top: 1px solid var(--border-sub);
@@ -214,21 +179,34 @@
     background: var(--amber); opacity: 0.5; animation: blink 1s ease-in-out infinite;
   }
 
-  /* ── Browser pane ───────────────────────────────────────────────────────── */
-  .browser-wrap { flex: 1; display: flex; padding: 16px; }
-  .browser-frame {
-    flex: 1; background: var(--bg-panel); border: 1px solid var(--border);
-    border-radius: 6px; overflow: hidden; display: flex; flex-direction: column;
+  /* ── Browser section ─────────────────────────────────────────────────────── */
+  .browser-section {
+    flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    background: var(--bg-alt);
   }
-  .browser-bar {
-    flex-shrink: 0; display: flex; align-items: center; gap: 10px;
-    padding: 7px 12px; background: var(--bg-hover); border-bottom: 1px solid var(--border);
+  .browser-chrome-row {
+    flex-shrink: 0; display: flex; align-items: center; gap: 12px;
+    padding: 0 16px; height: 38px;
+    border-bottom: 1px solid var(--border-sub);
+    background: var(--bg-panel);
   }
-  .chrome-dots { display: flex; gap: 5px; }
+  .chrome-dots { display: flex; gap: 5px; flex-shrink: 0; }
   .chrome-dot  { width: 10px; height: 10px; border-radius: 50%; }
-  .cd-r { background: var(--amber-bdr); } .cd-y { background: var(--dimmer); } .cd-g { background: var(--dimmer); }
-  .browser-url { flex: 1; padding: 3px 10px; border-radius: 3px; background: var(--bg); color: var(--muted); font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .frame-area  { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+  .cd-r { background: var(--amber-bdr); } .cd-y { background: #2a2520; } .cd-g { background: #2a2520; }
+  .browser-url-bar {
+    flex: 1; padding: 4px 10px; border-radius: 3px;
+    background: var(--bg); color: var(--muted);
+    font-family: var(--mono); font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cdp-badge {
+    display: flex; align-items: center; gap: 5px;
+    font-family: var(--mono); font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  /* ── Frame area ─────────────────────────────────────────────────────────── */
+  .frame-area { flex: 1; position: relative; overflow: hidden; min-height: 0; }
   #screenshotImg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: none; }
   .placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 32px; }
   .ph-label { font-family: var(--cond); font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); margin-bottom: 10px; }
@@ -241,6 +219,81 @@
   .cdp-btn { padding: 5px 14px; font-family: var(--mono); font-size: 12px; color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-bdr); border-radius: 4px; cursor: pointer; transition: opacity 0.1s; }
   .cdp-btn:hover { opacity: 0.8; } .cdp-btn:disabled { opacity: 0.3; cursor: default; }
   .cdp-err { font-family: var(--mono); font-size: 11px; color: var(--red); margin-top: 8px; }
+
+  /* ── Empty state content (inside browser frame) ─────────────────────────── */
+  .browser-empty-content {
+    position: absolute; inset: 0; overflow-y: auto;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 32px 24px; gap: 36px;
+  }
+  .empty-cta { text-align: center; max-width: 480px; }
+  .empty-eyebrow {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 16px;
+  }
+  .empty-heading {
+    font-family: var(--cond); font-weight: 700; font-size: 36px;
+    letter-spacing: -0.02em; line-height: 1.05;
+    color: var(--text); margin-bottom: 12px;
+  }
+  .empty-desc {
+    font-size: 13px; line-height: 1.65; color: var(--neutral);
+    margin-bottom: 24px;
+  }
+  .new-task-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; font-size: 13px; font-weight: 500;
+    color: #0e0d0c; background: var(--amber); border: none; border-radius: 5px;
+    cursor: pointer; transition: transform 0.1s, opacity 0.1s;
+  }
+  .new-task-btn:hover { transform: scale(1.02); opacity: 0.92; }
+
+  /* ── Recent runs (inside browser frame) ─────────────────────────────────── */
+  .recent-runs { width: 100%; max-width: 680px; }
+  .recent-head {
+    display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px;
+  }
+  .recent-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .view-all-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--mono); font-size: 11px; color: var(--neutral);
+    background: none; border: none; cursor: pointer;
+  }
+  .view-all-btn:hover { color: var(--text); }
+  .recent-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: 4px; border: 1px solid var(--border-sub);
+    cursor: pointer; transition: background 0.1s; margin-bottom: 4px;
+  }
+  .recent-row:hover { background: rgba(22,20,18,0.5); }
+  .recent-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .recent-id  { font-family: var(--mono); font-size: 10px; color: var(--dim); flex-shrink: 0; }
+  .recent-intent { font-size: 13px; color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recent-when { font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
+  .recent-arrow { color: var(--dim); opacity: 0; transition: opacity 0.12s; flex-shrink: 0; }
+  .recent-row:hover .recent-arrow { opacity: 1; }
+
+  /* ── Step strip (always-visible current step at bottom of browser) ───────── */
+  .step-strip {
+    flex-shrink: 0; height: 40px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 20px;
+    border-top: 1px solid var(--border-sub);
+    background: var(--bg);
+    font-family: var(--mono); font-size: 12px;
+    overflow: hidden;
+  }
+  .step-strip-left {
+    display: flex; align-items: center; gap: 8px;
+    flex: 1; min-width: 0; overflow: hidden;
+  }
+  .step-strip-right {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--muted); flex-shrink: 0;
+  }
   .vel-bars { display: flex; gap: 2px; align-items: flex-end; height: 11px; }
   .vbar { width: 3px; border-radius: 1px; background: var(--dim); transition: background 0.3s, height 0.3s; }
   .vbar.lit { background: var(--amber); } .vbar.hot { background: var(--red); }
@@ -260,8 +313,6 @@
     transform: translateY(10px); transition: transform 0.15s;
   }
   .modal-backdrop.open .modal { transform: translateY(0); }
-
-  /* modal header */
   .modal-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 20px; border-bottom: 1px solid var(--border);
@@ -269,8 +320,6 @@
   .modal-title { font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--neutral); }
   .modal-close { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px; display: flex; align-items: center; }
   .modal-close:hover { color: var(--text); }
-
-  /* blocked banner */
   .modal-blocked {
     display: flex; align-items: center; gap: 12px;
     padding: 10px 20px; background: var(--amber-bg); border-bottom: 1px solid var(--amber-bdr);
@@ -285,8 +334,6 @@
     cursor: pointer; white-space: nowrap; transition: opacity 0.1s;
   }
   .mb-stop:hover { opacity: 0.8; }
-
-  /* body */
   .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
   .modal-body.disabled { opacity: 0.5; pointer-events: none; }
   .field-label {
@@ -312,13 +359,11 @@
   .modal-input {
     width: 100%; padding: 8px 12px; font-family: var(--mono); font-size: 13px; color: var(--text);
     background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-    outline: none; transition: border-color 0.12s;
+    outline: none; transition: border-color 0.12px;
   }
   .modal-input:focus { border-color: var(--amber); }
   .modal-input::placeholder { color: var(--muted); }
   .modal-input.err { border-color: var(--red-bdr); }
-
-  /* error banner */
   .modal-err-banner {
     display: flex; align-items: flex-start; gap: 10px;
     padding: 10px 14px; border-radius: 4px;
@@ -326,8 +371,6 @@
   }
   .meb-title { font-size: 12.5px; font-weight: 500; color: var(--text); }
   .meb-sub   { font-family: var(--mono); font-size: 11.5px; color: var(--neutral); margin-top: 3px; }
-
-  /* footer */
   .modal-footer {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: 10px 20px; border-top: 1px solid var(--border); background: var(--bg);
@@ -351,7 +394,6 @@
 
   @keyframes spin { to { transform: rotate(360deg); } }
   .spin { animation: spin 0.8s linear infinite; display: inline-block; }
-
   .hidden { display: none !important; }
 </style>
 </head>
@@ -378,6 +420,31 @@
         </svg>
         new task
       </button>
+    </div>
+  </header>
+
+  <!-- Run bar: always present, content varies by state -->
+  <div class="run-bar">
+    <div class="run-bar-meta">
+      <span class="run-bar-label">active run</span>
+      <span class="run-bar-id" id="barRunId">—</span>
+      <span class="run-bar-time" id="barElapsed">00:00</span>
+      <span class="run-bar-status rbs-idle" id="barStatus">
+        <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="4.5" cy="4.5" r="3.5"/>
+        </svg>
+        idle
+      </span>
+      <div class="run-bar-divider" id="runBarIntentDivider" style="display:none"></div>
+      <span class="run-bar-intent" id="runBarIntent"></span>
+    </div>
+    <div class="run-bar-actions">
+      <button class="log-toggle-btn" id="logToggleBtn" onclick="toggleLog()" disabled>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M14 8l3 4-3 4"/>
+        </svg>
+        show log
+      </button>
       <button class="ctrl-btn" id="btnPause" onclick="togglePause()" disabled>
         <svg width="10" height="10" fill="currentColor" viewBox="0 0 10 10">
           <rect x="1.5" y="1" width="2.5" height="8" rx=".5"/>
@@ -392,130 +459,126 @@
         stop
       </button>
     </div>
-  </header>
-
-  <!-- Active run bar -->
-  <div class="run-bar">
-    <span class="run-bar-label">active run</span>
-    <span class="run-bar-id"  id="barRunId">—</span>
-    <span class="run-bar-time" id="barElapsed">00:00</span>
-    <span class="run-bar-status rbs-idle" id="barStatus">
-      <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5">
-        <circle cx="4.5" cy="4.5" r="3.5"/>
-      </svg>
-      idle
-    </span>
   </div>
 
-  <!-- Main -->
+  <!-- Main: sidebar + browser section, both always rendered -->
   <div class="main" id="main">
 
-    <!-- ── Empty state ──────────────────────────────────────────────────── -->
-    <div class="empty-shell" id="emptyShell">
-      <div class="empty-cta">
-        <div class="empty-center">
-          <div class="empty-eyebrow">command center</div>
-          <h1 class="empty-heading">Start a new task</h1>
-          <p class="empty-desc">
-            Describe what you want Operon to do — browse, click, type, scroll. The agent perceives, plans, and executes step by step. You watch every decision.
-          </p>
-          <button class="new-task-btn" onclick="openModal()">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-              <path d="M7 1v12M1 7h12"/>
-            </svg>
-            new task
-          </button>
+    <!-- Sidebar: collapsible step log, width-animated -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-inner">
+        <div class="sidebar-head">
+          <span>step stream</span>
+          <span class="sidebar-head-right" id="stepCounter">—</span>
+        </div>
+        <div class="steps-body" id="stepsBody"></div>
+        <div class="sidebar-foot">
+          <span id="fSteps">0 steps</span>
+          <span class="foot-sep">·</span>
+          <span id="fRules">0 rules</span>
+          <span class="foot-sep">·</span>
+          <span id="fLlm">0 llm</span>
         </div>
       </div>
+    </aside>
 
-      <div class="recent-runs">
-        <div class="recent-head">
-          <div class="recent-label">recent runs</div>
-          <button class="view-all-btn" onclick="location.href='/dashboard'">
-            view all
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-              <path d="M2 5h6M5.5 2.5L8 5l-2.5 2.5"/>
-            </svg>
-          </button>
+    <!-- Browser section: protagonist, always visible -->
+    <section class="browser-section" id="browserSection">
+
+      <!-- Browser chrome row -->
+      <div class="browser-chrome-row">
+        <div class="chrome-dots">
+          <div class="chrome-dot cd-r"></div>
+          <div class="chrome-dot cd-y"></div>
+          <div class="chrome-dot cd-g"></div>
         </div>
-        <div id="recentList"></div>
+        <div class="browser-url-bar" id="browserUrlBar">no session</div>
+        <span class="cdp-badge" id="cdpStatus" style="color:var(--dim)">not attached</span>
       </div>
-    </div>
 
-    <!-- ── Active run: split panes ──────────────────────────────────────── -->
-    <section class="pane pane-left hidden" id="paneLeft">
-      <div class="pane-head">
-        <span>Step Stream</span>
-        <span class="pane-head-right" id="stepCounter">—</span>
-      </div>
-      <div class="steps-body" id="stepsBody"></div>
-      <div class="pane-foot">
-        <span id="fSteps">0 steps</span>
-        <span class="foot-sep">·</span>
-        <span id="fRules">0 rules</span>
-        <span class="foot-sep">·</span>
-        <span id="fLlm">0 llm</span>
-      </div>
-    </section>
+      <!-- Frame area: empty state CTA or live stream -->
+      <div class="frame-area" id="frameArea">
 
-    <section class="pane pane-right hidden" id="paneRight">
-      <div class="pane-head">
-        <span>Live Execution</span>
-        <span class="pane-head-right" id="cdpStatus" style="color:var(--dim)">disconnected</span>
-      </div>
-      <div class="browser-wrap">
-        <div class="browser-frame">
-          <div class="browser-bar">
-            <div class="chrome-dots">
-              <div class="chrome-dot cd-r"></div>
-              <div class="chrome-dot cd-y"></div>
-              <div class="chrome-dot cd-g"></div>
-            </div>
-            <div class="browser-url" id="browserUrl">about:blank</div>
+        <!-- Empty state content (shown when no active run) -->
+        <div class="browser-empty-content" id="emptyContent">
+          <div class="empty-cta">
+            <div class="empty-eyebrow">ready</div>
+            <h1 class="empty-heading">Start a new task</h1>
+            <p class="empty-desc">
+              Describe what you want Operon to do — browse, click, type, scroll. The agent perceives, plans, and executes step by step.
+            </p>
+            <button class="new-task-btn" onclick="openModal()">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <path d="M6.5 1v11M1 6.5h11"/>
+              </svg>
+              new task
+            </button>
           </div>
-          <div class="frame-area">
-            <!-- TODO: CDP Page.screencast WebSocket slots in here for lower-latency streaming -->
-            <img id="screenshotImg" alt="">
-            <div class="placeholder" id="placeholder">
-              <div class="ph-label">Live Browser Stream</div>
-              <div class="ph-title">[ CDP-attached headed chrome renders here ]</div>
-              <div class="ph-desc">
-                The actual page mirror streams from
-                <span class="ph-port" id="portChip">:9222</span>
-                via Chrome DevTools Protocol.
-              </div>
-              <div class="cdp-form">
-                <input class="cdp-input" id="cdpPortInput" type="number" value="9222" min="1024" max="65535">
-                <button class="cdp-btn" id="cdpBtn" onclick="connectCdp()">connect</button>
-              </div>
-              <div class="cdp-err hidden" id="cdpErr"></div>
+
+          <div class="recent-runs">
+            <div class="recent-head">
+              <div class="recent-label">recent runs</div>
+              <button class="view-all-btn" onclick="location.href='/dashboard'">
+                view all
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                  <path d="M2 5h6M5.5 2.5L8 5l-2.5 2.5"/>
+                </svg>
+              </button>
             </div>
+            <div id="recentList"></div>
           </div>
         </div>
-      </div>
-      <div class="pane-foot">
-        <span>headed chrome</span>
-        <span style="flex:1"></span>
-        <span style="color:var(--dim)">velocity</span>
-        <div class="vel-bars">
-          <div class="vbar" id="vb0" style="height:3px"></div>
-          <div class="vbar" id="vb1" style="height:5px"></div>
-          <div class="vbar" id="vb2" style="height:4px"></div>
-          <div class="vbar" id="vb3" style="height:7px"></div>
-          <div class="vbar" id="vb4" style="height:4px"></div>
-        </div>
-        <span id="velLabel" style="color:var(--dim)">idle</span>
-      </div>
-    </section>
 
+        <!-- Live stream: screenshot image -->
+        <img id="screenshotImg" alt="" style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:contain;">
+
+        <!-- Live stream: placeholder / CDP connect form (shown when active but no screenshot yet) -->
+        <div class="placeholder" id="placeholder" style="display:none">
+          <div class="ph-label">Live Browser Stream</div>
+          <div class="ph-title">[ CDP-attached headed chrome renders here ]</div>
+          <div class="ph-desc">
+            The actual page mirror streams from
+            <span class="ph-port" id="portChip">:9222</span>
+            via Chrome DevTools Protocol.
+          </div>
+          <div class="cdp-form">
+            <input class="cdp-input" id="cdpPortInput" type="number" value="9222" min="1024" max="65535">
+            <button class="cdp-btn" id="cdpBtn" onclick="connectCdp()">connect</button>
+          </div>
+          <div class="cdp-err hidden" id="cdpErr"></div>
+        </div>
+
+      </div>
+
+      <!-- Step strip: always visible, content varies -->
+      <div class="step-strip" id="stepStrip">
+        <div class="step-strip-left" id="stepStripLeft">
+          <span style="color:var(--dim);font-size:9px;flex-shrink:0">○</span>
+          <span style="color:var(--dim)">no active run · ready to start</span>
+        </div>
+        <div class="step-strip-right" id="stripRight" style="display:none">
+          <span id="stripStepCount">— steps</span>
+          <span style="color:var(--dimmer)">·</span>
+          <span style="color:var(--dim)">velocity</span>
+          <div class="vel-bars">
+            <div class="vbar" id="vb0" style="height:3px"></div>
+            <div class="vbar" id="vb1" style="height:5px"></div>
+            <div class="vbar" id="vb2" style="height:4px"></div>
+            <div class="vbar" id="vb3" style="height:7px"></div>
+            <div class="vbar" id="vb4" style="height:4px"></div>
+          </div>
+          <span id="velLabel" style="color:var(--dim)">idle</span>
+        </div>
+      </div>
+
+    </section>
   </div>
 </div>
 
-<!-- ── Task Modal ─────────────────────────────────────────────────────────── -->
+<!-- Task Modal -->
 <div class="modal-backdrop" id="modalBackdrop" onclick="backdropClick(event)">
   <div class="modal" onclick="event.stopPropagation()">
 
-    <!-- Header -->
     <div class="modal-header">
       <div class="modal-title">new task</div>
       <button class="modal-close" onclick="closeModal()" title="close">
@@ -525,7 +588,6 @@
       </button>
     </div>
 
-    <!-- Blocked banner (shown when a run is active) -->
     <div class="modal-blocked hidden" id="modalBlocked">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#d97706" stroke-width="1.6" stroke-linecap="round" style="flex-shrink:0">
         <path d="M7 1L13 12H1L7 1z"/><path d="M7 5.5v3M7 10.5v.5"/>
@@ -540,7 +602,6 @@
       </button>
     </div>
 
-    <!-- Body -->
     <div class="modal-body" id="modalBody">
       <div>
         <label class="field-label">environment</label>
@@ -561,7 +622,6 @@
         </label>
         <input class="modal-input" id="urlInput" type="text" placeholder="https://…">
       </div>
-      <!-- Error banner (shown on API error) -->
       <div class="modal-err-banner hidden" id="modalErrBanner">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-linecap="round" style="flex-shrink:0;margin-top:2px">
           <circle cx="7" cy="7" r="6"/><path d="M7 4.5v3M7 9.5v.5"/>
@@ -573,7 +633,6 @@
       </div>
     </div>
 
-    <!-- Footer -->
     <div class="modal-footer">
       <div class="modal-status" id="modalStatus"></div>
       <div class="modal-footer-btns">
@@ -607,6 +666,12 @@ let frameTimes = [];
 let modalMode = 'browser';
 let modalLoading = false;
 let modalAbortCtrl = null;
+let logOpen = false;
+let currentIntent = '';
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+const ICON_PANEL_OPEN  = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M14 8l3 4-3 4"/></svg>`;
+const ICON_PANEL_CLOSE = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M16 8l-3 4 3 4"/></svg>`;
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function esc(v) {
@@ -625,10 +690,41 @@ function fmtAge(ts) {
   return `${Math.floor(s/86400)}d ago`;
 }
 
+// ── Log sidebar toggle ────────────────────────────────────────────────────────
+function toggleLog() {
+  logOpen = !logOpen;
+  applyLogState();
+  localStorage.setItem('cc-log-open', logOpen ? '1' : '0');
+}
+
+function applyLogState() {
+  const sidebar = document.getElementById('sidebar');
+  const btn = document.getElementById('logToggleBtn');
+  if (!sidebar || !btn) return;
+  if (logOpen) {
+    sidebar.classList.add('open');
+    btn.classList.add('open');
+    btn.innerHTML = `${ICON_PANEL_CLOSE} hide log`;
+  } else {
+    sidebar.classList.remove('open');
+    btn.classList.remove('open');
+    btn.innerHTML = `${ICON_PANEL_OPEN} show log`;
+  }
+}
+
+// ── Intent display ────────────────────────────────────────────────────────────
+function setIntent(intent) {
+  currentIntent = intent || '';
+  const el = document.getElementById('runBarIntent');
+  const divider = document.getElementById('runBarIntentDivider');
+  if (el) el.textContent = currentIntent;
+  if (divider) divider.style.display = currentIntent ? '' : 'none';
+}
+
 // ── Run bar ───────────────────────────────────────────────────────────────────
 function updateRunBar(on, rid, status) {
-  const idEl  = document.getElementById('barRunId');
-  const stEl  = document.getElementById('barStatus');
+  const idEl = document.getElementById('barRunId');
+  const stEl = document.getElementById('barStatus');
   idEl.textContent = rid ? rid.slice(0,8) : '—';
   if (on) {
     stEl.className = 'run-bar-status rbs-live';
@@ -639,16 +735,37 @@ function updateRunBar(on, rid, status) {
   }
 }
 
-// ── View switch (empty ↔ split panes) ─────────────────────────────────────────
+// ── View switch ───────────────────────────────────────────────────────────────
 function showPanes() {
-  document.getElementById('emptyShell').classList.add('hidden');
-  document.getElementById('paneLeft').classList.remove('hidden');
-  document.getElementById('paneRight').classList.remove('hidden');
+  // Transition browser body from empty content → live stream
+  document.getElementById('emptyContent').style.display = 'none';
+  showPlaceholder();
+  // Enable controls
+  document.getElementById('logToggleBtn').disabled = false;
+  // Restore sidebar open/close preference
+  applyLogState();
+  // Update chrome row to reflect active state
+  document.getElementById('cd-r') || null; // cd-r tint handled by cdp connect
 }
+
 function showEmpty() {
-  document.getElementById('emptyShell').classList.remove('hidden');
-  document.getElementById('paneLeft').classList.add('hidden');
-  document.getElementById('paneRight').classList.add('hidden');
+  // Transition browser body from live stream → empty content
+  document.getElementById('emptyContent').style.display = '';
+  document.getElementById('screenshotImg').style.display = 'none';
+  document.getElementById('placeholder').style.display = 'none';
+  // Disable controls and close sidebar
+  document.getElementById('logToggleBtn').disabled = true;
+  logOpen = false;
+  applyLogState();
+  // Reset chrome row
+  document.getElementById('browserUrlBar').textContent = 'no session';
+  const cdp = document.getElementById('cdpStatus');
+  cdp.textContent = 'not attached'; cdp.style.color = 'var(--dim)';
+  // Update intent
+  setIntent('');
+  // Update run bar and step strip
+  updateRunBar(false, null, 'idle');
+  renderStepStrip();
 }
 
 // ── Step normalizers ──────────────────────────────────────────────────────────
@@ -727,43 +844,109 @@ function renderSteps() {
   document.getElementById('fRules').textContent   = `${rules} rules`;
   document.getElementById('fLlm').textContent     = `${llm} llm`;
   document.getElementById('stepCounter').textContent = steps.length > 0 ? `${steps.length}/${totalSteps||steps.length}` : '—';
+  renderStepStrip();
 }
-function upsertStep(norm) {
-  const i = steps.findIndex(s=>s.n===norm.n);
-  if (i>=0) steps[i]=norm; else steps.push(norm);
-  steps.sort((a,b)=>a.n-b.n);
-  renderSteps();
+
+// ── Step strip ────────────────────────────────────────────────────────────────
+function renderStepStrip() {
+  const left     = document.getElementById('stepStripLeft');
+  const countEl  = document.getElementById('stripStepCount');
+  const stripRight = document.getElementById('stripRight');
+  if (!left) return;
+
+  // Idle state — no active run and no steps loaded
+  if (!running && steps.length === 0) {
+    left.innerHTML = `<span style="color:var(--dim);font-size:9px;flex-shrink:0">○</span><span style="color:var(--dim)">no active run · ready to start</span>`;
+    if (countEl) countEl.textContent = '—';
+    if (stripRight) stripRight.style.display = 'none';
+    return;
+  }
+
+  // Active state — show step info and vel bars
+  if (stripRight) stripRight.style.display = '';
+  const countStr = steps.length > 0 ? `${steps.length}/${totalSteps||steps.length}` : '—';
+  if (countEl) countEl.textContent = `${countStr} steps`;
+
+  const cur = steps.find(s=>s.status==='running') || steps[steps.length-1] || null;
+  if (!cur) {
+    left.innerHTML = '<span style="color:var(--dim);font-size:12px">awaiting first step…</span>';
+    return;
+  }
+
+  const isRunning = cur.status === 'running';
+  const isPending = cur.status === 'pending';
+  const isFailed  = cur.status === 'failed';
+  const isRule    = cur.source && cur.source.startsWith('_');
+
+  let dot;
+  if (isRunning)      dot = '<span class="si-running" style="font-size:8px;line-height:1;flex-shrink:0">●</span>';
+  else if (isPending) dot = '<span class="si-pending" style="font-size:8px;line-height:1;flex-shrink:0">○</span>';
+  else if (isFailed)  dot = '<span class="si-failed"  style="font-size:8px;line-height:1;flex-shrink:0">✗</span>';
+  else                dot = '<span class="si-done"    style="font-size:8px;line-height:1;flex-shrink:0">✓</span>';
+
+  const srcStyle = `color:${isRule?'var(--amber)':'var(--muted)'};${isRule?'font-weight:500;':''}white-space:nowrap;font-family:var(--mono)`;
+
+  left.innerHTML = `${dot}
+    <div style="display:flex;align-items:baseline;gap:6px;min-width:0;overflow:hidden;flex:1">
+      <span style="color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;font-family:var(--mono)">step ${pad2(cur.n)}</span>
+      <span style="color:var(--dim);white-space:nowrap">›</span>
+      <span style="color:var(--text);font-weight:500;white-space:nowrap;font-family:var(--mono)">${esc(cur.action)}</span>
+      <span style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)">${esc(cur.target)}</span>
+      <span style="${srcStyle}">${esc(cur.source)}</span>
+      ${cur.conf!=null?`<span style="color:var(--dimmer);white-space:nowrap">·</span><span style="color:var(--muted);white-space:nowrap;font-family:var(--mono)">conf ${cur.conf.toFixed(2)}</span>`:''}
+    </div>`;
 }
 
 // ── Screenshot polling (2 Hz) ─────────────────────────────────────────────────
-// TODO: Replace with CDP Page.screencast WebSocket for lower-latency streaming
 function startScreenshotPoll(rid) {
   stopScreenshotPoll();
   const img = document.getElementById('screenshotImg');
   img.onload = () => { showScreenshot(); frameTimes.push(Date.now()); tickVelocity(); };
   screenshotPollId = setInterval(() => {
     img.src = `/command-center/api/run/${rid}/screenshot?t=${Date.now()}`;
-  }, 500); // 2 Hz
+  }, 500);
 }
 function stopScreenshotPoll() {
   if (screenshotPollId) { clearInterval(screenshotPollId); screenshotPollId = null; }
 }
-function showScreenshot()  { document.getElementById('screenshotImg').style.display='block'; document.getElementById('placeholder').style.display='none'; }
-function showPlaceholder() { document.getElementById('screenshotImg').style.display='none'; document.getElementById('placeholder').style.display=''; }
+function showScreenshot() {
+  document.getElementById('emptyContent').style.display = 'none';
+  document.getElementById('screenshotImg').style.display = 'block';
+  document.getElementById('placeholder').style.display = 'none';
+}
+function showPlaceholder() {
+  document.getElementById('emptyContent').style.display = 'none';
+  document.getElementById('screenshotImg').style.display = 'none';
+  document.getElementById('placeholder').style.display = '';
+}
 
 function tickVelocity() {
   const now=Date.now(); frameTimes=frameTimes.filter(t=>now-t<5000);
   const fps=frameTimes.length/5; const level=Math.min(5,Math.round(fps));
   ['vb0','vb1','vb2','vb3','vb4'].forEach((id,i)=>{
     const el=document.getElementById(id);
+    if (!el) return;
     el.style.height=`${[3,5,7,9,11][i]}px`;
     el.className='vbar'+(i<level?(fps>10?' hot':' lit'):'');
   });
   const lbl=document.getElementById('velLabel');
+  if (!lbl) return;
   if (fps>8)      {lbl.textContent='live';   lbl.style.color='var(--green)';}
   else if (fps>3) {lbl.textContent='stable'; lbl.style.color='var(--muted)';}
   else if (fps>0) {lbl.textContent='slow';   lbl.style.color='var(--amber)';}
   else            {lbl.textContent='idle';   lbl.style.color='var(--dim)';}
+}
+
+// ── Upsert step (also tracks navigate URL) ───────────────────────────────────
+function upsertStep(norm) {
+  if (norm.action === 'navigate' && norm.target) {
+    const urlBar = document.getElementById('browserUrlBar');
+    if (urlBar) urlBar.textContent = norm.target;
+  }
+  const i = steps.findIndex(s=>s.n===norm.n);
+  if (i>=0) steps[i]=norm; else steps.push(norm);
+  steps.sort((a,b)=>a.n-b.n);
+  renderSteps();
 }
 
 // ── Run state ─────────────────────────────────────────────────────────────────
@@ -786,6 +969,7 @@ function setRunning(on, status) {
     if (sseSource) { sseSource.close(); sseSource = null; }
     if (elapsedId) { clearInterval(elapsedId); elapsedId=null; }
     if (!steps.length) showEmpty();
+    else renderStepStrip();
   }
 }
 
@@ -828,7 +1012,7 @@ function connectSse(rid) {
   };
 }
 
-// ── CDP manual connect (fallback for external CDP sessions) ───────────────────
+// ── CDP manual connect ────────────────────────────────────────────────────────
 async function connectCdp() {
   const port=parseInt(document.getElementById('cdpPortInput').value)||9222;
   const btn=document.getElementById('cdpBtn'); const err=document.getElementById('cdpErr');
@@ -840,6 +1024,7 @@ async function connectCdp() {
       document.getElementById('portChip').textContent=':'+port;
       document.getElementById('cdpStatus').textContent=`● cdp · :${port} · attached`;
       document.getElementById('cdpStatus').style.color='var(--green)';
+      document.getElementById('browserUrlBar').textContent = `localhost:${port}`;
     } else { err.textContent=d.detail||'connection failed'; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='retry'; }
   } catch(e) { err.textContent=e.message; err.classList.remove('hidden'); btn.disabled=false; btn.textContent='retry'; }
 }
@@ -851,7 +1036,6 @@ function syncRunBtn() {
 }
 
 function openModal(opts = {}) {
-  // Pre-fill from opts (e.g. clicking a recent run row)
   if (opts.intent != null)    document.getElementById('intentInput').value = opts.intent;
   if (opts.start_url != null) document.getElementById('urlInput').value    = opts.start_url;
   setMode(opts.mode || modalMode || 'browser');
@@ -872,7 +1056,6 @@ function openModal(opts = {}) {
 }
 
 function closeModal() {
-  // Abort any in-flight fetch when user cancels during loading
   if (modalAbortCtrl) { modalAbortCtrl.abort(); modalAbortCtrl = null; }
   setModalLoading(false);
   document.getElementById('modalBackdrop').classList.remove('open');
@@ -910,7 +1093,6 @@ function setModalLoading(on) {
 }
 
 function _showBlockedFromConflict(activeRunId, elapsed) {
-  // 409: another run is active — flip modal into blocked state
   setModalLoading(false);
   document.getElementById('modalBlocked').classList.remove('hidden');
   document.getElementById('modalBody').classList.add('disabled');
@@ -934,7 +1116,6 @@ async function submitTask() {
   if (!intent) { document.getElementById('intentInput').focus(); return; }
   const url=(document.getElementById('urlInput')?.value||'').trim();
 
-  // Client-side URL validation
   if (modalMode==='browser' && url && !/^https?:\/\//i.test(url)) {
     document.getElementById('urlInput').classList.add('err');
     document.getElementById('modalErrText').textContent = 'start_url: must begin with http:// or https://';
@@ -975,6 +1156,7 @@ async function submitTask() {
     const data=await r.json();
     runId=data.run_id;
     steps=[]; totalSteps=0; startEpoch=Date.now(); paused=false;
+    setIntent(intent);
     history.pushState(null,'','/command-center/'+encodeURIComponent(runId));
     setRunning(true,'running'); renderSteps();
     connectSse(runId); startScreenshotPoll(runId);
@@ -984,7 +1166,7 @@ async function submitTask() {
     closeModal();
   } catch(e) {
     modalAbortCtrl=null;
-    if (e.name==='AbortError') return; // user cancelled — modal already closed
+    if (e.name==='AbortError') return;
     document.getElementById('modalErrText').textContent=e.message;
     document.getElementById('modalErrBanner').classList.remove('hidden');
     setModalLoading(false);
@@ -1000,7 +1182,7 @@ function connectWs() {
   ws.onclose=()=>{ document.getElementById('wsDot').className='ws-dot'; setTimeout(connectWs,wsRetry); wsRetry=Math.min(wsRetry*2,30000); };
   ws.onerror=()=>{ document.getElementById('wsDot').className='ws-dot err'; };
   ws.onmessage=ev=>{
-    if (ev.data instanceof ArrayBuffer) return; // frames handled by screenshot polling
+    if (ev.data instanceof ArrayBuffer) return;
     let msg; try{msg=JSON.parse(ev.data);}catch(_){return;}
     if (msg.type==='run_started'&&(!runId||msg.run_id===runId)) {
       startEpoch=Date.now(); steps=[]; totalSteps=0; runId=msg.run_id;
@@ -1020,18 +1202,20 @@ async function loadRecentRuns() {
     const data=await r.json();
     const runs=(data.runs||data||[]);
     const map={'succeeded':'#84cc16','failed':'#dc2626','running':'#d97706','cancelled':'#7a756c'};
-    document.getElementById('recentList').innerHTML=runs.map(run=>{
-      const intentJs=JSON.stringify(run.intent||'');
-      return `<div class="recent-row" onclick="openModal({intent:${intentJs}})">
-        <span class="recent-dot" style="background:${map[run.status]||'#7a756c'}"></span>
-        <span class="recent-id">${esc(run.run_id.slice(0,8))}</span>
-        <span class="recent-intent">${esc(run.intent||'—')}</span>
-        <span class="recent-when">${fmtAge(run.updated_at)}</span>
-        <svg class="recent-arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-          <path d="M2.5 6h7M6.5 3L9.5 6l-3 3"/>
-        </svg>
-      </div>`;
-    }).join('');
+    const list = document.getElementById('recentList');
+    list.innerHTML=runs.map(run=>`<div class="recent-row" data-run-id="${esc(run.run_id)}">
+      <span class="recent-dot" style="background:${map[run.status]||'#7a756c'}"></span>
+      <span class="recent-id">${esc(run.run_id.slice(0,8))}</span>
+      <span class="recent-intent">${esc(run.intent||'—')}</span>
+      <span class="recent-when">${fmtAge(run.updated_at)}</span>
+      <svg class="recent-arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M2.5 6h7M6.5 3L9.5 6l-3 3"/>
+      </svg>
+    </div>`).join('');
+    list.addEventListener('click', e => {
+      const row = e.target.closest('.recent-row');
+      if (row) location.href = '/command-center/' + encodeURIComponent(row.dataset.runId);
+    });
   } catch(_){}
 }
 
@@ -1045,10 +1229,18 @@ async function loadRun() {
     if (data.run) {
       totalSteps=data.run.step_count||0;
       startEpoch=startEpoch||Date.now();
+      setIntent(data.run.intent||'');
       setRunning(data.run.status==='running',data.run.status);
     }
     if (Array.isArray(data.steps)&&data.steps.length>0) steps=data.steps.map(normalizeObs);
-    if (steps.length) { showPanes(); renderSteps(); }
+    if (steps.length) {
+      const lastNav=[...steps].reverse().find(s=>s.action==='navigate');
+      if (lastNav) {
+        const urlBar=document.getElementById('browserUrlBar');
+        if (urlBar) urlBar.textContent=lastNav.target;
+      }
+      showPanes(); renderSteps();
+    }
   } catch(_){}
 }
 
@@ -1064,8 +1256,8 @@ document.addEventListener('keydown',e=>{
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', ()=>{
-  showPlaceholder();
-  showEmpty();
+  logOpen = localStorage.getItem('cc-log-open') === '1';
+  // Don't apply log state on boot — sidebar is disabled until a run starts
   setMode('browser');
   loadRecentRuns();
   if (runId) {

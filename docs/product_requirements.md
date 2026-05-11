@@ -178,7 +178,7 @@ Triggers when `screen_diff` detects no visual change after an idempotent action 
 |---|---|
 | **Task Intelligence** (35%) | SubgoalTree with status icons (pending/active/complete/failed), Thought Cards reasoning log (timestamp, perception, confidence badge, rationale), ThinkingPulse SVG animation, HITL approval card |
 | **Live Execution** (50%) | Canvas browser mirror (zero-render JPEG frame delivery), element bounds SVG overlay, ConfidenceSlider (autonomy threshold), HITL dim overlay |
-| **Moat Builder / Settings** | Rule Manager (toggle engine primitives on/off via `set_disabled_rules`), CDP Configuration (port + Test Connection), Session Persistence (Fresh / CDP Attach) |
+| **Moat Builder / Settings** | Rule Manager (toggle engine primitives on/off via `set_disabled_rules`), Session Persistence (Fresh / Observable) |
 
 **Confidence-Gated Autonomy:** Slider in Live Execution pane sets confidence floor. When `PolicyDecision.confidence` drops below it, the run pauses. UI shows approval card with Proceed and Correction Hint options.
 
@@ -237,8 +237,6 @@ FastAPI app (`src/api/server.py`). All routes in `src/api/routes.py`.
 | POST | `/desktop/resume` | Resume paused desktop run |
 | GET | `/desktop/run/{id}` | Read desktop run state |
 | POST | `/desktop/cleanup` | Close apps launched by a run |
-| POST | `/connect-cdp` | Attach to running Chrome via CDP + start screencast |
-| POST | `/disconnect-cdp` | Detach CDP session |
 | GET | `/observer/api/runs` | List all runs |
 | GET | `/observer/api/run/{id}` | Full run snapshot |
 | GET | `/observer/api/usage` | Token usage summary |

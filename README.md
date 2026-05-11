@@ -175,10 +175,6 @@ POST /run/{id}/pause                              Pause by path (→ WAITING_FOR
 GET  /run/{id}                                    Read run state
 GET  /health                                      Health check
 
-# CDP attach
-POST /connect-cdp                                 Attach to Chrome via CDP + start screencast
-POST /disconnect-cdp                              Detach CDP
-
 # Command Center
 GET  /command-center                              Split-pane UI (HTML)
 GET  /command-center/{run_id}                     Same UI, run_id is client-side state

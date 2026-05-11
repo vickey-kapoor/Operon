@@ -71,6 +71,7 @@ class _BrowserSession:
     page: object
     video_dir: Path | None = None
     browser_pid: int | None = None
+    owns_context: bool = True   # False for CDP mode — context is the shared default, only page is ours
 
 
 class NativeBrowserExecutor(Executor):
@@ -548,6 +549,7 @@ class NativeBrowserExecutor(Executor):
             page=page,
             video_dir=None,
             browser_pid=None,
+            owns_context=False,
         )
         self._sessions[run_id] = session
         self._fresh_session_run_id = run_id
@@ -982,7 +984,15 @@ class NativeBrowserExecutor(Executor):
         return was_fresh
 
     async def _close_session(self, session: _BrowserSession, *, observable: bool = False) -> None:
-        await session.context.close()
+        if observable and not session.owns_context:
+            # CDP mode: the context is the user's default Chrome context — never close it.
+            # Only close our task page.
+            try:
+                await session.page.close()
+            except Exception:
+                pass
+        else:
+            await session.context.close()
         if not observable:
             if session.browser is not None:
                 await session.browser.close()
@@ -991,7 +1001,7 @@ class NativeBrowserExecutor(Executor):
         self._finalize_recorded_video(session)
 
     async def close_persistent_browser(self) -> None:
-        """Tear down the shared observable-mode browser (call at server shutdown or disconnect-cdp)."""
+        """Tear down the shared observable-mode browser (call at server shutdown)."""
         if self._obs_browser is not None:
             try:
                 await self._obs_browser.close()

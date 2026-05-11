@@ -324,10 +324,6 @@ memory/memory.jsonl, episodes.jsonl
 ### Desktop
 `POST /desktop/run-task`, `POST /desktop/step`, `POST /desktop/resume`, `POST /desktop/cleanup`, `GET /desktop/run/{id}`
 
-### CDP / Browser attach
-`POST /connect-cdp` — attach to a running Chrome instance via CDP + start screencast  
-`POST /disconnect-cdp` — detach CDP session
-
 ### Observer / Telemetry
 `GET /observer/api/runs`, `/observer/api/run/{id}`, `/observer/api/usage`, `/observer/api/artifact`, `/observer/api/export/{id}`, `/observer/api/live-browser/{id}`
 

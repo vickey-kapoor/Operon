@@ -11,19 +11,19 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:        #f5f4f2;
-    --bg-panel:  #ffffff;
-    --bg-hover:  #f0eeeb;
-    --border:    #e2deda;
-    --border-sub:#ede9e4;
-    --text:      #1a1714;
-    --muted:     #8c8680;
-    --dim:       #c4bfb8;
-    --neutral:   #5a554f;
-    --amber:     #b45309;
-    --amber-bg:  #fef9ee;
-    --amber-bdr: #fde68a;
-    --green:     #16a34a;
+    --bg:        #0e0d0c;
+    --bg-panel:  #161412;
+    --bg-hover:  #1a1816;
+    --border:    #252321;
+    --border-sub:#1a1816;
+    --text:      #e8e4dc;
+    --muted:     #7a756c;
+    --dim:       #4a453e;
+    --neutral:   #a8a29a;
+    --amber:     #d97706;
+    --amber-bg:  #1f1408;
+    --amber-bdr: #3a2a14;
+    --green:     #84cc16;
     --red:       #dc2626;
     --sans:      'IBM Plex Sans', system-ui, sans-serif;
     --mono:      'IBM Plex Mono', ui-monospace, monospace;
@@ -153,7 +153,7 @@
   .model-cost { font-family: var(--mono); font-size: 13px; color: var(--amber); font-variant-numeric: tabular-nums; font-weight: 500; }
   .model-bar-wrap { display: flex; align-items: center; gap: 12px; }
   .model-bar-track { flex: 1; height: 5px; border-radius: 2px; overflow: hidden; background: var(--border-sub); }
-  .model-bar-fill { height: 100%; background: linear-gradient(90deg, #b45309, #d97706); }
+  .model-bar-fill { height: 100%; background: linear-gradient(90deg, #d97706, #f59e0b); }
   .model-meta { font-family: var(--mono); font-size: 10px; color: var(--muted); width: 140px; text-align: right; white-space: nowrap; }
 
   /* ── Run ledger ─────────────────────────────────────────────────────────── */
@@ -167,17 +167,18 @@
     border-color: var(--amber-bdr); background: var(--amber-bg); color: var(--amber);
   }
 
-  table { width: 100%; border-collapse: collapse; font-family: var(--mono); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); min-width: 700px; }
   thead tr { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
-  th { padding: 6px 0; font-weight: 500; text-align: left; }
-  th.r { text-align: right; }
+  th { padding: 6px 8px 6px 0; font-weight: 500; text-align: left; white-space: nowrap; }
+  th.r { text-align: right; padding-left: 12px; }
   tbody tr {
     font-size: 12.5px; border-top: 1px dashed var(--border-sub);
     cursor: pointer; transition: background 0.1s;
   }
   tbody tr:hover { background: var(--bg-hover); }
-  td { padding: 9px 0; }
-  td.r { text-align: right; }
+  td { padding: 9px 8px 9px 0; }
+  td.r { text-align: right; padding-left: 12px; }
 
   .run-id-chip { font-size: 10px; color: var(--dim); }
   .run-intent { font-family: var(--sans); color: var(--text); }
@@ -267,6 +268,7 @@
       <div class="panel-sub">terminal runs · most recent first</div>
     </div>
     <div class="filter-row" id="filterRow"></div>
+    <div class="table-wrap">
     <table>
       <thead>
         <tr>
@@ -281,6 +283,7 @@
       </thead>
       <tbody id="runTable"></tbody>
     </table>
+    </div>
   </div>
 
 </div>

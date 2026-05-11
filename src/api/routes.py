@@ -348,6 +348,8 @@ async def connect_cdp(body: _CdpConnectRequest) -> dict:
 
     _browser_manager_instance = manager
     _ws_stream.set_browser_manager(manager)
+    from src.browser.manager import set_active_manager
+    set_active_manager(manager)
     return {"connected": True, "port": body.port, "fps": body.fps}
 
 
@@ -360,6 +362,8 @@ async def disconnect_cdp() -> dict:
     await _browser_manager_instance.disconnect()
     _browser_manager_instance = None
     _ws_stream.set_browser_manager(None)
+    from src.browser.manager import set_active_manager
+    set_active_manager(None)
     executor = getattr(get_agent_loop(), "executor", None)
     if executor is not None and hasattr(executor, "close_persistent_browser"):
         await executor.close_persistent_browser()
@@ -368,7 +372,8 @@ async def disconnect_cdp() -> dict:
 
 @router.post("/run-task", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_task(request: RunTaskRequest) -> RunResponse:
-    """Create a new run record for the requested intent."""
+    """Create a new run and immediately kick off the agent loop in the background."""
+    await _ensure_cdp_ready(mode=request.mode)
     loop = get_agent_loop()
     response = await loop.start_run(request)
     _ws_stream.set_active_run(response.run_id)
@@ -378,9 +383,161 @@ async def run_task(request: RunTaskRequest) -> RunResponse:
         "intent": request.intent,
         "status": response.status.value,
     })
-    if request.mode == "observable":
-        asyncio.create_task(_auto_attach_cdp(loop))
+    task = asyncio.create_task(_auto_run_loop(loop, response.run_id, request.max_steps))
+    task.add_done_callback(
+        lambda t: logger.exception("[loop] run %s crashed", response.run_id, exc_info=t.exception())
+        if not t.cancelled() and t.exception() is not None else None
+    )
+    logger.info("[run-task] loop scheduled for run %s (max_steps=%d)", response.run_id, request.max_steps)
     return response
+
+
+async def _ensure_cdp_ready(mode: str = "batch") -> None:
+    """Ensure a CDP browser is connected before the first step runs.
+
+    For observable mode the executor owns Playwright Chromium launch and
+    BrowserManager wiring — this function is a no-op in that case.
+
+    Priority (batch/cdp modes):
+      1. BrowserManager already connected → no-op.
+      2. Port 9222 reachable (user's Chrome already open) → connect to it.
+      3. Otherwise launch Chrome with --remote-debugging-port=9222, then connect.
+    """
+    if mode == "observable":
+        return
+    import subprocess
+    import sys
+    import tempfile
+
+    import httpx
+
+    from src.browser.manager import (
+        BrowserManager,
+        get_active_manager,
+        set_active_manager,
+    )
+
+    global _browser_manager_instance
+
+    # Already connected — nothing to do.
+    bm = get_active_manager()
+    if bm is not None and bm.is_connected:
+        return
+
+    # Check if Chrome is already listening on 9222.
+    port_reachable = False
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            r = await client.get("http://localhost:9222/json/version")
+        port_reachable = r.status_code == 200
+    except Exception:
+        pass
+
+    if not port_reachable:
+        # Launch Chrome with remote debugging enabled.
+        chrome_candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+        if sys.platform == "darwin":
+            chrome_candidates = [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            ]
+        elif sys.platform.startswith("linux"):
+            chrome_candidates = ["google-chrome", "chromium-browser", "chromium"]
+
+        chrome_exe = next((p for p in chrome_candidates if _chrome_exists(p)), None)
+        if chrome_exe is None:
+            logger.warning("_ensure_cdp_ready: no Chrome found — cannot auto-launch")
+            return
+
+        profile_dir = tempfile.mkdtemp(prefix="operon-cdp-")
+        args = [
+            chrome_exe,
+            "--remote-debugging-port=9222",
+            f"--user-data-dir={profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "about:blank",
+        ]
+        try:
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info("_ensure_cdp_ready: Chrome launched, waiting for port 9222…")
+        except Exception as exc:
+            logger.warning("_ensure_cdp_ready: Chrome launch failed — %s", exc)
+            return
+
+        # Wait up to 12 s for the port to become reachable.
+        deadline = asyncio.get_event_loop().time() + 12
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(0.5)
+            try:
+                async with httpx.AsyncClient(timeout=1.0) as client:
+                    r = await client.get("http://localhost:9222/json/version")
+                if r.status_code == 200:
+                    break
+            except Exception:
+                pass
+        else:
+            logger.warning("_ensure_cdp_ready: port 9222 not reachable after 12 s")
+            return
+
+    # Connect BrowserManager.
+    if _browser_manager_instance is not None:
+        try:
+            await _browser_manager_instance.disconnect()
+        except Exception:
+            pass
+
+    manager = BrowserManager()
+    try:
+        await manager.connect(9222)
+        await manager.start_screencast(fps=15)
+    except Exception as exc:
+        logger.warning("_ensure_cdp_ready: connect failed — %s", exc)
+        return
+
+    _browser_manager_instance = manager
+    _ws_stream.set_browser_manager(manager)
+    set_active_manager(manager)
+    logger.info("_ensure_cdp_ready: CDP browser connected and screencast live")
+
+
+def _chrome_exists(path: str) -> bool:
+    import shutil
+    from pathlib import Path
+    return Path(path).exists() or shutil.which(path) is not None
+
+
+async def _auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
+    """Fire-and-forget step loop: runs until terminal state or max_steps."""
+    from src.models.common import RunStatus, StepRequest, StopReason
+
+    logger.info("[loop] starting run %s", run_id)
+    while True:
+        state = await loop.run_store.get_run(run_id)
+        if state is None:
+            logger.warning("[loop] run %s disappeared from store", run_id)
+            break
+        if state.status in {
+            RunStatus.SUCCEEDED,
+            RunStatus.FAILED,
+            RunStatus.WAITING_FOR_USER,
+            RunStatus.CANCELLED,
+        }:
+            logger.info("[loop] run %s terminal: %s", run_id, state.status.value)
+            break
+        if state.step_count >= max_steps:
+            logger.warning("[loop] run %s hit max_steps=%d — stopping", run_id, max_steps)
+            state.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
+            await loop.run_store.set_status(run_id, RunStatus.FAILED)
+            try:
+                await loop._cleanup_completed_run(run_id)
+            except Exception as exc:
+                logger.warning("[loop] cleanup after max_steps failed: %s", exc)
+            break
+        logger.info("[loop] run %s entering step %d", run_id, state.step_count + 1)
+        await loop.step_run(StepRequest(run_id=run_id))
 
 
 async def _auto_attach_cdp(loop) -> None:
@@ -424,6 +581,8 @@ async def _auto_attach_cdp(loop) -> None:
         return
     _browser_manager_instance = manager
     _ws_stream.set_browser_manager(manager)
+    from src.browser.manager import set_active_manager
+    set_active_manager(manager)
     logger.info("_auto_attach_cdp: CDP screencast live on port 9222")
 
 
@@ -561,12 +720,19 @@ async def step_run(request: StepRequest) -> RunResponse:
 
 @router.post("/resume", response_model=RunResponse)
 async def resume_run(request: ResumeRequest) -> RunResponse:
-    """Resume a run that is paused waiting for user input."""
+    """Resume a HITL-paused run and continue the auto-loop."""
     _validate_run_id(request.run_id)
+    loop = get_agent_loop()
     try:
-        return await get_agent_loop().resume_run(request.run_id)
+        response = await loop.resume_run(request.run_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    task = asyncio.create_task(_auto_run_loop(loop, request.run_id, max_steps=200))
+    task.add_done_callback(
+        lambda t: logger.exception("[loop] resumed run %s crashed", request.run_id, exc_info=t.exception())
+        if not t.cancelled() and t.exception() is not None else None
+    )
+    return response
 
 
 @router.post("/cleanup", response_model=CleanupResponse)

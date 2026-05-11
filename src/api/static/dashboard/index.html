@@ -188,6 +188,22 @@
     font-family: var(--mono); font-size: 11px;
   }
   .pill-dot { width: 5px; height: 5px; border-radius: 50%; }
+
+  /* ── Responsive ─────────────────────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .page { padding: 16px 16px 40px; }
+    .topbar { padding: 0 16px; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .two-col { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 560px) {
+    .stat-grid { grid-template-columns: 1fr; }
+    .stat-value { font-size: 22px; }
+    .topbar { gap: 6px; }
+    /* hide less important table columns on very small screens */
+    th:nth-child(2), td:nth-child(2),
+    th:nth-child(5), td:nth-child(5) { display: none; }
+  }
 </style>
 </head>
 <body>

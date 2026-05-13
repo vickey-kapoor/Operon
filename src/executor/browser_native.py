@@ -708,8 +708,12 @@ class NativeBrowserExecutor(Executor):
         Called once after the persistent observable browser is first launched.
         No-op if a BrowserManager is already connected.
         """
-        from src.browser.manager import BrowserManager, get_active_manager, set_active_manager
         from src.api import ws_stream as _ws
+        from src.browser.manager import (
+            BrowserManager,
+            get_active_manager,
+            set_active_manager,
+        )
 
         bm = get_active_manager()
         if bm is not None and bm.is_connected:

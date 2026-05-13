@@ -53,6 +53,13 @@ tests/e2e_*_results.json
 # Legacy browser binaries (no longer used)
 .ms-playwright/
 
+# Tauri sidecar binaries (built by scripts/bundle_sidecar.py — not committed)
+src-tauri/binaries/
+# PyInstaller build artifacts
+dist/
+build/
+*.spec
+
 # IDEs and local tool state
 .vscode/
 .idea/

@@ -41,6 +41,9 @@ drive = [
     "google-api-python-client>=2.100.0,<3.0.0",
     "google-auth>=2.20.0,<3.0.0",
 ]
+bundle = [
+    "pyinstaller>=6.0.0,<7.0.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

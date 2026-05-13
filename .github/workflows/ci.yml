@@ -77,3 +77,29 @@ jobs:
 
       - name: Run ruff
         run: ruff check src tests --select E,F,W,I --ignore E501
+
+  rust-check:
+    name: Rust (cargo check)
+    runs-on: ubuntu-latest
+    # Only run when Tauri source files change — skip on Python-only PRs.
+    # Remove the paths filter if you want it to run on every push.
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry + build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets

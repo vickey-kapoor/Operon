@@ -170,8 +170,8 @@ class BrowserbaseNativeBrowserExecutor(NativeBrowserExecutor):
         self._fresh_session_run_id = run_id
         return session
 
-    async def _close_session(self, session: _BrowserSession) -> None:
-        await super()._close_session(session)
+    async def _close_session(self, session: _BrowserSession, *, observable: bool = False) -> None:
+        await super()._close_session(session, observable=observable)
         for run_id, s in list(self._sessions.items()):
             if s is session:
                 self._stop_bb_session(run_id)

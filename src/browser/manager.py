@@ -92,6 +92,7 @@ class BrowserManager:
         self._frame_count: int = 0
         self._viewport_w: int = 1920
         self._viewport_h: int = 1080
+        self._task_page: Any = None             # Last task page; closed on next new_task_context()
 
     @property
     def is_connected(self) -> bool:
@@ -100,15 +101,31 @@ class BrowserManager:
     # ── Connection ──────────────────────────────────────────────────────────
 
     async def new_task_context(self) -> "tuple[Any, Any]":
-        """Open a new context + page in the attached browser for an Operon task.
+        """Open a new tab in the existing Chrome window for an Operon task.
 
-        Restarts the live screencast on the new page so Command Center follows
-        the agent. Returns (context, page); caller closes context when done.
+        Reuses the default browser context so the task tab appears inside the
+        user's existing Chrome window (not a new incognito window). Closes any
+        leftover task page from a prior run, then opens a fresh tab, brings
+        Chrome to the foreground, and maximizes it. Returns (context, page);
+        caller should close only the page, not the context.
         """
         if self._browser is None:
             raise RuntimeError("BrowserManager is not connected — call connect() first")
-        ctx = await self._browser.new_context()
+
+        # Close the previous task page if it wasn't cleaned up (e.g. run stopped mid-flight).
+        if self._task_page is not None:
+            try:
+                await self._task_page.close()
+            except Exception:
+                pass
+            self._task_page = None
+
+        # Reuse the default Chrome context so we open a tab, not a new window.
+        contexts = self._browser.contexts
+        ctx = contexts[0] if contexts else await self._browser.new_context()
         page = await ctx.new_page()
+        self._task_page = page
+
         # Switch screencast to follow the new task page.
         was_running = self._screencast_running
         if was_running:
@@ -116,7 +133,30 @@ class BrowserManager:
         self._page = page
         if was_running:
             await self.start_screencast()
+
+        # Bring the Chrome window to the foreground and maximize it.
+        await self._focus_and_maximize(page)
+
         return ctx, page
+
+    async def _focus_and_maximize(self, page: Any) -> None:
+        """Bring the task tab to front and maximize the Chrome OS window via CDP."""
+        try:
+            await page.bring_to_front()
+        except Exception:
+            pass
+        try:
+            cdp = await page.context.new_cdp_session(page)
+            target_info = await cdp.send("Target.getTargetInfo")
+            target_id = target_info["targetInfo"]["targetId"]
+            win = await cdp.send("Browser.getWindowForTarget", {"targetId": target_id})
+            await cdp.send(
+                "Browser.setWindowBounds",
+                {"windowId": win["windowId"], "bounds": {"windowState": "maximized"}},
+            )
+            await cdp.detach()
+        except Exception as exc:
+            logger.debug("focus_and_maximize: CDP window maximize failed — %s", exc)
 
     async def connect(self, port: int) -> None:
         """Attach to an existing Chrome instance via CDP on the given port."""
@@ -181,6 +221,7 @@ class BrowserManager:
         self._browser = None
         self._page = None
         self._cdp = None
+        self._task_page = None
         logger.info("BrowserManager: disconnected")
 
     # ── Screencast ──────────────────────────────────────────────────────────

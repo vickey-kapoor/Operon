@@ -1,7 +1,8 @@
 # Repository Guidelines
+_For AI coding agents and contributors._
 
 ## Project Structure & Module Organization
-Operon uses a Python `src/` layout. Core agent logic lives in `src/agent/`, API routes and static UIs in `src/api/`, executors in `src/executor/`, Gemini clients in `src/clients/`, shared schemas in `src/models/`, and persistence in `src/store/`. Tests live in `tests/` and generally mirror the package they cover. Supporting material is kept in `prompts/`, `docs/`, `assets/`, `examples/contracts/`, and `scripts/`.
+Operon uses a Python `src/` layout. Core agent logic lives in `src/agent/`, API routes and static UIs in `src/api/`, CDP-based browser observation in `src/browser/`, executors in `src/executor/`, Gemini clients in `src/clients/`, shared schemas in `src/models/`, and persistence in `src/store/`. Tests live in `tests/` and generally mirror the package they cover. Supporting material is kept in `prompts/`, `docs/`, `assets/`, `examples/contracts/`, and `scripts/`. The React 19 Command Center UI lives in `ui/`.
 
 ## Build, Test, and Development Commands
 Use Python 3.11 locally.
@@ -13,7 +14,7 @@ pip install -e .[dev]
 playwright install chromium
 ```
 
-Run the API locally with `python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080`.
+Run the API locally with `.venv\Scripts\python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080`.
 
 Run the default test suite (no live server required):
 ```powershell
@@ -33,6 +34,8 @@ Follow existing Python conventions: 4-space indentation, type hints, `snake_case
 - **Verification states**: SUCCESS / FAILURE / UNCERTAIN / PENDING / PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify; `PROGRESSING_STABLE` advances immediately.
 - **Atomic TYPE**: executor merges focus+type into one call. Never emit a CLICK immediately followed by TYPE on the same element from policy.
 - **Visual servo**: `_region_has_content()` runs before every click with an adaptively calibrated threshold. Never bypass.
+- **Observable mode**: `BrowserManager` (`src/browser/manager.py`) is a module-level singleton. It connects via `connect_over_cdp`, streams JPEG frames via CDP `Page.startScreencast`, and exposes `inject_input()` for interactive control. Never import `ws_stream` at module load — use the lazy `_ws_stream()` accessor to avoid circular imports.
+- **Benchmark plugins**: register benchmark-specific rules in `src/benchmarks/registry.py` via `BENCHMARK_REGISTRY`. Never hardcode benchmark logic in the core rule engine.
 
 ## Testing Guidelines
 Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs Python 3.11 and 3.12 plus Ruff.
@@ -48,4 +51,4 @@ Live-server and real-environment tests are opt-in and excluded from the default 
 Recent commits use short imperative subjects with prefixes like `Fix:`, `Docs:`, `CI:`, `Chore:`, `Refactor:`, and `Feat:`. Keep commit titles specific and one line. PRs should summarize the behavioral change, list validation performed, link related issues, and include screenshots only for UI or desktop-behavior changes.
 
 ## Configuration & Security Tips
-Store secrets in `.env` and keep `.env.example` in sync when adding new settings. Review `runs/` and `.browser-artifacts/` before sharing logs because they may contain screenshots, prompts, and execution traces.
+Store secrets in `.env` and keep `.env.example` in sync when adding new settings. Review `runs/` and `.browser-artifacts/` before sharing logs because they may contain screenshots, prompts, and execution traces. Never commit anything under `.claude/` — it is gitignored and personal.

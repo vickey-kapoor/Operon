@@ -166,7 +166,7 @@ Operon has two execution modes sharing the same loop, verifier, recovery, and pe
 
 - **Desktop mode** — full-screen automation via `pyautogui` + `mss`. Uses combined JSON perception+policy through `GeminiHttpClient`.
 - **Browser mode** — Playwright-based. Primary backend is `BrowserComputerUseBackend` (Gemini Computer Use with coordinate normalization and multi-call turns); fallback is `BrowserJsonBackend`. `NativeBrowserExecutor` translates actions to Playwright calls. Browser sessions are video-recorded under `.browser-artifacts/` and linked into the run snapshot for the observer UI.
-- **CDP attach mode** — `BrowserManager` (`src/browser/manager.py`) connects to an already-running Chrome via Playwright's `connect_over_cdp`, streams JPEG frames via CDP `Page.startScreencast`, and publishes them to all WebSocket clients. Activated via `POST /connect-cdp`; teardown via `POST /disconnect-cdp`.
+- **Observable mode** — `NativeBrowserExecutor` launches Playwright Chromium with `--headless=new --remote-debugging-port=9222`, then `BrowserManager` (`src/browser/manager.py`) connects internally via `connect_over_cdp` and streams JPEG frames via CDP `Page.startScreencast` to all WebSocket clients. Managed entirely by the executor; no public API endpoint.
 
 Backend selection is handled by `src/agent/backend.py` based on env vars. `src/agent/action_translation.py` bridges Computer Use action formats to the internal `AgentAction` schema.
 
@@ -280,7 +280,6 @@ FastAPI app at `src/api/server.py`. Routes in `src/api/routes.py`:
 
 - `POST /run-task`, `/step`, `/resume`, `/stop` — browser run lifecycle
 - `POST /desktop/run-task`, `/desktop/step`, `/desktop/resume` — desktop run lifecycle
-- `POST /connect-cdp`, `POST /disconnect-cdp` — attach/detach Chrome via CDP
 - `GET /run/{id}`, `GET /desktop/run/{id}`, `GET /health`
 - `GET /`, `/desktop-pilot` — Command Center UI (React 19)
 - `GET /observer/api/runs`, `/observer/api/run/{id}`, `/observer/api/usage`, `/observer/api/artifact`, `/observer/api/export/{id}`
@@ -312,7 +311,7 @@ React 19 + TypeScript + Zustand 5, served by the FastAPI backend. Three-pane lay
 
 - **Task Intelligence** — `SubgoalTree` (status icons per subgoal), `ReasoningLog` Thought Cards (timestamp, perception summary, confidence badge, rationale), `ThinkingPulse` SVG animation
 - **Live Execution** — canvas JPEG frame mirror (`registerFrameCallback` pattern, zero React re-renders), `ConfidenceSlider` (sends `set_confidence_threshold` over WS), HITL dim overlay
-- **Settings / Moat Builder** — `SettingsPane`: rule toggles (`set_disabled_rules`), CDP port config, session persistence mode
+- **Settings / Moat Builder** — `SettingsPane`: rule toggles (`set_disabled_rules`), session persistence mode (fresh / observable)
 
 All CSS is inline (no CSS files). `ui/CLAUDE.md` has full UI-specific guidance. `src-tauri/` contains the in-progress Tauri desktop packaging wrapper.
 

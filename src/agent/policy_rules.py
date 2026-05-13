@@ -630,6 +630,14 @@ class PolicyRuleEngine:
             and h.success
             for h in state.action_history
         )
+        # Typed + Enter was attempted at least once (success not required).
+        # Catches sites like GitHub where JS search doesn't set h.success=True.
+        _already_tried_search = any(
+            h.action.action_type is ActionType.TYPE
+            and h.action.text == query
+            and h.action.press_enter
+            for h in state.action_history
+        )
 
         # Don't re-issue a search if already on a known post-search page AND the
         # search was already submitted. When the page_hint is article_page but we
@@ -637,7 +645,7 @@ class PolicyRuleEngine:
         if _hint_str in _POST_SEARCH_HINTS and _already_searched:
             return None
 
-        if _already_searched:
+        if _already_searched or _already_tried_search:
             # Search was already submitted but we're still not on a results/article page —
             # keyboard Enter didn't navigate. This applies whether the rule or the LLM typed.
             _needs_navigate = (
@@ -1042,9 +1050,9 @@ class PolicyRuleEngine:
                         action_type=ActionType.SCROLL,
                         x=960,
                         y=540,
-                        scroll_amount=-3000,
+                        scroll_amount=-500,
                     ),
-                    rationale="All fields and options done — scrolling to page bottom to reveal submit button.",
+                    rationale="All fields and options done — scrolling down to reveal submit button.",
                     confidence=0.95,
                     active_subgoal="scroll to submit",
                 )

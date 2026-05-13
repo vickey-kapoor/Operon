@@ -6,9 +6,9 @@ Safe to run in CI — no network, no subprocesses, no display required.
 from __future__ import annotations
 
 import os
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Fixture: executor with test-safe-mode on

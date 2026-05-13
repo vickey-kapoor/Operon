@@ -26,12 +26,13 @@ Screenshot → stabilise → perceive → smooth + ghost-detect → decide → a
    - Model critic: Gemini image+text assessment
 6. **Recover** — retry, wait, context reset, session reset, or stop based on the escalation ladder
 
-## Two Execution Paths
+## Three Execution Paths
 
 - **Desktop** — pyautogui + mss, full-screen control. Combined JSON perception+policy via Gemini, or separate perception + Anthropic/Gemini planner.
 - **Browser** — Playwright. Primary backend: Gemini Computer Use (coordinate-based, multi-turn). JSON fallback available. Sessions video-recorded under `.browser-artifacts/`.
+- **Observable (browser)** — Same as Browser, but `NativeBrowserExecutor` also launches Chromium with `--remote-debugging-port=9222`. `BrowserManager` (`src/browser/manager.py`) attaches via `connect_over_cdp`, runs `Page.startScreencast` at ~15fps, and publishes JPEG frames to all WebSocket clients on port 9001. Interactive input injection (clicks, type, scroll, key) flows back from the Command Center UI through `inject_input` WebSocket control messages.
 
-Both share the same loop, verifier, recovery, persistence, and memory layers.
+All three share the same loop, verifier, recovery, persistence, and memory layers.
 
 ## Key Architectural Layers
 
@@ -43,14 +44,16 @@ Both share the same loop, verifier, recovery, persistence, and memory layers.
 | **Spatial persistence** | `models/memory.py` (`RollingElementBuffer`), `agent/perception.py` | 3-frame coord smoothing, ghost TTL, buffer clear on high velocity |
 | **Selectors** | `selector.py` | Target element matching, re-resolution on drift |
 | **Executors** | `executor/desktop.py`, `executor/browser_native.py` | pyautogui/Playwright + adaptive visual servo |
+| **Observable mode** | `src/browser/manager.py` (`BrowserManager`) | CDP attach, `Page.startScreencast`, JPEG publish, input injection |
 | **Verification** | `verifier.py`, `video_verifier.py`, `screen_diff.py` | 6-status verification: SUCCESS / FAILURE / UNCERTAIN / PENDING / PROGRESSING_STABLE / STABLE_WAIT |
-| **Recovery** | `recovery.py`, `reflector.py` | Retry/stop escalation; post-run learning |
+| **Recovery** | `recovery.py`, `reflector.py` | 5-rung escalation ladder; post-run learning |
 | **Models** | `src/models/` | Pydantic v2 — state, perception (GhostElement), policy, execution (visual_variance), verification (6 statuses), logs (decision_source) |
 | **Persistence** | `src/store/` | File-backed run store + memory store, JSONL logging |
 | **API** | `src/api/` | FastAPI server, Pilot UI, observer (live log with `[RULE]`/`[LLM]` colouring) |
 | **Gemini clients** | `src/clients/gemini.py`, `gemini_computer_use.py` | HTTP calls: single image, video, multi-image (reaction check) |
 | **Command Center UI** | `ui/` | React 19 + Zustand 5 + react-resizable-panels; SubgoalTree, Thought Cards, ConfidenceSlider, SettingsPane (Moat Builder) |
-| **WebSocket stream** | `src/api/ws_stream.py` (port 9001) | Live step events, JPEG frame delivery, control messages (set_disabled_rules, set_confidence_threshold, resume, override) |
+| **WebSocket stream** | `src/api/ws_stream.py` (port 9001) | Binary JPEG frames (CDP screencast), step events, control messages (`inject_input`, `set_disabled_rules`, `set_confidence_threshold`, `resume`, `override`) |
+| **Benchmarks** | `src/benchmarks/registry.py` | `BENCHMARK_REGISTRY` plugin rules; WebArena task definitions |
 
 ## Spatial Persistence in Detail
 

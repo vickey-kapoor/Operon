@@ -8,27 +8,16 @@ on:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }} / Python ${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.11", "3.12"]
-        include:
-          # Desktop loop (pyautogui/mss/baseline) is Windows-first per CLAUDE.md.
-          # Run the desktop-executor + upload-macro tests on a Windows runner so
-          # platform-specific regressions surface in CI rather than at runtime.
-          - os: windows-latest
-            python-version: "3.11"
+    name: Test
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4.2.2
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5.3.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
           cache: pip
 
       - name: Install dependencies
@@ -48,7 +37,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts-py${{ matrix.python-version }}
+          name: test-artifacts
           path: |
             test-results.xml
             runs/

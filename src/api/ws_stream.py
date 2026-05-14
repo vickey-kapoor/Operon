@@ -151,12 +151,6 @@ async def _handle_control(msg: dict) -> None:
                 delta_y=int(msg.get("delta_y", 300)),
             )
 
-    elif msg_type == "snapshot_ax":
-        # On-demand accessibility tree snapshot.
-        if _browser_manager is not None:
-            tree = await _browser_manager.snapshot_accessibility_tree()
-            publish_event({"type": "accessibility_tree", "tree": tree})
-
     elif msg_type == "set_confidence_threshold":
         set_confidence_threshold(float(msg.get("threshold", 0.0)))
         publish_event({"type": "control_ack", "action": "set_confidence_threshold", "threshold": _confidence_threshold})

@@ -6,7 +6,6 @@ import os
 import time
 from pathlib import Path
 
-from src.agent.anchor_cache import AnchorCache, tag_input_zone
 from src.agent.capture import CaptureService
 from src.agent.perception import PerceptionLowQualityError, PerceptionService
 from src.agent.policy import PolicyService
@@ -26,7 +25,6 @@ from src.agent.progress_tracker import (
     target_signature,
 )
 from src.agent.recovery import RecoveryManager, validate_benchmark_integrity
-from src.agent.reflector import PostRunReflector
 from src.agent.retry_hardening import (
     RetryHardening,
     apply_reresolution_failure,
@@ -40,10 +38,8 @@ from src.agent.retry_hardening import (
 from src.agent.selector import DeterministicTargetSelector
 from src.agent.step_artifacts import StepArtifactsManager
 from src.agent.verifier import VerifierService
-from src.agent.video_verifier import VideoVerifier
 from src.clients.gemini import GeminiClient
 from src.core.contracts.perception import Environment as UnifiedEnvironment
-from src.core.router import RoutingError
 from src.executor.browser import Executor
 from src.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
 from src.executor.desktop_adapter import DesktopExecutor as UnifiedDesktopExecutor
@@ -58,7 +54,6 @@ from src.models.common import (
     StopReason,
 )
 from src.models.execution import (
-    AnchorSnapInfo,
     ExecutedAction,
     ExecutionReresolutionTrace,
 )
@@ -78,9 +73,6 @@ from src.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
-from src.runtime.adapter import LegacyOperonContractAdapter
-from src.runtime.orchestrator import UnifiedOrchestrator
-from src.runtime.runtime_state import AgentRuntimeState
 from src.store.memory import MemoryStore
 from src.store.run_logger import append_step_log, append_step_log_critical
 from src.store.run_store import RunStore
@@ -144,7 +136,6 @@ class AgentLoop:
         memory_store: MemoryStore | None = None,
         gemini_client: GeminiClient | None = None,
         environment: UnifiedEnvironment = UnifiedEnvironment.BROWSER,
-        unified_orchestrator: UnifiedOrchestrator | None = None,
     ) -> None:
         self.capture_service = capture_service
         self.perception_service = perception_service
@@ -157,17 +148,7 @@ class AgentLoop:
         self.gemini_client = gemini_client
         self.target_selector = DeterministicTargetSelector()
         self._retry = RetryHardening(self.target_selector)
-        self.video_verifier: VideoVerifier | None = (
-            VideoVerifier(gemini_client) if isinstance(gemini_client, GeminiClient) else None
-        )
-        self.reflector: PostRunReflector | None = (
-            PostRunReflector(memory_store) if memory_store is not None else None
-        )
         self.environment = environment
-        self.unified_orchestrator = unified_orchestrator or UnifiedOrchestrator()
-        self.legacy_contract_adapter = LegacyOperonContractAdapter(environment=environment)
-        self.unified_states: dict[str, AgentRuntimeState] = {}
-        self._anchor_cache = AnchorCache()
         self._artifacts = StepArtifactsManager(run_store)
         self._progress = ProgressTracker()
         if environment is UnifiedEnvironment.BROWSER:
@@ -215,22 +196,12 @@ class AgentLoop:
             await self.executor.execute(
                 AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
             )
-        self.unified_states[record.run_id] = AgentRuntimeState(
-            environment=self.environment,
-            active_app="browser" if self.environment is UnifiedEnvironment.BROWSER else "desktop",
-            current_url=request.start_url if self.environment is UnifiedEnvironment.BROWSER else None,
-        )
         return RunResponse(
             run_id=record.run_id,
             status=record.status,
             intent=record.intent,
             step_count=record.step_count,
         )
-
-    def unified_state_for_run(self, run_id: str) -> AgentRuntimeState | None:
-        """Return the unified runtime state for one run, if present."""
-
-        return self.unified_states.get(run_id)
 
     @staticmethod
     def _test_safe_mode_enabled() -> bool:
@@ -441,9 +412,6 @@ class AgentLoop:
         _trace("  3 POLICY OK", f"{_record_stage('policy', _t0):.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
-        _anchor_snap_info: AnchorSnapInfo | None = None
-        decision, _anchor_snap_info = self._apply_coord_anchor(record.run_id, decision)
-        decision = self._tag_input_zone(decision, perception)
 
         # Human-in-the-loop: pause the run and wait for user input
         if decision.action.action_type is ActionType.WAIT_FOR_USER:
@@ -535,7 +503,6 @@ class AgentLoop:
         # Set run context on the executor so launched processes are tracked per run
         if hasattr(self.executor, "set_current_run_id"):
             self.executor.set_current_run_id(record.run_id)
-        unified_state = self.unified_states.get(record.run_id)
         adaptation_trace: list[str] = []
         retries_used = 0
         attempt_index = 1
@@ -554,8 +521,6 @@ class AgentLoop:
                     use_unified_executor=True,
                 )
                 _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{_record_stage('execute', _t0):.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
-                if executed_action.success and decision.action.action_type is ActionType.CLICK:
-                    self._update_coord_anchor(record.run_id, executed_action.action)
             else:
                 _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
                 executed_action = blocked_action
@@ -598,7 +563,7 @@ class AgentLoop:
             _trace("  5 VERIFY OK", f"{_record_stage('verify', _t0):.2f}s  status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
             verification_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "verification", self.verifier_service)
 
-            # Compute screen change ratio once; reused by video verify and progress tracking.
+            # Compute screen change ratio for progress tracking.
             from src.agent.screen_diff import compute_screen_change_ratio as _scr
             _after_path = executed_action.artifact_path
             _screen_change_ratio: float | None = (
@@ -607,26 +572,7 @@ class AgentLoop:
                 else None
             )
 
-            # Video verification: when screen didn't change, record and ask Gemini.
-            # Skipped when the verifier's reaction check already set video_verified=True.
-            if not verification.stop_condition_met and not verification.video_verified and self.video_verifier is not None:
-                video_result = await self._maybe_video_verify(
-                    state=state,
-                    decision=decision,
-                    executed_action=executed_action,
-                    before_artifact_path=before_artifact_path,
-                    step_index=step_index,
-                    screen_change_ratio=_screen_change_ratio,
-                )
-                if video_result is not None:
-                    _trace("  5b VIDEO_VERIFY OK", f"status={video_result.status.value!r}")
-                    verification = video_result
-
-            # Native retry decision (no longer routed through the unified contract).
-            # The unified contract conversion below is now observability-only — kept
-            # so benchmark_runner can read retry_count/last_failure_type via
-            # unified_state_for_run(). Retry strategy comes from a direct
-            # FailureCategory→strategy lookup.
+            # Retry decision: direct FailureCategory → strategy lookup.
             from src.agent.adaptation import strategy_for_failure
             recent_failure = verification.failure_category or executed_action.failure_category
             strategy = strategy_for_failure(
@@ -634,27 +580,6 @@ class AgentLoop:
                 verification_failure=verification.status is VerificationStatus.FAILURE,
                 verification_uncertain=verification.status is VerificationStatus.UNCERTAIN,
             )
-
-            # Best-effort unified contract conversion for observability/benchmarks.
-            unified_step = None
-            try:
-                unified_step = self._record_unified_step(
-                    record=record,
-                    state=state,
-                    perception=perception,
-                    decision=decision,
-                    executed_action=executed_action,
-                    verification=verification,
-                    unified_state=unified_state,
-                    attempt_index=attempt_index,
-                )
-                unified_state = unified_step.after
-                self.unified_states[record.run_id] = unified_state
-                _trace("  6 OBSERVABILITY OK", f"failure_category={recent_failure!r}  strategy={strategy!r}")
-            except (RoutingError, ValueError) as _exc:
-                # Conversion failure must not affect the retry decision — that's
-                # decoupled now. Just log and continue.
-                _trace("  6 OBSERVABILITY skipped", f"{type(_exc).__name__}: {_exc}")
 
             # In-step retry only when (a) verification produced a hard FAILURE —
             # not merely UNCERTAIN, which the outer recovery stage handles — and
@@ -667,37 +592,17 @@ class AgentLoop:
                 verification.status is VerificationStatus.FAILURE
                 and not legacy_retry_attempted
             )
+            _MAX_ADAPTATION_RETRIES = 3
             if strategy is None or not allow_adaptation_retry:
-                if retries_used > 0 and unified_step is not None:
-                    unified_state = unified_state.model_copy(
-                        update={
-                            "retry_count": retries_used,
-                            "last_strategy": adaptation_trace[-1],
-                            "last_failure_type": None
-                            if verification.status is VerificationStatus.SUCCESS
-                            else unified_step.critic.failure_type,
-                        }
-                    )
-                    self.unified_states[record.run_id] = unified_state
                 _trace("  RETRY_LOOP -> break", f"strategy={strategy!r}  retries_used={retries_used}  allow_retry={allow_adaptation_retry}")
                 break
-            if retries_used >= self.unified_orchestrator.max_retries:
+            if retries_used >= _MAX_ADAPTATION_RETRIES:
                 _trace("  RETRY_LOOP -> max_retries", f"retries_used={retries_used}")
                 break
 
             retries_used += 1
             adaptation_trace.append(strategy)
             _trace("  RETRY_LOOP -> retry", f"retries_used={retries_used}  strategy={strategy!r}")
-            if unified_step is not None:
-                unified_state = unified_state.apply_retry_feedback(
-                    perception=unified_step.perception,
-                    planner=unified_step.planner,
-                    actor=unified_step.actor,
-                    critic=unified_step.critic,
-                    retry_count=retries_used,
-                    strategy=strategy,
-                )
-                self.unified_states[record.run_id] = unified_state
 
             frame = await self.capture_service.capture(state)
             if hasattr(self.policy_service, "prepare_hints"):
@@ -712,9 +617,6 @@ class AgentLoop:
             if _enriched is not decision.action:
                 decision = decision.model_copy(update={"action": _enriched})
             state.current_subgoal = decision.active_subgoal
-            decision, _retry_snap = self._apply_coord_anchor(record.run_id, decision)
-            if _retry_snap is not None:
-                _anchor_snap_info = _retry_snap
             attempt_index += 1
 
         _trace("  7 RECOVER", f"RuleBasedRecoveryManager  verification={verification.status.value!r}")
@@ -750,8 +652,6 @@ class AgentLoop:
             }
         )
         progress_trace_artifact_path = self._persist_progress_trace(record.run_id, step_index, progress_trace)
-        if _anchor_snap_info is not None:
-            executed_action = executed_action.model_copy(update={"anchor_snap": _anchor_snap_info})
 
         failure = self._build_failure_record(state, decision, executed_action, verification, recovery)
 
@@ -845,21 +745,10 @@ class AgentLoop:
         _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
         updated = await self.run_store.set_status(record.run_id, final_status)
         if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
-            self._anchor_cache.discard_run(record.run_id)
             try:
                 await self._cleanup_completed_run(record.run_id)
             except Exception as exc:
                 logger.warning("cleanup after %s failed, continuing: %s", final_status.value, exc)
-
-        # Post-run reflection: analyze completed/failed runs and learn
-        if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED} and self.reflector is not None:
-            _trace("  9 REFLECT", "PostRunReflector analyzing run -> MemoryRecord")
-            try:
-                self.reflector.reflect(record.run_id)
-                _trace("  9 REFLECT OK")
-            except Exception as exc:
-                logger.warning("post-run reflection failed for %s: %s", record.run_id, exc)
-                _trace("  9 REFLECT ERROR", str(exc))
 
         # Persist per-stage durations for tail-latency analysis. Best-effort —
         # the step has already completed by this point.
@@ -1132,190 +1021,6 @@ class AgentLoop:
     def _relocate_after_artifact(self, executed_action, planned_path: str):
         return self._artifacts.relocate_after_artifact(executed_action, planned_path)
 
-    async def _maybe_video_verify(
-        self,
-        *,
-        state,
-        decision,
-        executed_action,
-        before_artifact_path: str,
-        step_index: int,
-        screen_change_ratio: float | None = None,
-    ) -> VerificationResult | None:
-        """Record a video and verify with Gemini when screen_diff shows no change.
-
-        Gate: only fires when expected_change ∈ {content, navigation, dialog} AND
-        screen_change_ratio < SCREEN_CHANGE_THRESHOLD. Actions expected to produce
-        no pixel change (none, focus) are correct with low delta — video-verifying
-        them wastes Gemini calls.
-        """
-        if not executed_action.success:
-            return None
-
-        after_path = executed_action.artifact_path
-        if not before_artifact_path or not after_path:
-            return None
-
-        from src.agent.screen_diff import SCREEN_CHANGE_THRESHOLD
-        from src.models.policy import ExpectedChange
-
-        if screen_change_ratio is None:
-            from src.agent.screen_diff import compute_screen_change_ratio
-            screen_change_ratio = compute_screen_change_ratio(before_artifact_path, after_path)
-
-        ratio = screen_change_ratio
-        if ratio >= SCREEN_CHANGE_THRESHOLD:
-            return None  # Screen changed — no video needed
-
-        # Gate: video-verify only when the planner expected a visible change.
-        # none/focus are correct with low pixel delta — skip without recording.
-        _VIDEO_VERIFY_EXPECTATIONS = {
-            ExpectedChange.CONTENT, ExpectedChange.NAVIGATION, ExpectedChange.DIALOG,
-        }
-        expected_change = decision.expected_change
-        if expected_change not in _VIDEO_VERIFY_EXPECTATIONS:
-            _trace(
-                "  5b VIDEO_VERIFY SKIPPED",
-                f"expected_change={expected_change!r}  ratio={ratio:.4f}  "
-                "low-change expectation is correct — no Gemini call",
-            )
-            return None
-
-        # Belt-and-suspenders: re-execution of TYPE/DRAG/SELECT could double the action.
-        action = decision.action
-        if action.action_type in {ActionType.TYPE, ActionType.DRAG, ActionType.SELECT}:
-            _trace(
-                "  5b VIDEO_VERIFY SKIPPED",
-                f"action_type={action.action_type.value!r} is non-idempotent — skipping re-execution",
-            )
-            return None
-
-        if not hasattr(self.executor, "execute_with_recording"):
-            return None
-
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.info(
-            "No screen change (ratio=%.4f, expected_change=%r) at step %d — recording video for verification",
-            ratio,
-            expected_change,
-            step_index,
-        )
-
-        step_dir = Path(before_artifact_path).parent
-        try:
-            replay_result, video_path = await self.executor.execute_with_recording(action, step_dir)
-        except Exception:
-            logger.debug("Video recording failed", exc_info=True)
-            return None
-
-        if video_path is None:
-            _trace("  5b VIDEO_VERIFY SKIPPED", "browser executor returned video_path=None (no screen recording)")
-            return None
-
-        # Update executed_action recording path (informational)
-        executed_action = executed_action.model_copy(update={"recording_path": str(video_path)})
-
-        video_result = await self.video_verifier.verify_action(
-            video_path=video_path, action=action, intent=state.intent,
-        )
-
-        confidence = video_result.confidence_score
-        motion_detail = f"[{video_result.motion_class}, confidence={confidence:.2f}] {video_result.what_happened}"
-
-        if confidence < 0.2:
-            # Hung app or Gemini confirmed no effect — hard failure.
-            return VerificationResult(
-                status=VerificationStatus.FAILURE,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason=f"Video showed no effect: {motion_detail}",
-                failure_type=VerificationFailureType.ACTION_FAILED,
-                recovery_hint="retry_same_step",
-                video_verified=True,
-                video_detail=video_result.suggested_next_action,
-                failure_category=FailureCategory.EXECUTION_ERROR,
-                failure_stage=LoopStage.VERIFY,
-            )
-
-        if confidence < 0.5:
-            # Loading spinner or ambiguous — stay uncertain so recovery can wait.
-            return VerificationResult(
-                status=VerificationStatus.UNCERTAIN,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason=f"Video detected loading motion; waiting for completion: {motion_detail}",
-                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
-                recovery_hint="wait_and_retry",
-                video_verified=True,
-                video_detail=video_result.what_happened,
-                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
-                failure_stage=LoopStage.VERIFY,
-            )
-
-        # High confidence: action produced directed progress.
-        if self._passive_wait_needs_more_signal(state, action, video_result.what_happened):
-            return VerificationResult(
-                status=VerificationStatus.UNCERTAIN,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason=f"Video verified the wait action, but it did not reveal enough new browser-task signal: {motion_detail}",
-                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
-                video_verified=True,
-                video_detail=video_result.what_happened,
-                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
-                failure_stage=LoopStage.VERIFY,
-            )
-        return VerificationResult(
-            status=VerificationStatus.SUCCESS,
-            expected_outcome_met=True,
-            stop_condition_met=False,
-            reason=f"Video verified: {motion_detail}",
-            recovery_hint="advance",
-            video_verified=True,
-            video_detail=video_result.what_happened,
-        )
-
-    @classmethod
-    def _passive_wait_needs_more_signal(
-        cls,
-        state,
-        action: AgentAction,
-        video_detail: str,
-    ) -> bool:
-        if action.action_type is not ActionType.WAIT:
-            return False
-        intent = state.intent.lower()
-        if not any(token in intent for token in ("inspect", "look", "find", "open", "check", "view", "read")):
-            return False
-        if not cls._latest_observation_lacks_browser_signal(state):
-            return False
-        detail = video_detail.lower()
-        return any(
-            token in detail
-            for token in (
-                "loading",
-                "still loading",
-                "spinner",
-                "blank",
-                "empty",
-                "waiting",
-                "redirect",
-                "navigating",
-                "transition",
-            )
-        )
-
-    @staticmethod
-    def _latest_observation_lacks_browser_signal(state) -> bool:
-        if not state.observation_history:
-            return True
-        latest = state.observation_history[-1]
-        if latest.visible_elements:
-            return False
-        return str(latest.page_hint) == "unknown"
-
     async def _wait_for_ui_stable(
         self,
         *,
@@ -1581,53 +1286,12 @@ class AgentLoop:
         retry_executed = self._apply_no_progress_detection(state, retry_executed)
         return retry_state, self._persist_execution_trace(record.run_id, step_index, retry_executed)
 
-    def _record_unified_step(
-        self,
-        *,
-        record,
-        state,
-        perception,
-        decision,
-        executed_action,
-        verification,
-        unified_state: AgentRuntimeState | None,
-        attempt_index: int,
-    ):
-        bundle = self.legacy_contract_adapter.bundle(
-            state=state,
-            perception=perception,
-            decision=decision,
-            executed_action=executed_action,
-            verification=verification,
-            attempt_index=attempt_index,
-        )
-        return self.unified_orchestrator.process_step(
-            perception=bundle.perception,
-            planner=bundle.planner,
-            actor=bundle.actor,
-            critic=bundle.critic,
-            current_state=unified_state,
-        )
-
     @staticmethod
     def _should_retry_execution(executed_action) -> bool:
         return should_retry(executed_action)
 
     def _resolve_retry_action(self, *, action, perception, retry_reason: FailureCategory | None) -> _RetryResolution:
         return self._retry.resolve_retry_action(action=action, perception=perception, retry_reason=retry_reason)
-
-    # ------------------------------------------------------------------
-    # Coordinate anchor cache (delegated to src.agent.anchor_cache)
-    # ------------------------------------------------------------------
-
-    def _tag_input_zone(self, decision, perception):
-        return tag_input_zone(decision, perception)
-
-    def _update_coord_anchor(self, run_id: str, action: AgentAction) -> None:
-        self._anchor_cache.update(run_id, action)
-
-    def _apply_coord_anchor(self, run_id: str, decision) -> tuple:
-        return self._anchor_cache.apply(run_id, decision)
 
     @staticmethod
     def _refresh_action_coordinates(action, perception):

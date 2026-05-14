@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.core.contracts.critic import FailureType
-from src.core.contracts.perception import Environment, PerceptionOutput
+from src.core.contracts.perception import Environment
 from src.core.contracts.planner import ActionType as ContractActionType
 from src.core.contracts.planner import PlannerAction
 from src.core.router import (
@@ -20,8 +20,6 @@ from src.core.router import (
 from src.executor.browser_adapter import BrowserExecutor
 from src.models.common import FailureCategory
 from src.models.policy import ActionType, AgentAction
-from src.runtime.adapter import _map_action_type
-from src.runtime.orchestrator import UnifiedOrchestrator
 
 # ---------------------------------------------------------------------------
 # 1. Enum presence checks
@@ -135,68 +133,7 @@ def test_failure_category_includes_file_not_reflected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. Orchestrator adaptation strategies
-# ---------------------------------------------------------------------------
-
-
-def test_adaptation_for_picker_not_detected() -> None:
-    """PICKER_NOT_DETECTED must map to wait_then_retry."""
-    strategy = UnifiedOrchestrator.adaptation_strategy_for(FailureType.PICKER_NOT_DETECTED)
-    assert strategy == "wait_then_retry"
-
-
-def test_adaptation_for_file_not_reflected() -> None:
-    """FILE_NOT_REFLECTED must map to reperceive_and_replan."""
-    strategy = UnifiedOrchestrator.adaptation_strategy_for(FailureType.FILE_NOT_REFLECTED)
-    assert strategy == "reperceive_and_replan"
-
-
-# ---------------------------------------------------------------------------
-# 5. Orchestrator: detect_file_picker
-# ---------------------------------------------------------------------------
-
-
-def test_detect_file_picker_true_on_context_label() -> None:
-    """detect_file_picker returns True when context_label contains picker signal."""
-    perception = PerceptionOutput(
-        environment=Environment.DESKTOP,
-        observation_id="obs_picker_1",
-        summary="The Open File dialog is active.",
-        context_label="Open File Dialog",
-        visible_targets=[],
-        notes=[],
-    )
-    assert UnifiedOrchestrator.detect_file_picker(perception) is True
-
-
-def test_detect_file_picker_true_on_notes() -> None:
-    """detect_file_picker returns True when notes mention file picker."""
-    perception = PerceptionOutput(
-        environment=Environment.DESKTOP,
-        observation_id="obs_picker_2",
-        summary="A dialog window appeared.",
-        context_label="Dialog",
-        visible_targets=[],
-        notes=["native file chooser is active"],
-    )
-    assert UnifiedOrchestrator.detect_file_picker(perception) is True
-
-
-def test_detect_file_picker_false_on_normal_page() -> None:
-    """detect_file_picker returns False for a normal browser page."""
-    perception = PerceptionOutput(
-        environment=Environment.BROWSER,
-        observation_id="obs_picker_3",
-        summary="The upload form is visible.",
-        context_label="Upload Form",
-        visible_targets=[],
-        notes=[],
-    )
-    assert UnifiedOrchestrator.detect_file_picker(perception) is False
-
-
-# ---------------------------------------------------------------------------
-# 6. Executor adapters
+# 4. Executor adapters
 # ---------------------------------------------------------------------------
 
 
@@ -228,22 +165,7 @@ def test_browser_executor_translates_upload_file_native_no_picker_title() -> Non
 
 
 # ---------------------------------------------------------------------------
-# 7. Legacy adapter: _map_action_type
-# ---------------------------------------------------------------------------
-
-
-def test_legacy_adapter_maps_upload_file_native_action_type() -> None:
-    """_map_action_type must map upload_file_native to ContractActionType.UPLOAD_FILE_NATIVE."""
-    action = AgentAction(
-        action_type=ActionType.UPLOAD_FILE_NATIVE,
-        target_element_id="upload_btn",
-    )
-    result = _map_action_type(action)
-    assert result is ContractActionType.UPLOAD_FILE_NATIVE
-
-
-# ---------------------------------------------------------------------------
-# 8. NativeBrowserExecutor: upload_file_native execution path
+# 5. NativeBrowserExecutor: upload_file_native execution path
 # ---------------------------------------------------------------------------
 
 

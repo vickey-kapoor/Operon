@@ -18,7 +18,6 @@ from src.agent.policy import GeminiPolicyService
 from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
-from src.agent.video_verifier import VideoVerifier
 from src.clients.gemini import GeminiHttpClient
 from src.executor.desktop import DesktopExecutor
 from src.models.benchmark import (
@@ -142,7 +141,6 @@ def _build_loop(*, root_dir: str | Path = "runs") -> tuple[AgentLoop, DesktopExe
     run_store = FileBackedRunStore(root_dir=root_dir)
     memory_store = FileBackedMemoryStore(root_dir=root_dir)
     perception_service = GeminiPerceptionService(gemini_client=gemini_client)
-    video_verifier = VideoVerifier(gemini_client)
     policy_service = PolicyCoordinator(
         delegate=GeminiPolicyService(gemini_client=gemini_client),
         memory_store=memory_store,
@@ -156,7 +154,6 @@ def _build_loop(*, root_dir: str | Path = "runs") -> tuple[AgentLoop, DesktopExe
         executor=executor,
         verifier_service=DeterministicVerifierService(
             gemini_client=gemini_client,
-            video_verifier=video_verifier,
         ),
         recovery_manager=RuleBasedRecoveryManager(),
         memory_store=memory_store,
@@ -334,9 +331,7 @@ async def run_stress_benchmark(
 
     Uses StressRunner from benchmark_suite for the k-repetition and window
     randomisation logic.  After each task, the trajectory drift is computed from
-    the run artifacts and logged.  The PostRunReflector is called for every
-    successful run but only saves the Golden Path episode when the task achieved
-    100% reliability (all k repetitions passed).
+    the run artifacts and logged.
     """
     from src.api.benchmark_suite import StressRunner
 
@@ -375,13 +370,6 @@ async def run_stress_benchmark(
         settle_fn=pre_flight_settle,
     )
 
-    # Compute drift and call reflector for each task
-    from src.agent.reflector import PostRunReflector
-    from src.store.memory import FileBackedMemoryStore
-
-    memory_store = FileBackedMemoryStore(root_dir=root)
-    reflector = PostRunReflector(memory_store=memory_store, root_dir=root)
-
     for task_result in stress_result.task_results:
         reliability = task_result.reliability_score
         drift = stress_result.trajectory_drift_px.get(task_result.task_id)
@@ -391,13 +379,6 @@ async def run_stress_benchmark(
             reliability,
             f"{drift:.1f}" if drift is not None else "n/a",
         )
-        # Reflect on every successful run; episode only saved when reliability == 1.0
-        for attempt in task_result.attempts:
-            if attempt.run_id and attempt.succeeded:
-                try:
-                    reflector.reflect(attempt.run_id, reliability_score=reliability)
-                except Exception as exc:
-                    _log.warning("reflector failed for %s: %s", attempt.run_id, exc)
 
     # Persist stress result JSON
     result_path = root / "stress_result.json"

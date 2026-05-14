@@ -28,7 +28,6 @@ from src.agent.policy import GeminiPolicyService, PolicyService
 from src.agent.policy_coordinator import PolicyCoordinator
 from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
-from src.agent.video_verifier import VideoVerifier
 from src.api import ws_stream as _ws_stream
 from src.api.observer import (
     artifact_path_for_request,
@@ -229,12 +228,6 @@ def get_agent_loop() -> AgentLoop:
         services = _build_browser_services(executor)
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
-        # Video verification always uses Gemini regardless of the verifier provider,
-        # because VideoVerifier calls generate_video_verification on a GeminiClient.
-        video_gemini_client = GeminiHttpClient(
-            model=browser_config.primary_model, timeout_seconds=120.0
-        )
-        video_verifier = VideoVerifier(video_gemini_client)
         _agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
             perception_service=services.perception_service,
@@ -247,11 +240,9 @@ def get_agent_loop() -> AgentLoop:
             executor=executor,
             verifier_service=DeterministicVerifierService(
                 gemini_client=verifier_client,
-                video_verifier=video_verifier,
             ),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
-            gemini_client=video_gemini_client,
             environment=UnifiedEnvironment.BROWSER,
         )
         _ws_stream.set_executor(executor)
@@ -274,10 +265,6 @@ def get_desktop_agent_loop() -> AgentLoop:
         executor = DesktopExecutor()
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
-        video_gemini_client = GeminiHttpClient(
-            model=desktop_config.primary_model, timeout_seconds=120.0
-        )
-        desktop_video_verifier = VideoVerifier(video_gemini_client)
         _desktop_agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor),
             perception_service=services.perception_service,
@@ -290,11 +277,9 @@ def get_desktop_agent_loop() -> AgentLoop:
             executor=executor,
             verifier_service=DeterministicVerifierService(
                 gemini_client=verifier_client,
-                video_verifier=desktop_video_verifier,
             ),
             recovery_manager=RuleBasedRecoveryManager(),
             memory_store=memory_store,
-            gemini_client=video_gemini_client,
             environment=UnifiedEnvironment.DESKTOP,
         )
     return _desktop_agent_loop

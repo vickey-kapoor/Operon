@@ -43,23 +43,6 @@ export type ActionIntentEvent = {
   rationale: string;
 };
 
-export type ElementBound = {
-  tag: string;
-  role: string;
-  text: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-};
-
-export type ElementBoundsEvent = {
-  type: "element_bounds";
-  viewport_w: number;
-  viewport_h: number;
-  elements: ElementBound[];
-};
-
 export type HitlRequiredEvent = {
   type: "hitl_required";
   run_id: string;
@@ -71,7 +54,7 @@ export type HitlRequiredEvent = {
   rationale: string | null;
 };
 
-export type AgentEvent = StepEvent | RunEvent | ControlAck | ActionIntentEvent | ElementBoundsEvent | HitlRequiredEvent;
+export type AgentEvent = StepEvent | RunEvent | ControlAck | ActionIntentEvent | HitlRequiredEvent;
 
 // ── Hook state ────────────────────────────────────────────────────────────────
 
@@ -79,7 +62,6 @@ export type StreamState = {
   connected: boolean;
   events: AgentEvent[];
   frameUrl: string | null;
-  elementBounds: ElementBoundsEvent | null;
   latestActionIntent: ActionIntentEvent | null;
   pendingDecision: HitlRequiredEvent | null;
 };
@@ -92,7 +74,6 @@ export function useAgentStream() {
     connected: false,
     events: [],
     frameUrl: null,
-    elementBounds: null,
     latestActionIntent: null,
     pendingDecision: null,
   });
@@ -133,9 +114,7 @@ export function useAgentStream() {
         if (event.type === "step") {
           (event as StepEvent).receivedAt = Date.now();
         }
-        if (event.type === "element_bounds") {
-          setState((s) => ({ ...s, elementBounds: event as ElementBoundsEvent }));
-        } else if (event.type === "action_intent") {
+        if (event.type === "action_intent") {
           setState((s) => ({ ...s, latestActionIntent: event as ActionIntentEvent }));
         } else if (event.type === "hitl_required") {
           setState((s) => ({ ...s, pendingDecision: event as HitlRequiredEvent }));

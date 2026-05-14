@@ -48,9 +48,6 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     load_dotenv(find_dotenv(usecwd=True), override=True)
 
-    # Register benchmark plugins before any engine code runs.
-    import src.benchmarks.form_plugin  # noqa: F401
-    from src.api.command_center import router as cc_router
     from src.api.routes import router
     from src.api.ws_stream import router as ws_router
 
@@ -73,7 +70,6 @@ def create_app() -> FastAPI:
     )
     app.include_router(router)
     app.include_router(ws_router)
-    app.include_router(cc_router)
     return app
 
 

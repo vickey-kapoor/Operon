@@ -180,39 +180,3 @@ def test_run_task_with_http_start_url(client: TestClient) -> None:
     assert resp.status_code == 202
 
 
-# ── Modal HTML elements present ───────────────────────────────────────────────
-
-
-def test_command_center_html_has_modal_elements(client: TestClient) -> None:
-    """The command center HTML includes all required modal elements."""
-    resp = client.get("/command-center")
-    assert resp.status_code == 200
-    html = resp.text
-    assert "modalBackdrop" in html
-    assert "intentInput" in html
-    assert "modalRunBtn" in html
-    assert "btnNewTask" in html
-    assert "modalBlocked" in html
-    assert "modalErrBanner" in html
-
-
-def test_command_center_html_has_mode_toggle(client: TestClient) -> None:
-    """The modal HTML contains browser/desktop mode toggle buttons."""
-    resp = client.get("/command-center")
-    html = resp.text
-    assert "modeBrowser" in html
-    assert "modeDesktop" in html
-
-
-def test_command_center_html_has_url_input(client: TestClient) -> None:
-    """The modal HTML contains the start URL input (browser-only field)."""
-    resp = client.get("/command-center")
-    html = resp.text
-    assert "urlInput" in html
-
-
-def test_command_center_html_stop_and_reset_present(client: TestClient) -> None:
-    """The blocked state within the modal has a stop-and-reset button."""
-    resp = client.get("/command-center")
-    html = resp.text
-    assert "stopAndReset" in html

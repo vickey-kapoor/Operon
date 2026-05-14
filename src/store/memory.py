@@ -235,11 +235,10 @@ class FileBackedMemoryStore(MemoryStore):
             logger.debug("Memory decay: key=%r effective_weight %.3f → %.3f", key, effective, decayed)
 
     def _seed_default_guardrails(self) -> None:
-        from src.benchmarks.registry import BENCHMARK_REGISTRY
         existing = self._load_records()
         existing_keys = {(record.key, record.benchmark) for record in existing if record.outcome is MemoryOutcome.GUARDRAIL}
         self._seeded_guardrail_keys = {k for k, _ in existing_keys}
-        generic_seeds = [
+        seeds = [
             MemoryRecord(
                 key="click_before_type",
                 benchmark=GENERIC_TASK,
@@ -257,8 +256,7 @@ class FileBackedMemoryStore(MemoryStore):
                 success=False,
             ),
         ]
-        all_seeds = generic_seeds + BENCHMARK_REGISTRY.all_seeds()
-        for record in all_seeds:
+        for record in seeds:
             if (record.key, record.benchmark) not in existing_keys:
                 self._append_record(record)
                 self._seeded_guardrail_keys.add(record.key)

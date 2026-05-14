@@ -1,11 +1,9 @@
 import { useEffect, useRef } from "react";
-import type { ActionIntentEvent, ElementBoundsEvent } from "../hooks/useAgentStream";
+import type { ActionIntentEvent } from "../hooks/useAgentStream";
 
 type Props = {
   registerFrameCallback: (cb: (blob: Blob) => void) => () => void;
   actionIntent: ActionIntentEvent | null;
-  elementBounds: ElementBoundsEvent | null;
-  showOverlay: boolean;
   onInput: (msg: object) => void;
   inputMode: "click" | "type" | "scroll";
   typeText: string;
@@ -113,16 +111,13 @@ function updateGhostTrail(svg: SVGSVGElement, trail: [number, number][]) {
 }
 
 export function LiveMirror({
-  registerFrameCallback, actionIntent, elementBounds, showOverlay, onInput, inputMode, typeText,
+  registerFrameCallback, actionIntent, onInput, inputMode, typeText,
 }: Props) {
   const boxRef  = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const svgRef  = useRef<SVGSVGElement>(null);
   const trailRef = useRef<[number, number][]>([]);
   const intentSeen = useRef<ActionIntentEvent | null>(null);
-
-  const nativeW = elementBounds?.viewport_w ?? NATIVE_FALLBACK_W;
-  const nativeH = elementBounds?.viewport_h ?? NATIVE_FALLBACK_H;
 
   // Inject CSS keyframes once.
   useEffect(() => { ensureKeyframes(); }, []);
@@ -208,35 +203,16 @@ export function LiveMirror({
         }}
       />
 
-      {/* SVG overlay — pulse animations + ghost trail + element bounds */}
+      {/* SVG overlay — pulse animations + ghost trail */}
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${nativeW} ${nativeH}`}
+        viewBox={`0 0 ${NATIVE_FALLBACK_W} ${NATIVE_FALLBACK_H}`}
         preserveAspectRatio="none"
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
       >
-        {/* Element bounds overlay */}
-        {showOverlay && elementBounds?.elements.map((el, i) => (
-          <rect
-            key={i}
-            x={el.x} y={el.y} width={el.w} height={el.h}
-            fill="none"
-            stroke={elColor(el.role)}
-            strokeWidth="1.5"
-            opacity="0.55"
-          >
-            <title>{el.role}: {el.text}</title>
-          </rect>
-        ))}
         {/* Pulse + ghost trail elements are added imperatively above */}
       </svg>
     </div>
   );
 }
 
-function elColor(role: string): string {
-  if (role === "button" || role === "a" || role === "link") return "#10b981";
-  if (role === "input" || role === "textarea") return "#818cf8";
-  if (role === "select") return "#f59e0b";
-  return "#38bdf8";
-}

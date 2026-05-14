@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.loop import AgentLoop
 from src.agent.verifier import DeterministicVerifierService
 from src.clients.gemini import PlaceholderGeminiClient
 from src.models.common import FailureCategory, RunStatus

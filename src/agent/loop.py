@@ -1739,7 +1739,6 @@ class AgentLoop:
         return None
 
     def _infer_target_intent(self, action: AgentAction, target: UIElement | None, perception, benchmark: str | None = None) -> TargetIntent | None:
-        from src.benchmarks.registry import BENCHMARK_REGISTRY
         if target is None:
             return None
         if action.action_type is ActionType.CLICK:
@@ -1756,7 +1755,7 @@ class AgentLoop:
             target_role=target.role,
             expected_element_types=[target.element_type],
             value_to_type=action.text if action.action_type in {ActionType.TYPE, ActionType.SELECT} else None,
-            expected_section=BENCHMARK_REGISTRY.get_section(benchmark, perception.page_hint),
+            expected_section=None,
         )
 
     def _persist_execution_trace(self, run_id: str, step_index: int, executed_action):

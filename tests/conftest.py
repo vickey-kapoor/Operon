@@ -13,7 +13,6 @@ os.environ.setdefault("OPERON_TEST_SAFE_MODE", "true")
 # sys.modules.setdefault — ensures the real implementations are loaded first so
 # stub injection is a no-op and doesn't break tests that depend on real behaviour.
 import src.agent.screen_diff  # noqa: F401, E402
-import src.benchmarks.form_plugin  # noqa: F401, E402
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

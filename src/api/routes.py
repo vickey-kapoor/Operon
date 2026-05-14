@@ -12,10 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import (
     FileResponse,
-    HTMLResponse,
-    RedirectResponse,
     Response,
-    StreamingResponse,
 )
 
 from src.agent.anthropic_policy import AnthropicPolicyService
@@ -33,14 +30,6 @@ from src.agent.recovery import RuleBasedRecoveryManager
 from src.agent.verifier import DeterministicVerifierService
 from src.agent.video_verifier import VideoVerifier
 from src.api import ws_stream as _ws_stream
-from src.api.benchmark_suite import (
-    create_single_task_suite,
-    create_suite,
-    get_all_tasks,
-    get_suite,
-    run_suite_background,
-    stop_suite,
-)
 from src.api.observer import (
     artifact_path_for_request,
     build_run_bundle,
@@ -64,7 +53,6 @@ from src.models.common import (
     RunTaskRequest,
     StepRequest,
     StopRunRequest,
-    StrictModel,
 )
 from src.store.memory import FileBackedMemoryStore
 from src.store.run_store import FileBackedRunStore
@@ -86,12 +74,7 @@ def _validate_run_id(run_id: str) -> None:
     """Reject run_ids that would cause filesystem issues or path traversal."""
     if len(run_id) > _MAX_RUN_ID_LENGTH or not _RUN_ID_RE.match(run_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-_STATIC_DIR = Path(__file__).resolve().parent / "static"
 _RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
-_CONSOLE_HTML_PATH = _STATIC_DIR / "console.html"
-_DASHBOARD_HTML_PATH = _STATIC_DIR / "dashboard" / "index.html"
-_BENCHMARKS_HTML_PATH = _STATIC_DIR / "benchmarks" / "index.html"
-_COMMAND_CENTER_HTML_PATH = _STATIC_DIR / "command-center" / "index.html"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
@@ -768,161 +751,8 @@ async def observer_live_browser(run_id: str) -> Response:
     return Response(content=png_bytes, media_type="image/png")
 
 
-# ── UI ──────────────────────────────────────────────────────────
 
 
-@router.get("/console", response_class=HTMLResponse)
-async def task_console_ui() -> str:
-    """Serve the command center UI (legacy /console path)."""
-    return _COMMAND_CENTER_HTML_PATH.read_text(encoding="utf-8")
-
-
-@router.get("/")
-async def root_ui() -> RedirectResponse:
-    """Redirect root to the command center."""
-    return RedirectResponse(url="/command-center", status_code=307)
-
-
-@router.get("/command-center", response_class=HTMLResponse)
-async def command_center_root_ui() -> str:
-    """Serve the command center UI."""
-    return _COMMAND_CENTER_HTML_PATH.read_text(encoding="utf-8")
-
-
-@router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_ui() -> str:
-    """Serve the standalone usage dashboard UI."""
-    return _DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
-
-
-@router.get("/benchmarks", response_class=HTMLResponse)
-async def benchmarks_ui() -> str:
-    """Serve the WebArena benchmark suite runner UI."""
-    return _BENCHMARKS_HTML_PATH.read_text(encoding="utf-8")
-
-
-def _step_log_to_event(record: dict) -> dict | None:
-    """Map a StepLog or PreStepFailureLog JSONL record to the SSE step event shape."""
-    import json as _json  # noqa: F401 — local import avoids module-level shadowing
-
-    if record.get("record_type") == "pre_step_failure":
-        return {
-            "n": record.get("step_index", 0),
-            "action": "error",
-            "target": (record.get("error_message") or "")[:70],
-            "value": None,
-            "source": "system",
-            "conf": None,
-            "expects": None,
-            "status": "failed",
-        }
-    pd = record.get("policy_decision") or {}
-    action = pd.get("action") or {}
-    atype = action.get("action_type", "unknown")
-    target = ""
-    value = None
-    if atype == "navigate":
-        url = action.get("url") or ""
-        target = url.replace("https://", "").replace("http://", "").split("?")[0][:70]
-    elif atype in ("type", "select"):
-        target = action.get("selector") or action.get("target_element_id") or ""
-        text = action.get("text") or ""
-        if text and len(text) <= 80:
-            value = text
-    elif atype in ("press_key", "hotkey"):
-        target = action.get("key") or ""
-    elif atype == "launch_app":
-        target = action.get("text") or ""
-    elif atype == "scroll":
-        amt = action.get("scroll_amount") or 0
-        target = "down" if amt > 0 else "up"
-    elif atype == "wait":
-        target = f"{action.get('wait_ms') or 0}ms"
-    else:
-        target = action.get("selector") or action.get("target_element_id") or ""
-    failure = record.get("failure")
-    expected = pd.get("expected_change") or "none"
-    return {
-        "n": record.get("step_index", 0),
-        "action": atype,
-        "target": target or (pd.get("active_subgoal") or "")[:70],
-        "value": value,
-        "source": pd.get("rule_name") or "LLM",
-        "conf": pd.get("confidence"),
-        "expects": expected if expected != "none" else None,
-        "status": "failed" if failure else "done",
-    }
-
-
-@router.get("/command-center/api/run/{run_id}/stream")
-async def command_center_run_stream(run_id: str) -> StreamingResponse:
-    """SSE: replay existing run.jsonl steps, then tail new ones at 200 ms. Heartbeat every 15 s."""
-    import json as _json
-    _validate_run_id(run_id)
-    jsonl_path = _RUNS_DIR / run_id / "run.jsonl"
-
-    async def _generate():
-        offset = 0
-        if jsonl_path.exists():
-            raw = jsonl_path.read_bytes()
-            for line in raw.decode("utf-8", errors="replace").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    ev = _step_log_to_event(_json.loads(line))
-                    if ev:
-                        yield f"data: {_json.dumps(ev)}\n\n"
-                except Exception:
-                    pass
-            offset = len(raw)
-        ticks = 0
-        while True:
-            await asyncio.sleep(0.2)
-            ticks += 1
-            if ticks >= 75:  # 75 × 200 ms = 15 s
-                yield ": heartbeat\n\n"
-                ticks = 0
-            if not jsonl_path.exists():
-                continue
-            size = jsonl_path.stat().st_size
-            if size <= offset:
-                continue
-            with jsonl_path.open("rb") as fh:
-                fh.seek(offset)
-                chunk = fh.read()
-            offset += len(chunk)
-            for line in chunk.decode("utf-8", errors="replace").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    ev = _step_log_to_event(_json.loads(line))
-                    if ev:
-                        yield f"data: {_json.dumps(ev)}\n\n"
-                except Exception:
-                    pass
-
-    return StreamingResponse(
-        _generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@router.get("/command-center/api/run/{run_id}/screenshot")
-async def command_center_screenshot(run_id: str) -> Response:
-    """Return the current browser viewport as PNG for 2 Hz screenshot polling."""
-    _validate_run_id(run_id)
-    executor = get_agent_loop().executor
-    if not hasattr(executor, "live_frame_png"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screenshot not available")
-    png_bytes = await executor.live_frame_png(run_id)
-    if png_bytes is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active browser session")
-    return Response(
-        content=png_bytes,
-        media_type="image/png",
-        headers={"Cache-Control": "no-store"},
-    )
 
 
 @router.post("/run/{run_id}/stop")
@@ -952,87 +782,6 @@ async def pause_run(run_id: str) -> dict:
     return {"run_id": run_id, "status": run.status.value}
 
 
-@router.get("/command-center/{run_id}", response_class=HTMLResponse)
-async def command_center_ui(run_id: str) -> str:
-    """Serve the live command center for a specific run."""
-    _validate_run_id(run_id)
-    return _COMMAND_CENTER_HTML_PATH.read_text(encoding="utf-8")
-
-
-# ── Benchmark suite ─────────────────────────────────────────────
-
-
-_VALID_DIFFICULTIES = {"easy", "medium", "hard", "all"}
-
-
-class _SuiteRequest(StrictModel):
-    difficulty: str = "all"
-    source: str = "all"
-    max_steps: int = 15
-    headless: bool = False
-    mode: str = "batch"
-
-
-class _SingleTaskRequest(StrictModel):
-    task_id: str
-    max_steps: int = 15
-    headless: bool = False
-    mode: str = "batch"
-
-
-@router.post("/benchmark/run-suite")
-async def benchmark_run_suite(body: _SuiteRequest) -> dict:
-    """Start a benchmark suite run in the background and return its suite_id."""
-    difficulty = body.difficulty.lower()
-    if difficulty not in _VALID_DIFFICULTIES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"difficulty must be one of {sorted(_VALID_DIFFICULTIES)}")
-    max_steps = max(5, min(body.max_steps, 40))
-    suite = create_suite(difficulty, source=body.source)
-    asyncio.create_task(run_suite_background(suite.suite_id, max_steps, get_agent_loop, headless=body.headless, mode=body.mode))
-    return {"suite_id": suite.suite_id, "status": suite.status, "total": suite.total, "difficulty": suite.difficulty}
-
-
-@router.post("/benchmark/stop-suite/{suite_id}")
-async def benchmark_stop_suite(suite_id: str) -> dict:
-    """Cancel a running benchmark suite."""
-    stopped = stop_suite(suite_id)
-    if not stopped:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suite not found or not running")
-    return {"suite_id": suite_id, "cancelled": True}
-
-
-@router.post("/benchmark/run-task")
-async def benchmark_run_task(body: _SingleTaskRequest) -> dict:
-    """Start a single benchmark task in the background; returns suite_id for polling."""
-    max_steps = max(5, min(body.max_steps, 40))
-    try:
-        suite = create_single_task_suite(body.task_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    asyncio.create_task(run_suite_background(suite.suite_id, max_steps, get_agent_loop, headless=body.headless, mode=body.mode))
-    return {"suite_id": suite.suite_id, "task_id": body.task_id, "status": "running"}
-
-
-@router.get("/benchmark/tasks")
-async def benchmark_tasks(difficulty: str = "all", source: str = "all") -> list:
-    """Return all benchmark tasks from all datasets for UI initialisation."""
-    return get_all_tasks(difficulty=difficulty, source=source)
-
-
-@router.get("/benchmark/suite/{suite_id}")
-async def benchmark_suite_status(suite_id: str) -> dict:
-    """Return the current status of a benchmark suite run."""
-    suite = get_suite(suite_id)
-    if suite is None:
-        # Return a terminal EXPIRED state instead of a bare 404.
-        # A bare 404 causes the browser agent to loop endlessly polling a
-        # stale suite_id that was lost when the server restarted.
-        return {
-            "suite_id": suite_id,
-            "status":   "expired",
-            "detail":   "Suite state was lost — server restarted. Do not retry this suite_id.",
-        }
-    return suite.to_dict()
 
 
 # ── Desktop (computer-use) routes ───────────────────────────────

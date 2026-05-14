@@ -162,7 +162,6 @@ export function MainLayout() {
         <LiveExecution
           registerFrameCallback={stream.registerFrameCallback}
           actionIntent={stream.latestActionIntent}
-          elementBounds={stream.elementBounds}
           runState={runState}
           sendControl={stream.sendControl}
           latestConfidence={confidence}

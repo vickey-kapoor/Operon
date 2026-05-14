@@ -99,7 +99,6 @@ export function CommandCenter({ runState, onRunChange }: Props) {
         <LiveExecution
           registerFrameCallback={stream.registerFrameCallback}
           actionIntent={stream.latestActionIntent}
-          elementBounds={stream.elementBounds}
           runState={runState}
           sendControl={stream.sendControl}
           latestConfidence={latestConfidence}

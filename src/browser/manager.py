@@ -6,9 +6,6 @@ and publishes them to all connected WebSocket clients via ws_stream.publish_fram
 
 Input injection translates normalised frontend coordinates (0.0–1.0) into real
 browser mouse/keyboard events on the actual page viewport.
-
-The accessibility/bounds snapshot queries the live DOM every N frames and publishes
-bounding boxes for all interactive elements so the React frontend can render overlays.
 """
 
 from __future__ import annotations
@@ -31,37 +28,6 @@ def _ws_stream():
         from src.api import ws_stream as _m
         _ws_stream_module = _m
     return _ws_stream_module
-
-
-# CDP selector for all interactive DOM elements worth overlaying.
-_INTERACTIVE_SELECTOR = (
-    'a, button, input, select, textarea, '
-    '[role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="menuitem"], '
-    '[tabindex]:not([tabindex="-1"])'
-)
-
-_BOUNDS_JS = f"""
-() => {{
-    const sel = {repr(_INTERACTIVE_SELECTOR)};
-    return Array.from(document.querySelectorAll(sel))
-        .map(el => {{
-            const r = el.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) return null;
-            return {{
-                tag:  el.tagName.toLowerCase(),
-                role: el.getAttribute('role') || el.tagName.toLowerCase(),
-                text: (el.innerText || el.value || el.placeholder
-                       || el.getAttribute('aria-label') || '').slice(0, 60).trim(),
-                x: Math.round(r.left),
-                y: Math.round(r.top),
-                w: Math.round(r.width),
-                h: Math.round(r.height),
-            }};
-        }})
-        .filter(Boolean)
-        .slice(0, 200);
-}}
-"""
 
 
 # Module-level singleton so NativeBrowserExecutor can discover the active CDP
@@ -264,9 +230,6 @@ class BrowserManager:
             _ws_stream().publish_frame(jpeg_bytes)
 
             self._frame_count += 1
-            # Every 30 frames (~2s at 15fps): push element bounding boxes.
-            if self._frame_count % 30 == 1:
-                asyncio.create_task(self._publish_element_bounds())
 
         self._cdp.on("Page.screencastFrame", _on_frame)
 
@@ -358,29 +321,3 @@ class BrowserManager:
         except Exception as exc:
             logger.warning("inject_input failed: %s", exc)
 
-    # ── Accessibility / element bounds ──────────────────────────────────────
-
-    async def snapshot_accessibility_tree(self) -> dict:
-        """Return Playwright's accessibility tree snapshot for the current page."""
-        if self._page is None:
-            return {}
-        try:
-            return await self._page.accessibility.snapshot() or {}
-        except Exception as exc:
-            logger.warning("accessibility snapshot failed: %s", exc)
-            return {}
-
-    async def _publish_element_bounds(self) -> None:
-        """Query the live DOM for interactive element bounding boxes and broadcast."""
-        if self._page is None:
-            return
-        try:
-            elements = await self._page.evaluate(_BOUNDS_JS)
-            _ws_stream().publish_event({
-                "type": "element_bounds",
-                "viewport_w": self._viewport_w,
-                "viewport_h": self._viewport_h,
-                "elements": elements,
-            })
-        except Exception as exc:
-            logger.debug("element bounds query failed: %s", exc)

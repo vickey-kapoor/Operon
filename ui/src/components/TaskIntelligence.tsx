@@ -316,7 +316,6 @@ export function TaskIntelligence({ events, connected, runState, onRunChange, sen
       }}>
         <PanelBtn onClick={() => sendControl({ type: "pause" })} disabled={!isActive} color="#f59e0b" label="⏸ Pause" />
         <PanelBtn onClick={() => sendControl({ type: "resume" })} disabled={isActive} color="#6366f1" label="⟳ Resume" />
-        <PanelBtn onClick={() => sendControl({ type: "snapshot_ax" })} disabled={false} color="#6b7280" label="AX" />
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ActionIntentEvent, ElementBoundsEvent } from "../hooks/useAgentStream";
+import type { ActionIntentEvent } from "../hooks/useAgentStream";
 import type { RunState } from "../App";
 import { LiveMirror } from "./LiveMirror";
 import { ConfidenceSlider } from "./ConfidenceSlider";
@@ -7,7 +7,6 @@ import { ConfidenceSlider } from "./ConfidenceSlider";
 type Props = {
   registerFrameCallback: (cb: (blob: Blob) => void) => () => void;
   actionIntent: ActionIntentEvent | null;
-  elementBounds: ElementBoundsEvent | null;
   runState: RunState;
   sendControl: (msg: object) => void;
   latestConfidence: number;
@@ -19,12 +18,11 @@ type InputMode = "click" | "type" | "scroll";
 const API = "http://127.0.0.1:8080";
 
 export function LiveExecution({
-  registerFrameCallback, actionIntent, elementBounds, runState, sendControl,
+  registerFrameCallback, actionIntent, runState, sendControl,
   latestConfidence, hitlActive,
 }: Props) {
   const [inputMode, setInputMode] = useState<InputMode>("click");
   const [typeText, setTypeText] = useState("");
-  const [showOverlay, setShowOverlay] = useState(true);
   const [threshold, setThreshold] = useState(0);
 
   const onThresholdChange = (v: number) => {
@@ -81,13 +79,6 @@ export function LiveExecution({
           />
         )}
         <span style={{ flex: 1 }} />
-        <button
-          onClick={() => setShowOverlay((v) => !v)}
-          style={modeBtn(showOverlay)}
-          title="Toggle element bounds overlay"
-        >
-          ◻ Overlay
-        </button>
         <span style={{ fontSize: 9, color: "#9ca3af", marginLeft: 4 }}>
           {runState.runId ? `#${runState.runId.slice(0, 10)}` : "no run"}
         </span>
@@ -98,8 +89,6 @@ export function LiveExecution({
         <LiveMirror
           registerFrameCallback={registerFrameCallback}
           actionIntent={actionIntent}
-          elementBounds={elementBounds}
-          showOverlay={showOverlay}
           onInput={sendControl}
           inputMode={inputMode}
           typeText={typeText}

@@ -554,15 +554,7 @@ class DeterministicVerifierService(VerifierService):
 
     @staticmethod
     def _task_success_visible(perception, benchmark: str | None) -> bool:
-        from src.benchmarks.registry import BENCHMARK_REGISTRY
-        if perception.page_hint is PageHint.FORM_SUCCESS:
-            return True
-        success_tokens = BENCHMARK_REGISTRY.get_success_tokens(benchmark)
-        if not success_tokens:
-            return False
-        if any(token in perception.summary.lower() for token in success_tokens):
-            return True
-        return any(any(token in element.primary_name.lower() for token in success_tokens) for element in perception.visible_elements)
+        return perception.page_hint is PageHint.FORM_SUCCESS
 
 def _parse_verification_output(raw_output: str) -> VerificationResult | None:
     cleaned = raw_output.strip()

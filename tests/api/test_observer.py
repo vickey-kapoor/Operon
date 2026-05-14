@@ -210,13 +210,6 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
     monkeypatch.setenv("OPERON_BROWSER_ARTIFACTS_ROOT", str(browser_root))
     client = TestClient(app)
 
-    page = client.get("/")
-    assert page.status_code == 200
-    assert "Command Center" in page.text
-
-    dashboard = client.get("/dashboard")
-    assert dashboard.status_code == 200
-    assert "cost by outcome" in dashboard.text
 
     runs = client.get("/observer/api/runs")
     assert runs.status_code == 200

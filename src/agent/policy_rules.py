@@ -176,8 +176,7 @@ class PolicyRuleEngine:
 
         # Benchmark-specific plugins run first (higher priority / more specific)
         if benchmark_name is not None:
-            from src.benchmarks.registry import BENCHMARK_REGISTRY
-            for plugin in BENCHMARK_REGISTRY.get_rules(benchmark_name) or self._plugins.get(benchmark_name, []):
+            for plugin in self._plugins.get(benchmark_name, []):
                 decision = plugin(state, perception, memory_hints)
                 if decision is not None:
                     self._last_fired_rule = getattr(plugin, "__name__", type(plugin).__name__)

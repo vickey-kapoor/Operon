@@ -48,11 +48,7 @@ class GeminiClient(ABC):
 
     @abstractmethod
     async def generate_reaction_check(self, prompt: str, frame_paths: list[str]) -> str:
-        """Send multiple screenshots as a temporal sequence and return raw JSON.
-
-        Used by VideoVerifier.verify_reaction to ask Gemini whether the UI produced
-        a visible reaction (ripple, focus ring, loading state) between frames.
-        """
+        """Send multiple screenshots as a temporal sequence and return raw JSON."""
 
     def latest_usage(self) -> ModelUsage | None:
         """Return provider-reported usage for the most recent call, when available."""

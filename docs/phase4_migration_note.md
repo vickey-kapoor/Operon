@@ -1,32 +1,27 @@
 # Phase 4 Migration Note
+_Historical note, refreshed 2026-05-15_
 
-## Old Modules Still Used
+This document previously described an in-progress migration toward a separate unified runtime/orchestrator layer. The current repository does not include a tracked `src/runtime/` package.
 
-- `src/api/routes.py`
-- `src/agent/loop.py`
-- `src/agent/capture.py`
-- existing perception backends under `src/agent/`
-- existing policy service and `src/agent/policy_coordinator.py`
-- existing verifier and recovery services
-- existing browser and desktop executors under `src/executor/`
-- existing run store and logging
+## Current Status
 
-## Old Modules Now Bypassed or Guarded by the Unified Path
+The active runtime remains:
 
-- legacy direct executor invocation in `src/agent/loop.py` is now routed through thin adapters when the unified path is active
-- legacy per-execution retry hardening in `src/agent/loop.py` is bypassed on the unified path so Phase 3 deterministic adaptation owns retries
-- legacy implicit routing decisions are now validated by `src/core/router.py`
+```text
+src.api.routes
+  -> src.agent.loop.AgentLoop
+  -> src.executor browser/desktop executor
+```
 
-## Old Modules Safe To Delete Later
+The pieces that still exist from the contract work are:
 
-- duplicated legacy retry-routing helpers in `src/agent/loop.py` once the unified path fully replaces the old hardening path
-- any standalone routing helpers that duplicate `src/core/router.py`
-- any coordinator logic that exists only to decide browser vs desktop executor selection outside the unified orchestrator
+- `src/core/contracts/`
+- `src/core/router.py`
+- `src/executor/browser_adapter.py`
+- `src/executor/desktop_adapter.py`
 
-## Notes
+These are used for typed contracts, route validation, executor adapters, and tests. They are not a separate orchestrator path.
 
-The current migration is intentionally minimal:
+## Guidance
 
-- old services still do the actual perception, planning, execution, and verification work
-- the unified contract/state/orchestrator path now acts as the shared control-plane layer
-- executor behavior remains thin and inspectable
+Do not describe a unified orchestrator or runtime state package as active unless those modules are restored. The source of truth for active behavior is `src/agent/loop.py` and `src/api/routes.py`.

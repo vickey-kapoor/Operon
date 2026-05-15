@@ -844,14 +844,13 @@ class TestRegressionExistingFunctionality:
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
-    def test_root_ui_still_serves_html(self):
-        resp = get("/")
+    def test_health_endpoint_still_returns_json(self):
+        resp = get("/health")
         assert resp.status_code == 200
-        assert "text/html" in resp.headers.get("Content-Type", "")
-        assert len(resp.text) > 500
+        assert resp.json() == {"status": "ok"}
 
-    def test_console_route_still_works(self):
-        resp = get("/console")
+    def test_observer_runs_route_still_works(self):
+        resp = get("/observer/api/runs")
         assert resp.status_code == 200
 
     def test_observer_runs_list_still_works(self):

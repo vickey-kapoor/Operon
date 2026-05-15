@@ -1,111 +1,70 @@
 # Operon Codebase Overview
+_Last refreshed: 2026-05-15_
 
 ## Core Concept
 
-Operon is a **vision-only** desktop/browser automation engine. No DOM, no accessibility tree — it looks at screenshots (and optionally video) to decide what to do, exactly like a human would.
+Operon is a vision-first computer-use engine for browser and desktop automation. It uses screenshots and structured visual perception to choose actions, execute them, verify progress, and recover from failures.
 
-## The Loop (everything flows through `src/agent/loop.py`)
+## Main Flow
 
-Every step follows this cycle:
-
+```text
+request
+  -> src.api.routes
+  -> AgentLoop
+  -> capture
+  -> perception
+  -> policy
+  -> execution
+  -> verification
+  -> recovery
+  -> persistence
 ```
-Screenshot → stabilise → perceive → smooth + ghost-detect → decide → anchor-check → execute → verify → recover
-```
 
-1. **Capture** — takes a 3-frame burst screenshot. Measures `visual_velocity` (pixel diff between frames). If velocity > 5%, clears the `RollingElementBuffer` to prevent stale ghost coordinates from a previous app context.
-2. **Perceive** — sends it to Gemini, gets back structured `ScreenPerception`. Then:
-   - **Coordinate smoothing**: per-element jitter < 3 px snapped back to previous-frame values (eliminates Gemini sub-pixel variance that would cause targets to vibrate).
-   - **Ghost detection**: elements visible in T-1 but absent in T-0 on a stable screen become `GhostElement`s. TTL = 2 frames — they're purged automatically if the element doesn't reappear.
-3. **Decide** — `PolicyCoordinator` runs in order: benchmark plugins → rule engine (`PolicyRuleEngine`) → LLM. Post-LLM, `_semantic_anchor_check` inspects the decision's coordinates: if the point is > 15 px from every visible element's bounding box, the action is intercepted and the agent re-perceives with an anchor hint injected into the next LLM prompt.
-4. **Execute** — `DesktopExecutor` (pyautogui, adaptive servo) or `NativeBrowserExecutor` (Playwright). Before every click, `_region_has_content()` samples a 100×100 px crop. A calibrated variance threshold (tuned at startup from 5 desktop crops) gates whether the click proceeds or aborts with `CoordDriftWarning`.
-5. **Verify** — checks if it worked. In order:
-   - Terminal state check (success page hint / benchmark tokens) — exits immediately on success
-   - Reaction check: sends before+after frames to Gemini, looks for micro-reactions (ripple, focus ring, spinner) → `PROGRESSING_STABLE` (advance)
-   - Motion check: if screen is actively changing → `STABLE_WAIT` (wait 200 ms, re-capture, re-verify once)
-   - Page loading check → `PENDING` (2–8 s exponential backoff)
-   - Model critic: Gemini image+text assessment
-6. **Recover** — retry, wait, context reset, session reset, or stop based on the escalation ladder
+## Key Files
 
-## Three Execution Paths
-
-- **Desktop** — pyautogui + mss, full-screen control. Combined JSON perception+policy via Gemini, or separate perception + Anthropic/Gemini planner.
-- **Browser** — Playwright. Primary backend: Gemini Computer Use (coordinate-based, multi-turn). JSON fallback available. Sessions video-recorded under `.browser-artifacts/`.
-- **Observable (browser)** — Same as Browser, but `NativeBrowserExecutor` also launches Chromium with `--remote-debugging-port=9222`. `BrowserManager` (`src/browser/manager.py`) attaches via `connect_over_cdp`, runs `Page.startScreencast` at ~15fps, and publishes JPEG frames to all WebSocket clients on port 9001. Interactive input injection (clicks, type, scroll, key) flows back from the Command Center UI through `inject_input` WebSocket control messages.
-
-All three share the same loop, verifier, recovery, persistence, and memory layers.
-
-## Key Architectural Layers
-
-| Layer | Files | Role |
+| Area | Files | Purpose |
 |---|---|---|
-| **Agent loop** | `src/agent/loop.py` | Orchestrates the step cycle; owns `STABLE_WAIT` and `PENDING` re-verify logic |
-| **Backends** | `backend.py`, `combined.py`, `browser_computer_use.py`, `browser_json.py` | Perception+policy strategy per mode |
-| **Policy** | `policy_coordinator.py`, `policy_rules.py`, `policy.py` | Rule engine (8 deterministic rules) + LLM + post-LLM anchor check |
-| **Spatial persistence** | `models/memory.py` (`RollingElementBuffer`), `agent/perception.py` | 3-frame coord smoothing, ghost TTL, buffer clear on high velocity |
-| **Selectors** | `selector.py` | Target element matching, re-resolution on drift |
-| **Executors** | `executor/desktop.py`, `executor/browser_native.py` | pyautogui/Playwright + adaptive visual servo |
-| **Observable mode** | `src/browser/manager.py` (`BrowserManager`) | CDP attach, `Page.startScreencast`, JPEG publish, input injection |
-| **Verification** | `verifier.py`, `video_verifier.py`, `screen_diff.py` | 6-status verification: SUCCESS / FAILURE / UNCERTAIN / PENDING / PROGRESSING_STABLE / STABLE_WAIT |
-| **Recovery** | `recovery.py`, `reflector.py` | 5-rung escalation ladder; post-run learning |
-| **Models** | `src/models/` | Pydantic v2 — state, perception (GhostElement), policy, execution (visual_variance), verification (6 statuses), logs (decision_source) |
-| **Persistence** | `src/store/` | File-backed run store + memory store, JSONL logging |
-| **API** | `src/api/` | FastAPI server, Pilot UI, observer (live log with `[RULE]`/`[LLM]` colouring) |
-| **Gemini clients** | `src/clients/gemini.py`, `gemini_computer_use.py` | HTTP calls: single image, video, multi-image (reaction check) |
-| **Command Center UI** | `ui/` | React 19 + Zustand 5 + react-resizable-panels; SubgoalTree, Thought Cards, ConfidenceSlider, SettingsPane (Moat Builder) |
-| **WebSocket stream** | `src/api/ws_stream.py` (port 9001) | Binary JPEG frames (CDP screencast), step events, control messages (`inject_input`, `set_disabled_rules`, `set_confidence_threshold`, `resume`, `override`) |
-| **Benchmarks** | `src/benchmarks/registry.py` | `BENCHMARK_REGISTRY` plugin rules; WebArena task definitions |
+| API | `src/api/server.py`, `src/api/routes.py`, `src/api/ws_stream.py`, `src/api/observer.py` | FastAPI app, run routes, websocket stream, run inspection |
+| Loop | `src/agent/loop.py` | Core step orchestration |
+| Backends | `src/agent/browser_computer_use.py`, `src/agent/browser_json.py`, `src/agent/combined.py`, `src/agent/fallback_backend.py` | Perception/policy backend selection |
+| Policy | `src/agent/policy_coordinator.py`, `src/agent/policy_rules.py`, `src/agent/policy.py`, `src/agent/anthropic_policy.py` | Rules, LLM fallback, post-LLM guards |
+| Execution | `src/executor/browser_native.py`, `src/executor/desktop.py`, `src/executor/browserbase_native.py` | Browser, desktop, and Browserbase execution |
+| Verification | `src/agent/verifier.py`, `src/models/verification.py` | Deterministic verification and status model |
+| Recovery | `src/agent/recovery.py` | Recovery ladder and integrity checks |
+| Targeting | `src/agent/selector.py`, `src/agent/retry_hardening.py`, `src/models/selector.py` | Target selection and re-resolution |
+| Browser observation | `src/browser/manager.py` | CDP attach, screencast, input injection |
+| Models | `src/models/` | Pydantic schemas |
+| Store | `src/store/` | Run store, memory store, replay, summaries, cleanup |
+| Optional UI | `ui/`, `src-tauri/` | React/Tauri command center surface |
 
-## Spatial Persistence in Detail
+## Active API
 
-`RollingElementBuffer` (3-frame deque in `src/models/memory.py`) is the single source of truth for cross-step element state:
+The current FastAPI app exposes run, desktop, observer, health, cleanup, pause/stop, and websocket endpoints. It does not serve the optional React UI and does not expose benchmark or command-center HTML routes.
 
-- **Coordinate smoothing** — tiny per-element jitter corrected before ghost detection so false ghosts aren't created by sub-pixel drift.
-- **Ghost elements** — absent elements with stable screen marked as `GhostElement` in `ScreenPerception.ghost_elements`. TTL=2 means they survive 2 more frames max. The policy prompt explains to the LLM that ghosts are occluded, not gone.
-- **High-velocity clear** — any `visual_velocity > 5%` clears the buffer entirely; a major UI transition (app switch, full navigation) must not bleed prior-window coordinates into the new context.
-- **Run reset** — `PolicyCoordinator.reset_run_context()` also clears the buffer via `element_buffer.clear()`.
+## Runtime Backends
 
-## Verification Status Model
+Browser:
+- default: Gemini Computer Use
+- optional: JSON fallback
+- optional: Browserbase executor
 
-| Status | What it means | What the loop does |
-|---|---|---|
-| `SUCCESS` | Outcome confirmed | Advance or stop |
-| `FAILURE` | Action definitively failed | Recovery ladder |
-| `UNCERTAIN` | Can't confirm | Recovery ladder |
-| `PENDING` | Page mid-load (blank/sparse) | Backoff 2–4–8 s, re-verify |
-| `PROGRESSING_STABLE` | Gemini confirmed UI micro-reaction | Advance immediately — no retry |
-| `STABLE_WAIT` | Screen actively animating post-action | 200 ms wait, re-capture, re-verify once |
+Desktop:
+- default: Gemini JSON combined perception+policy
 
-## Step-Level Logging
+Policy providers:
+- Gemini by default
+- Anthropic optional for planner/verifier paths where configured
 
-Every `StepLog` in `run.jsonl` now carries:
-- `decision_source`: `"[RULE] rule_name"` or `"[LLM] gemini"` — who made the policy decision
-- `visual_variance`: float from the servo check — the raw pixel² variance at the click target
+## State And Artifacts
 
-The observer emits a `decision_source` event per step. Console.html colours rule decisions green and LLM decisions blue in the live log feed.
+Run state is stored in `runs/<run_id>/state.json`. Step artifacts are stored in `runs/<run_id>/step_N/`. Logs are appended to `runs/<run_id>/run.jsonl`.
 
-## Self-Improvement Mechanism
+Memory support exists in `src/store/memory.py` and `src/models/episode.py`. The current tree does not include a post-run reflector implementation that automatically generates reflection records.
 
-After a run ends, `PostRunReflector` analyzes what happened, extracts failure patterns, and writes `MemoryRecord` entries. On future runs, `FileBackedMemoryStore` surfaces these as `MemoryHint`s — injected into both the rule engine and the LLM prompt. Hints decay geometrically on failure (weight halved each time) and are pruned when weight < 0.1. Successful runs yield `Episode`s — compressed optimal trajectories replayed on similar future tasks.
+## Optional Or Experimental Areas
 
-## Data Flow
-
-A run is triggered via `POST /run-task`, advanced via `POST /step`. Everything is persisted under `runs/<run_id>/` — screenshots, all Gemini prompts and raw responses, parsed decisions, execution traces, and progress snapshots. Browser runs also produce video under `.browser-artifacts/`.
-
-## Unified Contract Layer (observer on top of the loop)
-
-After each step, `AgentLoop._record_unified_step()` translates to four typed Pydantic contracts:
-
-```
-LegacyOperonContractAdapter  (src/runtime/legacy_adapter.py)
-  → PerceptionOutput  — semantic, no coordinates
-  → PlannerOutput     — action + rationale
-  → ActorOutput       — execution result
-  → CriticOutput      — success / retry / failure
-
-UnifiedOrchestrator  (src/runtime/orchestrator.py)
-  → validates cross-field consistency
-  → checks routing rules (src/core/router.py)
-  → updates AgentRuntimeState per run
-```
-
-This is an **observer and validator**, not a replacement for `AgentLoop`. The loop still owns execution ordering and termination.
+- `src/core/contracts` and `src/core/router.py`: contract models and environment/action validation used by executor adapters and tests.
+- `benchmarks/`: dataset files only.
+- `src/agent/benchmark.py`: local benchmark runner.
+- `docs/substack_drafts/`: historical writeups.
+- `docs/claude_task.md`: historical task backlog and audit notes.

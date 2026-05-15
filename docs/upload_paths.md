@@ -1,93 +1,57 @@
 # Upload Action Paths
+_Last refreshed: 2026-05-15_
 
-Operon provides two action types for file upload flows. They differ in how the file
-selection is performed.
+Operon has two upload-related browser actions.
 
----
-
-## `upload_file` — Playwright browser-native chooser
+## `upload_file`
 
 | Property | Value |
 |---|---|
 | Action type | `upload_file` |
-| Executor | Browser (`NativeBrowserExecutor`) |
-| Mechanism | `page.expect_file_chooser()` + `set_files()` |
-| OS picker shown | No |
+| Executor | `NativeBrowserExecutor` |
+| Mechanism | Playwright file chooser interception |
+| Headless-safe | Yes |
 
-Playwright intercepts the file-chooser event before the OS dialog appears and
-injects the file path directly. The OS file picker is bypassed entirely. This is
-reliable, fast, and headless-safe, but it only works when the upload control is a
-standard `<input type="file">` element reachable by Playwright.
+This path uses Playwright's file chooser support. It bypasses the native OS picker and sets the selected file directly.
 
-**Payload**: `text` = absolute path of the file to upload. Optionally `selector` or
-`x,y` to locate the control.
+Payload requirements:
+- `text`: absolute file path.
+- target location: selector or visual coordinates, depending on executor path.
 
----
-
-## `upload_file_native` — True OS picker path
+## `upload_file_native`
 
 | Property | Value |
 |---|---|
 | Action type | `upload_file_native` |
-| Starting executor | Browser (`NativeBrowserExecutor`) |
-| Continuing executor | Desktop (`DesktopExecutor`) |
-| Mechanism | Browser click → OS picker appears → desktop interaction |
-| OS picker shown | Yes |
+| Executor | `NativeBrowserExecutor` with OS picker macro |
+| Mechanism | click upload control, wait for native picker, type path, press Enter |
+| Headless-safe | No |
 
-This is a cross-environment action. The flow is:
+This path is for custom upload controls that open the native OS picker. The current implementation lives in:
 
-1. **Browser step** — `NativeBrowserExecutor` clicks the upload control (by selector,
-   coordinate, or `target_element_id`). This triggers the OS file picker to open.
-   The executor returns immediately with `detail="native_picker_triggered"`.
-2. **Desktop step** — `DesktopExecutor` interacts with the native OS file picker using
-   `TYPE` (to enter the path) and `PRESS_KEY` (to press Enter or click Open). No new
-   action types are needed; the existing primitives are sufficient.
-3. **Browser verify** — After the picker closes, the agent re-perceives the browser
-   page and confirms the file appears as attached or queued by the upload control.
+- `src/executor/browser_native.py`
+- `src/executor/os_picker_macro.py`
 
-### Routing
+The browser executor clicks the visual target, then delegates picker handling to the OS picker macro. It does not depend on a separate runtime/orchestrator state package.
 
-`UPLOAD_FILE_NATIVE` belongs to `BROWSER_ACTIONS` and `CROSS_ENVIRONMENT_ACTIONS` in
-`src/core/router.py`. It is **not** in `DESKTOP_ACTIONS` — the desktop interaction with
-the picker is handled by ordinary `TYPE` / `PRESS_KEY` actions, not a separate entry
-point.
+## Routing
 
+`upload_file_native` is allowed for browser actions and treated as cross-environment in `src/core/router.py`. It is not a standalone desktop action; desktop input primitives are used internally by the picker macro.
+
+## Failure Signals
+
+Common failure categories:
+
+- `PICKER_NOT_DETECTED`: the OS picker did not appear.
+- `FILE_NOT_REFLECTED`: the chosen file did not appear attached or queued.
+- `EXECUTION_ERROR`: generic execution failure, including headed-mode requirements.
+
+## Artifacts
+
+Upload steps write normal run artifacts under:
+
+```text
+runs/<run_id>/step_N/
 ```
-BROWSER_ACTIONS    ✓  upload_file_native
-DESKTOP_ACTIONS    ✗  (not present — desktop sub-step uses TYPE + PRESS_KEY)
-CROSS_ENVIRONMENT  ✓  upload_file_native
-```
 
-### Failure types
-
-| FailureType | When | Adaptation strategy |
-|---|---|---|
-| `PICKER_NOT_DETECTED` | OS picker never appeared after the click | `wait_then_retry` |
-| `FILE_NOT_REFLECTED` | Browser page never showed the file as attached | `reperceive_and_replan` |
-
-### State tracking
-
-`AgentRuntimeState.file_picker_active: bool` is set to `True` by the orchestrator
-(`UnifiedOrchestrator.process_step`) when:
-
-- The action was `UPLOAD_FILE_NATIVE`, and
-- `detect_file_picker(perception)` finds picker signals in `context_label` or `notes`.
-
----
-
-## When to use each
-
-| Scenario | Use |
-|---|---|
-| Standard `<input type="file">` element, headless or not | `upload_file` |
-| Custom upload button that triggers the OS picker, or non-standard control | `upload_file_native` |
-| Upload control hidden or bypassed by JS (no real picker) | `upload_file` |
-| Need to verify file name as typed into the OS dialog title bar | `upload_file_native` |
-
----
-
-## Log / artifact trail
-
-Both action types write `execution_trace.json` and screenshots to
-`runs/<run_id>/step_N/`. `upload_file_native` additionally sets
-`file_picker_active=True` in the runtime state JSON when the picker was detected.
+Look for `execution_trace.json`, before/after screenshots, and the step log entry in `run.jsonl`.

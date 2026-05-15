@@ -1,299 +1,131 @@
-# Operon — Product Requirements Document
+# Operon Product Requirements
+_Last refreshed: 2026-05-15_
 
-**Vision:** Vision-only computer use agent. No DOM, no selectors. Sees the screen like a human and acts on it.
+## Product Goal
 
-**Loop:** `capture → perceive → decide → execute → verify → recover`
+Operon is a vision-first computer-use agent for browser and desktop tasks. It observes screenshots, chooses coordinate-based actions, executes through native/browser executors, verifies the result, and recovers when progress stalls.
 
-Desktop (pyautogui + mss) and browser (Playwright + Gemini Computer Use) share one loop, one verifier, one recovery manager, one persistence layer.
+## Core Requirements
 
----
+1. The agent must operate from visual perception, not DOM selectors or XPath.
+2. Browser and desktop runs must share the same loop, verifier, recovery manager, and persistence model.
+3. Deterministic policy rules must run before LLM policy fallback.
+4. TYPE actions must remain atomic from the policy perspective.
+5. Clicks must pass visual servo checks before execution.
+6. Runs must produce inspectable artifacts under `runs/<run_id>/`.
+7. Uncertain states must either recover deterministically or pause for human input.
 
-## 1. Core Control Loop
+## Supported Modes
 
-**What:** Closed-loop autonomous agent. Each step is discrete and API-driven — the caller advances the loop or it runs autonomously.
-
-**Stages:**
-
-| Stage | Responsibility |
-|---|---|
-| Capture | Screenshot the current screen |
-| Perceive | Send screenshot to Gemini → typed `ScreenPerception` |
-| Update state | Merge perception into `AgentState` |
-| Choose action | Rule engine first, LLM fallback |
-| Execute | Perform action; one bounded retry on stale/shifted target |
-| Verify | Deterministic check + optional video verify |
-| Recover | Decide continue / retry / stop based on failure category |
-| Reflect (terminal) | Extract failure patterns → write `MemoryRecord` |
-
-**Tech:** `src/agent/loop.py` — `AgentLoop` singleton per mode. Steps via `POST /step` or `POST /desktop/step`.
-
----
-
-## 2. Dual Execution Modes
-
-| | Desktop | Browser | Observable |
+| Mode | Executor | Primary backend | Status |
 |---|---|---|---|
-| Executor | `DesktopExecutor` (pyautogui) | `NativeBrowserExecutor` (Playwright) | `NativeBrowserExecutor` + `BrowserManager` |
-| Capture | `mss` full-screen | `page.screenshot()` | CDP `Page.startScreencast` (~15fps JPEG) |
-| Primary backend | `CombinedPerceptionPolicyService` (Gemini JSON) | `BrowserComputerUseBackend` (Gemini Computer Use) | Same as Browser |
-| Fallback backend | — | `BrowserJsonBackend` | `BrowserJsonBackend` |
-| Live stream | — | — | WebSocket port 9001, binary JPEG frames |
-| Video recording | — | `.browser-artifacts/<run_id>/session_video/session.webm` | Same |
-
-Backend selection via env vars: `OPERON_DESKTOP_BACKEND`, `OPERON_BROWSER_BACKEND`, `OPERON_BROWSER_FALLBACK_BACKEND`.
-
-**Observable mode** is activated when `RunTaskRequest.thread == "observable"`. `NativeBrowserExecutor` launches Chromium with `--remote-debugging-port=9222`. `BrowserManager` (`src/browser/manager.py`) attaches via `connect_over_cdp`, starts `Page.startScreencast`, and publishes JPEG frames to all connected WebSocket clients. Element bounding boxes are published every ~2s so the Command Center UI can render interactive overlays.
-
----
-
-## 3. Action Types (21 total)
-
-| Category | Actions |
-|---|---|
-| Pointer | `click`, `double_click`, `right_click`, `hover`, `drag`, `scroll` |
-| Keyboard | `type`, `select`, `press_key`, `hotkey` |
-| Navigation | `navigate`, `launch_app` |
-| Flow control | `wait`, `wait_for_user`, `stop`, `batch` |
-| Clipboard | `read_clipboard`, `write_clipboard` |
-| Vision | `screenshot_region` |
-| File upload | `upload_file`, `upload_file_native` |
-
-**upload_file** — Playwright `expect_file_chooser` interception. Headless-safe.
-
-**upload_file_native** — Deterministic OS picker macro (`src/executor/os_picker_macro.py`). After clicking the upload trigger: polls for native picker window by title keyword, types the absolute path via `pyautogui.write`, presses Enter, polls for close. Returns `PickerOutcome`: `SUCCESS`, `PICKER_NOT_DETECTED`, `FILE_NOT_REFLECTED`, `UNAVAILABLE`. Headed mode only — headless guard returns `EXECUTION_ERROR` immediately.
-
----
-
-## 4. Perception
-
-**What:** Vision-only. Screenshot → Gemini → typed `ScreenPerception` (visible elements, `PageHint`, focused element). No DOM, no XPath, no CSS selectors from the model.
-
-**Tech:**
-- `GeminiPerceptionService` — `src/agent/perception.py`
-- `GeminiHttpClient` — `src/clients/gemini.py`
-- Prompts: `prompts/perception_prompt.txt`, `prompts/desktop_perception_prompt.txt`
-
----
-
-## 5. Policy Layer (3-tier)
-
-### Tier 1 — Deterministic Rule Engine
-`PolicyRuleEngine` (`src/agent/policy_rules.py`). 8 engine primitives in priority order, plus benchmark-specific plugins registered via `BENCHMARK_REGISTRY` that run first:
-
-| Rule | Trigger |
-|---|---|
-| `_human_intervention_rule` | page_hint contains HITL keyword × 2 consecutive steps (debounced) |
-| `_task_success_stop_rule` | `page_hint == FORM_SUCCESS` or success tokens visible |
-| `_dropdown_menu_select_rule` | Dropdown open + unselected option visible |
-| `_avoid_identical_type_retry` | Memory hint `avoid_identical_type_retry` + repeated TYPE failure on same element |
-| `_no_progress_recovery_rule` | No-progress streak > threshold (issues Escape + `force_fresh_perception`) |
-| `_dismiss_blocking_overlay_rule` | Blocking dialog/banner + stuck signal |
-| `_search_query_rule` | Intent contains search query + search input visible |
-| `_focus_before_type_rule` | Memory hint `click_before_type` + target not focused (memory-gated) |
-
-### Tier 2 — LLM Fallback
-`GeminiPolicyService` (`src/agent/policy.py`). Renders prompt template + memory hints → Gemini. Prompts: `prompts/policy_prompt.txt`, `prompts/browser_combined_prompt.txt`.
-
-### Tier 3 — Anthropic Planner (optional)
-`AnthropicPolicyService` (`src/agent/anthropic_policy.py`). Claude-backed planning. Enabled via `OPERON_DESKTOP_PLANNER_PROVIDER=anthropic`.
-
-**Coordinator:** `PolicyCoordinator` (`src/agent/policy_coordinator.py`) wraps all three tiers. Memory hints from `FileBackedMemoryStore` are injected into both rule engine and LLM prompt every step.
-
----
-
-## 6. Target Resolution & Re-resolution
-
-**What:** Targetable actions carry a serializable `TargetIntent` + `target_context` (original target signature, top candidate evidence, matched signals). On stale/shifted/lost target, the executor captures fresh perception and re-resolves deterministically — no LLM call.
-
-**Tech:** `DeterministicTargetSelector.reresolve()` — `src/agent/selector.py`. Failures emit `target_reresolution_failed` or `target_reresolution_ambiguous`. Full trace (trigger reason, candidates considered, outcome) written to `execution_trace.json` as `reresolution_trace`.
-
----
-
-## 7. Verification
-
-### Deterministic Verifier
-`DeterministicVerifierService` (`src/agent/verifier.py`). Checks expected outcome against new perception after every action.
-
-### Video Verifier
-Triggers when `screen_diff` detects no visual change after an idempotent action (`click`, `press_key`, `hotkey`, `launch_app`, `scroll`, `hover`). Records a 3-second clip via `ScreenRecorder`, re-executes the action, sends clip to Gemini for temporal analysis. Adds ~5–8s per uncertain step. Prompt: `prompts/video_verification_prompt.txt`.
-
-### Critic (in progress)
-`prompts/critic_prompt.txt` — critic-backed step evaluation. Selectable via `OPERON_DESKTOP_VERIFIER_PROVIDER`.
-
----
-
-## 8. Self-Improving Memory
-
-**What:** After terminal steps, `PostRunReflector` analyzes the run, extracts failure patterns, writes `MemoryRecord` entries per benchmark. On next run, hints are injected into both the rule engine and the LLM prompt.
-
-**Tech:**
-- `src/agent/reflector.py` — `PostRunReflector`
-- `src/store/memory.py` — `FileBackedMemoryStore`
-- `src/models/memory.py` — `MemoryRecord`, `MemoryHint`
-
----
-
-## 9. Episodic Memory
-
-**What:** Successful runs are compressed into reusable `Episode` objects — a trajectory cache of what worked, available as advisory context on future runs.
-
-**Tech:** `src/models/episode.py`. Written by `PostRunReflector` on `SUCCEEDED` runs.
-
----
-
-## 10. Redundancy Blocking
-
-**What:** Prevents the agent from repeating the same action without screen progress.
-
-**Tech:** `ProgressState` counters inside `AgentState`. `AgentLoop._block_redundant_action()` compares current action + screen diff against recent history. Emits `REPEATED_ACTION_WITHOUT_PROGRESS`, `REPEATED_TARGET_WITHOUT_PROGRESS`, or `REPEATED_FAILURE_LOOP`.
-
----
-
-## 11. Recovery Manager
-
-**What:** After a failed step, decides: continue / retry / stop.
-
-**Tech:** `RuleBasedRecoveryManager` (`src/agent/recovery.py`). Maps `FailureCategory` → recovery strategy.
-
-**Failure categories (40+):** Full enumeration in `src/models/common.py`. Includes perception failures, selector failures, target re-resolution failures, execution failures, progress failures, file upload failures (`PICKER_NOT_DETECTED`, `FILE_NOT_REFLECTED`), and terminal limits.
-
----
-
-## 12. Unified Contract Layer
-
-**What:** Every step wrapped in typed perception/planner/actor/critic bundles — clean separation of concerns between observation, planning, execution, and critique.
-
-**Contracts:** `PerceptionOutput`, `PlannerOutput`, `ActorOutput`, `CriticOutput` in `src/core/contracts/`.
-
-**Router:** `BROWSER_ACTIONS` / `DESKTOP_ACTIONS` sets. `is_cross_environment_action()` flags actions (like `upload_file_native`) that cross environment boundaries. `validate_plan_route()` enforces this at plan time.
-
-**Orchestrator:** `UnifiedOrchestrator` — adaptation strategies per failure type (e.g. `PICKER_NOT_DETECTED` → `wait_then_retry`, `FILE_NOT_REFLECTED` → `reperceive_and_replan`).
-
----
-
-## 13. Command Center UI
-
-**What:** React 19 + Zustand 5 web UI served by the FastAPI backend. Single-page, three-pane layout. Real-time over WebSocket (port 9001).
-
-**Panes:**
-
-| Pane | Content |
-|---|---|
-| **Task Intelligence** (35%) | SubgoalTree with status icons (pending/active/complete/failed), Thought Cards reasoning log (timestamp, perception, confidence badge, rationale), ThinkingPulse SVG animation, HITL approval card |
-| **Live Execution** (50%) | Canvas browser mirror (zero-render JPEG frame delivery), element bounds SVG overlay, ConfidenceSlider (autonomy threshold), HITL dim overlay |
-| **Moat Builder / Settings** | Rule Manager (toggle engine primitives on/off via `set_disabled_rules`), Session Persistence (Fresh / Observable) |
-
-**Confidence-Gated Autonomy:** Slider in Live Execution pane sets confidence floor. When `PolicyDecision.confidence` drops below it, the run pauses. UI shows approval card with Proceed and Correction Hint options.
-
-**Tech:** `ui/` — Vite + TypeScript, `react-resizable-panels` v4 (Group/Panel/Separator), inline styles only, `useAgentStream` hook owns WS connection, `registerFrameCallback` pattern for zero-render frame delivery.
-
----
-
-## 14. Persistence & Observability
-
-### Run Store
-`FileBackedRunStore` — in-memory dict + `runs/<run_id>/state.json`. No database.
-
-### Per-step artifacts
-```
-runs/<run_id>/
-  state.json
-  run.jsonl                   # StepLog per step (JSONL)
-  step_N/
-    before.png
-    after.png
-    perception_prompt.txt
-    perception_raw.txt
-    perception_parsed.json
-    policy_prompt.txt
-    policy_raw.txt
-    policy_decision.json
-    execution_trace.json
-    progress_trace.json
-```
-
-### Browser video
-`ScreenRecorder` → `.browser-artifacts/<run_id>/session_video/session.webm`
-
-### CLI tools
-```
-python -m src.store.replay <run_id>
-python -m src.store.summary <run_id>
-python -m src.store.summary runs
-```
-
----
-
-## 14. API
-
-FastAPI app (`src/api/server.py`). All routes in `src/api/routes.py`.
+| Browser | `NativeBrowserExecutor` | Gemini Computer Use | Active |
+| Browser JSON | `NativeBrowserExecutor` | Gemini JSON combined backend | Optional/fallback |
+| Browserbase | `BrowserbaseNativeBrowserExecutor` | Gemini Computer Use | Optional |
+| Desktop | `DesktopExecutor` | Gemini JSON combined backend | Active |
+| Observable browser | `NativeBrowserExecutor` + `BrowserManager` | Browser backend | Active through `/ws/stream` |
+
+## API Requirements
+
+Active HTTP endpoints:
 
 | Method | Endpoint | Purpose |
 |---|---|---|
 | POST | `/run-task` | Create browser run |
-| POST | `/step` | Advance browser run one step |
+| POST | `/step` | Advance browser run |
 | POST | `/resume` | Resume paused browser run |
-| POST | `/stop` | Cancel active run |
-| GET | `/run/{id}` | Read browser run state |
-| POST | `/desktop/run-task` | Create desktop run |
-| POST | `/desktop/step` | Advance desktop run one step |
-| POST | `/desktop/resume` | Resume paused desktop run |
-| GET | `/desktop/run/{id}` | Read desktop run state |
-| POST | `/desktop/cleanup` | Close apps launched by a run |
-| GET | `/observer/api/runs` | List all runs |
-| GET | `/observer/api/run/{id}` | Full run snapshot |
-| GET | `/observer/api/usage` | Token usage summary |
-| GET | `/observer/api/artifact` | Serve step artifact (png, json, txt) |
-| GET | `/observer/api/export/{id}` | Export run as ZIP |
-| GET | `/observer/api/live-browser/{id}` | Live browser URL for run |
-| POST | `/benchmark/run-suite` | Start benchmark suite |
-| POST | `/benchmark/stop-suite/{id}` | Stop benchmark suite |
-| GET | `/benchmark/tasks` | List available benchmark tasks |
-| GET | `/benchmark/suite/{id}` | Read suite run state |
+| POST | `/stop` | Cancel active browser run |
+| POST | `/run/{run_id}/stop` | Cancel by path |
+| POST | `/run/{run_id}/pause` | Pause by path |
+| GET | `/run/{run_id}` | Read browser run state |
+| POST | `/cleanup` | Clean up browser resources |
 | GET | `/health` | Health check |
-| GET | `/` or `/desktop-pilot` | Command Center UI |
+| POST | `/desktop/run-task` | Create desktop run |
+| POST | `/desktop/step` | Advance desktop run |
+| POST | `/desktop/resume` | Resume desktop run |
+| POST | `/desktop/cleanup` | Clean up desktop resources |
+| GET | `/desktop/run/{run_id}` | Read desktop run state |
+| GET | `/observer/api/runs` | List recent runs |
+| GET | `/observer/api/run/{run_id}` | Load run snapshot |
+| GET | `/observer/api/artifact` | Serve run artifact |
+| GET | `/observer/api/usage` | Summarize token usage |
+| GET | `/observer/api/export/{run_id}` | Export run bundle |
+| GET | `/observer/api/live-browser/{run_id}` | Return active browser frame |
+| WS | `/ws/stream` | Live frames, events, and controls |
 
-**WebSocket:** `ws://127.0.0.1:9001` — live step events, binary JPEG frames, and control messages. Control messages: `set_confidence_threshold`, `set_disabled_rules`, `override`, `resume`, `pause`, `snapshot_ax`, `inject_input`.
+Removed or absent from the current FastAPI app:
+- `/benchmark/*`
+- `/benchmarks`
+- `/command-center`
+- `/console`
+- `/dashboard`
+- static UI routes from `src/api/static`
 
-Input validation: `intent` 1–500 chars, stripped whitespace, strict Pydantic v2 models — no extra fields.
+## Action Requirements
 
----
+The internal policy action model supports pointer, keyboard, navigation, clipboard, screenshot, upload, read-text, batch, stop, wait, HITL, and optional file-porter actions. The contract-layer action model in `src/core/contracts/planner.py` is narrower and is used by executor adapters and route validation.
 
-## 15. Benchmarks
+Important product constraints:
+- `upload_file_native` is headed-mode only and uses the OS picker macro.
+- `file_porter` is an optional backend helper, not a vision-control action.
+- Browser/desktop route compatibility is validated in `src/core/router.py`.
 
-| Benchmark | Entry point | What it measures |
-|---|---|---|
-| WebArena easy (13 tasks) | `/benchmarks` UI or `POST /benchmark/run-suite` | Web task success rate across form fill, search, navigation |
-| Form benchmark | `python -m src.agent.benchmark` | End-to-end web form fill success rate |
-| Native upload benchmark | `src/evaluation/benchmark_native_upload.py` | `upload_file_native` reliability in headed mode |
+## Verification Requirements
 
-WebArena tasks are defined in `src/benchmarks/registry.py` and include: form filling (practice-automation.com), GitHub search, Wikipedia lookup, and multi-step web workflows. Task schema: `{task_id, source, difficulty, category, site, intent, start_url, optimal_steps}`.
+The verifier must classify outcomes as:
 
-`POST /benchmark/run-task` body: `{"task_id": "<id>", "max_steps": 25, "headless": false, "mode": "batch"}`.  
-`GET /benchmark/suite/{suite_id}` returns per-task `status`, `step_count`, `stop_reason`, `step_efficiency`, and `pass_rate`.
+```text
+SUCCESS
+FAILURE
+UNCERTAIN
+PENDING
+PROGRESSING_STABLE
+STABLE_WAIT
+```
 
----
+Loop behavior:
+- `SUCCESS`: advance or terminate.
+- `FAILURE` / `UNCERTAIN`: recovery ladder.
+- `PENDING`: wait and re-verify with 2/4/8 second backoff.
+- `STABLE_WAIT`: wait 200ms and re-verify once.
+- `PROGRESSING_STABLE`: advance immediately.
 
-## 16. Model Configuration
+## Recovery Requirements
 
-All model choices are env-configurable at runtime:
+`RuleBasedRecoveryManager` must:
+- stop when verifier reports a terminal condition.
+- advance only on verified success or confirmed progress.
+- hard-stop repeated no-progress loops.
+- escalate repeated failure clusters through retry, different tactic, context reset, session reset, then stop.
+- block unverified terminal success claims.
 
-| Role | Default model | Env var |
-|---|---|---|
-| Desktop perception + policy | `gemini-3-flash-preview` | `OPERON_DESKTOP_MODEL` |
-| Browser primary | `gemini-2.5-computer-use-preview-10-2025` | `OPERON_BROWSER_MODEL` |
-| Browser fallback | `gemini-3-flash-preview` | `OPERON_BROWSER_FALLBACK_MODEL` |
-| Desktop verifier | `gemini-3-flash-preview` | `OPERON_DESKTOP_VERIFIER_MODEL` |
-| Browser verifier | `gemini-3-flash-preview` | `OPERON_BROWSER_VERIFIER_MODEL` |
-| Planner (optional) | Claude (Anthropic) | `OPERON_DESKTOP_PLANNER_PROVIDER=anthropic` |
+## Persistence Requirements
 
----
+Every run should persist:
+- current run state
+- step log JSONL
+- before/after screenshots
+- perception artifacts
+- policy artifacts
+- execution traces
+- verification and progress artifacts where available
 
-## 17. Known Gaps & Hardening Opportunities
+Retention cleanup is handled at FastAPI lifespan startup through `src.store.cleanup.cleanup_old_runs`.
 
-- **`upload_file_native` integration test** — no test against a real headed browser with a live OS picker. CI-only coverage is unit-level.
-- **Critic integration** — `critic_prompt.txt` exists but critic is not fully wired into the recovery loop.
-- **WebArena medium/hard benchmarks** — easy tasks running; medium/hard not yet run at scale.
-- **Prompt caching** — Vertex AI context cache for static prompt prefixes not yet implemented.
-- **Multi-monitor support** — single primary display assumed; `DesktopExecutor` captures monitor index 0.
-- **`_search_query_rule` GitHub fix** — `_already_tried_search` (no `h.success` requirement) triggers URL fallback after any TYPE attempt; addresses JS-search sites that don't confirm success via Playwright.
+## Optional Components
+
+These are part of the repository but not required for the core agent:
+
+- `ui/`: optional React command center frontend.
+- `src-tauri/`: optional Tauri shell and websocket bridge.
+- `src/executor/browserbase_native.py`: Browserbase backend.
+- `src/tools/file_porter.py`: Google Drive transfer helper.
+- `src/agent/benchmark.py` and `benchmarks/`: local benchmark runner and datasets.
+
+## Known Gaps
+
+- The repository contains historical docs that describe removed systems. Current implementation truth should be taken from `README.md`, `AGENTS.md`, this PRD, and `docs/architecture.md`.
+- There is no active benchmark API route set in FastAPI.
+- There is no tracked `PostRunReflector` implementation.
+- There is no tracked `src/runtime` package.
+- The optional UI is not served by the current FastAPI router.

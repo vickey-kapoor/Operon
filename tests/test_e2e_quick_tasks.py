@@ -149,36 +149,31 @@ class TestHealth:
 
 
 # ---------------------------------------------------------------------------
-# 2. UI HTML serving
+# 2. Active API endpoints
 # ---------------------------------------------------------------------------
 
-class TestUIEndpoints:
-    def test_root_serves_html(self):
-        resp = get("/")
+class TestActiveApiEndpoints:
+    def test_health_serves_json(self):
+        resp = get("/health")
         assert resp.status_code == 200
-        assert "text/html" in resp.headers.get("Content-Type", "")
+        assert "application/json" in resp.headers.get("Content-Type", "")
 
-    def test_root_html_contains_operon_content(self):
-        resp = get("/")
-        body = resp.text
+    def test_health_body_contains_status(self):
+        resp = get("/health")
+        body = resp.json()
         # The page should have some UI content — not a blank page
-        assert len(body) > 500, "HTML body is suspiciously short"
+        assert body == {"status": "ok"}
 
-    def test_console_route_serves_html(self):
-        resp = get("/console")
+    def test_observer_runs_serves_json(self):
+        resp = get("/observer/api/runs")
         assert resp.status_code == 200
-        assert "text/html" in resp.headers.get("Content-Type", "")
+        assert "application/json" in resp.headers.get("Content-Type", "")
 
-    def test_root_and_console_have_matching_title(self):
-        root = get("/")
-        console = get("/console")
-        import re
-        def extract_title(html: str) -> str:
-            m = re.search(r"<title>(.*?)</title>", html)
-            return m.group(1) if m else ""
-        assert extract_title(root.text) == extract_title(console.text), (
-            "/ and /console should have the same <title>"
-        )
+    def test_health_and_observer_routes_are_available(self):
+        health = get("/health")
+        observer = get("/observer/api/runs")
+        assert health.status_code == 200
+        assert observer.status_code == 200
 
 
 # ---------------------------------------------------------------------------

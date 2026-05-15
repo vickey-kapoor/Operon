@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from src.core.contracts.actor import ActorOutput, ExecutorChoice
 from src.core.contracts.perception import Environment
 from src.core.contracts.planner import ActionType, PlannerOutput
-from src.runtime.runtime_state import AgentRuntimeState
 
 BROWSER_ACTIONS = {
     ActionType.CLICK,
@@ -73,7 +74,7 @@ def route_plan(plan: PlannerOutput) -> ExecutorChoice:
 
 
 def validate_environment_transition(
-    current_state: AgentRuntimeState | None,
+    current_state: Any | None,
     next_environment: Environment,
 ) -> None:
     """Validate that an environment transition is explicitly allowed."""
@@ -92,7 +93,7 @@ def validate_environment_transition(
 
 
 def validate_actor_for_state(
-    current_state: AgentRuntimeState | None,
+    current_state: Any | None,
     plan: PlannerOutput,
     actor: ActorOutput,
 ) -> None:

@@ -1,12 +1,8 @@
 """Native failure→strategy mapping for in-step adaptation retries.
 
-Replaces the previous indirection through the unified contract layer
-(LegacyOperonContractAdapter → UnifiedOrchestrator.adaptation_strategy_for)
-with a direct dict lookup keyed by the legacy FailureCategory enum.
-
-Behavior is preserved: the same FailureCategory inputs produce the same
-strategy outputs as before, but the call no longer requires a contract
-translation.
+Direct dict lookup keyed by the legacy FailureCategory enum. The same
+FailureCategory inputs produce the same strategy outputs, resolved without
+any intermediate contract translation.
 """
 
 from __future__ import annotations
@@ -20,9 +16,6 @@ FOCUS_CORRECTION_THEN_RETRY = "focus_correction_then_retry"
 REPERCEIVE_AND_REPLAN = "reperceive_and_replan"
 REFRESH_STATE_AND_REPLAN = "refresh_state_and_replan"
 
-# Combines the FailureCategory→FailureType mapping (was in
-# src/runtime/legacy_adapter._map_failure_type) with the FailureType→strategy
-# mapping (was in src/runtime/orchestrator.UnifiedOrchestrator.adaptation_strategy_for).
 _STRATEGY_TABLE: dict[FailureCategory, str] = {
     FailureCategory.EXECUTION_TARGET_NOT_FOUND: REPERCEIVE_AND_REPLAN,
     FailureCategory.SELECTOR_NO_CANDIDATES_AFTER_FILTERING: REPERCEIVE_AND_REPLAN,

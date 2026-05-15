@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -154,9 +153,8 @@ async def test_browser_computer_use_single_step_smoke() -> None:
         gemini_client=PlaceholderGeminiClient(),
     )
 
-    with patch.object(loop, "_maybe_video_verify", new_callable=AsyncMock, return_value=None):
-        start = await loop.start_run(RunTaskRequest(intent="Inspect the current browser page"))
-        step = await loop.step_run(StepRequest(run_id=start.run_id))
+    start = await loop.start_run(RunTaskRequest(intent="Inspect the current browser page"))
+    step = await loop.step_run(StepRequest(run_id=start.run_id))
 
     assert step.status in {RunStatus.RUNNING, RunStatus.SUCCEEDED}
     assert executor.current_run_id == start.run_id

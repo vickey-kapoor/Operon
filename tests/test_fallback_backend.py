@@ -29,13 +29,14 @@ class _FailingBackend:
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self.hints.extend(hints)
 
-    def clear_advisory_hints(self) -> None:
+    def clear_advisory_hints(self, run_id: str = "") -> None:
         self.hints = []
 
 
 class _RunScopedBackend:
     def __init__(self) -> None:
         self.hints: list[str] = []
+        self.scoped_hints: dict[str, list[str]] = {}
         self.calls: list[str] = []
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
@@ -66,14 +67,21 @@ class _RunScopedBackend:
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self.hints.extend(hints)
+        self.scoped_hints.setdefault(run_id, []).extend(hints)
 
-    def clear_advisory_hints(self) -> None:
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        if run_id:
+            self.scoped_hints.pop(run_id, None)
+            self.hints = [hint for scoped in self.scoped_hints.values() for hint in scoped]
+            return
+        self.scoped_hints = {}
         self.hints = []
 
 
 class _WorkingBackend:
     def __init__(self) -> None:
         self.hints: list[str] = []
+        self.scoped_hints: dict[str, list[str]] = {}
         self.perception = ScreenPerception(
             summary="Browser visible",
             page_hint="unknown",
@@ -102,8 +110,14 @@ class _WorkingBackend:
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self.hints.extend(hints)
+        self.scoped_hints.setdefault(run_id, []).extend(hints)
 
-    def clear_advisory_hints(self) -> None:
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        if run_id:
+            self.scoped_hints.pop(run_id, None)
+            self.hints = [hint for scoped in self.scoped_hints.values() for hint in scoped]
+            return
+        self.scoped_hints = {}
         self.hints = []
 
 
@@ -161,6 +175,17 @@ def test_fallback_backend_forwards_hints_to_active_backend() -> None:
     assert secondary.hints == ["avoid repeated clicks"]
 
 
+def test_fallback_backend_forwards_run_id_to_both_backends() -> None:
+    primary = _RunScopedBackend()
+    secondary = _WorkingBackend()
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+
+    backend.add_advisory_hints(["run-scoped hint"], source="memory", run_id="run-2")
+
+    assert primary.scoped_hints == {"run-2": ["run-scoped hint"]}
+    assert secondary.scoped_hints == {"run-2": ["run-scoped hint"]}
+
+
 @pytest.mark.asyncio
 async def test_fallback_backend_clears_inactive_hints_after_primary_success() -> None:
     primary = _RunScopedBackend()
@@ -174,8 +199,28 @@ async def test_fallback_backend_clears_inactive_hints_after_primary_success() ->
     )
     state = AgentState(run_id="run-2", intent="Browse", status=RunStatus.PENDING)
 
-    backend.add_advisory_hints(["fresh hint"], source="memory")
+    backend.add_advisory_hints(["fresh hint"], source="memory", run_id="run-2")
     await backend.perceive(frame, state)
 
     assert primary.hints == ["fresh hint"]
     assert secondary.hints == []
+
+
+@pytest.mark.asyncio
+async def test_fallback_backend_clears_only_inactive_hints_for_current_run() -> None:
+    primary = _RunScopedBackend()
+    secondary = _WorkingBackend()
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+    frame = CaptureFrame(
+        artifact_path="runs/run-2/step_1/before.png",
+        width=1280,
+        height=720,
+        mime_type="image/png",
+    )
+    state = AgentState(run_id="run-2", intent="Browse", status=RunStatus.PENDING)
+
+    backend.add_advisory_hints(["run-1 hint"], source="memory", run_id="run-1")
+    backend.add_advisory_hints(["run-2 hint"], source="memory", run_id="run-2")
+    await backend.perceive(frame, state)
+
+    assert secondary.scoped_hints == {"run-1": ["run-1 hint"]}

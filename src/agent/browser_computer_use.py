@@ -63,7 +63,7 @@ class BrowserComputerUseBackend(AgentBackend):
         )
         self._cached_decision: PolicyDecision | None = None
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
-        self._advisory_hints: list[tuple[str, str]] = []
+        self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._conversations: dict[str, _ConversationState] = {}
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
@@ -129,19 +129,20 @@ class BrowserComputerUseBackend(AgentBackend):
 
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         """Reset hints to a known state. Test use only."""
-        self._advisory_hints = [(h, "") for h in hints if h]
+        self._advisory_hints = {"": [(h, "") for h in hints if h]}
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         """Append hints without discarding hints set by other writers."""
         incoming = [(h, source) for h in hints if h]
-        self._advisory_hints.extend(incoming)
+        bucket = self._advisory_hints.setdefault(run_id, [])
+        bucket.extend(incoming)
         logger.debug(
-            "add_advisory_hints(%s): source=%r incoming=%d total=%d",
-            self.__class__.__name__, source, len(incoming), len(self._advisory_hints),
+            "add_advisory_hints(%s): run=%r source=%r incoming=%d total=%d",
+            self.__class__.__name__, run_id, source, len(incoming), len(bucket),
         )
 
-    def clear_advisory_hints(self) -> None:
-        self._advisory_hints = []
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        self._advisory_hints.pop(run_id, None)
 
     async def _run_with_retry(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
         try:
@@ -223,14 +224,14 @@ class BrowserComputerUseBackend(AgentBackend):
         return response_payload
 
     def _render_prompt(self, state: AgentState) -> str:
-        if self._advisory_hints:
+        hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None)
+        if hints:
             _counts: dict[str, int] = {}
-            for _, _src in self._advisory_hints:
+            for _, _src in hints:
                 _label = _src or "unknown"
                 _counts[_label] = _counts.get(_label, 0) + 1
             logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
-        hint_block = "\n".join(f"- {h}" for h, _ in self._advisory_hints) if self._advisory_hints else "none"
-        self._advisory_hints = []
+        hint_block = "\n".join(f"- {h}" for h, _ in hints) if hints else "none"
         return self._prompt_template.format(
             intent=state.intent,
             current_subgoal=state.current_subgoal or "not set",

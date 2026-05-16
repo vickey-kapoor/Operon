@@ -29,7 +29,7 @@ class FallbackBackend(AgentBackend):
             self._active_backends[state.run_id] = self.secondary
             backend = self.secondary
             perception = await backend.perceive(screenshot, state)
-        self._clear_inactive_hints(active=backend)
+        self._clear_inactive_hints(active=backend, run_id=state.run_id)
         self._latest_backend = backend
         return perception
 
@@ -40,7 +40,7 @@ class FallbackBackend(AgentBackend):
     ) -> PolicyDecision:
         backend = self._backend_for_run(state.run_id)
         decision = await backend.choose_action(state, perception)
-        self._clear_inactive_hints(active=backend)
+        self._clear_inactive_hints(active=backend, run_id=state.run_id)
         self._latest_backend = backend
         return decision
 
@@ -54,12 +54,12 @@ class FallbackBackend(AgentBackend):
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         """Append hints on both backends without discarding existing ones."""
-        self.primary.add_advisory_hints(hints, source=source)
-        self.secondary.add_advisory_hints(hints, source=source)
+        self.primary.add_advisory_hints(hints, source=source, run_id=run_id)
+        self.secondary.add_advisory_hints(hints, source=source, run_id=run_id)
 
     def _backend_for_run(self, run_id: str) -> AgentBackend:
         return self._active_backends.get(run_id, self.primary)
 
-    def _clear_inactive_hints(self, *, active: AgentBackend) -> None:
+    def _clear_inactive_hints(self, *, active: AgentBackend, run_id: str) -> None:
         inactive = self.secondary if active is self.primary else self.primary
-        inactive.clear_advisory_hints()
+        inactive.clear_advisory_hints(run_id=run_id)

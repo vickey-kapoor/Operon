@@ -5,10 +5,10 @@ _For AI coding agents and contributors._
 Operon uses a Python `src/` layout. Core agent logic lives in `src/agent/`, API routes in `src/api/`, CDP-based browser observation in `src/browser/`, executors in `src/executor/`, Gemini clients in `src/clients/`, shared schemas in `src/models/`, and persistence in `src/store/`. Tests live in `tests/` and generally mirror the package they cover. Supporting material is kept in `prompts/`, `docs/`, `assets/`, `examples/contracts/`, and `scripts/`. The optional React 19 Command Center UI lives in `ui/`.
 
 ## Build, Test, and Development Commands
-Use Python 3.11 locally.
+Use Python 3.14 locally. Package metadata remains compatible with Python 3.11+.
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
 playwright install chromium
@@ -39,7 +39,7 @@ Follow existing Python conventions: 4-space indentation, type hints, `snake_case
 - **Benchmark hooks**: benchmark datasets and the local runner are optional. Do not add benchmark-specific logic to core policy rules unless a dedicated plugin registry is restored.
 
 ## Testing Guidelines
-Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs Python 3.11 and 3.12 plus Ruff.
+Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs Python 3.11 and 3.14 plus Ruff.
 
 Live-server and real-environment tests are opt-in and excluded from the default CI path:
 - `tests/test_e2e_quick_tasks.py`, `tests/test_bug_fixes_verification.py` - require a live server

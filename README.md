@@ -48,10 +48,10 @@ FastAPI routes
 
 ## Quick Start
 
-Requirements: Python 3.11 and Chrome/Chromium for browser runs.
+Requirements: Python 3.14 for local development and Chrome/Chromium for browser runs. Package metadata remains compatible with Python 3.11+.
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
 playwright install chromium

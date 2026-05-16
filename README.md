@@ -138,7 +138,6 @@ src-tauri/    Optional Tauri shell for the UI
 prompts/      Model prompt templates
 tests/        Pytest suite
 docs/         Architecture and product notes
-benchmarks/   Dataset files and benchmark inputs
 ```
 
 ## Testing
@@ -165,6 +164,4 @@ These are not required for the core computer-use agent:
 - `ui/` and `src-tauri/`: command center UI and desktop packaging shell.
 - `src/executor/browserbase_native.py`: Browserbase backend.
 - `src/tools/file_porter.py`: Google Drive file-transfer helper.
-- `benchmarks/` and `src/agent/benchmark.py`: benchmark datasets and local benchmark runner.
 - `docs/substack_drafts/`: historical writeups.
-

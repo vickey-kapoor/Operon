@@ -39,7 +39,7 @@ request
 
 ## Active API
 
-The current FastAPI app exposes run, desktop, observer, health, cleanup, pause/stop, and websocket endpoints. It does not serve the optional React UI and does not expose benchmark or command-center HTML routes.
+The current FastAPI app exposes run, desktop, observer, health, cleanup, pause/stop, and websocket endpoints. It does not serve the optional React UI and does not expose command-center HTML routes.
 
 ## Runtime Backends
 
@@ -64,7 +64,5 @@ Memory support exists in `src/store/memory.py` and `src/models/episode.py`. The 
 ## Optional Or Experimental Areas
 
 - `src/core/contracts` and `src/core/router.py`: contract models and environment/action validation used by executor adapters and tests.
-- `benchmarks/`: dataset files only.
-- `src/agent/benchmark.py`: local benchmark runner.
 - `docs/substack_drafts/`: historical writeups.
 - `docs/claude_task.md`: historical task backlog and audit notes.

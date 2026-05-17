@@ -155,7 +155,7 @@ async def test_out_of_bounds_click_skipped_and_warns(caplog: pytest.LogCaptureFi
 
     with (
         patch("src.executor.desktop.pyautogui.click") as mock_click,
-        patch("src.executor.desktop.mss.mss", return_value=_mss_ctx(monitors_primary_only)),
+        patch("src.executor.desktop._mss", return_value=_mss_ctx(monitors_primary_only)),
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         caplog.at_level(logging.WARNING, logger="src.executor.desktop"),
     ):

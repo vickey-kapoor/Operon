@@ -49,7 +49,7 @@ async def test_capture_returns_valid_frame() -> None:
     ]
 
     with (
-        patch("src.executor.desktop.mss.mss") as mock_mss,
+        patch("src.executor.desktop._mss") as mock_mss,
         patch("src.executor.desktop.mss.tools.to_png"),
     ):
         ctx = MagicMock()
@@ -658,7 +658,7 @@ async def test_screenshot_region_success() -> None:
     )
 
     with (
-        patch("src.executor.desktop.mss.mss") as mock_mss,
+        patch("src.executor.desktop._mss") as mock_mss,
         patch("src.executor.desktop.mss.tools.to_png"),
     ):
         ctx = MagicMock()

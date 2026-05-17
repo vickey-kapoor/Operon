@@ -58,6 +58,12 @@ logger = logging.getLogger(__name__)
 # non-Windows is a no-op (creationflags is ignored outside win32).
 _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+
+def _mss():
+    """Return an MSS context manager using the non-deprecated constructor when available."""
+    factory = getattr(mss, "MSS", mss.mss)
+    return factory()
+
 if not hasattr(os, "startfile"):
     def _missing_startfile(_path: str) -> None:
         raise NotImplementedError("os.startfile is only available on Windows")
@@ -141,7 +147,7 @@ def validate_display_baseline(*, require_min_resolution: tuple[int, int] = (1280
 
     # --- Resolution ---
     try:
-        with mss.mss() as sct:
+        with _mss() as sct:
             if not sct.monitors or len(sct.monitors) < 2:
                 return
             primary = sct.monitors[1]
@@ -200,7 +206,7 @@ def _foreground_monitor() -> dict | None:
         hmon = user32.MonitorFromWindow(hwnd, 2)
         if not hmon:
             return None
-        with mss.mss() as sct:
+        with _mss() as sct:
             for mon in sct.monitors[1:]:  # skip monitors[0] (virtual combined)
                 # mss monitor dicts use left/top/width/height; cross-reference via
                 # the monitor's origin to match the HMONITOR returned by Win32.
@@ -335,7 +341,7 @@ class DesktopExecutor(Executor):
         """
         import random
         try:
-            with mss.mss() as sct:
+            with _mss() as sct:
                 if len(sct.monitors) < 2:
                     return 0.0
                 mon = sct.monitors[1]
@@ -345,7 +351,7 @@ class DesktopExecutor(Executor):
             rng = random.Random(42)  # reproducible seed for calibration
             margin = crop_radius + 2
             variances: list[float] = []
-            with mss.mss() as sct:
+            with _mss() as sct:
                 for _ in range(num_crops):
                     cx = rng.randint(margin, max(margin + 1, mon_w - margin)) + mon_l
                     cy = rng.randint(margin, max(margin + 1, mon_h - margin)) + mon_t
@@ -367,7 +373,7 @@ class DesktopExecutor(Executor):
     def _coord_in_monitor_bounds(self, virt_x: int, virt_y: int) -> tuple[bool, list[dict]]:
         """Return (in_bounds, physical_monitors) for the given virtual-desktop coord."""
         try:
-            with mss.mss() as sct:
+            with _mss() as sct:
                 monitors = list(sct.monitors[1:])
             if not monitors:
                 return True, monitors
@@ -399,7 +405,7 @@ class DesktopExecutor(Executor):
         except Exception:
             logger.debug("context_reset: escape press failed", exc_info=True)
         try:
-            with mss.mss() as sct:
+            with _mss() as sct:
                 mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
                 cx = mon["left"] + mon["width"] // 2
                 cy = mon["top"] + mon["height"] // 3  # upper-third: avoids taskbar
@@ -486,7 +492,7 @@ class DesktopExecutor(Executor):
     def _capture_burst_sync(self) -> tuple[CaptureFrame, float]:
         """Capture t0, t+100ms, t+200ms frames; return (last_frame, visual_velocity)."""
         import time as _time
-        with mss.mss() as sct:
+        with _mss() as sct:
             monitor = _foreground_monitor() or sct.monitors[1]
             sct.grab(monitor)  # t0 frame (discarded — used only to warm up the capture pipeline)
             _time.sleep(0.1)
@@ -723,7 +729,7 @@ class DesktopExecutor(Executor):
 
     def _sample_region(self, x: int, y: int, radius: int = 30) -> bytes:
         """Capture a small pixel region around (x, y) for focus-change detection."""
-        with mss.mss() as sct:
+        with _mss() as sct:
             region = {
                 "left": max(0, x - radius),
                 "top": max(0, y - radius),
@@ -881,7 +887,7 @@ class DesktopExecutor(Executor):
             filepath = self._artifact_dir / filename
 
             def _grab_region() -> None:
-                with mss.mss() as sct:
+                with _mss() as sct:
                     shot = sct.grab(region)
                     mss.tools.to_png(shot.rgb, shot.size, output=str(filepath))
 

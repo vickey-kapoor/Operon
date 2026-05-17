@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import os
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,6 +74,12 @@ def _validate_run_id(run_id: str) -> None:
     """Reject run_ids that would cause filesystem issues or path traversal."""
     if len(run_id) > _MAX_RUN_ID_LENGTH or not _RUN_ID_RE.match(run_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+
+def _test_safe_mode_enabled() -> bool:
+    return os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true"
+
+
 _RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
@@ -289,7 +296,8 @@ def get_desktop_agent_loop() -> AgentLoop:
 @router.post("/run-task", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def run_task(request: RunTaskRequest) -> RunResponse:
     """Create a new run and immediately kick off the agent loop in the background."""
-    await _ensure_cdp_ready(mode=request.mode)
+    if not _test_safe_mode_enabled():
+        await _ensure_cdp_ready(mode=request.mode)
     loop = get_agent_loop()
     response = await loop.start_run(request)
     _ws_stream.set_active_run(response.run_id)
@@ -299,12 +307,15 @@ async def run_task(request: RunTaskRequest) -> RunResponse:
         "intent": request.intent,
         "status": response.status.value,
     })
-    task = asyncio.create_task(_auto_run_loop(loop, response.run_id, request.max_steps))
-    task.add_done_callback(
-        lambda t: logger.exception("[loop] run %s crashed", response.run_id, exc_info=t.exception())
-        if not t.cancelled() and t.exception() is not None else None
-    )
-    logger.info("[run-task] loop scheduled for run %s (max_steps=%d)", response.run_id, request.max_steps)
+    if _test_safe_mode_enabled():
+        logger.info("[run-task] test safe mode active; auto-run skipped for run %s", response.run_id)
+    else:
+        task = asyncio.create_task(_auto_run_loop(loop, response.run_id, request.max_steps))
+        task.add_done_callback(
+            lambda t: logger.exception("[loop] run %s crashed", response.run_id, exc_info=t.exception())
+            if not t.cancelled() and t.exception() is not None else None
+        )
+        logger.info("[run-task] loop scheduled for run %s (max_steps=%d)", response.run_id, request.max_steps)
     return response
 
 

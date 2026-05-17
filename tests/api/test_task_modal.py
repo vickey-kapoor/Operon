@@ -35,6 +35,21 @@ def test_submit_browser_task_success(client: TestClient) -> None:
     assert data["status"] == "pending"
 
 
+def test_submit_browser_task_safe_mode_skips_cdp_and_background_loop(client: TestClient) -> None:
+    """Unit tests run in safe mode, so /run-task must not launch browsers or background loops."""
+    with (
+        patch("src.api.routes.get_agent_loop") as mock_loop,
+        patch("src.api.routes._ensure_cdp_ready", new_callable=AsyncMock) as mock_cdp,
+        patch("src.api.routes.asyncio.create_task") as mock_create_task,
+    ):
+        mock_loop.return_value.start_run = AsyncMock(return_value=_run_response())
+        resp = client.post("/run-task", json={"intent": "Navigate to example.com"})
+
+    assert resp.status_code == 202
+    mock_cdp.assert_not_awaited()
+    mock_create_task.assert_not_called()
+
+
 def test_submit_desktop_task_success(client: TestClient) -> None:
     """POST /desktop/run-task with valid intent returns 202 with run_id."""
     with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:

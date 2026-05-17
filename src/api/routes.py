@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 _agent_loop: AgentLoop | None = None
 _desktop_agent_loop: AgentLoop | None = None
+_auto_run_tasks: dict[str, asyncio.Task] = {}
 DesktopExecutor = None
 NativeBrowserExecutor = None
 _MAX_RUN_ID_LENGTH = 64
@@ -85,6 +86,48 @@ async def _cleanup_cancelled_run(loop: AgentLoop, run_id: str) -> None:
         await loop._cleanup_completed_run(run_id)
     except Exception as exc:
         logger.warning("cleanup after cancellation failed for %s: %s", run_id, exc)
+
+
+def _auto_run_done_callback(run_id: str):
+    def _callback(task: asyncio.Task) -> None:
+        if _auto_run_tasks.get(run_id) is task:
+            _auto_run_tasks.pop(run_id, None)
+        if task.cancelled():
+            logger.info("[loop] run %s auto-run task cancelled", run_id)
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("[loop] run %s crashed", run_id, exc_info=(type(exc), exc, exc.__traceback__))
+
+    return _callback
+
+
+def _schedule_auto_run(loop: AgentLoop, run_id: str, max_steps: int) -> asyncio.Task:
+    existing = _auto_run_tasks.get(run_id)
+    if existing is not None:
+        if not existing.done():
+            logger.info("[loop] run %s auto-run already scheduled", run_id)
+            return existing
+        _auto_run_tasks.pop(run_id, None)
+
+    task = asyncio.create_task(_auto_run_loop(loop, run_id, max_steps))
+    _auto_run_tasks[run_id] = task
+    task.add_done_callback(_auto_run_done_callback(run_id))
+    logger.info("[loop] run %s auto-run scheduled (max_steps=%d)", run_id, max_steps)
+    return task
+
+
+async def _cancel_auto_run(run_id: str) -> None:
+    task = _auto_run_tasks.pop(run_id, None)
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.warning("[loop] run %s auto-run cancellation surfaced error: %s", run_id, exc)
 
 
 _RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
@@ -317,12 +360,7 @@ async def run_task(request: RunTaskRequest) -> RunResponse:
     if _test_safe_mode_enabled():
         logger.info("[run-task] test safe mode active; auto-run skipped for run %s", response.run_id)
     else:
-        task = asyncio.create_task(_auto_run_loop(loop, response.run_id, request.max_steps))
-        task.add_done_callback(
-            lambda t: logger.exception("[loop] run %s crashed", response.run_id, exc_info=t.exception())
-            if not t.cancelled() and t.exception() is not None else None
-        )
-        logger.info("[run-task] loop scheduled for run %s (max_steps=%d)", response.run_id, request.max_steps)
+        _schedule_auto_run(loop, response.run_id, request.max_steps)
     return response
 
 
@@ -614,11 +652,7 @@ async def resume_run(request: ResumeRequest) -> RunResponse:
         response = await loop.resume_run(request.run_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    task = asyncio.create_task(_auto_run_loop(loop, request.run_id, max_steps=200))
-    task.add_done_callback(
-        lambda t: logger.exception("[loop] resumed run %s crashed", request.run_id, exc_info=t.exception())
-        if not t.cancelled() and t.exception() is not None else None
-    )
+    _schedule_auto_run(loop, request.run_id, max_steps=200)
     return response
 
 
@@ -672,6 +706,7 @@ async def stop_run(request: StopRunRequest) -> RunResponse:
         run = await run_store.set_status(request.run_id, RunStatus.CANCELLED)
         cancelled_now = True
     if cancelled_now:
+        await _cancel_auto_run(request.run_id)
         await _cleanup_cancelled_run(loop, request.run_id)
     return RunResponse(
         run_id=run.run_id,
@@ -778,6 +813,7 @@ async def stop_run_by_id(run_id: str) -> dict:
         run = await run_store.set_status(run_id, RunStatus.CANCELLED)
         cancelled_now = True
     if cancelled_now:
+        await _cancel_auto_run(run_id)
         await _cleanup_cancelled_run(loop, run_id)
     return {"run_id": run_id, "status": run.status.value}
 

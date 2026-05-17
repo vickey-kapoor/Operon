@@ -80,6 +80,13 @@ def _test_safe_mode_enabled() -> bool:
     return os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true"
 
 
+async def _cleanup_cancelled_run(loop: AgentLoop, run_id: str) -> None:
+    try:
+        await loop._cleanup_completed_run(run_id)
+    except Exception as exc:
+        logger.warning("cleanup after cancellation failed for %s: %s", run_id, exc)
+
+
 _RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
@@ -654,13 +661,18 @@ async def health() -> HealthResponse:
 async def stop_run(request: StopRunRequest) -> RunResponse:
     """Cancel an active run. Safe to call on already-terminal runs."""
     _validate_run_id(request.run_id)
-    run_store = get_agent_loop().run_store
+    loop = get_agent_loop()
+    run_store = loop.run_store
     run = await run_store.get_run(request.run_id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     terminal = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
+    cancelled_now = False
     if run.status not in terminal:
         run = await run_store.set_status(request.run_id, RunStatus.CANCELLED)
+        cancelled_now = True
+    if cancelled_now:
+        await _cleanup_cancelled_run(loop, request.run_id)
     return RunResponse(
         run_id=run.run_id,
         status=run.status,
@@ -755,13 +767,18 @@ async def observer_live_browser(run_id: str) -> Response:
 async def stop_run_by_id(run_id: str) -> dict:
     """Stop a run by path parameter. Idempotent on already-terminal runs."""
     _validate_run_id(run_id)
-    run_store = get_agent_loop().run_store
+    loop = get_agent_loop()
+    run_store = loop.run_store
     run = await run_store.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     terminal = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
+    cancelled_now = False
     if run.status not in terminal:
         run = await run_store.set_status(run_id, RunStatus.CANCELLED)
+        cancelled_now = True
+    if cancelled_now:
+        await _cleanup_cancelled_run(loop, run_id)
     return {"run_id": run_id, "status": run.status.value}
 
 

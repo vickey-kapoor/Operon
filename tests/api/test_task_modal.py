@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -48,6 +49,48 @@ def test_submit_browser_task_safe_mode_skips_cdp_and_background_loop(client: Tes
     assert resp.status_code == 202
     mock_cdp.assert_not_awaited()
     mock_create_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_schedule_auto_run_deduplicates_active_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only one background auto-run task should exist for a run_id."""
+    from src.api import routes
+
+    routes._auto_run_tasks.clear()
+    release = asyncio.Event()
+
+    async def fake_auto_run(_loop, _run_id: str, _max_steps: int) -> None:
+        await release.wait()
+
+    monkeypatch.setattr(routes, "_auto_run_loop", fake_auto_run)
+
+    first = routes._schedule_auto_run(object(), "run-dedupe", 5)
+    second = routes._schedule_auto_run(object(), "run-dedupe", 200)
+
+    assert first is second
+    assert routes._auto_run_tasks["run-dedupe"] is first
+
+    await routes._cancel_auto_run("run-dedupe")
+    assert "run-dedupe" not in routes._auto_run_tasks
+
+
+@pytest.mark.asyncio
+async def test_schedule_auto_run_removes_completed_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Completed auto-run tasks should not remain in the registry."""
+    from src.api import routes
+
+    routes._auto_run_tasks.clear()
+
+    async def fake_auto_run(_loop, _run_id: str, _max_steps: int) -> None:
+        return None
+
+    monkeypatch.setattr(routes, "_auto_run_loop", fake_auto_run)
+
+    task = routes._schedule_auto_run(object(), "run-complete", 5)
+    await task
+    await asyncio.sleep(0)
+
+    assert "run-complete" not in routes._auto_run_tasks
 
 
 def test_submit_desktop_task_success(client: TestClient) -> None:
@@ -114,7 +157,10 @@ def test_stop_current_run_before_new_task(client: TestClient) -> None:
         run_id="old-run-1", intent="old task", status=RunStatus.CANCELLED
     )
 
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with (
+        patch("src.api.routes.get_agent_loop") as mock_loop,
+        patch("src.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
+    ):
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=running)
         store.set_status = AsyncMock(return_value=cancelled)
@@ -126,6 +172,7 @@ def test_stop_current_run_before_new_task(client: TestClient) -> None:
     data = resp.json()
     assert data["status"] == "cancelled"
     store.set_status.assert_awaited_once_with("old-run-1", RunStatus.CANCELLED)
+    mock_cancel.assert_awaited_once_with("old-run-1")
     mock_loop.return_value._cleanup_completed_run.assert_awaited_once_with("old-run-1")
 
 
@@ -141,7 +188,10 @@ def test_stop_run_by_path_cleanup_failure_still_returns_cancelled(client: TestCl
         run_id="cleanup-fails", intent="old task", status=RunStatus.CANCELLED
     )
 
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with (
+        patch("src.api.routes.get_agent_loop") as mock_loop,
+        patch("src.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
+    ):
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=running)
         store.set_status = AsyncMock(return_value=cancelled)
@@ -151,6 +201,7 @@ def test_stop_run_by_path_cleanup_failure_still_returns_cancelled(client: TestCl
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "cancelled"
+    mock_cancel.assert_awaited_once_with("cleanup-fails")
     mock_loop.return_value._cleanup_completed_run.assert_awaited_once_with("cleanup-fails")
 
 
@@ -166,7 +217,10 @@ def test_stop_run_by_body_cleans_up_cancelled_run(client: TestClient) -> None:
         run_id="body-stop-1", intent="old task", status=RunStatus.CANCELLED
     )
 
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with (
+        patch("src.api.routes.get_agent_loop") as mock_loop,
+        patch("src.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
+    ):
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=running)
         store.set_status = AsyncMock(return_value=cancelled)
@@ -177,6 +231,7 @@ def test_stop_run_by_body_cleans_up_cancelled_run(client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.json()["status"] == "cancelled"
     store.set_status.assert_awaited_once_with("body-stop-1", RunStatus.CANCELLED)
+    mock_cancel.assert_awaited_once_with("body-stop-1")
     mock_loop.return_value._cleanup_completed_run.assert_awaited_once_with("body-stop-1")
 
 
@@ -197,7 +252,10 @@ def test_stop_run_by_path_already_done_is_noop(client: TestClient) -> None:
         run_id="done-run", intent="done task", status=RunStatus.SUCCEEDED
     )
 
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with (
+        patch("src.api.routes.get_agent_loop") as mock_loop,
+        patch("src.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
+    ):
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=done)
         store.set_status = AsyncMock()
@@ -208,6 +266,7 @@ def test_stop_run_by_path_already_done_is_noop(client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.json()["status"] == "succeeded"
     store.set_status.assert_not_called()
+    mock_cancel.assert_not_awaited()
     mock_loop.return_value._cleanup_completed_run.assert_not_awaited()
 
 

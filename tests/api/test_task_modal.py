@@ -118,6 +118,7 @@ def test_stop_current_run_before_new_task(client: TestClient) -> None:
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=running)
         store.set_status = AsyncMock(return_value=cancelled)
+        mock_loop.return_value._cleanup_completed_run = AsyncMock()
 
         resp = client.post("/run/old-run-1/stop")
 
@@ -125,6 +126,58 @@ def test_stop_current_run_before_new_task(client: TestClient) -> None:
     data = resp.json()
     assert data["status"] == "cancelled"
     store.set_status.assert_awaited_once_with("old-run-1", RunStatus.CANCELLED)
+    mock_loop.return_value._cleanup_completed_run.assert_awaited_once_with("old-run-1")
+
+
+def test_stop_run_by_path_cleanup_failure_still_returns_cancelled(client: TestClient) -> None:
+    """Cleanup failure after cancellation should not block the stop response."""
+    running_state_cls = __import__(
+        "src.models.state", fromlist=["AgentState"]
+    ).AgentState
+    running = running_state_cls(
+        run_id="cleanup-fails", intent="old task", status=RunStatus.RUNNING
+    )
+    cancelled = running_state_cls(
+        run_id="cleanup-fails", intent="old task", status=RunStatus.CANCELLED
+    )
+
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        store = mock_loop.return_value.run_store
+        store.get_run = AsyncMock(return_value=running)
+        store.set_status = AsyncMock(return_value=cancelled)
+        mock_loop.return_value._cleanup_completed_run = AsyncMock(side_effect=RuntimeError("close failed"))
+
+        resp = client.post("/run/cleanup-fails/stop")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+    mock_loop.return_value._cleanup_completed_run.assert_awaited_once_with("cleanup-fails")
+
+
+def test_stop_run_by_body_cleans_up_cancelled_run(client: TestClient) -> None:
+    """POST /stop cancels a running task and releases browser resources."""
+    running_state_cls = __import__(
+        "src.models.state", fromlist=["AgentState"]
+    ).AgentState
+    running = running_state_cls(
+        run_id="body-stop-1", intent="old task", status=RunStatus.RUNNING
+    )
+    cancelled = running_state_cls(
+        run_id="body-stop-1", intent="old task", status=RunStatus.CANCELLED
+    )
+
+    with patch("src.api.routes.get_agent_loop") as mock_loop:
+        store = mock_loop.return_value.run_store
+        store.get_run = AsyncMock(return_value=running)
+        store.set_status = AsyncMock(return_value=cancelled)
+        mock_loop.return_value._cleanup_completed_run = AsyncMock()
+
+        resp = client.post("/stop", json={"run_id": "body-stop-1"})
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+    store.set_status.assert_awaited_once_with("body-stop-1", RunStatus.CANCELLED)
+    mock_loop.return_value._cleanup_completed_run.assert_awaited_once_with("body-stop-1")
 
 
 def test_stop_run_by_path_not_found_returns_404(client: TestClient) -> None:
@@ -148,12 +201,14 @@ def test_stop_run_by_path_already_done_is_noop(client: TestClient) -> None:
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=done)
         store.set_status = AsyncMock()
+        mock_loop.return_value._cleanup_completed_run = AsyncMock()
 
         resp = client.post("/run/done-run/stop")
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "succeeded"
     store.set_status.assert_not_called()
+    mock_loop.return_value._cleanup_completed_run.assert_not_awaited()
 
 
 # ── Instruction validation (server-side) ─────────────────────────────────────

@@ -697,21 +697,27 @@ async def test_second_local_browser_launch_inherits_same_port(
     launch would fail at the OS level (address in use), not silently bind a random
     port. This test confirms the port is hardcoded so the failure is deterministic."""
     manager, executor = _make_fake_playwright_manager(monkeypatch)
+    manager2 = None
+    executor2 = None
+    try:
+        await executor._ensure_session("run-first")
+        first_args = manager.playwright.chromium.launch.call_args.kwargs.get("args", [])
 
-    await executor._ensure_session("run-first")
-    first_args = manager.playwright.chromium.launch.call_args.kwargs.get("args", [])
+        manager.playwright.chromium.launch.reset_mock()
+        manager2, executor2 = _make_fake_playwright_manager(monkeypatch)
+        await executor2._ensure_session("run-second")
+        second_args = manager2.playwright.chromium.launch.call_args.kwargs.get("args", [])
 
-    manager.playwright.chromium.launch.reset_mock()
-    manager2, executor2 = _make_fake_playwright_manager(monkeypatch)
-    await executor2._ensure_session("run-second")
-    second_args = manager2.playwright.chromium.launch.call_args.kwargs.get("args", [])
-
-    assert "--remote-debugging-port=9222" in first_args
-    assert "--remote-debugging-port=9222" in second_args
-    assert first_args == second_args, (
-        "Both launches must request the same port so a port-conflict error is "
-        "surfaced immediately rather than one run silently getting an unbound port."
-    )
+        assert "--remote-debugging-port=9222" in first_args
+        assert "--remote-debugging-port=9222" in second_args
+        assert first_args == second_args, (
+            "Both launches must request the same port so a port-conflict error is "
+            "surfaced immediately rather than one run silently getting an unbound port."
+        )
+    finally:
+        await executor.aclose_run("run-first")
+        if executor2 is not None:
+            await executor2.aclose_run("run-second")
 
 
 # ── Observable mode tests ────────────────────────────────────────────────────

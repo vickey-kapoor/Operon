@@ -19,7 +19,7 @@ from operon.agent.hitl import (
     post_hitl_webhook,
     start_escalation_timer,
 )
-from operon.agent.policy_rules import PolicyRuleEngine
+from operon.agent.policy.rules import PolicyRuleEngine
 from operon.models.common import RunStatus
 from operon.models.perception import ScreenPerception, UIElement, UIElementType
 from operon.models.state import AgentState

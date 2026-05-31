@@ -11,8 +11,8 @@ from uuid import uuid4
 import pytest
 
 from operon.agent.loop import AgentLoop
-from operon.agent.recovery import RuleBasedRecoveryManager
-from operon.agent.verifier import DeterministicVerifierService
+from operon.agent.policy.recovery import RuleBasedRecoveryManager
+from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.clients.gemini import PlaceholderGeminiClient
 from operon.models.capture import CaptureFrame
 from operon.models.common import (

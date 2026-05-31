@@ -3,29 +3,32 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from operon.core.paths import browser_artifacts_dir, runs_dir
 from operon.models.common import RunStatus, StopReason
 from operon.models.logs import PreStepFailureLog, StepLog
 from operon.models.state import AgentState
 from operon.models.usage import ModelUsage, UsageAggregate
 from operon.store.replay import load_run_replay
-from operon.store.summary import _load_state_from_path
+
+
+def _load_state_from_path(path: Path) -> AgentState:
+    return AgentState.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def runs_root() -> Path:
     """Return the root directory used for local run artifacts."""
-    return Path(os.getenv("OPERON_RUNS_ROOT", "runs")).resolve()
+    return runs_dir().resolve()
 
 
 def browser_artifacts_root() -> Path:
     """Return the root directory used for browser session recordings."""
-    return Path(os.getenv("OPERON_BROWSER_ARTIFACTS_ROOT", ".browser-artifacts")).resolve()
+    return browser_artifacts_dir().resolve()
 
 
 def list_runs(limit: int = 20) -> list[dict[str, Any]]:

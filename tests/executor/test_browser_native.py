@@ -515,7 +515,7 @@ async def test_type_clears_before_typing_when_requested(tmp_path: Path) -> None:
 
 # ── vision-only contract tests ────────────────────────────────────
 #
-# Per CLAUDE.md, the executor's action paths must NOT consult the DOM
+# Per project invariants, the executor's action paths must NOT consult the DOM
 # (no selectors, no elementFromPoint, no element-name heuristics). These
 # tests lock the contract so future regressions are caught.
 

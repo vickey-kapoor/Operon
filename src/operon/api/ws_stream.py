@@ -1,8 +1,7 @@
 """WebSocket streaming endpoint.
 
 Publishes step events (JSON text frames) and screenshot frames (binary JPEG)
-to all connected clients. The Rust WS bridge on port 9001 proxies these to
-the React Command Center frontend.
+to all connected observable clients.
 
 Usage from route handlers:
     from operon.api import ws_stream
@@ -126,7 +125,7 @@ async def _sender(ws: WebSocket, q: asyncio.Queue) -> None:
 
 
 async def _receiver(ws: WebSocket) -> None:
-    """Consume control messages from the frontend."""
+    """Consume control messages from observable clients."""
     async for raw in ws.iter_text():
         try:
             msg = json.loads(raw)

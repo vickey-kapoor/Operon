@@ -4,7 +4,7 @@ Connects to an existing Chrome instance (user's real browser) via Playwright's
 connect_over_cdp. Streams JPEG frames using the CDP Page.startScreencast protocol
 and publishes them to all connected WebSocket clients via ws_stream.publish_frame().
 
-Input injection translates normalised frontend coordinates (0.0–1.0) into real
+Input injection translates normalised client coordinates (0.0–1.0) into real
 browser mouse/keyboard events on the actual page viewport.
 """
 
@@ -263,7 +263,7 @@ class BrowserManager:
         input_type: str,
         **kwargs: Any,
     ) -> None:
-        """Translate normalised frontend coordinates into real browser input events.
+        """Translate normalised client coordinates into real browser input events.
 
         Args:
             x_ratio: Horizontal position as a fraction of viewport width (0.0–1.0).

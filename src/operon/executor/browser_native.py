@@ -16,6 +16,7 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
+from operon.core.paths import browser_artifacts_dir
 from operon.executor.browser import Executor
 from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 from operon.models.capture import CaptureFrame
@@ -84,7 +85,7 @@ class NativeBrowserExecutor(Executor):
     def __init__(
         self,
         *,
-        artifact_dir: str | Path = ".browser-artifacts",
+        artifact_dir: str | Path | None = None,
 # ✅ Healed 2026-04-26T22:45:36Z | Added --disable-blink-features=AutomationControlled to prevent detection and add
         viewport_width: int | None = None,
         viewport_height: int | None = None,
@@ -92,7 +93,7 @@ class NativeBrowserExecutor(Executor):
         record_video: bool | None = None,
         post_action_delay: float = 0.5,
     ) -> None:
-        self._artifact_dir = Path(artifact_dir)
+        self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else browser_artifacts_dir()
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self._viewport_width = viewport_width or int(os.getenv("BROWSER_WIDTH", "1920"))
         self._viewport_height = viewport_height or int(os.getenv("BROWSER_HEIGHT", "1080"))
@@ -203,7 +204,7 @@ class NativeBrowserExecutor(Executor):
                 return self._ok(action, detail, None)
             elif at is ActionType.CLICK:
                 # Vision-only: coords from the perception layer are the single source
-                # of truth. CSS-selector fallbacks are a CLAUDE.md contract violation
+                # of truth. CSS-selector fallbacks are a project contract violation
                 # ("no DOM, no selectors, no XPaths in policy/perception").
                 page = await self._current_page()
                 point = self._action_point(action)
@@ -218,7 +219,7 @@ class NativeBrowserExecutor(Executor):
                     return self._fail(action, "hover requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
                 await page.mouse.move(*point)
             elif at is ActionType.TYPE:
-                # Atomic Focus+Type (CLAUDE.md system invariant): when coordinates
+                # Atomic Focus+Type (project system invariant): when coordinates
                 # are present, click then type in a single executor call so no
                 # intervening state can steal focus. No DOM, no selectors, no
                 # element-name heuristics — vision-only.
@@ -334,7 +335,7 @@ class NativeBrowserExecutor(Executor):
 
                 # Click the upload control to trigger the native OS file picker.
                 # Vision-only: coordinates are required; selector/element-id fallbacks
-                # are CLAUDE.md contract violations.
+                # are project contract violations.
                 page = await self._current_page()
                 point = self._action_point(action)
                 if point is None:
@@ -537,7 +538,7 @@ class NativeBrowserExecutor(Executor):
         return await self._ensure_session_batch(run_id, foreground=foreground)
 
     async def _ensure_session_cdp(self, run_id: str, bm: object) -> _BrowserSession:
-        """CDP mode: create a new context+page in the Command Center browser.
+        """CDP mode: create a new context+page in the observable browser.
 
         No Chromium is launched. The BrowserManager switches its live screencast
         to follow this page automatically.
@@ -557,7 +558,7 @@ class NativeBrowserExecutor(Executor):
         )
         self._sessions[run_id] = session
         self._fresh_session_run_id = run_id
-        logger.info("CDP mode: task %s routed through Command Center browser", run_id)
+        logger.info("CDP mode: task %s routed through observable browser", run_id)
         return session
 
     async def _ensure_session_observable(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:

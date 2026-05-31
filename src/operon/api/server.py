@@ -8,6 +8,8 @@ from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from operon.core.paths import runs_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,7 +30,7 @@ async def _lifespan(app: FastAPI):
         try:
             from operon.store.cleanup import cleanup_old_runs
             deleted, freed = cleanup_old_runs(
-                root_dir=os.getenv("OPERON_RUNS_ROOT", "runs"),
+                root_dir=runs_dir(),
                 keep_days=retain_days,
                 delete=True,
             )
@@ -58,8 +60,7 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     origins = os.getenv("CORS_ORIGINS", "").strip()
-    # Always allow the Tauri WS bridge and local dev origins.
-    allowed = {"http://localhost:9001", "http://127.0.0.1:9001", "http://localhost:5173"}
+    allowed: set[str] = set()
     if origins:
         allowed.update(o.strip() for o in origins.split(","))
     app.add_middleware(

@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="assets/operon-loop-mark.svg" width="72" alt="Operon logo" />
-
 # Operon
 
 **A zero-abstraction, vision-first computer-use agent.**
@@ -43,7 +41,7 @@ FastAPI routes
 - Rolling spatial memory for recent elements and ghost-element handling.
 - Adaptive click servo checks before browser/desktop clicks.
 - Human-in-the-loop pause/resume for uncertain or blocked states.
-- Run artifacts under `runs/<run_id>/`, including screenshots, model I/O, policy decisions, execution traces, and logs.
+- Run artifacts under `.var/runs/<run_id>/` by default, including screenshots, model I/O, policy decisions, execution traces, and logs.
 - Observable browser mode via CDP screencast and `/ws/stream`.
 
 ## Quick Start
@@ -66,7 +64,7 @@ python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 
 ## API Surface
 
-The active FastAPI routes are defined in `src/operon/api/routes.py`.
+The active FastAPI routes are registered from `src/operon/api/routes/`.
 
 ```text
 # Browser run lifecycle
@@ -105,7 +103,7 @@ WS   /ws/stream
 |---|---|---|
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | unset | Gemini API key |
 | `ANTHROPIC_API_KEY` | unset | Required only when using Anthropic planner/verifier |
-| `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use`, `json`, or `browserbase` |
+| `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` or `json` |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend |
 | `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend |
 | `OPERON_BROWSER_PLANNER_PROVIDER` | `gemini` | `gemini` or `anthropic` |
@@ -115,26 +113,29 @@ WS   /ws/stream
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |
 | `BROWSER_HEIGHT` | `1080` | Browser viewport height |
+| `OPERON_RUNTIME_ROOT` | `.var` | Root for generated runtime artifacts |
+| `OPERON_RUNS_ROOT` | `.var/runs` | Override run state and step artifact storage |
+| `OPERON_BROWSER_ARTIFACTS_ROOT` | `.var/browser-artifacts` | Override browser recording/session artifacts |
+| `OPERON_DESKTOP_ARTIFACTS_ROOT` | `.var/desktop-artifacts` | Override desktop recording/session artifacts |
+| `OPERON_TEST_ARTIFACTS_ROOT` | `.var/test-artifacts` | Override test artifact output |
 | `OPERON_TRACE` | unset | Set `1` for loop trace logging |
 | `OPERON_TEST_SAFE_MODE` | `false` | Skips display baseline and servo calibration in tests |
+
+Generated runtime output is intentionally kept under `.var/` and ignored by git. Legacy `runs/`, `.browser-artifacts/`, and `.desktop-artifacts/` paths may still appear in old logs or tests, but new default runtime output uses the `.var/` tree unless overridden by environment variables.
 
 ## Project Layout
 
 ```text
 src/
-  agent/      loop, perception, policy, policy rules, recovery, verifier,
-              browser backends, action translation, targeting, progress tracking
-  api/        FastAPI app, routes, observer helpers, runtime config, websocket stream
+  agent/      loop plus focused actions, artifacts, backends, perception, and policy packages
+  api/        FastAPI app, split routes, runtime construction, observer helpers, websocket stream
   browser/    CDP BrowserManager for observable mode
   clients/    Gemini, Gemini Computer Use, and Anthropic HTTP clients
   core/       contract models and route validation used by executor adapters
-  executor/   browser, desktop, Browserbase, and native upload executors
+  executor/   browser, desktop, and native upload executors
   models/     Pydantic schemas for state, perception, policy, execution, logs, memory
-  store/      run persistence, memory, replay, summaries, cleanup, background writer
-  tools/      optional file transfer helpers
+  store/      run persistence, memory, replay, cleanup, background writer
 
-ui/           Optional React/Tauri command center UI
-src-tauri/    Optional Tauri shell for the UI
 prompts/      Model prompt templates
 tests/        Pytest suite
 docs/         Architecture and product notes
@@ -155,13 +156,5 @@ Lint:
 ruff check src tests --select E,F,W,I --ignore E501
 ```
 
-Some tests are intentionally opt-in because they require a live server, headed Windows browser session, Browserbase, or Google Drive credentials.
+Some tests are intentionally opt-in because they require a live server or headed Windows browser session.
 
-## Optional Components
-
-These are not required for the core computer-use agent:
-
-- `ui/` and `src-tauri/`: command center UI and desktop packaging shell.
-- `src/operon/executor/browserbase_native.py`: Browserbase backend.
-- `src/operon/tools/file_porter.py`: Google Drive file-transfer helper.
-- `docs/substack_drafts/`: historical writeups.

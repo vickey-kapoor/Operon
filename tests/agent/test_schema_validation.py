@@ -75,7 +75,7 @@ def test_agent_action_stop_rejects_payload_fields() -> None:
 def test_agent_action_stop_allows_text_as_answer_payload() -> None:
     """STOP with text is the answer-extraction protocol for information-retrieval
     tasks (intent: 'find the year X' -> stop with text='1991'). The downstream
-    benchmark runner reads action.text to feed the string_match evaluator."""
+    external evaluators can read action.text as the final answer payload."""
     action = AgentAction(action_type=ActionType.STOP, text="1991")
     assert action.action_type is ActionType.STOP
     assert action.text == "1991"

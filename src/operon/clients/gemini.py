@@ -1,4 +1,4 @@
-"""Gemini client interface and thin HTTP implementation."""
+﻿"""Gemini client interface and thin HTTP implementation."""
 
 from __future__ import annotations
 
@@ -41,14 +41,6 @@ class GeminiClient(ABC):
     @abstractmethod
     async def generate_policy(self, prompt: str) -> str:
         """Generate JSON-only policy output for the provided state and perception prompt."""
-
-    @abstractmethod
-    async def generate_video_verification(self, prompt: str, video_path: str) -> str:
-        """Send a video clip with a verification prompt and return raw JSON."""
-
-    @abstractmethod
-    async def generate_reaction_check(self, prompt: str, frame_paths: list[str]) -> str:
-        """Send multiple screenshots as a temporal sequence and return raw JSON."""
 
     def latest_usage(self) -> ModelUsage | None:
         """Return provider-reported usage for the most recent call, when available."""
@@ -118,7 +110,7 @@ class GeminiHttpClient(GeminiClient):
         self._last_perception_scale_ratio: float = 1.0
         self._vertex_credentials: Any = None
         self.cached_content_name: str | None = None
-        # Lazy cache priming — see _maybe_prime_cache(). On Vertex AI the static
+        # Lazy cache priming â€” see _maybe_prime_cache(). On Vertex AI the static
         # system prompt is cached once on first call; on the public API this is
         # a no-op (prompts are too small for the >=32k token minimum).
         self._cacheable_system_prompt: str | None = cacheable_system_prompt
@@ -152,35 +144,6 @@ class GeminiHttpClient(GeminiClient):
         await self._maybe_prime_cache()
         payload = self._build_text_payload(prompt=prompt)
         return await self._post_json_payload(payload, request_kind="text")
-
-    async def generate_video_verification(self, prompt: str, video_path: str) -> str:
-        """Send a video clip with verification prompt and return raw JSON."""
-        video_bytes = await asyncio.to_thread(Path(video_path).read_bytes)
-        payload = self._build_perception_payload(
-            prompt=prompt, image_bytes=video_bytes, mime_type="video/mp4",
-        )
-        return await self._post_json_payload(payload, request_kind="video")
-
-    async def generate_reaction_check(self, prompt: str, frame_paths: list[str]) -> str:
-        """Send multiple screenshots as a temporal sequence and return raw JSON.
-
-        Builds a single Gemini request with one image part per frame so the model
-        can reason about the before→after pixel delta for UI reaction detection.
-        """
-        parts: list[dict[str, Any]] = [{"text": prompt}]
-        for path in frame_paths:
-            image_bytes, _ = await asyncio.to_thread(_optimize_screenshot, Path(path))
-            parts.append({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(image_bytes).decode("utf-8"),
-                }
-            })
-        payload: dict[str, Any] = {
-            "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
-        }
-        return await self._post_json_payload(payload, request_kind="image")
 
     def latest_usage(self) -> ModelUsage | None:
         return self._last_usage
@@ -300,7 +263,7 @@ class GeminiHttpClient(GeminiClient):
         client = await self._get_client()
         attempts = self.max_retries + 1
         last_error: GeminiClientError | None = None
-        # Pre-serialize once — avoids re-encoding base64 payload on retries
+        # Pre-serialize once â€” avoids re-encoding base64 payload on retries
         payload_bytes = json.dumps(payload).encode("utf-8")
 
         # Hard asyncio timeout guards against slow-drip streaming responses
@@ -477,14 +440,6 @@ class PlaceholderGeminiClient(GeminiClient):
     async def generate_policy(self, prompt: str) -> str:
         """Placeholder model interface; external API calls are intentionally disabled."""
         raise NotImplementedError("Gemini policy integration is not configured for this client.")
-
-    async def generate_video_verification(self, prompt: str, video_path: str) -> str:
-        """Placeholder model interface; external API calls are intentionally disabled."""
-        raise NotImplementedError("Gemini video verification is not configured for this client.")
-
-    async def generate_reaction_check(self, prompt: str, frame_paths: list[str]) -> str:
-        """Placeholder model interface; external API calls are intentionally disabled."""
-        raise NotImplementedError("Gemini reaction check is not configured for this client.")
 
 
 def _extract_usage(*, payload: dict[str, Any], model: str, request_kind: str) -> ModelUsage | None:

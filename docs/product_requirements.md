@@ -21,7 +21,6 @@ Operon is a vision-first computer-use agent for browser and desktop tasks. It ob
 |---|---|---|---|
 | Browser | `NativeBrowserExecutor` | Gemini Computer Use | Active |
 | Browser JSON | `NativeBrowserExecutor` | Gemini JSON combined backend | Optional/fallback |
-| Browserbase | `BrowserbaseNativeBrowserExecutor` | Gemini Computer Use | Optional |
 | Desktop | `DesktopExecutor` | Gemini JSON combined backend | Active |
 | Observable browser | `NativeBrowserExecutor` + `BrowserManager` | Browser backend | Active through `/ws/stream` |
 
@@ -59,15 +58,14 @@ Removed or absent from the current FastAPI app:
 - `/command-center`
 - `/console`
 - `/dashboard`
-- static UI routes from `src/operon/api/static`
+- static UI routes
 
 ## Action Requirements
 
-The internal policy action model supports pointer, keyboard, navigation, clipboard, screenshot, upload, read-text, batch, stop, wait, HITL, and optional file-porter actions. The contract-layer action model in `src/operon/core/contracts/planner.py` is narrower and is used by executor adapters and route validation.
+The internal policy action model supports pointer, keyboard, navigation, clipboard, screenshot, upload, read-text, batch, stop, wait, and HITL actions. The contract-layer action model in `src/operon/core/contracts/planner.py` is narrower and is used by executor adapters and route validation.
 
 Important product constraints:
 - `upload_file_native` is headed-mode only and uses the OS picker macro.
-- `file_porter` is an optional backend helper, not a vision-control action.
 - Browser/desktop route compatibility is validated in `src/operon/core/router.py`.
 
 ## Verification Requirements
@@ -116,11 +114,6 @@ Retention cleanup is handled at FastAPI lifespan startup through `operon.store.c
 
 These are part of the repository but not required for the core agent:
 
-- `ui/`: optional React command center frontend.
-- `src-tauri/`: optional Tauri shell and websocket bridge.
-- `src/operon/executor/browserbase_native.py`: Browserbase backend.
-- `src/operon/tools/file_porter.py`: Google Drive transfer helper.
-- `src/operon/agent/benchmark.py` and `benchmarks/`: local benchmark runner and datasets.
 
 ## Known Gaps
 
@@ -128,4 +121,4 @@ These are part of the repository but not required for the core agent:
 - There is no active benchmark API route set in FastAPI.
 - There is no tracked `PostRunReflector` implementation.
 - There is no tracked `src/runtime` package.
-- The optional UI is not served by the current FastAPI router.
+- The current FastAPI router does not serve a bundled frontend.

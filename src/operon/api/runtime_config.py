@@ -5,7 +5,7 @@ import sys
 from dataclasses import asdict, dataclass
 
 _VALID_DESKTOP_BACKENDS = frozenset({"json"})
-_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "browserbase"})
+_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use"})
 _VALID_PROVIDERS = frozenset({"gemini", "anthropic"})
 
 

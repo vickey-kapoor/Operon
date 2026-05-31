@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from operon.agent.verifier import DeterministicVerifierService
+from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.clients.gemini import PlaceholderGeminiClient
 from operon.models.common import FailureCategory, RunStatus
 from operon.models.execution import ExecutedAction

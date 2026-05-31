@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from operon.agent.fallback_backend import BackendCompatibilityError, FallbackBackend
+from operon.agent.backends.fallback import BackendCompatibilityError, FallbackBackend
 from operon.models.capture import CaptureFrame
 from operon.models.common import RunStatus
 from operon.models.perception import ScreenPerception

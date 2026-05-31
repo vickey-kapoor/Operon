@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict
 from uuid import uuid4
 
+from operon.core.paths import runs_dir
 from operon.models.common import RunStatus
 from operon.models.perception import ScreenPerception
 from operon.models.state import AgentState
@@ -49,8 +50,8 @@ class RunStore(ABC):
 class FileBackedRunStore(RunStore):
     """Local file-backed run store using one directory per run."""
 
-    def __init__(self, root_dir: str | Path = "runs") -> None:
-        self.root_dir = Path(root_dir)
+    def __init__(self, root_dir: str | Path | None = None) -> None:
+        self.root_dir = Path(root_dir) if root_dir is not None else runs_dir()
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self._resolved_root = self.root_dir.resolve()
         self._runs: Dict[str, AgentState] = {}

@@ -187,7 +187,7 @@ class FileBackedMemoryStore(MemoryStore):
             # prefix without using the wrap_subgoal helper. The MemoryRecord
             # schema enforces 200 chars and ValidationError here would crash
             # the run mid-task. Truncate at this boundary as a safety net.
-            from operon.agent.subgoal_utils import truncate_subgoal
+            from operon.agent.actions.subgoal_utils import truncate_subgoal
             self._decay_active_hints(
                 benchmark=benchmark,
                 page_hint=perception.page_hint,
@@ -272,7 +272,7 @@ class FileBackedMemoryStore(MemoryStore):
         verification: VerificationResult,
         recovery: RecoveryDecision,
     ) -> list[MemoryRecord]:
-        from operon.agent.subgoal_utils import truncate_subgoal
+        from operon.agent.actions.subgoal_utils import truncate_subgoal
         records: list[MemoryRecord] = []
         action = decision.action
         recent_failure_category = verification.failure_category or executed_action.failure_category

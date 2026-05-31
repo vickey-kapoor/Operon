@@ -671,7 +671,7 @@ async def test_policy_llm_fallback_is_used_when_no_rule_fires() -> None:
     Uses PolicyCoordinator with a stub LLM to verify the fallback path.
     """
 
-    from operon.agent.policy_coordinator import PolicyCoordinator
+    from operon.agent.policy.coordinator import PolicyCoordinator
     from operon.store.memory import FileBackedMemoryStore
 
     test_root = _test_dir("llm-fallback")

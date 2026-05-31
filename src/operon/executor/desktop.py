@@ -16,6 +16,8 @@ import mss
 import mss.tools
 import pyperclip
 
+from operon.core.paths import desktop_artifacts_dir
+
 try:
     import pyautogui
 except Exception as exc:  # pragma: no cover - exercised on headless CI
@@ -264,12 +266,12 @@ class DesktopExecutor(Executor):
     def __init__(
         self,
         *,
-        artifact_dir: str | Path = ".desktop-artifacts",
+        artifact_dir: str | Path | None = None,
         type_interval: float = 0.03,
         post_action_delay: float = 0.15,
         post_launch_delay: float = 0.8,
     ) -> None:
-        self._artifact_dir = Path(artifact_dir)
+        self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else desktop_artifacts_dir()
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self._type_interval = type_interval
         self._post_action_delay = post_action_delay
@@ -544,7 +546,6 @@ class DesktopExecutor(Executor):
             ActionType.WAIT_FOR_USER: self._exec_noop,
             ActionType.NAVIGATE: self._exec_unsupported,
             ActionType.SELECT: self._exec_unsupported,
-            ActionType.FILE_PORTER: self._exec_file_porter,
         }
         handler = dispatch.get(at, self._exec_unsupported)
         return await handler(action)
@@ -917,22 +918,6 @@ class DesktopExecutor(Executor):
             FailureCategory.EXECUTION_ERROR,
         )
 
-    async def _exec_file_porter(self, action: AgentAction) -> ExecutedAction:
-        if action.url is None or action.text is None:
-            return self._fail(
-                action,
-                "file_porter requires url and text (folder ID)",
-                FailureCategory.EXECUTION_ERROR,
-            )
-        try:
-            from operon.tools.file_porter import run_porter
-            result = await asyncio.to_thread(run_porter, action.url, action.text)
-            if result.success:
-                return self._ok(action, result.detail, None)
-            return self._fail(action, result.detail, FailureCategory.EXECUTION_ERROR)
-        except Exception as exc:
-            return self._fail(action, f"FilePorter raised: {exc}", FailureCategory.EXECUTION_ERROR)
-
     # ── helpers ──────────────────────────────────────────────────
 
     async def _capture_after(self) -> str:
@@ -995,7 +980,7 @@ class DesktopExecutor(Executor):
         """
         if run_id in self._run_recorders:
             return
-        from operon.agent.screen_recorder import ScreenRecorder
+        from operon.agent.artifacts.screen_recorder import ScreenRecorder
 
         video_path = Path(root_dir) / run_id / "run_recording.mp4"
         recorder = ScreenRecorder(
@@ -1031,7 +1016,7 @@ class DesktopExecutor(Executor):
         self, action: AgentAction, step_dir: Path,
     ) -> tuple[ExecutedAction, Path | None]:
         """Re-execute an action while recording the screen for video verification."""
-        from operon.agent.screen_recorder import ScreenRecorder
+        from operon.agent.artifacts.screen_recorder import ScreenRecorder
 
         video_path = step_dir / "verification_recording.mp4"
         recorder = ScreenRecorder(output_path=video_path)

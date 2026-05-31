@@ -43,6 +43,7 @@ nosetests.xml
 test-results/
 runs/
 results/
+.var/
 .codex-logs/
 .desktop-artifacts/
 .browser-artifacts/

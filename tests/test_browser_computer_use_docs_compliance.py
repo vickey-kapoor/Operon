@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from operon.agent.browser_computer_use import BrowserComputerUseBackend
+from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.models.capture import CaptureFrame
 from operon.models.common import RunStatus
 from operon.models.state import AgentState

@@ -16,6 +16,7 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
+from operon.core.paths import browser_artifacts_dir
 from operon.executor.browser import Executor
 from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 from operon.models.capture import CaptureFrame
@@ -84,7 +85,7 @@ class NativeBrowserExecutor(Executor):
     def __init__(
         self,
         *,
-        artifact_dir: str | Path = ".browser-artifacts",
+        artifact_dir: str | Path | None = None,
 # ✅ Healed 2026-04-26T22:45:36Z | Added --disable-blink-features=AutomationControlled to prevent detection and add
         viewport_width: int | None = None,
         viewport_height: int | None = None,
@@ -92,7 +93,7 @@ class NativeBrowserExecutor(Executor):
         record_video: bool | None = None,
         post_action_delay: float = 0.5,
     ) -> None:
-        self._artifact_dir = Path(artifact_dir)
+        self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else browser_artifacts_dir()
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self._viewport_width = viewport_width or int(os.getenv("BROWSER_WIDTH", "1920"))
         self._viewport_height = viewport_height or int(os.getenv("BROWSER_HEIGHT", "1080"))

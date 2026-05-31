@@ -33,7 +33,7 @@ def test_desktop_run_task(client: TestClient) -> None:
     """POST /desktop/run-task should create a desktop run."""
     mock_response = _mock_run_response(RunStatus.PENDING)
 
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(return_value=mock_response)
         mock_loop.return_value.executor.reset_desktop = AsyncMock()
         resp = client.post(
@@ -51,7 +51,7 @@ def test_desktop_step(client: TestClient) -> None:
     """POST /desktop/step should advance a desktop run."""
     mock_response = _mock_run_response(RunStatus.RUNNING)
 
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.step_run = AsyncMock(return_value=mock_response)
         resp = client.post(
             "/desktop/step",
@@ -65,7 +65,7 @@ def test_desktop_step(client: TestClient) -> None:
 
 def test_desktop_step_not_found(client: TestClient) -> None:
     """POST /desktop/step with unknown run_id should return 404."""
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.step_run = AsyncMock(side_effect=ValueError("Run not found"))
         resp = client.post(
             "/desktop/step",
@@ -85,7 +85,7 @@ def test_desktop_get_run(client: TestClient) -> None:
         status=RunStatus.RUNNING,
     )
 
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.run_store.get_run = AsyncMock(return_value=mock_state)
         resp = client.get("/desktop/run/test-run-1")
 
@@ -96,7 +96,7 @@ def test_desktop_get_run(client: TestClient) -> None:
 
 def test_desktop_get_run_not_found(client: TestClient) -> None:
     """GET /desktop/run/{id} with unknown id should return 404."""
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.run_store.get_run = AsyncMock(return_value=None)
         resp = client.get("/desktop/run/nonexistent")
 
@@ -107,7 +107,7 @@ def test_desktop_resume(client: TestClient) -> None:
     """POST /desktop/resume should resume a paused desktop run."""
     mock_response = _mock_run_response(RunStatus.RUNNING)
 
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.resume_run = AsyncMock(return_value=mock_response)
         resp = client.post(
             "/desktop/resume",
@@ -121,7 +121,7 @@ def test_desktop_resume(client: TestClient) -> None:
 
 def test_desktop_resume_not_found(client: TestClient) -> None:
     """POST /desktop/resume with bad run_id should return 404."""
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.resume_run = AsyncMock(side_effect=ValueError("invalid"))
         resp = client.post(
             "/desktop/resume",
@@ -150,7 +150,7 @@ def test_desktop_stop_cancels_desktop_store_run(client: TestClient) -> None:
         _cleanup_completed_run=AsyncMock(),
     )
 
-    with patch("operon.api.routes.get_desktop_agent_loop", return_value=mock_loop):
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop", return_value=mock_loop):
         resp = client.post(
             "/desktop/stop",
             json={"run_id": "test-run-1"},
@@ -178,7 +178,7 @@ def test_desktop_stop_by_id(client: TestClient) -> None:
         _cleanup_completed_run=AsyncMock(),
     )
 
-    with patch("operon.api.routes.get_desktop_agent_loop", return_value=mock_loop):
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop", return_value=mock_loop):
         resp = client.post("/desktop/run/test-run-1/stop")
 
     assert resp.status_code == 200
@@ -187,7 +187,7 @@ def test_desktop_stop_by_id(client: TestClient) -> None:
 
 def test_desktop_cleanup(client: TestClient) -> None:
     """POST /desktop/cleanup should call executor.cleanup_run."""
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_executor = mock_loop.return_value.executor
         mock_executor.cleanup_run.return_value = 2
         resp = client.post(
@@ -204,7 +204,7 @@ def test_desktop_cleanup(client: TestClient) -> None:
 
 def test_desktop_cleanup_no_apps(client: TestClient) -> None:
     """POST /desktop/cleanup with nothing to close returns 0."""
-    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
         mock_executor = mock_loop.return_value.executor
         mock_executor.cleanup_run.return_value = 0
         resp = client.post(
@@ -219,7 +219,7 @@ def test_desktop_cleanup_no_apps(client: TestClient) -> None:
 
 def test_browser_cleanup(client: TestClient) -> None:
     """POST /cleanup should call executor.cleanup_run for browser runs."""
-    with patch("operon.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.browser.get_agent_loop") as mock_loop:
         mock_executor = mock_loop.return_value.executor
         mock_executor.cleanup_run.return_value = 1
         resp = client.post(
@@ -236,7 +236,7 @@ def test_browser_cleanup(client: TestClient) -> None:
 
 def test_browser_cleanup_without_support(client: TestClient) -> None:
     """POST /cleanup should return a no-op response if cleanup is unsupported."""
-    with patch("operon.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.browser.get_agent_loop") as mock_loop:
         del mock_loop.return_value.executor.cleanup_run
         resp = client.post(
             "/cleanup",
@@ -255,7 +255,7 @@ def test_browser_cleanup_without_support(client: TestClient) -> None:
 
 def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
     """get_desktop_agent_loop should use CombinedPerceptionPolicyService with 120s timeout."""
-    import operon.api.routes as routes_module
+    import operon.api.runtime.loops as routes_module
     from operon.api.runtime_config import RuntimeModeConfig
 
     # Reset the singleton so it gets rebuilt
@@ -272,17 +272,17 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
 
     try:
         with (
-            patch("operon.api.routes.desktop_mode_config", return_value=gemini_config),
-            patch("operon.api.routes.DesktopExecutor"),
-            patch("operon.api.routes.FileBackedRunStore"),
-            patch("operon.api.routes.FileBackedMemoryStore"),
-            patch("operon.api.routes.GeminiHttpClient") as mock_gemini,
-            patch("operon.api.routes.ScreenCaptureService"),
-            patch("operon.api.routes.CombinedPerceptionPolicyService"),
-            patch("operon.api.routes.PolicyCoordinator"),
-            patch("operon.api.routes.DeterministicVerifierService"),
-            patch("operon.api.routes.RuleBasedRecoveryManager"),
-            patch("operon.api.routes.AgentLoop"),
+            patch("operon.api.runtime.loops.desktop_mode_config", return_value=gemini_config),
+            patch("operon.api.runtime.loops.DesktopExecutor"),
+            patch("operon.api.runtime.loops.FileBackedRunStore"),
+            patch("operon.api.runtime.loops.FileBackedMemoryStore"),
+            patch("operon.api.runtime.services.GeminiHttpClient") as mock_gemini,
+            patch("operon.api.runtime.loops.ScreenCaptureService"),
+            patch("operon.api.runtime.services.CombinedPerceptionPolicyService"),
+            patch("operon.api.runtime.loops.PolicyCoordinator"),
+            patch("operon.api.runtime.loops.DeterministicVerifierService"),
+            patch("operon.api.runtime.loops.RuleBasedRecoveryManager"),
+            patch("operon.api.runtime.loops.AgentLoop"),
         ):
             routes_module.get_desktop_agent_loop()
 
@@ -296,7 +296,7 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
 
 def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
     """Desktop Anthropic planner should split Gemini perception from planner selection."""
-    import operon.api.routes as routes_module
+    import operon.api.runtime.loops as routes_module
     from operon.api.runtime_config import RuntimeModeConfig
 
     original = routes_module._desktop_agent_loop
@@ -305,7 +305,7 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
     try:
         with (
             patch(
-                "operon.api.routes.desktop_mode_config",
+                "operon.api.runtime.loops.desktop_mode_config",
                 return_value=RuntimeModeConfig(
                     backend="json",
                     primary_model="gemini-3-flash-preview",
@@ -316,18 +316,18 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
                     verifier_model="claude-sonnet-4-20250514",
                 ),
             ),
-            patch("operon.api.routes.DesktopExecutor"),
-            patch("operon.api.routes.FileBackedRunStore"),
-            patch("operon.api.routes.FileBackedMemoryStore"),
-            patch("operon.api.routes.GeminiHttpClient") as mock_gemini,
-            patch("operon.api.routes.AnthropicHttpClient") as mock_anthropic,
-            patch("operon.api.routes.ScreenCaptureService"),
-            patch("operon.api.routes.GeminiPerceptionService"),
-            patch("operon.api.routes.AnthropicPolicyService"),
-            patch("operon.api.routes.PolicyCoordinator"),
-            patch("operon.api.routes.DeterministicVerifierService"),
-            patch("operon.api.routes.RuleBasedRecoveryManager"),
-            patch("operon.api.routes.AgentLoop"),
+            patch("operon.api.runtime.loops.DesktopExecutor"),
+            patch("operon.api.runtime.loops.FileBackedRunStore"),
+            patch("operon.api.runtime.loops.FileBackedMemoryStore"),
+            patch("operon.api.runtime.services.GeminiHttpClient") as mock_gemini,
+            patch("operon.api.runtime.services.AnthropicHttpClient") as mock_anthropic,
+            patch("operon.api.runtime.loops.ScreenCaptureService"),
+            patch("operon.api.runtime.services.GeminiPerceptionService"),
+            patch("operon.api.runtime.services.AnthropicPolicyService"),
+            patch("operon.api.runtime.loops.PolicyCoordinator"),
+            patch("operon.api.runtime.loops.DeterministicVerifierService"),
+            patch("operon.api.runtime.loops.RuleBasedRecoveryManager"),
+            patch("operon.api.runtime.loops.AgentLoop"),
         ):
             routes_module.get_desktop_agent_loop()
 
@@ -342,7 +342,7 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
 
 def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
     """Browser JSON mode should support Gemini perception with Anthropic planner."""
-    import operon.api.routes as routes_module
+    import operon.api.runtime.loops as routes_module
     from operon.api.runtime_config import RuntimeModeConfig
 
     original = routes_module._agent_loop
@@ -351,7 +351,7 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
     try:
         with (
             patch(
-                "operon.api.routes.browser_mode_config",
+                "operon.api.runtime.loops.browser_mode_config",
                 return_value=RuntimeModeConfig(
                     backend="json",
                     primary_model="gemini-3-flash-preview",
@@ -363,18 +363,18 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
                     verifier_model="claude-sonnet-4-20250514",
                 ),
             ),
-            patch("operon.api.routes.NativeBrowserExecutor"),
-            patch("operon.api.routes.FileBackedRunStore"),
-            patch("operon.api.routes.FileBackedMemoryStore"),
-            patch("operon.api.routes.GeminiHttpClient") as mock_gemini,
-            patch("operon.api.routes.AnthropicHttpClient") as mock_anthropic,
-            patch("operon.api.routes.ScreenCaptureService"),
-            patch("operon.api.routes.GeminiPerceptionService"),
-            patch("operon.api.routes.AnthropicPolicyService"),
-            patch("operon.api.routes.PolicyCoordinator"),
-            patch("operon.api.routes.DeterministicVerifierService"),
-            patch("operon.api.routes.RuleBasedRecoveryManager"),
-            patch("operon.api.routes.AgentLoop"),
+            patch("operon.api.runtime.loops.NativeBrowserExecutor"),
+            patch("operon.api.runtime.loops.FileBackedRunStore"),
+            patch("operon.api.runtime.loops.FileBackedMemoryStore"),
+            patch("operon.api.runtime.services.GeminiHttpClient") as mock_gemini,
+            patch("operon.api.runtime.services.AnthropicHttpClient") as mock_anthropic,
+            patch("operon.api.runtime.loops.ScreenCaptureService"),
+            patch("operon.api.runtime.services.GeminiPerceptionService"),
+            patch("operon.api.runtime.services.AnthropicPolicyService"),
+            patch("operon.api.runtime.loops.PolicyCoordinator"),
+            patch("operon.api.runtime.loops.DeterministicVerifierService"),
+            patch("operon.api.runtime.loops.RuleBasedRecoveryManager"),
+            patch("operon.api.runtime.loops.AgentLoop"),
         ):
             routes_module.get_agent_loop()
 

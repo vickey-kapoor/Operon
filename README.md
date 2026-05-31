@@ -41,7 +41,7 @@ FastAPI routes
 - Rolling spatial memory for recent elements and ghost-element handling.
 - Adaptive click servo checks before browser/desktop clicks.
 - Human-in-the-loop pause/resume for uncertain or blocked states.
-- Run artifacts under `runs/<run_id>/`, including screenshots, model I/O, policy decisions, execution traces, and logs.
+- Run artifacts under `.var/runs/<run_id>/` by default, including screenshots, model I/O, policy decisions, execution traces, and logs.
 - Observable browser mode via CDP screencast and `/ws/stream`.
 
 ## Quick Start
@@ -64,7 +64,7 @@ python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 
 ## API Surface
 
-The active FastAPI routes are defined in `src/operon/api/routes.py`.
+The active FastAPI routes are registered from `src/operon/api/routes/`.
 
 ```text
 # Browser run lifecycle
@@ -113,16 +113,22 @@ WS   /ws/stream
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |
 | `BROWSER_HEIGHT` | `1080` | Browser viewport height |
+| `OPERON_RUNTIME_ROOT` | `.var` | Root for generated runtime artifacts |
+| `OPERON_RUNS_ROOT` | `.var/runs` | Override run state and step artifact storage |
+| `OPERON_BROWSER_ARTIFACTS_ROOT` | `.var/browser-artifacts` | Override browser recording/session artifacts |
+| `OPERON_DESKTOP_ARTIFACTS_ROOT` | `.var/desktop-artifacts` | Override desktop recording/session artifacts |
+| `OPERON_TEST_ARTIFACTS_ROOT` | `.var/test-artifacts` | Override test artifact output |
 | `OPERON_TRACE` | unset | Set `1` for loop trace logging |
 | `OPERON_TEST_SAFE_MODE` | `false` | Skips display baseline and servo calibration in tests |
+
+Generated runtime output is intentionally kept under `.var/` and ignored by git. Legacy `runs/`, `.browser-artifacts/`, and `.desktop-artifacts/` paths may still appear in old logs or tests, but new default runtime output uses the `.var/` tree unless overridden by environment variables.
 
 ## Project Layout
 
 ```text
 src/
-  agent/      loop, perception, policy, policy rules, recovery, verifier,
-              browser backends, action translation, targeting, progress tracking
-  api/        FastAPI app, routes, observer helpers, runtime config, websocket stream
+  agent/      loop plus focused actions, artifacts, backends, perception, and policy packages
+  api/        FastAPI app, split routes, runtime construction, observer helpers, websocket stream
   browser/    CDP BrowserManager for observable mode
   clients/    Gemini, Gemini Computer Use, and Anthropic HTTP clients
   core/       contract models and route validation used by executor adapters

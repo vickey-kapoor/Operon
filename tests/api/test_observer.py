@@ -281,7 +281,7 @@ def test_observer_live_browser_frame() -> None:
     from unittest.mock import patch
 
     client = TestClient(app)
-    with patch("operon.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.observer.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get("/observer/api/live-browser/live-run")
 
@@ -299,7 +299,7 @@ def test_observer_live_browser_frame_missing_session() -> None:
     from unittest.mock import patch
 
     client = TestClient(app)
-    with patch("operon.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.observer.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get("/observer/api/live-browser/missing-run")
 
@@ -329,7 +329,7 @@ def test_observer_run_includes_current_browser_url(monkeypatch) -> None:
 
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
     client = TestClient(app)
-    with patch("operon.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.observer.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get(f"/observer/api/run/{run_id}")
 
@@ -360,7 +360,7 @@ def test_observer_run_reconciles_orphaned_browser_run(monkeypatch) -> None:
 
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
     client = TestClient(app)
-    with patch("operon.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.observer.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get(f"/observer/api/run/{run_id}")
 
@@ -405,7 +405,7 @@ def test_observer_runs_reconciles_orphaned_browser_runs(monkeypatch) -> None:
 
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
     client = TestClient(app)
-    with patch("operon.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.observer.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get("/observer/api/runs?limit=10")
 

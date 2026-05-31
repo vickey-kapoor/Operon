@@ -6,10 +6,22 @@ import os
 import time
 from pathlib import Path
 
-from operon.agent.capture import CaptureService
+from operon.agent.actions.retry_hardening import (
+    RetryHardening,
+    apply_reresolution_failure,
+    merge_execution_retry,
+    refresh_action_coordinates,
+    should_retry,
+)
+from operon.agent.actions.retry_hardening import (
+    RetryResolution as _RetryResolution,
+)
+from operon.agent.actions.selector import DeterministicTargetSelector
+from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
+from operon.agent.perception.capture import CaptureService
 from operon.agent.policy import PolicyService
-from operon.agent.progress_tracker import (
+from operon.agent.policy.progress_tracker import (
     ProgressTracker,
     action_signature,
     alternating_action_loop,
@@ -24,20 +36,8 @@ from operon.agent.progress_tracker import (
     subgoal_signature,
     target_signature,
 )
-from operon.agent.recovery import RecoveryManager, validate_benchmark_integrity
-from operon.agent.retry_hardening import (
-    RetryHardening,
-    apply_reresolution_failure,
-    merge_execution_retry,
-    refresh_action_coordinates,
-    should_retry,
-)
-from operon.agent.retry_hardening import (
-    RetryResolution as _RetryResolution,
-)
-from operon.agent.selector import DeterministicTargetSelector
-from operon.agent.step_artifacts import StepArtifactsManager
-from operon.agent.verifier import VerifierService
+from operon.agent.policy.recovery import RecoveryManager, validate_benchmark_integrity
+from operon.agent.policy.verifier import VerifierService
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.executor.browser import Executor
@@ -578,7 +578,9 @@ class AgentLoop:
             verification_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "verification", self.verifier_service)
 
             # Compute screen change ratio for progress tracking.
-            from operon.agent.screen_diff import compute_screen_change_ratio as _scr
+            from operon.agent.perception.screen_diff import (
+                compute_screen_change_ratio as _scr,
+            )
             _after_path = executed_action.artifact_path
             _screen_change_ratio: float | None = (
                 _scr(before_artifact_path, _after_path)
@@ -587,7 +589,7 @@ class AgentLoop:
             )
 
             # Retry decision: direct FailureCategory → strategy lookup.
-            from operon.agent.adaptation import strategy_for_failure
+            from operon.agent.policy.adaptation import strategy_for_failure
             recent_failure = verification.failure_category or executed_action.failure_category
             strategy = strategy_for_failure(
                 recent_failure,
@@ -1510,7 +1512,7 @@ class AgentLoop:
         return perception
 
     # ------------------------------------------------------------------
-    # Progress-tracking and signatures (delegated to operon.agent.progress_tracker)
+    # Progress-tracking and signatures (delegated to operon.agent.policy.progress_tracker)
     # ------------------------------------------------------------------
 
     def _block_redundant_action(self, state, action, step_index: int):

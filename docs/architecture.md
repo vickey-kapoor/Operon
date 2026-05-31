@@ -77,7 +77,7 @@ Only `OPERON_DESKTOP_BACKEND=json` is implemented.
 
 ## API Routes
 
-The active HTTP routes are defined in `src/operon/api/routes.py`.
+The active HTTP routes are registered from `src/operon/api/routes/`.
 
 ```text
 POST /run-task
@@ -106,7 +106,7 @@ GET  /observer/api/live-browser/{run_id}
 WS   /ws/stream
 ```
 
-There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`, or static HTML routes in `src/operon/api/routes.py`.
+There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`, or static HTML routes in `src/operon/api/routes/`.
 
 ## Policy Layer
 
@@ -167,7 +167,7 @@ It also hard-stops repeated no-progress failures and validates success claims be
 Run data is file-backed:
 
 ```text
-runs/<run_id>/
+.var/runs/<run_id>/
   state.json
   run.jsonl
   step_N/
@@ -187,7 +187,7 @@ memory/memory.jsonl
 memory/episodes.jsonl
 ```
 
-Browser session videos may be written under `.browser-artifacts/` by the browser executor.
+Browser session videos are written under `.var/browser-artifacts/` by default. Desktop artifacts use `.var/desktop-artifacts/`. Set `OPERON_RUNTIME_ROOT`, `OPERON_RUNS_ROOT`, `OPERON_BROWSER_ARTIFACTS_ROOT`, or `OPERON_DESKTOP_ARTIFACTS_ROOT` to override these locations.
 
 ## Configuration
 

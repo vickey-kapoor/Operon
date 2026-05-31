@@ -8,6 +8,8 @@ from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from operon.core.paths import runs_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,7 +30,7 @@ async def _lifespan(app: FastAPI):
         try:
             from operon.store.cleanup import cleanup_old_runs
             deleted, freed = cleanup_old_runs(
-                root_dir=os.getenv("OPERON_RUNS_ROOT", "runs"),
+                root_dir=runs_dir(),
                 keep_days=retain_days,
                 delete=True,
             )

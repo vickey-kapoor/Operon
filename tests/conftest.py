@@ -12,7 +12,7 @@ os.environ.setdefault("OPERON_TEST_SAFE_MODE", "true")
 # Pre-import modules that test stubs (test_phase4_integration.py) replace via
 # sys.modules.setdefault — ensures the real implementations are loaded first so
 # stub injection is a no-op and doesn't break tests that depend on real behaviour.
-import operon.agent.screen_diff  # noqa: F401, E402
+import operon.agent.perception.screen_diff  # noqa: F401, E402
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

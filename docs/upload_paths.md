@@ -51,7 +51,7 @@ Common failure categories:
 Upload steps write normal run artifacts under:
 
 ```text
-runs/<run_id>/step_N/
+.var/runs/<run_id>/step_N/
 ```
 
 Look for `execution_trace.json`, before/after screenshots, and the step log entry in `run.jsonl`.

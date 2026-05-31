@@ -1,7 +1,7 @@
 # Recovery Ladder
 _Last refreshed: 2026-05-15_
 
-`RuleBasedRecoveryManager` in `src/operon/agent/recovery.py` maps failed or uncertain steps to recovery decisions. The ladder is keyed by a retry cluster built from subgoal, target, and failure signal.
+`RuleBasedRecoveryManager` in `src/operon/agent/policy/recovery.py` maps failed or uncertain steps to recovery decisions. The ladder is keyed by a retry cluster built from subgoal, target, and failure signal.
 
 ## Bypass Cases
 

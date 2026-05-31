@@ -38,7 +38,7 @@ Planner provider override (per-mode, defaults to `gemini`):
 - `OPERON_BROWSER_PLANNER_PROVIDER=anthropic` — use Claude as the browser planner
 - `ANTHROPIC_API_KEY` — required when either planner provider is `anthropic`
 
-Model overrides (all optional, see `src/api/runtime_config.py` for defaults):
+Model overrides (all optional, see `src/operon/api/runtime_config.py` for defaults):
 
 - `OPERON_DESKTOP_MODEL`, `OPERON_DESKTOP_PLANNER_MODEL`, `OPERON_DESKTOP_VERIFIER_MODEL`
 - `OPERON_BROWSER_MODEL`, `OPERON_BROWSER_PLANNER_MODEL`, `OPERON_BROWSER_VERIFIER_MODEL`, `OPERON_BROWSER_FALLBACK_MODEL`
@@ -74,28 +74,28 @@ ruff check src tests --select E,F,W,I --ignore E501
 
 ```powershell
 $env:FORM_BENCHMARK_URL = "https://practice-automation.com/form-fields/"
-python -m src.agent.benchmark
+python -m operon.agent.benchmark
 ```
 
 **Start the API server:**
 
 ```powershell
-python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
+python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 
 **Replay / summarize a stored run:**
 
 ```powershell
-python -m src.store.replay <run_id>
-python -m src.store.summary <run_id>
-python -m src.store.summary runs
+python -m operon.store.replay <run_id>
+python -m operon.store.summary <run_id>
+python -m operon.store.summary runs
 ```
 
 **Clean up old run artifacts (default: keep last 7 days):**
 
 ```powershell
-python -m src.store.cleanup           # dry-run
-python -m src.store.cleanup --delete  # actually delete
+python -m operon.store.cleanup           # dry-run
+python -m operon.store.cleanup --delete  # actually delete
 ```
 
 **UI dev server (hot-reload at http://localhost:5173):**
@@ -106,7 +106,7 @@ cd ui && npm run dev
 
 ## Architecture
 
-### Core Loop (`src/agent/loop.py`)
+### Core Loop (`src/operon/agent/loop.py`)
 
 `AgentLoop` orchestrates every run. A single step does:
 
@@ -125,7 +125,7 @@ cd ui && npm run dev
 
 Terminal conditions: `FORM_SUBMITTED_SUCCESS`, `STOP_BEFORE_SEND`, `TASK_COMPLETED` (success); retry limit, max step limit, repeated loop detection (failure). `WAITING_FOR_USER` is a non-terminal pause — the run resumes when `POST /resume` is called.
 
-`AgentLoop` delegates to focused helper modules (all in `src/agent/`):
+`AgentLoop` delegates to focused helper modules (all in `src/operon/agent/`):
 
 | Module | Role |
 |---|---|
@@ -147,7 +147,7 @@ These are enforced at `DesktopExecutor.__init__()` via `validate_display_baselin
 | DPI scaling | 100% (96 DPI) recommended | `CoordDriftWarning` logged if != 100%; not a hard stop because per-monitor DPI awareness mitigates drift |
 | Loading/shimmer state | Wait exactly 500ms | Prompt directive + verifier `_is_page_loading()` returns `PENDING` |
 
-`HardwareBaselineError` is defined in `src/executor/desktop.py`. It is a `RuntimeError` subclass raised when the display geometry cannot support reliable coordinate targeting.
+`HardwareBaselineError` is defined in `src/operon/executor/desktop.py`. It is a `RuntimeError` subclass raised when the display geometry cannot support reliable coordinate targeting.
 
 **Temporal Physics rule:** If the perception shows a loading skeleton, shimmer animation, spinner, or fewer than 3 elements on a content page — issue `wait 500ms` and re-perceive. Never act on a transient UI state. This rule is enforced in both prompt files and in `DeterministicVerifierService._is_page_loading()`.
 
@@ -166,21 +166,21 @@ Operon has two execution modes sharing the same loop, verifier, recovery, and pe
 
 - **Desktop mode** — full-screen automation via `pyautogui` + `mss`. Uses combined JSON perception+policy through `GeminiHttpClient`.
 - **Browser mode** — Playwright-based. Primary backend is `BrowserComputerUseBackend` (Gemini Computer Use with coordinate normalization and multi-call turns); fallback is `BrowserJsonBackend`. `NativeBrowserExecutor` translates actions to Playwright calls. Browser sessions are video-recorded under `.browser-artifacts/` and linked into the run snapshot for the observer UI.
-- **Observable mode** — `NativeBrowserExecutor` launches Playwright Chromium with `--headless=new --remote-debugging-port=9222`, then `BrowserManager` (`src/browser/manager.py`) connects internally via `connect_over_cdp` and streams JPEG frames via CDP `Page.startScreencast` to all WebSocket clients. Managed entirely by the executor; no public API endpoint.
+- **Observable mode** — `NativeBrowserExecutor` launches Playwright Chromium with `--headless=new --remote-debugging-port=9222`, then `BrowserManager` (`src/operon/browser/manager.py`) connects internally via `connect_over_cdp` and streams JPEG frames via CDP `Page.startScreencast` to all WebSocket clients. Managed entirely by the executor; no public API endpoint.
 
-Backend selection is handled by `src/agent/backend.py` based on env vars. `src/agent/action_translation.py` bridges Computer Use action formats to the internal `AgentAction` schema.
+Backend selection is handled by `src/operon/agent/backend.py` based on env vars. `src/operon/agent/action_translation.py` bridges Computer Use action formats to the internal `AgentAction` schema.
 
 ### Runtime Package (`src/runtime/`)
 
 The `src/runtime/` package provides the unified contract layer:
 
 - `UnifiedOrchestrator` — receives `LegacyContractBundle` from `LegacyOperonContractAdapter` each step, runs adaptation strategy lookup, detects OS file pickers via perception, and advances `AgentRuntimeState`
-- `AgentRuntimeState` — structured per-run mutable state tracking subgoal progress, last perception summary, retry context, and advisory hints; separate from `AgentState` in `src/models/`
+- `AgentRuntimeState` — structured per-run mutable state tracking subgoal progress, last perception summary, retry context, and advisory hints; separate from `AgentState` in `src/operon/models/`
 - `LegacyOperonContractAdapter` — translates the existing `AgentState`/`ScreenPerception`/`PolicyDecision`/`ExecutedAction`/`VerificationResult` types into the unified `LegacyContractBundle` format consumed by `UnifiedOrchestrator`
 
 `AgentLoop` creates a `UnifiedOrchestrator` singleton and maintains a `unified_states` dict of `AgentRuntimeState` per run. After each step's verify phase, the loop translates to contracts and calls `UnifiedOrchestrator.process_step()`.
 
-### Policy Layer (`src/agent/policy_coordinator.py`, `policy_rules.py`, `policy.py`)
+### Policy Layer (`src/operon/agent/policy_coordinator.py`, `policy_rules.py`, `policy.py`)
 
 `PolicyCoordinator` wraps `GeminiPolicyService` with a rule layer:
 
@@ -223,7 +223,7 @@ Before any `pyautogui.click`, `_region_has_content(x, y, radius=50)` captures a 
 **Visual Velocity:**
 `_capture_burst_sync()` samples three frames with 100ms sleeps between them (inside `asyncio.to_thread`) and computes the fraction of pixels that changed between the last two. This float is stored in `CaptureFrame.visual_velocity`. The capture service re-bursts after 300ms when velocity > 2%. The loop stage that follows never perceives an animating frame.
 
-### Intent-Based Re-resolution (`src/agent/loop.py`, `src/agent/selector.py`)
+### Intent-Based Re-resolution (`src/operon/agent/loop.py`, `src/operon/agent/selector.py`)
 
 - Targetable `AgentAction`s carry serializable `target_context` with normalized `TargetIntent`, original target signature, top candidate evidence, and original matched signals.
 - Retry-time re-resolution is deterministic only and reuses `DeterministicTargetSelector.reresolve()`.
@@ -231,7 +231,7 @@ Before any `pyautogui.click`, `_region_has_content(x, y, radius=50)` captures a 
 - Failures are explicit: `target_reresolution_failed` or `target_reresolution_ambiguous`.
 - Traceability is recorded inside `execution_trace.json` via `reresolution_trace`.
 
-### State & Models (`src/models/`)
+### State & Models (`src/operon/models/`)
 
 All Pydantic v2. Key types:
 
@@ -266,7 +266,7 @@ Operon's memory system is self-pruning. It optimizes for the shortest path, not 
 - Clears `_active_episode`, `_replay_state`, and the hint cache so no episodic context from a prior task bleeds into the new one.
 - Browser-level auth state (cookies, session tokens) is **intentionally preserved** — it is managed at the Playwright executor layer and must survive across runs of authenticated benchmark flows (e.g., WebArena/GitLab).
 
-### Persistence (`src/store/`)
+### Persistence (`src/operon/store/`)
 
 - `FileBackedRunStore` — in-memory dict + `runs/<run_id>/state.json` on disk; no database.
 - `FileBackedMemoryStore` — append-only JSONL; weight-aware `get_hints()`; decays on failure; 1-step-filtered episode extraction.
@@ -274,9 +274,9 @@ Operon's memory system is self-pruning. It optimizes for the shortest path, not 
 - `replay.py`, `summary.py` — read-only analysis tools.
 - `cleanup.py` — prunes `runs/` directories older than 7 days; `--delete` flag required to actually delete.
 
-### API (`src/api/`)
+### API (`src/operon/api/`)
 
-FastAPI app at `src/api/server.py`. Routes in `src/api/routes.py`:
+FastAPI app at `src/operon/api/server.py`. Routes in `src/operon/api/routes.py`:
 
 - `POST /run-task`, `/step`, `/resume`, `/stop` — browser run lifecycle
 - `POST /desktop/run-task`, `/desktop/step`, `/desktop/resume` — desktop run lifecycle
@@ -285,11 +285,11 @@ FastAPI app at `src/api/server.py`. Routes in `src/api/routes.py`:
 - `GET /observer/api/runs`, `/observer/api/run/{id}`, `/observer/api/usage`, `/observer/api/artifact`, `/observer/api/export/{id}`
 - `POST /benchmark/run-suite`, `GET /benchmark/tasks`, `GET /benchmark/suite/{id}`
 
-**WebSocket** (`src/api/ws_stream.py`) on port 9001 — live step events, binary JPEG frames, control messages. Control message types: `set_confidence_threshold`, `set_disabled_rules`, `override`, `resume`, `pause`, `inject_input`.
+**WebSocket** (`src/operon/api/ws_stream.py`) on port 9001 — live step events, binary JPEG frames, control messages. Control message types: `set_confidence_threshold`, `set_disabled_rules`, `override`, `resume`, `pause`, `inject_input`.
 
 The `AgentLoop` singleton is built lazily on first request via `get_agent_loop()`.
 
-### Human-in-the-Loop (`src/agent/hitl.py`)
+### Human-in-the-Loop (`src/operon/agent/hitl.py`)
 
 When the agent encounters a page it cannot handle autonomously (CAPTCHA, login wall, cookie consent, 2FA, age gate, payment, T&C, bot-detection block), `_human_intervention_rule` in `PolicyRuleEngine` fires (after 2 consecutive matching steps — debounced to prevent false positives) and issues `ActionType.WAIT_FOR_USER`. The loop then calls `_pause_for_user()` which:
 
@@ -301,7 +301,7 @@ When the agent encounters a page it cannot handle autonomously (CAPTCHA, login w
 
 `HITL_PAGE_HINT_KEYWORDS` covers: `captcha`, `recaptcha`, `robot`, `login`, `sign_in`, `cookie_consent`, `gdpr`, `age_verification`, `two_factor`, `2fa`, `mfa`, `otp`, `terms_and_conditions`, `payment`, `checkout`, `blocked`, `access_denied`, `bot_detection`.
 
-### OS File Picker Macro (`src/executor/os_picker_macro.py`)
+### OS File Picker Macro (`src/operon/executor/os_picker_macro.py`)
 
 `run_os_picker_macro()` is a deterministic, LLM-free primitive invoked by `NativeBrowserExecutor` after clicking an upload control that opens a native OS file dialog. It polls for a picker window via `pygetwindow` keyword matching, types the absolute file path with `pyautogui.write`, presses Enter, then polls for the window to close. Returns `PickerMacroResult` with `PickerOutcome` enum (`SUCCESS`, `PICKER_NOT_DETECTED`, `FILE_NOT_REFLECTED`, `UNAVAILABLE`).
 
@@ -315,7 +315,7 @@ React 19 + TypeScript + Zustand 5, served by the FastAPI backend. Three-pane lay
 
 All CSS is inline (no CSS files). `ui/CLAUDE.md` has full UI-specific guidance. `src-tauri/` contains the in-progress Tauri desktop packaging wrapper.
 
-### Clients (`src/clients/gemini.py`, `src/clients/anthropic.py`)
+### Clients (`src/operon/clients/gemini.py`, `src/operon/clients/anthropic.py`)
 
 `GeminiHttpClient` wraps raw HTTP calls for both perception and policy Gemini requests. Prompt templates live in `prompts/perception_prompt.txt` and `prompts/policy_prompt.txt`.
 
@@ -365,7 +365,7 @@ When a task fails or produces unexpected behavior, always start with the run's J
 
 ```powershell
 # Tail the last N steps of a run
-.venv\Scripts\python -m src.store.summary <run_id>
+.venv\Scripts\python -m operon.store.summary <run_id>
 
 # Read raw step logs (one JSON object per line)
 cat runs/<run_id>/run.jsonl

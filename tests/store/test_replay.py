@@ -5,21 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from src.models.common import FailureCategory, LoopStage, StopReason
-from src.models.execution import ExecutedAction
-from src.models.logs import (
+from operon.models.common import FailureCategory, LoopStage, StopReason
+from operon.models.execution import ExecutedAction
+from operon.models.logs import (
     FailureRecord,
     ModelDebugArtifacts,
     PreStepFailureLog,
     StepLog,
 )
-from src.models.perception import ScreenPerception
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.progress import ProgressState
-from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.verification import VerificationResult, VerificationStatus
-from src.store.replay import load_run_replay, render_run_replay
-from src.store.run_logger import append_step_log
+from operon.models.perception import ScreenPerception
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.progress import ProgressState
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
+from operon.models.verification import VerificationResult, VerificationStatus
+from operon.store.replay import load_run_replay, render_run_replay
+from operon.store.run_logger import append_step_log
 
 
 def _local_test_dir(name: str) -> Path:

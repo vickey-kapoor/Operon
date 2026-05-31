@@ -10,24 +10,24 @@ from uuid import uuid4
 
 import pytest
 
-from src.agent.loop import AgentLoop
-from src.agent.recovery import RuleBasedRecoveryManager
-from src.agent.verifier import DeterministicVerifierService
-from src.clients.gemini import PlaceholderGeminiClient
-from src.models.capture import CaptureFrame
-from src.models.common import (
+from operon.agent.loop import AgentLoop
+from operon.agent.recovery import RuleBasedRecoveryManager
+from operon.agent.verifier import DeterministicVerifierService
+from operon.clients.gemini import PlaceholderGeminiClient
+from operon.models.capture import CaptureFrame
+from operon.models.common import (
     FailureCategory,
     LoopStage,
     RunStatus,
     StepRequest,
     StopReason,
 )
-from src.models.execution import ExecutedAction
-from src.models.logs import ModelDebugArtifacts, StepLog
-from src.models.perception import ScreenPerception
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.state import AgentState
-from src.models.verification import (
+from operon.models.execution import ExecutedAction
+from operon.models.logs import ModelDebugArtifacts, StepLog
+from operon.models.perception import ScreenPerception
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.state import AgentState
+from operon.models.verification import (
     VerificationFailureType,
     VerificationResult,
     VerificationStatus,

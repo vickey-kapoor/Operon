@@ -77,7 +77,7 @@ def _open_windows_file_dialog_async() -> None:
 @requires_headed_integration
 def test_os_picker_macro_against_real_windows_open_dialog() -> None:
     """Macro must type a path and close a real Windows Open dialog."""
-    from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
+    from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 
     upload_file = _create_temp_upload_file()
     try:
@@ -102,7 +102,7 @@ def test_os_picker_macro_against_real_windows_open_dialog() -> None:
 @requires_headed_integration
 def test_os_picker_macro_detects_picker_not_detected_when_no_dialog() -> None:
     """Macro must return PICKER_NOT_DETECTED when no dialog opens within timeout."""
-    from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
+    from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 
     # Do NOT open any dialog — macro should time out
     result = run_os_picker_macro(
@@ -146,8 +146,8 @@ def _write_upload_html() -> Path:
 @pytest.mark.asyncio
 async def test_native_browser_executor_upload_file_native_headed_end_to_end() -> None:
     """Full path: headed browser → click file input → OS picker → macro → file reflected."""
-    from src.executor.browser_native import NativeBrowserExecutor
-    from src.models.policy import ActionType, AgentAction
+    from operon.executor.browser_native import NativeBrowserExecutor
+    from operon.models.policy import ActionType, AgentAction
 
     upload_file = _create_temp_upload_file()
     html_page = _write_upload_html()

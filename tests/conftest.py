@@ -12,7 +12,7 @@ os.environ.setdefault("OPERON_TEST_SAFE_MODE", "true")
 # Pre-import modules that test stubs (test_phase4_integration.py) replace via
 # sys.modules.setdefault — ensures the real implementations are loaded first so
 # stub injection is a no-op and doesn't break tests that depend on real behaviour.
-import src.agent.screen_diff  # noqa: F401, E402
+import operon.agent.screen_diff  # noqa: F401, E402
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -41,7 +41,7 @@ def _reset_active_browser_manager():
     Without this reset, a test that sets an active manager pollutes subsequent
     tests that expect the batch routing path.
     """
-    import src.browser.manager as _bm_mod
+    import operon.browser.manager as _bm_mod
     yield
     _bm_mod._active_manager = None
 
@@ -53,7 +53,7 @@ def _sync_bg_writer():
     Ensures tests that assert Path(...).exists() immediately after a service
     call see the file without having to await a background thread.
     """
-    from src.store.background_writer import bg_writer
+    from operon.store.background_writer import bg_writer
     bg_writer._sync = True
     yield
     bg_writer._sync = False

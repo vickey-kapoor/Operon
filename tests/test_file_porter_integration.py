@@ -23,7 +23,7 @@ import os
 
 import pytest
 
-from src.tools.file_porter import run_porter
+from operon.tools.file_porter import run_porter
 
 _RUN_DRIVE_INTEGRATION = os.getenv("OPERON_RUN_DRIVE_INTEGRATION", "false").lower() == "true"
 _TEST_FOLDER_ID = os.getenv("OPERON_DRIVE_TEST_FOLDER_ID", "")

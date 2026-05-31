@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.executor.browser_native import NativeBrowserExecutor, _BrowserSession
-from src.executor.browserbase_native import (
+from operon.executor.browser_native import NativeBrowserExecutor, _BrowserSession
+from operon.executor.browserbase_native import (
     BrowserbaseNativeBrowserExecutor,
     _is_session_closed,
 )
-from src.models.common import FailureCategory
-from src.models.policy import ActionType, AgentAction
+from operon.models.common import FailureCategory
+from operon.models.policy import ActionType, AgentAction
 
 
 def _install_browserbase_modules(monkeypatch: pytest.MonkeyPatch):

@@ -19,17 +19,17 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from src.agent.loop import AgentLoop
-from src.api.server import app
-from src.models.capture import CaptureFrame
-from src.models.common import RunStatus, StepRequest
-from src.models.execution import ExecutedAction
-from src.models.logs import ModelDebugArtifacts
-from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.state import AgentState
-from src.models.verification import (
+from operon.agent.loop import AgentLoop
+from operon.api.server import app
+from operon.models.capture import CaptureFrame
+from operon.models.common import RunStatus, StepRequest
+from operon.models.execution import ExecutedAction
+from operon.models.logs import ModelDebugArtifacts
+from operon.models.perception import ScreenPerception, UIElement, UIElementType
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
+from operon.models.state import AgentState
+from operon.models.verification import (
     VerificationFailureType,
     VerificationResult,
     VerificationStatus,
@@ -436,7 +436,7 @@ async def test_single_step_action_failure_triggers_recovery() -> None:
     action = AgentAction(action_type=ActionType.CLICK, target_element_id="missing-btn")
     decision = PolicyDecision(action=action, rationale="Click submit.", confidence=0.7, active_subgoal="submit")
 
-    from src.models.common import FailureCategory
+    from operon.models.common import FailureCategory
     executed = ExecutedAction(
         action=action,
         success=False,
@@ -620,7 +620,7 @@ async def test_perception_failure_produces_failed_status() -> None:
     CAPABILITY: When the perception service fails (bad screenshot), the run
     should fail gracefully rather than crashing the loop.
     """
-    from src.agent.perception import PerceptionError
+    from operon.agent.perception import PerceptionError
 
     run_root = _test_dir("perception-fail")
     run_id = "run-perc-fail"
@@ -671,8 +671,8 @@ async def test_policy_llm_fallback_is_used_when_no_rule_fires() -> None:
     Uses PolicyCoordinator with a stub LLM to verify the fallback path.
     """
 
-    from src.agent.policy_coordinator import PolicyCoordinator
-    from src.store.memory import FileBackedMemoryStore
+    from operon.agent.policy_coordinator import PolicyCoordinator
+    from operon.store.memory import FileBackedMemoryStore
 
     test_root = _test_dir("llm-fallback")
     prompt_path = test_root / "policy_prompt.txt"
@@ -698,7 +698,7 @@ async def test_policy_llm_fallback_is_used_when_no_rule_fires() -> None:
     memory_dir = test_root / "memory"
     memory_store = FileBackedMemoryStore(root_dir=memory_dir)
 
-    from src.agent.policy import GeminiPolicyService
+    from operon.agent.policy import GeminiPolicyService
     policy_service = GeminiPolicyService(
         gemini_client=_StubLLMClient(),  # type: ignore[arg-type]
         prompt_path=prompt_path,

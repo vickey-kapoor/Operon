@@ -8,25 +8,34 @@ from uuid import uuid4
 
 import pytest
 
-from src.agent.loop import AgentLoop
-from src.agent.perception import PerceptionError, PerceptionLowQualityError
-from src.models.capture import CaptureFrame
-from src.models.common import (
+from operon.agent.loop import AgentLoop
+from operon.agent.perception import PerceptionError, PerceptionLowQualityError
+from operon.models.capture import CaptureFrame
+from operon.models.common import (
     FailureCategory,
     RunStatus,
     RunTaskRequest,
     StepRequest,
     StopReason,
 )
-from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
-from src.models.logs import ModelDebugArtifacts
-from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.progress import ProgressState
-from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.state import AgentState
-from src.models.verification import VerificationResult, VerificationStatus
-from src.store.run_store import FileBackedRunStore
+from operon.models.execution import (
+    ExecutedAction,
+    ExecutionAttemptTrace,
+    ExecutionTrace,
+)
+from operon.models.logs import ModelDebugArtifacts
+from operon.models.perception import (
+    PageHint,
+    ScreenPerception,
+    UIElement,
+    UIElementType,
+)
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.progress import ProgressState
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
+from operon.models.state import AgentState
+from operon.models.verification import VerificationResult, VerificationStatus
+from operon.store.run_store import FileBackedRunStore
 
 
 def _local_test_dir(name: str) -> Path:
@@ -351,6 +360,7 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
         headless=True,
         benchmark=None,
         mode="batch",
+        max_steps=25,
     )
     executor.configure_run.assert_called_once_with("run-3", headless=True, mode="batch")
     assert response.run_id == "run-3"
@@ -392,7 +402,7 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_browser_mode() -> Non
     window and minimizing the user's foreground app on every task start steals
     focus during multi-task benchmark sweeps. Especially harmful in headless
     runs where there's no visible browser to give space to."""
-    from src.core.contracts.perception import Environment as UnifiedEnvironment
+    from operon.core.contracts.perception import Environment as UnifiedEnvironment
 
     created = AgentState(run_id="run-browser", intent="Browser task", status=RunStatus.PENDING)
     run_store = Mock()
@@ -428,7 +438,7 @@ async def test_agent_loop_start_run_runs_reset_desktop_in_desktop_mode(
     side-effects during the suite — disable it here so we can verify the
     real desktop-mode reset_desktop dispatch.
     """
-    from src.core.contracts.perception import Environment as UnifiedEnvironment
+    from operon.core.contracts.perception import Environment as UnifiedEnvironment
 
     monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
 
@@ -1583,7 +1593,7 @@ async def test_consume_force_fresh_perception_sleeps_before_reset() -> None:
     Browser environment uses 1.0s; desktop uses 0.5s."""
     from unittest.mock import patch as _patch
 
-    from src.core.contracts.perception import Environment as UnifiedEnvironment
+    from operon.core.contracts.perception import Environment as UnifiedEnvironment
 
     desktop_loop = _loop()
     desktop_loop.environment = UnifiedEnvironment.DESKTOP
@@ -1596,7 +1606,7 @@ async def test_consume_force_fresh_perception_sleeps_before_reset() -> None:
         # proving sleep happens BEFORE reset.
         flag_when_sleeping.append(state.force_fresh_perception)
 
-    with _patch("src.agent.loop.asyncio.sleep", side_effect=_spy_sleep) as mock_sleep:
+    with _patch("operon.agent.loop.asyncio.sleep", side_effect=_spy_sleep) as mock_sleep:
         await desktop_loop._consume_force_fresh_perception(state)
 
     assert flag_when_sleeping == [True], "sleep must run while the flag is still True"
@@ -1608,13 +1618,13 @@ async def test_consume_force_fresh_perception_sleeps_before_reset() -> None:
 async def test_consume_force_fresh_perception_uses_longer_delay_for_browser() -> None:
     from unittest.mock import patch as _patch
 
-    from src.core.contracts.perception import Environment as UnifiedEnvironment
+    from operon.core.contracts.perception import Environment as UnifiedEnvironment
 
     browser_loop = _loop()
     browser_loop.environment = UnifiedEnvironment.BROWSER
     state = AgentState(run_id="r1", intent="x", status=RunStatus.RUNNING, force_fresh_perception=True)
 
-    with _patch("src.agent.loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         await browser_loop._consume_force_fresh_perception(state)
 
     mock_sleep.assert_awaited_once_with(1.0)
@@ -1628,7 +1638,7 @@ async def test_consume_force_fresh_perception_noop_when_flag_clear() -> None:
     loop = _loop()
     state = AgentState(run_id="r1", intent="x", status=RunStatus.RUNNING, force_fresh_perception=False)
 
-    with _patch("src.agent.loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         await loop._consume_force_fresh_perception(state)
 
     mock_sleep.assert_not_awaited()
@@ -1647,8 +1657,8 @@ def test_maybe_reuse_prior_perception_returns_none_when_velocity_nonzero() -> No
 
 def test_maybe_reuse_prior_perception_requires_last_action_wait() -> None:
     """Cache fires only when the last action was idempotent (WAIT)."""
-    from src.models.execution import ExecutedAction
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.execution import ExecutedAction
+    from operon.models.policy import ActionType, AgentAction
     loop = _loop()
     frame = CaptureFrame(artifact_path="x.png", width=100, height=100, mime_type="image/png", visual_velocity=0.0)
     perception = ScreenPerception(summary="x", page_hint="unknown", capture_artifact_path="prev.png", visible_elements=[])
@@ -1663,9 +1673,9 @@ def test_maybe_reuse_prior_perception_requires_last_action_wait() -> None:
 
 def test_maybe_reuse_prior_perception_fires_when_all_conditions_met() -> None:
     """All four gates green → reuse the prior perception with updated artifact path."""
-    from src.models.execution import ExecutedAction
-    from src.models.policy import ActionType, AgentAction
-    from src.models.verification import VerificationResult, VerificationStatus
+    from operon.models.execution import ExecutedAction
+    from operon.models.policy import ActionType, AgentAction
+    from operon.models.verification import VerificationResult, VerificationStatus
     loop = _loop()
     frame = CaptureFrame(artifact_path="current.png", width=100, height=100, mime_type="image/png", visual_velocity=0.0)
     prior = ScreenPerception(summary="prev frame", page_hint="form_page", capture_artifact_path="prev.png", visible_elements=[])
@@ -1686,9 +1696,9 @@ def test_maybe_reuse_prior_perception_fires_when_all_conditions_met() -> None:
 def test_maybe_reuse_prior_perception_blocks_back_to_back_reuse() -> None:
     """A second consecutive call (same run_id) must NOT reuse — forces a fresh
     perception every other step to catch slow renders the first skip might have missed."""
-    from src.models.execution import ExecutedAction
-    from src.models.policy import ActionType, AgentAction
-    from src.models.verification import VerificationResult, VerificationStatus
+    from operon.models.execution import ExecutedAction
+    from operon.models.policy import ActionType, AgentAction
+    from operon.models.verification import VerificationResult, VerificationStatus
     loop = _loop()
     frame = CaptureFrame(artifact_path="current.png", width=100, height=100, mime_type="image/png", visual_velocity=0.0)
     prior = ScreenPerception(summary="prev", page_hint="form_page", capture_artifact_path="prev.png", visible_elements=[])

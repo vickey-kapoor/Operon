@@ -10,8 +10,8 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from src.models.common import FailureCategory
-from src.models.policy import ActionType, AgentAction
+from operon.models.common import FailureCategory
+from operon.models.policy import ActionType, AgentAction
 
 
 def _local_test_dir(name: str) -> Path:
@@ -22,8 +22,8 @@ def _local_test_dir(name: str) -> Path:
 
 def _make_executor(artifact_dir: Path | None = None):
     """Import and create a DesktopExecutor with mocked DPI awareness."""
-    with patch("src.executor.desktop._set_dpi_awareness"):
-        from src.executor.desktop import DesktopExecutor
+    with patch("operon.executor.desktop._set_dpi_awareness"):
+        from operon.executor.desktop import DesktopExecutor
 
         return DesktopExecutor(artifact_dir=artifact_dir or _local_test_dir("desktop"))
 
@@ -49,8 +49,8 @@ async def test_capture_returns_valid_frame() -> None:
     ]
 
     with (
-        patch("src.executor.desktop._mss") as mock_mss,
-        patch("src.executor.desktop.mss.tools.to_png"),
+        patch("operon.executor.desktop._mss") as mock_mss,
+        patch("operon.executor.desktop.mss.tools.to_png"),
     ):
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=ctx)
@@ -78,7 +78,7 @@ async def test_click_success() -> None:
     action = AgentAction(action_type=ActionType.CLICK, x=500, y=300)
 
     with (
-        patch("src.executor.desktop.pyautogui.click") as mock_click,
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         patch.object(executor, "_region_has_content", return_value=True),
     ):
@@ -111,9 +111,9 @@ async def test_type_with_coords() -> None:
     action = AgentAction(action_type=ActionType.TYPE, text="hello", x=100, y=200)
 
     with (
-        patch("src.executor.desktop.pyautogui.click") as mock_click,
-        patch("src.executor.desktop.pyautogui.hotkey") as mock_hotkey,
-        patch("src.executor.desktop.pyperclip.copy") as mock_copy,
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
+        patch("operon.executor.desktop.pyautogui.hotkey") as mock_hotkey,
+        patch("operon.executor.desktop.pyperclip.copy") as mock_copy,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         # Return different bytes pre/post click to simulate focus change (no retry needed)
         patch.object(executor, "_sample_region", side_effect=[b"\x00" * 100, b"\xff" * 100]),
@@ -133,9 +133,9 @@ async def test_type_with_coords_retries_click_when_focus_not_detected() -> None:
     action = AgentAction(action_type=ActionType.TYPE, text="hello", x=100, y=200)
 
     with (
-        patch("src.executor.desktop.pyautogui.click") as mock_click,
-        patch("src.executor.desktop.pyautogui.hotkey"),
-        patch("src.executor.desktop.pyperclip.copy"),
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
+        patch("operon.executor.desktop.pyautogui.hotkey"),
+        patch("operon.executor.desktop.pyperclip.copy"),
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         # Return identical bytes to simulate no visual change (focus stolen → retry)
         patch.object(executor, "_sample_region", return_value=b"\x00" * 100),
@@ -156,7 +156,7 @@ async def test_press_key() -> None:
     action = AgentAction(action_type=ActionType.PRESS_KEY, key="enter")
 
     with (
-        patch("src.executor.desktop.pyautogui.press") as mock_press,
+        patch("operon.executor.desktop.pyautogui.press") as mock_press,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -175,7 +175,7 @@ async def test_hotkey_splits_keys() -> None:
     action = AgentAction(action_type=ActionType.HOTKEY, key="ctrl+shift+esc")
 
     with (
-        patch("src.executor.desktop.pyautogui.hotkey") as mock_hotkey,
+        patch("operon.executor.desktop.pyautogui.hotkey") as mock_hotkey,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -194,7 +194,7 @@ async def test_launch_app_known_alias() -> None:
     action = AgentAction(action_type=ActionType.LAUNCH_APP, text="calculator")
 
     with (
-        patch("src.executor.desktop.subprocess.Popen") as mock_popen,
+        patch("operon.executor.desktop.subprocess.Popen") as mock_popen,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -211,7 +211,7 @@ async def test_launch_app_unknown_passthrough() -> None:
     action = AgentAction(action_type=ActionType.LAUNCH_APP, text="myapp.exe")
 
     with (
-        patch("src.executor.desktop.subprocess.Popen") as mock_popen,
+        patch("operon.executor.desktop.subprocess.Popen") as mock_popen,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -327,7 +327,7 @@ async def test_launch_app_ms_settings() -> None:
     action = AgentAction(action_type=ActionType.LAUNCH_APP, text="settings")
 
     with (
-        patch("src.executor.desktop.os.startfile") as mock_startfile,
+        patch("operon.executor.desktop.os.startfile") as mock_startfile,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -346,7 +346,7 @@ async def test_double_click_success() -> None:
     action = AgentAction(action_type=ActionType.DOUBLE_CLICK, x=500, y=300)
 
     with (
-        patch("src.executor.desktop.pyautogui.doubleClick") as mock_dclick,
+        patch("operon.executor.desktop.pyautogui.doubleClick") as mock_dclick,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         patch.object(executor, "_region_has_content", return_value=(True, 100.0)),
     ):
@@ -379,7 +379,7 @@ async def test_right_click_success() -> None:
     action = AgentAction(action_type=ActionType.RIGHT_CLICK, x=400, y=250)
 
     with (
-        patch("src.executor.desktop.pyautogui.rightClick") as mock_rclick,
+        patch("operon.executor.desktop.pyautogui.rightClick") as mock_rclick,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         patch.object(executor, "_region_has_content", return_value=(True, 100.0)),
     ):
@@ -426,7 +426,7 @@ async def test_visual_servo_aborts_uniform_region(action_type, pyautogui_attr) -
     action = AgentAction(action_type=action_type, x=500, y=300)
 
     with (
-        patch(f"src.executor.desktop.pyautogui.{pyautogui_attr}") as mock_prim,
+        patch(f"operon.executor.desktop.pyautogui.{pyautogui_attr}") as mock_prim,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         patch.object(executor, "_region_has_content", return_value=(False, 5.0)),
     ):
@@ -447,7 +447,7 @@ async def test_visual_servo_resilient_to_mss_failure() -> None:
     action = AgentAction(action_type=ActionType.CLICK, x=500, y=300)
 
     with (
-        patch("src.executor.desktop.pyautogui.click") as mock_click,
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         patch.object(executor, "_region_has_content", side_effect=RuntimeError("mss unavailable")),
     ):
@@ -475,7 +475,7 @@ async def test_region_has_content_bypasses_variance_for_input_zone() -> None:
 async def test_capture_re_bursts_on_high_visual_velocity() -> None:
     """`capture()` must re-burst once when the first burst returns velocity > 0.02
     so perception never sees an animating frame."""
-    from src.models.capture import CaptureFrame
+    from operon.models.capture import CaptureFrame
 
     executor = _make_executor()
 
@@ -495,7 +495,7 @@ async def test_capture_re_bursts_on_high_visual_velocity() -> None:
         "_capture_burst_sync",
         side_effect=[(moving_frame, 0.05), (stable_frame, 0.0)],
     ) as mock_burst:
-        with patch("src.executor.desktop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        with patch("operon.executor.desktop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             frame = await executor.capture()
 
     assert mock_burst.call_count == 2
@@ -507,7 +507,7 @@ async def test_capture_re_bursts_on_high_visual_velocity() -> None:
 @pytest.mark.asyncio
 async def test_capture_no_reburst_on_low_velocity() -> None:
     """When the first burst is already stable, capture() must NOT re-burst."""
-    from src.models.capture import CaptureFrame
+    from operon.models.capture import CaptureFrame
 
     executor = _make_executor()
     stable = CaptureFrame(
@@ -533,9 +533,9 @@ async def test_drag_success() -> None:
     action = AgentAction(action_type=ActionType.DRAG, x=100, y=200, x_end=300, y_end=400)
 
     with (
-        patch("src.executor.desktop.pyautogui.moveTo") as mock_move,
-        patch("src.executor.desktop.pyautogui.mouseDown") as mock_down,
-        patch("src.executor.desktop.pyautogui.mouseUp") as mock_up,
+        patch("operon.executor.desktop.pyautogui.moveTo") as mock_move,
+        patch("operon.executor.desktop.pyautogui.mouseDown") as mock_down,
+        patch("operon.executor.desktop.pyautogui.mouseUp") as mock_up,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -565,7 +565,7 @@ async def test_scroll_success() -> None:
     action = AgentAction(action_type=ActionType.SCROLL, scroll_amount=3, x=100, y=200)
 
     with (
-        patch("src.executor.desktop.pyautogui.scroll") as mock_scroll,
+        patch("operon.executor.desktop.pyautogui.scroll") as mock_scroll,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -591,7 +591,7 @@ async def test_hover_success() -> None:
     action = AgentAction(action_type=ActionType.HOVER, x=150, y=250)
 
     with (
-        patch("src.executor.desktop.pyautogui.moveTo") as mock_move,
+        patch("operon.executor.desktop.pyautogui.moveTo") as mock_move,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -616,7 +616,7 @@ async def test_read_clipboard_success() -> None:
     executor = _make_executor()
     action = AgentAction(action_type=ActionType.READ_CLIPBOARD)
 
-    with patch("src.executor.desktop.pyperclip.paste", return_value="test content"):
+    with patch("operon.executor.desktop.pyperclip.paste", return_value="test content"):
         result = await executor.execute(action)
 
         assert result.success is True
@@ -629,7 +629,7 @@ async def test_write_clipboard_success() -> None:
     executor = _make_executor()
     action = AgentAction(action_type=ActionType.WRITE_CLIPBOARD, text="hello world")
 
-    with patch("src.executor.desktop.pyperclip.copy") as mock_copy:
+    with patch("operon.executor.desktop.pyperclip.copy") as mock_copy:
         result = await executor.execute(action)
 
         assert result.success is True
@@ -658,8 +658,8 @@ async def test_screenshot_region_success() -> None:
     )
 
     with (
-        patch("src.executor.desktop._mss") as mock_mss,
-        patch("src.executor.desktop.mss.tools.to_png"),
+        patch("operon.executor.desktop._mss") as mock_mss,
+        patch("operon.executor.desktop.mss.tools.to_png"),
     ):
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=ctx)
@@ -724,7 +724,7 @@ async def test_hotkey_allows_other_hotkeys() -> None:
     action = AgentAction(action_type=ActionType.HOTKEY, key="ctrl+c")
 
     with (
-        patch("src.executor.desktop.pyautogui.hotkey"),
+        patch("operon.executor.desktop.pyautogui.hotkey"),
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)
@@ -746,7 +746,7 @@ async def test_launch_app_tracks_process() -> None:
     mock_proc.args = "calc.exe"
 
     with (
-        patch("src.executor.desktop.subprocess.Popen", return_value=mock_proc),
+        patch("operon.executor.desktop.subprocess.Popen", return_value=mock_proc),
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
         result = await executor.execute(action)

@@ -5,18 +5,23 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from src.models.common import FailureCategory, LoopStage, RunStatus
-from src.models.execution import ExecutedAction
-from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.state import AgentState
-from src.models.verification import (
+from operon.models.common import FailureCategory, LoopStage, RunStatus
+from operon.models.execution import ExecutedAction
+from operon.models.perception import (
+    PageHint,
+    ScreenPerception,
+    UIElement,
+    UIElementType,
+)
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
+from operon.models.state import AgentState
+from operon.models.verification import (
     VerificationFailureType,
     VerificationResult,
     VerificationStatus,
 )
-from src.store.memory import FileBackedMemoryStore
+from operon.store.memory import FileBackedMemoryStore
 
 
 def _local_test_dir(name: str) -> Path:
@@ -248,7 +253,7 @@ def test_memory_get_hints_prunes_buckets_below_threshold(tmp_path: Path) -> None
     """A bucket whose mean weight is below the prune threshold (0.1) must be
     excluded from get_hints() — this is the self-healing mechanism that stops
     bad advice from persisting forever."""
-    from src.models.memory import MemoryOutcome, MemoryRecord
+    from operon.models.memory import MemoryOutcome, MemoryRecord
 
     store = FileBackedMemoryStore(root_dir=tmp_path / "runs")
 

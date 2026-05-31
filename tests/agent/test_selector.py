@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from src.agent.selector import DeterministicTargetSelector
-from src.models.common import FailureCategory, StopReason
-from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.selector import (
+from operon.agent.selector import DeterministicTargetSelector
+from operon.models.common import FailureCategory, StopReason
+from operon.models.perception import ScreenPerception, UIElement, UIElementType
+from operon.models.selector import (
     SelectorFinalDecision,
     SelectorMode,
     SelectorRecoveryStrategy,

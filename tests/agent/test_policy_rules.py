@@ -7,19 +7,19 @@ from uuid import uuid4
 
 import pytest
 
-from src.agent.policy import GeminiPolicyService
-from src.agent.policy_coordinator import PolicyCoordinator
-from src.models.common import FailureCategory, LoopStage, RunStatus
-from src.models.execution import ExecutedAction
-from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction
-from src.models.state import AgentState
-from src.models.verification import (
+from operon.agent.policy import GeminiPolicyService
+from operon.agent.policy_coordinator import PolicyCoordinator
+from operon.models.common import FailureCategory, LoopStage, RunStatus
+from operon.models.execution import ExecutedAction
+from operon.models.perception import ScreenPerception, UIElement, UIElementType
+from operon.models.policy import ActionType, AgentAction
+from operon.models.state import AgentState
+from operon.models.verification import (
     VerificationFailureType,
     VerificationResult,
     VerificationStatus,
 )
-from src.store.memory import FileBackedMemoryStore
+from operon.store.memory import FileBackedMemoryStore
 
 
 class StubGeminiClient:

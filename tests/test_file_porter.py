@@ -7,10 +7,10 @@ from unittest.mock import patch
 import pytest
 import requests
 
-from src.executor.desktop import DesktopExecutor
-from src.models.common import FailureCategory
-from src.models.policy import ActionType, AgentAction
-from src.tools.file_porter import (
+from operon.executor.desktop import DesktopExecutor
+from operon.models.common import FailureCategory
+from operon.models.policy import ActionType, AgentAction
+from operon.tools.file_porter import (
     PorterResult,
     _derive_filename,
     _derive_mime,
@@ -53,7 +53,7 @@ def test_derive_mime_falls_back_to_filename_guess() -> None:
 
 
 def test_run_porter_returns_download_failure() -> None:
-    with patch("src.tools.file_porter.requests.get", side_effect=requests.RequestException("network down")):
+    with patch("operon.tools.file_porter.requests.get", side_effect=requests.RequestException("network down")):
         result = run_porter("https://example.com/file.txt", "folder-1")
 
     assert result.success is False
@@ -67,7 +67,7 @@ def test_run_porter_returns_missing_google_dependency_after_download(monkeypatch
 
     _install_google_http_module(monkeypatch, FakeMediaUpload)
 
-    with patch("src.tools.file_porter.requests.get", return_value=_Response(content=b"abc")):
+    with patch("operon.tools.file_porter.requests.get", return_value=_Response(content=b"abc")):
         result = run_porter("https://example.com/file.txt", "folder-1")
 
     assert result.success is False
@@ -83,8 +83,8 @@ def test_run_porter_returns_auth_failure(monkeypatch: pytest.MonkeyPatch) -> Non
     _install_google_http_module(monkeypatch, FakeMediaUpload)
 
     with (
-        patch("src.tools.file_porter.requests.get", return_value=_Response(content=b"hello")),
-        patch("src.tools.file_porter._build_drive_service", side_effect=RuntimeError("bad credentials")),
+        patch("operon.tools.file_porter.requests.get", return_value=_Response(content=b"hello")),
+        patch("operon.tools.file_porter._build_drive_service", side_effect=RuntimeError("bad credentials")),
     ):
         result = run_porter("https://example.com/file.txt", "folder-1")
 
@@ -110,8 +110,8 @@ def test_run_porter_returns_upload_failure(monkeypatch: pytest.MonkeyPatch) -> N
     _install_google_http_module(monkeypatch, FakeMediaUpload)
 
     with (
-        patch("src.tools.file_porter.requests.get", return_value=_Response(content=b"payload")),
-        patch("src.tools.file_porter._build_drive_service", return_value=service),
+        patch("operon.tools.file_porter.requests.get", return_value=_Response(content=b"payload")),
+        patch("operon.tools.file_porter._build_drive_service", return_value=service),
     ):
         result = run_porter("https://example.com/file.txt", "folder-1")
 
@@ -143,8 +143,8 @@ def test_run_porter_success(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_google_http_module(monkeypatch, FakeMediaUpload)
 
     with (
-        patch("src.tools.file_porter.requests.get", return_value=_Response(content=b"hello")),
-        patch("src.tools.file_porter._build_drive_service", return_value=service),
+        patch("operon.tools.file_porter.requests.get", return_value=_Response(content=b"hello")),
+        patch("operon.tools.file_porter._build_drive_service", return_value=service),
     ):
         result = run_porter("https://example.com/report.txt", "folder-1")
 
@@ -166,7 +166,7 @@ async def test_desktop_executor_file_porter_success() -> None:
     )
 
     with patch(
-        "src.tools.file_porter.run_porter",
+        "operon.tools.file_porter.run_porter",
         return_value=PorterResult(success=True, detail="saved to drive"),
     ):
         result = await DesktopExecutor._exec_file_porter(executor, action)
@@ -185,7 +185,7 @@ async def test_desktop_executor_file_porter_failure_maps_to_execution_error() ->
     )
 
     with patch(
-        "src.tools.file_porter.run_porter",
+        "operon.tools.file_porter.run_porter",
         return_value=PorterResult(success=False, detail="upload failed"),
     ):
         result = await DesktopExecutor._exec_file_porter(executor, action)

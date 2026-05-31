@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from src.clients.gemini import GeminiClientError, GeminiHttpClient
+from operon.clients.gemini import GeminiClientError, GeminiHttpClient
 
 
 def test_extract_text_returns_first_text_part() -> None:

@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from src.executor.browserbase_native import BrowserbaseNativeBrowserExecutor
-from src.models.policy import ActionType, AgentAction
+from operon.executor.browserbase_native import BrowserbaseNativeBrowserExecutor
+from operon.models.policy import ActionType, AgentAction
 
 _RUN_BROWSERBASE_INTEGRATION = (
     os.getenv("OPERON_RUN_BROWSERBASE_INTEGRATION", "false").lower() == "true"

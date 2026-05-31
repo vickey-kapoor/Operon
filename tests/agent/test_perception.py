@@ -7,18 +7,18 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.perception import (
+from operon.agent.perception import (
     GeminiPerceptionService,
     PerceptionError,
     PerceptionLowQualityError,
     parse_perception_output,
 )
-from src.agent.selector import DeterministicTargetSelector
-from src.models.capture import CaptureFrame
-from src.models.common import RunStatus
-from src.models.perception import PageHint, UIElementNameSource, UIElementType
-from src.models.selector import TargetIntent, TargetIntentAction
-from src.models.state import AgentState
+from operon.agent.selector import DeterministicTargetSelector
+from operon.models.capture import CaptureFrame
+from operon.models.common import RunStatus
+from operon.models.perception import PageHint, UIElementNameSource, UIElementType
+from operon.models.selector import TargetIntent, TargetIntentAction
+from operon.models.state import AgentState
 
 
 class StubGeminiClient:

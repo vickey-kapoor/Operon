@@ -1,0 +1,776 @@
+"""Helpers for the local real-time debug observer UI."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
+
+from operon.models.common import RunStatus, StopReason
+from operon.models.logs import PreStepFailureLog, StepLog
+from operon.models.state import AgentState
+from operon.models.usage import ModelUsage, UsageAggregate
+from operon.store.replay import load_run_replay
+from operon.store.summary import _load_state_from_path
+
+
+def runs_root() -> Path:
+    """Return the root directory used for local run artifacts."""
+    return Path(os.getenv("OPERON_RUNS_ROOT", "runs")).resolve()
+
+
+def browser_artifacts_root() -> Path:
+    """Return the root directory used for browser session recordings."""
+    return Path(os.getenv("OPERON_BROWSER_ARTIFACTS_ROOT", ".browser-artifacts")).resolve()
+
+
+def list_runs(limit: int = 20) -> list[dict[str, Any]]:
+    """Return recent runs ordered by state file timestamp."""
+    root = runs_root()
+    if not root.exists():
+        return []
+
+    runs: list[dict[str, Any]] = []
+    for run_dir in sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.stat().st_mtime, reverse=True):
+        state_path = run_dir / "state.json"
+        if not state_path.exists():
+            continue
+        try:
+            state = _load_state_from_path(state_path)
+        except Exception:
+            continue
+        runs.append(
+            {
+                "run_id": state.run_id,
+                "intent": state.intent,
+                "status": state.status.value,
+                "step_count": state.step_count,
+                "stop_reason": state.stop_reason.value if state.stop_reason is not None else None,
+                "updated_at": state_path.stat().st_mtime,
+                "usage": summarize_run_usage(state.run_id).model_dump(mode="json"),
+            }
+        )
+        if len(runs) >= limit:
+            break
+    return runs
+
+
+def load_run_snapshot(run_id: str) -> dict[str, Any]:
+    """Load one run plus current and historical step observer data."""
+    root = runs_root()
+    state_path = root / run_id / "state.json"
+    if not state_path.exists():
+        raise FileNotFoundError(f"Run state not found: {state_path}")
+
+    state = _load_state_from_path(state_path)
+    try:
+        entries = load_run_replay(run_id, root_dir=root)
+    except FileNotFoundError:
+        entries = []
+    run_dir = root / run_id
+    completed_steps = [entry for entry in entries if isinstance(entry, StepLog)]
+    pre_step_failures = [entry for entry in entries if isinstance(entry, PreStepFailureLog)]
+    steps = [_step_payload(entry) for entry in completed_steps]
+    partial_current_step = _latest_partial_step_payload(run_dir)
+    latest_completed_step = steps[-1] if steps else None
+    partial_is_newer = partial_current_step is not None and (
+        latest_completed_step is None or partial_current_step["step_index"] > latest_completed_step["step_index"]
+    )
+    current_step = (
+        partial_current_step
+        if partial_is_newer
+        else (latest_completed_step or (_pre_step_payload(pre_step_failures[-1]) if pre_step_failures else None))
+    )
+    phase = _current_phase(state, current_step, pre_step_failures[-1] if pre_step_failures else None)
+    event_log = _build_event_log(state, completed_steps, pre_step_failures, partial_current_step)
+    if partial_is_newer:
+        steps.append(partial_current_step)
+        steps.sort(key=lambda item: item["step_index"])
+    return {
+        "run": {
+            "run_id": state.run_id,
+            "intent": state.intent,
+            "status": state.status.value,
+            "step_count": state.step_count,
+            "headless": state.headless,
+            "stop_reason": state.stop_reason.value if state.stop_reason is not None else None,
+            "current_subgoal": state.current_subgoal,
+            "current_task_id": state.benchmark or "ad_hoc_run",
+            "current_phase": phase,
+            "session_video_path": _session_video_path(state),
+        },
+        "usage": summarize_run_usage(run_id).model_dump(mode="json"),
+        "progress_state": state.progress_state.model_dump(mode="json"),
+        "current_step": current_step,
+        "steps": steps,
+        "pre_step_failures": [_pre_step_payload(entry) for entry in pre_step_failures],
+        "event_log": event_log,
+    }
+
+
+def artifact_path_for_request(path_value: str) -> Path:
+    """Resolve and validate an artifact path for local observer access."""
+    allowed_roots = [runs_root(), browser_artifacts_root()]
+    requested = Path(path_value)
+    candidate = requested if requested.is_absolute() else (Path.cwd() / requested)
+    resolved = candidate.resolve()
+    if not any(root == resolved or root in resolved.parents for root in allowed_roots):
+        raise ValueError("Artifact path is outside the allowed artifact roots")
+    if not resolved.exists():
+        raise FileNotFoundError(f"Artifact not found: {resolved}")
+    return resolved
+
+
+def build_run_bundle(run_id: str) -> bytes:
+    """Package a run's artifacts into an in-memory zip bundle."""
+    run_dir = runs_root() / run_id
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run not found: {run_id}")
+
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as bundle:
+        for path in run_dir.rglob("*"):
+            if path.is_file():
+                bundle.write(path, arcname=str(Path("runs") / run_id / path.relative_to(run_dir)))
+
+        state = _load_state_from_path(run_dir / "state.json")
+        session_video = _session_video_path(state)
+        if session_video:
+            try:
+                video_path = artifact_path_for_request(session_video)
+            except (FileNotFoundError, ValueError):
+                video_path = None
+            if video_path is not None:
+                bundle.write(
+                    video_path,
+                    arcname=str(Path("browser-artifacts") / run_id / video_path.parent.name / video_path.name),
+                )
+
+    return buffer.getvalue()
+
+
+def reconcile_orphaned_browser_run(run_id: str, *, has_live_session: bool) -> AgentState | None:
+    """Mark stale running browser runs as failed when no live session remains."""
+    state_path = runs_root() / run_id / "state.json"
+    if not state_path.exists():
+        return None
+    state = _load_state_from_path(state_path)
+    if state.status is not RunStatus.RUNNING:
+        return state
+    if has_live_session or not _looks_like_browser_run(state):
+        return state
+    state.status = RunStatus.FAILED
+    if state.stop_reason is None:
+        state.stop_reason = StopReason.EXECUTION_NO_PROGRESS
+    state_path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+    return state
+
+
+def _session_video_path(state) -> str | None:
+    for artifact_path in reversed(state.artifact_paths):
+        lowered = artifact_path.lower()
+        if "session_video" in lowered and lowered.endswith((".webm", ".mp4")):
+            return artifact_path
+    return None
+
+
+def _looks_like_browser_run(state: AgentState) -> bool:
+    if state.start_url:
+        return True
+    intent = state.intent.lower()
+    return any(token in intent for token in ("chrome", "browser", "website", "http", "www."))
+
+
+def _step_payload(entry: StepLog) -> dict[str, Any]:
+    before_dimensions = _image_dimensions(entry.before_artifact_path)
+    perception_diagnostics = _load_json(entry.perception_debug.diagnostics_artifact_path)
+    return {
+        "step_id": entry.step_id,
+        "step_index": entry.step_index,
+        "before_artifact_path": entry.before_artifact_path,
+        "after_artifact_path": entry.after_artifact_path,
+        "before_dimensions": before_dimensions,
+        "page_hint": entry.perception.page_hint.value,
+        "perception": {
+            "summary": entry.perception.summary,
+            "focused_element_id": entry.perception.focused_element_id,
+            "confidence": entry.perception.confidence,
+            "usage": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
+            "metrics": _perception_metrics(entry),
+            "elements": [element.model_dump(mode="json") for element in entry.perception.visible_elements],
+            "retry_log": _read_text(entry.perception_debug.retry_log_artifact_path),
+            "diagnostics": perception_diagnostics,
+        },
+        "selector": {
+            "intent": None,
+            "candidate_count": None,
+            "top_candidates": [],
+            "selected_candidate": None,
+            "score_margin": None,
+            "recovery_attempted": False,
+            "recovery_strategy_used": None,
+            "final_decision": None,
+            "failure_reason": None,
+            "trace": _selector_trace_payload(entry.policy_debug.selector_trace_artifact_path),
+        },
+        "execution": {
+            "action": entry.executed_action.action.model_dump(mode="json"),
+            "detail": entry.executed_action.detail,
+            "failure_category": entry.executed_action.failure_category.value if entry.executed_action.failure_category is not None else None,
+            "trace": _load_json(entry.executed_action.execution_trace_artifact_path),
+        },
+        "verification": entry.verification_result.model_dump(mode="json"),
+        "usage": {
+            "perception": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
+            "policy": entry.policy_debug.usage.model_dump(mode="json") if entry.policy_debug.usage is not None else None,
+            "verification": entry.verification_debug.usage.model_dump(mode="json") if entry.verification_debug is not None and entry.verification_debug.usage is not None else None,
+        },
+        "recovery": entry.recovery_decision.model_dump(mode="json"),
+        "plan": {
+            "rationale": entry.policy_decision.rationale,
+            "confidence": entry.policy_decision.confidence,
+            "active_subgoal": entry.policy_decision.active_subgoal,
+            "rule_name": entry.policy_decision.rule_name,
+            "proposed_action": entry.policy_decision.action.model_dump(mode="json"),
+            "usage": entry.policy_debug.usage.model_dump(mode="json") if entry.policy_debug.usage is not None else None,
+        },
+        "progress": {
+            "state": entry.progress_state.model_dump(mode="json") if entry.progress_state is not None else None,
+            "trace": _load_json(entry.progress_trace_artifact_path),
+        },
+        "failure": entry.failure.model_dump(mode="json") if entry.failure is not None else None,
+        "is_partial": False,
+    }
+
+
+def _pre_step_payload(entry: PreStepFailureLog) -> dict[str, Any]:
+    diagnostics = _load_json(entry.perception_debug.diagnostics_artifact_path) or {}
+    parsed_perception = _load_json(entry.perception_debug.parsed_artifact_path) or {}
+    visible_elements = parsed_perception.get("visible_elements", []) if isinstance(parsed_perception, dict) else []
+    return {
+        "step_id": entry.step_id,
+        "step_index": entry.step_index,
+        "before_artifact_path": entry.before_artifact_path,
+        "before_dimensions": _image_dimensions(entry.before_artifact_path),
+        "phase": entry.failure.stage.value,
+        "error_message": entry.error_message,
+        "failure": entry.failure.model_dump(mode="json"),
+        "perception_retry_log": _read_text(entry.perception_debug.retry_log_artifact_path),
+        "perception": {
+            "summary": diagnostics.get("summary") or parsed_perception.get("summary"),
+            "focused_element_id": diagnostics.get("normalized_raw_perception_summary", {}).get("focused_element_id")
+            if isinstance(diagnostics.get("normalized_raw_perception_summary"), dict)
+            else parsed_perception.get("focused_element_id"),
+            "confidence": parsed_perception.get("confidence"),
+            "usage": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
+            "metrics": _pre_step_perception_metrics(diagnostics),
+            "elements": visible_elements,
+            "retry_log": _read_text(entry.perception_debug.retry_log_artifact_path),
+            "diagnostics": diagnostics or None,
+        },
+        "selector": {"trace": None},
+        "execution": {"trace": None},
+        "progress": {"state": None, "trace": None},
+        "is_partial": False,
+    }
+
+
+def _latest_partial_step_payload(run_dir: Path) -> dict[str, Any] | None:
+    latest_step_dir = _latest_step_dir(run_dir)
+    if latest_step_dir is None:
+        return None
+    return _partial_step_payload(latest_step_dir)
+
+
+def _latest_step_dir(run_dir: Path) -> Path | None:
+    candidates: list[tuple[int, Path]] = []
+    for child in run_dir.iterdir():
+        if not child.is_dir():
+            continue
+        match = re.fullmatch(r"step_(\d+)", child.name)
+        if match is None:
+            continue
+        candidates.append((int(match.group(1)), child))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def _partial_step_payload(step_dir: Path) -> dict[str, Any] | None:
+    step_index = int(step_dir.name.split("_", 1)[1])
+    before_artifact_path = _existing_path(step_dir / "before.png")
+    if before_artifact_path is None:
+        return None
+
+    perception = _partial_perception_payload(step_dir, before_artifact_path)
+    selector_trace = _selector_trace_payload(_existing_path(step_dir / "selector_trace.json"))
+    execution_trace = _load_json(_existing_path(step_dir / "execution_trace.json"))
+    progress_trace_path = _existing_path(step_dir / "progress_trace.json")
+    progress_trace = _load_json(progress_trace_path)
+    return {
+        "step_id": f"step_{step_index}",
+        "step_index": step_index,
+        "before_artifact_path": before_artifact_path,
+        "after_artifact_path": _existing_path(step_dir / "after.png"),
+        "before_dimensions": _image_dimensions(before_artifact_path),
+        "page_hint": (perception or {}).get("metrics", {}).get("page_hint"),
+        "phase": _partial_step_phase(step_dir),
+        "perception": perception,
+        "selector": {
+            "intent": None,
+            "candidate_count": None,
+            "top_candidates": [],
+            "selected_candidate": None,
+            "score_margin": None,
+            "recovery_attempted": False,
+            "recovery_strategy_used": None,
+            "final_decision": None,
+            "failure_reason": None,
+            "trace": selector_trace,
+        },
+        "execution": _partial_execution_payload(execution_trace),
+        "verification": None,
+        "recovery": None,
+        "plan": None,
+        "progress": {
+            "state": None,
+            "trace": progress_trace,
+        },
+        "failure": None,
+        "is_partial": True,
+    }
+
+
+def _partial_perception_payload(step_dir: Path, before_artifact_path: str) -> dict[str, Any] | None:
+    parsed_perception = _load_json(_existing_path(step_dir / "perception_parsed.json"))
+    diagnostics = _load_json(_existing_path(step_dir / "perception_diagnostics.json"))
+    retry_log = _read_text(_existing_path(step_dir / "perception_retry_log.txt"))
+    usage = _load_json(_existing_path(step_dir / "perception_usage.json"))
+    if parsed_perception is None and diagnostics is None and retry_log is None:
+        return None
+
+    if isinstance(parsed_perception, dict):
+        elements = parsed_perception.get("visible_elements", [])
+        summary = parsed_perception.get("summary")
+        focused_element_id = parsed_perception.get("focused_element_id")
+        confidence = parsed_perception.get("confidence")
+        metrics = _perception_metrics_from_elements(elements, parsed_perception.get("page_hint"), retry_log)
+    else:
+        elements = []
+        summary = diagnostics.get("summary") if isinstance(diagnostics, dict) else None
+        focused_element_id = None
+        confidence = None
+        metrics = _pre_step_perception_metrics(diagnostics or {})
+
+    if isinstance(diagnostics, dict):
+        metrics = {**metrics, **{k: v for k, v in _pre_step_perception_metrics(diagnostics).items() if v is not None}}
+
+    return {
+        "summary": summary,
+        "focused_element_id": focused_element_id,
+        "confidence": confidence,
+        "usage": usage,
+        "metrics": metrics,
+        "elements": elements,
+        "retry_log": retry_log,
+        "diagnostics": diagnostics,
+        "capture_artifact_path": before_artifact_path,
+    }
+
+
+def _partial_execution_payload(execution_trace: Any) -> dict[str, Any]:
+    if execution_trace is None:
+        return {"action": None, "detail": None, "failure_category": None, "trace": None}
+    action = execution_trace.get("action") if isinstance(execution_trace, dict) else None
+    failure_category = execution_trace.get("failure_category") if isinstance(execution_trace, dict) else None
+    return {
+        "action": action,
+        "detail": execution_trace.get("final_outcome") if isinstance(execution_trace, dict) else None,
+        "failure_category": failure_category,
+        "trace": execution_trace,
+    }
+
+
+def _perception_metrics(entry: StepLog) -> dict[str, Any]:
+    elements = entry.perception.visible_elements
+    retry_log = _read_text(entry.perception_debug.retry_log_artifact_path) or ""
+    return _perception_metrics_from_elements(
+        [element.model_dump(mode="json") for element in elements],
+        entry.perception.page_hint.value,
+        retry_log,
+    )
+
+
+def _perception_metrics_from_elements(elements: list[dict[str, Any]], page_hint: Any, retry_log: str | None) -> dict[str, Any]:
+    total = len(elements)
+    unlabeled = sum(1 for element in elements if bool(element.get("is_unlabeled")))
+    usable = sum(1 for element in elements if bool(element.get("usable_for_targeting")))
+    interactive = sum(
+        1
+        for element in elements
+        if bool(element.get("is_interactable")) and element.get("element_type") in {"input", "button", "link"}
+    )
+    text_count = sum(1 for element in elements if element.get("element_type") == "text")
+    labeled_interactive_count = sum(
+        1
+        for element in elements
+        if bool(element.get("is_interactable"))
+        and element.get("element_type") in {"input", "button", "link"}
+        and not bool(element.get("is_unlabeled"))
+    )
+    return {
+        "total_elements": total,
+        "labeled_elements": total - unlabeled,
+        "unlabeled_elements": unlabeled,
+        "usable_elements": usable,
+        "interactive_count": interactive,
+        "text_count": text_count,
+        "labeled_interactive_count": labeled_interactive_count,
+        "unlabeled_interactive_count": max(interactive - labeled_interactive_count, 0),
+        "page_hint": page_hint,
+        "perception_retry_occurred": "attempt=" in (retry_log or ""),
+        "salvage_mode_triggered": "salvage_mode=true" in (retry_log or ""),
+    }
+
+
+def _pre_step_perception_metrics(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    quality_metrics = diagnostics.get("quality_metrics", {}) if isinstance(diagnostics, dict) else {}
+    salvage_result = diagnostics.get("salvage_result", {}) if isinstance(diagnostics, dict) else {}
+    salvage_metrics = salvage_result.get("quality_metrics", {}) if isinstance(salvage_result, dict) else {}
+    active_metrics = salvage_metrics or quality_metrics
+    return {
+        "total_elements": active_metrics.get("total_elements"),
+        "labeled_elements": active_metrics.get("labeled_elements"),
+        "unlabeled_elements": active_metrics.get("unlabeled_elements"),
+        "usable_elements": active_metrics.get("usable_count"),
+        "interactive_count": active_metrics.get("interactive_count"),
+        "text_count": active_metrics.get("text_count"),
+        "labeled_interactive_count": active_metrics.get("labeled_interactive_count"),
+        "unlabeled_interactive_count": active_metrics.get("unlabeled_interactive_count"),
+        "candidate_count": active_metrics.get("candidate_count"),
+        "page_hint": diagnostics.get("page_hint"),
+        "perception_retry_occurred": bool(diagnostics.get("quality_gate_reason")),
+        "salvage_mode_triggered": bool(diagnostics.get("salvage_attempted")),
+        "quality_gate_failure_reason": diagnostics.get("salvage_reason") or diagnostics.get("quality_gate_reason"),
+        "raw_response_artifact_path": diagnostics.get("raw_response_artifact_path"),
+        "final_decision": diagnostics.get("final_decision"),
+    }
+
+
+def _selector_trace_payload(path_value: str | None) -> dict[str, Any] | None:
+    payload = _load_json(path_value)
+    if payload is None:
+        return None
+    traces = payload if isinstance(payload, list) else [payload]
+    if not traces:
+        return None
+    current = traces[-1]
+    top_candidates = current.get("top_candidates", [])
+    return {
+        "intent": current.get("intent"),
+        "candidate_count": current.get("candidate_count"),
+        "top_candidates": top_candidates[:3],
+        "selected_candidate": current.get("selected_element_id"),
+        "score_margin": current.get("score_margin"),
+        "recovery_attempted": current.get("recovery_attempted", False),
+        "recovery_strategy_used": current.get("recovery_strategy_used"),
+        "final_decision": current.get("final_decision"),
+        "failure_reason": current.get("rejection_reason") or current.get("initial_failure_reason"),
+    }
+
+
+def _build_event_log(
+    state,
+    completed_steps: list[StepLog],
+    pre_step_failures: list[PreStepFailureLog],
+    partial_current_step: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = [
+        {"step_index": 0, "event": "run_started", "detail": state.intent},
+    ]
+    for entry in completed_steps:
+        _variance_str = f" | variance={entry.visual_variance:.1f}" if entry.visual_variance is not None else ""
+        _action_detail = entry.policy_decision.action.action_type.value + _variance_str
+        events.extend(
+            [
+                {"step_index": entry.step_index, "event": "screenshot_captured", "detail": entry.before_artifact_path},
+                {"step_index": entry.step_index, "event": "perception_requested", "detail": entry.perception.summary},
+                {"step_index": entry.step_index, "event": entry.decision_source or "action_decided", "detail": _action_detail},
+            ]
+        )
+        retry_log = _read_text(entry.perception_debug.retry_log_artifact_path) or ""
+        if retry_log:
+            for line in retry_log.splitlines():
+                if line.strip():
+                    events.append({"step_index": entry.step_index, "event": "perception_retry", "detail": line})
+        if entry.policy_debug.selector_trace_artifact_path:
+            events.append({"step_index": entry.step_index, "event": "selector_trace_written", "detail": entry.policy_debug.selector_trace_artifact_path})
+        selector = _selector_trace_payload(entry.policy_debug.selector_trace_artifact_path)
+        if selector and selector["recovery_attempted"]:
+            events.append(
+                {
+                    "step_index": entry.step_index,
+                    "event": "selector_recovery_used" if selector["final_decision"] == "success" else "selector_recovery_failed",
+                    "detail": selector["recovery_strategy_used"],
+                }
+            )
+        if entry.executed_action.execution_trace is not None and entry.executed_action.execution_trace.retry_attempted:
+            events.append(
+                {
+                    "step_index": entry.step_index,
+                    "event": "execution_retry",
+                    "detail": entry.executed_action.execution_trace.retry_reason.value if entry.executed_action.execution_trace.retry_reason is not None else "unknown",
+                }
+            )
+        progress_trace = _load_json(entry.progress_trace_artifact_path) or {}
+        if progress_trace.get("blocked_as_redundant"):
+            events.append(
+                {
+                    "step_index": entry.step_index,
+                    "event": "progress_blocked_action",
+                    "detail": progress_trace.get("redundancy_reason"),
+                }
+            )
+    for entry in pre_step_failures:
+        events.append({"step_index": entry.step_index, "event": "screenshot_captured", "detail": entry.before_artifact_path})
+        events.append({"step_index": entry.step_index, "event": "perception_requested", "detail": entry.error_message})
+        retry_log = _read_text(entry.perception_debug.retry_log_artifact_path) or ""
+        if retry_log:
+            for line in retry_log.splitlines():
+                if line.strip():
+                    events.append({"step_index": entry.step_index, "event": "perception_retry", "detail": line})
+        events.append({"step_index": entry.step_index, "event": "run_aborted", "detail": entry.error_message})
+    if partial_current_step is not None:
+        events.extend(_partial_step_events(partial_current_step))
+    if state.status.value == "succeeded":
+        events.append({"step_index": state.step_count, "event": "run_succeeded", "detail": state.stop_reason.value if state.stop_reason else "succeeded"})
+    elif state.status.value == "failed":
+        events.append({"step_index": state.step_count, "event": "run_aborted", "detail": state.stop_reason.value if state.stop_reason else "failed"})
+    return sorted(events, key=lambda item: item["step_index"])
+
+
+def _current_phase(state, current_step: dict[str, Any] | None, pre_step_failure: PreStepFailureLog | None) -> str:
+    if state.status.value in {"succeeded", "failed"}:
+        if pre_step_failure is not None:
+            return pre_step_failure.failure.stage.value
+        if current_step and current_step.get("is_partial"):
+            return current_step.get("phase") or "capture"
+        if current_step and current_step.get("recovery"):
+            recovery = current_step["recovery"]
+            if recovery.get("strategy") == "stop":
+                return "recover"
+        return "complete"
+    if state.step_count == 0:
+        return current_step.get("phase") if current_step is not None else "capture"
+    if current_step and current_step.get("is_partial"):
+        return current_step.get("phase") or "capture"
+    return "recover" if current_step is not None else "capture"
+
+
+
+
+def _read_text(path_value: str | None) -> str | None:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _load_json(path_value: str | None) -> Any:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _existing_path(path: Path) -> str | None:
+    return str(path) if path.exists() else None
+
+
+def _partial_step_phase(step_dir: Path) -> str:
+    if (step_dir / "progress_trace.json").exists():
+        return "recover"
+    if (step_dir / "execution_trace.json").exists():
+        return "verify"
+    if (step_dir / "selector_trace.json").exists():
+        return "execute"
+    if (step_dir / "policy_decision.json").exists():
+        return "choose"
+    if (step_dir / "perception_parsed.json").exists() or (step_dir / "perception_diagnostics.json").exists():
+        return "choose"
+    if (step_dir / "perception_raw.txt").exists() or (step_dir / "perception_prompt.txt").exists():
+        return "perceive"
+    if (step_dir / "before.png").exists():
+        return "capture"
+    return "capture"
+
+
+def summarize_run_usage(run_id: str) -> UsageAggregate:
+    root = runs_root()
+    run_dir = root / run_id
+    aggregate = UsageAggregate()
+    try:
+        entries = load_run_replay(run_id, root_dir=root)
+    except FileNotFoundError:
+        entries = []
+    latest_logged_step_index = 0
+    for entry in entries:
+        latest_logged_step_index = max(latest_logged_step_index, entry.step_index)
+        for usage in _entry_usages(entry):
+            _merge_usage(aggregate, usage)
+    step_dir = _latest_step_dir(run_dir) if run_dir.exists() else None
+    if step_dir is not None:
+        step_index = int(step_dir.name.split("_", 1)[1])
+        if step_index <= latest_logged_step_index:
+            return aggregate
+        for filename in ("combined_usage.json", "computer_use_usage.json", "perception_usage.json", "policy_usage.json", "verification_usage.json"):
+            usage = _usage_from_path(step_dir / filename)
+            if usage is not None:
+                _merge_usage(aggregate, usage)
+    return aggregate
+
+
+def usage_dashboard(limit: int = 50) -> dict[str, Any]:
+    root = runs_root()
+    overall = UsageAggregate()
+    runs: list[dict[str, Any]] = []
+    if not root.exists():
+        return {"summary": overall.model_dump(mode="json"), "runs": runs}
+    candidates = sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.stat().st_mtime, reverse=True)
+    for run_dir in candidates[:limit]:
+        state_path = run_dir / "state.json"
+        if not state_path.exists():
+            continue
+        try:
+            state = _load_state_from_path(state_path)
+        except Exception:
+            continue
+        usage = summarize_run_usage(state.run_id)
+        _merge_aggregate(overall, usage)
+        runs.append(
+            {
+                "run_id": state.run_id,
+                "intent": state.intent,
+                "status": state.status.value,
+                "step_count": state.step_count,
+                "updated_at": state_path.stat().st_mtime,
+                "usage": usage.model_dump(mode="json"),
+            }
+        )
+    return {"summary": overall.model_dump(mode="json"), "runs": runs}
+
+
+def _partial_step_events(step: dict[str, Any]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    step_index = step["step_index"]
+    if step.get("before_artifact_path"):
+        events.append({"step_index": step_index, "event": "screenshot_captured", "detail": step["before_artifact_path"]})
+    perception = step.get("perception") or {}
+    if perception:
+        events.append({"step_index": step_index, "event": "perception_requested", "detail": perception.get("summary") or "perception available"})
+        retry_log = perception.get("retry_log") or ""
+        for line in retry_log.splitlines():
+            if line.strip():
+                events.append({"step_index": step_index, "event": "perception_retry", "detail": line})
+    selector = (step.get("selector") or {}).get("trace")
+    if selector is not None:
+        events.append({"step_index": step_index, "event": "selector_trace_written", "detail": f"step_{step_index}/selector_trace.json"})
+        if selector.get("recovery_attempted"):
+            events.append(
+                {
+                    "step_index": step_index,
+                    "event": "selector_recovery_used" if selector.get("final_decision") == "success" else "selector_recovery_failed",
+                    "detail": selector.get("recovery_strategy_used"),
+                }
+            )
+    execution = step.get("execution") or {}
+    trace = execution.get("trace") if isinstance(execution, dict) else None
+    if trace is not None and trace.get("retry_attempted"):
+        events.append({"step_index": step_index, "event": "execution_retry", "detail": trace.get("retry_reason") or "unknown"})
+    progress = (step.get("progress") or {}).get("trace")
+    if isinstance(progress, dict) and progress.get("blocked_as_redundant"):
+        events.append({"step_index": step_index, "event": "progress_blocked_action", "detail": progress.get("redundancy_reason")})
+    return events
+
+
+def _entry_usages(entry: StepLog | PreStepFailureLog) -> list[ModelUsage]:
+    usages: list[ModelUsage] = []
+    seen_keys: set[str] = set()
+    if entry.perception_debug.usage is not None:
+        key = entry.perception_debug.usage_artifact_path or f"{entry.perception_debug.usage.provider}:{entry.perception_debug.usage.model}:{entry.perception_debug.usage.request_kind}:{entry.perception_debug.usage.total_tokens}"
+        seen_keys.add(key)
+        usages.append(entry.perception_debug.usage)
+    if isinstance(entry, StepLog):
+        for debug in [entry.policy_debug, entry.verification_debug]:
+            if debug is None or debug.usage is None:
+                continue
+            key = debug.usage_artifact_path or f"{debug.usage.provider}:{debug.usage.model}:{debug.usage.request_kind}:{debug.usage.total_tokens}"
+            if key not in seen_keys:
+                seen_keys.add(key)
+                usages.append(debug.usage)
+    return usages
+
+
+def _usage_from_path(path: Path) -> ModelUsage | None:
+    try:
+        payload = _load_json(str(path))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return ModelUsage.model_validate(payload)
+    except Exception:
+        return None
+
+
+def _merge_usage(aggregate: UsageAggregate, usage: ModelUsage) -> None:
+    aggregate.request_count += 1
+    aggregate.input_tokens += usage.input_tokens or 0
+    aggregate.output_tokens += usage.output_tokens or 0
+    aggregate.total_tokens += usage.total_tokens or 0
+    aggregate.estimated_cost_usd = round(aggregate.estimated_cost_usd + (usage.estimated_cost_usd or 0.0), 8)
+    model_bucket = aggregate.by_model.setdefault(usage.model, UsageAggregate())
+    model_bucket.request_count += 1
+    model_bucket.input_tokens += usage.input_tokens or 0
+    model_bucket.output_tokens += usage.output_tokens or 0
+    model_bucket.total_tokens += usage.total_tokens or 0
+    model_bucket.estimated_cost_usd = round(model_bucket.estimated_cost_usd + (usage.estimated_cost_usd or 0.0), 8)
+
+
+def _merge_aggregate(target: UsageAggregate, source: UsageAggregate) -> None:
+    target.request_count += source.request_count
+    target.input_tokens += source.input_tokens
+    target.output_tokens += source.output_tokens
+    target.total_tokens += source.total_tokens
+    target.estimated_cost_usd = round(target.estimated_cost_usd + source.estimated_cost_usd, 8)
+    for model, bucket in source.by_model.items():
+        target_bucket = target.by_model.setdefault(model, UsageAggregate())
+        target_bucket.request_count += bucket.request_count
+        target_bucket.input_tokens += bucket.input_tokens
+        target_bucket.output_tokens += bucket.output_tokens
+        target_bucket.total_tokens += bucket.total_tokens
+        target_bucket.estimated_cost_usd = round(target_bucket.estimated_cost_usd + bucket.estimated_cost_usd, 8)
+
+
+def _image_dimensions(path_value: str | None) -> dict[str, int] | None:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    if not path.exists():
+        return None
+    try:
+        from PIL import Image  # type: ignore
+
+        with Image.open(path) as image:
+            return {"width": image.width, "height": image.height}
+    except Exception:
+        return None

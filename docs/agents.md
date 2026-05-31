@@ -2,7 +2,7 @@
 _For AI coding agents and contributors._
 
 ## Project Structure & Module Organization
-Operon uses a Python `src/` layout. Core agent logic lives in `src/agent/`, API routes in `src/api/`, CDP-based browser observation in `src/browser/`, executors in `src/executor/`, Gemini clients in `src/clients/`, shared schemas in `src/models/`, and persistence in `src/store/`. Tests live in `tests/` and generally mirror the package they cover. Supporting material is kept in `prompts/`, `docs/`, `assets/`, `examples/contracts/`, and `scripts/`. The optional React 19 Command Center UI lives in `ui/`.
+Operon uses a Python `src/` layout. Core agent logic lives in `src/operon/agent/`, API routes in `src/operon/api/`, CDP-based browser observation in `src/operon/browser/`, executors in `src/operon/executor/`, Gemini clients in `src/operon/clients/`, shared schemas in `src/operon/models/`, and persistence in `src/operon/store/`. Tests live in `tests/` and generally mirror the package they cover. Supporting material is kept in `prompts/`, `docs/`, `assets/`, `examples/contracts/`, and `scripts/`. The optional React 19 Command Center UI lives in `ui/`.
 
 ## Build, Test, and Development Commands
 Use Python 3.14 locally. Package metadata remains compatible with Python 3.11+.
@@ -14,7 +14,7 @@ pip install -e .[dev]
 playwright install chromium
 ```
 
-Run the API locally with `.venv\Scripts\python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080`.
+Run the API locally with `.venv\Scripts\python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080`.
 
 Run the default test suite (no live server required):
 
@@ -32,7 +32,7 @@ Lint with `ruff check src tests --select E,F,W,I --ignore E501`.
 - **Verification states**: SUCCESS / FAILURE / UNCERTAIN / PENDING / PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify; `PROGRESSING_STABLE` advances immediately.
 - **Atomic TYPE**: executor merges focus+type into one call. Never emit a CLICK immediately followed by TYPE on the same element from policy.
 - **Visual servo**: `_region_has_content()` runs before every click with an adaptively calibrated threshold. Never bypass it.
-- **Observable mode**: `BrowserManager` (`src/browser/manager.py`) connects via `connect_over_cdp`, streams JPEG frames via CDP `Page.startScreencast`, and exposes `inject_input()` for interactive control. Never import `ws_stream` at module load; use the lazy `_ws_stream()` accessor to avoid circular imports.
+- **Observable mode**: `BrowserManager` (`src/operon/browser/manager.py`) connects via `connect_over_cdp`, streams JPEG frames via CDP `Page.startScreencast`, and exposes `inject_input()` for interactive control. Never import `ws_stream` at module load; use the lazy `_ws_stream()` accessor to avoid circular imports.
 - **Benchmark hooks**: benchmark datasets and the local runner are optional. Do not add benchmark-specific logic to core policy rules unless a dedicated plugin registry is restored.
 
 ## Testing Guidelines

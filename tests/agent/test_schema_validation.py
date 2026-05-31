@@ -3,21 +3,21 @@
 import pytest
 from pydantic import ValidationError
 
-from src.agent.policy import parse_policy_output
-from src.models.capture import CaptureFrame
-from src.models.common import RunStatus
-from src.models.execution import ExecutedAction
-from src.models.logs import ModelDebugArtifacts, StepLog
-from src.models.perception import (
+from operon.agent.policy import parse_policy_output
+from operon.models.capture import CaptureFrame
+from operon.models.common import RunStatus
+from operon.models.execution import ExecutedAction
+from operon.models.logs import ModelDebugArtifacts, StepLog
+from operon.models.perception import (
     ScreenPerception,
     UIElement,
     UIElementNameSource,
     UIElementType,
 )
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.state import AgentState
-from src.models.verification import VerificationResult, VerificationStatus
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
+from operon.models.state import AgentState
+from operon.models.verification import VerificationResult, VerificationStatus
 
 
 def test_capture_frame_forbids_extra_fields() -> None:

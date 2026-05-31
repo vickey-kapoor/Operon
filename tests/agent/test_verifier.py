@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.verifier import DeterministicVerifierService
-from src.clients.gemini import PlaceholderGeminiClient
-from src.models.common import FailureCategory, LoopStage, StopReason
-from src.models.execution import ExecutedAction
-from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.state import AgentState
-from src.models.verification import VerificationFailureType, VerificationStatus
+from operon.agent.verifier import DeterministicVerifierService
+from operon.clients.gemini import PlaceholderGeminiClient
+from operon.models.common import FailureCategory, LoopStage, StopReason
+from operon.models.execution import ExecutedAction
+from operon.models.perception import ScreenPerception, UIElement, UIElementType
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.state import AgentState
+from operon.models.verification import VerificationFailureType, VerificationStatus
 
 
 def _service() -> DeterministicVerifierService:

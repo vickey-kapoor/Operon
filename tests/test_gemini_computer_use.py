@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from src.clients.gemini_computer_use import (
+from operon.clients.gemini_computer_use import (
     GeminiComputerUseError,
     GeminiComputerUseHttpClient,
 )

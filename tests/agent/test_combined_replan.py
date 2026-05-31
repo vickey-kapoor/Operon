@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.agent.combined import CombinedPerceptionPolicyService
-from src.agent.policy import PolicyError
-from src.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.agent.combined import CombinedPerceptionPolicyService
+from operon.agent.policy import PolicyError
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
 
 
 def _make_service(prompt_template: str = "intent={intent} subgoal={current_subgoal} step={step_count} prev={previous_summary} retries={retry_counts} hints={advisory_hints}") -> tuple[CombinedPerceptionPolicyService, MagicMock]:

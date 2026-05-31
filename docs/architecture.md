@@ -7,7 +7,7 @@ This document describes the code currently present in this repository.
 
 ```text
 FastAPI app
-  -> src.api.routes
+  -> operon.api.routes
   -> AgentLoop
   -> ScreenCaptureService
   -> Perception/policy backend
@@ -18,7 +18,7 @@ FastAPI app
   -> FileBackedRunStore
 ```
 
-Browser and desktop runs share `src.agent.loop.AgentLoop`. The API creates one lazy singleton for browser runs and one for desktop runs.
+Browser and desktop runs share `operon.agent.loop.AgentLoop`. The API creates one lazy singleton for browser runs and one for desktop runs.
 
 ## Package Layout
 
@@ -85,7 +85,7 @@ Only `OPERON_DESKTOP_BACKEND=json` is implemented.
 
 ## API Routes
 
-The active HTTP routes are defined in `src/api/routes.py`.
+The active HTTP routes are defined in `src/operon/api/routes.py`.
 
 ```text
 POST /run-task
@@ -114,7 +114,7 @@ GET  /observer/api/live-browser/{run_id}
 WS   /ws/stream
 ```
 
-There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`, or static HTML routes in `src/api/routes.py`.
+There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`, or static HTML routes in `src/operon/api/routes.py`.
 
 ## Policy Layer
 
@@ -156,7 +156,7 @@ STABLE_WAIT
 - `STABLE_WAIT`: waits 200ms and re-verifies once.
 - `PROGRESSING_STABLE`: advances because the UI reacted.
 
-Reaction checks use Gemini multi-image support through `generate_reaction_check()`. There is no tracked `src/agent/video_verifier.py` module in the current tree.
+Reaction checks use Gemini multi-image support through `generate_reaction_check()`. There is no tracked `src/operon/agent/video_verifier.py` module in the current tree.
 
 ## Recovery
 
@@ -199,7 +199,7 @@ Browser session videos may be written under `.browser-artifacts/` by the browser
 
 ## Configuration
 
-Core runtime configuration is in `src/api/runtime_config.py`.
+Core runtime configuration is in `src/operon/api/runtime_config.py`.
 
 Important variables:
 - `GOOGLE_API_KEY` / `GEMINI_API_KEY`

@@ -29,14 +29,14 @@ Payload requirements:
 
 This path is for custom upload controls that open the native OS picker. The current implementation lives in:
 
-- `src/executor/browser_native.py`
-- `src/executor/os_picker_macro.py`
+- `src/operon/executor/browser_native.py`
+- `src/operon/executor/os_picker_macro.py`
 
 The browser executor clicks the visual target, then delegates picker handling to the OS picker macro. It does not depend on a separate runtime/orchestrator state package.
 
 ## Routing
 
-`upload_file_native` is allowed for browser actions and treated as cross-environment in `src/core/router.py`. It is not a standalone desktop action; desktop input primitives are used internally by the picker macro.
+`upload_file_native` is allowed for browser actions and treated as cross-environment in `src/operon/core/router.py`. It is not a standalone desktop action; desktop input primitives are used internally by the picker macro.
 
 ## Failure Signals
 

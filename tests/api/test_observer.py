@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -33,12 +32,11 @@ from operon.models.state import AgentState
 from operon.models.usage import ModelUsage
 from operon.models.verification import VerificationResult, VerificationStatus
 from operon.store.run_logger import append_step_log
+from tests.fixtures.paths import unique_artifact_dir
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return unique_artifact_dir(name)
 
 
 def _write_state(run_dir: Path, state: AgentState) -> None:

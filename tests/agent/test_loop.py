@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
 
 import pytest
 
@@ -36,12 +35,11 @@ from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.state import AgentState
 from operon.models.verification import VerificationResult, VerificationStatus
 from operon.store.run_store import FileBackedRunStore
+from tests.fixtures.paths import unique_artifact_dir
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return unique_artifact_dir(name)
 
 
 def _loop() -> AgentLoop:

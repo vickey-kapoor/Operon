@@ -12,7 +12,7 @@ Operon is a vision-first computer-use agent for browser and desktop tasks. It ob
 3. Deterministic policy rules must run before LLM policy fallback.
 4. TYPE actions must remain atomic from the policy perspective.
 5. Clicks must pass visual servo checks before execution.
-6. Runs must produce inspectable artifacts under `runs/<run_id>/`.
+6. Runs must produce inspectable artifacts under `.var/runs/<run_id>/` by default, with `OPERON_RUNS_ROOT` available as an override.
 7. Uncertain states must either recover deterministically or pause for human input.
 
 ## Supported Modes

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 from operon.models.common import FailureCategory, LoopStage, RunStatus
 from operon.models.execution import ExecutedAction
@@ -22,12 +21,11 @@ from operon.models.verification import (
     VerificationStatus,
 )
 from operon.store.memory import FileBackedMemoryStore
+from tests.fixtures.paths import unique_artifact_dir
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return unique_artifact_dir(name)
 
 
 def _perception(page_hint: str = "form_page") -> ScreenPerception:

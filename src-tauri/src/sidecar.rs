@@ -2,7 +2,7 @@ use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 
-/// In dev mode the Python server is started manually (`uvicorn src.api.server:app --port 8080`).
+/// In dev mode the Python server is started manually (`uvicorn operon.api.server:app --port 8080`).
 /// In release builds Tauri bundles `operon-api` as an external binary and launches it here.
 pub fn launch(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(debug_assertions)]

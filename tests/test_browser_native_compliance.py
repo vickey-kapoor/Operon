@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.executor.browser_native import NativeBrowserExecutor
-from src.models.policy import ActionType, AgentAction
+from operon.executor.browser_native import NativeBrowserExecutor
+from operon.models.policy import ActionType, AgentAction
 
 
 @pytest.mark.asyncio

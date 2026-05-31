@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from src.api.server import app
+from operon.api.server import app
 
 
 def test_imports_and_app_startup() -> None:

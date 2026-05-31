@@ -13,16 +13,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.agent.hitl import (
+from operon.agent.hitl import (
     HITL_PAGE_HINT_KEYWORDS,
     generate_hitl_message,
     post_hitl_webhook,
     start_escalation_timer,
 )
-from src.agent.policy_rules import PolicyRuleEngine
-from src.models.common import RunStatus
-from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.state import AgentState
+from operon.agent.policy_rules import PolicyRuleEngine
+from operon.models.common import RunStatus
+from operon.models.perception import ScreenPerception, UIElement, UIElementType
+from operon.models.state import AgentState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -178,7 +178,7 @@ async def test_post_hitl_webhook_posts_correct_payload(tmp_path) -> None:
     mock_client.post = _mock_post
 
     with patch.dict("os.environ", {"HITL_WEBHOOK_URL": "https://hooks.example.com/notify"}):
-        with patch("src.agent.hitl.httpx.AsyncClient", return_value=mock_client):
+        with patch("operon.agent.hitl.httpx.AsyncClient", return_value=mock_client):
             await post_hitl_webhook(
                 run_id="run-abc",
                 intent="Submit report",
@@ -208,7 +208,7 @@ async def test_post_hitl_webhook_does_not_raise_on_http_error() -> None:
     mock_client.post = AsyncMock(return_value=mock_response)
 
     with patch.dict("os.environ", {"HITL_WEBHOOK_URL": "https://hooks.example.com/notify"}):
-        with patch("src.agent.hitl.httpx.AsyncClient", return_value=mock_client):
+        with patch("operon.agent.hitl.httpx.AsyncClient", return_value=mock_client):
             await post_hitl_webhook(
                 run_id="run-1",
                 intent="Fill form",
@@ -228,7 +228,7 @@ async def test_post_hitl_webhook_does_not_raise_on_network_error() -> None:
     mock_client.post = AsyncMock(side_effect=ConnectionError("network unreachable"))
 
     with patch.dict("os.environ", {"HITL_WEBHOOK_URL": "https://hooks.example.com/notify"}):
-        with patch("src.agent.hitl.httpx.AsyncClient", return_value=mock_client):
+        with patch("operon.agent.hitl.httpx.AsyncClient", return_value=mock_client):
             await post_hitl_webhook(
                 run_id="run-1",
                 intent="Buy ticket",
@@ -356,7 +356,7 @@ def test_hitl_debounce_first_hit_returns_none() -> None:
 
 def test_hitl_debounce_second_consecutive_hit_fires() -> None:
     """Second consecutive HITL keyword match MUST fire WAIT_FOR_USER."""
-    from src.models.policy import ActionType
+    from operon.models.policy import ActionType
     engine = _engine()
     state = _state("run-abc")
     perception = _captcha_perception()
@@ -384,7 +384,7 @@ def test_hitl_debounce_resets_after_normal_page() -> None:
 
 def test_hitl_debounce_tracked_per_run_id() -> None:
     """Debounce counters for different run IDs must not interfere."""
-    from src.models.policy import ActionType
+    from operon.models.policy import ActionType
     engine = _engine()
     state_a = _state("run-aaa")
     state_b = _state("run-bbb")
@@ -403,7 +403,7 @@ def test_hitl_debounce_tracked_per_run_id() -> None:
 
 def test_hitl_fires_for_multiple_keyword_variants() -> None:
     """Each HITL keyword variant triggers the debounce path."""
-    from src.models.policy import ActionType
+    from operon.models.policy import ActionType
     for keyword in ["login_wall", "recaptcha_v3", "2fa_code", "gdpr_banner"]:
         engine = _engine()
         state = _state(f"run-{keyword}")

@@ -20,8 +20,13 @@ from uuid import uuid4
 
 import pytest
 
-from src.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction
+from operon.models.perception import (
+    PageHint,
+    ScreenPerception,
+    UIElement,
+    UIElementType,
+)
+from operon.models.policy import ActionType, AgentAction
 
 # ── shared helpers ────────────────────────────────────────────────────────────
 
@@ -32,8 +37,8 @@ def _local_test_dir(name: str) -> Path:
 
 
 def _make_executor(artifact_dir: Path | None = None):
-    with patch("src.executor.desktop._set_dpi_awareness"):
-        from src.executor.desktop import DesktopExecutor
+    with patch("operon.executor.desktop._set_dpi_awareness"):
+        from operon.executor.desktop import DesktopExecutor
         return DesktopExecutor(artifact_dir=artifact_dir or _local_test_dir("monitor-offset"))
 
 
@@ -68,7 +73,7 @@ def _mss_ctx(monitors: list[dict]) -> MagicMock:
 
 def _apply_origin(action: AgentAction, perception: ScreenPerception) -> AgentAction:
     """Call the loop's static transform without instantiating AgentLoop."""
-    from src.agent.loop import AgentLoop
+    from operon.agent.loop import AgentLoop
     return AgentLoop._apply_monitor_origin(action, perception)
 
 
@@ -154,10 +159,10 @@ async def test_out_of_bounds_click_skipped_and_warns(caplog: pytest.LogCaptureFi
     ]
 
     with (
-        patch("src.executor.desktop.pyautogui.click") as mock_click,
-        patch("src.executor.desktop._mss", return_value=_mss_ctx(monitors_primary_only)),
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
+        patch("operon.executor.desktop._mss", return_value=_mss_ctx(monitors_primary_only)),
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
-        caplog.at_level(logging.WARNING, logger="src.executor.desktop"),
+        caplog.at_level(logging.WARNING, logger="operon.executor.desktop"),
     ):
         result = await executor.execute(action)
 

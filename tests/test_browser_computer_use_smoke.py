@@ -7,18 +7,18 @@ from uuid import uuid4
 
 import pytest
 
-from src.agent.browser_computer_use import BrowserComputerUseBackend
-from src.agent.capture import ScreenCaptureService
-from src.agent.loop import AgentLoop
-from src.agent.policy_coordinator import PolicyCoordinator
-from src.agent.recovery import RuleBasedRecoveryManager
-from src.agent.verifier import DeterministicVerifierService
-from src.clients.gemini import PlaceholderGeminiClient
-from src.models.capture import CaptureFrame
-from src.models.common import RunStatus, RunTaskRequest, StepRequest
-from src.models.state import AgentState
-from src.store.memory import FileBackedMemoryStore
-from src.store.run_store import FileBackedRunStore
+from operon.agent.browser_computer_use import BrowserComputerUseBackend
+from operon.agent.capture import ScreenCaptureService
+from operon.agent.loop import AgentLoop
+from operon.agent.policy_coordinator import PolicyCoordinator
+from operon.agent.recovery import RuleBasedRecoveryManager
+from operon.agent.verifier import DeterministicVerifierService
+from operon.clients.gemini import PlaceholderGeminiClient
+from operon.models.capture import CaptureFrame
+from operon.models.common import RunStatus, RunTaskRequest, StepRequest
+from operon.models.state import AgentState
+from operon.store.memory import FileBackedMemoryStore
+from operon.store.run_store import FileBackedRunStore
 
 
 def _local_test_dir(name: str) -> Path:
@@ -105,7 +105,7 @@ class StubBrowserExecutor:
         self.executed_actions.append(action)
         after_path = self.artifact_dir / f"after-{uuid4().hex[:8]}.png"
         after_path.write_bytes(b"after")
-        from src.models.execution import ExecutedAction
+        from operon.models.execution import ExecutedAction
 
         return ExecutedAction(
             action=action,

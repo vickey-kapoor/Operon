@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from src.models.common import RunStatus
-from src.models.execution import ExecutedAction
-from src.models.logs import ModelDebugArtifacts, StepLog
-from src.models.perception import ScreenPerception
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.verification import VerificationResult, VerificationStatus
-from src.store.run_logger import append_step_log
-from src.store.run_store import FileBackedRunStore
+from operon.models.common import RunStatus
+from operon.models.execution import ExecutedAction
+from operon.models.logs import ModelDebugArtifacts, StepLog
+from operon.models.perception import ScreenPerception
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
+from operon.models.verification import VerificationResult, VerificationStatus
+from operon.store.run_logger import append_step_log
+from operon.store.run_store import FileBackedRunStore
 
 
 def _local_test_dir(name: str) -> Path:

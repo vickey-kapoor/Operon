@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.models.common import RunResponse, RunStatus
+from operon.models.common import RunResponse, RunStatus
 
 
 @pytest.fixture
 def client():
     """Create a test client with mocked desktop agent loop."""
-    from src.api.server import app
+    from operon.api.server import app
 
     return TestClient(app)
 
@@ -33,7 +33,7 @@ def test_desktop_run_task(client: TestClient) -> None:
     """POST /desktop/run-task should create a desktop run."""
     mock_response = _mock_run_response(RunStatus.PENDING)
 
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(return_value=mock_response)
         mock_loop.return_value.executor.reset_desktop = AsyncMock()
         resp = client.post(
@@ -51,7 +51,7 @@ def test_desktop_step(client: TestClient) -> None:
     """POST /desktop/step should advance a desktop run."""
     mock_response = _mock_run_response(RunStatus.RUNNING)
 
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.step_run = AsyncMock(return_value=mock_response)
         resp = client.post(
             "/desktop/step",
@@ -65,7 +65,7 @@ def test_desktop_step(client: TestClient) -> None:
 
 def test_desktop_step_not_found(client: TestClient) -> None:
     """POST /desktop/step with unknown run_id should return 404."""
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.step_run = AsyncMock(side_effect=ValueError("Run not found"))
         resp = client.post(
             "/desktop/step",
@@ -77,7 +77,7 @@ def test_desktop_step_not_found(client: TestClient) -> None:
 
 def test_desktop_get_run(client: TestClient) -> None:
     """GET /desktop/run/{id} should return run state."""
-    from src.models.state import AgentState
+    from operon.models.state import AgentState
 
     mock_state = AgentState(
         run_id="test-run-1",
@@ -85,7 +85,7 @@ def test_desktop_get_run(client: TestClient) -> None:
         status=RunStatus.RUNNING,
     )
 
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.run_store.get_run = AsyncMock(return_value=mock_state)
         resp = client.get("/desktop/run/test-run-1")
 
@@ -96,7 +96,7 @@ def test_desktop_get_run(client: TestClient) -> None:
 
 def test_desktop_get_run_not_found(client: TestClient) -> None:
     """GET /desktop/run/{id} with unknown id should return 404."""
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.run_store.get_run = AsyncMock(return_value=None)
         resp = client.get("/desktop/run/nonexistent")
 
@@ -107,7 +107,7 @@ def test_desktop_resume(client: TestClient) -> None:
     """POST /desktop/resume should resume a paused desktop run."""
     mock_response = _mock_run_response(RunStatus.RUNNING)
 
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.resume_run = AsyncMock(return_value=mock_response)
         resp = client.post(
             "/desktop/resume",
@@ -121,7 +121,7 @@ def test_desktop_resume(client: TestClient) -> None:
 
 def test_desktop_resume_not_found(client: TestClient) -> None:
     """POST /desktop/resume with bad run_id should return 404."""
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.resume_run = AsyncMock(side_effect=ValueError("invalid"))
         resp = client.post(
             "/desktop/resume",
@@ -131,9 +131,63 @@ def test_desktop_resume_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_desktop_stop_cancels_desktop_store_run(client: TestClient) -> None:
+    """POST /desktop/stop should cancel through the desktop loop/store."""
+    from operon.models.state import AgentState
+
+    mock_state = AgentState(
+        run_id="test-run-1",
+        intent="Open Calculator",
+        status=RunStatus.RUNNING,
+        step_count=3,
+    )
+    cancelled_state = mock_state.model_copy(update={"status": RunStatus.CANCELLED})
+    mock_loop = SimpleNamespace(
+        run_store=SimpleNamespace(
+            get_run=AsyncMock(return_value=mock_state),
+            set_status=AsyncMock(return_value=cancelled_state),
+        ),
+        _cleanup_completed_run=AsyncMock(),
+    )
+
+    with patch("operon.api.routes.get_desktop_agent_loop", return_value=mock_loop):
+        resp = client.post(
+            "/desktop/stop",
+            json={"run_id": "test-run-1"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "cancelled"
+    mock_loop.run_store.set_status.assert_awaited_once_with("test-run-1", RunStatus.CANCELLED)
+    mock_loop._cleanup_completed_run.assert_awaited_once_with("test-run-1")
+
+
+def test_desktop_stop_by_id(client: TestClient) -> None:
+    """POST /desktop/run/{id}/stop should expose path-style cancellation."""
+    from operon.models.state import AgentState
+
+    cancelled_state = AgentState(
+        run_id="test-run-1",
+        intent="Open Calculator",
+        status=RunStatus.CANCELLED,
+        step_count=3,
+    )
+    mock_loop = SimpleNamespace(
+        run_store=SimpleNamespace(get_run=AsyncMock(return_value=cancelled_state)),
+        _cleanup_completed_run=AsyncMock(),
+    )
+
+    with patch("operon.api.routes.get_desktop_agent_loop", return_value=mock_loop):
+        resp = client.post("/desktop/run/test-run-1/stop")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"run_id": "test-run-1", "status": "cancelled"}
+
+
 def test_desktop_cleanup(client: TestClient) -> None:
     """POST /desktop/cleanup should call executor.cleanup_run."""
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_executor = mock_loop.return_value.executor
         mock_executor.cleanup_run.return_value = 2
         resp = client.post(
@@ -150,7 +204,7 @@ def test_desktop_cleanup(client: TestClient) -> None:
 
 def test_desktop_cleanup_no_apps(client: TestClient) -> None:
     """POST /desktop/cleanup with nothing to close returns 0."""
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_executor = mock_loop.return_value.executor
         mock_executor.cleanup_run.return_value = 0
         resp = client.post(
@@ -165,7 +219,7 @@ def test_desktop_cleanup_no_apps(client: TestClient) -> None:
 
 def test_browser_cleanup(client: TestClient) -> None:
     """POST /cleanup should call executor.cleanup_run for browser runs."""
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_executor = mock_loop.return_value.executor
         mock_executor.cleanup_run.return_value = 1
         resp = client.post(
@@ -182,7 +236,7 @@ def test_browser_cleanup(client: TestClient) -> None:
 
 def test_browser_cleanup_without_support(client: TestClient) -> None:
     """POST /cleanup should return a no-op response if cleanup is unsupported."""
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         del mock_loop.return_value.executor.cleanup_run
         resp = client.post(
             "/cleanup",
@@ -201,8 +255,8 @@ def test_browser_cleanup_without_support(client: TestClient) -> None:
 
 def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
     """get_desktop_agent_loop should use CombinedPerceptionPolicyService with 120s timeout."""
-    import src.api.routes as routes_module
-    from src.api.runtime_config import RuntimeModeConfig
+    import operon.api.routes as routes_module
+    from operon.api.runtime_config import RuntimeModeConfig
 
     # Reset the singleton so it gets rebuilt
     original = routes_module._desktop_agent_loop
@@ -218,17 +272,17 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
 
     try:
         with (
-            patch("src.api.routes.desktop_mode_config", return_value=gemini_config),
-            patch("src.api.routes.DesktopExecutor"),
-            patch("src.api.routes.FileBackedRunStore"),
-            patch("src.api.routes.FileBackedMemoryStore"),
-            patch("src.api.routes.GeminiHttpClient") as mock_gemini,
-            patch("src.api.routes.ScreenCaptureService"),
-            patch("src.api.routes.CombinedPerceptionPolicyService"),
-            patch("src.api.routes.PolicyCoordinator"),
-            patch("src.api.routes.DeterministicVerifierService"),
-            patch("src.api.routes.RuleBasedRecoveryManager"),
-            patch("src.api.routes.AgentLoop"),
+            patch("operon.api.routes.desktop_mode_config", return_value=gemini_config),
+            patch("operon.api.routes.DesktopExecutor"),
+            patch("operon.api.routes.FileBackedRunStore"),
+            patch("operon.api.routes.FileBackedMemoryStore"),
+            patch("operon.api.routes.GeminiHttpClient") as mock_gemini,
+            patch("operon.api.routes.ScreenCaptureService"),
+            patch("operon.api.routes.CombinedPerceptionPolicyService"),
+            patch("operon.api.routes.PolicyCoordinator"),
+            patch("operon.api.routes.DeterministicVerifierService"),
+            patch("operon.api.routes.RuleBasedRecoveryManager"),
+            patch("operon.api.routes.AgentLoop"),
         ):
             routes_module.get_desktop_agent_loop()
 
@@ -242,8 +296,8 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
 
 def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
     """Desktop Anthropic planner should split Gemini perception from planner selection."""
-    import src.api.routes as routes_module
-    from src.api.runtime_config import RuntimeModeConfig
+    import operon.api.routes as routes_module
+    from operon.api.runtime_config import RuntimeModeConfig
 
     original = routes_module._desktop_agent_loop
     routes_module._desktop_agent_loop = None
@@ -251,7 +305,7 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
     try:
         with (
             patch(
-                "src.api.routes.desktop_mode_config",
+                "operon.api.routes.desktop_mode_config",
                 return_value=RuntimeModeConfig(
                     backend="json",
                     primary_model="gemini-3-flash-preview",
@@ -262,18 +316,18 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
                     verifier_model="claude-sonnet-4-20250514",
                 ),
             ),
-            patch("src.api.routes.DesktopExecutor"),
-            patch("src.api.routes.FileBackedRunStore"),
-            patch("src.api.routes.FileBackedMemoryStore"),
-            patch("src.api.routes.GeminiHttpClient") as mock_gemini,
-            patch("src.api.routes.AnthropicHttpClient") as mock_anthropic,
-            patch("src.api.routes.ScreenCaptureService"),
-            patch("src.api.routes.GeminiPerceptionService"),
-            patch("src.api.routes.AnthropicPolicyService"),
-            patch("src.api.routes.PolicyCoordinator"),
-            patch("src.api.routes.DeterministicVerifierService"),
-            patch("src.api.routes.RuleBasedRecoveryManager"),
-            patch("src.api.routes.AgentLoop"),
+            patch("operon.api.routes.DesktopExecutor"),
+            patch("operon.api.routes.FileBackedRunStore"),
+            patch("operon.api.routes.FileBackedMemoryStore"),
+            patch("operon.api.routes.GeminiHttpClient") as mock_gemini,
+            patch("operon.api.routes.AnthropicHttpClient") as mock_anthropic,
+            patch("operon.api.routes.ScreenCaptureService"),
+            patch("operon.api.routes.GeminiPerceptionService"),
+            patch("operon.api.routes.AnthropicPolicyService"),
+            patch("operon.api.routes.PolicyCoordinator"),
+            patch("operon.api.routes.DeterministicVerifierService"),
+            patch("operon.api.routes.RuleBasedRecoveryManager"),
+            patch("operon.api.routes.AgentLoop"),
         ):
             routes_module.get_desktop_agent_loop()
 
@@ -288,8 +342,8 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
 
 def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
     """Browser JSON mode should support Gemini perception with Anthropic planner."""
-    import src.api.routes as routes_module
-    from src.api.runtime_config import RuntimeModeConfig
+    import operon.api.routes as routes_module
+    from operon.api.runtime_config import RuntimeModeConfig
 
     original = routes_module._agent_loop
     routes_module._agent_loop = None
@@ -297,7 +351,7 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
     try:
         with (
             patch(
-                "src.api.routes.browser_mode_config",
+                "operon.api.routes.browser_mode_config",
                 return_value=RuntimeModeConfig(
                     backend="json",
                     primary_model="gemini-3-flash-preview",
@@ -309,18 +363,18 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
                     verifier_model="claude-sonnet-4-20250514",
                 ),
             ),
-            patch("src.api.routes.NativeBrowserExecutor"),
-            patch("src.api.routes.FileBackedRunStore"),
-            patch("src.api.routes.FileBackedMemoryStore"),
-            patch("src.api.routes.GeminiHttpClient") as mock_gemini,
-            patch("src.api.routes.AnthropicHttpClient") as mock_anthropic,
-            patch("src.api.routes.ScreenCaptureService"),
-            patch("src.api.routes.GeminiPerceptionService"),
-            patch("src.api.routes.AnthropicPolicyService"),
-            patch("src.api.routes.PolicyCoordinator"),
-            patch("src.api.routes.DeterministicVerifierService"),
-            patch("src.api.routes.RuleBasedRecoveryManager"),
-            patch("src.api.routes.AgentLoop"),
+            patch("operon.api.routes.NativeBrowserExecutor"),
+            patch("operon.api.routes.FileBackedRunStore"),
+            patch("operon.api.routes.FileBackedMemoryStore"),
+            patch("operon.api.routes.GeminiHttpClient") as mock_gemini,
+            patch("operon.api.routes.AnthropicHttpClient") as mock_anthropic,
+            patch("operon.api.routes.ScreenCaptureService"),
+            patch("operon.api.routes.GeminiPerceptionService"),
+            patch("operon.api.routes.AnthropicPolicyService"),
+            patch("operon.api.routes.PolicyCoordinator"),
+            patch("operon.api.routes.DeterministicVerifierService"),
+            patch("operon.api.routes.RuleBasedRecoveryManager"),
+            patch("operon.api.routes.AgentLoop"),
         ):
             routes_module.get_agent_loop()
 
@@ -335,14 +389,14 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
 
 def test_build_browser_executor_uses_browserbase_when_configured() -> None:
     """Browserbase backend should instantiate the remote Browserbase executor."""
-    import src.api.routes as routes_module
-    from src.api.runtime_config import RuntimeModeConfig
+    import operon.api.routes as routes_module
+    from operon.api.runtime_config import RuntimeModeConfig
 
     fake_instance = object()
 
     with (
         patch(
-            "src.api.routes.browser_mode_config",
+            "operon.api.routes.browser_mode_config",
             return_value=RuntimeModeConfig(
                 backend="browserbase",
                 primary_model="gemini-2.5-computer-use-preview-10-2025",
@@ -351,20 +405,20 @@ def test_build_browser_executor_uses_browserbase_when_configured() -> None:
             ),
         ),
         patch(
-            "src.api.routes.importlib.import_module",
+            "operon.api.routes.importlib.import_module",
             return_value=SimpleNamespace(BrowserbaseNativeBrowserExecutor=lambda: fake_instance),
         ) as mock_import,
     ):
         executor = routes_module._build_browser_executor()
 
     assert executor is fake_instance
-    mock_import.assert_called_once_with("src.executor.browserbase_native")
+    mock_import.assert_called_once_with("operon.executor.browserbase_native")
 
 
 def test_browserbase_services_use_computer_use_with_json_fallback() -> None:
     """Browserbase mode should wrap computer-use in FallbackBackend when JSON fallback is configured."""
-    import src.api.routes as routes_module
-    from src.api.runtime_config import RuntimeModeConfig
+    import operon.api.routes as routes_module
+    from operon.api.runtime_config import RuntimeModeConfig
 
     fake_executor = object()
     fake_primary = object()
@@ -373,7 +427,7 @@ def test_browserbase_services_use_computer_use_with_json_fallback() -> None:
 
     with (
         patch(
-            "src.api.routes.browser_mode_config",
+            "operon.api.routes.browser_mode_config",
             return_value=RuntimeModeConfig(
                 backend="browserbase",
                 primary_model="gemini-2.5-computer-use-preview-10-2025",
@@ -381,9 +435,9 @@ def test_browserbase_services_use_computer_use_with_json_fallback() -> None:
                 fallback_model="gemini-3-flash-preview",
             ),
         ),
-        patch("src.api.routes.BrowserComputerUseBackend", return_value=fake_primary) as mock_primary,
-        patch("src.api.routes.BrowserJsonBackend", return_value=fake_secondary) as mock_secondary,
-        patch("src.api.routes.FallbackBackend", return_value=fake_fallback) as mock_fallback,
+        patch("operon.api.routes.BrowserComputerUseBackend", return_value=fake_primary) as mock_primary,
+        patch("operon.api.routes.BrowserJsonBackend", return_value=fake_secondary) as mock_secondary,
+        patch("operon.api.routes.FallbackBackend", return_value=fake_fallback) as mock_fallback,
     ):
         services = routes_module._build_browser_services(fake_executor)
 
@@ -399,7 +453,7 @@ def test_browserbase_services_use_computer_use_with_json_fallback() -> None:
 
 def test_ui_element_type_missing_accepts_arbitrary_strings() -> None:
     """UIElementType._missing_ should accept arbitrary strings like 'menu_item', 'toolbar'."""
-    from src.models.perception import UIElementType
+    from operon.models.perception import UIElementType
 
     menu_item = UIElementType("menu_item")
     assert menu_item.value == "menu_item"
@@ -416,7 +470,7 @@ def test_ui_element_type_missing_accepts_arbitrary_strings() -> None:
 
 def test_ui_element_type_known_values_still_work() -> None:
     """Known UIElementType values should still resolve normally."""
-    from src.models.perception import UIElementType
+    from operon.models.perception import UIElementType
 
     assert UIElementType("button") is UIElementType.BUTTON
     assert UIElementType("window") is UIElementType.WINDOW
@@ -425,7 +479,7 @@ def test_ui_element_type_known_values_still_work() -> None:
 
 def test_ui_element_type_window_exists() -> None:
     """UIElementType.WINDOW should exist and have value 'window'."""
-    from src.models.perception import UIElementType
+    from operon.models.perception import UIElementType
 
     assert hasattr(UIElementType, "WINDOW")
     assert UIElementType.WINDOW.value == "window"
@@ -436,7 +490,7 @@ def test_ui_element_type_window_exists() -> None:
 
 def test_action_type_has_desktop_actions() -> None:
     """ActionType should include LAUNCH_APP, HOTKEY, and WAIT_FOR_USER."""
-    from src.models.policy import ActionType
+    from operon.models.policy import ActionType
 
     assert hasattr(ActionType, "LAUNCH_APP")
     assert ActionType.LAUNCH_APP.value == "launch_app"
@@ -451,7 +505,7 @@ def test_action_type_has_desktop_actions() -> None:
 
 def test_action_type_has_all_new_types() -> None:
     """ActionType should include all 8 new desktop action types."""
-    from src.models.policy import ActionType
+    from operon.models.policy import ActionType
 
     new_types = {
         "DOUBLE_CLICK": "double_click",
@@ -470,7 +524,7 @@ def test_action_type_has_all_new_types() -> None:
 
 def test_double_click_action_valid() -> None:
     """DOUBLE_CLICK with x,y should be valid."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     action = AgentAction(action_type=ActionType.DOUBLE_CLICK, x=100, y=200)
     assert action.action_type is ActionType.DOUBLE_CLICK
@@ -480,7 +534,7 @@ def test_double_click_action_valid() -> None:
 
 def test_double_click_rejects_text() -> None:
     """DOUBLE_CLICK with text should raise ValueError."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.DOUBLE_CLICK, x=100, y=200, text="bad")
@@ -488,7 +542,7 @@ def test_double_click_rejects_text() -> None:
 
 def test_drag_action_valid() -> None:
     """DRAG with all 4 coordinates should be valid."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     action = AgentAction(action_type=ActionType.DRAG, x=10, y=20, x_end=300, y_end=400)
     assert action.x_end == 300
@@ -497,7 +551,7 @@ def test_drag_action_valid() -> None:
 
 def test_drag_missing_x_end_fails() -> None:
     """DRAG without x_end should raise ValueError."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.DRAG, x=10, y=20, y_end=400)
@@ -505,7 +559,7 @@ def test_drag_missing_x_end_fails() -> None:
 
 def test_scroll_action_valid() -> None:
     """SCROLL with scroll_amount and coordinates should be valid."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     action = AgentAction(action_type=ActionType.SCROLL, scroll_amount=3, x=100, y=200)
     assert action.scroll_amount == 3
@@ -513,7 +567,7 @@ def test_scroll_action_valid() -> None:
 
 def test_scroll_zero_amount_fails() -> None:
     """SCROLL with scroll_amount=0 should raise ValueError."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.SCROLL, scroll_amount=0, x=100, y=200)
@@ -521,7 +575,7 @@ def test_scroll_zero_amount_fails() -> None:
 
 def test_scroll_rejects_x_end() -> None:
     """SCROLL with x_end should raise ValueError."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.SCROLL, scroll_amount=3, x=100, y=200, x_end=500)
@@ -529,7 +583,7 @@ def test_scroll_rejects_x_end() -> None:
 
 def test_hover_action_valid() -> None:
     """HOVER with x,y should be valid."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     action = AgentAction(action_type=ActionType.HOVER, x=100, y=200)
     assert action.action_type is ActionType.HOVER
@@ -537,7 +591,7 @@ def test_hover_action_valid() -> None:
 
 def test_read_clipboard_action_valid() -> None:
     """READ_CLIPBOARD with no fields should be valid."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     action = AgentAction(action_type=ActionType.READ_CLIPBOARD)
     assert action.action_type is ActionType.READ_CLIPBOARD
@@ -545,7 +599,7 @@ def test_read_clipboard_action_valid() -> None:
 
 def test_read_clipboard_rejects_text() -> None:
     """READ_CLIPBOARD with text should raise ValueError."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.READ_CLIPBOARD, text="bad")
@@ -553,7 +607,7 @@ def test_read_clipboard_rejects_text() -> None:
 
 def test_write_clipboard_action_valid() -> None:
     """WRITE_CLIPBOARD with text should be valid."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     action = AgentAction(action_type=ActionType.WRITE_CLIPBOARD, text="hello")
     assert action.text == "hello"
@@ -561,7 +615,7 @@ def test_write_clipboard_action_valid() -> None:
 
 def test_write_clipboard_rejects_coords() -> None:
     """WRITE_CLIPBOARD with x,y should raise ValueError."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.WRITE_CLIPBOARD, text="hello", x=100, y=200)
@@ -569,7 +623,7 @@ def test_write_clipboard_rejects_coords() -> None:
 
 def test_screenshot_region_action_valid() -> None:
     """SCREENSHOT_REGION with all 4 coordinates should be valid."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     action = AgentAction(action_type=ActionType.SCREENSHOT_REGION, x=10, y=20, x_end=200, y_end=300)
     assert action.x_end == 200
@@ -578,7 +632,7 @@ def test_screenshot_region_action_valid() -> None:
 
 def test_existing_click_rejects_new_fields() -> None:
     """CLICK with x_end should raise ValueError."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.CLICK, x=100, y=200, x_end=300)
@@ -586,7 +640,7 @@ def test_existing_click_rejects_new_fields() -> None:
 
 def test_existing_stop_rejects_new_fields() -> None:
     """STOP with scroll_amount should raise ValueError."""
-    from src.models.policy import ActionType, AgentAction
+    from operon.models.policy import ActionType, AgentAction
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.STOP, scroll_amount=5)

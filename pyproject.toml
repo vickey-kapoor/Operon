@@ -46,8 +46,8 @@ bundle = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
+where = ["src"]
+include = ["operon*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

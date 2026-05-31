@@ -8,7 +8,7 @@ next memory write. wrap_subgoal() is the dedupe + cap that prevents that.
 
 from __future__ import annotations
 
-from src.agent.subgoal_utils import SUBGOAL_MAX_CHARS, truncate_subgoal, wrap_subgoal
+from operon.agent.subgoal_utils import SUBGOAL_MAX_CHARS, truncate_subgoal, wrap_subgoal
 
 # ---------------------------------------------------------------------------
 # wrap_subgoal — idempotency
@@ -90,7 +90,7 @@ def test_truncate_subgoal_passes_at_exactly_max_chars():
 def test_wrap_subgoal_output_validates_against_memory_record_schema():
     """A pre-fix run had this exact recursive nesting trigger ValidationError.
     Each fire must produce a string short enough for MemoryRecord(subgoal=...)."""
-    from src.models.memory import MemoryOutcome, MemoryRecord
+    from operon.models.memory import MemoryOutcome, MemoryRecord
 
     subgoal = "anchor_recheck:(0,0)→1"
     prefixes = [

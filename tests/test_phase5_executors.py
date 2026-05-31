@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.core.contracts.planner import ActionType as ContractActionType
-from src.core.contracts.planner import PlannerAction
-from src.executor.browser_adapter import BrowserExecutor
-from src.executor.desktop_adapter import DesktopExecutor
-from src.models.execution import ExecutedAction
-from src.models.policy import ActionType, AgentAction
+from operon.core.contracts.planner import ActionType as ContractActionType
+from operon.core.contracts.planner import PlannerAction
+from operon.executor.browser_adapter import BrowserExecutor
+from operon.executor.desktop_adapter import DesktopExecutor
+from operon.models.execution import ExecutedAction
+from operon.models.policy import ActionType, AgentAction
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ import pytest
 @pytest.fixture()
 def executor():
     os.environ["OPERON_TEST_SAFE_MODE"] = "true"
-    from src.executor.browser_native import NativeBrowserExecutor
+    from operon.executor.browser_native import NativeBrowserExecutor
     ex = NativeBrowserExecutor(headless=True)
     ex._sessions = {}
     return ex
@@ -71,7 +71,7 @@ async def test_ensure_session_routes_batch_no_bm(executor):
     executor._run_mode["batch"] = "batch"
     sentinel = MagicMock()
 
-    with patch("src.browser.manager.get_active_manager", return_value=None), \
+    with patch("operon.browser.manager.get_active_manager", return_value=None), \
          patch.object(executor, "_ensure_session_observable", new=AsyncMock()) as obs, \
          patch.object(executor, "_ensure_session_batch", new=AsyncMock(return_value=sentinel)) as batch, \
          patch.object(executor, "_ensure_session_cdp", new=AsyncMock()) as cdp:
@@ -92,7 +92,7 @@ async def test_ensure_session_routes_cdp_when_bm_connected(executor):
     mock_bm = MagicMock()
     mock_bm.is_connected = True
 
-    with patch("src.browser.manager.get_active_manager", return_value=mock_bm), \
+    with patch("operon.browser.manager.get_active_manager", return_value=mock_bm), \
          patch.object(executor, "_ensure_session_observable", new=AsyncMock()) as obs, \
          patch.object(executor, "_ensure_session_batch", new=AsyncMock()) as batch, \
          patch.object(executor, "_ensure_session_cdp", new=AsyncMock(return_value=sentinel)) as cdp:
@@ -188,9 +188,9 @@ async def test_batch_launch_args_exclude_headless_new(executor):
 @pytest.mark.asyncio
 async def test_ensure_cdp_ready_noop_for_observable():
     """_ensure_cdp_ready(mode='observable') must return without touching BrowserManager."""
-    from src.api.routes import _ensure_cdp_ready
+    from operon.api.routes import _ensure_cdp_ready
 
-    with patch("src.browser.manager.BrowserManager") as mock_cls:
+    with patch("operon.browser.manager.BrowserManager") as mock_cls:
         await _ensure_cdp_ready(mode="observable")
 
     mock_cls.assert_not_called()
@@ -199,11 +199,11 @@ async def test_ensure_cdp_ready_noop_for_observable():
 @pytest.mark.asyncio
 async def test_ensure_cdp_ready_proceeds_for_batch():
     """_ensure_cdp_ready(mode='batch') must not early-return for observable."""
-    from src.api.routes import _ensure_cdp_ready
+    from operon.api.routes import _ensure_cdp_ready
 
     # Fastest path through batch: already-connected manager → no Chrome launch
     mock_bm = MagicMock()
     mock_bm.is_connected = True
 
-    with patch("src.browser.manager.get_active_manager", return_value=mock_bm):
+    with patch("operon.browser.manager.get_active_manager", return_value=mock_bm):
         await _ensure_cdp_ready(mode="batch")

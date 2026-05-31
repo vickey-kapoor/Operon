@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.action_translation import (
+from operon.agent.action_translation import (
     build_policy_decision,
     normalize_computer_use_actions,
     normalize_computer_use_function_call,
     translate_computer_use_action,
 )
-from src.agent.fallback_backend import BackendCompatibilityError
-from src.models.policy import ActionType
+from operon.agent.fallback_backend import BackendCompatibilityError
+from operon.models.policy import ActionType
 
 
 def test_translate_click_action() -> None:

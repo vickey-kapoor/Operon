@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 from operon.models.common import FailureCategory, LoopStage, StopReason
 from operon.models.execution import ExecutedAction
@@ -20,12 +19,11 @@ from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.verification import VerificationResult, VerificationStatus
 from operon.store.replay import load_run_replay, render_run_replay
 from operon.store.run_logger import append_step_log
+from tests.fixtures.paths import unique_artifact_dir
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return unique_artifact_dir(name)
 
 
 

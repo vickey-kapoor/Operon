@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
 
 import pytest
 
@@ -32,12 +31,11 @@ from operon.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
+from tests.fixtures.paths import unique_artifact_dir
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return unique_artifact_dir(name)
 
 
 @pytest.mark.asyncio

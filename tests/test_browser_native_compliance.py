@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
+from operon.core.paths import test_artifacts_dir as artifact_root_dir
 from operon.executor.browser_native import NativeBrowserExecutor
 from operon.models.policy import ActionType, AgentAction
 
 
 @pytest.mark.asyncio
 async def test_browser_native_type_respects_clear_and_enter_flags() -> None:
-    executor = NativeBrowserExecutor(artifact_dir=Path(".test-artifacts/native-compliance"), headless=True)
+    executor = NativeBrowserExecutor(artifact_dir=artifact_root_dir() / "native-compliance", headless=True)
     keyboard = type(
         "Keyboard",
         (),
@@ -54,7 +54,7 @@ async def test_browser_native_type_respects_clear_and_enter_flags() -> None:
 
 @pytest.mark.asyncio
 async def test_browser_native_executes_batch_actions_in_order() -> None:
-    executor = NativeBrowserExecutor(artifact_dir=Path(".test-artifacts/native-batch"), headless=True)
+    executor = NativeBrowserExecutor(artifact_dir=artifact_root_dir() / "native-batch", headless=True)
     executor.execute = AsyncMock(
         side_effect=[
             type("Result", (), {"success": True, "artifact_path": "a.png", "detail": "ok", "execution_trace": None, "failure_category": None, "failure_stage": None})(),

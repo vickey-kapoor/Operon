@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -17,14 +16,11 @@ from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.verification import VerificationResult, VerificationStatus
 from operon.store.run_logger import append_step_log
 from operon.store.run_store import FileBackedRunStore
+from tests.fixtures.paths import unique_artifact_dir
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / name
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return unique_artifact_dir(name)
 
 
 def _debug(stage: str) -> ModelDebugArtifacts:

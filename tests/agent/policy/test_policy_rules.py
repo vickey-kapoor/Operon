@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 
@@ -20,6 +19,7 @@ from operon.models.verification import (
     VerificationStatus,
 )
 from operon.store.memory import FileBackedMemoryStore
+from tests.fixtures.paths import unique_artifact_dir
 
 
 class StubGeminiClient:
@@ -38,9 +38,7 @@ class StubGeminiClient:
 
 
 def _local_test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / f"{name}-{uuid4().hex}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return unique_artifact_dir(name)
 
 
 def _prompt_path(root: Path) -> Path:

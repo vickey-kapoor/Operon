@@ -170,15 +170,25 @@ Operon has two execution modes sharing the same loop, verifier, recovery, and pe
 
 Backend selection is handled by `src/operon/agent/backend.py` based on env vars. `src/operon/agent/action_translation.py` bridges Computer Use action formats to the internal `AgentAction` schema.
 
-### Runtime Package (`src/runtime/`)
+### Unified Core Layer (`src/operon/core/`)
 
-The `src/runtime/` package provides the unified contract layer:
+The `src/operon/core/` package defines the environment-agnostic contract layer shared by the browser and desktop execution paths:
 
-- `UnifiedOrchestrator` — receives `LegacyContractBundle` from `LegacyOperonContractAdapter` each step, runs adaptation strategy lookup, detects OS file pickers via perception, and advances `AgentRuntimeState`
-- `AgentRuntimeState` — structured per-run mutable state tracking subgoal progress, last perception summary, retry context, and advisory hints; separate from `AgentState` in `src/operon/models/`
-- `LegacyOperonContractAdapter` — translates the existing `AgentState`/`ScreenPerception`/`PolicyDecision`/`ExecutedAction`/`VerificationResult` types into the unified `LegacyContractBundle` format consumed by `UnifiedOrchestrator`
+- `core/contracts/` — strict Pydantic v2 models (`ContractModel`, `extra="forbid"`) describing each stage as a typed boundary, independent of the richer `operon.models.*` runtime types:
+  - `perception.py` — `Environment` enum (`BROWSER` / `DESKTOP`), `PerceptionOutput`, `VisibleTarget`
+  - `planner.py` — `ActionType` (the contract action subset), `PlannerAction`, `PlannerOutput`
+  - `actor.py` — `ExecutorChoice`, `ActorOutput`
+  - `critic.py` — verification contract
+- `core/router.py` — pure routing/validation helpers over the contracts: `validate_plan_route`, `route_plan`, `validate_environment_transition`, `validate_actor_for_state`, raising `RoutingError`. These guard which `ActionType`s are legal per environment and which environment transitions are allowed.
 
-`AgentLoop` creates a `UnifiedOrchestrator` singleton and maintains a `unified_states` dict of `AgentRuntimeState` per run. After each step's verify phase, the loop translates to contracts and calls `UnifiedOrchestrator.process_step()`.
+The contract layer is bridged to the live executors by two thin adapters in `src/operon/executor/`:
+
+- `desktop_adapter.py` — `DesktopExecutor` wraps the legacy pyautogui/mss executor; `_to_legacy_action()` translates a contract `PlannerAction` into the runtime `operon.models.policy.AgentAction`.
+- `browser_adapter.py` — `BrowserExecutor` does the same for the Playwright path.
+
+`AgentLoop` consumes this layer at construction: it imports `Environment as UnifiedEnvironment` and selects `UnifiedBrowserExecutor` or `UnifiedDesktopExecutor` based on the run's environment (`loop.py` `__init__`). All execution then flows through the single `executor_adapter.execute()` interface, keeping desktop/browser branching out of the step loop.
+
+> Note: `core.contracts.ActionType` is a deliberately narrow subset of the full `operon.models.policy.ActionType` vocabulary, and the `router.py` validators are currently exercised primarily through the adapters and tests rather than enforced inside the step loop. Treat the contract layer as the typed seam between the two execution paths, not as a second orchestrator.
 
 ### Policy Layer (`src/operon/agent/policy_coordinator.py`, `policy_rules.py`, `policy.py`)
 

@@ -2,7 +2,7 @@
 _For AI coding agents and contributors._
 
 ## Project Structure & Module Organization
-Operon uses a Python `src/` layout. Core agent logic lives in `src/operon/agent/`, API routes in `src/operon/api/`, CDP-based browser observation in `src/operon/browser/`, executors in `src/operon/executor/`, Gemini clients in `src/operon/clients/`, shared schemas in `src/operon/models/`, and persistence in `src/operon/store/`. Tests live in `tests/` and generally mirror the package they cover. Supporting material is kept in `prompts/` and `docs/`.
+Operon uses a Python `src/` layout. Core orchestration lives in `src/operon/agent/`, with focused `actions/`, `artifacts/`, `backends/`, `perception/`, and `policy/` subpackages. API routes live in `src/operon/api/routes/`, shared API runtime construction in `src/operon/api/runtime/`, CDP-based browser observation in `src/operon/browser/`, executors in `src/operon/executor/`, Gemini clients in `src/operon/clients/`, shared schemas in `src/operon/models/`, and persistence in `src/operon/store/`. Tests live in `tests/` and generally mirror the package they cover. Supporting material is kept in `prompts/` and `docs/`.
 
 ## Build, Test, and Development Commands
 Use Python 3.14 locally. Package metadata remains compatible with Python 3.11+.
@@ -50,4 +50,4 @@ Live-server and real-environment tests are opt-in and excluded from the default 
 Recent commits use short imperative subjects with prefixes like `Fix:`, `Docs:`, `CI:`, `Chore:`, `Refactor:`, and `Feat:`. Keep commit titles specific and one line. PRs should summarize the behavioral change, list validation performed, link related issues, and include screenshots only for UI or desktop-behavior changes.
 
 ## Configuration & Security Tips
-Store secrets in `.env` and keep `.env.example` in sync when adding new settings. Review `runs/` and `.browser-artifacts/` before sharing logs because they may contain screenshots, prompts, and execution traces. Never commit anything under `.claude/`; it is gitignored and personal.
+Store secrets in `.env` and keep `.env.example` in sync when adding new settings. Review `.var/runs/`, `.var/browser-artifacts/`, and `.var/desktop-artifacts/` before sharing logs because they may contain screenshots, prompts, and execution traces. Never commit anything under `.claude/`; it is gitignored and personal.

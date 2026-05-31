@@ -14,7 +14,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,15 +33,14 @@ from operon.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
+from tests.fixtures.paths import unique_artifact_dir
 
 # ---------------------------------------------------------------------------
 # Shared test fixtures and helpers
 # ---------------------------------------------------------------------------
 
 def _test_dir(name: str) -> Path:
-    path = Path(".test-artifacts") / f"cap-{name}-{uuid4().hex[:8]}"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return unique_artifact_dir(f"cap-{name}")
 
 
 def _frame(run_root: Path, run_id: str, step: int = 1) -> CaptureFrame:

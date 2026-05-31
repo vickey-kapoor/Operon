@@ -30,17 +30,10 @@ src/
   browser/    CDP BrowserManager for observable browser mode
   clients/    Gemini, Gemini Computer Use, and Anthropic HTTP clients
   core/       contract models and route validation used by executor adapters
-  executor/   browser, desktop, Browserbase, adapters, native upload macro
+  executor/   browser, desktop, adapters, native upload macro
   models/     Pydantic schemas for state, perception, policy, execution, logs, memory
-  store/      run persistence, memory, replay, summaries, cleanup, background writer
-  tools/      optional file transfer helper
+  store/      run persistence, memory, replay, cleanup, background writer
 ```
-
-Optional top-level areas:
-- `ui/`: React/Tauri command center frontend.
-- `src-tauri/`: optional Tauri shell.
-- `benchmarks/`: dataset files and benchmark inputs.
-- `docs/substack_drafts/`: historical writeups.
 
 ## Control Loop
 
@@ -65,9 +58,8 @@ Optional top-level areas:
 
 Default backend: `BrowserComputerUseBackend` using `GeminiComputerUseHttpClient`.
 
-Optional paths:
+Optional path:
 - `BrowserJsonBackend` fallback when configured.
-- `BrowserbaseNativeBrowserExecutor` when `OPERON_BROWSER_BACKEND=browserbase`.
 
 Executor: `NativeBrowserExecutor`.
 
@@ -156,7 +148,7 @@ STABLE_WAIT
 - `STABLE_WAIT`: waits 200ms and re-verifies once.
 - `PROGRESSING_STABLE`: advances because the UI reacted.
 
-Reaction checks use Gemini multi-image support through `generate_reaction_check()`. There is no tracked `src/operon/agent/video_verifier.py` module in the current tree.
+The verifier is deterministic and does not use a separate video verifier module.
 
 ## Recovery
 

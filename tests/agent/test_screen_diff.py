@@ -125,7 +125,7 @@ def test_corrupted_file_returns_zero(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Complex: threshold semantics (meaningful for the video verifier decision gate)
+# Complex: threshold semantics for visible reaction detection.
 # ---------------------------------------------------------------------------
 
 def test_screen_change_threshold_classifies_real_change(tmp_path: Path) -> None:

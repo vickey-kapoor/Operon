@@ -404,7 +404,7 @@ async def test_right_click_without_coords_fails() -> None:
 
 # ── visual servo invariant tests ────────────────────────────────
 #
-# Per CLAUDE.md, visual servo is a non-negotiable system invariant: every
+# Per project invariants, visual servo is a non-negotiable system invariant: every
 # click goes through `_region_has_content`, which aborts on a uniform region.
 # These tests lock the abort path and the mss-error fallback path so that
 # future refactors cannot silently bypass the gate.

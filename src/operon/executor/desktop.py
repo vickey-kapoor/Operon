@@ -544,7 +544,6 @@ class DesktopExecutor(Executor):
             ActionType.WAIT_FOR_USER: self._exec_noop,
             ActionType.NAVIGATE: self._exec_unsupported,
             ActionType.SELECT: self._exec_unsupported,
-            ActionType.FILE_PORTER: self._exec_file_porter,
         }
         handler = dispatch.get(at, self._exec_unsupported)
         return await handler(action)
@@ -916,22 +915,6 @@ class DesktopExecutor(Executor):
             f"Action '{action.action_type}' is not supported on desktop",
             FailureCategory.EXECUTION_ERROR,
         )
-
-    async def _exec_file_porter(self, action: AgentAction) -> ExecutedAction:
-        if action.url is None or action.text is None:
-            return self._fail(
-                action,
-                "file_porter requires url and text (folder ID)",
-                FailureCategory.EXECUTION_ERROR,
-            )
-        try:
-            from operon.tools.file_porter import run_porter
-            result = await asyncio.to_thread(run_porter, action.url, action.text)
-            if result.success:
-                return self._ok(action, result.detail, None)
-            return self._fail(action, result.detail, FailureCategory.EXECUTION_ERROR)
-        except Exception as exc:
-            return self._fail(action, f"FilePorter raised: {exc}", FailureCategory.EXECUTION_ERROR)
 
     # ── helpers ──────────────────────────────────────────────────
 

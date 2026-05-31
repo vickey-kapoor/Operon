@@ -15,7 +15,10 @@ from operon.models.logs import PreStepFailureLog, StepLog
 from operon.models.state import AgentState
 from operon.models.usage import ModelUsage, UsageAggregate
 from operon.store.replay import load_run_replay
-from operon.store.summary import _load_state_from_path
+
+
+def _load_state_from_path(path: Path) -> AgentState:
+    return AgentState.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def runs_root() -> Path:

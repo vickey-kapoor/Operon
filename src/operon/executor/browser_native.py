@@ -203,7 +203,7 @@ class NativeBrowserExecutor(Executor):
                 return self._ok(action, detail, None)
             elif at is ActionType.CLICK:
                 # Vision-only: coords from the perception layer are the single source
-                # of truth. CSS-selector fallbacks are a CLAUDE.md contract violation
+                # of truth. CSS-selector fallbacks are a project contract violation
                 # ("no DOM, no selectors, no XPaths in policy/perception").
                 page = await self._current_page()
                 point = self._action_point(action)
@@ -218,7 +218,7 @@ class NativeBrowserExecutor(Executor):
                     return self._fail(action, "hover requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
                 await page.mouse.move(*point)
             elif at is ActionType.TYPE:
-                # Atomic Focus+Type (CLAUDE.md system invariant): when coordinates
+                # Atomic Focus+Type (project system invariant): when coordinates
                 # are present, click then type in a single executor call so no
                 # intervening state can steal focus. No DOM, no selectors, no
                 # element-name heuristics — vision-only.
@@ -334,7 +334,7 @@ class NativeBrowserExecutor(Executor):
 
                 # Click the upload control to trigger the native OS file picker.
                 # Vision-only: coordinates are required; selector/element-id fallbacks
-                # are CLAUDE.md contract violations.
+                # are project contract violations.
                 page = await self._current_page()
                 point = self._action_point(action)
                 if point is None:
@@ -537,7 +537,7 @@ class NativeBrowserExecutor(Executor):
         return await self._ensure_session_batch(run_id, foreground=foreground)
 
     async def _ensure_session_cdp(self, run_id: str, bm: object) -> _BrowserSession:
-        """CDP mode: create a new context+page in the Command Center browser.
+        """CDP mode: create a new context+page in the observable browser.
 
         No Chromium is launched. The BrowserManager switches its live screencast
         to follow this page automatically.
@@ -557,7 +557,7 @@ class NativeBrowserExecutor(Executor):
         )
         self._sessions[run_id] = session
         self._fresh_session_run_id = run_id
-        logger.info("CDP mode: task %s routed through Command Center browser", run_id)
+        logger.info("CDP mode: task %s routed through observable browser", run_id)
         return session
 
     async def _ensure_session_observable(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:

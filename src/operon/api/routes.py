@@ -224,20 +224,6 @@ def _build_browser_services(executor) -> _RuntimeServices:
             backend = FallbackBackend(primary=primary, secondary=secondary)
             return _RuntimeServices(perception_service=backend, policy_delegate=backend)
         return _RuntimeServices(perception_service=primary, policy_delegate=primary)
-    if config.backend == "browserbase":
-        primary = BrowserComputerUseBackend(
-            client=GeminiComputerUseHttpClient(model=config.primary_model),
-            prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
-            browser_runtime=executor,
-        )
-        if config.fallback_backend == "json" and config.fallback_model:
-            secondary = BrowserJsonBackend(
-                gemini_client=GeminiHttpClient(model=config.fallback_model, timeout_seconds=120.0),
-                prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
-            )
-            backend = FallbackBackend(primary=primary, secondary=secondary)
-            return _RuntimeServices(perception_service=backend, policy_delegate=backend)
-        return _RuntimeServices(perception_service=primary, policy_delegate=primary)
     raise ValueError(f"Unsupported browser backend {config.backend!r}")
 
 
@@ -264,11 +250,6 @@ def _build_desktop_services() -> _RuntimeServices:
 
 
 def _build_browser_executor():
-    browser_config = browser_mode_config()
-    if browser_config.backend == "browserbase":
-        return importlib.import_module(
-            "operon.executor.browserbase_native"
-        ).BrowserbaseNativeBrowserExecutor()
     global NativeBrowserExecutor
     if NativeBrowserExecutor is None:
         NativeBrowserExecutor = importlib.import_module("operon.executor.browser_native").NativeBrowserExecutor

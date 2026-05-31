@@ -181,7 +181,7 @@ def test_memory_retrieval_returns_relevant_hints() -> None:
 
 # ── memory decay invariant tests ─────────────────────────────────
 #
-# Per CLAUDE.md, on verification failure the store appends a decay record
+# Per project invariants, on verification failure the store appends a decay record
 # with weight = current_effective_weight × 0.5. Buckets whose mean weight
 # drops below 0.1 are excluded from get_hints() — this is the self-healing
 # mechanism that stops bad advice from persisting forever.

@@ -436,7 +436,7 @@ async def test_browser_navigation_summary_does_not_trigger_success_stop_rule() -
 
 @pytest.mark.asyncio
 async def test_reset_run_context_clears_episode_and_hint_cache() -> None:
-    """Per CLAUDE.md: reset_run_context must clear active_episode, replay_state,
+    """Per project invariants: reset_run_context must clear active_episode, replay_state,
     and the hint cache so context from a previous task does not bleed across runs.
     Auth state is intentionally preserved at the executor layer — not asserted here."""
     root = _local_test_dir("test-reset-run-context")

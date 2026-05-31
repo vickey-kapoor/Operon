@@ -58,8 +58,7 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     origins = os.getenv("CORS_ORIGINS", "").strip()
-    # Always allow the Tauri WS bridge and local dev origins.
-    allowed = {"http://localhost:9001", "http://127.0.0.1:9001", "http://localhost:5173"}
+    allowed: set[str] = set()
     if origins:
         allowed.update(o.strip() for o in origins.split(","))
     app.add_middleware(

@@ -61,12 +61,12 @@ copy .env.example .env
 Set `GOOGLE_API_KEY` or `GEMINI_API_KEY` in `.env`, then start the API:
 
 ```powershell
-python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8080
+python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 
 ## API Surface
 
-The active FastAPI routes are defined in `src/api/routes.py`.
+The active FastAPI routes are defined in `src/operon/api/routes.py`.
 
 ```text
 # Browser run lifecycle
@@ -162,6 +162,6 @@ Some tests are intentionally opt-in because they require a live server, headed W
 These are not required for the core computer-use agent:
 
 - `ui/` and `src-tauri/`: command center UI and desktop packaging shell.
-- `src/executor/browserbase_native.py`: Browserbase backend.
-- `src/tools/file_porter.py`: Google Drive file-transfer helper.
+- `src/operon/executor/browserbase_native.py`: Browserbase backend.
+- `src/operon/tools/file_porter.py`: Google Drive file-transfer helper.
 - `docs/substack_drafts/`: historical writeups.

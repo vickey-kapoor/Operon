@@ -7,14 +7,14 @@ reintroduce contract-driven retry decisions.
 
 from __future__ import annotations
 
-from src.agent.adaptation import (
+from operon.agent.adaptation import (
     FOCUS_CORRECTION_THEN_RETRY,
     REFRESH_STATE_AND_REPLAN,
     REPERCEIVE_AND_REPLAN,
     WAIT_THEN_RETRY,
     strategy_for_failure,
 )
-from src.models.common import FailureCategory
+from operon.models.common import FailureCategory
 
 
 def test_specific_category_returns_specific_strategy() -> None:

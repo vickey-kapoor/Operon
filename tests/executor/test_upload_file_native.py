@@ -6,20 +6,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.core.contracts.critic import FailureType
-from src.core.contracts.perception import Environment
-from src.core.contracts.planner import ActionType as ContractActionType
-from src.core.contracts.planner import PlannerAction
-from src.core.router import (
+from operon.core.contracts.critic import FailureType
+from operon.core.contracts.perception import Environment
+from operon.core.contracts.planner import ActionType as ContractActionType
+from operon.core.contracts.planner import PlannerAction
+from operon.core.router import (
     BROWSER_ACTIONS,
     DESKTOP_ACTIONS,
     RoutingError,
     is_cross_environment_action,
     validate_plan_route,
 )
-from src.executor.browser_adapter import BrowserExecutor
-from src.models.common import FailureCategory
-from src.models.policy import ActionType, AgentAction
+from operon.executor.browser_adapter import BrowserExecutor
+from operon.models.common import FailureCategory
+from operon.models.policy import ActionType, AgentAction
 
 # ---------------------------------------------------------------------------
 # 1. Enum presence checks
@@ -63,8 +63,8 @@ def test_is_cross_environment_action_returns_false_for_click() -> None:
 
 def test_validate_plan_route_accepts_upload_file_native_in_browser() -> None:
     """validate_plan_route must not raise for upload_file_native in browser."""
-    from src.core.contracts.perception import ContractVersion
-    from src.core.contracts.planner import PlannerOutput
+    from operon.core.contracts.perception import ContractVersion
+    from operon.core.contracts.planner import PlannerOutput
 
     plan = PlannerOutput(
         contract_version=ContractVersion.PHASE1,
@@ -86,8 +86,8 @@ def test_validate_plan_route_accepts_upload_file_native_in_browser() -> None:
 
 def test_validate_plan_route_rejects_upload_file_native_in_desktop() -> None:
     """validate_plan_route must raise RoutingError for upload_file_native in desktop."""
-    from src.core.contracts.perception import ContractVersion
-    from src.core.contracts.planner import PlannerOutput
+    from operon.core.contracts.perception import ContractVersion
+    from operon.core.contracts.planner import PlannerOutput
 
     plan = PlannerOutput(
         contract_version=ContractVersion.PHASE1,
@@ -175,7 +175,7 @@ def _make_executor_and_page(
     headless: bool = False,
 ):
     """Return (executor, mock_page) wired up for upload_file_native tests."""
-    from src.executor.browser_native import NativeBrowserExecutor
+    from operon.executor.browser_native import NativeBrowserExecutor
 
     mock_page = MagicMock()
     mock_page.mouse = MagicMock()
@@ -199,7 +199,7 @@ def _make_executor_and_page(
 @pytest.mark.asyncio
 async def test_browser_native_executor_upload_file_native_clicks_and_runs_macro() -> None:
     """upload_file_native should click, then delegate to the OS picker macro."""
-    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
+    from operon.executor.os_picker_macro import PickerMacroResult, PickerOutcome
 
     executor, mock_page = _make_executor_and_page()
 
@@ -218,7 +218,7 @@ async def test_browser_native_executor_upload_file_native_clicks_and_runs_macro(
         patch.object(executor, "_current_page", side_effect=_fake_current_page),
         patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
         patch(
-            "src.executor.browser_native.run_os_picker_macro",
+            "operon.executor.browser_native.run_os_picker_macro",
             return_value=mock_macro_result,
         ) as mock_macro,
     ):
@@ -297,7 +297,7 @@ async def test_browser_native_executor_upload_file_native_missing_text() -> None
 @pytest.mark.asyncio
 async def test_browser_native_executor_upload_file_native_picker_not_detected() -> None:
     """PICKER_NOT_DETECTED outcome maps to the correct failure category."""
-    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
+    from operon.executor.os_picker_macro import PickerMacroResult, PickerOutcome
 
     executor, mock_page = _make_executor_and_page()
 
@@ -316,7 +316,7 @@ async def test_browser_native_executor_upload_file_native_picker_not_detected() 
         patch.object(executor, "_current_page", side_effect=_fake_current_page),
         patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
         patch(
-            "src.executor.browser_native.run_os_picker_macro",
+            "operon.executor.browser_native.run_os_picker_macro",
             return_value=mock_macro_result,
         ),
     ):
@@ -336,7 +336,7 @@ async def test_browser_native_executor_upload_file_native_picker_not_detected() 
 @pytest.mark.asyncio
 async def test_browser_native_executor_upload_file_native_file_not_reflected() -> None:
     """FILE_NOT_REFLECTED outcome maps to the correct failure category."""
-    from src.executor.os_picker_macro import PickerMacroResult, PickerOutcome
+    from operon.executor.os_picker_macro import PickerMacroResult, PickerOutcome
 
     executor, mock_page = _make_executor_and_page()
 
@@ -355,7 +355,7 @@ async def test_browser_native_executor_upload_file_native_file_not_reflected() -
         patch.object(executor, "_current_page", side_effect=_fake_current_page),
         patch.object(executor, "_capture_after", side_effect=_fake_capture_after),
         patch(
-            "src.executor.browser_native.run_os_picker_macro",
+            "operon.executor.browser_native.run_os_picker_macro",
             return_value=mock_macro_result,
         ),
     ):
@@ -402,12 +402,12 @@ async def test_browser_native_executor_upload_file_native_rejects_target_element
 
 def test_os_picker_macro_unavailable_when_deps_missing() -> None:
     """Macro returns UNAVAILABLE when pyautogui/pygetwindow can't import."""
-    from src.executor.os_picker_macro import PickerOutcome
+    from operon.executor.os_picker_macro import PickerOutcome
 
     with (
-        patch("src.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", RuntimeError("no display")),
+        patch("operon.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", RuntimeError("no display")),
     ):
-        from src.executor.os_picker_macro import run_os_picker_macro
+        from operon.executor.os_picker_macro import run_os_picker_macro
         result = run_os_picker_macro(r"C:\tmp\test.txt")
 
     assert result.outcome is PickerOutcome.UNAVAILABLE
@@ -416,11 +416,11 @@ def test_os_picker_macro_unavailable_when_deps_missing() -> None:
 
 def test_os_picker_macro_picker_not_detected() -> None:
     """Macro returns PICKER_NOT_DETECTED if no picker window appears."""
-    from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
+    from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 
     with (
-        patch("src.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
-        patch("src.executor.os_picker_macro.pygetwindow") as mock_pgw,
+        patch("operon.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
+        patch("operon.executor.os_picker_macro.pygetwindow") as mock_pgw,
     ):
         mock_pgw.getAllWindows.return_value = []
         result = run_os_picker_macro(r"C:\tmp\test.txt", appear_timeout_s=0.1)
@@ -430,7 +430,7 @@ def test_os_picker_macro_picker_not_detected() -> None:
 
 def test_os_picker_macro_success() -> None:
     """Macro types path and presses Enter when picker window found and closes."""
-    from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
+    from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 
     mock_window = MagicMock()
     mock_window.title = "Open File Dialog"
@@ -446,9 +446,9 @@ def test_os_picker_macro_success() -> None:
         return []
 
     with (
-        patch("src.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
-        patch("src.executor.os_picker_macro.pygetwindow") as mock_pgw,
-        patch("src.executor.os_picker_macro.pyautogui") as mock_pag,
+        patch("operon.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
+        patch("operon.executor.os_picker_macro.pygetwindow") as mock_pgw,
+        patch("operon.executor.os_picker_macro.pyautogui") as mock_pag,
     ):
         mock_pgw.getAllWindows = _mock_get_all_windows
         result = run_os_picker_macro(r"C:\tmp\test.txt", appear_timeout_s=1.0, close_timeout_s=1.0)
@@ -460,16 +460,16 @@ def test_os_picker_macro_success() -> None:
 
 def test_os_picker_macro_file_not_reflected() -> None:
     """Macro returns FILE_NOT_REFLECTED when picker doesn't close after Enter."""
-    from src.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
+    from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 
     mock_window = MagicMock()
     mock_window.title = "Open File Dialog"
     mock_window.activate = MagicMock()
 
     with (
-        patch("src.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
-        patch("src.executor.os_picker_macro.pygetwindow") as mock_pgw,
-        patch("src.executor.os_picker_macro.pyautogui"),
+        patch("operon.executor.os_picker_macro._PYAUTOGUI_IMPORT_ERROR", None),
+        patch("operon.executor.os_picker_macro.pygetwindow") as mock_pgw,
+        patch("operon.executor.os_picker_macro.pyautogui"),
     ):
         # Picker always visible — never closes
         mock_pgw.getAllWindows.return_value = [mock_window]

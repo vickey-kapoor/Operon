@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.models.common import RunResponse, RunStatus
+from operon.models.common import RunResponse, RunStatus
 
 
 @pytest.fixture
 def client():
-    from src.api.server import app
+    from operon.api.server import app
     return TestClient(app)
 
 
@@ -26,7 +26,7 @@ def _run_response(run_id: str = "modal-run-1", status: RunStatus = RunStatus.PEN
 
 def test_submit_browser_task_success(client: TestClient) -> None:
     """POST /run-task with valid intent returns 202 with run_id."""
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(return_value=_run_response())
         resp = client.post("/run-task", json={"intent": "Navigate to example.com"})
 
@@ -39,9 +39,9 @@ def test_submit_browser_task_success(client: TestClient) -> None:
 def test_submit_browser_task_safe_mode_skips_cdp_and_background_loop(client: TestClient) -> None:
     """Unit tests run in safe mode, so /run-task must not launch browsers or background loops."""
     with (
-        patch("src.api.routes.get_agent_loop") as mock_loop,
-        patch("src.api.routes._ensure_cdp_ready", new_callable=AsyncMock) as mock_cdp,
-        patch("src.api.routes.asyncio.create_task") as mock_create_task,
+        patch("operon.api.routes.get_agent_loop") as mock_loop,
+        patch("operon.api.routes._ensure_cdp_ready", new_callable=AsyncMock) as mock_cdp,
+        patch("operon.api.routes.asyncio.create_task") as mock_create_task,
     ):
         mock_loop.return_value.start_run = AsyncMock(return_value=_run_response())
         resp = client.post("/run-task", json={"intent": "Navigate to example.com"})
@@ -54,7 +54,7 @@ def test_submit_browser_task_safe_mode_skips_cdp_and_background_loop(client: Tes
 @pytest.mark.asyncio
 async def test_schedule_auto_run_deduplicates_active_task(monkeypatch: pytest.MonkeyPatch) -> None:
     """Only one background auto-run task should exist for a run_id."""
-    from src.api import routes
+    from operon.api import routes
 
     routes._auto_run_tasks.clear()
     release = asyncio.Event()
@@ -77,7 +77,7 @@ async def test_schedule_auto_run_deduplicates_active_task(monkeypatch: pytest.Mo
 @pytest.mark.asyncio
 async def test_schedule_auto_run_removes_completed_task(monkeypatch: pytest.MonkeyPatch) -> None:
     """Completed auto-run tasks should not remain in the registry."""
-    from src.api import routes
+    from operon.api import routes
 
     routes._auto_run_tasks.clear()
 
@@ -95,7 +95,7 @@ async def test_schedule_auto_run_removes_completed_task(monkeypatch: pytest.Monk
 
 def test_submit_desktop_task_success(client: TestClient) -> None:
     """POST /desktop/run-task with valid intent returns 202 with run_id."""
-    with patch("src.api.routes.get_desktop_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_desktop_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(return_value=_run_response("desktop-run-1"))
         resp = client.post("/desktop/run-task", json={"intent": "Open Calculator"})
 
@@ -121,7 +121,7 @@ def test_submit_empty_intent_returns_422(client: TestClient) -> None:
 
 def test_submit_task_server_error_propagates(client: TestClient) -> None:
     """When start_run raises an unhandled RuntimeError, the TestClient re-raises it."""
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(side_effect=RuntimeError("storage failure"))
         with pytest.raises(RuntimeError, match="storage failure"):
             client.post("/run-task", json={"intent": "Do something"})
@@ -134,7 +134,7 @@ def test_submit_task_conflict_returns_409(client: TestClient) -> None:
     """POST /run-task when a run is already active returns 409."""
     from fastapi import HTTPException
 
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(
             side_effect=HTTPException(status_code=409, detail="A run is already in progress")
         )
@@ -148,7 +148,7 @@ def test_submit_task_conflict_returns_409(client: TestClient) -> None:
 def test_stop_current_run_before_new_task(client: TestClient) -> None:
     """POST /run/{id}/stop cancels a running task so modal can unblock."""
     running_state_cls = __import__(
-        "src.models.state", fromlist=["AgentState"]
+        "operon.models.state", fromlist=["AgentState"]
     ).AgentState
     running = running_state_cls(
         run_id="old-run-1", intent="old task", status=RunStatus.RUNNING
@@ -158,8 +158,8 @@ def test_stop_current_run_before_new_task(client: TestClient) -> None:
     )
 
     with (
-        patch("src.api.routes.get_agent_loop") as mock_loop,
-        patch("src.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
+        patch("operon.api.routes.get_agent_loop") as mock_loop,
+        patch("operon.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
     ):
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=running)
@@ -179,7 +179,7 @@ def test_stop_current_run_before_new_task(client: TestClient) -> None:
 def test_stop_run_by_path_cleanup_failure_still_returns_cancelled(client: TestClient) -> None:
     """Cleanup failure after cancellation should not block the stop response."""
     running_state_cls = __import__(
-        "src.models.state", fromlist=["AgentState"]
+        "operon.models.state", fromlist=["AgentState"]
     ).AgentState
     running = running_state_cls(
         run_id="cleanup-fails", intent="old task", status=RunStatus.RUNNING
@@ -189,8 +189,8 @@ def test_stop_run_by_path_cleanup_failure_still_returns_cancelled(client: TestCl
     )
 
     with (
-        patch("src.api.routes.get_agent_loop") as mock_loop,
-        patch("src.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
+        patch("operon.api.routes.get_agent_loop") as mock_loop,
+        patch("operon.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
     ):
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=running)
@@ -208,7 +208,7 @@ def test_stop_run_by_path_cleanup_failure_still_returns_cancelled(client: TestCl
 def test_stop_run_by_body_cleans_up_cancelled_run(client: TestClient) -> None:
     """POST /stop cancels a running task and releases browser resources."""
     running_state_cls = __import__(
-        "src.models.state", fromlist=["AgentState"]
+        "operon.models.state", fromlist=["AgentState"]
     ).AgentState
     running = running_state_cls(
         run_id="body-stop-1", intent="old task", status=RunStatus.RUNNING
@@ -218,8 +218,8 @@ def test_stop_run_by_body_cleans_up_cancelled_run(client: TestClient) -> None:
     )
 
     with (
-        patch("src.api.routes.get_agent_loop") as mock_loop,
-        patch("src.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
+        patch("operon.api.routes.get_agent_loop") as mock_loop,
+        patch("operon.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
     ):
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=running)
@@ -237,7 +237,7 @@ def test_stop_run_by_body_cleans_up_cancelled_run(client: TestClient) -> None:
 
 def test_stop_run_by_path_not_found_returns_404(client: TestClient) -> None:
     """POST /run/{id}/stop with unknown run_id returns 404."""
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.run_store.get_run = AsyncMock(return_value=None)
         resp = client.post("/run/no-such-run/stop")
     assert resp.status_code == 404
@@ -246,15 +246,15 @@ def test_stop_run_by_path_not_found_returns_404(client: TestClient) -> None:
 def test_stop_run_by_path_already_done_is_noop(client: TestClient) -> None:
     """POST /run/{id}/stop on a completed run preserves status and does not call set_status."""
     running_state_cls = __import__(
-        "src.models.state", fromlist=["AgentState"]
+        "operon.models.state", fromlist=["AgentState"]
     ).AgentState
     done = running_state_cls(
         run_id="done-run", intent="done task", status=RunStatus.SUCCEEDED
     )
 
     with (
-        patch("src.api.routes.get_agent_loop") as mock_loop,
-        patch("src.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
+        patch("operon.api.routes.get_agent_loop") as mock_loop,
+        patch("operon.api.routes._cancel_auto_run", new_callable=AsyncMock) as mock_cancel,
     ):
         store = mock_loop.return_value.run_store
         store.get_run = AsyncMock(return_value=done)
@@ -276,7 +276,7 @@ def test_stop_run_by_path_already_done_is_noop(client: TestClient) -> None:
 def test_run_task_accepts_long_intent(client: TestClient) -> None:
     """POST /run-task accepts intents up to a reasonable length."""
     long_intent = "Search for the best restaurants near downtown " * 5
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(
             return_value=_run_response(run_id="long-run")
         )
@@ -289,7 +289,7 @@ def test_run_task_accepts_long_intent(client: TestClient) -> None:
 
 def test_run_task_with_valid_start_url(client: TestClient) -> None:
     """POST /run-task with a valid https start_url succeeds."""
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(return_value=_run_response())
         resp = client.post(
             "/run-task",
@@ -300,7 +300,7 @@ def test_run_task_with_valid_start_url(client: TestClient) -> None:
 
 def test_run_task_with_http_start_url(client: TestClient) -> None:
     """POST /run-task with http:// start_url is also accepted."""
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.start_run = AsyncMock(return_value=_run_response())
         resp = client.post(
             "/run-task",

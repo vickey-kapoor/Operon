@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.agent.policy import GeminiPolicyService, PolicyError, parse_policy_output
-from src.models.common import RunStatus
-from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, PolicyDecision
-from src.models.state import AgentState
+from operon.agent.policy import GeminiPolicyService, PolicyError, parse_policy_output
+from operon.models.common import RunStatus
+from operon.models.perception import ScreenPerception, UIElement, UIElementType
+from operon.models.policy import ActionType, PolicyDecision
+from operon.models.state import AgentState
 
 
 class StubGeminiClient:
@@ -123,7 +123,7 @@ def test_parse_policy_output_defaults_expected_change_when_missing(caplog) -> No
     }
     """
     import logging
-    with caplog.at_level(logging.WARNING, logger="src.agent.policy"):
+    with caplog.at_level(logging.WARNING, logger="operon.agent.policy"):
         decision = parse_policy_output(raw_output)
 
     assert decision.action.action_type.value == "click"

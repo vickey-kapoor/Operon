@@ -20,9 +20,9 @@ import pytest
 
 @pytest.mark.skipif(sys.platform != "win32", reason="creationflags is Windows-specific")
 def test_browser_native_app_activate_passes_no_console_window() -> None:
-    from src.executor.browser_native import NativeBrowserExecutor
+    from operon.executor.browser_native import NativeBrowserExecutor
 
-    with patch("src.executor.browser_native.subprocess.run") as mock_run:
+    with patch("operon.executor.browser_native.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1)
         NativeBrowserExecutor._app_activate_browser_window(browser_pid=1234)
 
@@ -37,9 +37,9 @@ def test_browser_native_app_activate_passes_no_console_window() -> None:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="creationflags is Windows-specific")
 def test_browser_native_chrome_process_ids_passes_no_console_window() -> None:
-    from src.executor.browser_native import NativeBrowserExecutor
+    from operon.executor.browser_native import NativeBrowserExecutor
 
-    with patch("src.executor.browser_native.subprocess.run") as mock_run:
+    with patch("operon.executor.browser_native.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="[]")
         NativeBrowserExecutor._chrome_process_ids("C:\\path\\to\\chrome.exe")
 
@@ -57,9 +57,9 @@ def test_no_console_constant_is_real_create_no_window() -> None:
     """Sanity: the helper constant in each module is the actual Windows flag."""
     import subprocess
 
-    from src.agent.hitl import _NO_CONSOLE as hitl_flag
-    from src.executor.browser_native import _NO_CONSOLE as browser_flag
-    from src.executor.desktop import _NO_CONSOLE as desktop_flag
+    from operon.agent.hitl import _NO_CONSOLE as hitl_flag
+    from operon.executor.browser_native import _NO_CONSOLE as browser_flag
+    from operon.executor.desktop import _NO_CONSOLE as desktop_flag
 
     expected = subprocess.CREATE_NO_WINDOW
     assert hitl_flag == expected

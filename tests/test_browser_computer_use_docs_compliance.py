@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.browser_computer_use import BrowserComputerUseBackend
-from src.models.capture import CaptureFrame
-from src.models.common import RunStatus
-from src.models.state import AgentState
+from operon.agent.browser_computer_use import BrowserComputerUseBackend
+from operon.models.capture import CaptureFrame
+from operon.models.common import RunStatus
+from operon.models.state import AgentState
 
 
 class _StubClient:

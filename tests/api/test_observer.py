@@ -7,28 +7,32 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from src.api.server import app
-from src.models.common import FailureCategory, LoopStage, RunStatus, StopReason
-from src.models.execution import ExecutedAction, ExecutionAttemptTrace, ExecutionTrace
-from src.models.logs import (
+from operon.api.server import app
+from operon.models.common import FailureCategory, LoopStage, RunStatus, StopReason
+from operon.models.execution import (
+    ExecutedAction,
+    ExecutionAttemptTrace,
+    ExecutionTrace,
+)
+from operon.models.logs import (
     FailureRecord,
     ModelDebugArtifacts,
     PreStepFailureLog,
     StepLog,
 )
-from src.models.perception import (
+from operon.models.perception import (
     ScreenPerception,
     UIElement,
     UIElementNameSource,
     UIElementType,
 )
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.progress import ProgressState
-from src.models.recovery import RecoveryDecision, RecoveryStrategy
-from src.models.state import AgentState
-from src.models.usage import ModelUsage
-from src.models.verification import VerificationResult, VerificationStatus
-from src.store.run_logger import append_step_log
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.progress import ProgressState
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
+from operon.models.state import AgentState
+from operon.models.usage import ModelUsage
+from operon.models.verification import VerificationResult, VerificationStatus
+from operon.store.run_logger import append_step_log
 
 
 def _local_test_dir(name: str) -> Path:
@@ -277,7 +281,7 @@ def test_observer_live_browser_frame() -> None:
     from unittest.mock import patch
 
     client = TestClient(app)
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get("/observer/api/live-browser/live-run")
 
@@ -295,7 +299,7 @@ def test_observer_live_browser_frame_missing_session() -> None:
     from unittest.mock import patch
 
     client = TestClient(app)
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get("/observer/api/live-browser/missing-run")
 
@@ -325,7 +329,7 @@ def test_observer_run_includes_current_browser_url(monkeypatch) -> None:
 
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
     client = TestClient(app)
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get(f"/observer/api/run/{run_id}")
 
@@ -356,7 +360,7 @@ def test_observer_run_reconciles_orphaned_browser_run(monkeypatch) -> None:
 
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
     client = TestClient(app)
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get(f"/observer/api/run/{run_id}")
 
@@ -401,7 +405,7 @@ def test_observer_runs_reconciles_orphaned_browser_runs(monkeypatch) -> None:
 
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
     client = TestClient(app)
-    with patch("src.api.routes.get_agent_loop") as mock_loop:
+    with patch("operon.api.routes.get_agent_loop") as mock_loop:
         mock_loop.return_value.executor = _Executor()
         resp = client.get("/observer/api/runs?limit=10")
 

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.fallback_backend import BackendCompatibilityError, FallbackBackend
-from src.models.capture import CaptureFrame
-from src.models.common import RunStatus
-from src.models.perception import ScreenPerception
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.state import AgentState
+from operon.agent.fallback_backend import BackendCompatibilityError, FallbackBackend
+from operon.models.capture import CaptureFrame
+from operon.models.common import RunStatus
+from operon.models.perception import ScreenPerception
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.state import AgentState
 
 
 class _FailingBackend:

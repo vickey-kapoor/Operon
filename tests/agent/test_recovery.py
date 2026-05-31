@@ -4,21 +4,21 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.policy import GeminiPolicyService
-from src.agent.policy_coordinator import PolicyCoordinator
-from src.agent.recovery import RuleBasedRecoveryManager
-from src.models.common import FailureCategory, LoopStage
-from src.models.execution import ExecutedAction
-from src.models.perception import ScreenPerception, UIElement, UIElementType
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.recovery import RecoveryStrategy
-from src.models.state import AgentState
-from src.models.verification import (
+from operon.agent.policy import GeminiPolicyService
+from operon.agent.policy_coordinator import PolicyCoordinator
+from operon.agent.recovery import RuleBasedRecoveryManager
+from operon.models.common import FailureCategory, LoopStage
+from operon.models.execution import ExecutedAction
+from operon.models.perception import ScreenPerception, UIElement, UIElementType
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.recovery import RecoveryStrategy
+from operon.models.state import AgentState
+from operon.models.verification import (
     VerificationFailureType,
     VerificationResult,
     VerificationStatus,
 )
-from src.store.memory import FileBackedMemoryStore
+from operon.store.memory import FileBackedMemoryStore
 
 
 class _UnusedGeminiClient:
@@ -112,6 +112,74 @@ async def test_recovery_retry_limit_behavior() -> None:
     result = await manager.recover(state, decision, _executed(), verification)
 
     assert result.strategy is RecoveryStrategy.STOP
+
+
+@pytest.mark.asyncio
+async def test_repeated_uncertain_type_steps_stop_even_when_target_changes() -> None:
+    manager = RuleBasedRecoveryManager()
+    text = "package main"
+    prior_actions = [
+        ExecutedAction(
+            action=AgentAction(action_type=ActionType.TYPE, target_element_id="editor-a", text=text),
+            success=True,
+            detail="typed",
+        ),
+        ExecutedAction(
+            action=AgentAction(action_type=ActionType.TYPE, target_element_id="editor-b", text=text),
+            success=True,
+            detail="typed",
+        ),
+    ]
+    prior_verifications = [
+        VerificationResult(
+            status=VerificationStatus.UNCERTAIN,
+            expected_outcome_met=False,
+            stop_condition_met=False,
+            reason="uncertain",
+            failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+            failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+            failure_stage=LoopStage.VERIFY,
+        ),
+        VerificationResult(
+            status=VerificationStatus.UNCERTAIN,
+            expected_outcome_met=False,
+            stop_condition_met=False,
+            reason="uncertain",
+            failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+            failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+            failure_stage=LoopStage.VERIFY,
+        ),
+    ]
+    state = AgentState(
+        run_id="run-type-loop",
+        intent="Open Notepad and type a Go hello world program",
+        status="running",
+        action_history=prior_actions,
+        verification_history=prior_verifications,
+    )
+    action = AgentAction(action_type=ActionType.TYPE, target_element_id="editor-c", text=text)
+    decision = PolicyDecision(
+        action=action,
+        rationale="Type code.",
+        confidence=0.8,
+        active_subgoal="Type hello world program in Go",
+    )
+    executed = ExecutedAction(action=action, success=True, detail="typed")
+    verification = VerificationResult(
+        status=VerificationStatus.UNCERTAIN,
+        expected_outcome_met=False,
+        stop_condition_met=False,
+        reason="uncertain",
+        failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+        failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+        failure_stage=LoopStage.VERIFY,
+    )
+
+    result = await manager.recover(state, decision, executed, verification)
+
+    assert result.strategy is RecoveryStrategy.STOP
+    assert result.terminal is True
+    assert result.failure_category is FailureCategory.UNCERTAIN_SCREEN_STATE
 
 
 @pytest.mark.asyncio

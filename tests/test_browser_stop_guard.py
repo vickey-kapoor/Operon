@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.verifier import DeterministicVerifierService
-from src.clients.gemini import PlaceholderGeminiClient
-from src.models.common import FailureCategory, RunStatus
-from src.models.execution import ExecutedAction
-from src.models.perception import ScreenPerception
-from src.models.policy import ActionType, AgentAction, PolicyDecision
-from src.models.state import AgentState
-from src.models.verification import VerificationStatus
+from operon.agent.verifier import DeterministicVerifierService
+from operon.clients.gemini import PlaceholderGeminiClient
+from operon.models.common import FailureCategory, RunStatus
+from operon.models.execution import ExecutedAction
+from operon.models.perception import ScreenPerception
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.state import AgentState
+from operon.models.verification import VerificationStatus
 
 
 @pytest.mark.asyncio

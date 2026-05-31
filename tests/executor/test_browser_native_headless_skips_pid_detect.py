@@ -25,7 +25,7 @@ async def test_chrome_process_ids_not_called_in_headless_mode() -> None:
     This is a behaviour test: we don't care which Playwright APIs are used,
     only that the PowerShell-spawning helper is bypassed.
     """
-    from src.executor.browser_native import NativeBrowserExecutor
+    from operon.executor.browser_native import NativeBrowserExecutor
 
     executor = NativeBrowserExecutor.__new__(NativeBrowserExecutor)
     executor._sessions = {}

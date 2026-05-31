@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from src.agent.screen_diff import (
+from operon.agent.screen_diff import (
     CURSOR_ONLY_THRESHOLD,
     SCREEN_CHANGE_THRESHOLD,
     compute_screen_change_ratio,

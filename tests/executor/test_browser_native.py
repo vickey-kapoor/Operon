@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.executor.browser_native import NativeBrowserExecutor, _BrowserSession
-from src.models.policy import ActionType, AgentAction
+from operon.executor.browser_native import NativeBrowserExecutor, _BrowserSession
+from operon.models.policy import ActionType, AgentAction
 
 
 @pytest.mark.asyncio
@@ -524,7 +524,7 @@ async def test_type_clears_before_typing_when_requested(tmp_path: Path) -> None:
 async def test_click_rejects_selector_only_action(tmp_path: Path) -> None:
     """A CLICK with only a CSS selector and no coordinates must fail —
     the executor no longer falls back to page.locator()."""
-    from src.models.common import FailureCategory
+    from operon.models.common import FailureCategory
 
     locator_called: list[str] = []
     page = SimpleNamespace(

@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from operon.agent._agent_utils import collect_latest_usage
+from operon.agent.policy.keywords import terminal_patterns
 from operon.clients.anthropic import AnthropicClientError
 from operon.clients.gemini import GeminiClient, GeminiClientError
 from operon.core.paths import prompts_dir
@@ -462,20 +463,8 @@ class DeterministicVerifierService(VerifierService):
             e.primary_name.lower() for e in perception.visible_elements
         )
 
-        # Build goal-specific terminal indicators from the intent
-        _TERMINAL_PATTERNS: list[tuple[str, list[str]]] = [
-            ("submitted", ["submitted", "submission received", "thank you", "success"]),
-            ("saved", ["saved", "changes saved", "save successful"]),
-            ("created", ["created", "issue created", "record created", "added"]),
-            ("deleted", ["deleted", "removed", "record deleted"]),
-            ("uploaded", ["uploaded", "upload complete", "file uploaded"]),
-            ("sent", ["sent", "message sent", "email sent"]),
-            ("logged in", ["dashboard", "welcome", "logged in", "sign out", "log out"]),
-            ("logged out", ["signed out", "logged out", "login", "sign in"]),
-            ("searched", ["search results", "results for", "no results"]),
-            ("found", ["found", "result", "match"]),
-        ]
-        for intent_keyword, visual_signals in _TERMINAL_PATTERNS:
+        # Goal-specific terminal indicators, keyed by intent keyword.
+        for intent_keyword, visual_signals in terminal_patterns():
             if intent_keyword not in intent_lower:
                 continue
             for signal in visual_signals:

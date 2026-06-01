@@ -80,6 +80,14 @@ from operon.store.run_store import RunStore
 logger = logging.getLogger(__name__)
 
 _TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
+
+# Default demo target for run_live_benchmark: a public, auth-free form used as a
+# smoke/demo run. This is the one site-specific literal the loop carries; keep it
+# named here (rather than buried as a method default) so it is easy to find and
+# override via the benchmark_url / intent arguments for real tasks.
+DEFAULT_BENCHMARK_URL = "https://practice-automation.com/form-fields/"
+DEFAULT_BENCHMARK_INTENT = "Complete the auth-free form and submit it successfully."
+
 _LIVENESS_RETRY_MAX = 3
 _LIVENESS_RETRY_FIRST_SLEEP_S = 0.5   # fast recovery for brief UI transitions (e.g. search overlay animating in)
 _LIVENESS_RETRY_SLEEP_S = 1.5         # subsequent retries give slower loads more time
@@ -260,9 +268,9 @@ class AgentLoop:
 
     async def run_live_benchmark(
         self,
-        intent: str = "Complete the auth-free form and submit it successfully.",
+        intent: str = DEFAULT_BENCHMARK_INTENT,
         *,
-        benchmark_url: str = "https://practice-automation.com/form-fields/",
+        benchmark_url: str = DEFAULT_BENCHMARK_URL,
         max_steps: int = 12,
     ) -> RunResponse:
         response = await self.start_run(RunTaskRequest(intent=intent, start_url=benchmark_url))

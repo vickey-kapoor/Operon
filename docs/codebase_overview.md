@@ -61,4 +61,4 @@ Memory support exists in `src/operon/store/memory.py` and `src/operon/models/epi
 
 ## Supporting Areas
 
-- `src/operon/core/contracts` and `src/operon/core/router.py`: contract models and environment/action validation used by executor adapters and tests.
+- `src/operon/core/contracts/perception.py`: the shared `Environment` enum (`BROWSER` / `DESKTOP`) that `AgentLoop` and the API use to select which execution path a run takes.

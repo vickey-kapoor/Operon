@@ -36,7 +36,7 @@ The browser executor clicks the visual target, then delegates picker handling to
 
 ## Routing
 
-`upload_file_native` is allowed for browser actions and treated as cross-environment in `src/operon/core/router.py`. It is not a standalone desktop action; desktop input primitives are used internally by the picker macro.
+`upload_file_native` is a browser action. It is not a standalone desktop action; the OS picker macro uses desktop input primitives internally to drive the native file dialog.
 
 ## Failure Signals
 

@@ -62,11 +62,11 @@ Removed or absent from the current FastAPI app:
 
 ## Action Requirements
 
-The internal policy action model supports pointer, keyboard, navigation, clipboard, screenshot, upload, read-text, batch, stop, wait, and HITL actions. The contract-layer action model in `src/operon/core/contracts/planner.py` is narrower and is used by executor adapters and route validation.
+The policy action model (`src/operon/models/policy.py`) supports pointer, keyboard, navigation, clipboard, screenshot, upload, read-text, batch, stop, wait, and HITL actions. It is the single action vocabulary used end to end by perception, policy, executor, and verifier.
 
 Important product constraints:
 - `upload_file_native` is headed-mode only and uses the OS picker macro.
-- Browser/desktop route compatibility is validated in `src/operon/core/router.py`.
+- Browser and desktop execution paths are selected by the `Environment` enum; the executor adapters delegate straight to the path-specific executor.
 
 ## Verification Requirements
 

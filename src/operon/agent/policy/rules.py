@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from urllib.parse import quote_plus, urljoin
 
 from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.hitl import HITL_PAGE_HINT_KEYWORDS
+from operon.agent.policy.site_adapters import resolve_search_url
 from operon.models.common import FailureCategory
 from operon.models.memory import MemoryHint
 from operon.models.perception import (
@@ -660,28 +660,7 @@ class PolicyRuleEngine:
                 )
             )
             if _hint_str not in _POST_SEARCH_HINTS:
-                # Build a site-aware search URL.
-                _base = state.start_url or ""
-                if "wikipedia.org" in _base:
-                    from urllib.parse import urlparse
-                    _origin = f"{urlparse(_base).scheme}://{urlparse(_base).netloc}"
-                    _search_url = f"{_origin}/w/index.php?search={quote_plus(query)}"
-                elif "github.com" in _base:
-                    # Translate common natural-language patterns to GitHub search syntax.
-                    _lang_m = re.search(r"\b(python|javascript|typescript|rust|go|java|c\+\+|ruby|swift|kotlin)\b", query, re.IGNORECASE)
-                    _star_m = re.search(r"(\d[\d,]*)\s*(?:k|,?000)?\s*\+?\s*stars?", query, re.IGNORECASE)
-                    _star_thresh_m = re.search(r"more than\s+(\d[\d,]*)", query, re.IGNORECASE)
-                    if _lang_m and (_star_m or _star_thresh_m):
-                        _lang = _lang_m.group(1).lower().replace("+", "%2B")
-                        _raw = (_star_thresh_m or _star_m).group(1).replace(",", "")
-                        _stars = int(_raw) if len(_raw) <= 6 else int(_raw)
-                        _search_url = f"https://github.com/search?q=language%3A{_lang}+stars%3A%3E{_stars}&type=repositories&s=stars&o=desc"
-                    elif _lang_m:
-                        _search_url = f"https://github.com/trending/{_lang_m.group(1).lower()}"
-                    else:
-                        _search_url = f"https://github.com/search?q={quote_plus(query)}&type=repositories"
-                else:
-                    _search_url = urljoin(_base, f"search?q={quote_plus(query)}")
+                _search_url = resolve_search_url(query, state.start_url or "")
                 return PolicyDecision(
                     action=AgentAction(action_type=ActionType.NAVIGATE, url=_search_url),
                     rationale=f"Search submitted but page did not navigate — using direct search URL for '{query}'.",
@@ -699,26 +678,7 @@ class PolicyRuleEngine:
             # hasn't advanced, Enter didn't navigate — go straight to the URL fallback
             # rather than typing the same query again.
             if "_search_query_rule" in _last_trace and "action=type" in _last_trace:
-                _base = state.start_url or ""
-                if "wikipedia.org" in _base:
-                    from urllib.parse import urlparse
-                    _origin = f"{urlparse(_base).scheme}://{urlparse(_base).netloc}"
-                    _search_url = f"{_origin}/w/index.php?search={quote_plus(query)}"
-                elif "github.com" in _base:
-                    _lang_m = re.search(r"\b(python|javascript|typescript|rust|go|java|c\+\+|ruby|swift|kotlin)\b", query, re.IGNORECASE)
-                    _star_thresh_m = re.search(r"more than\s+(\d[\d,]*)", query, re.IGNORECASE)
-                    _star_m = re.search(r"(\d[\d,]*)\s*(?:k|,?000)?\s*\+?\s*stars?", query, re.IGNORECASE)
-                    if _lang_m and (_star_thresh_m or _star_m):
-                        _lang = _lang_m.group(1).lower().replace("+", "%2B")
-                        _raw = (_star_thresh_m or _star_m).group(1).replace(",", "")
-                        _stars = int(_raw) if len(_raw) <= 6 else int(_raw)
-                        _search_url = f"https://github.com/search?q=language%3A{_lang}+stars%3A%3E{_stars}&type=repositories&s=stars&o=desc"
-                    elif _lang_m:
-                        _search_url = f"https://github.com/trending/{_lang_m.group(1).lower()}"
-                    else:
-                        _search_url = f"https://github.com/search?q={quote_plus(query)}&type=repositories"
-                else:
-                    _search_url = urljoin(_base, f"search?q={quote_plus(query)}")
+                _search_url = resolve_search_url(query, state.start_url or "")
                 return PolicyDecision(
                     action=AgentAction(action_type=ActionType.NAVIGATE, url=_search_url),
                     rationale=f"Search typed but Enter did not navigate — using direct search URL for '{query}'.",
@@ -758,7 +718,7 @@ class PolicyRuleEngine:
         if "_search_query_rule" in _last_trace:
             if "action=type" in _last_trace:
                 # TYPE didn't land in any focused input — navigate directly to search URL.
-                _search_url = urljoin(state.start_url or "", f"search?q={quote_plus(query)}")
+                _search_url = resolve_search_url(query, state.start_url or "")
                 return PolicyDecision(
                     action=AgentAction(action_type=ActionType.NAVIGATE, url=_search_url),
                     rationale=f"Search overlay TYPE failed — navigating directly to search URL for '{query}'.",

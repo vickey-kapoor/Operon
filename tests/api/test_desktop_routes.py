@@ -303,19 +303,18 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
     routes_module._desktop_agent_loop = None
 
     try:
+        anthropic_config = RuntimeModeConfig(
+            backend="json",
+            primary_model="gemini-3-flash-preview",
+            planner_provider="anthropic",
+            planner_model="claude-sonnet-4-20250514",
+            verifier_provider="anthropic",
+            fallback_model="gemini-2.5-flash",
+            verifier_model="claude-sonnet-4-20250514",
+        )
         with (
-            patch(
-                "operon.api.runtime.loops.desktop_mode_config",
-                return_value=RuntimeModeConfig(
-                    backend="json",
-                    primary_model="gemini-3-flash-preview",
-                    planner_provider="anthropic",
-                    planner_model="claude-sonnet-4-20250514",
-                    verifier_provider="anthropic",
-                    fallback_model="gemini-2.5-flash",
-                    verifier_model="claude-sonnet-4-20250514",
-                ),
-            ),
+            patch("operon.api.runtime.loops.desktop_mode_config", return_value=anthropic_config),
+            patch("operon.api.runtime.services.desktop_mode_config", return_value=anthropic_config),
             patch("operon.api.runtime.loops.DesktopExecutor"),
             patch("operon.api.runtime.loops.FileBackedRunStore"),
             patch("operon.api.runtime.loops.FileBackedMemoryStore"),
@@ -349,20 +348,19 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
     routes_module._agent_loop = None
 
     try:
+        anthropic_config = RuntimeModeConfig(
+            backend="json",
+            primary_model="gemini-3-flash-preview",
+            planner_provider="anthropic",
+            planner_model="claude-sonnet-4-20250514",
+            verifier_provider="anthropic",
+            fallback_backend="json",
+            fallback_model="gemini-3-flash-preview",
+            verifier_model="claude-sonnet-4-20250514",
+        )
         with (
-            patch(
-                "operon.api.runtime.loops.browser_mode_config",
-                return_value=RuntimeModeConfig(
-                    backend="json",
-                    primary_model="gemini-3-flash-preview",
-                    planner_provider="anthropic",
-                    planner_model="claude-sonnet-4-20250514",
-                    verifier_provider="anthropic",
-                    fallback_backend="json",
-                    fallback_model="gemini-3-flash-preview",
-                    verifier_model="claude-sonnet-4-20250514",
-                ),
-            ),
+            patch("operon.api.runtime.loops.browser_mode_config", return_value=anthropic_config),
+            patch("operon.api.runtime.services.browser_mode_config", return_value=anthropic_config),
             patch("operon.api.runtime.loops.NativeBrowserExecutor"),
             patch("operon.api.runtime.loops.FileBackedRunStore"),
             patch("operon.api.runtime.loops.FileBackedMemoryStore"),

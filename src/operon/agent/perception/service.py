@@ -188,10 +188,6 @@ class GeminiPerceptionService(PerceptionService):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
-    def reset_element_buffer(self) -> None:
-        """Discard all cached frames and active ghosts. Called at the start of every new run."""
-        self.element_buffer.clear()
-
     def _with_spatial_persistence(self, perception: ScreenPerception, screenshot: CaptureFrame) -> ScreenPerception:
         """Apply coordinate smoothing, detect ghost elements, update the spatial cache.
 

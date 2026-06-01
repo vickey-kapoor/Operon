@@ -7,7 +7,9 @@ import re
 from collections.abc import Callable
 
 from operon.agent.actions.selector import DeterministicTargetSelector
+from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.agent.hitl import HITL_PAGE_HINT_KEYWORDS
+from operon.agent.policy.keywords import dismiss_tokens, overlay_tokens
 from operon.agent.policy.site_adapters import resolve_search_url
 from operon.models.common import FailureCategory
 from operon.models.memory import MemoryHint
@@ -50,42 +52,6 @@ _LAUNCH_INTENT_RE = re.compile(
     r"(?:open|launch|start|run|use)\s+([a-zA-Z0-9][a-zA-Z0-9 _\-]*?)(?:\s+and\b|\s+then\b|\s+to\b|\s+write\b|\s+in\b|$)",
     re.IGNORECASE,
 )
-
-# Canonical app name → argument passed to launch_app executor.
-# Mirrors _APP_ALIASES in desktop.py but lives here so policy_rules has no
-# circular dependency on the executor layer.
-_LAUNCH_APP_NAMES: dict[str, str] = {
-    "notepad": "notepad",
-    "calculator": "calc",
-    "calc": "calc",
-    "paint": "mspaint",
-    "mspaint": "mspaint",
-    "explorer": "explorer",
-    "file explorer": "explorer",
-    "vs code": "code",
-    "vscode": "code",
-    "visual studio code": "code",
-    "word": "winword",
-    "excel": "excel",
-    "powerpoint": "powerpnt",
-    "chrome": "chrome",
-    "google chrome": "chrome",
-    "edge": "msedge",
-    "microsoft edge": "msedge",
-    "terminal": "wt",
-    "windows terminal": "wt",
-    "powershell": "powershell",
-    "cmd": "cmd",
-    "command prompt": "cmd",
-    "task manager": "taskmgr",
-    "settings": "ms-settings:",
-}
-
-# Labels that suggest a button dismisses / rejects rather than accepts.
-_DISMISS_TOKENS: frozenset[str] = frozenset({
-    "don't", "dont", "dismiss", "close", "cancel", "no thanks", "skip",
-    "not now", "maybe later", "decline", "reject", "later", "no", "×", "✕",
-})
 
 # A benchmark rule plugin is any callable that matches this signature.
 # Return a PolicyDecision to short-circuit the engine, or None to pass through.
@@ -255,23 +221,22 @@ class PolicyRuleEngine:
             return None
 
         raw_name = m.group(1).strip().lower()
-        app_cmd = _LAUNCH_APP_NAMES.get(raw_name)
-        if app_cmd is None:
+        alias = raw_name if raw_name in APP_LAUNCH_TARGETS else None
+        if alias is None:
             # Partial-match fallback: "open vs code" → matches "vs code" key
-            for alias, cmd in _LAUNCH_APP_NAMES.items():
-                if alias in raw_name or raw_name.startswith(alias):
-                    app_cmd = cmd
-                    raw_name = alias
+            for known in APP_LAUNCH_TARGETS:
+                if known in raw_name or raw_name.startswith(known):
+                    alias = known
                     break
-        if app_cmd is None:
+        if alias is None:
             return None
 
         logger.info(
             "_prefer_launch_app_rule: intent=%r → launch_app(%r)",
-            intent[:80], app_cmd,
+            intent[:80], alias,
         )
         return PolicyDecision(
-            action=AgentAction(action_type=ActionType.LAUNCH_APP, text=app_cmd),
+            action=AgentAction(action_type=ActionType.LAUNCH_APP, text=alias),
             rationale=(
                 f"Intent requires '{raw_name}' — using launch_app directly "
                 "instead of searching to avoid screen-state churn."
@@ -1318,7 +1283,7 @@ def _blocking_overlay_elements(perception: ScreenPerception) -> list[UIElement]:
         # Non-interactable elements with overlay-like labels also qualify
         if not e.is_interactable and e.element_type not in {UIElementType.TEXT, UIElementType.ICON}:
             name = e.primary_name.lower()
-            if any(tok in name for tok in ("banner", "promo", "modal", "overlay", "popup", "notification", "toast", "cookie", "consent")):
+            if any(tok in name for tok in overlay_tokens()):
                 results.append(e)
     return results
 
@@ -1350,7 +1315,8 @@ def _best_dismiss_button(
         cy = e.y + e.height // 2
         if not (x1 <= cx <= x2 and y1 <= cy <= y2):
             continue
-        score = sum(1 for tok in _DISMISS_TOKENS if tok in e.primary_name.lower())
+        label = e.primary_name.lower()
+        score = sum(1 for tok in dismiss_tokens() if tok in label)
         candidates.append((score, e))
 
     if not candidates:

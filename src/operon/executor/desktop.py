@@ -16,6 +16,7 @@ import mss
 import mss.tools
 import pyperclip
 
+from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.core.paths import desktop_artifacts_dir
 
 try:
@@ -86,29 +87,6 @@ _PROTECTED_PROCESSES: set[str] = {
     "python", "python.exe",
     "uvicorn",                    # Our own server
 }
-
-_APP_ALIASES: dict[str, str] = {
-    "notepad": "notepad.exe",
-    "calculator": "calc.exe",
-    "calc": "calc.exe",
-    "explorer": "explorer.exe",
-    "file explorer": "explorer.exe",
-    "vscode": "code",
-    "vs code": "code",
-    "visual studio code": "code",
-    "paint": "mspaint.exe",
-    "cmd": "cmd.exe",
-    "terminal": "wt.exe",
-    "powershell": "powershell.exe",
-    "settings": "ms-settings:",
-    "task manager": "taskmgr.exe",
-    "chrome": "chrome",
-    "google chrome": "chrome",
-    "browser": "chrome",
-    "edge": "msedge",
-    "microsoft edge": "msedge",
-}
-
 
 class HardwareBaselineError(RuntimeError):
     """Raised when the display hardware baseline check fails.
@@ -775,7 +753,7 @@ class DesktopExecutor(Executor):
         if action.text is None:
             return self._fail(action, "launch_app requires text (app name)", FailureCategory.EXECUTION_ERROR)
         app_key = action.text.strip().lower()
-        command = _APP_ALIASES.get(app_key, action.text.strip())
+        command = APP_LAUNCH_TARGETS.get(app_key, action.text.strip())
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]

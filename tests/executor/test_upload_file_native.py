@@ -6,18 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from operon.core.contracts.critic import FailureType
-from operon.core.contracts.perception import Environment
-from operon.core.contracts.planner import ActionType as ContractActionType
-from operon.core.contracts.planner import PlannerAction
-from operon.core.router import (
-    BROWSER_ACTIONS,
-    DESKTOP_ACTIONS,
-    RoutingError,
-    is_cross_environment_action,
-    validate_plan_route,
-)
-from operon.executor.browser_adapter import BrowserExecutor
 from operon.models.common import FailureCategory
 from operon.models.policy import ActionType, AgentAction
 
@@ -31,97 +19,6 @@ def test_upload_file_native_action_type_exists() -> None:
     assert ActionType.UPLOAD_FILE_NATIVE == "upload_file_native"
 
 
-def test_contract_action_type_upload_file_native_exists() -> None:
-    """Contract ActionType enum must include upload_file_native."""
-    assert ContractActionType.UPLOAD_FILE_NATIVE == "upload_file_native"
-
-
-# ---------------------------------------------------------------------------
-# 2. Router: environment gating
-# ---------------------------------------------------------------------------
-
-
-def test_router_allows_upload_file_native_in_browser() -> None:
-    """upload_file_native must be allowed in the BROWSER action set."""
-    assert ContractActionType.UPLOAD_FILE_NATIVE in BROWSER_ACTIONS
-
-
-def test_router_blocks_upload_file_native_in_desktop() -> None:
-    """upload_file_native must NOT be in the DESKTOP action set."""
-    assert ContractActionType.UPLOAD_FILE_NATIVE not in DESKTOP_ACTIONS
-
-
-def test_is_cross_environment_action_returns_true_for_upload_file_native() -> None:
-    """is_cross_environment_action must return True for upload_file_native."""
-    assert is_cross_environment_action(ContractActionType.UPLOAD_FILE_NATIVE) is True
-
-
-def test_is_cross_environment_action_returns_false_for_click() -> None:
-    """is_cross_environment_action must return False for plain click."""
-    assert is_cross_environment_action(ContractActionType.CLICK) is False
-
-
-def test_validate_plan_route_accepts_upload_file_native_in_browser() -> None:
-    """validate_plan_route must not raise for upload_file_native in browser."""
-    from operon.core.contracts.perception import ContractVersion
-    from operon.core.contracts.planner import PlannerOutput
-
-    plan = PlannerOutput(
-        contract_version=ContractVersion.PHASE1,
-        environment=Environment.BROWSER,
-        observation_id="obs_ufn_1",
-        plan_id="plan_ufn_1",
-        subgoal="Upload a file using the native OS picker.",
-        rationale="Testing native upload routing.",
-        action=PlannerAction(
-            action_type=ContractActionType.UPLOAD_FILE_NATIVE,
-            target_id="upload_btn",
-            file_path="/tmp/test.pdf",
-        ),
-        expected_outcome="OS file picker opens.",
-    )
-    # Should not raise
-    validate_plan_route(plan)
-
-
-def test_validate_plan_route_rejects_upload_file_native_in_desktop() -> None:
-    """validate_plan_route must raise RoutingError for upload_file_native in desktop."""
-    from operon.core.contracts.perception import ContractVersion
-    from operon.core.contracts.planner import PlannerOutput
-
-    plan = PlannerOutput(
-        contract_version=ContractVersion.PHASE1,
-        environment=Environment.DESKTOP,
-        observation_id="obs_ufn_2",
-        plan_id="plan_ufn_2",
-        subgoal="Upload a file using the native OS picker.",
-        rationale="Testing desktop rejection.",
-        action=PlannerAction(
-            action_type=ContractActionType.UPLOAD_FILE_NATIVE,
-            target_id="upload_btn",
-            file_path="/tmp/test.pdf",
-        ),
-        expected_outcome="Should be rejected.",
-    )
-    with pytest.raises(RoutingError):
-        validate_plan_route(plan)
-
-
-# ---------------------------------------------------------------------------
-# 3. Failure type checks
-# ---------------------------------------------------------------------------
-
-
-def test_failure_types_include_picker_not_detected() -> None:
-    """FailureType enum must include picker_not_detected."""
-    assert FailureType.PICKER_NOT_DETECTED == "picker_not_detected"
-
-
-def test_failure_types_include_file_not_reflected() -> None:
-    """FailureType enum must include file_not_reflected."""
-    assert FailureType.FILE_NOT_REFLECTED == "file_not_reflected"
-
-
 def test_failure_category_includes_picker_not_detected() -> None:
     """Legacy FailureCategory enum must include picker_not_detected."""
     assert FailureCategory.PICKER_NOT_DETECTED == "picker_not_detected"
@@ -130,38 +27,6 @@ def test_failure_category_includes_picker_not_detected() -> None:
 def test_failure_category_includes_file_not_reflected() -> None:
     """Legacy FailureCategory enum must include file_not_reflected."""
     assert FailureCategory.FILE_NOT_REFLECTED == "file_not_reflected"
-
-
-# ---------------------------------------------------------------------------
-# 4. Executor adapters
-# ---------------------------------------------------------------------------
-
-
-def test_browser_executor_translates_upload_file_native() -> None:
-    """BrowserExecutor._to_legacy_action must translate UPLOAD_FILE_NATIVE correctly."""
-    action = PlannerAction(
-        action_type=ContractActionType.UPLOAD_FILE_NATIVE,
-        target_id="upload_btn",
-        file_path="/tmp/test.pdf",
-        picker_title="Choose a file",
-    )
-    legacy = BrowserExecutor._to_legacy_action(action)
-    assert legacy.action_type is ActionType.UPLOAD_FILE_NATIVE
-    assert legacy.target_element_id == "upload_btn"
-    assert legacy.text == "Choose a file"
-
-
-def test_browser_executor_translates_upload_file_native_no_picker_title() -> None:
-    """BrowserExecutor._to_legacy_action handles UPLOAD_FILE_NATIVE without picker_title."""
-    action = PlannerAction(
-        action_type=ContractActionType.UPLOAD_FILE_NATIVE,
-        target_id="file_input",
-        file_path="/home/user/report.pdf",
-    )
-    legacy = BrowserExecutor._to_legacy_action(action)
-    assert legacy.action_type is ActionType.UPLOAD_FILE_NATIVE
-    assert legacy.target_element_id == "file_input"
-    assert legacy.text is None
 
 
 # ---------------------------------------------------------------------------

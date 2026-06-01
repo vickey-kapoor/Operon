@@ -131,7 +131,7 @@ src/
   api/        FastAPI app, split routes, runtime construction, observer helpers, websocket stream
   browser/    CDP BrowserManager for observable mode
   clients/    Gemini, Gemini Computer Use, and Anthropic HTTP clients
-  core/       contract models and route validation used by executor adapters
+  core/       shared Environment enum used to select the execution path
   executor/   browser, desktop, and native upload executors
   models/     Pydantic schemas for state, perception, policy, execution, logs, memory
   store/      run persistence, memory, replay, cleanup, background writer

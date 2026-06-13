@@ -989,17 +989,3 @@ class DesktopExecutor(Executor):
     def recorded_video_path_for_run(self, run_id: str) -> Path | None:
         """Return the saved full-run video path, or None if not recorded."""
         return self._run_video_paths.get(run_id)
-
-    async def execute_with_recording(
-        self, action: AgentAction, step_dir: Path,
-    ) -> tuple[ExecutedAction, Path | None]:
-        """Re-execute an action while recording the screen for video verification."""
-        from operon.agent.artifacts.screen_recorder import ScreenRecorder
-
-        video_path = step_dir / "verification_recording.mp4"
-        recorder = ScreenRecorder(output_path=video_path)
-        await recorder.start()
-        result = await self.execute(action)
-        await asyncio.sleep(2.0)  # let UI settle after action
-        final_path = await recorder.stop()
-        return result, final_path

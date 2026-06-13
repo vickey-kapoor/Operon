@@ -88,7 +88,9 @@ class HeuristicCritic:
     """Baseline, model-free critic scoring a candidate from signals already on hand:
 
     - the policy's own ``confidence`` (trust the planner, but not blindly),
-    - grounding plausibility: does a coordinate action land on a perceived element?,
+    - grounding quality: does a coordinate action land on a *high-confidence,
+      interactable* element? (a low-confidence or non-interactable hit scores
+      lower than a clean one, and empty space is penalized),
     - non-redundancy: does it repeat the immediately-preceding *failed* action?
 
     Deterministic and cheap. Explicitly swappable for a learned critic later
@@ -102,11 +104,15 @@ class HeuristicCritic:
         w_grounding: float = 0.5,
         w_redundant: float = 0.75,
         hit_radius: int = 40,
+        noninteractable_factor: float = 0.5,
     ) -> None:
         self._w_conf = w_confidence
         self._w_ground = w_grounding
         self._w_redundant = w_redundant
         self._hit_radius = hit_radius
+        # Multiplier applied to grounding quality when the matched element is not
+        # flagged interactable — a click there is plausible but less likely correct.
+        self._noninteractable_factor = noninteractable_factor
 
     def score(
         self, state: AgentState, perception: ScreenPerception, decision: PolicyDecision
@@ -119,17 +125,37 @@ class HeuristicCritic:
         )
 
     def _grounding_plausibility(self, action: AgentAction, perception: ScreenPerception) -> float:
-        """+1 if a coordinate action lands near a perceived element, -1 if on empty
-        space, 0 (neutral) for non-spatial actions or when no elements are perceived."""
+        """Score how well a coordinate action lands on a real, usable target.
+
+        Returns a quality score in [0, 1] when the action lands on a perceived
+        element — scaled by the element's confidence and whether it is interactable,
+        so the critic prefers high-confidence, clickable targets over a low-confidence
+        or non-interactable hit. Returns -1 for a click on empty space, and 0
+        (neutral) for non-spatial actions or when no elements are perceived.
+        """
         if action.x is None or action.y is None:
             return 0.0
         elements = getattr(perception, "visible_elements", None) or []
         if not elements:
             return 0.0
-        for el in elements:
-            if abs(el.x - action.x) <= self._hit_radius and abs(el.y - action.y) <= self._hit_radius:
-                return 1.0
-        return -1.0
+        match = self._element_under(action.x, action.y, elements)
+        if match is None:
+            return -1.0
+        quality = float(getattr(match, "confidence", 1.0) or 0.0)
+        if not getattr(match, "is_interactable", True):
+            quality *= self._noninteractable_factor
+        return quality
+
+    def _element_under(self, x: int, y: int, elements: list) -> object | None:
+        """Return the perceived element whose center is within ``hit_radius`` of
+        (x, y), or None. On overlap, prefer the higher-confidence element."""
+        hits = [
+            el for el in elements
+            if abs(el.x - x) <= self._hit_radius and abs(el.y - y) <= self._hit_radius
+        ]
+        if not hits:
+            return None
+        return max(hits, key=lambda el: float(getattr(el, "confidence", 0.0) or 0.0))
 
     def _redundancy_penalty(self, action: AgentAction, state: AgentState) -> float:
         """1.0 if this repeats the immediately-preceding action that did *not*

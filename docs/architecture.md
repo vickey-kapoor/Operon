@@ -1,7 +1,9 @@
 # Operon Architecture Reference
-_Last refreshed: 2026-05-15_
+_Last refreshed: 2026-06-13_
 
-This document describes the code currently present in this repository.
+This document describes the code currently present in this repository. It is the
+single canonical engineering reference; the product "why" lives in
+[`PRD.md`](./PRD.md) and contributor workflow in [`../AGENTS.md`](../AGENTS.md).
 
 ## Active Runtime Shape
 
@@ -117,7 +119,7 @@ There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`,
 - the configured policy delegate
 - post-LLM guards such as `_semantic_anchor_check`
 
-`PolicyRuleEngine` supports runtime plugin registration through `register_plugins()`, but there is no dedicated `src/benchmarks` plugin package in the current tree.
+Earlier benchmark-plugin registration scaffolding has been removed from `PolicyRuleEngine`; benchmark-specific behavior must not be hardcoded into core policy rules.
 
 Current built-in policy rules include:
 - human intervention detection
@@ -152,15 +154,49 @@ The verifier is deterministic and does not use a separate video verifier module.
 
 ## Recovery
 
-`RuleBasedRecoveryManager` escalates by failure cluster:
+`RuleBasedRecoveryManager` (`src/operon/agent/policy/recovery.py`) maps failed or
+uncertain steps to recovery decisions, keyed by a retry cluster built from subgoal,
+target, and failure signal.
 
-1. `RETRY_SAME_STEP`
-2. `RETRY_DIFFERENT_TACTIC`
-3. `CONTEXT_RESET`
-4. `SESSION_RESET`
-5. `STOP`
+**Bypass cases** (decided before escalation):
 
-It also hard-stops repeated no-progress failures and validates success claims before accepting terminal success.
+| Condition | Decision |
+|---|---|
+| `verification.stop_condition_met` | `STOP` |
+| `FailureCategory.EXECUTION_NO_PROGRESS` | terminal `STOP` |
+| `VerificationStatus.SUCCESS` with expected outcome met | `ADVANCE` |
+| `VerificationStatus.PROGRESSING_STABLE` | `ADVANCE` |
+| TYPE failed because target was missing/not editable | `WAIT_AND_RETRY` (focus-oriented subgoal) |
+
+**Escalation by failure cluster:**
+
+| Attempt | Strategy | Wait |
+|---|---|---|
+| 1 | `RETRY_SAME_STEP` | optional |
+| 2 | `RETRY_DIFFERENT_TACTIC` | optional |
+| 3 | `CONTEXT_RESET` | 1000 ms |
+| 4 | `SESSION_RESET` | 1500 ms |
+| 5+ | terminal `STOP` (`RETRY_LIMIT_REACHED`) | none |
+
+**Integrity guard.** `validate_benchmark_integrity()` prevents recovery from claiming
+terminal success unless verification actually returned `SUCCESS`, and prevents
+`ADVANCE` when the verifier set a stop boundary without success. The recovery manager
+only chooses the strategy; the loop applies it, and each executor implements its own
+context/session reset semantics.
+
+## Upload Action Paths
+
+Two browser upload actions exist, both on `NativeBrowserExecutor`:
+
+| Action | Mechanism | Headless-safe |
+|---|---|---|
+| `upload_file` | Playwright file-chooser interception (sets the file directly, bypassing the OS picker) | Yes |
+| `upload_file_native` | Clicks the visual target, then drives the native OS picker via `os_picker_macro.py` (type path, Enter) | No (headed only) |
+
+`upload_file_native` is a browser action; the OS picker macro uses desktop input
+primitives internally to drive the native file dialog. Failure signals include
+`PICKER_NOT_DETECTED`, `FILE_NOT_REFLECTED`, and `EXECUTION_ERROR` (which covers the
+headed-mode requirement).
 
 ## Persistence
 
@@ -218,4 +254,15 @@ Important variables:
 - TYPE remains atomic at the executor level.
 - Clicks use visual servo checks before input injection.
 - Rolling element memory is cleared on high visual velocity.
-- Benchmark-specific behavior must not be hardcoded into core policy unless a plugin boundary is restored.
+- Benchmark-specific behavior must not be hardcoded into core policy rules.
+
+## Not Present / Intentionally Removed
+
+To prevent re-introduction, the current tree intentionally does **not** include:
+
+- `/benchmark/*`, `/command-center`, `/console`, `/dashboard`, or static-HTML/bundled-frontend routes.
+- A `src/benchmarks` plugin package or policy-rule plugin registry.
+- A `PostRunReflector` that auto-generates reflection records.
+- A separate `src/runtime` orchestrator package or a standalone video-verifier module.
+
+Current implementation truth is this document, `README.md`, and `AGENTS.md`.

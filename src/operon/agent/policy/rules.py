@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable
 
 from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
@@ -28,7 +27,6 @@ from operon.models.selector import (
     TargetIntentAction,
 )
 from operon.models.state import AgentState
-from operon.models.verification import VerificationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -53,50 +51,6 @@ _LAUNCH_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# A benchmark rule plugin is any callable that matches this signature.
-# Return a PolicyDecision to short-circuit the engine, or None to pass through.
-BenchmarkRulePlugin = Callable[
-    [AgentState, ScreenPerception, list[MemoryHint]],
-    PolicyDecision | None,
-]
-
-
-# ---------------------------------------------------------------------------
-# Form benchmark-specific rules
-# ---------------------------------------------------------------------------
-
-def form_submit_when_ready_rule(
-    state: AgentState,
-    perception: ScreenPerception,
-    memory_hints: list[MemoryHint],
-) -> PolicyDecision | None:
-    if perception.page_hint is not PageHint.FORM_PAGE:
-        return None
-    if not _form_fields_completed(state, perception):
-        return None
-    submit_button = _submit_button(perception)
-    if submit_button is None:
-        return None
-    return PolicyDecision(
-        action=AgentAction(
-            action_type=ActionType.CLICK,
-            target_element_id=submit_button.element_id,
-            x=submit_button.x + max(1, submit_button.width // 2),
-            y=submit_button.y + max(1, submit_button.height // 2),
-        ),
-        rationale="Required form fields are already filled; submit the form.",
-        confidence=0.97,
-        active_subgoal="submit_form",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Default plugin registry — benchmark name → plugins
-# ---------------------------------------------------------------------------
-
-BENCHMARK_PLUGINS: dict[str, list[BenchmarkRulePlugin]] = {}
-
-
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -105,17 +59,13 @@ class PolicyRuleEngine:
     """Small explicit rule engine that runs before the LLM-backed policy.
 
     Engine primitives run unconditionally for every benchmark.
-    Benchmark-specific plugins are registered per benchmark name and only
-    run when that benchmark is active.
     """
 
     def __init__(
         self,
         selector: DeterministicTargetSelector | None = None,
-        plugins: dict[str, list[BenchmarkRulePlugin]] | None = None,
     ) -> None:
         self.selector = selector or DeterministicTargetSelector()
-        self._plugins = plugins if plugins is not None else dict(BENCHMARK_PLUGINS)
         self._latest_selector_traces: list[SelectorTrace] = []
         self._cached_intermediates: tuple[list[UIElement], list[list[UIElement]]] | None = None
         # Tracks consecutive steps where a HITL keyword matched, per run_id.
@@ -136,7 +86,6 @@ class PolicyRuleEngine:
         state: AgentState,
         perception: ScreenPerception,
         memory_hints: list[MemoryHint],
-        benchmark_name: str | None = None,
     ) -> PolicyDecision | None:
         self._latest_selector_traces = []
         self._last_fired_rule: str | None = None
@@ -144,14 +93,6 @@ class PolicyRuleEngine:
             self.selector._label_like_text_candidates(perception),
             self.selector._visual_groups(perception),
         )
-
-        # Benchmark-specific plugins run first (higher priority / more specific)
-        if benchmark_name is not None:
-            for plugin in self._plugins.get(benchmark_name, []):
-                decision = plugin(state, perception, memory_hints)
-                if decision is not None:
-                    self._last_fired_rule = getattr(plugin, "__name__", type(plugin).__name__)
-                    return decision
 
         # Engine primitives — always active, checked in priority order
         _primitives: list[tuple[str, object]] = [
@@ -183,10 +124,6 @@ class PolicyRuleEngine:
     def last_fired_rule_name(self) -> str | None:
         """Return the name of the rule that fired in the most recent choose_action call."""
         return getattr(self, "_last_fired_rule", None)
-
-    def register_plugins(self, benchmark_name: str, plugins: list[BenchmarkRulePlugin]) -> None:
-        """Register additional plugins for a benchmark at runtime."""
-        self._plugins.setdefault(benchmark_name, []).extend(plugins)
 
     def latest_selector_traces(self) -> list[SelectorTrace]:
         return list(self._latest_selector_traces)
@@ -1347,54 +1284,3 @@ def _nearest_element_by_box(
         if best is None or dist < best[1]:
             best = (elem, dist)
     return best
-
-
-def _form_fields_completed(state: AgentState, perception: ScreenPerception) -> bool:
-    # Build a map of visible text input fields we can match to intent values.
-    # Accept "name", "email", "message", OR "password" (Gemini sometimes
-    # mis-labels email-type inputs as "password").
-    _FIELD_LABELS = {"name", "email", "message", "password"}
-    required_targets: dict[str, str] = {}
-    for element in _input_candidates(perception):
-        label = element.primary_name.lower()
-        for field in _FIELD_LABELS:
-            if field in label and field not in required_targets:
-                required_targets[field] = element.element_id
-                break
-
-    # Need at least 1 identified field to evaluate (avoids firing on blank pages).
-    if not required_targets:
-        return False
-
-    completed_targets = {
-        executed.action.target_element_id
-        for executed, verification in zip(state.action_history, state.verification_history)
-        if executed.action.action_type is ActionType.TYPE
-        and verification.status is VerificationStatus.SUCCESS
-        and executed.action.target_element_id is not None
-    }
-    # Also accept typed-by-text: if the value was typed (regardless of element_id
-    # stability), count the field as completed.
-    typed_values: set[str] = {
-        executed.action.text
-        for executed in state.action_history
-        if executed.action.action_type is ActionType.TYPE and executed.action.text
-    }
-    intent = state.intent or ""
-    email_match = re.search(r"[\w.+\-]+@[\w.\-]+\.\w+", intent)
-    name_match = re.search(
-        r"[Nn]ame(?:\s+as)?\s+['\"]?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)['\"]?", intent
-    )
-    intent_email = email_match.group() if email_match else None
-    intent_name = name_match.group(1) if name_match else None
-
-    for field, target_id in required_targets.items():
-        if target_id in completed_targets:
-            continue
-        # Fallback: check if the expected value for this field was typed
-        if field in ("email", "password") and intent_email and intent_email in typed_values:
-            continue
-        if field == "name" and intent_name and intent_name in typed_values:
-            continue
-        return False
-    return True

@@ -114,9 +114,8 @@ class PolicyCoordinator(PolicyService):
         self._try_episode_hint(state, perception)
 
         memory_hints = self._get_hints(state, perception)
-        benchmark = state.benchmark
 
-        decision = self.rule_engine.choose_action(state, perception, memory_hints, benchmark_name=benchmark)
+        decision = self.rule_engine.choose_action(state, perception, memory_hints)
         selector_traces = self.rule_engine.latest_selector_traces()
         if decision is not None:
             # Stamp which rule fired so the loop can build a rule trace for the next LLM prompt

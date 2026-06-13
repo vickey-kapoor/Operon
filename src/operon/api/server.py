@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import find_dotenv, load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from operon.core.paths import runs_dir
@@ -65,6 +65,7 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     load_dotenv(find_dotenv(usecwd=True), override=True)
 
+    from operon.api.auth import configured_api_keys, require_api_key
     from operon.api.routes import router
     from operon.api.ws_stream import router as ws_router
 
@@ -84,7 +85,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(router)
+    # API-key auth (opt-in): enforced on every HTTP route except /health when
+    # API_KEYS is set; a no-op otherwise. The agent can drive a real machine, so
+    # an unauthenticated server should never be exposed beyond a trusted host.
+    if not configured_api_keys():
+        logger.warning(
+            "API authentication is DISABLED (API_KEYS not set). Any client that can reach "
+            "this server can drive the agent — set API_KEYS to require an X-API-Key header."
+        )
+    app.include_router(router, dependencies=[Depends(require_api_key)])
     app.include_router(ws_router)
     return app
 

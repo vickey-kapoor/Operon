@@ -1,6 +1,7 @@
 """Agent loop orchestrator for the vision-driven automation workflow."""
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -20,6 +21,14 @@ from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
 from operon.agent.policy import PolicyService
+from operon.agent.policy.best_of_n import (
+    Critic,
+    HeuristicCritic,
+    ScoredCandidate,
+    best_of_n_confidence_ceiling,
+    best_of_n_count,
+    select_best_of_n,
+)
 from operon.agent.policy.progress_tracker import (
     ProgressTracker,
     apply_no_progress_detection,
@@ -53,15 +62,17 @@ from operon.models.logs import (
     StepLog,
 )
 from operon.models.perception import ScreenPerception, UIElement, UIElementType
-from operon.models.policy import ActionType, AgentAction
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
 from operon.models.progress import ProgressTrace
 from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.selector import TargetIntent, TargetIntentAction
+from operon.models.state import AgentState
 from operon.models.verification import (
     VerificationFailureType,
     VerificationResult,
     VerificationStatus,
 )
+from operon.store.background_writer import bg_writer
 from operon.store.memory import MemoryStore
 from operon.store.run_logger import append_step_log, append_step_log_critical
 from operon.store.run_store import RunStore
@@ -148,6 +159,10 @@ class AgentLoop:
         self.environment = environment
         self._artifacts = StepArtifactsManager(run_store)
         self._progress = ProgressTracker()
+        # RFC 0001 Move 3: pre-execution candidate selection. Default critic is
+        # heuristic/model-free; swap for a learned critic later. Off unless
+        # OPERON_BESTOFN_N > 1 (see _select_best_of_n).
+        self._best_of_n_critic: Critic = HeuristicCritic()
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -420,6 +435,9 @@ class AgentLoop:
         _enriched = self._attach_target_context(decision.action, perception, state.benchmark)
         if _enriched is not decision.action:
             decision = decision.model_copy(update={"action": _enriched})
+        # RFC 0001 Move 3: at uncertain steps, sample N candidates and keep the
+        # best-scored one before any gating/execution. No-op unless OPERON_BESTOFN_N > 1.
+        decision = await self._select_best_of_n(state, perception, decision)
         _trace("  3 POLICY OK", f"{_record_stage('policy', _t0):.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
@@ -1315,6 +1333,77 @@ class AgentLoop:
             target_reresolved=target_reresolved,
             reresolution_trace=reresolution_trace,
         )
+
+    async def _select_best_of_n(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision:
+        """RFC 0001 Move 3: pre-execution Best-of-N candidate selection.
+
+        Returns the original decision unchanged unless ``OPERON_BESTOFN_N > 1`` and
+        the decision's confidence is below the configured ceiling. The provided
+        decision is reused as candidate #1, so only N-1 extra policy calls are made.
+        Selection happens before any gating/execution — no speculative actions, no
+        rollback; the executor, verifier, and recovery path are untouched.
+        """
+        n = best_of_n_count()
+        if n <= 1 or decision.confidence >= best_of_n_confidence_ceiling():
+            return decision
+
+        async def _propose(s: AgentState, p: ScreenPerception) -> PolicyDecision:
+            d = await self.policy_service.choose_action(s, p)
+            enriched = self._attach_target_context(d.action, p, s.benchmark)
+            if enriched is not d.action:
+                d = d.model_copy(update={"action": enriched})
+            return d
+
+        chosen, candidates = await select_best_of_n(
+            _propose, state, perception, n=n, critic=self._best_of_n_critic, first=decision
+        )
+        if candidates:
+            best_score = max(c.score for c in candidates)
+            _trace(
+                "  3 BEST_OF_N",
+                f"n={n}  scores={[round(c.score, 3) for c in candidates]}  best={round(best_score, 3)}",
+            )
+            self._persist_best_of_n(perception, candidates, chosen)
+        return chosen
+
+    def _persist_best_of_n(
+        self,
+        perception: ScreenPerception,
+        candidates: list[ScoredCandidate],
+        chosen: PolicyDecision,
+    ) -> None:
+        """Best-effort audit artifact (`bestofn.json`): the candidates, their scores,
+        and the winner — so the spike's lift can be measured and selections audited.
+        Never raises into the loop."""
+        try:
+            capture_path = getattr(perception, "capture_artifact_path", None)
+            if not capture_path:
+                return
+            step_dir = Path(capture_path).resolve().parent
+            payload = {
+                "n": len(candidates),
+                "chosen_action": chosen.action.action_type.value,
+                "candidates": [
+                    {
+                        "action": c.decision.action.action_type.value,
+                        "target_element_id": c.decision.action.target_element_id,
+                        "x": c.decision.action.x,
+                        "y": c.decision.action.y,
+                        "confidence": c.decision.confidence,
+                        "score": c.score,
+                        "chosen": c.decision is chosen,
+                    }
+                    for c in candidates
+                ],
+            }
+            bg_writer.enqueue(step_dir / "bestofn.json", json.dumps(payload, indent=2))
+        except Exception as exc:
+            logger.debug("best_of_n artifact persist skipped: %s", exc)
 
     def _attach_target_context(self, action: AgentAction, perception, benchmark: str | None = None) -> AgentAction:
         target = self._resolve_action_target(action, perception)

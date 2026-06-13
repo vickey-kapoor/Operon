@@ -10,7 +10,6 @@ from operon.agent.actions.retry_hardening import (
     RetryHardening,
     apply_reresolution_failure,
     merge_execution_retry,
-    refresh_action_coordinates,
     should_retry,
 )
 from operon.agent.actions.retry_hardening import (
@@ -23,18 +22,8 @@ from operon.agent.perception.capture import CaptureService
 from operon.agent.policy import PolicyService
 from operon.agent.policy.progress_tracker import (
     ProgressTracker,
-    action_signature,
-    alternating_action_loop,
-    append_window,
     apply_no_progress_detection,
-    failure_signature,
-    meaningful_progress,
     page_signature,
-    redundant_action_failure,
-    should_mark_subgoal_complete,
-    stop_reason_for_failure,
-    subgoal_signature,
-    target_signature,
 )
 from operon.agent.policy.recovery import RecoveryManager, validate_benchmark_integrity
 from operon.agent.policy.verifier import VerifierService
@@ -1318,10 +1307,6 @@ class AgentLoop:
         return self._retry.resolve_retry_action(action=action, perception=perception, retry_reason=retry_reason)
 
     @staticmethod
-    def _refresh_action_coordinates(action, perception):
-        return refresh_action_coordinates(action, perception)
-
-    @staticmethod
     def _merge_execution_retry(*, original, retried, retry_reason, target_reresolved, reresolution_trace):
         return merge_execution_retry(
             original=original,
@@ -1394,14 +1379,6 @@ class AgentLoop:
             center_y = target.y + max(1, target.height // 2)
             return action.model_copy(update={"x": center_x, "y": center_y})
         return action
-
-    def _intent_reresolve_action(
-        self,
-        action: AgentAction,
-        perception,
-        retry_reason: FailureCategory,
-    ) -> _RetryResolution:
-        return self._retry.intent_reresolve_action(action, perception, retry_reason)
 
     @staticmethod
     def _apply_reresolution_failure(original, reresolution_trace: ExecutionReresolutionTrace | None):
@@ -1526,10 +1503,6 @@ class AgentLoop:
     def _block_redundant_action(self, state, action, step_index: int):
         return self._progress.block_redundant_action(state, action, step_index, logger)
 
-    @staticmethod
-    def _redundant_action_failure(*, action, category: FailureCategory, detail: str):
-        return redundant_action_failure(action=action, category=category, detail=detail)
-
     def _update_progress_state(
         self,
         *,
@@ -1556,76 +1529,12 @@ class AgentLoop:
     def _apply_progress_stop_guard(self, recovery: RecoveryDecision, progress_trace: ProgressTrace) -> RecoveryDecision:
         return self._progress.apply_progress_stop_guard(recovery, progress_trace)
 
-    def _detect_loop_failure(
-        self,
-        *,
-        progress_state,
-        action_signature: str,
-        target_signature: str | None,
-        failure_signature: str | None,
-    ) -> tuple[FailureCategory | None, str | None]:
-        return self._progress.detect_loop_failure(
-            progress_state=progress_state,
-            action_signature=action_signature,
-            target_signature=target_signature,
-            failure_signature=failure_signature,
-        )
-
-    @staticmethod
-    def _alternating_action_loop(recent_actions: list[str]) -> bool:
-        return alternating_action_loop(recent_actions)
-
     def _mark_completed_progress(self, state, decision, executed_action, verification) -> None:
         self._progress._mark_completed_progress(state, decision, executed_action, verification)
-
-    @staticmethod
-    def _should_mark_subgoal_complete(progress_state, executed_action, verification) -> bool:
-        return should_mark_subgoal_complete(progress_state, executed_action, verification)
-
-    @staticmethod
-    def _meaningful_progress(
-        executed_action,
-        verification,
-        *,
-        subgoal_changed: bool = True,
-        screen_change_ratio: float | None = None,
-        is_novel_action: bool = True,
-    ) -> bool:
-        return meaningful_progress(
-            executed_action,
-            verification,
-            subgoal_changed=subgoal_changed,
-            screen_change_ratio=screen_change_ratio,
-            is_novel_action=is_novel_action,
-        )
-
-    @classmethod
-    def _failure_signature(cls, executed_action, verification, recovery, target_sig: str | None) -> str | None:
-        return failure_signature(executed_action, verification, recovery, target_sig)
-
-    @staticmethod
-    def _stop_reason_for_failure(category: FailureCategory | None) -> StopReason | None:
-        return stop_reason_for_failure(category)
 
     @classmethod
     def _page_signature(cls, perception) -> str:
         return page_signature(perception)
-
-    @staticmethod
-    def _append_window(entries: list[str], value: str) -> list[str]:
-        return append_window(entries, value)
-
-    @classmethod
-    def _action_signature(cls, action: AgentAction) -> str:
-        return action_signature(action)
-
-    @staticmethod
-    def _target_signature(action: AgentAction) -> str | None:
-        return target_signature(action)
-
-    @classmethod
-    def _subgoal_signature(cls, subgoal: str | None) -> str:
-        return subgoal_signature(subgoal)
 
     @staticmethod
     def _apply_no_progress_detection(state, executed_action):

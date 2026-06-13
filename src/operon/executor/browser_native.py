@@ -997,6 +997,10 @@ class NativeBrowserExecutor(Executor):
                 pass
             self._obs_playwright = None
 
+    async def aclose(self) -> None:
+        """Uniform server-shutdown teardown. Releases the persistent browser."""
+        await self.close_persistent_browser()
+
     def _video_dir_for_run(self, run_id: str) -> Path:
         return self._artifact_dir / run_id / "session_video"
 

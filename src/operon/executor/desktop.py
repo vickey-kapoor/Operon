@@ -459,6 +459,27 @@ class DesktopExecutor(Executor):
 
         return closed
 
+    async def aclose(self) -> None:
+        """Uniform server-shutdown teardown.
+
+        Per-run resources are normally released as each run completes
+        (stop_run_recording + the cleanup_run route). This sweeps whatever is
+        still tracked when the server stops mid-run, so screen recorders and
+        launched child apps don't outlive the process. Best-effort: one run's
+        failure must not block teardown of the rest.
+        """
+        for run_id in list(self._run_recorders):
+            try:
+                await self.stop_run_recording(run_id)
+            except Exception:
+                logger.debug("aclose: stop_run_recording failed for %s", run_id, exc_info=True)
+        pending_runs = set(self._launched_processes) | set(self._launched_app_names)
+        for run_id in pending_runs:
+            try:
+                self.cleanup_run(run_id)
+            except Exception:
+                logger.debug("aclose: cleanup_run failed for %s", run_id, exc_info=True)
+
     async def capture(self) -> CaptureFrame:
         """Take a 3-frame burst screenshot and return the last frame with visual velocity."""
         frame, velocity = await asyncio.to_thread(self._capture_burst_sync)

@@ -26,6 +26,18 @@ DesktopExecutor = None
 NativeBrowserExecutor = None
 
 
+def iter_built_executors():
+    """Yield the executor of each agent loop that has actually been built.
+
+    Reads the module globals directly so it never triggers lazy construction
+    (which would launch a browser). Used by the server lifespan to tear down
+    executor-held resources at shutdown.
+    """
+    for loop in (_agent_loop, _desktop_agent_loop):
+        if loop is not None:
+            yield loop.executor
+
+
 def _build_browser_executor():
     global NativeBrowserExecutor
     if NativeBrowserExecutor is None:

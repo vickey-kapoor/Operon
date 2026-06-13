@@ -7,6 +7,7 @@ import os
 import time
 from pathlib import Path
 
+from operon.agent.actions.grounding import element_center
 from operon.agent.actions.retry_hardening import (
     RetryHardening,
     apply_reresolution_failure,
@@ -1464,8 +1465,7 @@ class AgentLoop:
             ActionType.UPLOAD_FILE_NATIVE,
             ActionType.TYPE,
         }:
-            center_x = target.x + max(1, target.width // 2)
-            center_y = target.y + max(1, target.height // 2)
+            center_x, center_y = element_center(target)
             return action.model_copy(update={"x": center_x, "y": center_y})
         return action
 

@@ -86,7 +86,6 @@ class NativeBrowserExecutor(Executor):
         self,
         *,
         artifact_dir: str | Path | None = None,
-# ✅ Healed 2026-04-26T22:45:36Z | Added --disable-blink-features=AutomationControlled to prevent detection and add
         viewport_width: int | None = None,
         viewport_height: int | None = None,
         headless: bool | None = None,

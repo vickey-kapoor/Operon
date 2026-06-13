@@ -55,7 +55,3 @@ class ScreenCaptureService(CaptureService):
         if Path(frame.artifact_path) != planned_path:
             shutil.move(frame.artifact_path, planned_path)
         return frame.model_copy(update={"artifact_path": str(planned_path)})
-
-
-# Backwards-compatible alias
-BrowserCaptureService = ScreenCaptureService

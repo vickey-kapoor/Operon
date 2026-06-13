@@ -1,8 +1,9 @@
-"""Lifespan shutdown wiring: the persistent observable browser is torn down."""
+"""Lifespan shutdown wiring: built executors get a uniform aclose() teardown."""
 
 import asyncio
+from types import SimpleNamespace
 
-from operon.api import ws_stream
+from operon.api.runtime import loops
 from operon.api.server import _lifespan, app
 
 
@@ -14,33 +15,58 @@ def _drive_lifespan() -> None:
     asyncio.run(_run())
 
 
-def test_lifespan_closes_persistent_browser_on_shutdown(monkeypatch) -> None:
+def test_lifespan_acloses_built_executors_on_shutdown(monkeypatch) -> None:
     monkeypatch.setenv("OPERON_RUNS_RETAIN_DAYS", "-1")  # skip retention sweep
     calls: list[str] = []
 
-    class _FakeBrowserExecutor:
-        async def close_persistent_browser(self) -> None:
-            calls.append("closed")
+    class _FakeExecutor:
+        def __init__(self, tag: str) -> None:
+            self._tag = tag
 
-    prev = ws_stream.get_executor()
-    ws_stream.set_executor(_FakeBrowserExecutor())
-    try:
-        _drive_lifespan()
-    finally:
-        ws_stream.set_executor(prev)
+        async def aclose(self) -> None:
+            calls.append(self._tag)
 
-    assert calls == ["closed"]
+    # Stand in two "built" agent loops (browser + desktop), each exposing .executor.
+    monkeypatch.setattr(loops, "_agent_loop", SimpleNamespace(executor=_FakeExecutor("browser")))
+    monkeypatch.setattr(loops, "_desktop_agent_loop", SimpleNamespace(executor=_FakeExecutor("desktop")))
+
+    _drive_lifespan()
+
+    assert calls == ["browser", "desktop"]
 
 
-def test_lifespan_skips_executor_without_close(monkeypatch) -> None:
+def test_lifespan_skips_unbuilt_loops_and_missing_aclose(monkeypatch) -> None:
     monkeypatch.setenv("OPERON_RUNS_RETAIN_DAYS", "-1")
+    calls: list[str] = []
 
-    class _DesktopLikeExecutor:
-        """No close_persistent_browser — shutdown must skip it without raising."""
+    class _LegacyExecutor:
+        """No aclose() — shutdown must skip it without raising."""
 
-    prev = ws_stream.get_executor()
-    ws_stream.set_executor(_DesktopLikeExecutor())
-    try:
-        _drive_lifespan()  # must not raise
-    finally:
-        ws_stream.set_executor(prev)
+    # Browser loop never built (None); desktop executor lacks aclose().
+    monkeypatch.setattr(loops, "_agent_loop", None)
+    monkeypatch.setattr(loops, "_desktop_agent_loop", SimpleNamespace(executor=_LegacyExecutor()))
+
+    _drive_lifespan()  # must not raise
+
+    assert calls == []
+
+
+def test_lifespan_swallows_aclose_errors(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_RUNS_RETAIN_DAYS", "-1")
+    reached: list[str] = []
+
+    class _BoomExecutor:
+        async def aclose(self) -> None:
+            raise RuntimeError("teardown blew up")
+
+    class _OkExecutor:
+        async def aclose(self) -> None:
+            reached.append("ok")
+
+    # A failing teardown must not prevent the next executor from closing.
+    monkeypatch.setattr(loops, "_agent_loop", SimpleNamespace(executor=_BoomExecutor()))
+    monkeypatch.setattr(loops, "_desktop_agent_loop", SimpleNamespace(executor=_OkExecutor()))
+
+    _drive_lifespan()  # must not raise
+
+    assert reached == ["ok"]

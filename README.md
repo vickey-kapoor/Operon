@@ -103,7 +103,7 @@ WS   /ws/stream
 |---|---|---|
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | unset | Gemini API key |
 | `ANTHROPIC_API_KEY` | unset | Required only when using Anthropic planner/verifier |
-| `API_KEYS` | unset | Comma-separated API keys. When set, every HTTP route except `/health` requires a matching `X-API-Key` header. **Unset = no auth** — only safe on a trusted host, since the API can drive a real browser/desktop. |
+| `API_KEYS` | unset | Comma-separated API keys. When set, every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires the key via `?api_key=` (or an `x-api-key` subprotocol). **Unset = no auth** — only safe on a trusted host, since the API can drive a real browser/desktop. |
 | `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` or `json` |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend |
 | `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend |

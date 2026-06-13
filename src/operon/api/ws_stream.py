@@ -212,6 +212,14 @@ async def _frame_pusher(q: asyncio.Queue) -> None:
 
 @router.websocket("/ws/stream")
 async def stream(ws: WebSocket) -> None:
+    # Auth gate: the stream both exposes live frames and accepts control messages
+    # (inject_input, resume, ...), so it must honor API_KEYS like the HTTP routes.
+    # Browsers can't set headers on a WebSocket — the key comes via ?api_key= (or
+    # an x-api-key subprotocol). No-op when API_KEYS is unset.
+    from operon.api.auth import websocket_api_key_ok
+    if not websocket_api_key_ok(ws):
+        await ws.close(code=1008)  # 1008 = policy violation (unauthorized)
+        return
     await ws.accept()
     q: asyncio.Queue = asyncio.Queue(maxsize=64)
     _subscribers.append(q)

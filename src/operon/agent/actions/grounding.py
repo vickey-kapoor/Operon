@@ -23,6 +23,7 @@ follow-up increment.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -78,6 +79,11 @@ class Grounder(Protocol):
         prior_context: TargetSelectionContext | None = None,
     ) -> GroundingResult: ...
 
+    def refine(self, x: int, y: int, perception: ScreenPerception) -> tuple[int, int]:
+        """Optionally adjust an already-chosen raw coordinate (e.g. a CUA's
+        ``click_at(x, y)``) using perception. The baseline returns it unchanged."""
+        ...
+
 
 class DeterministicGrounder:
     """Baseline grounder backed by ``DeterministicTargetSelector``.
@@ -116,3 +122,47 @@ class DeterministicGrounder:
             element=selected,
             trace=result.trace,
         )
+
+    def refine(self, x: int, y: int, perception: ScreenPerception) -> tuple[int, int]:
+        """Baseline: trust the coordinate as given."""
+        return (x, y)
+
+
+class SnapToInteractableGrounder(DeterministicGrounder):
+    """Conservatively snap a raw click coordinate onto the nearest interactable
+    element's center, but only within ``snap_radius`` pixels.
+
+    Targets the failure mode where a vision model (e.g. Gemini Computer Use)
+    emits a ``click_at(x, y)`` that is a few pixels off the real control — a
+    near-miss snaps onto it, while an intentional precise click far from any
+    control is left untouched. ``ground`` is inherited unchanged; only the
+    raw-coordinate refinement differs. Opt-in via ``OPERON_GROUNDER=snap``.
+    """
+
+    def __init__(self, target_selector, *, snap_radius: int = 24) -> None:
+        super().__init__(target_selector)
+        self._snap_radius = snap_radius
+
+    def refine(self, x: int, y: int, perception: ScreenPerception) -> tuple[int, int]:
+        elements = getattr(perception, "visible_elements", None) or []
+        best_center: tuple[int, int] | None = None
+        best_dist: int | None = None
+        for el in elements:
+            if not getattr(el, "is_interactable", False):
+                continue
+            cx, cy = element_center(el)
+            dist = abs(cx - x) + abs(cy - y)  # Manhattan; cheap and adequate here
+            if dist > self._snap_radius:
+                continue
+            if best_dist is None or dist < best_dist:
+                best_dist, best_center = dist, (cx, cy)
+        return best_center if best_center is not None else (x, y)
+
+
+def make_grounder(target_selector) -> Grounder:
+    """Build the configured grounder. ``OPERON_GROUNDER`` selects the backend
+    (default ``deterministic``); ``snap`` enables :class:`SnapToInteractableGrounder`."""
+    name = os.getenv("OPERON_GROUNDER", "deterministic").strip().lower()
+    if name == "snap":
+        return SnapToInteractableGrounder(target_selector)
+    return DeterministicGrounder(target_selector)

@@ -4,16 +4,29 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from operon.agent.actions.grounding import (
     DeterministicGrounder,
     Grounder,
     GroundingResult,
+    SnapToInteractableGrounder,
     element_center,
+    make_grounder,
 )
 
 
-def _el(eid: str = "e1", x: int = 100, y: int = 200, width: int = 40, height: int = 20):
-    return SimpleNamespace(element_id=eid, x=x, y=y, width=width, height=height)
+def _el(
+    eid: str = "e1", x: int = 100, y: int = 200, width: int = 40, height: int = 20,
+    *, is_interactable: bool = True,
+):
+    return SimpleNamespace(
+        element_id=eid, x=x, y=y, width=width, height=height, is_interactable=is_interactable,
+    )
+
+
+def _perception(elements):
+    return SimpleNamespace(visible_elements=elements)
 
 
 class _FakeSelector:
@@ -91,3 +104,65 @@ def test_grounding_result_miss_factory() -> None:
 
 def test_deterministic_grounder_satisfies_protocol() -> None:
     assert isinstance(DeterministicGrounder(_FakeSelector(None)), Grounder)
+
+
+def test_deterministic_refine_is_identity() -> None:
+    grounder = DeterministicGrounder(_FakeSelector(None))
+    assert grounder.refine(137, 246, _perception([_el()])) == (137, 246)
+
+
+# ── SnapToInteractableGrounder ────────────────────────────────────────────
+
+def _snap(snap_radius: int = 24) -> SnapToInteractableGrounder:
+    return SnapToInteractableGrounder(_FakeSelector(None), snap_radius=snap_radius)
+
+
+def test_snap_corrects_a_near_miss() -> None:
+    # Element centered at (120, 210); a click 4px away (Manhattan) snaps onto it.
+    perception = _perception([_el(x=100, y=200, width=40, height=20)])
+    assert _snap().refine(118, 208, perception) == (120, 210)
+
+
+def test_snap_leaves_far_clicks_untouched() -> None:
+    perception = _perception([_el(x=100, y=200, width=40, height=20)])
+    # Far from any interactable center → intentional click is respected.
+    assert _snap().refine(500, 500, perception) == (500, 500)
+
+
+def test_snap_ignores_non_interactable_elements() -> None:
+    perception = _perception([_el(x=100, y=200, width=40, height=20, is_interactable=False)])
+    # A near-miss on a decorative element is NOT snapped.
+    assert _snap().refine(118, 208, perception) == (118, 208)
+
+
+def test_snap_picks_the_nearest_interactable() -> None:
+    perception = _perception([
+        _el("near", x=100, y=200, width=40, height=20),   # center (120, 210)
+        _el("far", x=280, y=300, width=40, height=20),    # center (300, 310)
+    ])
+    assert _snap().refine(122, 212, perception) == (120, 210)
+
+
+def test_snap_inherits_deterministic_ground() -> None:
+    el = _el()
+    grounder = SnapToInteractableGrounder(_FakeSelector(el))
+    result = grounder.ground(intent=object(), perception=_perception([el]))
+    assert result.grounded is True
+    assert (result.x, result.y) == element_center(el)
+
+
+# ── make_grounder factory ─────────────────────────────────────────────────
+
+def test_make_grounder_defaults_to_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPERON_GROUNDER", raising=False)
+    assert type(make_grounder(_FakeSelector(None))) is DeterministicGrounder
+
+
+def test_make_grounder_selects_snap(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPERON_GROUNDER", "snap")
+    assert type(make_grounder(_FakeSelector(None))) is SnapToInteractableGrounder
+
+
+def test_make_grounder_unknown_falls_back_to_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPERON_GROUNDER", "nonsense")
+    assert type(make_grounder(_FakeSelector(None))) is DeterministicGrounder

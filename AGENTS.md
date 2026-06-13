@@ -36,7 +36,7 @@ Follow existing Python conventions: 4-space indentation, type hints, `snake_case
 - **Atomic TYPE**: executor merges focus+type into one call. Never emit a CLICK immediately followed by TYPE on the same element from policy.
 - **Visual servo**: `_region_has_content()` runs before every click with an adaptively calibrated threshold. Never bypass it.
 - **Observable mode**: `BrowserManager` (`src/operon/browser/manager.py`) connects via `connect_over_cdp`, streams JPEG frames via CDP `Page.startScreencast`, and exposes `inject_input()` for interactive control. Never import `ws_stream` at module load; use the lazy `_ws_stream()` accessor to avoid circular imports.
-- **Benchmark hooks**: the local runner is optional. Do not add benchmark-specific logic to core policy rules unless a dedicated plugin registry is restored.
+- **Benchmark hooks**: do not add benchmark-specific logic to core policy rules (the former plugin registry has been removed).
 
 ## Testing Guidelines
 Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs Python 3.11 and 3.14 plus Ruff.

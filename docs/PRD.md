@@ -8,9 +8,9 @@
 | **Status** | Draft |
 | **Last updated** | 2026-06-13 |
 | **Owner** | Operon maintainers |
-| **Related docs** | [`docs/product_requirements.md`](./product_requirements.md) (engineering implementation-truth spec), [`docs/architecture.md`](./architecture.md), [`docs/codebase_overview.md`](./codebase_overview.md), [`docs/recovery-ladder.md`](./recovery-ladder.md), [`README.md`](../README.md), [`AGENTS.md`](../AGENTS.md) |
+| **Related docs** | [`docs/architecture.md`](./architecture.md) (canonical engineering reference), [`README.md`](../README.md), [`AGENTS.md`](../AGENTS.md) |
 
-> **How this document relates to the existing spec.** `docs/product_requirements.md` is the engineering "implementation truth" — what the code does today, endpoint by endpoint. *This* document is the broader product PRD: market context, users, positioning, requirements (current **and** roadmap), success metrics, and risks. Where the two disagree about current behavior, `product_requirements.md` and the code win.
+> **How this document relates to the engineering reference.** [`docs/architecture.md`](./architecture.md) is the implementation truth — what the code does today (runtime shape, routes, verification, recovery, persistence). *This* document is the broader product PRD: market context, users, positioning, requirements (current **and** roadmap), success metrics, and risks. Where the two disagree about current behavior, `architecture.md` and the code win.
 
 > **Note on external figures.** Market-size dollar figures in §2 come from commercial market-research firms whose estimates diverge 3–8× by definition; they are cited as ranges, not point values. Benchmark scores (§5, §10) are fast-moving, frequently vendor-self-reported, and sometimes rely on multiple attempts (pass@k) rather than single-attempt (pass@1); treat them as dated snapshots. Sources are listed in §15.
 

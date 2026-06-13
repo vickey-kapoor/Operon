@@ -7,7 +7,7 @@ import os
 import time
 from pathlib import Path
 
-from operon.agent.actions.grounding import element_center
+from operon.agent.actions.grounding import element_center, make_grounder
 from operon.agent.actions.retry_hardening import (
     RetryHardening,
     apply_reresolution_failure,
@@ -157,6 +157,9 @@ class AgentLoop:
         self.gemini_client = gemini_client
         self.target_selector = DeterministicTargetSelector()
         self._retry = RetryHardening(self.target_selector)
+        # RFC 0001 Move 2: configured grounder (OPERON_GROUNDER). Default is the
+        # deterministic baseline whose refine() is identity ⇒ no behavior change.
+        self._grounder = make_grounder(self.target_selector)
         self.environment = environment
         self._artifacts = StepArtifactsManager(run_store)
         self._progress = ProgressTracker()
@@ -1406,9 +1409,24 @@ class AgentLoop:
         except Exception as exc:
             logger.debug("best_of_n artifact persist skipped: %s", exc)
 
+    def _refine_with_grounder(self, action: AgentAction, perception) -> AgentAction:
+        """Let the configured grounder adjust an already-set raw coordinate.
+        Identity for the deterministic baseline; the snap grounder corrects
+        near-miss CUA coordinates onto the nearest interactable element."""
+        if action.x is None or action.y is None:
+            return action
+        rx, ry = self._grounder.refine(action.x, action.y, perception)
+        if (rx, ry) == (action.x, action.y):
+            return action
+        return action.model_copy(update={"x": rx, "y": ry})
+
     def _attach_target_context(self, action: AgentAction, perception, benchmark: str | None = None) -> AgentAction:
         target = self._resolve_action_target(action, perception)
         normalized_action = self._normalize_action_target_coordinates(action, target)
+        # Grounder refinement runs in perception-local space (same frame as
+        # visible_elements), before the monitor-origin transform below. No-op for
+        # the default deterministic grounder.
+        normalized_action = self._refine_with_grounder(normalized_action, perception)
         # Apply monitor origin: perception coords are monitor-local; pyautogui needs
         # virtual-desktop coords. This is the single transform point — perception
         # and policy layers stay in monitor-local space throughout.

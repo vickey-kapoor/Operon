@@ -35,10 +35,12 @@ def _decision(action: AgentAction, confidence: float, subgoal: str = "advance") 
     return PolicyDecision(action=action, rationale="r", confidence=confidence, active_subgoal=subgoal)
 
 
-def _element(eid: str, x: int, y: int) -> UIElement:
+def _element(
+    eid: str, x: int, y: int, *, confidence: float = 0.9, is_interactable: bool = True
+) -> UIElement:
     return UIElement(
         element_id=eid, element_type=UIElementType.BUTTON, label=eid,
-        x=x, y=y, width=40, height=20, is_interactable=True, confidence=0.9,
+        x=x, y=y, width=40, height=20, is_interactable=is_interactable, confidence=confidence,
     )
 
 
@@ -78,6 +80,36 @@ def test_critic_rewards_grounded_click_over_empty_space() -> None:
     empty = _decision(_click(500, 500), confidence=0.8)      # lands on nothing
 
     assert critic.score(state, perception, grounded) > critic.score(state, perception, empty)
+
+
+def test_critic_prefers_higher_confidence_target() -> None:
+    critic = HeuristicCritic()
+    perception = _perception([
+        _element("strong", 100, 100, confidence=0.95),
+        _element("weak", 300, 300, confidence=0.20),
+    ])
+    state = _state()
+
+    on_strong = _decision(_click(100, 100), confidence=0.8)
+    on_weak = _decision(_click(300, 300), confidence=0.8)
+
+    # Same policy confidence; grounding quality (element confidence) is the tiebreaker.
+    assert critic.score(state, perception, on_strong) > critic.score(state, perception, on_weak)
+
+
+def test_critic_prefers_interactable_target() -> None:
+    critic = HeuristicCritic()
+    perception = _perception([
+        _element("clickable", 100, 100, confidence=0.8, is_interactable=True),
+        _element("inert", 300, 300, confidence=0.8, is_interactable=False),
+    ])
+    state = _state()
+
+    on_clickable = _decision(_click(100, 100), confidence=0.8)
+    on_inert = _decision(_click(300, 300), confidence=0.8)
+
+    # Equal confidence everywhere; the interactable target is preferred.
+    assert critic.score(state, perception, on_clickable) > critic.score(state, perception, on_inert)
 
 
 def test_critic_weights_confidence_for_non_spatial_actions() -> None:

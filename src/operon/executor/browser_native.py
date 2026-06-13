@@ -779,19 +779,6 @@ class NativeBrowserExecutor(Executor):
             await asyncio.sleep(0.2)
         self._app_activate_browser_window(browser_pid)
 
-    def _headed_launch_size(self) -> tuple[int, int]:
-        if os.name != "nt":
-            return self._viewport_width, self._viewport_height
-        try:
-            user32 = ctypes.windll.user32
-            screen_width = int(user32.GetSystemMetrics(0))
-            screen_height = int(user32.GetSystemMetrics(1))
-        except Exception:
-            return self._viewport_width, self._viewport_height
-        if screen_width <= 0 or screen_height <= 0:
-            return self._viewport_width, self._viewport_height
-        return screen_width, screen_height
-
     @staticmethod
     async def _reset_browser_zoom(page: object) -> None:
         keyboard = getattr(page, "keyboard", None)

@@ -52,6 +52,12 @@ markers = [
 # CI runs only fast/safe tests by default. Use `pytest -m live_server` to opt into
 # the server-required suites (or set OPERON_RUN_LIVE_SERVER_TESTS=true).
 addopts = "-m 'not live_server'"
+filterwarnings = [
+    # starlette 1.2.x emits this purely on importing TestClient. We can't act on
+    # it without migrating off httpx (which FastAPI's TestClient still requires),
+    # so silence the one message rather than let it spam every test run.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:Warning",
+]
 
 [tool.ruff]
 target-version = "py311"

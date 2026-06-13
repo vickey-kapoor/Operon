@@ -774,3 +774,44 @@ async def test_batch_mode_close_session_kills_browser(
     session.context.close.assert_awaited_once()
     session.browser.close.assert_awaited_once()
     session.playwright.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_aclose_tears_down_persistent_observable_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """aclose() (the server-shutdown hook) must release the shared observable browser."""
+    manager, executor = _make_fake_playwright_manager(monkeypatch)
+
+    executor.configure_run("run-obs", mode="observable")
+    await executor._ensure_session("run-obs")
+    obs_browser = executor._obs_browser
+    obs_playwright = executor._obs_playwright
+    assert obs_browser is not None and obs_playwright is not None
+
+    await executor.aclose()
+
+    obs_browser.close.assert_awaited_once()
+    obs_playwright.stop.assert_awaited_once()
+    # References cleared so a second shutdown can't double-close.
+    assert executor._obs_browser is None
+    assert executor._obs_playwright is None
+
+    # Idempotent: a second aclose() on an already-torn-down executor must not raise.
+    await executor.aclose()
+    obs_browser.close.assert_awaited_once()
+    obs_playwright.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_aclose_is_noop_when_no_persistent_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """aclose() on an executor that never launched an observable browser is a safe no-op."""
+    _manager, executor = _make_fake_playwright_manager(monkeypatch)
+
+    assert executor._obs_browser is None
+    await executor.aclose()  # must not raise
+    assert executor._obs_browser is None
+    assert executor._obs_playwright is None
+

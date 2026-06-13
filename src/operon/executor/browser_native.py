@@ -471,12 +471,6 @@ class NativeBrowserExecutor(Executor):
             return None
         return session.page.url
 
-    async def execute_with_recording(
-        self, action: AgentAction, step_dir: Path,
-    ) -> tuple[ExecutedAction, Path | None]:
-        result = await self.execute(action)
-        return result, None
-
     async def context_reset(self) -> None:
         """Dismiss open modals/dropdowns, clear focus traps, scroll to top."""
         try:
@@ -983,14 +977,6 @@ class NativeBrowserExecutor(Executor):
                 await self._close_session(session, observable=is_obs)
             except Exception:
                 continue
-
-    def _consume_fresh_session_flag(self) -> bool:
-        if self._current_run_id is None:
-            return False
-        was_fresh = self._fresh_session_run_id == self._current_run_id
-        if was_fresh:
-            self._fresh_session_run_id = None
-        return was_fresh
 
     async def _close_session(self, session: _BrowserSession, *, observable: bool = False) -> None:
         if observable and not session.owns_context:

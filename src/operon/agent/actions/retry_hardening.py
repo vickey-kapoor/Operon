@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from operon.agent.actions.grounding import DeterministicGrounder, element_center
 from operon.models.common import FailureCategory, LoopStage
 from operon.models.execution import ExecutionReresolutionTrace
 from operon.models.policy import AgentAction
@@ -59,12 +60,8 @@ def refresh_action_coordinates(action, perception):
     target = next((element for element in perception.visible_elements if element.element_id == target_id), None)
     if target is None:
         return action
-    return action.model_copy(
-        update={
-            "x": target.x + max(1, target.width // 2),
-            "y": target.y + max(1, target.height // 2),
-        }
-    )
+    cx, cy = element_center(target)
+    return action.model_copy(update={"x": cx, "y": cy})
 
 
 def merge_execution_retry(*, original, retried, retry_reason, target_reresolved, reresolution_trace):
@@ -120,6 +117,7 @@ class RetryHardening:
 
     def __init__(self, target_selector) -> None:
         self.target_selector = target_selector
+        self._grounder = DeterministicGrounder(target_selector)
 
     def resolve_retry_action(self, *, action, perception, retry_reason: FailureCategory | None) -> RetryResolution:
         if retry_reason in _RERESOLVE_CATEGORIES:
@@ -135,8 +133,9 @@ class RetryHardening:
         if action.target_context is None:
             return RetryResolution(action=refresh_action_coordinates(action, perception), trace=None)
 
-        result = self.target_selector.reresolve(perception, action.target_context)
-        selected = result.selected
+        result = self._grounder.ground(
+            action.target_context.intent, perception, prior_context=action.target_context
+        )
         trace = ExecutionReresolutionTrace(
             trigger_reason=retry_reason,
             original_target_element_id=action.target_context.original_target.element_id,
@@ -145,25 +144,25 @@ class RetryHardening:
             original_page_signature=action.target_context.original_page_signature,
             selector_trace=result.trace,
             reused_original_element_id=(
-                selected is not None and selected.element_id == action.target_context.original_target.element_id
+                result.grounded and result.element_id == action.target_context.original_target.element_id
             ),
-            final_target_element_id=selected.element_id if selected is not None else None,
-            succeeded=selected is not None,
+            final_target_element_id=result.element_id,
+            succeeded=result.grounded,
             detail=(
-                f"Re-resolved target to {selected.element_id} from original intent."
-                if selected is not None
+                f"Re-resolved target to {result.element_id} from original intent."
+                if result.grounded
                 else "Intent-based target re-resolution did not find a safe deterministic match."
             ),
         )
-        if selected is None:
+        if not result.grounded:
             return RetryResolution(action=None, trace=trace)
 
         return RetryResolution(
             action=action.model_copy(
                 update={
-                    "target_element_id": selected.element_id,
-                    "x": selected.x + max(1, selected.width // 2),
-                    "y": selected.y + max(1, selected.height // 2),
+                    "target_element_id": result.element_id,
+                    "x": result.x,
+                    "y": result.y,
                 }
             ),
             trace=trace,

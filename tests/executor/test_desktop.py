@@ -792,6 +792,38 @@ async def test_cleanup_skips_protected_processes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_aclose_stops_recorders_and_cleans_pending_runs() -> None:
+    """aclose() should sweep still-active recorders and launched processes."""
+    executor = _make_executor()
+
+    recorder = AsyncMock()
+    recorder.stop = AsyncMock(return_value=Path("/tmp/run-rec.mp4"))
+    executor._run_recorders = {"run-rec": recorder}
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None  # still running
+    mock_proc.args = "notepad.exe"
+    mock_proc.pid = 22222
+    executor._launched_processes = {"run-proc": [mock_proc]}
+    executor._launched_app_names = {"run-proc": []}
+
+    await executor.aclose()
+
+    recorder.stop.assert_awaited_once()
+    mock_proc.terminate.assert_called_once()
+    # Both tracking dicts fully drained — nothing left to outlive the server.
+    assert executor._run_recorders == {}
+    assert executor._launched_processes == {}
+
+
+@pytest.mark.asyncio
+async def test_aclose_is_safe_when_idle() -> None:
+    """aclose() with no tracked runs is a no-op and must not raise."""
+    executor = _make_executor()
+    await executor.aclose()  # no recorders, no processes
+
+
+@pytest.mark.asyncio
 async def test_cleanup_skips_already_exited() -> None:
     """cleanup_run should skip processes that already exited."""
     executor = _make_executor()

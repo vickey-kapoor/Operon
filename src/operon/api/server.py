@@ -45,18 +45,20 @@ async def _lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown: tear down the persistent observable-mode browser so the shared
-    # Chromium + Playwright instance does not leak when the server stops. The
-    # browser executor is a lazily-built singleton registered on ws_stream during
-    # run setup; the hasattr guard skips desktop-mode executors cleanly.
-    try:
-        from operon.api import ws_stream
-        executor = ws_stream.get_executor()
-        if executor is not None and hasattr(executor, "close_persistent_browser"):
-            await executor.close_persistent_browser()
-    except Exception as exc:
-        # Shutdown cleanup must never raise out of the lifespan.
-        logger.warning("browser shutdown cleanup skipped: %s", exc)
+    # Shutdown: release executor-held OS resources so they don't outlive the
+    # server — the browser executor's persistent Chromium + Playwright, and the
+    # desktop executor's still-active screen recorders + launched child apps.
+    # Each executor exposes a uniform aclose(); we only touch loops that were
+    # actually built (iter_built_executors never triggers lazy construction).
+    from operon.api.runtime.loops import iter_built_executors
+    for executor in iter_built_executors():
+        if not hasattr(executor, "aclose"):
+            continue
+        try:
+            await executor.aclose()
+        except Exception as exc:
+            # Shutdown cleanup must never raise out of the lifespan.
+            logger.warning("executor shutdown cleanup skipped: %s", exc)
 
 
 def create_app() -> FastAPI:

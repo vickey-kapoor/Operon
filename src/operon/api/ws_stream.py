@@ -54,11 +54,6 @@ def set_executor(executor: Any) -> None:
     _executor = executor
 
 
-def get_executor() -> Any:
-    """Return the executor singleton registered for the active runtime, if any."""
-    return _executor
-
-
 def set_active_run(run_id: str | None) -> None:
     global _active_run_id
     _active_run_id = run_id

@@ -36,6 +36,7 @@ from operon.agent.policy.progress_tracker import (
     page_signature,
 )
 from operon.agent.policy.recovery import RecoveryManager, validate_benchmark_integrity
+from operon.agent.policy.trust_gate import TrustVerdict, make_trust_gate
 from operon.agent.policy.verifier import VerifierService
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
@@ -167,6 +168,8 @@ class AgentLoop:
         # heuristic/model-free; swap for a learned critic later. Off unless
         # OPERON_BESTOFN_N > 1 (see _select_best_of_n).
         self._best_of_n_critic: Critic = HeuristicCritic()
+        # RFC 0001 Move 5: deny/confirm policy gate before execution (OPERON_TRUST_GATE).
+        self._trust_gate = make_trust_gate()
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -520,6 +523,38 @@ class AgentLoop:
                         "Click Proceed to approve or enter a correction hint."
                     ),
                 ),
+            })
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=gate_decision,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+            )
+
+        # Trust gate (RFC 0001 Move 5): deny/confirm policy before execution.
+        # No-op unless OPERON_TRUST_GATE is on. A non-ALLOW verdict pauses for a
+        # human (the action is not executed) — DENY = blocked, CONFIRM = high-risk.
+        trust = self._trust_gate.evaluate(decision.action)
+        if trust.verdict is not TrustVerdict.ALLOW:
+            _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
+            if trust.verdict is TrustVerdict.DENY:
+                gate_text = (
+                    f"Blocked by policy: {decision.action.action_type.value} action "
+                    f"(matched deny rule '{trust.matched}'). It will not run autonomously — "
+                    "review and resume to override, or stop the run."
+                )
+            else:
+                gate_text = (
+                    f"High-risk action needs approval: {decision.action.action_type.value} "
+                    f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
+                )
+            gate_decision = decision.model_copy(update={
+                "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
             })
             return await self._pause_for_user(
                 record=record,

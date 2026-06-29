@@ -27,9 +27,6 @@ venv/
 env/
 ENV/
 
-# uv lockfile — environment artifact, not tracked in this repo
-uv.lock
-
 # Environment — never commit real secrets
 .env
 .env.local

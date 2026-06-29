@@ -21,6 +21,52 @@ def _action(text: str | None = None, url: str | None = None, element_name: str |
     return SimpleNamespace(text=text, url=url, target_context=ctx)
 
 
+# ── domain allowlist ──────────────────────────────────────────────────────
+
+def test_allowlist_permits_listed_domain_and_subdomains() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    assert gate.evaluate(_action(url="https://example.com/page")).verdict is TrustVerdict.ALLOW
+    assert gate.evaluate(_action(url="https://app.example.com/x")).verdict is TrustVerdict.ALLOW
+
+
+def test_allowlist_denies_unlisted_domain() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    result = gate.evaluate(_action(url="https://evil.example.org/x"))
+    assert result.verdict is TrustVerdict.DENY
+    assert result.reason == "domain not in allowlist"
+    assert result.matched == "evil.example.org"
+
+
+def test_allowlist_does_not_partial_match_suffix() -> None:
+    # "notexample.com" must NOT be allowed by an "example.com" entry.
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    assert gate.evaluate(_action(url="https://notexample.com/x")).verdict is TrustVerdict.DENY
+
+
+def test_allowlist_is_fail_closed_on_unparseable_url() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    result = gate.evaluate(_action(url="not-a-url"))
+    assert result.verdict is TrustVerdict.DENY
+
+
+def test_allowlist_ignores_actions_without_a_url() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    assert gate.evaluate(_action(text="click submit")).verdict is TrustVerdict.ALLOW
+
+
+def test_no_allowlist_means_no_domain_restriction() -> None:
+    gate = TrustGate(enabled=True, allow_domains=())
+    assert gate.evaluate(_action(url="https://anywhere.example/x")).verdict is TrustVerdict.ALLOW
+
+
+def test_deny_phrase_takes_precedence_over_allowlist() -> None:
+    gate = TrustGate(enabled=True, deny=("delete",), allow_domains=("example.com",))
+    # Even on an allowed domain, a deny-phrase match still blocks (and is the reason).
+    result = gate.evaluate(_action(url="https://example.com/delete", text="delete"))
+    assert result.verdict is TrustVerdict.DENY
+    assert result.reason == "matched deny rule"
+
+
 # ── disabled (default) ────────────────────────────────────────────────────
 
 def test_disabled_gate_allows_everything() -> None:
@@ -95,3 +141,10 @@ def test_make_trust_gate_custom_lists(monkeypatch: pytest.MonkeyPatch) -> None:
     gate = make_trust_gate()
     assert gate.deny == ("rm -rf", "format disk")
     assert gate.confirm == ("submit",)
+
+
+def test_make_trust_gate_reads_allow_domains(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPERON_TRUST_GATE", "on")
+    monkeypatch.setenv("OPERON_TRUST_ALLOW_DOMAINS", "example.com, Foo.ORG")
+    gate = make_trust_gate()
+    assert gate.allow_domains == ("example.com", "foo.org")  # normalized to lowercase

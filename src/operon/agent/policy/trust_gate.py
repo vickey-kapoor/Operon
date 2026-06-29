@@ -16,10 +16,13 @@ the action's ``text``, target ``url``, and resolved target-element name. Deny
 takes precedence over confirm.
 
 Config:
-    OPERON_TRUST_GATE     off | on            master switch (default off)
-    OPERON_TRUST_DENY     comma-separated     phrases that block (default none)
-    OPERON_TRUST_CONFIRM  comma-separated     phrases needing approval
-                                              (default: a conservative built-in set)
+    OPERON_TRUST_GATE           off | on        master switch (default off)
+    OPERON_TRUST_DENY           comma-separated  phrases that block (default none)
+    OPERON_TRUST_CONFIRM        comma-separated  phrases needing approval
+                                                 (default: a conservative built-in set)
+    OPERON_TRUST_ALLOW_DOMAINS  comma-separated  if set, navigation is restricted to
+                                                 these domains (and subdomains); any
+                                                 other URL is denied (fail-closed)
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
+from urllib.parse import urlparse
 
 
 class TrustVerdict(str, Enum):
@@ -70,6 +74,7 @@ class TrustGate:
     enabled: bool = False
     deny: tuple[str, ...] = ()
     confirm: tuple[str, ...] = ()
+    allow_domains: tuple[str, ...] = ()
 
     def describe(self, action: object) -> str:
         """Human-meaningful text for an action: its typed value, URL, and the
@@ -88,6 +93,24 @@ class TrustGate:
             parts.append(str(name))
         return " ".join(parts).lower()
 
+    def _domain_blocked(self, action: object) -> str | None:
+        """If a domain allowlist is configured, return the offending host for any
+        action whose URL is outside the allowed domains. Fail-closed: an
+        unparseable host is treated as not-allowed. Returns None when there is no
+        allowlist, the action has no URL, or the host is allowed."""
+        if not self.allow_domains:
+            return None
+        url = getattr(action, "url", None)
+        if not url:
+            return None
+        host = (urlparse(str(url)).hostname or "").lower()
+        if not host:
+            return "(unparseable url)"
+        for domain in self.allow_domains:
+            if host == domain or host.endswith("." + domain):
+                return None
+        return host
+
     def evaluate(self, action: object) -> TrustResult:
         if not self.enabled:
             return TrustResult(TrustVerdict.ALLOW)
@@ -95,6 +118,9 @@ class TrustGate:
         for keyword in self.deny:
             if keyword in description:
                 return TrustResult(TrustVerdict.DENY, "matched deny rule", keyword)
+        blocked_host = self._domain_blocked(action)
+        if blocked_host is not None:
+            return TrustResult(TrustVerdict.DENY, "domain not in allowlist", blocked_host)
         for keyword in self.confirm:
             if keyword in description:
                 return TrustResult(TrustVerdict.CONFIRM, "matched high-risk rule", keyword)
@@ -106,4 +132,5 @@ def make_trust_gate() -> TrustGate:
     enabled = os.getenv("OPERON_TRUST_GATE", "off").strip().lower() in {"on", "true", "1"}
     deny = _split_env("OPERON_TRUST_DENY")
     confirm = _split_env("OPERON_TRUST_CONFIRM") or _DEFAULT_CONFIRM
-    return TrustGate(enabled=enabled, deny=deny, confirm=confirm)
+    allow_domains = _split_env("OPERON_TRUST_ALLOW_DOMAINS")
+    return TrustGate(enabled=enabled, deny=deny, confirm=confirm, allow_domains=allow_domains)

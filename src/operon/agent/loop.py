@@ -545,7 +545,7 @@ class AgentLoop:
             if trust.verdict is TrustVerdict.DENY:
                 gate_text = (
                     f"Blocked by policy: {decision.action.action_type.value} action "
-                    f"(matched deny rule '{trust.matched}'). It will not run autonomously — "
+                    f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
                     "review and resume to override, or stop the run."
                 )
             else:

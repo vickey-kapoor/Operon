@@ -60,7 +60,7 @@ def estimate_usage_cost(*, provider: ModelProvider, model: str, input_tokens: in
 def _pricing_for_model(*, provider: ModelProvider, model: str) -> tuple[float | None, float | None]:
     normalized = model.strip().lower()
     if provider == "anthropic":
-        if normalized == "claude-sonnet-4-20250514":
+        if normalized == "claude-sonnet-5":
             return 3.0, 15.0
         return None, None
 

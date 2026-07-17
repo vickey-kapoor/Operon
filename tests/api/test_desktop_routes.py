@@ -307,10 +307,10 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
             backend="json",
             primary_model="gemini-3-flash-preview",
             planner_provider="anthropic",
-            planner_model="claude-sonnet-4-20250514",
+            planner_model="claude-sonnet-5",
             verifier_provider="anthropic",
             fallback_model="gemini-2.5-flash",
-            verifier_model="claude-sonnet-4-20250514",
+            verifier_model="claude-sonnet-5",
         )
         with (
             patch("operon.api.runtime.loops.desktop_mode_config", return_value=anthropic_config),
@@ -334,7 +334,7 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
             assert mock_gemini.call_count == 1
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in mock_gemini.call_args_list)
             assert mock_anthropic.call_count == 2
-            assert all(c.kwargs["model"] == "claude-sonnet-4-20250514" for c in mock_anthropic.call_args_list)
+            assert all(c.kwargs["model"] == "claude-sonnet-5" for c in mock_anthropic.call_args_list)
     finally:
         routes_module._desktop_agent_loop = original
 
@@ -352,11 +352,11 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
             backend="json",
             primary_model="gemini-3-flash-preview",
             planner_provider="anthropic",
-            planner_model="claude-sonnet-4-20250514",
+            planner_model="claude-sonnet-5",
             verifier_provider="anthropic",
             fallback_backend="json",
             fallback_model="gemini-3-flash-preview",
-            verifier_model="claude-sonnet-4-20250514",
+            verifier_model="claude-sonnet-5",
         )
         with (
             patch("operon.api.runtime.loops.browser_mode_config", return_value=anthropic_config),
@@ -380,7 +380,7 @@ def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
             assert mock_gemini.call_count == 1
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in mock_gemini.call_args_list)
             assert mock_anthropic.call_count == 2
-            assert all(c.kwargs["model"] == "claude-sonnet-4-20250514" for c in mock_anthropic.call_args_list)
+            assert all(c.kwargs["model"] == "claude-sonnet-5" for c in mock_anthropic.call_args_list)
     finally:
         routes_module._agent_loop = original
 

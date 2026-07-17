@@ -26,7 +26,7 @@ class AnthropicHttpClient:
         self,
         *,
         api_key: str | None = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-5",
         api_base_url: str | None = None,
         timeout_seconds: float = 30.0,
         max_retries: int = 2,
@@ -55,7 +55,11 @@ class AnthropicHttpClient:
             payload={
                 "model": self.model,
                 "max_tokens": 1024,
-                "temperature": 0,
+                # Sonnet 5 (and Opus 4.7+) reject a non-default temperature; it runs
+                # adaptive thinking by default, which would consume this 1024-token
+                # budget. Disable thinking to preserve the prior deterministic,
+                # full-budget planner behavior.
+                "thinking": {"type": "disabled"},
                 "messages": [{"role": "user", "content": prompt}],
             },
             request_kind="text",
@@ -72,7 +76,8 @@ class AnthropicHttpClient:
             payload={
                 "model": self.model,
                 "max_tokens": 1024,
-                "temperature": 0,
+                # See generate_policy: no temperature, thinking disabled for Sonnet 5+.
+                "thinking": {"type": "disabled"},
                 "messages": [
                     {
                         "role": "user",

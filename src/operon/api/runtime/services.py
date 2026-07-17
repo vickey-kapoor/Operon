@@ -51,7 +51,7 @@ def read_static_prefix(prompt_path: Path) -> str | None:
 def build_policy_delegate(*, config, prompt_name: str) -> PolicyService:
     planner_provider = config.planner_provider.lower()
     if planner_provider == "anthropic":
-        planner_model = config.planner_model or "claude-sonnet-4-20250514"
+        planner_model = config.planner_model or "claude-sonnet-5"
         return AnthropicPolicyService(
             anthropic_client=AnthropicHttpClient(model=planner_model, timeout_seconds=120.0),
             prompt_path=_PROMPTS_DIR / prompt_name,
@@ -71,7 +71,7 @@ def build_verifier_client(*, config):
     verifier_provider = config.verifier_provider.lower()
     verifier_model = config.verifier_model or config.fallback_model or config.primary_model
     if verifier_provider == "anthropic":
-        verifier_model = verifier_model or "claude-sonnet-4-20250514"
+        verifier_model = verifier_model or "claude-sonnet-5"
         return AnthropicHttpClient(model=verifier_model, timeout_seconds=120.0)
     return GeminiHttpClient(model=verifier_model, timeout_seconds=120.0)
 

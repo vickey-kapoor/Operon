@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 async def ensure_cdp_ready(mode: str = "batch") -> None:
     """Ensure a CDP browser is connected before the first browser step runs."""
-    if mode == "observable":
+    if mode != "observable":
+        # Batch tasks launch their own isolated Playwright Chromium and close it on
+        # completion. Routing them through a shared CDP browser prevents cleanup.
         return
 
     from operon.browser.manager import (

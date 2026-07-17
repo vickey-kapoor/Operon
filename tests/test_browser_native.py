@@ -55,13 +55,11 @@ async def test_ensure_session_routes_observable(executor):
     sentinel = MagicMock()
 
     with patch.object(executor, "_ensure_session_observable", new=AsyncMock(return_value=sentinel)) as obs, \
-         patch.object(executor, "_ensure_session_batch", new=AsyncMock()) as batch, \
-         patch.object(executor, "_ensure_session_cdp", new=AsyncMock()) as cdp:
+         patch.object(executor, "_ensure_session_batch", new=AsyncMock()) as batch:
         result = await executor._ensure_session("obs", foreground=False)
 
     obs.assert_awaited_once_with("obs", foreground=False)
     batch.assert_not_awaited()
-    cdp.assert_not_awaited()
     assert result is sentinel
 
 
@@ -71,36 +69,12 @@ async def test_ensure_session_routes_batch_no_bm(executor):
     executor._run_mode["batch"] = "batch"
     sentinel = MagicMock()
 
-    with patch("operon.browser.manager.get_active_manager", return_value=None), \
-         patch.object(executor, "_ensure_session_observable", new=AsyncMock()) as obs, \
-         patch.object(executor, "_ensure_session_batch", new=AsyncMock(return_value=sentinel)) as batch, \
-         patch.object(executor, "_ensure_session_cdp", new=AsyncMock()) as cdp:
+    with patch.object(executor, "_ensure_session_observable", new=AsyncMock()) as obs, \
+         patch.object(executor, "_ensure_session_batch", new=AsyncMock(return_value=sentinel)) as batch:
         result = await executor._ensure_session("batch", foreground=False)
 
     batch.assert_awaited_once_with("batch", foreground=False)
     obs.assert_not_awaited()
-    cdp.assert_not_awaited()
-    assert result is sentinel
-
-
-@pytest.mark.asyncio
-async def test_ensure_session_routes_cdp_when_bm_connected(executor):
-    """batch run with a connected BrowserManager uses _ensure_session_cdp."""
-    executor._run_mode["cdp"] = "batch"
-    sentinel = MagicMock()
-
-    mock_bm = MagicMock()
-    mock_bm.is_connected = True
-
-    with patch("operon.browser.manager.get_active_manager", return_value=mock_bm), \
-         patch.object(executor, "_ensure_session_observable", new=AsyncMock()) as obs, \
-         patch.object(executor, "_ensure_session_batch", new=AsyncMock()) as batch, \
-         patch.object(executor, "_ensure_session_cdp", new=AsyncMock(return_value=sentinel)) as cdp:
-        result = await executor._ensure_session("cdp", foreground=False)
-
-    cdp.assert_awaited_once_with("cdp", mock_bm)
-    obs.assert_not_awaited()
-    batch.assert_not_awaited()
     assert result is sentinel
 
 
@@ -182,28 +156,32 @@ async def test_batch_launch_args_exclude_headless_new(executor):
 
 
 # ---------------------------------------------------------------------------
-# ensure_cdp_ready: observable early-return
+# ensure_cdp_ready: batch early-return
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def testensure_cdp_ready_noop_for_observable():
-    """ensure_cdp_ready(mode='observable') must return without touching BrowserManager."""
+async def testensure_cdp_ready_noop_for_batch():
+    """ensure_cdp_ready(mode='batch') must return without touching BrowserManager.
+
+    Batch tasks launch their own isolated Playwright Chromium and close it on
+    completion, so they must not be routed through a shared CDP browser.
+    """
     from operon.api.runtime import ensure_cdp_ready
 
     with patch("operon.browser.manager.BrowserManager") as mock_cls:
-        await ensure_cdp_ready(mode="observable")
+        await ensure_cdp_ready(mode="batch")
 
     mock_cls.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def testensure_cdp_ready_proceeds_for_batch():
-    """ensure_cdp_ready(mode='batch') must not early-return for observable."""
+async def testensure_cdp_ready_proceeds_for_observable():
+    """ensure_cdp_ready(mode='observable') must not early-return."""
     from operon.api.runtime import ensure_cdp_ready
 
-    # Fastest path through batch: already-connected manager → no Chrome launch
+    # Fastest path through observable: already-connected manager → no Chrome launch
     mock_bm = MagicMock()
     mock_bm.is_connected = True
 
     with patch("operon.browser.manager.get_active_manager", return_value=mock_bm):
-        await ensure_cdp_ready(mode="batch")
+        await ensure_cdp_ready(mode="observable")

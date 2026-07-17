@@ -519,40 +519,12 @@ class NativeBrowserExecutor(Executor):
 
         mode = self._run_mode.get(run_id, "batch")
 
-        # Observable runs own their Chromium process (--headless=new via Playwright).
-        # Batch runs prefer an existing CDP connection, else launch their own browser.
         if mode == "observable":
             return await self._ensure_session_observable(run_id, foreground=foreground)
 
-        from operon.browser.manager import get_active_manager
-        bm = get_active_manager()
-        if bm is not None and bm.is_connected:
-            return await self._ensure_session_cdp(run_id, bm)
+        # Batch mode: always use an isolated Playwright Chromium so the browser
+        # closes cleanly when the task ends.
         return await self._ensure_session_batch(run_id, foreground=foreground)
-
-    async def _ensure_session_cdp(self, run_id: str, bm: object) -> _BrowserSession:
-        """CDP mode: create a new context+page in the observable browser.
-
-        No Chromium is launched. The BrowserManager switches its live screencast
-        to follow this page automatically.
-        """
-        await self._close_other_sessions(run_id)
-        ctx, page = await bm.new_task_context()
-        self._attach_page_listeners(page, run_id)
-        self._run_mode[run_id] = "cdp"
-        session = _BrowserSession(
-            playwright=None,
-            browser=None,
-            context=ctx,
-            page=page,
-            video_dir=None,
-            browser_pid=None,
-            owns_context=False,
-        )
-        self._sessions[run_id] = session
-        self._fresh_session_run_id = run_id
-        logger.info("CDP mode: task %s routed through observable browser", run_id)
-        return session
 
     async def _ensure_session_observable(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:
         """Observable mode: reuse the persistent browser across tasks; only context+page are new."""

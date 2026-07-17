@@ -755,7 +755,7 @@ def test_observer_usage_dashboard_aggregates_run_and_model_costs(monkeypatch) ->
     policy_debug = _debug("policy", step_dir).model_copy(
         update={
             "usage_artifact_path": str(step_dir / "policy_usage.json"),
-            "usage": _usage("anthropic", "claude-sonnet-4-20250514", "text", total_tokens=900, estimated_cost_usd=0.0045),
+            "usage": _usage("anthropic", "claude-sonnet-5", "text", total_tokens=900, estimated_cost_usd=0.0045),
         }
     )
     verification_debug = ModelDebugArtifacts(
@@ -763,7 +763,7 @@ def test_observer_usage_dashboard_aggregates_run_and_model_costs(monkeypatch) ->
         raw_response_artifact_path=str(step_dir / "verification_raw.txt"),
         parsed_artifact_path=str(step_dir / "verification_result.json"),
         usage_artifact_path=str(step_dir / "verification_usage.json"),
-        usage=_usage("anthropic", "claude-sonnet-4-20250514", "image", total_tokens=600, estimated_cost_usd=0.003),
+        usage=_usage("anthropic", "claude-sonnet-5", "image", total_tokens=600, estimated_cost_usd=0.003),
     )
     _write_state(
         run_dir,
@@ -806,7 +806,7 @@ def test_observer_usage_dashboard_aggregates_run_and_model_costs(monkeypatch) ->
     body = usage.json()
     assert body["summary"]["request_count"] == 3
     assert body["summary"]["by_model"]["gemini-3-flash-preview"]["request_count"] == 1
-    assert body["summary"]["by_model"]["claude-sonnet-4-20250514"]["request_count"] == 2
+    assert body["summary"]["by_model"]["claude-sonnet-5"]["request_count"] == 2
     assert body["summary"]["estimated_cost_usd"] == 0.0087
 
 

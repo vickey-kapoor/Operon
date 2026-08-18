@@ -45,6 +45,7 @@ runs/
 results/
 .var/
 .codex-logs/
+logs/
 .desktop-artifacts/
 .browser-artifacts/
 .test-artifacts/

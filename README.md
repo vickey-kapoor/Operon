@@ -194,7 +194,7 @@ $env:GEMINI_API_KEY = "fake-test-key"
 python -m pytest tests -q
 ```
 
-That runs the full offline suite — 552 tests, about 30 seconds, no API calls and
+That runs the full offline suite — 554 tests, about 30 seconds, no API calls and
 no browser. No `--ignore` flags needed: `addopts = "-m 'not live_server'"` in
 `pyproject.toml` already deselects the suites that need a running server.
 

@@ -105,7 +105,7 @@ class ScreenRecorder:
                 if self.streaming:
                     if writer is None:
                         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-                        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                        fourcc = cv2.VideoWriter.fourcc(*"mp4v")
                         writer = cv2.VideoWriter(
                             str(self.output_path), fourcc, self.fps, (new_w, new_h)
                         )
@@ -127,7 +127,7 @@ class ScreenRecorder:
     def _encode(self) -> None:
         """Encode buffered frames to an MP4 file (buffered mode only)."""
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter.fourcc(*"mp4v")
         writer = cv2.VideoWriter(
             str(self.output_path), fourcc, self.fps, (self._width, self._height)
         )

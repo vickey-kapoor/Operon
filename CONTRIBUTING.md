@@ -12,7 +12,7 @@ GEMINI_API_KEY=fake-test-key python -m pytest tests -q
 ruff check src tests --select E,F,W,I --ignore E501
 ```
 
-552 tests should pass in about 30 seconds with no network access. If they don't,
+554 tests should pass in about 30 seconds with no network access. If they don't,
 that's a bug in the setup instructions — please report it.
 
 ## Before you open a PR

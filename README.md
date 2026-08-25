@@ -2,6 +2,10 @@
 
 # Operon
 
+[![CI](https://github.com/vickey-kapoor/Operon/actions/workflows/ci.yml/badge.svg)](https://github.com/vickey-kapoor/Operon/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+
 **A zero-abstraction, vision-first computer-use agent.**
 
 No DOM targeting, no CSS selectors, no XPath. Operon observes pixels, chooses coordinate-based actions, executes them, verifies the visual result, and recovers when progress stalls.
@@ -46,21 +50,47 @@ FastAPI routes
 
 ## Quick Start
 
-Requirements: Python 3.14 for local development and Chrome/Chromium for browser runs. Package metadata remains compatible with Python 3.11+.
+Requirements: Python 3.11 or newer, and Chrome/Chromium for browser runs. CI tests
+against 3.11 and 3.14.
+
+**macOS / Linux**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+playwright install chromium
+cp .env.example .env
+```
+
+**Windows (PowerShell)**
 
 ```powershell
-py -3.14 -m venv .venv
+py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .[dev]
+pip install -e ".[dev]"
 playwright install chromium
 copy .env.example .env
 ```
 
 Set `GOOGLE_API_KEY` or `GEMINI_API_KEY` in `.env`, then start the API:
 
-```powershell
+```bash
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
+
+Open http://127.0.0.1:8080/console for the Command Center UI, or drive the API
+directly:
+
+```bash
+curl -X POST http://127.0.0.1:8080/desktop/run-task \
+  -H 'Content-Type: application/json' \
+  -d '{"instruction": "Open notepad and type hello world in go programming language"}'
+```
+
+> **Desktop runs control your actual mouse and keyboard.** Run them on a machine
+> you can afford to have clicked on, or inside a VM. Browser runs are contained
+> to the Chromium instance Operon launches.
 
 ## API Surface
 
@@ -82,6 +112,8 @@ GET  /health
 POST /desktop/run-task
 POST /desktop/step
 POST /desktop/resume
+POST /desktop/stop
+POST /desktop/run/{run_id}/stop
 POST /desktop/cleanup
 GET  /desktop/run/{run_id}
 
@@ -151,18 +183,32 @@ docs/         Architecture and product notes
 
 ## Testing
 
+```bash
+GEMINI_API_KEY=fake-test-key python -m pytest tests -q
+```
+
+On Windows (PowerShell):
+
 ```powershell
 $env:GEMINI_API_KEY = "fake-test-key"
-python -m pytest tests -q `
-  --ignore=tests/test_e2e_quick_tasks.py `
-  --ignore=tests/test_bug_fixes_verification.py
+python -m pytest tests -q
+```
+
+That runs the full offline suite — 552 tests, about 30 seconds, no API calls and
+no browser. No `--ignore` flags needed: `addopts = "-m 'not live_server'"` in
+`pyproject.toml` already deselects the suites that need a running server.
+
+A further 350 tests are marked `live_server` and are **not** covered by CI. They
+need a uvicorn instance on `localhost:8080` and, in some cases, a headed Windows
+session. To opt in:
+
+```bash
+OPERON_RUN_LIVE_SERVER_TESTS=true python -m pytest tests -m live_server
 ```
 
 Lint:
 
-```powershell
+```bash
 ruff check src tests --select E,F,W,I --ignore E501
 ```
-
-Some tests are intentionally opt-in because they require a live server or headed Windows browser session.
 

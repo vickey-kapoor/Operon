@@ -20,8 +20,10 @@ Run the default test suite (no live server required):
 
 ```powershell
 $env:GEMINI_API_KEY = "fake-test-key"
-.venv\Scripts\python -m pytest tests\ -q --ignore=tests/test_e2e_quick_tasks.py --ignore=tests/test_bug_fixes_verification.py
+.venv\Scripts\python -m pytest tests -q
 ```
+
+No `--ignore` flags needed: `addopts = "-m 'not live_server'"` in `pyproject.toml` already deselects the suites that require a running server.
 
 Lint with `ruff check src tests --select E,F,W,I --ignore E501`.
 
@@ -29,14 +31,9 @@ Lint with `ruff check src tests --select E,F,W,I --ignore E501`.
 Follow existing Python conventions: 4-space indentation, type hints, `snake_case` for modules/functions/variables, and `PascalCase` for classes and Pydantic models. Keep modules focused and prefer explicit names such as `browser_native.py` or `policy_coordinator.py`. Ruff enforces import sorting and core lint rules; long lines are tolerated.
 
 ## Key Architecture Points
-- **Vision-only**: no DOM, no CSS selectors, no XPath, no Playwright `locator()` in the policy/perception path. All targeting uses `UIElement` coordinates from perception output.
-- **Rules before LLM**: deterministic logic belongs in `PolicyRuleEngine`. Post-LLM guards, such as `_semantic_anchor_check`, live on `PolicyCoordinator`.
-- **Spatial persistence**: `RollingElementBuffer` tracks elements across steps. Ghost elements have TTL=2 and are auto-purged. Buffer clears on `visual_velocity > 5%`.
-- **Verification states**: SUCCESS / FAILURE / UNCERTAIN / PENDING / PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify; `PROGRESSING_STABLE` advances immediately.
-- **Atomic TYPE**: executor merges focus+type into one call. Never emit a CLICK immediately followed by TYPE on the same element from policy.
-- **Visual servo**: `_region_has_content()` runs before every click with an adaptively calibrated threshold. Never bypass it.
-- **Observable mode**: `BrowserManager` (`src/operon/browser/manager.py`) connects via `connect_over_cdp`, streams JPEG frames via CDP `Page.startScreencast`, and exposes `inject_input()` for interactive control. Never import `ws_stream` at module load; use the lazy `_ws_stream()` accessor to avoid circular imports.
-- **Benchmark hooks**: do not add benchmark-specific logic to core policy rules (the former plugin registry has been removed).
+Operon is vision-only: no DOM, CSS selectors, XPath, or Playwright `locator()` in the perception/policy path — all targeting uses `UIElement` coordinates from perception output. Deterministic logic belongs in `PolicyRuleEngine` before any LLM call.
+
+The full set of load-bearing invariants (spatial buffer TTLs, verification states, atomic TYPE, visual servo, observable-mode import rules) lives in [CLAUDE.md](CLAUDE.md#invariants). Read it before changing agent flow.
 
 ## Testing Guidelines
 Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs Python 3.11 and 3.14 plus Ruff.

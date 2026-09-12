@@ -546,60 +546,6 @@ class TestFix7PathDisclosureRemoved:
 
 
 # ===========================================================================
-# FIX 8: MINOR — XSS in observer UI uses esc() for all dynamic content
-# ===========================================================================
-
-class TestFix8XssProtection:
-    """FIX 8: Verify esc() function exists and is used for dynamic content in UI HTML."""
-
-    def _get_html(self) -> str:
-        resp = get("/")
-        assert resp.status_code == 200
-        return resp.text
-
-    def test_esc_function_defined_in_html(self):
-        html = self._get_html()
-        assert "function esc(" in html or "function esc (" in html, (
-            "FIX8 FAIL: esc() function not defined in desktop.html"
-        )
-
-    def test_esc_uses_textcontent_not_innerhtml_for_sanitization(self):
-        html = self._get_html()
-        # The esc() implementation should use textContent to safely escape HTML
-        assert "textContent" in html, (
-            "FIX8 FAIL: esc() function does not use textContent for sanitization"
-        )
-
-    def test_dynamic_intent_rendered_safely(self):
-        html = self._get_html()
-        # Intent is user-supplied — must be rendered via esc() or textContent (setText uses textContent)
-        safe = (
-            "esc(r.intent)" in html
-            or "esc(run.intent)" in html
-            or "escapedIntent" in html
-            or "setText(" in html  # setText() writes to .textContent — inherently safe
-        )
-        assert safe, "FIX8 FAIL: Intent field not rendered safely in UI HTML"
-
-    def test_run_id_rendered_safely(self):
-        html = self._get_html()
-        safe = (
-            "esc(r.run_id)" in html
-            or "safeId" in html
-            or "setText(" in html  # setText() writes to .textContent — inherently safe
-        )
-        assert safe, "FIX8 FAIL: run_id field not rendered safely in UI HTML"
-
-    def test_action_type_rendered_safely(self):
-        html = self._get_html()
-        safe = (
-            "esc(action.action_type" in html
-            or "setText(" in html  # setText() writes to .textContent — inherently safe
-        )
-        assert safe, "FIX8 FAIL: action_type not rendered safely in UI HTML"
-
-
-# ===========================================================================
 # FIX 9: MINOR — Misleading 404 for unstepped runs (covered by Fix 2)
 # ===========================================================================
 

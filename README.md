@@ -79,8 +79,9 @@ Set `GOOGLE_API_KEY` or `GEMINI_API_KEY` in `.env`, then start the API:
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 
-Open http://127.0.0.1:8080/console for the Command Center UI, or drive the API
-directly:
+The Command Center UI is a separate Vite app — start it from `ui/` with
+`npm install && npm run dev` and open http://localhost:5173. It talks to the API
+on port 8080. Or drive the API directly:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/desktop/run-task \
@@ -198,7 +199,7 @@ That runs the full offline suite — 551 passed and 3 skipped, roughly a minute,
 no browser. No `--ignore` flags needed: `addopts = "-m 'not live_server'"` in
 `pyproject.toml` already deselects the suites that need a running server.
 
-A further 350 tests are marked `live_server` and are **not** covered by CI. They
+A further 345 tests are marked `live_server` and are **not** covered by CI. They
 need a uvicorn instance on `localhost:8080` and, in some cases, a headed Windows
 session. To opt in:
 

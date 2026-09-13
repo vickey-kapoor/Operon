@@ -39,8 +39,15 @@ class VerifierService(ABC):
         state: AgentState,
         decision: PolicyDecision,
         executed_action: ExecutedAction,
+        *,
+        allow_stable_wait: bool = True,
     ) -> VerificationResult:
-        """Verify whether the executed action achieved the expected outcome."""
+        """Verify whether the executed action achieved the expected outcome.
+
+        ``allow_stable_wait=False`` is passed by the loop's settle re-verifies:
+        the after-frame has already been refreshed, so returning STABLE_WAIT again
+        would only loop.
+        """
 
 
 class DeterministicVerifierService(VerifierService):
@@ -64,6 +71,8 @@ class DeterministicVerifierService(VerifierService):
         state: AgentState,
         decision: PolicyDecision,
         executed_action: ExecutedAction,
+        *,
+        allow_stable_wait: bool = True,
     ) -> VerificationResult:
         """Evaluate typed inputs using deterministic rules."""
         self._last_debug_artifacts = None
@@ -153,12 +162,15 @@ class DeterministicVerifierService(VerifierService):
                 failure_stage=LoopStage.VERIFY,
             )
 
-        # STABLE_WAIT: deterministic motion check — if the screen is actively changing
-        # post-action but the reaction check didn't fire (or wasn't applicable), wait
-        # 200ms and re-verify rather than asking the model critic on a mid-animation
-        # frame. No Gemini call; falls through to the model critic on re-verify once
-        # the UI has settled.
-        if executed_action.success and self._screen_is_in_motion(executed_action):
+        # STABLE_WAIT: the action visibly changed the screen, so the after-frame may
+        # be mid-transition. The loop waits 200ms, swaps in a fresh frame, and
+        # re-verifies with allow_stable_wait=False so the critic judges the settled
+        # frame. No model call here.
+        if (
+            allow_stable_wait
+            and executed_action.success
+            and self._action_changed_screen(executed_action)
+        ):
             return VerificationResult(
                 status=VerificationStatus.STABLE_WAIT,
                 expected_outcome_met=False,
@@ -193,17 +205,16 @@ class DeterministicVerifierService(VerifierService):
             critic_fallback_reason="critic_unavailable_or_unusable",
         )
 
-    def _screen_is_in_motion(self, executed_action: ExecutedAction) -> bool:
-        """Return True when the before→after screenshot delta shows real UI motion.
+    def _action_changed_screen(self, executed_action: ExecutedAction) -> bool:
+        """Return True when the before→after screenshot delta shows a visible change.
 
-        Uses the step-directory convention (before.png / after.png sit in the same
-        folder as the action artifact) to compute a pixel-change ratio without any
-        additional captures.  Returns False on any I/O error so the check degrades
-        gracefully rather than blocking verification.
+        A visible change means the after-frame may have been captured mid-transition;
+        it does not by itself prove the UI is still moving — the loop's settle
+        re-capture establishes that. Uses the step-directory convention (before.png /
+        after.png sit in the same folder as the action artifact). Returns False when
+        either frame is missing so the check degrades gracefully.
 
-        Threshold: any change above CURSOR_ONLY_THRESHOLD (0.05%) counts as real
-        motion.  The PENDING path already handles the case where the page is
-        mostly blank; this check fires for non-blank in-progress transitions.
+        Threshold: any change above CURSOR_ONLY_THRESHOLD (0.05%) counts.
         """
         from operon.agent.perception.screen_diff import (
             CURSOR_ONLY_THRESHOLD,
@@ -218,7 +229,7 @@ class DeterministicVerifierService(VerifierService):
             return False
         ratio = compute_screen_change_ratio(str(before_path), after_path)
         logger.debug(
-            "stable_wait_check: screen_change_ratio=%.5f cursor_only_threshold=%.5f in_motion=%s",
+            "stable_wait_check: screen_change_ratio=%.5f cursor_only_threshold=%.5f changed=%s",
             ratio, CURSOR_ONLY_THRESHOLD, ratio > CURSOR_ONLY_THRESHOLD,
         )
         return ratio > CURSOR_ONLY_THRESHOLD

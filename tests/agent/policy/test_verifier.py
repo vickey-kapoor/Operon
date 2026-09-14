@@ -237,6 +237,33 @@ async def test_verifier_falls_back_when_model_critic_unavailable(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_verifier_critic_failure_is_logged_and_persisted(tmp_path: Path, caplog) -> None:
+    # A dead critic falls back to SUCCESS at confidence >= 0.5, so the failure
+    # reason must reach both the log and the step's diagnostics file.
+    state = AgentState(run_id="run-9", intent="Create draft", status="running")
+    action = AgentAction(action_type=ActionType.CLICK, target_element_id="compose")
+    decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.9, active_subgoal="open compose")
+    screenshot = tmp_path / "after.png"
+    screenshot.write_bytes(b"fake")
+    executed = ExecutedAction(action=action, success=True, detail="clicked compose", artifact_path=str(screenshot))
+    service = DeterministicVerifierService(
+        gemini_client=StubVerificationClient(raises=True),
+        prompt_path=_prompt_path(tmp_path),
+    )
+
+    with caplog.at_level("WARNING", logger="operon.agent.policy.verifier"):
+        result = await service.verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.SUCCESS
+    assert result.critic_fallback_reason == "critic_unavailable_or_unusable"
+    assert "Critic call failed" in caplog.text
+    assert "verification unavailable" in caplog.text
+    diagnostics = json.loads((tmp_path / "verification_diagnostics.json").read_text(encoding="utf-8"))
+    assert diagnostics["critic_fallback_reason"] == "critic_error: verification unavailable"
+    assert (tmp_path / "verification_prompt.txt").exists()
+
+
+@pytest.mark.asyncio
 async def test_verifier_does_not_treat_input_label_as_typed_value() -> None:
     state = AgentState(
         run_id="run-8",

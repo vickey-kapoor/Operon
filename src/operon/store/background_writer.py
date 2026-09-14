@@ -38,8 +38,11 @@ class BackgroundWriter:
         self._sync = sync
         self._pending: list[asyncio.Future] = []
 
-    def enqueue(self, path: Path, content: str) -> None:
+    def enqueue(self, path: str | Path, content: str) -> None:
         """Schedule a file write.  Returns immediately; write runs in a thread."""
+        # Callers pass str paths (e.g. ModelDebugArtifacts fields); _write_file needs
+        # Path.parent, and its broad except would otherwise drop the write silently.
+        path = Path(path)
         if self._sync:
             _write_file(path, content)
             return
@@ -53,8 +56,10 @@ class BackgroundWriter:
             # No running event loop (startup context) — write inline.
             _write_file(path, content)
 
-    def append(self, path: Path, line: str) -> None:
+    def append(self, path: str | Path, line: str) -> None:
         """Schedule an append of one line to *path*.  Never overwrites existing content."""
+        path = Path(path)
+
         def _append_line(p: Path, content: str) -> None:
             try:
                 p.parent.mkdir(parents=True, exist_ok=True)

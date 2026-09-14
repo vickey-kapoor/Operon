@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -1091,6 +1092,38 @@ class AgentLoop:
     def _relocate_after_artifact(self, executed_action, planned_path: str):
         return self._artifacts.relocate_after_artifact(executed_action, planned_path)
 
+    @staticmethod
+    def _adopt_settle_frame(executed_action, frame_path: str | None, *, protected_path: str | None = None) -> bool:
+        """Replace the step's after.png with a later post-action frame.
+
+        Settle re-verifies must judge the newest frame: the verifier's critic and
+        the progress tracker both read ``executed_action.artifact_path``, which
+        would otherwise still hold the pre-settle frame. Mid-step recaptures land
+        in the next step's before.png slot (step_count is already bumped), so
+        moving the file also keeps that slot clean. ``protected_path`` (the
+        current step's before.png) is never moved. Returns True when swapped.
+        """
+        after_path = executed_action.artifact_path
+        if not after_path or not frame_path or not Path(frame_path).exists():
+            return False
+        frame = Path(frame_path).resolve()
+        if frame == Path(after_path).resolve():
+            return False
+        if protected_path and frame == Path(protected_path).resolve():
+            return False
+        try:
+            Path(after_path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(frame), after_path)
+        except OSError as exc:
+            logger.warning("settle frame swap failed (%s -> %s): %s", frame_path, after_path, exc)
+            return False
+        if frame.parent != Path(after_path).resolve().parent:
+            try:
+                frame.parent.rmdir()  # drop the next-step dir if the move emptied it
+            except OSError:
+                pass
+        return True
+
     async def _wait_for_ui_stable(
         self,
         *,
@@ -1099,59 +1132,46 @@ class AgentLoop:
         decision,
         executed_action,
     ) -> VerificationResult:
-        """Single 200ms re-verify for STABLE_WAIT (UI actively transitioning post-action).
+        """Single 200ms settle wait for STABLE_WAIT (the action visibly changed the screen).
 
-        Waits 200ms, re-captures, re-perceives, and calls verify() once more.
-        If the screen has settled the verifier will return its normal verdict.
-        If the UI is still moving (STABLE_WAIT again) or the outcome is still
-        uncertain, we downgrade to UNCERTAIN so the recovery ladder can decide.
+        Waits 200ms, re-captures, swaps the fresh frame in as the step's after.png,
+        and re-verifies once with ``allow_stable_wait=False`` so the critic judges
+        the settled frame instead of a possibly mid-transition one. No re-perception:
+        the critic reads the screenshot, and a perception call here would double the
+        model cost of every visible action. If the frame is still changing after the
+        wait, the critic still gets the newest frame; the motion ratio is logged.
         """
-        from operon.agent.perception import PerceptionLowQualityError
+        from operon.agent.perception.screen_diff import (
+            CURSOR_ONLY_THRESHOLD,
+            compute_screen_change_ratio,
+        )
 
-        _trace("  5-STABLE_WAIT", "UI still transitioning — waiting 200ms before re-verify")
-        logger.info("stable_wait: UI in motion — waiting 200ms before re-verifying (run=%s)", record.run_id[:8])
+        _trace("  5-STABLE_WAIT", "action changed the screen — waiting 200ms before re-verify")
+        logger.info("stable_wait: screen changed — waiting 200ms before re-verifying (run=%s)", record.run_id[:8])
         await asyncio.sleep(0.2)
 
         try:
             frame = await self.capture_service.capture(record)
-            fresh_perception = await self._perceive_with_liveness_retry(record, frame)
-        except PerceptionLowQualityError:
-            logger.info("stable_wait: perception still unstable after 200ms — downgrading to UNCERTAIN")
-            return VerificationResult(
-                status=VerificationStatus.UNCERTAIN,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason="UI still transitioning after 200ms stability wait; perception quality too low.",
-                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
-                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
-                failure_stage=LoopStage.VERIFY,
-            )
         except Exception as exc:
-            logger.warning("stable_wait: re-capture/perceive failed: %s", exc)
-            return VerificationResult(
-                status=VerificationStatus.UNCERTAIN,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason=f"UI stability wait failed during re-capture: {exc}",
-                failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
-                failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
-                failure_stage=LoopStage.VERIFY,
+            # Fall through and verify the original after-frame rather than
+            # inventing an UNCERTAIN verdict.
+            logger.warning("stable_wait: re-capture failed, verifying original frame: %s", exc)
+            frame = None
+
+        if frame is not None:
+            motion = (
+                compute_screen_change_ratio(executed_action.artifact_path, frame.artifact_path)
+                if executed_action.artifact_path
+                else 0.0
             )
+            still_moving = motion > CURSOR_ONLY_THRESHOLD
+            self._adopt_settle_frame(executed_action, frame.artifact_path)
+            logger.info("stable_wait: post-wait motion=%.5f still_moving=%s", motion, still_moving)
+            _trace("  5-STABLE_WAIT re-verify", f"motion={motion:.5f} still_moving={still_moving}")
 
-        fresh_perception = self._infer_focused_element(record, fresh_perception)
-        state.observation_history.append(fresh_perception)
-        self._sync_progress_state_with_perception(state, fresh_perception)
-        _trace("  5-STABLE_WAIT re-verify", f"elements={len(fresh_perception.visible_elements)} hint={fresh_perception.page_hint.value!r}")
-
-        verification = await self.verifier_service.verify(state, decision, executed_action)
-        if verification.status is VerificationStatus.STABLE_WAIT:
-            # Still moving after one retry — downgrade to UNCERTAIN, let recovery decide.
-            logger.info("stable_wait: still transitioning after re-verify — downgrading to UNCERTAIN")
-            return verification.model_copy(update={
-                "status": VerificationStatus.UNCERTAIN,
-                "reason": "UI still transitioning after 200ms stability wait; treating as uncertain.",
-            })
-
+        verification = await self.verifier_service.verify(
+            state, decision, executed_action, allow_stable_wait=False
+        )
         _trace("  5-STABLE_WAIT resolved", f"status={verification.status.value!r}")
         logger.info("stable_wait: resolved to %s after re-verify", verification.status.value)
         return verification
@@ -1202,12 +1222,26 @@ class AgentLoop:
                     retries, fresh_perception.liveness_retries,
                 )
 
-            # Update state observation so the verifier sees fresh elements.
+            # Update state observation so the verifier sees fresh elements, and swap
+            # the loaded frame in as after.png so the critic judges it rather than
+            # the loading screen captured right after the action.
             fresh_perception = self._infer_focused_element(record, fresh_perception)
+            if self._adopt_settle_frame(
+                executed_action,
+                fresh_perception.capture_artifact_path,
+                protected_path=before_artifact_path,
+            ):
+                fresh_perception = fresh_perception.model_copy(
+                    update={"capture_artifact_path": executed_action.artifact_path}
+                )
             state.observation_history.append(fresh_perception)
             self._sync_progress_state_with_perception(state, fresh_perception)
             _trace("  5-PENDING re-verify", f"retry={retries} elements={len(fresh_perception.visible_elements)} hint={fresh_perception.page_hint.value!r}")
-            verification = await self.verifier_service.verify(state, decision, executed_action)
+            # The page just finished loading, so a before/after change is expected;
+            # STABLE_WAIT here would escape the PENDING loop unhandled.
+            verification = await self.verifier_service.verify(
+                state, decision, executed_action, allow_stable_wait=False
+            )
             if verification.status is not VerificationStatus.PENDING:
                 _trace("  5-PENDING resolved", f"retry={retries} status={verification.status.value!r}")
                 logger.info("patience_retry=%d: resolved to %s", retries, verification.status.value)

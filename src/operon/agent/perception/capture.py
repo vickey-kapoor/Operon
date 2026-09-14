@@ -8,6 +8,7 @@ import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from operon.core.paths import runs_dir
 from operon.executor.browser import Executor
 from operon.models.capture import CaptureFrame
 from operon.models.state import AgentState
@@ -28,9 +29,11 @@ class CaptureService(ABC):
 class ScreenCaptureService(CaptureService):
     """Capture implementation backed by the executor."""
 
-    def __init__(self, executor: Executor, root_dir: str | Path = "runs") -> None:
+    def __init__(self, executor: Executor, root_dir: str | Path | None = None) -> None:
         self.executor = executor
-        self.root_dir = Path(root_dir)
+        # Must match the run store root: the verifier and progress tracker expect
+        # before.png to sit next to after.png in the same step directory.
+        self.root_dir = Path(root_dir) if root_dir is not None else runs_dir()
 
     async def capture(self, state: AgentState) -> CaptureFrame:
         """Capture a screenshot into the planned run artifact path.

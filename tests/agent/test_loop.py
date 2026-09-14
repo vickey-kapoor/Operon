@@ -1711,3 +1711,123 @@ def test_maybe_reuse_prior_perception_blocks_back_to_back_reuse() -> None:
     assert loop._maybe_reuse_prior_perception(state, frame) is not None
     # Second consecutive call must NOT reuse — force a fresh look.
     assert loop._maybe_reuse_prior_perception(state, frame) is None
+
+
+# ── settle re-verify tests (STABLE_WAIT / PENDING) ────────────────
+
+
+def _save_frame(path: Path, color: str) -> Path:
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (480, 270), color).save(path)
+    return path
+
+
+def _settle_inputs(tmp_path: Path):
+    after = _save_frame(tmp_path / "run-1" / "step_1" / "after.png", "white")
+    # Mid-step recaptures land in the next step's before.png slot.
+    fresh = _save_frame(tmp_path / "run-1" / "step_2" / "before.png", "black")
+    state = AgentState(run_id="run-1", intent="x", status=RunStatus.RUNNING, step_count=1)
+    action = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
+    decision = PolicyDecision(action=action, rationale="click", confidence=0.9, active_subgoal="click")
+    executed = ExecutedAction(action=action, success=True, detail="clicked", artifact_path=str(after))
+    verdict = VerificationResult(
+        status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=False, reason="ok"
+    )
+    return after, fresh, state, decision, executed, verdict
+
+
+def _pixel(path: Path) -> tuple[int, int, int]:
+    from PIL import Image
+
+    with Image.open(path) as img:
+        return img.convert("RGB").getpixel((0, 0))
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ui_stable_reverifies_on_fresh_frame_without_reperceiving(tmp_path: Path) -> None:
+    from unittest.mock import patch as _patch
+
+    after, fresh, state, decision, executed, verdict = _settle_inputs(tmp_path)
+    loop = _loop()
+    loop.capture_service = SimpleNamespace(
+        capture=AsyncMock(return_value=CaptureFrame(artifact_path=str(fresh), width=480, height=270))
+    )
+    loop.verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verdict))
+    loop.perception_service = SimpleNamespace(perceive=AsyncMock())
+
+    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        result = await loop._wait_for_ui_stable(
+            record=state, state=state, decision=decision, executed_action=executed
+        )
+
+    mock_sleep.assert_awaited_once_with(0.2)
+    assert result is verdict
+    assert _pixel(after) == (0, 0, 0), "after.png must hold the post-wait frame"
+    assert not fresh.parent.exists(), "emptied next-step dir must be removed"
+    loop.perception_service.perceive.assert_not_awaited()
+    assert loop.verifier_service.verify.await_args.kwargs == {"allow_stable_wait": False}
+
+
+@pytest.mark.asyncio
+async def test_wait_for_ui_stable_verifies_original_frame_when_recapture_fails(tmp_path: Path) -> None:
+    from unittest.mock import patch as _patch
+
+    after, _fresh, state, decision, executed, verdict = _settle_inputs(tmp_path)
+    loop = _loop()
+    loop.capture_service = SimpleNamespace(capture=AsyncMock(side_effect=RuntimeError("no screen")))
+    loop.verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verdict))
+
+    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock):
+        result = await loop._wait_for_ui_stable(
+            record=state, state=state, decision=decision, executed_action=executed
+        )
+
+    assert result is verdict
+    assert _pixel(after) == (255, 255, 255)
+    assert loop.verifier_service.verify.await_args.kwargs == {"allow_stable_wait": False}
+
+
+@pytest.mark.asyncio
+async def test_wait_for_page_load_reverifies_on_loaded_frame(tmp_path: Path) -> None:
+    from unittest.mock import patch as _patch
+
+    after, fresh, state, decision, executed, verdict = _settle_inputs(tmp_path)
+    loop = _loop()
+    loop.capture_service = SimpleNamespace(
+        capture=AsyncMock(return_value=CaptureFrame(artifact_path=str(fresh), width=480, height=270))
+    )
+    loaded = ScreenPerception(
+        summary="loaded", page_hint="unknown", capture_artifact_path=str(fresh), visible_elements=[]
+    )
+    loop._perceive_with_liveness_retry = AsyncMock(return_value=loaded)
+    loop._infer_focused_element = lambda _record, perception: perception
+    loop._sync_progress_state_with_perception = Mock()
+    loop.verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verdict))
+
+    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock):
+        result = await loop._wait_for_page_load(
+            record=state,
+            state=state,
+            decision=decision,
+            executed_action=executed,
+            before_artifact_path=str(tmp_path / "run-1" / "step_1" / "before.png"),
+        )
+
+    assert result.status is VerificationStatus.SUCCESS
+    assert result.patience_retries == 1
+    assert _pixel(after) == (0, 0, 0), "critic must judge the loaded frame, not the loading one"
+    assert state.observation_history[-1].capture_artifact_path == str(after)
+    assert loop.verifier_service.verify.await_args.kwargs == {"allow_stable_wait": False}
+
+
+def test_adopt_settle_frame_never_moves_protected_before_frame(tmp_path: Path) -> None:
+    after, _fresh, _state, _decision, executed, _verdict = _settle_inputs(tmp_path)
+    before = _save_frame(tmp_path / "run-1" / "step_1" / "before.png", "black")
+
+    swapped = AgentLoop._adopt_settle_frame(executed, str(before), protected_path=str(before))
+
+    assert swapped is False
+    assert before.exists()
+    assert _pixel(after) == (255, 255, 255)

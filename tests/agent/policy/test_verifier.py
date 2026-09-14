@@ -278,3 +278,52 @@ async def test_verifier_does_not_treat_input_label_as_typed_value() -> None:
 
     assert result.status is VerificationStatus.SUCCESS
     assert result.expected_outcome_met is True
+
+
+def _write_step_frames(step_dir: Path, *, changed: bool) -> Path:
+    from PIL import Image
+
+    step_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (480, 270), "white").save(step_dir / "before.png")
+    after = Image.new("RGB", (480, 270), "white")
+    if changed:
+        after.paste((0, 0, 0), (0, 0, 240, 135))
+    after.save(step_dir / "after.png")
+    return step_dir / "after.png"
+
+
+def _stable_wait_inputs(after_path: Path):
+    state = AgentState(run_id="run-sw", intent="Open compose", status="running")
+    action = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
+    decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.9, active_subgoal="open compose")
+    executed = ExecutedAction(action=action, success=True, detail="clicked", artifact_path=str(after_path))
+    return state, decision, executed
+
+
+@pytest.mark.asyncio
+async def test_verifier_returns_stable_wait_when_action_changed_screen(tmp_path: Path) -> None:
+    after = _write_step_frames(tmp_path / "step_1", changed=True)
+
+    result = await _service().verify(*_stable_wait_inputs(after))
+
+    assert result.status is VerificationStatus.STABLE_WAIT
+
+
+@pytest.mark.asyncio
+async def test_verifier_skips_stable_wait_when_screen_unchanged(tmp_path: Path) -> None:
+    after = _write_step_frames(tmp_path / "step_1", changed=False)
+
+    result = await _service().verify(*_stable_wait_inputs(after))
+
+    assert result.status is not VerificationStatus.STABLE_WAIT
+
+
+@pytest.mark.asyncio
+async def test_verifier_settle_reverify_never_returns_stable_wait(tmp_path: Path) -> None:
+    # The loop's settle re-verify passes allow_stable_wait=False; the unchanged
+    # before.png would otherwise make the verdict STABLE_WAIT forever.
+    after = _write_step_frames(tmp_path / "step_1", changed=True)
+
+    result = await _service().verify(*_stable_wait_inputs(after), allow_stable_wait=False)
+
+    assert result.status is not VerificationStatus.STABLE_WAIT

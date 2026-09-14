@@ -56,7 +56,7 @@ def get_agent_loop() -> AgentLoop:
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
         _agent_loop = AgentLoop(
-            capture_service=ScreenCaptureService(executor=executor),
+            capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
             perception_service=services.perception_service,
             run_store=run_store,
             policy_service=PolicyCoordinator(
@@ -91,7 +91,7 @@ def get_desktop_agent_loop() -> AgentLoop:
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
         _desktop_agent_loop = AgentLoop(
-            capture_service=ScreenCaptureService(executor=executor),
+            capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
             perception_service=services.perception_service,
             run_store=run_store,
             policy_service=PolicyCoordinator(

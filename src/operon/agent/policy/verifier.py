@@ -245,9 +245,13 @@ class DeterministicVerifierService(VerifierService):
             elif hasattr(self.gemini_client, "generate_policy"):
                 raw_output = await self.gemini_client.generate_policy(prompt)
             else:
+                logger.warning("Critic unavailable: %s has no verification method", type(self.gemini_client).__name__)
                 self._write_fallback_debug(debug_artifacts, "client_missing_verification_method")
                 return None
         except (AnthropicClientError, GeminiClientError, NotImplementedError, RuntimeError) as exc:
+            # Warn on every failure: the fallback verdict can be SUCCESS, so a dead
+            # critic (bad key, exhausted credits, outage) is otherwise invisible.
+            logger.warning("Critic call failed, using deterministic fallback: %s: %s", type(exc).__name__, exc)
             self._write_fallback_debug(debug_artifacts, f"critic_error: {exc}")
             return None
         except Exception as exc:
@@ -258,6 +262,7 @@ class DeterministicVerifierService(VerifierService):
         bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
         parsed = _parse_verification_output(raw_output)
         if parsed is None:
+            logger.warning("Critic response could not be parsed, using deterministic fallback")
             self._write_fallback_debug(debug_artifacts, "critic_parse_failed", raw_output=raw_output)
             return None
         normalized = _normalize_verification_result(parsed).model_copy(

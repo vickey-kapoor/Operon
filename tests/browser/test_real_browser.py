@@ -63,3 +63,55 @@ async def test_popup_becomes_active_page_for_next_action(tmp_path: Path) -> None
     finally:
         await executor.aclose_run(run_id)
         await executor.aclose()
+
+
+@pytest.mark.asyncio
+async def test_static_page_streams_initial_and_last_changed_frame(tmp_path: Path) -> None:
+    """Throttling must not discard the only frame of a static page or final update."""
+    import asyncio
+    import io
+    import socket
+
+    from PIL import Image
+    from playwright.async_api import async_playwright
+
+    from operon.api import ws_stream
+    from operon.browser.manager import BrowserManager
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=True, args=[f"--remote-debugging-port={port}"]
+        )
+        page = await browser.new_page(viewport={"width": 800, "height": 600})
+        await page.set_content('<html><body style="background:rgb(25,70,130)"></body></html>')
+        await page.screenshot()  # Wait for the static scene to render before attaching.
+        manager = BrowserManager()
+        frames = asyncio.Queue()
+        ws_stream._subscribers.append(frames)
+
+        async def wait_for_color(expected: tuple[int, int, int]) -> None:
+            async with asyncio.timeout(5):
+                while True:
+                    frame = await frames.get()
+                    image = Image.open(io.BytesIO(frame)).convert("RGB")
+                    actual = image.getpixel((400, 300))
+                    if all(abs(a - b) < 15 for a, b in zip(actual, expected)):
+                        return
+
+        try:
+            await manager.connect(port)
+            await manager.start_screencast(fps=15)
+            await wait_for_color((25, 70, 130))
+            await page.evaluate("document.body.style.background = 'rgb(40,150,70)'")
+            await wait_for_color((40, 150, 70))
+            await manager.stop_screencast()
+            await manager.disconnect()
+            assert browser.is_connected(), "Disconnect must preserve the external browser"
+        finally:
+            await manager.disconnect()
+            ws_stream._subscribers.remove(frames)
+            await browser.close()

@@ -56,6 +56,8 @@ class BrowserManager:
         self._cdp: Any = None                   # CDPSession for Page.startScreencast
         self._screencast_running: bool = False
         self._frame_count: int = 0
+        self._frame_timer: asyncio.TimerHandle | None = None
+        self._pending_frame: bytes | None = None
         self._viewport_w: int = 1920
         self._viewport_h: int = 1080
         self._task_page: Any = None             # Last task page; closed on next new_task_context()
@@ -195,9 +197,9 @@ class BrowserManager:
     async def start_screencast(self, fps: int = 15) -> None:
         """Begin streaming JPEG frames via CDP Page.startScreencast.
 
-        Chrome captures internally at ~60fps; everyNthFrame throttles delivery
-        to the requested fps. Each frame is base64-decoded and published to all
-        connected WebSocket clients as binary data.
+        Request every changed frame from Chrome, then throttle publication to
+        the requested fps. Chrome may emit just one frame for a static page,
+        so skipping every Nth frame can leave the live view blank or stale.
         """
         if self._page is None:
             raise RuntimeError("Not connected — call connect() first")
@@ -205,31 +207,47 @@ class BrowserManager:
             return
 
         self._cdp = await self._page.context.new_cdp_session(self._page)
+        cdp = self._cdp
         self._screencast_running = True
         self._frame_count = 0
+        self._pending_frame = None
+        loop = asyncio.get_running_loop()
+        interval = 1 / max(1, fps)
+        last_published = 0.0
 
-        # Chrome exposes ~60fps internally; skip every N frames to hit target fps.
-        every_nth = max(1, round(60 / fps))
+        def _publish_pending() -> None:
+            nonlocal last_published
+            self._frame_timer = None
+            if not self._screencast_running or self._cdp is not cdp:
+                return
+            frame = self._pending_frame
+            self._pending_frame = None
+            if frame is not None:
+                _ws_stream().publish_frame(frame)
+                last_published = loop.time()
+                self._frame_count += 1
 
         async def _on_frame(params: dict) -> None:
-            if not self._screencast_running:
+            if not self._screencast_running or self._cdp is not cdp:
                 return
 
             # ACK immediately — Chrome stops sending if we don't ACK promptly.
             session_id = params.get("sessionId", 0)
             try:
-                await self._cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
+                await cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
             except Exception:
                 pass
 
+            if not self._screencast_running or self._cdp is not cdp:
+                return
             raw_b64 = params.get("data", "")
             if not raw_b64:
                 return
 
-            jpeg_bytes = base64.b64decode(raw_b64)
-            _ws_stream().publish_frame(jpeg_bytes)
-
-            self._frame_count += 1
+            self._pending_frame = base64.b64decode(raw_b64)
+            if self._frame_timer is None:
+                delay = max(0.0, interval - (loop.time() - last_published))
+                self._frame_timer = loop.call_later(delay, _publish_pending)
 
         self._cdp.on("Page.screencastFrame", _on_frame)
 
@@ -238,18 +256,28 @@ class BrowserManager:
             "quality": 75,
             "maxWidth": self._viewport_w,
             "maxHeight": self._viewport_h,
-            "everyNthFrame": every_nth,
+            "everyNthFrame": 1,
         })
 
-        logger.info("BrowserManager: screencast started at ~%dfps (everyNth=%d)", fps, every_nth)
+        logger.info("BrowserManager: screencast started at up to %dfps", max(1, fps))
 
     async def stop_screencast(self) -> None:
         if not self._screencast_running:
             return
         self._screencast_running = False
-        if self._cdp is not None:
+        if self._frame_timer is not None:
+            self._frame_timer.cancel()
+            self._frame_timer = None
+        self._pending_frame = None
+        cdp = self._cdp
+        self._cdp = None
+        if cdp is not None:
             try:
-                await self._cdp.send("Page.stopScreencast")
+                await cdp.send("Page.stopScreencast")
+            except Exception:
+                pass
+            try:
+                await cdp.detach()
             except Exception:
                 pass
         logger.info("BrowserManager: screencast stopped after %d frames", self._frame_count)

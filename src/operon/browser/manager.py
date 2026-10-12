@@ -58,6 +58,7 @@ class BrowserManager:
         self._frame_count: int = 0
         self._frame_timer: asyncio.TimerHandle | None = None
         self._pending_frame: bytes | None = None
+        self._latest_frame: bytes | None = None
         self._viewport_w: int = 1920
         self._viewport_h: int = 1080
         self._task_page: Any = None             # Last task page; closed on next new_task_context()
@@ -65,6 +66,11 @@ class BrowserManager:
     @property
     def is_connected(self) -> bool:
         return self._browser is not None
+
+    @property
+    def latest_frame(self) -> bytes | None:
+        """Last published frame of the active stream, for newly connected viewers."""
+        return self._latest_frame
 
     # ── Connection ──────────────────────────────────────────────────────────
 
@@ -211,6 +217,7 @@ class BrowserManager:
         self._screencast_running = True
         self._frame_count = 0
         self._pending_frame = None
+        self._latest_frame = None
         loop = asyncio.get_running_loop()
         interval = 1 / max(1, fps)
         last_published = 0.0
@@ -223,6 +230,7 @@ class BrowserManager:
             frame = self._pending_frame
             self._pending_frame = None
             if frame is not None:
+                self._latest_frame = frame
                 _ws_stream().publish_frame(frame)
                 last_published = loop.time()
                 self._frame_count += 1
@@ -262,6 +270,7 @@ class BrowserManager:
         logger.info("BrowserManager: screencast started at up to %dfps", max(1, fps))
 
     async def stop_screencast(self) -> None:
+        self._latest_frame = None
         if not self._screencast_running:
             return
         self._screencast_running = False

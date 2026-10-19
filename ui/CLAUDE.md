@@ -20,7 +20,7 @@ This is the **Operon Command Center UI** — a React 19 + TypeScript frontend th
 
 ```
 Python API (port 8080) ──HTTP──▶ fetch() calls in components
-Python WS stream (port 9001) ──WebSocket──▶ useAgentStream hook
+Python /ws/stream (port 8080) ──WebSocket──▶ useAgentStream hook
                                               │
                                               ▼
                                          agentStore (Zustand 5)
@@ -28,7 +28,9 @@ Python WS stream (port 9001) ──WebSocket──▶ useAgentStream hook
                                          React components
 ```
 
-`useAgentStream` (`src/hooks/useAgentStream.ts`) owns the single WebSocket connection to `ws://127.0.0.1:9001`. It:
+`useAgentStream` (`src/hooks/useAgentStream.ts`) owns the single WebSocket connection to `ws://127.0.0.1:8080/ws/stream`. The server refuses
+browser origins it doesn't know, so add the dev origin to the API's `.env`
+(`CORS_ORIGINS=http://localhost:5173`). The HTTP calls need the same setting. It:
 - Delivers binary JPEG frames directly to registered canvas callbacks (zero React state overhead) via `registerFrameCallback` — bypassing React for frame rendering
 - Parses JSON text frames into typed `AgentEvent` union objects and appends them to `state.events`
 - Handles `hitl_required`, `action_intent`, and `element_bounds` as special singleton state fields

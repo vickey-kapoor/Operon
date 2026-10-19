@@ -3,6 +3,7 @@ import type { ActionIntentEvent } from "../hooks/useAgentStream";
 import type { RunState } from "../App";
 import { LiveMirror } from "./LiveMirror";
 import { ConfidenceSlider } from "./ConfidenceSlider";
+import { API, apiHeaders } from "../api";
 
 type Props = {
   registerFrameCallback: (cb: (blob: Blob) => void) => () => void;
@@ -14,8 +15,6 @@ type Props = {
 };
 
 type InputMode = "click" | "type" | "scroll";
-
-const API = "http://127.0.0.1:8080";
 
 export function LiveExecution({
   registerFrameCallback, actionIntent, runState, sendControl,
@@ -133,7 +132,7 @@ export function LiveExecution({
           if (!runState.runId) return;
           await fetch(`${API}/stop`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: apiHeaders(),
             body: JSON.stringify({ run_id: runState.runId }),
           });
         }}

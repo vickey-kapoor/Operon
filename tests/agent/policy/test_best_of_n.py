@@ -217,3 +217,52 @@ def test_best_of_n_confidence_ceiling_env(monkeypatch: pytest.MonkeyPatch) -> No
     assert best_of_n_confidence_ceiling() == 0.5
     monkeypatch.setenv("OPERON_BESTOFN_CONFIDENCE", "garbage")
     assert best_of_n_confidence_ceiling() == 1.0
+
+
+# ── backends that cannot re-sample ────────────────────────────────────────
+
+def test_resampling_support_propagates_through_fallback_and_coordinator(tmp_path) -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
+    from operon.agent.backends.combined import CombinedPerceptionPolicyService
+    from operon.agent.backends.fallback import FallbackBackend
+    from operon.agent.policy.coordinator import PolicyCoordinator
+
+    computer_use = BrowserComputerUseBackend(
+        client=SimpleNamespace(), prompt_path=Path("prompts/browser_computer_use_prompt.txt")
+    )
+    combined = CombinedPerceptionPolicyService(gemini_client=SimpleNamespace())
+    fallback = FallbackBackend(primary=computer_use, secondary=combined)
+
+    assert computer_use.supports_resampling() is False
+    assert combined.supports_resampling() is True
+    assert PolicyCoordinator(delegate=fallback, memory_store=SimpleNamespace()).supports_resampling("run-1") is False
+
+    fallback._active_backends["run-1"] = combined  # the run fell back to the JSON backend
+    assert PolicyCoordinator(delegate=fallback, memory_store=SimpleNamespace()).supports_resampling("run-1") is True
+
+
+@pytest.mark.asyncio
+async def test_loop_skips_best_of_n_when_policy_cannot_resample(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from operon.agent.loop import AgentLoop
+
+    monkeypatch.setenv("OPERON_BESTOFN_N", "3")
+    policy = SimpleNamespace(
+        choose_action=AsyncMock(side_effect=RuntimeError("No cached computer-use decision available")),
+        supports_resampling=lambda run_id: False,
+    )
+    loop = AgentLoop(
+        capture_service=Mock(), perception_service=Mock(), run_store=Mock(), policy_service=policy,
+        executor=Mock(), verifier_service=Mock(), recovery_manager=Mock(),
+    )
+    first = _decision(_click(100, 100), confidence=0.5)
+
+    chosen = await loop._select_best_of_n(_state(), _perception([]), first)
+
+    assert chosen is first
+    policy.choose_action.assert_not_called()

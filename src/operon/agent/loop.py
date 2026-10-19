@@ -1482,6 +1482,12 @@ class AgentLoop:
         n = best_of_n_count()
         if n <= 1 or decision.confidence >= best_of_n_confidence_ceiling():
             return decision
+        check = getattr(self.policy_service, "supports_resampling", None)
+        if check is not None and not check(state.run_id):
+            # e.g. Gemini Computer Use: the decision was cached by perceive() and a
+            # second choose_action has nothing to return, so sampling would crash the step.
+            _trace("  3 BEST_OF_N skipped", "policy backend cannot re-sample a decision")
+            return decision
 
         async def _propose(s: AgentState, p: ScreenPerception) -> PolicyDecision:
             d = await self.policy_service.choose_action(s, p)

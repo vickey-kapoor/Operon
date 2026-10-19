@@ -66,7 +66,7 @@ export type StreamState = {
   pendingDecision: HitlRequiredEvent | null;
 };
 
-const WS_URL = "ws://127.0.0.1:9001";
+const WS_URL = "ws://127.0.0.1:8080/ws/stream";
 const RECONNECT_MS = 2000;
 
 export function useAgentStream() {

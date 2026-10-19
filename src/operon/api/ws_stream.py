@@ -134,6 +134,12 @@ async def _receiver(ws: WebSocket) -> None:
             pass
 
 
+async def _resume_active_run() -> None:
+    # Local import: runtime.tasks imports this module at load time.
+    from operon.api.runtime.tasks import resume_and_schedule
+    await resume_and_schedule(_agent_loop, _active_run_id)
+
+
 async def _handle_control(msg: dict) -> None:
     msg_type = msg.get("type")
 
@@ -161,7 +167,7 @@ async def _handle_control(msg: dict) -> None:
         # Resume a HITL-paused run from the UI "Proceed" button.
         if _agent_loop is not None and _active_run_id is not None:
             try:
-                await _agent_loop.resume_run(_active_run_id)
+                await _resume_active_run()
                 publish_event({"type": "control_ack", "action": "resume"})
             except Exception as exc:
                 publish_event({"type": "control_ack", "action": "resume", "error": str(exc)})
@@ -180,9 +186,10 @@ async def _handle_control(msg: dict) -> None:
         _pending_override_hint = hint or None
         if _agent_loop is not None and _active_run_id is not None:
             try:
-                await _agent_loop.resume_run(_active_run_id)
-            except Exception:
-                pass
+                await _resume_active_run()
+            except Exception as exc:
+                publish_event({"type": "control_ack", "action": "override", "hint": hint, "error": str(exc)})
+                return
         publish_event({"type": "control_ack", "action": "override", "hint": hint})
 
 

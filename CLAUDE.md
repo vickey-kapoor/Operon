@@ -32,6 +32,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests -q
 # Offline eval: scripted scenarios through the real loop (tests/eval/); report table
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 
+# Live smoke: a few real browser tasks against a running API (real GEMINI_API_KEY)
+.venv\Scripts\python -m tests.eval.live_smoke
+
 # Single test / file
 .venv\Scripts\python -m pytest tests/agent/test_loop.py::test_name -q
 

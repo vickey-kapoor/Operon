@@ -178,6 +178,12 @@ class AgentLoop:
         # steps on the same run. Weak values: a lock lives only while a step holds
         # or awaits it, so the map does not grow with every run ever started.
         self._run_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+        # Human approval of a gate pause, per run. A pause records (action fingerprint,
+        # gate) as pending; a resume that approves adds that gate to the action's
+        # approved set. The same action then passes the gates it was approved for, and
+        # the approval is used up once it gets through (or the policy picks another).
+        self._pending_gate_approvals: dict[str, tuple[str, str]] = {}
+        self._approved_gate_actions: dict[str, tuple[str, frozenset[str]]] = {}
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -315,13 +321,25 @@ class AgentLoop:
                 )
             response = await self.step_run(StepRequest(run_id=response.run_id))
 
-    async def resume_run(self, run_id: str) -> RunResponse:
-        """Resume a run that was paused waiting for user input."""
+    async def resume_run(self, run_id: str, *, approve_gated_action: bool = True) -> RunResponse:
+        """Resume a run that was paused waiting for user input.
+
+        ``approve_gated_action``: when the pause came from the confidence or trust
+        gate or the coordinate-thrash guard, resuming is the human's approval of that
+        action, so the next step may run it once. Pass False when resuming with a
+        correction instead (override).
+        """
         record = await self.run_store.get_run(run_id)
         if record is None:
             raise ValueError(f"Run {run_id!r} not found")
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        pending = self._pending_gate_approvals.pop(run_id, None)
+        if approve_gated_action and pending is not None:
+            fingerprint, gate = pending
+            prior = self._approved_gate_actions.get(run_id)
+            gates = prior[1] if prior is not None and prior[0] == fingerprint else frozenset()
+            self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
         record.stop_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
         return RunResponse(
@@ -481,7 +499,11 @@ class AgentLoop:
 
         # Retry Exhaustion / Coordinate Thrash guard: if this action targets a (x, y)
         # that has already failed 3 times, escalate to HITL instead of attempting again.
-        if self._coordinate_thrash_detected(state, decision.action):
+        if (
+            "coordinate_thrash" not in self._approved_gates(record.run_id, decision.action)
+            and self._coordinate_thrash_detected(state, decision.action)
+        ):
+            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash")
             _trace("  3 POLICY -> COORDINATE_THRASH_HITL", "3 coord failures at same point — escalating to HITL")
             thrash_x, thrash_y = decision.action.x, decision.action.y
             hitl_decision = decision.model_copy(update={
@@ -507,59 +529,10 @@ class AgentLoop:
                 after_artifact_path=after_artifact_path,
             )
 
-        # Confidence-gated autonomy: if the user has set a threshold via the Cockpit
-        # slider and this decision's confidence is below it, pause and ask for approval.
-        # Skips WAIT_FOR_USER and STOP (those already pause/terminate the run).
-        _conf_threshold = run_control.get_confidence_threshold()
-        if (
-            _conf_threshold > 0.0
-            and decision.action.action_type is not ActionType.WAIT_FOR_USER
-            and decision.action.action_type is not ActionType.STOP
-            and decision.confidence < _conf_threshold
-        ):
-            _trace(
-                "  3 POLICY -> CONFIDENCE_GATE",
-                f"confidence={decision.confidence:.2f} < threshold={_conf_threshold:.2f}",
-            )
-            gate_decision = decision.model_copy(update={
-                "action": AgentAction(
-                    action_type=ActionType.WAIT_FOR_USER,
-                    text=(
-                        f"Confidence {decision.confidence:.0%} is below your threshold {_conf_threshold:.0%}. "
-                        f"Planned action: {decision.action.action_type.value}. "
-                        "Click Proceed to approve or enter a correction hint."
-                    ),
-                ),
-            })
-            return await self._pause_for_user(
-                record=record,
-                state=state,
-                perception=perception,
-                decision=gate_decision,
-                perception_debug=perception_debug,
-                policy_debug=policy_debug,
-                step_index=step_index,
-                before_artifact_path=before_artifact_path,
-                after_artifact_path=after_artifact_path,
-            )
-
-        # Trust gate (RFC 0001 Move 5): deny/confirm policy before execution.
-        # No-op unless OPERON_TRUST_GATE is on. A non-ALLOW verdict pauses for a
-        # human (the action is not executed) — DENY = blocked, CONFIRM = high-risk.
-        trust = self._trust_gate.evaluate(decision.action)
-        if trust.verdict is not TrustVerdict.ALLOW:
-            _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
-            if trust.verdict is TrustVerdict.DENY:
-                gate_text = (
-                    f"Blocked by policy: {decision.action.action_type.value} action "
-                    f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
-                    "review and resume to override, or stop the run."
-                )
-            else:
-                gate_text = (
-                    f"High-risk action needs approval: {decision.action.action_type.value} "
-                    f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
-                )
+        # Pre-execution gates (confidence, trust, file guard): a blocked action is
+        # never executed — the run pauses for a human with the gate's reason.
+        gate_text = self._pre_execution_gate_text(decision, intent=state.intent, run_id=record.run_id)
+        if gate_text is not None:
             gate_decision = decision.model_copy(update={
                 "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
             })
@@ -568,42 +541,6 @@ class AgentLoop:
                 state=state,
                 perception=perception,
                 decision=gate_decision,
-                perception_debug=perception_debug,
-                policy_debug=policy_debug,
-                step_index=step_index,
-                before_artifact_path=before_artifact_path,
-                after_artifact_path=after_artifact_path,
-            )
-
-        # File guard: read_text / upload_file* paths come from model output, so a
-        # path the user never named (and outside the run dir and allowed roots)
-        # pauses for a human instead of being written to or uploaded.
-        blocked_path = (
-            blocked_file_path(
-                decision.action,
-                intent=state.intent,
-                run_dir=Path(self.run_store.root_dir) / record.run_id,
-            )
-            if decision.action.action_type in FILE_PATH_ACTIONS
-            else None
-        )
-        if blocked_path is not None:
-            _trace("  3 POLICY -> FILE_GUARD", f"blocked path {blocked_path!r}")
-            guard_decision = decision.model_copy(update={
-                "action": AgentAction(
-                    action_type=ActionType.WAIT_FOR_USER,
-                    text=(
-                        f"Blocked {decision.action.action_type.value}: the path {blocked_path!r} is not "
-                        "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
-                        "Restart with the path in the task, allow its folder, or stop the run."
-                    ),
-                ),
-            })
-            return await self._pause_for_user(
-                record=record,
-                state=state,
-                perception=perception,
-                decision=guard_decision,
                 perception_debug=perception_debug,
                 policy_debug=policy_debug,
                 step_index=step_index,
@@ -874,6 +811,85 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    def _pre_execution_gate_text(self, decision: PolicyDecision, *, intent: str, run_id: str) -> str | None:
+        """Why ``decision`` must pause for a human before executing, or None to proceed.
+
+        Gates run in order and the first block wins:
+        1. Confidence: the operator's threshold (UI slider) is above the decision's
+           confidence. Skips WAIT_FOR_USER and STOP, which already pause or end the run.
+        2. Trust gate (RFC 0001 Move 5): deny/confirm policy; a no-op unless
+           OPERON_TRUST_GATE is on. DENY = blocked, CONFIRM = high-risk.
+        3. File guard: a read_text / upload_file* path the user never named, outside
+           the run dir and OPERON_ALLOWED_FILE_ROOTS.
+
+        Gates 1-2 (and the coordinate-thrash pause in step) can be approved by
+        resuming (see ``resume_run``); the file guard cannot, since its fix is
+        naming the path in the task or allowing its folder.
+        """
+        action = decision.action
+        fingerprint = self._gate_fingerprint(action)
+        approved = self._approved_gates(run_id, action)
+        threshold = run_control.get_confidence_threshold()
+        if (
+            "confidence" not in approved
+            and threshold > 0.0
+            and action.action_type is not ActionType.WAIT_FOR_USER
+            and action.action_type is not ActionType.STOP
+            and decision.confidence < threshold
+        ):
+            _trace("  3 POLICY -> CONFIDENCE_GATE", f"confidence={decision.confidence:.2f} < threshold={threshold:.2f}")
+            self._pending_gate_approvals[run_id] = (fingerprint, "confidence")
+            return (
+                f"Confidence {decision.confidence:.0%} is below your threshold {threshold:.0%}. "
+                f"Planned action: {action.action_type.value}. "
+                "Click Proceed to approve or enter a correction hint."
+            )
+
+        trust = self._trust_gate.evaluate(action)
+        if "trust" not in approved and trust.verdict is not TrustVerdict.ALLOW:
+            _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
+            self._pending_gate_approvals[run_id] = (fingerprint, "trust")
+            if trust.verdict is TrustVerdict.DENY:
+                return (
+                    f"Blocked by policy: {action.action_type.value} action "
+                    f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
+                    "review and resume to override, or stop the run."
+                )
+            return (
+                f"High-risk action needs approval: {action.action_type.value} "
+                f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
+            )
+
+        if action.action_type in FILE_PATH_ACTIONS:
+            blocked_path = blocked_file_path(
+                action, intent=intent, run_dir=Path(self.run_store.root_dir) / run_id
+            )
+            if blocked_path is not None:
+                _trace("  3 POLICY -> FILE_GUARD", f"blocked path {blocked_path!r}")
+                return (
+                    f"Blocked {action.action_type.value}: the path {blocked_path!r} is not "
+                    "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
+                    "Restart with the path in the task, allow its folder, or stop the run."
+                )
+        self._approved_gate_actions.pop(run_id, None)  # approval used: the action runs now
+        return None
+
+    def _approved_gates(self, run_id: str, action: AgentAction) -> frozenset[str]:
+        """Gates a human already approved for this exact action (see resume_run)."""
+        prior = self._approved_gate_actions.get(run_id)
+        if prior is None:
+            return frozenset()
+        if prior[0] != self._gate_fingerprint(action):
+            del self._approved_gate_actions[run_id]  # the policy moved on
+            return frozenset()
+        return prior[1]
+
+    def _gate_fingerprint(self, action: AgentAction) -> str:
+        """What a human approves at a gate pause: the action's type plus the text, URL
+        and target name the trust gate judges — not coordinates, which shift between
+        perceptions of the same screen."""
+        return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
 
     async def _pause_for_user(
         self,

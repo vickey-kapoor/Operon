@@ -40,6 +40,7 @@ class _FakeLoop:
         self.run_store = store
         self._outcomes = outcomes
         self.resumed: list[str] = []
+        self.approvals: list[bool] = []
 
     async def step_run(self, request) -> RunResponse:
         outcome = self._outcomes.pop(0)
@@ -49,8 +50,9 @@ class _FakeLoop:
         self.run_store.state.status = outcome
         return RunResponse(run_id="run-1", status=outcome, intent="do a thing", step_count=self.run_store.state.step_count)
 
-    async def resume_run(self, run_id: str) -> RunResponse:
+    async def resume_run(self, run_id: str, *, approve_gated_action: bool = True) -> RunResponse:
         self.resumed.append(run_id)
+        self.approvals.append(approve_gated_action)
         await self.run_store.set_status(run_id, RunStatus.RUNNING)
         return RunResponse(run_id=run_id, status=RunStatus.RUNNING, intent="do a thing", step_count=0)
 
@@ -111,6 +113,8 @@ async def test_ws_resume_and_override_reschedule_auto_run(
     await ws_stream._handle_control(message)
 
     assert loop.resumed == ["run-1"]
+    # Resume approves the paused action; an override is a correction, not an approval.
+    assert loop.approvals == [message["type"] == "resume"]
     assert scheduled == [("run-1", 7)]  # the run's own limit, not a hardcoded 200
     assert "error" not in events[-1]
 

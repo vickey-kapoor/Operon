@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -28,6 +29,16 @@ from operon.models.verification import (
 from operon.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
+
+# Separators between sequential steps of an intent ("X, then Y", "X and Y").
+_CLAUSE_SEPARATOR = re.compile(r",|;|\bthen\b|\band\b")
+
+
+def _final_clause(intent: str) -> str:
+    """Return the last step of a multi-step intent, lower-cased."""
+    text = intent.lower().replace("drag and drop", "drag_and_drop")
+    clauses = [clause.strip() for clause in _CLAUSE_SEPARATOR.split(text) if clause.strip()]
+    return clauses[-1] if clauses else text
 
 
 class VerifierService(ABC):
@@ -443,8 +454,12 @@ class DeterministicVerifierService(VerifierService):
 
     @staticmethod
     def _is_goal_completing_action(state: AgentState, action: AgentAction) -> bool:
-        """Check if this action type directly fulfills the task intent."""
-        intent = state.intent.lower()
+        """Check if this action type directly fulfills the task intent.
+
+        Only the intent's final clause counts: in "hover over Products and click
+        Pricing" the hover is a step on the way, not the goal.
+        """
+        intent = _final_clause(state.intent)
         if action.action_type is ActionType.READ_TEXT and any(
             kw in intent for kw in ("read", "extract", "save", "get", "find", "fetch")
         ):
@@ -467,10 +482,7 @@ class DeterministicVerifierService(VerifierService):
         if action.action_type is ActionType.HOTKEY and action.key:
             key_lower = action.key.lower().replace("+", "")
             if key_lower in intent.replace("+", "").replace("-", ""):
-                # Only if this is the LAST action in the intent
-                last_phrase = intent.split(",")[-1].strip().lower() if "," in intent else intent
-                if key_lower in last_phrase.replace("+", "").replace("-", ""):
-                    return True
+                return True
         return False
 
     def check_terminal_state(

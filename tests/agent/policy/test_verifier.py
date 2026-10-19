@@ -7,7 +7,7 @@ import pytest
 
 from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.clients.gemini import PlaceholderGeminiClient
-from operon.models.common import FailureCategory, LoopStage, StopReason
+from operon.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from operon.models.execution import ExecutedAction
 from operon.models.perception import ScreenPerception, UIElement, UIElementType
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
@@ -445,3 +445,22 @@ async def test_unsure_critic_falls_back_to_the_run_history(tmp_path: Path) -> No
 
     assert (await service.verify(worked, decision, executed)).stop_condition_met is True
     assert (await service.verify(idle, decision, executed)).stop_condition_met is False
+
+
+@pytest.mark.parametrize(
+    ("intent", "action_type", "completes"),
+    [
+        ("Hover over the Products menu", ActionType.HOVER, True),
+        ("Hover over the Products menu and click Pricing", ActionType.HOVER, False),
+        ("Hover over Products, then click Pricing", ActionType.HOVER, False),
+        ("Open the menu and hover over Products", ActionType.HOVER, True),
+        ("Drag and drop the file onto the folder", ActionType.DRAG, True),
+        ("Drag the card to Done and then refresh the page", ActionType.DRAG, False),
+        ("Right-click the file and choose Rename", ActionType.RIGHT_CLICK, False),
+    ],
+)
+def test_goal_completing_action_only_counts_the_final_step_of_the_intent(intent, action_type, completes) -> None:
+    state = AgentState(run_id="r", intent=intent, status=RunStatus.RUNNING)
+    action = AgentAction(action_type=action_type, x=10, y=10, x_end=20, y_end=20) if action_type is ActionType.DRAG else AgentAction(action_type=action_type, x=10, y=10)
+
+    assert DeterministicVerifierService._is_goal_completing_action(state, action) is completes

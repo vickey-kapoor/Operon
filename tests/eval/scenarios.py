@@ -97,10 +97,6 @@ def hover_then_click() -> Scenario:
             "menu": json_reply(_click(PRICING), subgoal="open pricing"),
             "pricing": json_reply(_STOP, subgoal="complete task", confidence=0.95),
         },
-        known_issue=(
-            "verifier._is_goal_completing_action treats any HOVER as completing an intent "
-            "containing 'hover', so the run stops after the first sub-step"
-        ),
     )
 
 
@@ -202,11 +198,6 @@ def cu_click_then_done() -> Scenario:
             "nav": cu_call("click_at", x=x, y=y),
             "pricing": cu_text("I opened the Products page. The task is complete."),
         },
-        known_issue=(
-            "a text-only Computer Use reply becomes WAIT; on a static screen the next step "
-            "reuses the prior perception, skips perceive(), and choose_action raises "
-            "'No cached computer-use decision available'"
-        ),
     )
 
 

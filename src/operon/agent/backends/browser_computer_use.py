@@ -21,7 +21,7 @@ from operon.clients.gemini_computer_use import (
 from operon.models.capture import CaptureFrame
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import PageHint, ScreenPerception
-from operon.models.policy import PolicyDecision
+from operon.models.policy import ActionType, PolicyDecision
 from operon.models.state import AgentState
 from operon.store.background_writer import bg_writer
 
@@ -62,11 +62,13 @@ class BrowserComputerUseBackend(AgentBackend):
             "- If uncertain, choose a low-risk action like hover_at or scroll_at instead of waiting.\n"
         )
         self._cached_decision: PolicyDecision | None = None
+        self._last_frames: dict[str, CaptureFrame] = {}
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._conversations: dict[str, _ConversationState] = {}
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        self._last_frames[state.run_id] = screenshot
         step_dir = Path(screenshot.artifact_path).resolve().parent
         step_dir.mkdir(parents=True, exist_ok=True)
         prompt_path = step_dir / "computer_use_prompt.txt"
@@ -94,6 +96,14 @@ class BrowserComputerUseBackend(AgentBackend):
                     screen_height=screenshot.height,
                 ),
             }
+        elif self._is_completion_text(response_payload, state):
+            # A text-only reply after the model has acted is how Computer Use says
+            # the task is done. Surface it as STOP so the verifier judges the claim.
+            response_payload = {
+                **response_payload,
+                "action": {"action_type": ActionType.STOP.value},
+                "active_subgoal": "complete task",
+            }
         self._cached_decision = build_policy_decision(response_payload)
         bg_writer.enqueue(
             parsed_path,
@@ -119,7 +129,13 @@ class BrowserComputerUseBackend(AgentBackend):
         perception: ScreenPerception,
     ) -> PolicyDecision:
         if self._cached_decision is None:
-            raise RuntimeError("No cached computer-use decision available")
+            # perceive() was skipped (the loop reused a prior perception) or the
+            # coordinator is asking for a second decision this step: take a fresh
+            # turn on the current screenshot rather than failing the step.
+            frame = self._last_frames.get(state.run_id)
+            if frame is None or not perception.capture_artifact_path:
+                raise RuntimeError("No cached computer-use decision available")
+            await self.perceive(frame.model_copy(update={"artifact_path": perception.capture_artifact_path}), state)
         decision = self._cached_decision
         self._cached_decision = None
         return decision
@@ -203,7 +219,11 @@ class BrowserComputerUseBackend(AgentBackend):
             conversation.contents.append(function_response)
             conversation.acknowledged_actions = len(state.action_history)
             conversation.pending_function_names = []
-        elif not conversation.contents:
+        elif not conversation.contents or (
+            not conversation.pending_function_names and conversation.contents[-1].get("role") == "model"
+        ):
+            # First turn, or the model's last turn had no tool call to answer:
+            # show it the current screen so the conversation keeps alternating.
             conversation.contents.append(
                 self._build_user_content(
                     prompt=prompt,
@@ -239,6 +259,17 @@ class BrowserComputerUseBackend(AgentBackend):
             previous_summary=state.observation_history[-1].summary if state.observation_history else "none",
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             advisory_hints=hint_block,
+        )
+
+    @staticmethod
+    def _is_completion_text(response_payload: dict, state: AgentState) -> bool:
+        if "function_call" in response_payload:
+            return False
+        if (response_payload.get("action") or {}).get("action_type") != "wait":
+            return False
+        return any(
+            executed.success and executed.action.action_type not in {ActionType.WAIT, ActionType.STOP, ActionType.WAIT_FOR_USER}
+            for executed in state.action_history
         )
 
     @staticmethod

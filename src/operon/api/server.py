@@ -65,7 +65,11 @@ def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     load_dotenv(find_dotenv(usecwd=True), override=True)
 
-    from operon.api.auth import configured_api_keys, require_api_key
+    from operon.api.auth import (
+        configured_api_keys,
+        configured_cors_origins,
+        require_api_key,
+    )
     from operon.api.routes import router
     from operon.api.ws_stream import router as ws_router
 
@@ -75,13 +79,9 @@ def create_app() -> FastAPI:
         description="Operate any interface with a vision-driven computer-use engine.",
         lifespan=_lifespan,
     )
-    origins = os.getenv("CORS_ORIGINS", "").strip()
-    allowed: set[str] = set()
-    if origins:
-        allowed.update(o.strip() for o in origins.split(","))
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=list(allowed),
+        allow_origins=sorted(configured_cors_origins()),
         allow_methods=["*"],
         allow_headers=["*"],
     )

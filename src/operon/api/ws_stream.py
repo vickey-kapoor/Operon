@@ -226,8 +226,10 @@ async def stream(ws: WebSocket) -> None:
     # (inject_input, resume, ...), so it must honor API_KEYS like the HTTP routes.
     # Browsers can't set headers on a WebSocket — the key comes via ?api_key= (or
     # an x-api-key subprotocol). No-op when API_KEYS is unset.
-    from operon.api.auth import websocket_api_key_ok
-    if not websocket_api_key_ok(ws):
+    # The Origin gate is always on: CORS does not cover WebSockets, so without it
+    # any page in a local browser could connect and drive the agent.
+    from operon.api.auth import websocket_api_key_ok, websocket_origin_ok
+    if not websocket_origin_ok(ws) or not websocket_api_key_ok(ws):
         await ws.close(code=1008)  # 1008 = policy violation (unauthorized)
         return
     await ws.accept()

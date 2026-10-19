@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 
+from operon.agent import control as run_control
 from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.agent.hitl import HITL_PAGE_HINT_KEYWORDS
@@ -106,11 +107,7 @@ class PolicyRuleEngine:
             ("_dismiss_blocking_overlay_rule", lambda: self._dismiss_blocking_overlay_rule(state, perception)),
             ("_search_query_rule", lambda: self._search_query_rule(state, perception)),
         ]
-        try:
-            from operon.api import ws_stream as _ws_mod
-            _disabled = _ws_mod.get_disabled_rules()
-        except ImportError:
-            _disabled = frozenset()
+        _disabled = run_control.get_disabled_rules()
 
         for rule_name, call in _primitives:
             if rule_name in _disabled:

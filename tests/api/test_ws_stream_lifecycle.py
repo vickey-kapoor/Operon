@@ -8,6 +8,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from operon.agent import control
 from operon.api import ws_stream
 
 
@@ -17,7 +18,7 @@ def stream_client(monkeypatch):
     monkeypatch.setattr(
         ws_stream, "_browser_manager", SimpleNamespace(latest_frame=b"current frame")
     )
-    monkeypatch.setattr(ws_stream, "_confidence_threshold", 0.0)
+    monkeypatch.setattr(control, "_confidence_threshold", 0.0)
     monkeypatch.setattr(ws_stream, "_subscribers", [])
     app = FastAPI()
     app.include_router(ws_stream.router)

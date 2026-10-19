@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+from urllib.parse import urlsplit
 
 from fastapi import Header, HTTPException, Request, WebSocket, status
 
@@ -32,6 +33,12 @@ def configured_api_keys() -> set[str]:
     """The set of accepted API keys from ``API_KEYS`` (comma-separated). Empty ⇒ auth off."""
     raw = os.getenv("API_KEYS", "")
     return {key.strip() for key in raw.split(",") if key.strip()}
+
+
+def configured_cors_origins() -> set[str]:
+    """The browser origins allowed by ``CORS_ORIGINS`` (comma-separated). Empty ⇒ none."""
+    raw = os.getenv("CORS_ORIGINS", "")
+    return {origin.strip() for origin in raw.split(",") if origin.strip()}
 
 
 def _key_matches(presented: str, accepted: set[str]) -> bool:
@@ -78,3 +85,32 @@ def websocket_api_key_ok(websocket: WebSocket) -> bool:
         if len(protocols) >= 2 and protocols[0] == "x-api-key":
             presented = protocols[1]
     return presented is not None and _key_matches(presented, accepted)
+
+
+_LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def websocket_origin_ok(websocket: WebSocket) -> bool:
+    """Whether a WebSocket handshake comes from an allowed browser origin.
+
+    CORS does not apply to WebSockets, so without this check any page open in
+    any browser on the host could connect to the stream and inject input. Unlike
+    the API-key gate this is always on:
+
+    - no ``Origin`` header ⇒ allowed (a non-browser client; browsers always send it)
+    - an origin listed in ``CORS_ORIGINS`` ⇒ allowed
+    - a same-origin page served by this server on a loopback host ⇒ allowed;
+      loopback-only so a DNS-rebound name (whose Host matches its Origin)
+      does not pass
+    - anything else, including ``null`` ⇒ rejected
+    """
+    origin = websocket.headers.get("origin")
+    if origin is None:
+        return True
+    if origin in configured_cors_origins():
+        return True
+    parts = urlsplit(origin)
+    host_header = websocket.headers.get("host", "").lower()
+    if parts.hostname not in _LOOPBACK_HOSTS:
+        return False
+    return parts.netloc.lower() == host_header

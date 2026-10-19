@@ -106,15 +106,17 @@ def _notify_windows(title: str, message: str) -> None:
         logger.warning("win11toast notification failed, falling back to balloon tip: %s", exc)
 
     # Fallback: PowerShell balloon tip (Windows XP-era, may be silenced by
-    # Focus Assist, but better than nothing).
-    safe_title = title.replace('"', "'")
-    safe_msg = message.replace('"', "'")
+    # Focus Assist, but better than nothing). The title and message are
+    # LLM-written from on-screen text, so they reach PowerShell only through
+    # environment variables: a value read from $env: is never parsed as code,
+    # unlike text spliced into the script (where "$(...)" would execute).
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "$n = New-Object System.Windows.Forms.NotifyIcon; "
         "$n.Icon = [System.Drawing.SystemIcons]::Information; "
         "$n.Visible = $true; "
-        f'$n.ShowBalloonTip(8000, "{safe_title}", "{safe_msg}", [System.Windows.Forms.ToolTipIcon]::Warning); '
+        "$n.ShowBalloonTip(8000, $env:OPERON_NOTIFY_TITLE, $env:OPERON_NOTIFY_MESSAGE, "
+        "[System.Windows.Forms.ToolTipIcon]::Warning); "
         "Start-Sleep -Seconds 9; $n.Visible = $false"
     )
     subprocess.Popen(
@@ -122,16 +124,29 @@ def _notify_windows(title: str, message: str) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=_NO_CONSOLE,
+        env={**os.environ, "OPERON_NOTIFY_TITLE": title, "OPERON_NOTIFY_MESSAGE": message},
     )
 
 
 def _notify_macos(title: str, message: str) -> None:
-    script = f'display notification "{message}" with title "{title}"'
-    subprocess.Popen(["osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Title and message are passed as argv to the run handler, never spliced
+    # into the AppleScript source, so a quote in them cannot break out.
+    subprocess.Popen(
+        [
+            "osascript",
+            "-e", "on run argv",
+            "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+            "-e", "end run",
+            title,
+            message,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _notify_linux(title: str, message: str) -> None:
-    subprocess.Popen(["notify-send", title, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(["notify-send", "--", title, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 async def start_escalation_timer(

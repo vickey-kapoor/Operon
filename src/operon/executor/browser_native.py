@@ -707,6 +707,16 @@ class NativeBrowserExecutor(Executor):
 
     def _attach_page_listeners(self, page: object, run_id: str) -> None:
         """Wire console/network/dialog listeners onto a newly created page."""
+        def _on_popup(popup) -> None:
+            # Chromium can emit the popup after mouse.click() has returned, so
+            # the immediate context.pages check in execute() can miss it.
+            # Follow the event as well, including popups opened by a popup.
+            self._attach_page_listeners(popup, run_id)
+            session = self._sessions.get(run_id)
+            if session is not None and session.page is page:
+                session.page = popup
+
+        page.on("popup", _on_popup)
         page.on("console", lambda msg: logger.debug("BROWSER_LOG [%s]: %s", msg.type, msg.text))
         page.on("requestfailed", lambda req: logger.warning(
             "NETWORK_FAIL: %s — %s", req.url, req.failure

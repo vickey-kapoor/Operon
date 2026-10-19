@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { wsProtocols } from "../api";
 
 // ── Event types ───────────────────────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ export function useAgentStream() {
   const frameCallbacksRef = useRef<Set<(blob: Blob) => void>>(new Set());
 
   const connect = useCallback(() => {
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(WS_URL, wsProtocols());
     wsRef.current = ws;
 
     ws.onopen = () => setState((s) => ({ ...s, connected: true }));

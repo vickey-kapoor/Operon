@@ -3,8 +3,7 @@ import type { AgentEvent, StepEvent, HitlRequiredEvent } from "../hooks/useAgent
 import type { RunState } from "../App";
 import { SubgoalTree } from "./SubgoalTree";
 import { ReasoningLog } from "./ReasoningLog";
-
-const API = "http://127.0.0.1:8080";
+import { API, apiHeaders } from "../api";
 
 type Props = {
   events: AgentEvent[];
@@ -69,7 +68,7 @@ export function TaskIntelligence({ events, connected, runState, onRunChange, sen
     if (!runState.runId) return;
     await fetch(`${API}/resume`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders(),
       body: JSON.stringify({ run_id: runState.runId }),
     });
     onRunChange({ ...runState, status: "running" });
@@ -94,7 +93,7 @@ export function TaskIntelligence({ events, connected, runState, onRunChange, sen
     if (!trimmed) return;
     const res = await fetch(`${API}/run-task`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders(),
       body: JSON.stringify({ intent: trimmed, max_steps: 25 }),
     });
     const data = await res.json();
@@ -105,7 +104,7 @@ export function TaskIntelligence({ events, connected, runState, onRunChange, sen
     if (!runState.runId) return;
     await fetch(`${API}/stop`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders(),
       body: JSON.stringify({ run_id: runState.runId }),
     });
   };

@@ -228,11 +228,15 @@ async def stream(ws: WebSocket) -> None:
     # an x-api-key subprotocol). No-op when API_KEYS is unset.
     # The Origin gate is always on: CORS does not cover WebSockets, so without it
     # any page in a local browser could connect and drive the agent.
-    from operon.api.auth import websocket_api_key_ok, websocket_origin_ok
+    from operon.api.auth import (
+        websocket_api_key_ok,
+        websocket_origin_ok,
+        websocket_subprotocol,
+    )
     if not websocket_origin_ok(ws) or not websocket_api_key_ok(ws):
         await ws.close(code=1008)  # 1008 = policy violation (unauthorized)
         return
-    await ws.accept()
+    await ws.accept(subprotocol=websocket_subprotocol(ws))
     q: asyncio.Queue = asyncio.Queue(maxsize=64)
     _subscribers.append(q)
     # Static pages may emit no further CDP frames after this client connects.

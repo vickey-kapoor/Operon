@@ -38,9 +38,9 @@ _browser_manager: Any = None
 # PolicyDecision.confidence < threshold). Set via "set_confidence_threshold" control message.
 _confidence_threshold: float = 0.0
 
-# Override hint typed by the user during a HITL pause. Consumed once by the next
-# step's policy call and cleared — see loop.py consume_override_hint usage.
-_pending_override_hint: str | None = None
+# Override hints typed by the user during a HITL pause, keyed by the run they were
+# sent for. Consumed once by that run's next step — see loop.py consume_override_hint.
+_pending_override_hints: dict[str, str] = {}
 
 # Reference to the AgentLoop singleton so WS control messages can call resume_run().
 _agent_loop: Any = None
@@ -87,12 +87,9 @@ def set_disabled_rules(names: list[str]) -> None:
     _disabled_rules = set(names)
 
 
-def consume_override_hint() -> str | None:
-    """Pop and return the pending user override hint (one-shot)."""
-    global _pending_override_hint
-    hint = _pending_override_hint
-    _pending_override_hint = None
-    return hint
+def consume_override_hint(run_id: str) -> str | None:
+    """Pop and return the pending user override hint for ``run_id`` (one-shot)."""
+    return _pending_override_hints.pop(run_id, None)
 
 
 def publish_event(event: dict[str, Any]) -> None:
@@ -182,8 +179,11 @@ async def _handle_control(msg: dict) -> None:
     elif msg_type == "override":
         # Store the correction hint and resume the paused run in one shot.
         hint = msg.get("hint", "").strip()
-        global _pending_override_hint
-        _pending_override_hint = hint or None
+        if _active_run_id is not None:
+            if hint:
+                _pending_override_hints[_active_run_id] = hint
+            else:
+                _pending_override_hints.pop(_active_run_id, None)
         if _agent_loop is not None and _active_run_id is not None:
             try:
                 await _resume_active_run()

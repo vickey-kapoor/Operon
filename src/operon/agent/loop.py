@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import time
+import weakref
 from pathlib import Path
 
 from operon.agent.actions.grounding import element_center, make_grounder
@@ -171,6 +172,10 @@ class AgentLoop:
         self._best_of_n_critic: Critic = HeuristicCritic()
         # RFC 0001 Move 5: deny/confirm policy gate before execution (OPERON_TRUST_GATE).
         self._trust_gate = make_trust_gate()
+        # One lock per run so /step, /resume and the auto-run task never interleave
+        # steps on the same run. Weak values: a lock lives only while a step holds
+        # or awaits it, so the map does not grow with every run ever started.
+        self._run_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -325,6 +330,13 @@ class AgentLoop:
         )
 
     async def step_run(self, request: StepRequest) -> RunResponse:
+        lock = self._run_locks.get(request.run_id)
+        if lock is None:
+            lock = self._run_locks[request.run_id] = asyncio.Lock()
+        async with lock:
+            return await self._step_run_locked(request)
+
+    async def _step_run_locked(self, request: StepRequest) -> RunResponse:
         record = await self.run_store.get_run(request.run_id)
         if record is None:
             raise ValueError(f"Run {request.run_id!r} not found")
@@ -373,10 +385,14 @@ class AgentLoop:
                 and not record.start_url
                 and hasattr(self.executor, "execute")
             ):
-                logger.info("Bootstrap warmup: no start URL — navigating to google.com")
-                await self.executor.execute(
-                    AgentAction(action_type=ActionType.NAVIGATE, url="https://www.google.com")
-                )
+                warmup = AgentAction(action_type=ActionType.NAVIGATE, url="https://www.google.com")
+                # The warmup is an agent-initiated navigation like any other, so it must
+                # honor the trust gate (e.g. OPERON_TRUST_ALLOW_DOMAINS) instead of bypassing it.
+                if self._trust_gate.evaluate(warmup).verdict is TrustVerdict.ALLOW:
+                    logger.info("Bootstrap warmup: no start URL — navigating to google.com")
+                    await self.executor.execute(warmup)
+                else:
+                    logger.info("Bootstrap warmup: trust gate blocks google.com — skipping warmup navigation")
             await asyncio.sleep(2.5)
 
         await self._consume_force_fresh_perception(record)
@@ -427,7 +443,7 @@ class AgentLoop:
         # Inject it as a rule trace so the LLM policy sees it this step.
         try:
             from operon.api import ws_stream as _ws_mod_hint
-            _override_hint = _ws_mod_hint.consume_override_hint()
+            _override_hint = _ws_mod_hint.consume_override_hint(record.run_id)
             if _override_hint:
                 state.last_rule_trace = (
                     f"[USER OVERRIDE HINT] The user provided this correction at step {step_index}: "

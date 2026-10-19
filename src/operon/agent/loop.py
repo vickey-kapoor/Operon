@@ -325,8 +325,9 @@ class AgentLoop:
         """Resume a run that was paused waiting for user input.
 
         ``approve_gated_action``: when the pause came from the confidence or trust
-        gate, resuming is the human's approval of that action, so the next step may
-        run it once. Pass False when resuming with a correction instead (override).
+        gate or the coordinate-thrash guard, resuming is the human's approval of that
+        action, so the next step may run it once. Pass False when resuming with a
+        correction instead (override).
         """
         record = await self.run_store.get_run(run_id)
         if record is None:
@@ -498,7 +499,11 @@ class AgentLoop:
 
         # Retry Exhaustion / Coordinate Thrash guard: if this action targets a (x, y)
         # that has already failed 3 times, escalate to HITL instead of attempting again.
-        if self._coordinate_thrash_detected(state, decision.action):
+        if (
+            "coordinate_thrash" not in self._approved_gates(record.run_id, decision.action)
+            and self._coordinate_thrash_detected(state, decision.action)
+        ):
+            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash")
             _trace("  3 POLICY -> COORDINATE_THRASH_HITL", "3 coord failures at same point — escalating to HITL")
             thrash_x, thrash_y = decision.action.x, decision.action.y
             hitl_decision = decision.model_copy(update={
@@ -818,19 +823,13 @@ class AgentLoop:
         3. File guard: a read_text / upload_file* path the user never named, outside
            the run dir and OPERON_ALLOWED_FILE_ROOTS.
 
-        Gates 1-2 can be approved by resuming (see ``resume_run``); the file guard
-        cannot, since its fix is naming the path in the task or allowing its folder.
+        Gates 1-2 (and the coordinate-thrash pause in step) can be approved by
+        resuming (see ``resume_run``); the file guard cannot, since its fix is
+        naming the path in the task or allowing its folder.
         """
         action = decision.action
         fingerprint = self._gate_fingerprint(action)
-        # Gates a human already approved for this exact action (see resume_run).
-        prior = self._approved_gate_actions.get(run_id)
-        approved: frozenset[str] = frozenset()
-        if prior is not None:
-            if prior[0] == fingerprint:
-                approved = prior[1]
-            else:
-                del self._approved_gate_actions[run_id]  # the policy moved on
+        approved = self._approved_gates(run_id, action)
         threshold = run_control.get_confidence_threshold()
         if (
             "confidence" not in approved
@@ -875,6 +874,16 @@ class AgentLoop:
                 )
         self._approved_gate_actions.pop(run_id, None)  # approval used: the action runs now
         return None
+
+    def _approved_gates(self, run_id: str, action: AgentAction) -> frozenset[str]:
+        """Gates a human already approved for this exact action (see resume_run)."""
+        prior = self._approved_gate_actions.get(run_id)
+        if prior is None:
+            return frozenset()
+        if prior[0] != self._gate_fingerprint(action):
+            del self._approved_gate_actions[run_id]  # the policy moved on
+            return frozenset()
+        return prior[1]
 
     def _gate_fingerprint(self, action: AgentAction) -> str:
         """What a human approves at a gate pause: the action's type plus the text, URL

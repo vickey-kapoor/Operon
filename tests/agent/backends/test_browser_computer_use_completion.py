@@ -155,3 +155,13 @@ async def test_perception_marks_elements_as_not_reported(tmp_path: Path) -> None
     perception = await backend.perceive(_frame(tmp_path), _state(ActionType.CLICK))
 
     assert perception.elements_reported is False
+
+
+async def test_subgoal_names_the_call_so_a_second_field_is_not_already_done(tmp_path: Path) -> None:
+    name = {"name": "type_text_at", "args": {"x": 100, "y": 100, "text": "Ada"}}
+    email = {"name": "type_text_at", "args": {"x": 100, "y": 200, "text": "ada@example.com"}}
+
+    subgoals = {BrowserComputerUseBackend._subgoal_for_calls([call]) for call in (name, email)}
+
+    assert len(subgoals) == 2
+    assert all(subgoal.startswith("type_text_at ") for subgoal in subgoals)

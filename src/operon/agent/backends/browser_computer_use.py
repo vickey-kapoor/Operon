@@ -88,13 +88,15 @@ class BrowserComputerUseBackend(AgentBackend):
             screenshot_path=screenshot.artifact_path,
         )
         if "function_call" in response_payload:
+            function_calls = response_payload.get("function_calls") or [response_payload["function_call"]]
             response_payload = {
                 **response_payload,
                 "action": normalize_computer_use_actions(
-                    response_payload.get("function_calls") or [response_payload["function_call"]],
+                    function_calls,
                     screen_width=screenshot.width,
                     screen_height=screenshot.height,
                 ),
+                "active_subgoal": self._subgoal_for_calls(function_calls),
             }
         elif self._is_completion_text(response_payload, state):
             # A text-only reply after the model has acted is how Computer Use says
@@ -260,6 +262,21 @@ class BrowserComputerUseBackend(AgentBackend):
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             advisory_hints=hint_block,
         )
+
+    @staticmethod
+    def _subgoal_for_calls(function_calls: list[dict]) -> str:
+        """Name the step by the call and its arguments, not the bare tool name.
+
+        The progress tracker blocks a subgoal already completed on the same page,
+        and this backend's page signature never changes, so a bare tool name would
+        block every second ``type_text_at`` (a form's second field) for the run.
+        """
+        described = []
+        for call in function_calls:
+            args = call.get("args") or {}
+            details = " ".join(f"{key}={args[key]}" for key in sorted(args) if key != "safety_decision")
+            described.append(f"{call.get('name', 'browser step')} {details}".strip())
+        return "; ".join(described)
 
     @staticmethod
     def _is_completion_text(response_payload: dict, state: AgentState) -> bool:

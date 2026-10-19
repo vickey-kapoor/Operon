@@ -142,3 +142,35 @@ def test_normalize_rejects_unknown_tool_function() -> None:
             screen_width=1200,
             screen_height=800,
         )
+
+
+@pytest.mark.parametrize(
+    ("function_call", "action_type", "key"),
+    [
+        ({"name": "go_back", "args": {}}, ActionType.HOTKEY, "alt+left"),
+        ({"name": "go_forward", "args": {}}, ActionType.HOTKEY, "alt+right"),
+        ({"name": "key_combination", "args": {"keys": "Control+A"}}, ActionType.HOTKEY, "Control+A"),
+        ({"name": "key_combination", "args": {"keys": "Enter"}}, ActionType.PRESS_KEY, "Enter"),
+    ],
+)
+def test_normalized_key_calls_translate_to_actions(function_call, action_type, key) -> None:
+    payload = normalize_computer_use_function_call(function_call, screen_width=1000, screen_height=1000)
+
+    action = translate_computer_use_action(payload)
+
+    assert action.action_type is action_type
+    assert action.key == key
+
+
+@pytest.mark.parametrize(("direction", "sign"), [("down", -1), ("up", 1)])
+def test_scroll_document_uses_the_executor_sign_convention(direction, sign) -> None:
+    """Executors scroll up for a positive amount; both scroll tools must agree."""
+    document = normalize_computer_use_function_call(
+        {"name": "scroll_document", "args": {"direction": direction}}, screen_width=1000, screen_height=1000
+    )
+    at = normalize_computer_use_function_call(
+        {"name": "scroll_at", "args": {"x": 500, "y": 500, "direction": direction}}, screen_width=1000, screen_height=1000
+    )
+
+    assert document["scroll_amount"] * sign > 0
+    assert at["scroll_amount"] * sign > 0

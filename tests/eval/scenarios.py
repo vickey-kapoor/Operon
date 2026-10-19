@@ -249,10 +249,6 @@ def cu_scroll_document() -> Scenario:
             "bottom": _cu_click(FOOTER_LINK),
             "careers": _DONE,
         },
-        known_issue=(
-            "translation maps scroll_document direction=down to a positive scroll_amount, "
-            "which the executors scroll UP (scroll_at uses the right sign)"
-        ),
     )
 
 
@@ -301,11 +297,6 @@ def cu_multi_field_form() -> Scenario:
             "filled": _cu_click(SUBMIT),
             "sent": _DONE,
         },
-        known_issue=(
-            "Computer Use sets active_subgoal to the tool name and its page signature is always "
-            "'unknown|none|none', so after one type_text_at succeeds every later one is blocked "
-            "as subgoal_already_completed"
-        ),
     )
 
 
@@ -401,11 +392,6 @@ def cu_go_back() -> Scenario:
             "support": cu_call("go_back"),
             "products": _DONE,
         },
-        known_issue=(
-            "go_back (and go_forward, and any key_combination with '+') translates to a HOTKEY "
-            "action that translate_computer_use_action does not support, which fails the run "
-            "as pre_step_perception_failed"
-        ),
     )
 
 

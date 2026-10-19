@@ -76,7 +76,8 @@ def normalize_computer_use_function_call(
         return {"action_type": "press_key", "key": keys}
     if name == "scroll_document":
         direction = str(args["direction"]).lower()
-        amount = 800 if direction in {"down", "right"} else -800
+        # Executors scroll up for a positive amount (as scroll_at below assumes).
+        amount = 800 if direction in {"up", "right"} else -800
         return {
             "action_type": "scroll",
             "x": max(screen_width // 2, 0),
@@ -165,6 +166,12 @@ def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction
         if "+" in key:
             return AgentAction(action_type=ActionType.HOTKEY, key=key)
         return AgentAction(action_type=ActionType.PRESS_KEY, key=key)
+
+    if action_type == "hotkey":
+        return AgentAction(action_type=ActionType.HOTKEY, key=action_payload["key"])
+
+    if action_type == "press_key":
+        return AgentAction(action_type=ActionType.PRESS_KEY, key=action_payload["key"])
 
     if action_type == "scroll":
         return AgentAction(

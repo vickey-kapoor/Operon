@@ -146,3 +146,60 @@ async def test_warmup_navigation_runs_when_gate_allows(monkeypatch: pytest.Monke
     await loop.step_run(StepRequest(run_id="run-1"))
 
     assert "https://www.google.com" in _navigations(execute)
+
+
+# ── Pre-execution gates ──────────────────────────────────────────────────────
+
+
+def _decision(action: AgentAction, confidence: float = 0.9) -> PolicyDecision:
+    return PolicyDecision(action=action, rationale="r", confidence=confidence, active_subgoal="s")
+
+
+@pytest.fixture
+def gate_loop(tmp_path, monkeypatch: pytest.MonkeyPatch) -> AgentLoop:
+    from operon.agent import control
+
+    monkeypatch.setattr(control, "_confidence_threshold", 0.0)
+    monkeypatch.delenv("OPERON_ALLOWED_FILE_ROOTS", raising=False)
+    loop = _bare_loop()
+    loop.run_store = SimpleNamespace(root_dir=str(tmp_path))
+    loop._trust_gate = TrustGate()  # disabled
+    return loop
+
+
+def test_gates_allow_an_ordinary_action(gate_loop: AgentLoop) -> None:
+    decision = _decision(AgentAction(action_type=ActionType.WAIT, wait_ms=10))
+    assert gate_loop._pre_execution_gate_text(decision, intent="x", run_id="r") is None
+
+
+def test_confidence_gate_blocks_below_threshold_but_not_stop(gate_loop: AgentLoop, monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.agent import control
+
+    monkeypatch.setattr(control, "_confidence_threshold", 0.8)
+    low = _decision(AgentAction(action_type=ActionType.WAIT, wait_ms=10), confidence=0.5)
+    stop = _decision(AgentAction(action_type=ActionType.STOP), confidence=0.5)
+    assert "below your threshold 80%" in gate_loop._pre_execution_gate_text(low, intent="x", run_id="r")
+    assert gate_loop._pre_execution_gate_text(stop, intent="x", run_id="r") is None
+
+
+def test_trust_gate_deny_and_confirm(gate_loop: AgentLoop) -> None:
+    gate_loop._trust_gate = TrustGate(enabled=True, deny=("delete",), confirm=("purchase",))
+    deny = _decision(AgentAction(action_type=ActionType.TYPE, text="delete account", target_element_id="e"))
+    confirm = _decision(AgentAction(action_type=ActionType.TYPE, text="purchase now", target_element_id="e"))
+    assert gate_loop._pre_execution_gate_text(deny, intent="x", run_id="r").startswith("Blocked by policy")
+    assert gate_loop._pre_execution_gate_text(confirm, intent="x", run_id="r").startswith("High-risk action")
+
+
+def test_file_guard_blocks_unnamed_path(gate_loop: AgentLoop) -> None:
+    unnamed = _decision(AgentAction(action_type=ActionType.READ_TEXT, selector="main", text="/etc/hosts"))
+    named = _decision(AgentAction(action_type=ActionType.READ_TEXT, selector="main", text="/tmp/a.txt"))
+    assert "/etc/hosts" in gate_loop._pre_execution_gate_text(unnamed, intent="save it", run_id="r")
+    assert gate_loop._pre_execution_gate_text(named, intent="save it to /tmp/a.txt", run_id="r") is None
+
+
+def test_first_failing_gate_wins(gate_loop: AgentLoop, monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.agent import control
+
+    monkeypatch.setattr(control, "_confidence_threshold", 0.95)
+    decision = _decision(AgentAction(action_type=ActionType.READ_TEXT, selector="main", text="/etc/hosts"), confidence=0.5)
+    assert "below your threshold" in gate_loop._pre_execution_gate_text(decision, intent="x", run_id="r")

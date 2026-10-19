@@ -507,59 +507,10 @@ class AgentLoop:
                 after_artifact_path=after_artifact_path,
             )
 
-        # Confidence-gated autonomy: if the user has set a threshold via the Cockpit
-        # slider and this decision's confidence is below it, pause and ask for approval.
-        # Skips WAIT_FOR_USER and STOP (those already pause/terminate the run).
-        _conf_threshold = run_control.get_confidence_threshold()
-        if (
-            _conf_threshold > 0.0
-            and decision.action.action_type is not ActionType.WAIT_FOR_USER
-            and decision.action.action_type is not ActionType.STOP
-            and decision.confidence < _conf_threshold
-        ):
-            _trace(
-                "  3 POLICY -> CONFIDENCE_GATE",
-                f"confidence={decision.confidence:.2f} < threshold={_conf_threshold:.2f}",
-            )
-            gate_decision = decision.model_copy(update={
-                "action": AgentAction(
-                    action_type=ActionType.WAIT_FOR_USER,
-                    text=(
-                        f"Confidence {decision.confidence:.0%} is below your threshold {_conf_threshold:.0%}. "
-                        f"Planned action: {decision.action.action_type.value}. "
-                        "Click Proceed to approve or enter a correction hint."
-                    ),
-                ),
-            })
-            return await self._pause_for_user(
-                record=record,
-                state=state,
-                perception=perception,
-                decision=gate_decision,
-                perception_debug=perception_debug,
-                policy_debug=policy_debug,
-                step_index=step_index,
-                before_artifact_path=before_artifact_path,
-                after_artifact_path=after_artifact_path,
-            )
-
-        # Trust gate (RFC 0001 Move 5): deny/confirm policy before execution.
-        # No-op unless OPERON_TRUST_GATE is on. A non-ALLOW verdict pauses for a
-        # human (the action is not executed) — DENY = blocked, CONFIRM = high-risk.
-        trust = self._trust_gate.evaluate(decision.action)
-        if trust.verdict is not TrustVerdict.ALLOW:
-            _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
-            if trust.verdict is TrustVerdict.DENY:
-                gate_text = (
-                    f"Blocked by policy: {decision.action.action_type.value} action "
-                    f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
-                    "review and resume to override, or stop the run."
-                )
-            else:
-                gate_text = (
-                    f"High-risk action needs approval: {decision.action.action_type.value} "
-                    f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
-                )
+        # Pre-execution gates (confidence, trust, file guard): a blocked action is
+        # never executed — the run pauses for a human with the gate's reason.
+        gate_text = self._pre_execution_gate_text(decision, intent=state.intent, run_id=record.run_id)
+        if gate_text is not None:
             gate_decision = decision.model_copy(update={
                 "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
             })
@@ -568,42 +519,6 @@ class AgentLoop:
                 state=state,
                 perception=perception,
                 decision=gate_decision,
-                perception_debug=perception_debug,
-                policy_debug=policy_debug,
-                step_index=step_index,
-                before_artifact_path=before_artifact_path,
-                after_artifact_path=after_artifact_path,
-            )
-
-        # File guard: read_text / upload_file* paths come from model output, so a
-        # path the user never named (and outside the run dir and allowed roots)
-        # pauses for a human instead of being written to or uploaded.
-        blocked_path = (
-            blocked_file_path(
-                decision.action,
-                intent=state.intent,
-                run_dir=Path(self.run_store.root_dir) / record.run_id,
-            )
-            if decision.action.action_type in FILE_PATH_ACTIONS
-            else None
-        )
-        if blocked_path is not None:
-            _trace("  3 POLICY -> FILE_GUARD", f"blocked path {blocked_path!r}")
-            guard_decision = decision.model_copy(update={
-                "action": AgentAction(
-                    action_type=ActionType.WAIT_FOR_USER,
-                    text=(
-                        f"Blocked {decision.action.action_type.value}: the path {blocked_path!r} is not "
-                        "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
-                        "Restart with the path in the task, allow its folder, or stop the run."
-                    ),
-                ),
-            })
-            return await self._pause_for_user(
-                record=record,
-                state=state,
-                perception=perception,
-                decision=guard_decision,
                 perception_debug=perception_debug,
                 policy_debug=policy_debug,
                 step_index=step_index,
@@ -874,6 +789,59 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    def _pre_execution_gate_text(self, decision: PolicyDecision, *, intent: str, run_id: str) -> str | None:
+        """Why ``decision`` must pause for a human before executing, or None to proceed.
+
+        Gates run in order and the first block wins:
+        1. Confidence: the operator's threshold (UI slider) is above the decision's
+           confidence. Skips WAIT_FOR_USER and STOP, which already pause or end the run.
+        2. Trust gate (RFC 0001 Move 5): deny/confirm policy; a no-op unless
+           OPERON_TRUST_GATE is on. DENY = blocked, CONFIRM = high-risk.
+        3. File guard: a read_text / upload_file* path the user never named, outside
+           the run dir and OPERON_ALLOWED_FILE_ROOTS.
+        """
+        action = decision.action
+        threshold = run_control.get_confidence_threshold()
+        if (
+            threshold > 0.0
+            and action.action_type is not ActionType.WAIT_FOR_USER
+            and action.action_type is not ActionType.STOP
+            and decision.confidence < threshold
+        ):
+            _trace("  3 POLICY -> CONFIDENCE_GATE", f"confidence={decision.confidence:.2f} < threshold={threshold:.2f}")
+            return (
+                f"Confidence {decision.confidence:.0%} is below your threshold {threshold:.0%}. "
+                f"Planned action: {action.action_type.value}. "
+                "Click Proceed to approve or enter a correction hint."
+            )
+
+        trust = self._trust_gate.evaluate(action)
+        if trust.verdict is not TrustVerdict.ALLOW:
+            _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
+            if trust.verdict is TrustVerdict.DENY:
+                return (
+                    f"Blocked by policy: {action.action_type.value} action "
+                    f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
+                    "review and resume to override, or stop the run."
+                )
+            return (
+                f"High-risk action needs approval: {action.action_type.value} "
+                f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
+            )
+
+        if action.action_type in FILE_PATH_ACTIONS:
+            blocked_path = blocked_file_path(
+                action, intent=intent, run_dir=Path(self.run_store.root_dir) / run_id
+            )
+            if blocked_path is not None:
+                _trace("  3 POLICY -> FILE_GUARD", f"blocked path {blocked_path!r}")
+                return (
+                    f"Blocked {action.action_type.value}: the path {blocked_path!r} is not "
+                    "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
+                    "Restart with the path in the task, allow its folder, or stop the run."
+                )
+        return None
 
     async def _pause_for_user(
         self,

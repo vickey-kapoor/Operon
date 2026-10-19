@@ -581,3 +581,11 @@ def test_existing_stop_rejects_new_fields() -> None:
 
     with pytest.raises(Exception):
         AgentAction(action_type=ActionType.STOP, scroll_amount=5)
+
+
+@pytest.mark.parametrize("path", ["/cleanup", "/desktop/cleanup"])
+def test_cleanup_rejects_invalid_run_id(path: str) -> None:
+    from operon.api.server import app
+
+    resp = TestClient(app).post(path, json={"run_id": "../../etc"})
+    assert resp.status_code == 404

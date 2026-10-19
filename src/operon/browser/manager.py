@@ -171,7 +171,11 @@ class BrowserManager:
                 self._viewport_w = dims.get("w", 1920)
                 self._viewport_h = dims.get("h", 1080)
             except Exception:
-                pass
+                # inject_input maps UI clicks through this size, so say when it is a guess.
+                logger.warning(
+                    "viewport probe failed; inject_input assumes %dx%d",
+                    self._viewport_w, self._viewport_h, exc_info=True,
+                )
 
         logger.info(
             "BrowserManager: attached — %s  viewport=%dx%d",

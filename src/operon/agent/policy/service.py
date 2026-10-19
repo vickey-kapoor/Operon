@@ -34,6 +34,11 @@ class PolicyService(ABC):
     ) -> PolicyDecision:
         """Choose the next action from current state and perception."""
 
+    def supports_resampling(self, run_id: str = "") -> bool:
+        """Whether a second ``choose_action`` for the same step yields a fresh
+        decision (Best-of-N sampling needs it)."""
+        return True
+
 
 class GeminiPolicyService(PolicyService):
     """Gemini-backed policy implementation for one-step next-action selection."""

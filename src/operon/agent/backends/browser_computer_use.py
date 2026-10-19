@@ -127,6 +127,11 @@ class BrowserComputerUseBackend(AgentBackend):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
+    def supports_resampling(self, run_id: str = "") -> bool:
+        # The decision is a function call in a stateful Computer Use conversation;
+        # there is no second sample for the same turn.
+        return False
+
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         """Reset hints to a known state. Test use only."""
         self._advisory_hints = {"": [(h, "") for h in hints if h]}

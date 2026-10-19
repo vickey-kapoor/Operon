@@ -32,6 +32,7 @@ from operon.agent.policy.best_of_n import (
     best_of_n_count,
     select_best_of_n,
 )
+from operon.agent.policy.file_guard import FILE_PATH_ACTIONS, blocked_file_path
 from operon.agent.policy.progress_tracker import (
     ProgressTracker,
     apply_no_progress_detection,
@@ -578,6 +579,42 @@ class AgentLoop:
                 state=state,
                 perception=perception,
                 decision=gate_decision,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+            )
+
+        # File guard: read_text / upload_file* paths come from model output, so a
+        # path the user never named (and outside the run dir and allowed roots)
+        # pauses for a human instead of being written to or uploaded.
+        blocked_path = (
+            blocked_file_path(
+                decision.action,
+                intent=state.intent,
+                run_dir=Path(self.run_store.root_dir) / record.run_id,
+            )
+            if decision.action.action_type in FILE_PATH_ACTIONS
+            else None
+        )
+        if blocked_path is not None:
+            _trace("  3 POLICY -> FILE_GUARD", f"blocked path {blocked_path!r}")
+            guard_decision = decision.model_copy(update={
+                "action": AgentAction(
+                    action_type=ActionType.WAIT_FOR_USER,
+                    text=(
+                        f"Blocked {decision.action.action_type.value}: the path {blocked_path!r} is not "
+                        "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
+                        "Restart with the path in the task, allow its folder, or stop the run."
+                    ),
+                ),
+            })
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=guard_decision,
                 perception_debug=perception_debug,
                 policy_debug=policy_debug,
                 step_index=step_index,

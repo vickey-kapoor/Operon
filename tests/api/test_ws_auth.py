@@ -95,3 +95,23 @@ def test_ws_rejects_dns_rebound_same_origin(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(WebSocketDisconnect):
         with _client().websocket_connect("/ws/stream", headers=headers):
             pass
+def test_ws_echoes_x_api_key_subprotocol(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Browsers drop a connection whose offered subprotocol is not echoed back.
+    monkeypatch.setenv("API_KEYS", "s3cret")
+    with _client().websocket_connect("/ws/stream", subprotocols=["x-api-key", "s3cret"]) as ws:
+        assert ws.accepted_subprotocol == "x-api-key"
+        ws.close()
+
+
+def test_ws_echoes_subprotocol_even_when_auth_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("API_KEYS", raising=False)
+    with _client().websocket_connect("/ws/stream", subprotocols=["x-api-key", "anything"]) as ws:
+        assert ws.accepted_subprotocol == "x-api-key"
+        ws.close()
+
+
+def test_ws_selects_no_subprotocol_when_none_offered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("API_KEYS", raising=False)
+    with _client().websocket_connect("/ws/stream") as ws:
+        assert ws.accepted_subprotocol is None
+        ws.close()

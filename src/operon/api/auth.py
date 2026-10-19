@@ -64,6 +64,25 @@ async def require_api_key(
         )
 
 
+def _offered_subprotocols(websocket: WebSocket) -> list[str]:
+    return [
+        p.strip()
+        for p in websocket.headers.get("sec-websocket-protocol", "").split(",")
+        if p.strip()
+    ]
+
+
+def websocket_subprotocol(websocket: WebSocket) -> str | None:
+    """The subprotocol to echo on accept: ``x-api-key`` when the client offered it.
+
+    A browser that offers subprotocols drops the connection unless the server
+    selects one, so the key-carrying ``x-api-key`` offer must be echoed back
+    (whether or not auth is enabled) — never the key itself.
+    """
+    protocols = _offered_subprotocols(websocket)
+    return "x-api-key" if protocols[:1] == ["x-api-key"] else None
+
+
 def websocket_api_key_ok(websocket: WebSocket) -> bool:
     """Whether a WebSocket handshake is authorized.
 
@@ -77,11 +96,7 @@ def websocket_api_key_ok(websocket: WebSocket) -> bool:
         return True
     presented = websocket.query_params.get("api_key")
     if presented is None:
-        protocols = [
-            p.strip()
-            for p in websocket.headers.get("sec-websocket-protocol", "").split(",")
-            if p.strip()
-        ]
+        protocols = _offered_subprotocols(websocket)
         if len(protocols) >= 2 and protocols[0] == "x-api-key":
             presented = protocols[1]
     return presented is not None and _key_matches(presented, accepted)

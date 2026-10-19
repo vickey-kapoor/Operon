@@ -169,6 +169,19 @@ def types(text: str) -> ActionMatcher:
     return lambda a: a.action_type is ActionType.TYPE and text.lower() in (a.text or "").lower()
 
 
+def scrolls(direction: Literal["up", "down"]) -> ActionMatcher:
+    """Executor convention: a positive ``scroll_amount`` scrolls up."""
+    return lambda a: a.action_type is ActionType.SCROLL and ((a.scroll_amount or 0) < 0) == (direction == "down")
+
+
+def presses(key: str) -> ActionMatcher:
+    return lambda a: a.action_type in {ActionType.PRESS_KEY, ActionType.HOTKEY} and (a.key or "").lower() == key.lower()
+
+
+def waits() -> ActionMatcher:
+    return lambda a: a.action_type is ActionType.WAIT
+
+
 # ── Scripted replies ──────────────────────────────────────────────────────
 
 

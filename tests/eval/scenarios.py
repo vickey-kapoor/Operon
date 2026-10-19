@@ -20,7 +20,10 @@ from tests.eval.harness import (
     cu_text,
     hovers,
     json_reply,
+    presses,
+    scrolls,
     types,
+    waits,
 )
 
 
@@ -201,6 +204,263 @@ def cu_click_then_done() -> Scenario:
     )
 
 
+# ── Computer Use scenarios ────────────────────────────────────────────────
+# The default browser backend. The model grounds its own clicks, so screens
+# need no element list; replies are function calls on the 0-999 grid.
+
+SEARCH = Element("search", "Search", 40, 80, width=360, element_type="input")
+COUNTRY = Element("country", "Country", 40, 150, width=200, element_type="select")
+CANADA = Element("canada", "Canada", 40, 190, width=200)
+ACCEPT = Element("accept", "Accept cookies", 240, 300, width=160)
+FOOTER_LINK = Element("careers", "Careers", 40, 340)
+WRONG = Element("about", "About", 400, 340)
+
+
+def _cu_click(element: Element):
+    x, y = element.center
+    return cu_call("click_at", x=x, y=y)
+
+
+def _cu_type(element: Element, text: str, *, enter: bool = True):
+    x, y = element.center
+    return cu_call("type_text_at", x=x, y=y, text=text, press_enter=enter)
+
+
+_DONE = cu_text("The task is complete.")
+
+
+def cu_scroll_document() -> Scenario:
+    top = Screen("top", "Company homepage, top of the page", (HOME, PRODUCTS, SUPPORT))
+    bottom = Screen("bottom", "Company homepage, footer with Careers and About", (FOOTER_LINK, WRONG))
+    careers = Screen("careers", "Careers page with open roles", (HOME,), goal=True)
+    return Scenario(
+        name="cu_scroll_document",
+        description="Target is below the fold; the model scrolls the page down, then clicks.",
+        intent="Open the Careers page from the footer",
+        backend="computer_use",
+        screens=[top, bottom, careers],
+        transitions=[
+            Transition("top", scrolls("down"), "bottom"),
+            Transition("bottom", scrolls("up"), "top"),
+            Transition("bottom", clicks(FOOTER_LINK), "careers"),
+        ],
+        model={
+            "top": cu_call("scroll_document", direction="down"),
+            "bottom": _cu_click(FOOTER_LINK),
+            "careers": _DONE,
+        },
+        known_issue=(
+            "translation maps scroll_document direction=down to a positive scroll_amount, "
+            "which the executors scroll UP (scroll_at uses the right sign)"
+        ),
+    )
+
+
+def cu_scroll_at() -> Scenario:
+    scenario = cu_scroll_document()
+    scenario.name = "cu_scroll_at"
+    scenario.description = "Same page, scrolled with scroll_at instead of scroll_document."
+    scenario.known_issue = None
+    scenario.model = {**scenario.model, "top": cu_call("scroll_at", x=320, y=200, direction="down", magnitude=800)}
+    return scenario
+
+
+def cu_search_enter() -> Scenario:
+    home = Screen("home", "Store homepage with a search box", (SEARCH, CART))
+    results = Screen("results", "Search results for running shoes", (PLAN, CART), goal=True)
+    return Scenario(
+        name="cu_search_enter",
+        description="type_text_at submits with Enter by default.",
+        intent="Search the store for running shoes",
+        backend="computer_use",
+        screens=[home, results],
+        transitions=[Transition("home", types("running shoes"), "results")],
+        model={"home": _cu_type(SEARCH, "running shoes"), "results": _DONE},
+    )
+
+
+def cu_multi_field_form() -> Scenario:
+    empty = Screen("empty", "Contact form with Name and Email fields", (NAME, EMAIL, SUBMIT), page_hint="form_page")
+    named = Screen("named", "Contact form, Name is Ada", (NAME, EMAIL, SUBMIT), page_hint="form_page")
+    filled = Screen("filled", "Contact form, Name Ada, Email ada@example.com", (NAME, EMAIL, SUBMIT), page_hint="form_page")
+    sent = Screen("sent", "Thank you! Your message was sent.", (HOME,), page_hint="form_success", goal=True)
+    return Scenario(
+        name="cu_multi_field_form",
+        description="Two fields typed without Enter, then an explicit submit click.",
+        intent="Fill in the contact form with name Ada and email ada@example.com, then submit it",
+        backend="computer_use",
+        screens=[empty, named, filled, sent],
+        transitions=[
+            Transition("empty", types("Ada"), "named"),
+            Transition("named", types("ada@example.com"), "filled"),
+            Transition("filled", clicks(SUBMIT), "sent"),
+        ],
+        model={
+            "empty": _cu_type(NAME, "Ada", enter=False),
+            "named": _cu_type(EMAIL, "ada@example.com", enter=False),
+            "filled": _cu_click(SUBMIT),
+            "sent": _DONE,
+        },
+        known_issue=(
+            "Computer Use sets active_subgoal to the tool name and its page signature is always "
+            "'unknown|none|none', so after one type_text_at succeeds every later one is blocked "
+            "as subgoal_already_completed"
+        ),
+    )
+
+
+def cu_dropdown() -> Scenario:
+    closed = Screen("closed", "Shipping form, Country dropdown closed", (COUNTRY, SUBMIT), page_hint="form_page")
+    opened = Screen("open", "Country dropdown open: Canada, Mexico", (COUNTRY, CANADA), page_hint="form_page")
+    chosen = Screen("chosen", "Shipping form, Country is Canada", (COUNTRY, SUBMIT), page_hint="form_page", goal=True)
+    return Scenario(
+        name="cu_dropdown",
+        description="Open a dropdown, pick an option.",
+        intent="Set the shipping country to Canada",
+        backend="computer_use",
+        screens=[closed, opened, chosen],
+        transitions=[
+            Transition("closed", clicks(COUNTRY), "open"),
+            Transition("open", clicks(CANADA), "chosen"),
+        ],
+        model={"closed": _cu_click(COUNTRY), "open": _cu_click(CANADA), "chosen": _DONE},
+    )
+
+
+def cu_cookie_banner() -> Scenario:
+    banner = Screen("banner", "Cookie consent dialog covering the page", (ACCEPT,))
+    page = Screen("page", "Site header with Home, Products and Support", (HOME, PRODUCTS, SUPPORT))
+    products = Screen("products", "Products page", (PLAN, CART), goal=True)
+    return Scenario(
+        name="cu_cookie_banner",
+        description="A consent dialog must be dismissed before the real target is reachable.",
+        intent="Open the Products page",
+        backend="computer_use",
+        screens=[banner, page, products],
+        transitions=[
+            Transition("banner", clicks(ACCEPT), "page"),
+            Transition("page", clicks(PRODUCTS), "products"),
+        ],
+        model={"banner": _cu_click(ACCEPT), "page": _cu_click(PRODUCTS), "products": _DONE},
+    )
+
+
+def cu_slow_load() -> Scenario:
+    nav = Screen("nav", "Site header with Home, Products and Support", (HOME, PRODUCTS, SUPPORT))
+    loading = Screen("loading", "Loading spinner")
+    products = Screen("products", "Products page", (PLAN, CART), goal=True)
+    return Scenario(
+        name="cu_slow_load",
+        description="The click lands on a spinner; the model waits, then confirms.",
+        intent="Open the Products page",
+        backend="computer_use",
+        screens=[nav, loading, products],
+        transitions=[
+            Transition("nav", clicks(PRODUCTS), "loading"),
+            Transition("loading", waits(), "products"),
+        ],
+        model={"nav": _cu_click(PRODUCTS), "loading": cu_call("wait_5_seconds"), "products": _DONE},
+    )
+
+
+def cu_misclick_recovers() -> Scenario:
+    footer = Screen("footer", "Company homepage, footer with Careers and About", (FOOTER_LINK, WRONG))
+    careers = Screen("careers", "Careers page with open roles", (HOME,), goal=True)
+    x, y = FOOTER_LINK.center
+    return Scenario(
+        name="cu_misclick_recovers",
+        description="The first click misses (no change); the model corrects its aim.",
+        intent="Open the Careers page from the footer",
+        backend="computer_use",
+        screens=[footer, careers],
+        transitions=[Transition("footer", clicks(FOOTER_LINK), "careers")],
+        model={
+            "footer": [cu_call("click_at", x=x, y=y - 60), cu_call("click_at", x=x, y=y)],
+            "careers": _DONE,
+        },
+    )
+
+
+def cu_go_back() -> Scenario:
+    nav = Screen("nav", "Site header with Home, Products and Support", (HOME, PRODUCTS, SUPPORT))
+    support = Screen("support", "Support page", (HOME,))
+    products = Screen("products", "Products page", (PLAN, CART), goal=True)
+    return Scenario(
+        name="cu_go_back",
+        description="The model opens the wrong page, goes back, and opens the right one.",
+        intent="Open the Products page",
+        backend="computer_use",
+        screens=[nav, support, products],
+        transitions=[
+            Transition("nav", clicks(SUPPORT), "support"),
+            Transition("support", presses("alt+left"), "nav"),
+            Transition("nav", clicks(PRODUCTS), "products"),
+        ],
+        model={
+            "nav": [_cu_click(SUPPORT), _cu_click(PRODUCTS)],
+            "support": cu_call("go_back"),
+            "products": _DONE,
+        },
+        known_issue=(
+            "go_back (and go_forward, and any key_combination with '+') translates to a HOTKEY "
+            "action that translate_computer_use_action does not support, which fails the run "
+            "as pre_step_perception_failed"
+        ),
+    )
+
+
+def cu_done_without_effect() -> Scenario:
+    form = Screen("form", "Contact form, Name is Ada", (NAME, EMAIL, SUBMIT), page_hint="form_page")
+    sent = Screen("sent", "Thank you! Your message was sent.", (HOME,), page_hint="form_success", goal=True)
+    return Scenario(
+        name="cu_done_without_effect",
+        description="Submit silently does nothing; the model says done; the critic sees the unchanged form.",
+        intent="Submit the contact form",
+        backend="computer_use",
+        screens=[form, sent],
+        transitions=[],
+        model={"form": [_cu_click(SUBMIT), _DONE]},
+        critic={"form": critic_verdict("failure", reason="The form is unchanged; nothing was submitted.")},
+        expected=("failure", "incomplete"),
+    )
+
+
+def cu_done_before_acting() -> Scenario:
+    nav = Screen("nav", "Site header with Home, Products and Support", (HOME, PRODUCTS, SUPPORT))
+    products = Screen("products", "Products page", (PLAN, CART), goal=True)
+    return Scenario(
+        name="cu_done_before_acting",
+        description="The model claims it is done on the first screen without doing anything.",
+        intent="Open the Products page",
+        backend="computer_use",
+        screens=[nav, products],
+        transitions=[Transition("nav", clicks(PRODUCTS), "products")],
+        model={"nav": _DONE, "products": _DONE},
+        expected=("failure", "incomplete"),
+    )
+
+
+def cu_scroll_twice() -> Scenario:
+    top = Screen("top", "Long article, top", (HOME, PRODUCTS))
+    middle = Screen("middle", "Long article, middle", (PLAN,))
+    bottom = Screen("bottom", "Long article, footer with Careers and About", (FOOTER_LINK, WRONG))
+    careers = Screen("careers", "Careers page with open roles", (HOME,), goal=True)
+    scroll = cu_call("scroll_at", x=320, y=200, direction="down", magnitude=800)
+    return Scenario(
+        name="cu_scroll_twice",
+        description="The target is two screens down: the same scroll is needed twice.",
+        intent="Open the Careers page from the footer",
+        backend="computer_use",
+        screens=[top, middle, bottom, careers],
+        transitions=[
+            Transition("top", scrolls("down"), "middle"),
+            Transition("middle", scrolls("down"), "bottom"),
+            Transition("bottom", clicks(FOOTER_LINK), "careers"),
+        ],
+        model={"top": scroll, "middle": scroll, "bottom": _cu_click(FOOTER_LINK), "careers": _DONE},
+    )
+
+
 SCENARIOS = [
     form_submit,
     hover_then_click,
@@ -210,4 +470,16 @@ SCENARIOS = [
     trust_gate_approved,
     trust_gate_declined,
     cu_click_then_done,
+    cu_scroll_document,
+    cu_scroll_at,
+    cu_scroll_twice,
+    cu_search_enter,
+    cu_multi_field_form,
+    cu_dropdown,
+    cu_cookie_banner,
+    cu_slow_load,
+    cu_misclick_recovers,
+    cu_go_back,
+    cu_done_without_effect,
+    cu_done_before_acting,
 ]

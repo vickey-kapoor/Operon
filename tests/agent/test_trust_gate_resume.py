@@ -166,3 +166,23 @@ async def test_file_guard_cannot_be_approved_by_resuming(monkeypatch: pytest.Mon
 
     assert second.status is RunStatus.WAITING_FOR_USER
     assert not [c for c in execute.call_args_list if c.args[0].action_type is ActionType.READ_TEXT]
+
+
+async def test_resume_after_coordinate_thrash_runs_the_click(monkeypatch: pytest.MonkeyPatch) -> None:
+    click = AgentAction(action_type=ActionType.CLICK, x=50, y=60)
+    loop, execute, state = _loop(monkeypatch, [click, click, click])
+    state.target_failure_counts["click:50:60"] = 3
+
+    first = await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    await loop.step_run(StepRequest(run_id="run-1"))  # approved: the click runs
+
+    def clicks() -> int:
+        return sum(1 for c in execute.call_args_list if c.args[0].action_type is ActionType.CLICK)
+
+    assert first.status is RunStatus.WAITING_FOR_USER
+    assert clicks() >= 1
+    ran = clicks()
+    third = await loop.step_run(StepRequest(run_id="run-1"))  # still thrashing: asks again
+    assert third.status is RunStatus.WAITING_FOR_USER
+    assert clicks() == ran

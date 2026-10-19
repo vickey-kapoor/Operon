@@ -116,6 +116,11 @@ class NativeBrowserExecutor(Executor):
         self._obs_playwright: object | None = None
         self._obs_browser: object | None = None
 
+    @property
+    def viewport_size(self) -> tuple[int, int]:
+        """(width, height) of the browser viewport that action coordinates refer to."""
+        return self._viewport_width, self._viewport_height
+
     def set_current_run_id(self, run_id: str) -> None:
         self._current_run_id = run_id
 

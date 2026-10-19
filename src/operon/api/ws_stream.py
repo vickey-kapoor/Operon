@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import suppress
 from typing import Any
 
@@ -20,7 +21,10 @@ import anyio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from operon.agent import control as _control
+
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # One asyncio.Queue per connected client. Items are either:
 #   dict  → serialised as a JSON text frame
@@ -37,19 +41,11 @@ _active_run_id: str | None = None
 # the _frame_pusher fallback is skipped automatically.
 _browser_manager: Any = None
 
-# User-configured confidence threshold (0.0 = off, >0.0 means pause when
-# PolicyDecision.confidence < threshold). Set via "set_confidence_threshold" control message.
-_confidence_threshold: float = 0.0
-
-# Override hints typed by the user during a HITL pause, keyed by the run they were
-# sent for. Consumed once by that run's next step — see loop.py consume_override_hint.
-_pending_override_hints: dict[str, str] = {}
-
 # Reference to the AgentLoop singleton so WS control messages can call resume_run().
 _agent_loop: Any = None
 
-# Rule names disabled by the user via the Settings UI.
-_disabled_rules: set[str] = set()
+# Confidence threshold, disabled rules and override hints live in
+# operon.agent.control, which the loop reads; this module only writes them.
 
 
 def set_executor(executor: Any) -> None:
@@ -72,27 +68,11 @@ def set_agent_loop(loop: Any) -> None:
     _agent_loop = loop
 
 
-def set_confidence_threshold(v: float) -> None:
-    global _confidence_threshold
-    _confidence_threshold = max(0.0, min(1.0, float(v)))
-
-
-def get_confidence_threshold() -> float:
-    return _confidence_threshold
-
-
-def get_disabled_rules() -> frozenset[str]:
-    return frozenset(_disabled_rules)
-
-
-def set_disabled_rules(names: list[str]) -> None:
-    global _disabled_rules
-    _disabled_rules = set(names)
-
-
-def consume_override_hint(run_id: str) -> str | None:
-    """Pop and return the pending user override hint for ``run_id`` (one-shot)."""
-    return _pending_override_hints.pop(run_id, None)
+set_confidence_threshold = _control.set_confidence_threshold
+get_confidence_threshold = _control.get_confidence_threshold
+get_disabled_rules = _control.get_disabled_rules
+set_disabled_rules = _control.set_disabled_rules
+consume_override_hint = _control.consume_override_hint
 
 
 def publish_event(event: dict[str, Any]) -> None:
@@ -131,7 +111,8 @@ async def _receiver(ws: WebSocket) -> None:
             msg = json.loads(raw)
             await _handle_control(msg)
         except Exception:
-            pass
+            # One bad message must not drop the connection, but it must not vanish either.
+            logger.warning("ignoring WebSocket control message that failed: %.200r", raw, exc_info=True)
 
 
 async def _resume_active_run() -> None:
@@ -157,8 +138,8 @@ async def _handle_control(msg: dict) -> None:
             )
 
     elif msg_type == "set_confidence_threshold":
-        set_confidence_threshold(float(msg.get("threshold", 0.0)))
-        publish_event({"type": "control_ack", "action": "set_confidence_threshold", "threshold": _confidence_threshold})
+        threshold = set_confidence_threshold(float(msg.get("threshold", 0.0)))
+        publish_event({"type": "control_ack", "action": "set_confidence_threshold", "threshold": threshold})
 
     elif msg_type == "pause":
         publish_event({"type": "control_ack", "action": "pause"})
@@ -183,10 +164,7 @@ async def _handle_control(msg: dict) -> None:
         # Store the correction hint and resume the paused run in one shot.
         hint = msg.get("hint", "").strip()
         if _active_run_id is not None:
-            if hint:
-                _pending_override_hints[_active_run_id] = hint
-            else:
-                _pending_override_hints.pop(_active_run_id, None)
+            _control.set_override_hint(_active_run_id, hint)
         if _agent_loop is not None and _active_run_id is not None:
             try:
                 await _resume_active_run()

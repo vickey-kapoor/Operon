@@ -88,6 +88,7 @@ async def resume_run(request: ResumeRequest) -> RunResponse:
 @router.post("/cleanup", response_model=CleanupResponse)
 async def cleanup(request: CleanupRequest) -> CleanupResponse:
     """Close resources created during a browser-native run."""
+    validate_run_id(request.run_id)
     loop = get_agent_loop()
     executor = loop.executor
     if not hasattr(executor, "cleanup_run"):

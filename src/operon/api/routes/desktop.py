@@ -81,6 +81,7 @@ async def desktop_stop_run_by_id(run_id: str) -> dict:
 @router.post("/desktop/cleanup", response_model=CleanupResponse)
 async def desktop_cleanup(request: CleanupRequest) -> CleanupResponse:
     """Close applications launched during a desktop run."""
+    validate_run_id(request.run_id)
     loop = get_desktop_agent_loop()
     executor = loop.executor
     if not hasattr(executor, "cleanup_run"):

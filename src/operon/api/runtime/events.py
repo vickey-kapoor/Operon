@@ -96,13 +96,16 @@ def _build_step_event(loop, response: RunResponse) -> dict:
         event["perception"] = perception
 
     if action.get("x") is not None and action.get("y") is not None:
+        # The UI maps x/y onto its mirror by this size, so it must be the executor's
+        # real viewport (BROWSER_WIDTH/HEIGHT or a constructor override), not a constant.
+        viewport_w, viewport_h = getattr(loop.executor, "viewport_size", (1920, 1080))
         _ws_stream.publish_event({
             "type": "action_intent",
             "action_type": action.get("action_type", "unknown"),
             "x": action["x"],
             "y": action["y"],
-            "viewport_w": 1920,
-            "viewport_h": 1080,
+            "viewport_w": viewport_w,
+            "viewport_h": viewport_h,
             "confidence": policy_decision.get("confidence", 0.0),
             "rule_name": policy_decision.get("rule_name"),
             "subgoal": policy_decision.get("active_subgoal"),

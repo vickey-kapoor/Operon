@@ -45,8 +45,9 @@ jobs:
           name: test-artifacts
           path: |
             test-results.xml
-            runs/
-            .browser-artifacts/
+            .var/runs/
+            .var/browser-artifacts/
+            .var/test-artifacts/
           if-no-files-found: ignore
           retention-days: 7
 
@@ -67,3 +68,26 @@ jobs:
 
       - name: Run ruff
         run: uv run ruff check src tests --select E,F,W,I --ignore E501
+
+  ui:
+    name: UI build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies (exact versions from package-lock.json)
+        run: npm ci
+
+      - name: Type-check and build
+        # tsc runs as part of `npm run build` — the frontend's only automated gate.
+        run: npm run build

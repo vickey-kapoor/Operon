@@ -105,7 +105,7 @@ async def test_ws_resume_and_override_reschedule_auto_run(
     monkeypatch.setattr(tasks, "schedule_auto_run", lambda _loop, run_id, max_steps: scheduled.append((run_id, max_steps)))
     monkeypatch.setattr(ws_stream, "_agent_loop", loop)
     monkeypatch.setattr(ws_stream, "_active_run_id", "run-1")
-    monkeypatch.setattr(ws_stream, "_pending_override_hint", None)
+    monkeypatch.setattr(ws_stream, "_pending_override_hints", {})
 
     await ws_stream._handle_control(message)
 
@@ -129,3 +129,46 @@ def test_http_resume_reschedules_with_run_max_steps(tmp_path, monkeypatch: pytes
 
     assert resp.status_code == 200
     assert scheduled == [("run-1", 12)]
+
+
+async def test_override_hint_is_scoped_to_the_run_it_was_sent_for(monkeypatch: pytest.MonkeyPatch, events) -> None:
+    monkeypatch.setattr(ws_stream, "_agent_loop", None)  # store the hint only; no resume
+    monkeypatch.setattr(ws_stream, "_active_run_id", "run-a")
+    monkeypatch.setattr(ws_stream, "_pending_override_hints", {})
+
+    await ws_stream._handle_control({"type": "override", "hint": "click Next"})
+
+    assert ws_stream.consume_override_hint("run-b") is None
+    assert ws_stream.consume_override_hint("run-a") == "click Next"
+    assert ws_stream.consume_override_hint("run-a") is None  # one-shot
+
+
+async def test_empty_override_clears_a_pending_hint(monkeypatch: pytest.MonkeyPatch, events) -> None:
+    monkeypatch.setattr(ws_stream, "_agent_loop", None)
+    monkeypatch.setattr(ws_stream, "_active_run_id", "run-a")
+    monkeypatch.setattr(ws_stream, "_pending_override_hints", {"run-a": "old hint"})
+
+    await ws_stream._handle_control({"type": "override", "hint": "  "})
+
+    assert ws_stream.consume_override_hint("run-a") is None
+
+
+def test_action_intent_reports_the_executor_viewport(tmp_path, events) -> None:
+    import json
+
+    from operon.api.runtime.events import _build_step_event
+
+    step_dir = tmp_path / "run-1" / "step_1"
+    step_dir.mkdir(parents=True)
+    (step_dir / "policy_decision.json").write_text(
+        json.dumps({"action": {"action_type": "click", "x": 100, "y": 50}, "confidence": 0.9}), encoding="utf-8"
+    )
+    loop = SimpleNamespace(
+        run_store=SimpleNamespace(root_dir=tmp_path),
+        executor=SimpleNamespace(viewport_size=(1280, 720)),
+    )
+
+    _build_step_event(loop, RunResponse(run_id="run-1", status=RunStatus.RUNNING, intent="x", step_count=1))
+
+    intent = next(e for e in events if e["type"] == "action_intent")
+    assert (intent["viewport_w"], intent["viewport_h"]) == (1280, 720)

@@ -119,10 +119,6 @@ def premature_stop() -> Scenario:
             "pricing": json_reply(_STOP, subgoal="complete task", confidence=0.95),
         },
         expected=("failure", "incomplete"),
-        known_issue=(
-            "PolicyCoordinator re-plans a no-work STOP once, then the verifier accepts any STOP "
-            "when elements are visible, so the run succeeds without doing anything"
-        ),
     )
 
 
@@ -157,10 +153,6 @@ def silent_submit_then_stop() -> Scenario:
         model={"form": [json_reply(_click(SUBMIT), subgoal="submit"), json_reply(_STOP, subgoal="complete task")]},
         critic={"form": critic_verdict("failure", reason="The form is unchanged; nothing was submitted.")},
         expected=("failure", "incomplete"),
-        known_issue=(
-            "the verifier accepts a STOP as success without checking the screen, so the "
-            "model's stop overrides the critic's failure on the unchanged form"
-        ),
     )
 
 

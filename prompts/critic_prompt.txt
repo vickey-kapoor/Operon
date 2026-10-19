@@ -30,4 +30,5 @@ Rules:
 - Use `uncertain` when the screenshot is ambiguous or insufficient.
 - Set `expected_outcome_met` consistently with `status`.
 - Set `stop_condition_met` to true only when the screenshot shows the task is complete or an intentional stop boundary has been reached.
+- When executed_action is a `stop`, the agent is claiming the whole task is done: use `success` only when the screenshot shows the task intent fully completed.
 - Prefer `uncertain` over guessing.

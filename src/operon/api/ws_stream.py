@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 router = APIRouter()
 
@@ -223,6 +226,12 @@ async def stream(ws: WebSocket) -> None:
     await ws.accept()
     q: asyncio.Queue = asyncio.Queue(maxsize=64)
     _subscribers.append(q)
+    # Static pages may emit no further CDP frames after this client connects.
+    # The manager clears its cached frame when stopping or changing the stream.
+    if _browser_manager is not None:
+        frame = _browser_manager.latest_frame
+        if frame is not None:
+            q.put_nowait(frame)
 
     frame_task = asyncio.create_task(_frame_pusher(q))
     send_task = asyncio.create_task(_sender(ws, q))
@@ -243,4 +252,14 @@ async def stream(ws: WebSocket) -> None:
         recv_task.cancel()
         if q in _subscribers:
             _subscribers.remove(q)
-        await ws.close()
+        # Finish cancelling child tasks even when the ASGI request's AnyIO
+        # cancellation scope has already been cancelled (including TestClient).
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(frame_task, send_task, recv_task, return_exceptions=True)
+            if (
+                ws.application_state is WebSocketState.CONNECTED
+                and ws.client_state is WebSocketState.CONNECTED
+            ):
+                # The peer can disconnect between the state check and the send.
+                with suppress(WebSocketDisconnect):
+                    await ws.close()

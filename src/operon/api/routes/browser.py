@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -14,6 +12,9 @@ from operon.api.dependencies import (
     cleanup_cancelled_run,
     ensure_cdp_ready,
     get_agent_loop,
+    mark_run_failed,
+    publish_step_outcome,
+    resume_and_schedule,
     schedule_auto_run,
     test_safe_mode_enabled,
     validate_run_id,
@@ -55,98 +56,6 @@ async def run_task(request: RunTaskRequest) -> RunResponse:
     return response
 
 
-def _action_target(action: dict) -> tuple[str, str | None]:
-    action_type = action.get("action_type", "")
-    if action_type == "navigate":
-        target = (action.get("url") or "").replace("https://", "").replace("http://", "").split("?")[0][:70]
-        return target, None
-    if action_type in ("type", "select"):
-        return action.get("selector") or action.get("target_element_id") or "", action.get("text")
-    if action_type in ("press_key", "hotkey"):
-        return action.get("key") or "", None
-    if action_type == "launch_app":
-        return action.get("text") or "", None
-    if action_type == "scroll":
-        amount = action.get("scroll_amount", 0) or 0
-        return ("down" if amount > 0 else "up"), None
-    return action.get("selector") or action.get("target_element_id") or "", None
-
-
-def _read_perception_summary(perception_path: Path) -> str | None:
-    if not perception_path.exists():
-        return None
-    try:
-        perception = json.loads(perception_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    page_hint = perception.get("page_hint", "")
-    element_count = len(perception.get("elements", []))
-    focused = perception.get("focused_element") or {}
-    focused_text = str(focused.get("text", ""))[:40] if focused else ""
-    parts: list[str] = []
-    if page_hint:
-        parts.append(page_hint)
-    if focused_text:
-        parts.append(f"focus: {focused_text}")
-    elif element_count:
-        parts.append(f"{element_count} elements")
-    return " . ".join(parts) if parts else None
-
-
-def _build_step_event(loop, response: RunResponse) -> dict:
-    event: dict = {
-        "type": "step",
-        "run_id": response.run_id,
-        "step": response.step_count,
-        "status": response.status.value,
-    }
-    policy_path = (
-        Path(loop.run_store.root_dir)
-        / response.run_id
-        / f"step_{response.step_count}"
-        / "policy_decision.json"
-    )
-    if not policy_path.exists():
-        return event
-    try:
-        policy_decision = json.loads(policy_path.read_text(encoding="utf-8"))
-    except Exception:
-        return event
-
-    action = policy_decision.get("action", {})
-    target, value = _action_target(action)
-    event.update({
-        "confidence": policy_decision.get("confidence"),
-        "subgoal": policy_decision.get("active_subgoal"),
-        "action_type": action.get("action_type"),
-        "rule_name": policy_decision.get("rule_name"),
-        "rationale": policy_decision.get("rationale"),
-        "action_expected_change": policy_decision.get("expected_change"),
-        "action_target": target,
-    })
-    if value is not None:
-        event["action_value"] = value
-
-    perception = _read_perception_summary(policy_path.parent / "perception_parsed.json")
-    if perception:
-        event["perception"] = perception
-
-    if action.get("x") is not None and action.get("y") is not None:
-        _ws_stream.publish_event({
-            "type": "action_intent",
-            "action_type": action.get("action_type", "unknown"),
-            "x": action["x"],
-            "y": action["y"],
-            "viewport_w": 1920,
-            "viewport_h": 1080,
-            "confidence": policy_decision.get("confidence", 0.0),
-            "rule_name": policy_decision.get("rule_name"),
-            "subgoal": policy_decision.get("active_subgoal"),
-            "rationale": policy_decision.get("rationale", ""),
-        })
-    return event
-
-
 @router.post("/step", response_model=RunResponse)
 async def step_run(request: StepRequest) -> RunResponse:
     """Advance an existing browser run by one loop step."""
@@ -154,47 +63,15 @@ async def step_run(request: StepRequest) -> RunResponse:
     try:
         loop = get_agent_loop()
         response = await loop.step_run(request)
-        step_event = _build_step_event(loop, response)
-        _ws_stream.publish_event(step_event)
-
-        if response.status.value == "waiting_for_user":
-            hitl_state = await loop.run_store.get_run(response.run_id)
-            _ws_stream.publish_event({
-                "type": "hitl_required",
-                "run_id": response.run_id,
-                "message": hitl_state.hitl_message if hitl_state else None,
-                "confidence": step_event.get("confidence"),
-                "threshold": _ws_stream.get_confidence_threshold(),
-                "pending_action": step_event.get("action_type"),
-                "subgoal": step_event.get("subgoal"),
-                "rationale": step_event.get("rationale"),
-            })
-
-        if response.status.value in ("succeeded", "failed", "cancelled"):
-            _ws_stream.set_active_run(None)
-            _ws_stream.publish_event({
-                "type": "run_completed",
-                "run_id": response.run_id,
-                "status": response.status.value,
-            })
+        await publish_step_outcome(loop, response)
         return response
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("unhandled exception in step_run for %s: %s", request.run_id, exc)
-        loop = get_agent_loop()
-        try:
-            state = await loop.run_store.get_run(request.run_id)
-            if state is not None and state.status not in (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED):
-                updated = await loop.run_store.set_status(request.run_id, RunStatus.FAILED)
-                return RunResponse(
-                    run_id=updated.run_id,
-                    status=updated.status,
-                    intent=updated.intent,
-                    step_count=updated.step_count,
-                )
-        except Exception:
-            pass
+        failed = await mark_run_failed(get_agent_loop(), request.run_id)
+        if failed is not None:
+            return failed
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
@@ -202,13 +79,10 @@ async def step_run(request: StepRequest) -> RunResponse:
 async def resume_run(request: ResumeRequest) -> RunResponse:
     """Resume a HITL-paused run and continue the auto-loop."""
     validate_run_id(request.run_id)
-    loop = get_agent_loop()
     try:
-        response = await loop.resume_run(request.run_id)
+        return await resume_and_schedule(get_agent_loop(), request.run_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    schedule_auto_run(loop, request.run_id, max_steps=200)
-    return response
 
 
 @router.post("/cleanup", response_model=CleanupResponse)

@@ -220,3 +220,6 @@ class ScreenPerception(StrictModel):
     liveness_retries: int = 0
     # Elements from T-1 absent in T-0 with low visual velocity — likely occluded.
     ghost_elements: list[GhostElement] = Field(default_factory=list)
+    # False when the backend does not enumerate elements at all (Gemini Computer
+    # Use grounds its own clicks), so an empty list says nothing about the page.
+    elements_reported: bool = True

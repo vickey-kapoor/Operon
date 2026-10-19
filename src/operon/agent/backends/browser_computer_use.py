@@ -292,6 +292,7 @@ class BrowserComputerUseBackend(AgentBackend):
             focused_element_id=payload.get("focused_element_id"),
             capture_artifact_path=screenshot_path,
             confidence=float(payload.get("confidence", 0.5)),
+            elements_reported=False,
         )
 
     @staticmethod

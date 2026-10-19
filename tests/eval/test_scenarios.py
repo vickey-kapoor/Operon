@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tests.eval.harness import grade, run_scenario
-from tests.eval.scenarios import SCENARIOS
+from tests.eval.scenarios import SCENARIOS, cu_click_then_done
 
 
 def _params():
@@ -41,3 +41,12 @@ def test_scenario_names_are_unique() -> None:
 )
 def test_grade_compares_the_claim_with_ground_truth(claimed, reached, ended, outcome) -> None:
     assert grade(claimed_success=claimed, reached_goal=reached, ended=ended) == outcome
+
+
+async def test_computer_use_click_costs_one_model_turn_per_step() -> None:
+    """The Computer Use backend reports no element list, which must not read as a
+    page still loading: that re-perceives (a full model turn each) mid-verify."""
+    result = await run_scenario(cu_click_then_done())
+
+    assert result.outcome == "success", result.summary()
+    assert result.model_calls == result.steps, result.summary()

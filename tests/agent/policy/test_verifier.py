@@ -464,3 +464,17 @@ def test_goal_completing_action_only_counts_the_final_step_of_the_intent(intent,
     action = AgentAction(action_type=action_type, x=10, y=10, x_end=20, y_end=20) if action_type is ActionType.DRAG else AgentAction(action_type=action_type, x=10, y=10)
 
     assert DeterministicVerifierService._is_goal_completing_action(state, action) is completes
+
+
+@pytest.mark.parametrize(("elements_reported", "loading"), [(True, True), (False, False)])
+def test_page_loading_needs_a_backend_that_reports_elements(elements_reported, loading) -> None:
+    perception = ScreenPerception(
+        summary="",
+        page_hint="unknown",
+        visible_elements=[],
+        capture_artifact_path="after.png",
+        elements_reported=elements_reported,
+    )
+    click = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
+
+    assert DeterministicVerifierService._is_page_loading(click, perception) is loading

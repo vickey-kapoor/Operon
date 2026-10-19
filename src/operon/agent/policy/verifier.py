@@ -415,6 +415,8 @@ class DeterministicVerifierService(VerifierService):
             return False
         if latest_perception.page_hint is not PageHint.UNKNOWN:
             return False
+        if not latest_perception.elements_reported:
+            return False
         return len(latest_perception.visible_elements) <= 2
 
     @staticmethod
@@ -431,6 +433,8 @@ class DeterministicVerifierService(VerifierService):
         if not any(token in intent for token in ("inspect", "look", "find", "open", "check", "view", "read")):
             return False
         if latest_perception.page_hint is not PageHint.UNKNOWN:
+            return False
+        if not latest_perception.elements_reported:
             return False
         return not latest_perception.visible_elements
 

@@ -147,3 +147,11 @@ async def test_choose_action_without_any_frame_still_raises(tmp_path: Path) -> N
         assert "No cached computer-use decision" in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+async def test_perception_marks_elements_as_not_reported(tmp_path: Path) -> None:
+    backend = _backend(ScriptedClient([_click_reply()]))
+
+    perception = await backend.perceive(_frame(tmp_path), _state(ActionType.CLICK))
+
+    assert perception.elements_reported is False

@@ -68,7 +68,7 @@ async def test_client_disconnect_does_not_send_another_close(monkeypatch):
             raise OSError("Client already disconnected")
         sent.append(message)
 
-    ws = WebSocket({"type": "websocket"}, receive=received.get, send=send)
+    ws = WebSocket({"type": "websocket", "headers": []}, receive=received.get, send=send)
     await asyncio.wait_for(ws_stream.stream(ws), timeout=1)
     assert [message["type"] for message in sent] == ["websocket.accept"]
     assert not ws_stream._subscribers

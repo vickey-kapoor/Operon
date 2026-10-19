@@ -178,6 +178,12 @@ class AgentLoop:
         # steps on the same run. Weak values: a lock lives only while a step holds
         # or awaits it, so the map does not grow with every run ever started.
         self._run_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+        # Human approval of a gate pause, per run. A pause records (action fingerprint,
+        # gate) as pending; a resume that approves adds that gate to the action's
+        # approved set. The same action then passes the gates it was approved for, and
+        # the approval is used up once it gets through (or the policy picks another).
+        self._pending_gate_approvals: dict[str, tuple[str, str]] = {}
+        self._approved_gate_actions: dict[str, tuple[str, frozenset[str]]] = {}
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -315,13 +321,24 @@ class AgentLoop:
                 )
             response = await self.step_run(StepRequest(run_id=response.run_id))
 
-    async def resume_run(self, run_id: str) -> RunResponse:
-        """Resume a run that was paused waiting for user input."""
+    async def resume_run(self, run_id: str, *, approve_gated_action: bool = True) -> RunResponse:
+        """Resume a run that was paused waiting for user input.
+
+        ``approve_gated_action``: when the pause came from the confidence or trust
+        gate, resuming is the human's approval of that action, so the next step may
+        run it once. Pass False when resuming with a correction instead (override).
+        """
         record = await self.run_store.get_run(run_id)
         if record is None:
             raise ValueError(f"Run {run_id!r} not found")
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        pending = self._pending_gate_approvals.pop(run_id, None)
+        if approve_gated_action and pending is not None:
+            fingerprint, gate = pending
+            prior = self._approved_gate_actions.get(run_id)
+            gates = prior[1] if prior is not None and prior[0] == fingerprint else frozenset()
+            self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
         record.stop_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
         return RunResponse(
@@ -800,16 +817,30 @@ class AgentLoop:
            OPERON_TRUST_GATE is on. DENY = blocked, CONFIRM = high-risk.
         3. File guard: a read_text / upload_file* path the user never named, outside
            the run dir and OPERON_ALLOWED_FILE_ROOTS.
+
+        Gates 1-2 can be approved by resuming (see ``resume_run``); the file guard
+        cannot, since its fix is naming the path in the task or allowing its folder.
         """
         action = decision.action
+        fingerprint = self._gate_fingerprint(action)
+        # Gates a human already approved for this exact action (see resume_run).
+        prior = self._approved_gate_actions.get(run_id)
+        approved: frozenset[str] = frozenset()
+        if prior is not None:
+            if prior[0] == fingerprint:
+                approved = prior[1]
+            else:
+                del self._approved_gate_actions[run_id]  # the policy moved on
         threshold = run_control.get_confidence_threshold()
         if (
-            threshold > 0.0
+            "confidence" not in approved
+            and threshold > 0.0
             and action.action_type is not ActionType.WAIT_FOR_USER
             and action.action_type is not ActionType.STOP
             and decision.confidence < threshold
         ):
             _trace("  3 POLICY -> CONFIDENCE_GATE", f"confidence={decision.confidence:.2f} < threshold={threshold:.2f}")
+            self._pending_gate_approvals[run_id] = (fingerprint, "confidence")
             return (
                 f"Confidence {decision.confidence:.0%} is below your threshold {threshold:.0%}. "
                 f"Planned action: {action.action_type.value}. "
@@ -817,8 +848,9 @@ class AgentLoop:
             )
 
         trust = self._trust_gate.evaluate(action)
-        if trust.verdict is not TrustVerdict.ALLOW:
+        if "trust" not in approved and trust.verdict is not TrustVerdict.ALLOW:
             _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
+            self._pending_gate_approvals[run_id] = (fingerprint, "trust")
             if trust.verdict is TrustVerdict.DENY:
                 return (
                     f"Blocked by policy: {action.action_type.value} action "
@@ -841,7 +873,14 @@ class AgentLoop:
                     "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
                     "Restart with the path in the task, allow its folder, or stop the run."
                 )
+        self._approved_gate_actions.pop(run_id, None)  # approval used: the action runs now
         return None
+
+    def _gate_fingerprint(self, action: AgentAction) -> str:
+        """What a human approves at a gate pause: the action's type plus the text, URL
+        and target name the trust gate judges — not coordinates, which shift between
+        perceptions of the same screen."""
+        return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
 
     async def _pause_for_user(
         self,

@@ -364,6 +364,9 @@ class PolicyCoordinator(PolicyService):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
+    def supports_resampling(self, run_id: str = "") -> bool:
+        return self.delegate.supports_resampling(run_id)
+
     @staticmethod
     def _recent_failure_category(state: AgentState) -> FailureCategory | None:
         if state.verification_history:

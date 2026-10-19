@@ -54,14 +54,16 @@ def schedule_auto_run(loop: AgentLoop, run_id: str, max_steps: int) -> asyncio.T
     return task
 
 
-async def resume_and_schedule(loop: AgentLoop, run_id: str) -> RunResponse:
+async def resume_and_schedule(loop: AgentLoop, run_id: str, *, approve_gated_action: bool = True) -> RunResponse:
     """Resume a HITL-paused run and restart its auto-run task.
 
     The auto-run loop exits when a run pauses, so every resume path (HTTP and
     WebSocket) must reschedule it or the run sits in RUNNING with nothing stepping it.
+    ``approve_gated_action`` is passed to ``AgentLoop.resume_run``: False when the
+    user resumes with a correction rather than approving the paused action.
     Raises ValueError when the run is missing or not waiting for the user.
     """
-    response = await loop.resume_run(run_id)
+    response = await loop.resume_run(run_id, approve_gated_action=approve_gated_action)
     state = await loop.run_store.get_run(run_id)
     max_steps = state.max_steps if state is not None else 200
     schedule_auto_run(loop, run_id, max_steps)

@@ -115,10 +115,10 @@ async def _receiver(ws: WebSocket) -> None:
             logger.warning("ignoring WebSocket control message that failed: %.200r", raw, exc_info=True)
 
 
-async def _resume_active_run() -> None:
+async def _resume_active_run(*, approve_gated_action: bool = True) -> None:
     # Local import: runtime.tasks imports this module at load time.
     from operon.api.runtime.tasks import resume_and_schedule
-    await resume_and_schedule(_agent_loop, _active_run_id)
+    await resume_and_schedule(_agent_loop, _active_run_id, approve_gated_action=approve_gated_action)
 
 
 async def _handle_control(msg: dict) -> None:
@@ -167,7 +167,8 @@ async def _handle_control(msg: dict) -> None:
             _control.set_override_hint(_active_run_id, hint)
         if _agent_loop is not None and _active_run_id is not None:
             try:
-                await _resume_active_run()
+                # A correction, not an approval: the paused action stays gated.
+                await _resume_active_run(approve_gated_action=False)
             except Exception as exc:
                 publish_event({"type": "control_ack", "action": "override", "hint": hint, "error": str(exc)})
                 return

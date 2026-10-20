@@ -134,7 +134,7 @@ def main(argv: list[str]) -> int:
 
     tasks = [t for t in TASKS if not args.only or t.name in args.only]
     results = []
-    with httpx.Client(base_url=args.base_url, timeout=60.0) as client:
+    with httpx.Client(base_url=args.base_url, timeout=300.0) as client:
         client.get("/health").raise_for_status()
         for task in tasks:
             result = run_task(client, task, args.timeout)

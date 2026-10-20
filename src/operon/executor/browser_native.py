@@ -105,6 +105,9 @@ class NativeBrowserExecutor(Executor):
         self._post_action_delay = post_action_delay
         self._current_run_id: str | None = None
         self._sessions: dict[str, _BrowserSession] = {}
+        # Serializes opening and closing sessions: a run that starts while the
+        # previous run's browser is still closing otherwise hangs its launch.
+        self._session_lock = asyncio.Lock()
         self._run_headless: dict[str, bool | None] = {}
         self._run_mode: dict[str, str] = {}
         self._fresh_session_run_id: str | None = None
@@ -133,13 +136,14 @@ class NativeBrowserExecutor(Executor):
         return None
 
     async def aclose_run(self, run_id: str) -> int:
-        session = self._sessions.pop(run_id, None)
-        self._run_headless.pop(run_id, None)
-        mode = self._run_mode.pop(run_id, "batch")
-        if session is None:
-            return 0
-        await self._close_session(session, observable=mode in {"observable", "cdp"})
-        return 1
+        async with self._session_lock:
+            session = self._sessions.pop(run_id, None)
+            self._run_headless.pop(run_id, None)
+            mode = self._run_mode.pop(run_id, "batch")
+            if session is None:
+                return 0
+            await self._close_session(session, observable=mode in {"observable", "cdp"})
+            return 1
 
     def cleanup_run(self, run_id: str) -> int:
         session = self._sessions.pop(run_id, None)
@@ -521,7 +525,13 @@ class NativeBrowserExecutor(Executor):
         existing = self._sessions.get(run_id)
         if existing is not None:
             return existing
+        async with self._session_lock:
+            existing = self._sessions.get(run_id)
+            if existing is not None:
+                return existing
+            return await self._open_session(run_id, foreground=foreground)
 
+    async def _open_session(self, run_id: str, *, foreground: bool) -> _BrowserSession:
         mode = self._run_mode.get(run_id, "batch")
 
         if mode == "observable":

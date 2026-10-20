@@ -204,14 +204,17 @@ class BrowserComputerUseBackend(AgentBackend):
 
     async def _run_turn(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
         conversation = self._conversations.setdefault(state.run_id, _ConversationState())
-        if conversation.pending_function_names and len(state.action_history) > conversation.acknowledged_actions:
+        if conversation.pending_function_names:
+            # Always answer the model's open tool call before asking again: the API
+            # rejects a request that ends with a model turn. A mid-step re-look (an
+            # execution or adaptation retry) arrives before the action is recorded,
+            # so the answer is just the current screen.
             current_url = None
             if self.browser_runtime is not None and hasattr(self.browser_runtime, "get_current_url"):
                 current_url = await self.browser_runtime.get_current_url()
             error = None
-            last_action = state.action_history[-1]
-            if not last_action.success:
-                error = last_action.detail
+            if len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
+                error = state.action_history[-1].detail
             function_response = self._build_function_response_content(
                 function_names=conversation.pending_function_names,
                 screenshot_path=screenshot.artifact_path,
@@ -274,7 +277,7 @@ class BrowserComputerUseBackend(AgentBackend):
         described = []
         for call in function_calls:
             args = call.get("args") or {}
-            details = " ".join(f"{key}={args[key]}" for key in sorted(args) if key != "safety_decision")
+            details = " ".join(f"{key}={args[key]}" for key in sorted(args) if key not in {"safety_decision", "intent"})
             described.append(f"{call.get('name', 'browser step')} {details}".strip())
         return "; ".join(described)
 

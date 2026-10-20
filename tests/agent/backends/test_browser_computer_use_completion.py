@@ -165,3 +165,18 @@ async def test_subgoal_names_the_call_so_a_second_field_is_not_already_done(tmp_
 
     assert len(subgoals) == 2
     assert all(subgoal.startswith("type_text_at ") for subgoal in subgoals)
+
+
+async def test_a_re_look_before_the_action_is_recorded_answers_the_open_tool_call(tmp_path: Path) -> None:
+    """The API rejects a request ending with a model turn; a mid-step re-perceive
+    (execution or adaptation retry) must answer the pending call first."""
+    client = ScriptedClient([_click_reply()])
+    backend = _backend(client)
+    state = _state(ActionType.WAIT)
+
+    await backend.perceive(_frame(tmp_path), state)
+    await backend.perceive(_frame(tmp_path, "retry.png"), state)
+
+    last = client.turns[-1][-1]
+    assert last["role"] == "user"
+    assert "function_response" in last["parts"][0]

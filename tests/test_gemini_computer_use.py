@@ -181,3 +181,22 @@ def test_build_function_response_content_includes_url_and_screenshot(tmp_path: P
     assert content["parts"][0]["function_response"]["name"] == "click_at"
     assert content["parts"][0]["function_response"]["response"]["url"] == "https://example.com"
     assert content["parts"][1]["inline_data"]["mime_type"] == "image/png"
+
+
+async def test_post_payload_sends_the_key_as_a_header_not_in_the_url() -> None:
+    client = GeminiComputerUseHttpClient(api_key="secret-key", model="gemini-3-flash-preview")
+    seen: dict = {}
+
+    async def fake_post(url, *, content=None, headers=None, **kwargs):
+        seen["url"], seen["headers"] = url, headers
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "done"}]}}]})
+
+    mock_client = AsyncMock()
+    mock_client.post = fake_post
+    mock_client.is_closed = False
+    client._client = mock_client
+
+    await client._post_payload({"contents": []})
+
+    assert "secret-key" not in seen["url"]
+    assert seen["headers"]["x-goog-api-key"] == "secret-key"

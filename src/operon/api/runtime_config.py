@@ -40,9 +40,14 @@ def desktop_mode_config() -> RuntimeModeConfig:
     )
 
 
+def _default_browser_backend() -> str:
+    """Claude computer use when an Anthropic key is present, else Gemini Computer Use."""
+    return "claude_computer_use" if os.getenv("ANTHROPIC_API_KEY") else "computer_use"
+
+
 def browser_mode_config() -> RuntimeModeConfig:
     return RuntimeModeConfig(
-        backend=os.getenv("OPERON_BROWSER_BACKEND", "computer_use"),
+        backend=os.getenv("OPERON_BROWSER_BACKEND") or _default_browser_backend(),
         primary_model=os.getenv(
             "OPERON_BROWSER_MODEL",
             "gemini-3.5-flash",

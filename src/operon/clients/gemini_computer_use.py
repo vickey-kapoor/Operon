@@ -56,8 +56,11 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         retry_backoff_seconds: float = 0.5,
         environment: str = "ENVIRONMENT_BROWSER",
         excluded_predefined_functions: list[str] | None = None,
+        thinking_level: str | None = None,
     ) -> None:
         self.model = model
+        # Gemini 3 thinking level ("minimal", "low", "high"); None keeps the model default.
+        self.thinking_level = thinking_level
         self.api_key = api_key
         self.api_base_url = api_base_url or os.getenv(
             "GEMINI_API_BASE_URL",
@@ -102,12 +105,13 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         }
         if self.excluded_predefined_functions:
             tool["computerUse"]["excludedPredefinedFunctions"] = self.excluded_predefined_functions
+        generation_config: dict[str, Any] = {"temperature": 0}
+        if self.thinking_level and not self.model.startswith("gemini-2"):
+            generation_config["thinkingConfig"] = {"thinkingLevel": self.thinking_level}
         return {
             "contents": contents,
             "tools": [tool],
-            "generationConfig": {
-                "temperature": 0,
-            },
+            "generationConfig": generation_config,
         }
 
     @staticmethod

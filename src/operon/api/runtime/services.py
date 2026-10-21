@@ -73,7 +73,11 @@ def build_verifier_client(*, config):
     if verifier_provider == "anthropic":
         verifier_model = verifier_model or "claude-sonnet-5"
         return AnthropicHttpClient(model=verifier_model, timeout_seconds=120.0)
-    return GeminiHttpClient(model=verifier_model, timeout_seconds=120.0)
+    return GeminiHttpClient(
+        model=verifier_model,
+        timeout_seconds=120.0,
+        thinking=config.verifier_thinking,
+    )
 
 
 def build_browser_services(executor) -> RuntimeServices:
@@ -94,7 +98,10 @@ def build_browser_services(executor) -> RuntimeServices:
         return RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend == "computer_use":
         primary = BrowserComputerUseBackend(
-            client=GeminiComputerUseHttpClient(model=config.primary_model),
+            client=GeminiComputerUseHttpClient(
+                model=config.primary_model,
+                thinking_level=config.thinking,
+            ),
             prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
             browser_runtime=executor,
         )

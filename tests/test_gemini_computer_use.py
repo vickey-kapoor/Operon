@@ -200,3 +200,15 @@ async def test_post_payload_sends_the_key_as_a_header_not_in_the_url() -> None:
 
     assert "secret-key" not in seen["url"]
     assert seen["headers"]["x-goog-api-key"] == "secret-key"
+
+
+def test_build_payload_sets_the_thinking_level_only_when_configured() -> None:
+    default = GeminiComputerUseHttpClient(api_key="k", model="gemini-3.5-flash")._build_payload(contents=[])
+    low = GeminiComputerUseHttpClient(api_key="k", model="gemini-3.5-flash", thinking_level="low")._build_payload(contents=[])
+
+    assert "thinkingConfig" not in default["generationConfig"]
+    assert low["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "low"}
+    legacy = GeminiComputerUseHttpClient(
+        api_key="k", model="gemini-2.5-computer-use-preview-10-2025", thinking_level="low"
+    )._build_payload(contents=[])
+    assert "thinkingConfig" not in legacy["generationConfig"]

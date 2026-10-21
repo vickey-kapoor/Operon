@@ -19,6 +19,9 @@ class RuntimeModeConfig:
     fallback_backend: str | None = None
     fallback_model: str | None = None
     verifier_model: str | None = None
+    # Gemini thinking settings: a level ("low") on Gemini 3, a token budget ("0") on 2.5.
+    thinking: str | None = None
+    verifier_thinking: str | None = None
 
 
 def desktop_mode_config() -> RuntimeModeConfig:
@@ -30,6 +33,7 @@ def desktop_mode_config() -> RuntimeModeConfig:
         verifier_provider=os.getenv("OPERON_DESKTOP_VERIFIER_PROVIDER", "gemini"),
         fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-2.5-flash"),
         verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-2.5-flash"),
+        verifier_thinking=os.getenv("OPERON_DESKTOP_VERIFIER_THINKING") or None,
     )
 
 
@@ -45,7 +49,9 @@ def browser_mode_config() -> RuntimeModeConfig:
         verifier_provider=os.getenv("OPERON_BROWSER_VERIFIER_PROVIDER", "gemini"),
         fallback_backend=os.getenv("OPERON_BROWSER_FALLBACK_BACKEND", "json"),
         fallback_model=os.getenv("OPERON_BROWSER_FALLBACK_MODEL", "gemini-2.5-flash"),
-        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL", "gemini-2.5-flash"),
+        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL", "gemini-3.5-flash"),
+        thinking=os.getenv("OPERON_BROWSER_THINKING", "low") or None,
+        verifier_thinking=os.getenv("OPERON_BROWSER_VERIFIER_THINKING", "low") or None,
     )
 
 

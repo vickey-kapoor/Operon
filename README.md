@@ -143,6 +143,8 @@ WS   /ws/stream
 | `OPERON_BROWSER_PLANNER_PROVIDER` | `gemini` | `gemini` or `anthropic` |
 | `OPERON_DESKTOP_PLANNER_PROVIDER` | `gemini` | `gemini` or `anthropic` |
 | `OPERON_BROWSER_MODEL` | `gemini-3.5-flash` | Browser primary model |
+| `OPERON_BROWSER_THINKING` | `low` | Computer Use thinking level (Gemini 3) |
+| `OPERON_BROWSER_VERIFIER_THINKING` | `low` | Browser critic thinking level |
 | `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` | Desktop primary model |
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |

@@ -137,7 +137,7 @@ WS   /ws/stream
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | unset | Gemini API key |
 | `ANTHROPIC_API_KEY` | unset | Required only when using Anthropic planner/verifier |
 | `API_KEYS` | unset | Comma-separated API keys. When set, every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires the key via `?api_key=` (or an `x-api-key` subprotocol). **Unset = no auth** — only safe on a trusted host, since the API can drive a real browser/desktop. |
-| `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` or `json` |
+| `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` (Gemini), `claude_computer_use` (experimental) or `json` |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend |
 | `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend |
 | `OPERON_BROWSER_PLANNER_PROVIDER` | `gemini` | `gemini` or `anthropic` |
@@ -145,6 +145,8 @@ WS   /ws/stream
 | `OPERON_BROWSER_MODEL` | `gemini-3.5-flash` | Browser primary model |
 | `OPERON_BROWSER_THINKING` | `low` | Computer Use thinking level (Gemini 3) |
 | `OPERON_BROWSER_VERIFIER_THINKING` | `low` | Browser critic thinking level |
+| `OPERON_BROWSER_CLAUDE_MODEL` | `claude-opus-5-5` | Model for `claude_computer_use` |
+| `OPERON_BROWSER_CLAUDE_EFFORT` | `low` | Claude effort level for `claude_computer_use` |
 | `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` | Desktop primary model |
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |

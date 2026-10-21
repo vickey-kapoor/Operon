@@ -278,11 +278,18 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
 
 
 def save_final_screens(results: list[TaskResult], target: Path) -> None:
-    """Copy each task's graded screenshot to ``target/<task>.png`` for upload or review."""
+    """Copy each task's graded screenshot to ``target/<task>.png`` for upload or review.
+
+    A task that did not succeed also gets its whole run folder (every step's
+    screenshots and model decisions) at ``target/<task>/``, so the failure can be
+    traced from the report alone.
+    """
     target.mkdir(parents=True, exist_ok=True)
     for r in results:
         if r.final_screenshot != "-" and Path(r.final_screenshot).is_file():
             shutil.copyfile(r.final_screenshot, target / f"{r.task}.png")
+        if r.outcome != "success" and r.run_id and _run_dir(r.run_id).is_dir():
+            shutil.copytree(_run_dir(r.run_id), target / r.task, dirs_exist_ok=True)
 
 
 def select_tasks(

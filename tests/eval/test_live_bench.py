@@ -138,19 +138,29 @@ async def test_desktop_run_task_uses_the_desktop_routes_and_cleans_up(tmp_path, 
     assert result.cu_steps == 0 and result.other_steps == 0
 
 
-def test_save_final_screens_copies_the_graded_screenshots(tmp_path) -> None:
+def test_save_final_screens_copies_the_graded_screenshots(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path / "runs")
     shot = tmp_path / "before.png"
     shot.write_bytes(b"png")
+    for run_id in ("run-1", "run-3"):
+        (tmp_path / "runs" / run_id / "step_1").mkdir(parents=True)
+        (tmp_path / "runs" / run_id / "step_1" / "before.png").write_bytes(b"png")
     graded = live_bench.TaskResult(
         "notepad_type", "text", "run-1", "succeeded", "success", "-", 1, 0, 5, 0, 0, "", str(shot)
     )
     missing = live_bench.TaskResult(
         "cmd_echo", "shell", None, "error", "error", "-", 0, 0, 1, 0, 0, "no screenshot", "-"
     )
+    failed = live_bench.TaskResult(
+        "explorer_windows", "files", "run-3", "failed", "failure", "-", 5, 0, 9, 0, 0, "Home", str(shot)
+    )
 
-    save_final_screens([graded, missing], tmp_path / "screens")
+    save_final_screens([graded, missing, failed], tmp_path / "screens")
 
-    assert [p.name for p in (tmp_path / "screens").iterdir()] == ["notepad_type.png"]
+    saved = sorted(p.name for p in (tmp_path / "screens").iterdir())
+    # Only the failed run's folder is kept; a successful run keeps just its final screen.
+    assert saved == ["explorer_windows", "explorer_windows.png", "notepad_type.png"]
+    assert (tmp_path / "screens" / "explorer_windows" / "step_1" / "before.png").is_file()
 
 
 async def _noop() -> None:

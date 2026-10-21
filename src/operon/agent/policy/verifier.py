@@ -295,7 +295,9 @@ class DeterministicVerifierService(VerifierService):
         executed_action: ExecutedAction,
     ) -> VerificationResult | None:
         screenshot_path = executed_action.artifact_path
-        if not screenshot_path:
+        # The executor can report an after-screenshot it never wrote (a failed capture);
+        # without the image the critic has nothing to judge.
+        if not screenshot_path or not Path(screenshot_path).is_file():
             self._last_debug_artifacts = None
             return None
 

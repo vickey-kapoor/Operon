@@ -48,9 +48,9 @@ TASKS: list[LiveTask] = [
     ),
     LiveTask(
         "toc_section", "navigation",
-        "Use the table of contents to jump to the 'Early life and education' section",
+        "Use the table of contents to jump to the 'Commemoration' section",
         "https://en.wikipedia.org/wiki/Ada_Lovelace",
-        "The 'Early life' section heading of the Ada Lovelace article is visible near the top of the view.",
+        "The 'Commemoration' section heading of the Ada Lovelace article is visible near the top of the view.",
     ),
     LiveTask(
         "hn_new", "navigation",
@@ -80,7 +80,9 @@ TASKS: list[LiveTask] = [
         "quotes_page_two", "navigation",
         "Go to the next page of quotes",
         "https://quotes.toscrape.com/",
-        "The second page of quotes is showing (a 'Previous' button is visible).",
+        "The second page of quotes is showing, not the first. Page 2 has quotes by Bob Marley, Dr. Seuss, "
+        "Douglas Adams, Elie Wiesel, Friedrich Nietzsche, Mark Twain and Allen Saunders, none of whom are on "
+        "page 1; page 1 has Thomas A. Edison, Jane Austen, Steve Martin, André Gide and Eleanor Roosevelt.",
     ),
     # --- search -------------------------------------------------------------
     LiveTask(
@@ -143,7 +145,8 @@ TASKS: list[LiveTask] = [
         "quotes_by_tag", "reading",
         "Show only quotes tagged 'love'",
         "https://quotes.toscrape.com/",
-        "The page lists quotes filtered by the tag 'love' ('Viewing tag: love').",
+        "Only quotes tagged 'love' are listed: the 'Viewing tag: love' header is visible, or every quote "
+        "on screen carries the 'love' tag.",
     ),
     LiveTask(
         "wiki_infobox_fact", "reading",

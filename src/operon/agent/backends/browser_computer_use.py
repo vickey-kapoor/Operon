@@ -33,6 +33,20 @@ class _ConversationState:
     contents: list[dict] = field(default_factory=list)
     pending_function_names: list[str] = field(default_factory=list)
     acknowledged_actions: int = 0
+    # Calls the model marked require_confirmation: the run paused on them, and the
+    # next perceive (only reached after the user resumes) runs them as approved.
+    held_calls: list[dict] = field(default_factory=list)
+    acknowledge_safety: bool = False
+
+
+def _requires_confirmation(call: dict) -> bool:
+    decision = (call.get("args") or {}).get("safety_decision")
+    return isinstance(decision, dict) and decision.get("decision") == "require_confirmation"
+
+
+def _without_safety_decision(call: dict) -> dict:
+    args = {key: value for key, value in (call.get("args") or {}).items() if key != "safety_decision"}
+    return {**call, "args": args}
 
 
 class BrowserComputerUseBackend(AgentBackend):
@@ -78,7 +92,23 @@ class BrowserComputerUseBackend(AgentBackend):
         prompt = self._render_prompt(state)
         bg_writer.enqueue(prompt_path, prompt)
 
-        response_payload = await self._run_with_retry(prompt=prompt, screenshot=screenshot, state=state)
+        conversation = self._conversations.get(state.run_id)
+        if conversation is not None and conversation.held_calls:
+            # The run paused for confirmation and the user resumed it: run the held
+            # call now, and acknowledge the safety decision when answering it.
+            function_calls = [_without_safety_decision(call) for call in conversation.held_calls]
+            conversation.held_calls = []
+            conversation.acknowledge_safety = True
+            response_payload = {
+                "function_call": function_calls[0],
+                "function_calls": function_calls,
+                "rationale": "Running the action the user confirmed.",
+            }
+        else:
+            response_payload = await self._run_with_retry(prompt=prompt, screenshot=screenshot, state=state)
+            function_calls = response_payload.get("function_calls") or []
+            if any(_requires_confirmation(call) for call in function_calls):
+                self._conversations[state.run_id].held_calls = function_calls
 
         bg_writer.enqueue(raw_path, json.dumps(response_payload, indent=2))
 
@@ -226,6 +256,13 @@ class BrowserComputerUseBackend(AgentBackend):
                 current_url=current_url,
                 error=error,
             )
+            if conversation.acknowledge_safety:
+                # The API rejects the answer to a require_confirmation call unless
+                # it acknowledges the decision the user just made.
+                for part in function_response["parts"]:
+                    if "function_response" in part:
+                        part["function_response"]["response"]["safety_acknowledgement"] = "true"
+                conversation.acknowledge_safety = False
             conversation.contents.append(function_response)
             conversation.acknowledged_actions = len(state.action_history)
             conversation.pending_function_names = []

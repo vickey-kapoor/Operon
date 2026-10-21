@@ -62,6 +62,10 @@ def _pricing_for_model(*, provider: ModelProvider, model: str) -> tuple[float | 
     if provider == "anthropic":
         if normalized == "claude-sonnet-5":
             return 3.0, 15.0
+        if normalized == "claude-opus-5-5":
+            return 4.0, 20.0
+        if normalized == "claude-sonnet-5-5":
+            return 2.0, 10.0
         return None, None
 
     if normalized == "gemini-3-flash-preview":

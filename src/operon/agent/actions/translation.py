@@ -163,6 +163,139 @@ def normalize_computer_use_actions(
     return {"action_type": "batch", "actions": normalized}
 
 
+# Claude's key names follow xdotool ("Return", "ctrl+s", "Page_Down"); Playwright's differ.
+_CLAUDE_KEY_NAMES = {
+    "ctrl": "Control",
+    "control": "Control",
+    "alt": "Alt",
+    "shift": "Shift",
+    "super": "Meta",
+    "cmd": "Meta",
+    "meta": "Meta",
+    "return": "Enter",
+    "enter": "Enter",
+    "kp_enter": "Enter",
+    "escape": "Escape",
+    "esc": "Escape",
+    "backspace": "Backspace",
+    "delete": "Delete",
+    "tab": "Tab",
+    "space": "Space",
+    "up": "ArrowUp",
+    "down": "ArrowDown",
+    "left": "ArrowLeft",
+    "right": "ArrowRight",
+    "page_up": "PageUp",
+    "prior": "PageUp",
+    "page_down": "PageDown",
+    "next": "PageDown",
+    "home": "Home",
+    "end": "End",
+    "insert": "Insert",
+}
+
+# Pixels per scroll-wheel click, as Chromium scrolls for one notch.
+_CLAUDE_SCROLL_STEP_PX = 100
+
+
+def _claude_key(text: str) -> dict[str, Any]:
+    parts = [part.strip() for part in str(text).split("+") if part.strip()]
+    if not parts:
+        raise BackendCompatibilityError("Claude key action without a key.")
+    if len(parts) == 1:
+        name = parts[0]
+        return {"action_type": "press_key", "key": _CLAUDE_KEY_NAMES.get(name.lower(), name)}
+    lowered = "+".join(part.lower() for part in parts)
+    if lowered in {"alt+left", "alt+right"}:
+        # The executor turns these into history navigation.
+        return {"action_type": "hotkey", "key": lowered}
+    return {
+        "action_type": "hotkey",
+        "key": "+".join(_CLAUDE_KEY_NAMES.get(part.lower(), part) for part in parts),
+    }
+
+
+def normalize_claude_computer_calls(
+    calls: list[dict[str, Any]],
+    *,
+    scale_x: float,
+    scale_y: float,
+    screen_width: int,
+    screen_height: int,
+) -> dict[str, Any]:
+    """Map one turn of Claude computer use calls to an executor action payload.
+
+    Each call is ``{"name": member, "input": {...}}``. Coordinates arrive in the
+    pixel space of the screenshot Claude saw and are multiplied by ``scale_x`` /
+    ``scale_y`` to reach screen space.
+    """
+
+    def point(value: Any) -> tuple[int, int]:
+        x, y = value
+        return (
+            max(0, min(screen_width - 1, round(float(x) * scale_x))),
+            max(0, min(screen_height - 1, round(float(y) * scale_y))),
+        )
+
+    def centre() -> tuple[int, int]:
+        return screen_width // 2, screen_height // 2
+
+    actions: list[dict[str, Any]] = []
+    for call in calls:
+        name = call.get("name")
+        args = call.get("input") or {}
+        if name == "screenshot":
+            continue  # every answer already carries a fresh screenshot
+        if name in {"left_click", "middle_click", "double_click", "right_click"}:
+            x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
+            action_type = {"left_click": "click", "middle_click": "click"}.get(name, name)
+            actions.append({"action_type": action_type, "x": x, "y": y})
+        elif name == "mouse_move":
+            x, y = point(args["coordinate"])
+            actions.append({"action_type": "hover", "x": x, "y": y})
+        elif name == "left_click_drag":
+            x, y = point(args["start_coordinate"])
+            x_end, y_end = point(args["coordinate"])
+            actions.append({"action_type": "drag", "x": x, "y": y, "x_end": x_end, "y_end": y_end})
+        elif name == "type":
+            typed: dict[str, Any] = {
+                "action_type": "type",
+                "text": args["text"],
+                "clear_before_typing": False,
+                "press_enter": False,
+            }
+            previous = actions[-1] if actions else None
+            if previous is not None and previous["action_type"] == "click":
+                # Focus and type in one atomic TYPE rather than a CLICK then a TYPE.
+                actions.pop()
+                typed.update(x=previous["x"], y=previous["y"])
+            actions.append(typed)
+        elif name == "key":
+            repeat = max(1, min(100, int(args.get("repeat", 1) or 1)))
+            actions.extend(_claude_key(args["text"]) for _ in range(repeat))
+        elif name == "scroll":
+            x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
+            direction = str(args.get("scroll_direction", "down")).lower()
+            magnitude = max(1, int(args.get("scroll_amount", 3) or 3)) * _CLAUDE_SCROLL_STEP_PX
+            # Executors scroll up for a positive amount.
+            amount = magnitude if direction in {"up", "right"} else -magnitude
+            actions.append({"action_type": "scroll", "x": x, "y": y, "scroll_amount": amount})
+        elif name == "wait":
+            seconds = min(float(args.get("duration", 1) or 1), 30.0)
+            actions.append({"action_type": "wait", "wait_ms": int(seconds * 1000)})
+        elif name == "navigate":
+            actions.append({"action_type": "navigate", "url": args["url"]})
+        else:
+            raise BackendCompatibilityError(f"Unsupported Claude computer use call: {name}")
+
+    if not actions:
+        # Only screenshots were asked for: nothing to do on screen this step.
+        return {"action_type": "wait", "wait_ms": 250}
+    if len(actions) == 1:
+        return actions[0]
+    return {"action_type": "batch", "actions": actions}
+
+
 def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction:
     action_type = action_payload.get("action_type")
 

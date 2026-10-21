@@ -5,7 +5,7 @@ import sys
 from dataclasses import asdict, dataclass
 
 _VALID_DESKTOP_BACKENDS = frozenset({"json"})
-_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use"})
+_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "claude_computer_use"})
 _VALID_PROVIDERS = frozenset({"gemini", "anthropic"})
 
 
@@ -19,6 +19,12 @@ class RuntimeModeConfig:
     fallback_backend: str | None = None
     fallback_model: str | None = None
     verifier_model: str | None = None
+    # Gemini thinking settings: a level ("low") on Gemini 3, a token budget ("0") on 2.5.
+    thinking: str | None = None
+    verifier_thinking: str | None = None
+    # Claude computer use backend (OPERON_BROWSER_BACKEND=claude_computer_use).
+    claude_model: str | None = None
+    claude_effort: str | None = None
 
 
 def desktop_mode_config() -> RuntimeModeConfig:
@@ -30,6 +36,7 @@ def desktop_mode_config() -> RuntimeModeConfig:
         verifier_provider=os.getenv("OPERON_DESKTOP_VERIFIER_PROVIDER", "gemini"),
         fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-2.5-flash"),
         verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-2.5-flash"),
+        verifier_thinking=os.getenv("OPERON_DESKTOP_VERIFIER_THINKING") or None,
     )
 
 
@@ -45,7 +52,11 @@ def browser_mode_config() -> RuntimeModeConfig:
         verifier_provider=os.getenv("OPERON_BROWSER_VERIFIER_PROVIDER", "gemini"),
         fallback_backend=os.getenv("OPERON_BROWSER_FALLBACK_BACKEND", "json"),
         fallback_model=os.getenv("OPERON_BROWSER_FALLBACK_MODEL", "gemini-2.5-flash"),
-        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL", "gemini-2.5-flash"),
+        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL", "gemini-3.5-flash"),
+        thinking=os.getenv("OPERON_BROWSER_THINKING", "low") or None,
+        verifier_thinking=os.getenv("OPERON_BROWSER_VERIFIER_THINKING", "low") or None,
+        claude_model=os.getenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-opus-5-5"),
+        claude_effort=os.getenv("OPERON_BROWSER_CLAUDE_EFFORT", "low") or None,
     )
 
 
@@ -77,6 +88,8 @@ def validate_modes() -> list[str]:
             errors.append(
                 f"OPERON_{label.upper()}_VERIFIER_PROVIDER={cfg.verifier_provider!r} is not one of {sorted(_VALID_PROVIDERS)}"
             )
+        if cfg.backend == "claude_computer_use" and not os.getenv("ANTHROPIC_API_KEY"):
+            errors.append(f"{label} backend=claude_computer_use but ANTHROPIC_API_KEY is unset")
         if cfg.planner_provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
             errors.append(
                 f"{label} planner_provider=anthropic but ANTHROPIC_API_KEY is unset"

@@ -1,0 +1,121 @@
+name: Live desktop benchmark
+
+# Runs the live desktop benchmark (tests/eval/live_desktop_bench.py) on a
+# GitHub-hosted Windows runner, whose interactive session has a real desktop
+# for the agent to drive. Manual only: every run spends model credits.
+# Needs repo secret GEMINI_API_KEY (the desktop loop and the judge are Gemini),
+# and ANTHROPIC_API_KEY only when planner_provider is anthropic.
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "smoke (3 tasks) or full (10 tasks)"
+        type: choice
+        options: [full, smoke]
+        default: full
+      desktop_model:
+        description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
+        default: ""
+      planner_provider:
+        description: "OPERON_DESKTOP_PLANNER_PROVIDER"
+        type: choice
+        options: [gemini, anthropic]
+        default: gemini
+      args:
+        description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Bench (desktop)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      UV_PYTHON: "3.14"
+      PYTHONUTF8: "1"
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPERON_DESKTOP_PLANNER_PROVIDER: ${{ inputs.planner_provider }}
+    steps:
+      - name: Check the secrets
+        run: |
+          $missing = @()
+          if (-not $env:GEMINI_API_KEY) { $missing += "GEMINI_API_KEY" }
+          if ($env:OPERON_DESKTOP_PLANNER_PROVIDER -eq "anthropic" -and -not $env:ANTHROPIC_API_KEY) { $missing += "ANTHROPIC_API_KEY" }
+          if ($missing.Count -gt 0) {
+            Write-Output "::error::Missing repository secret(s): $($missing -join ', '). Add them under Settings > Secrets and variables > Actions."
+            exit 1
+          }
+
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set the desktop model
+        if: inputs.desktop_model != ''
+        env:
+          DESKTOP_MODEL: ${{ inputs.desktop_model }}
+        run: Add-Content -Path $env:GITHUB_ENV -Value "OPERON_DESKTOP_MODEL=$env:DESKTOP_MODEL"
+
+      - name: Set the screen to 1920x1080
+        # The runner's session starts at 1024x768; the agent works better on a full-size screen.
+        continue-on-error: true
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Start the API
+        # Hidden window: a visible console would sit on the desktop the agent is driving.
+        run: |
+          Start-Process -FilePath uv -WindowStyle Hidden `
+            -ArgumentList "run", "python", "-m", "uvicorn", "operon.api.server:app", "--host", "127.0.0.1", "--port", "8080" `
+            -RedirectStandardOutput uvicorn.log -RedirectStandardError uvicorn.err.log
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              Invoke-WebRequest -Uri http://127.0.0.1:8080/health -UseBasicParsing -TimeoutSec 2 | Out-Null
+              exit 0
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          Get-Content uvicorn.log, uvicorn.err.log -ErrorAction SilentlyContinue
+          exit 1
+
+      - name: Run the benchmark
+        env:
+          SUITE: ${{ inputs.suite }}
+          EXTRA_ARGS: ${{ inputs.args }}
+        run: |
+          $extra = if ($env:EXTRA_ARGS) { $env:EXTRA_ARGS -split '\s+' } else { @() }
+          uv run python -m tests.eval.live_desktop_bench --suite $env:SUITE --keep-screens @extra | Tee-Object -FilePath bench.txt
+          exit $LASTEXITCODE
+
+      - name: Summary
+        if: always()
+        run: |
+          $report = if (Test-Path bench.txt) { Get-Content bench.txt -Tail 40 } else { "no report" }
+          @("## desktop", '```') + $report + @('```') | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-desktop
+          # .var/bench holds the JSON report and each task's graded screenshot.
+          path: |
+            bench.txt
+            uvicorn.log
+            uvicorn.err.log
+            .var/bench/
+          if-no-files-found: ignore
+          retention-days: 14

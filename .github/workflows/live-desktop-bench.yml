@@ -76,29 +76,34 @@ jobs:
       - name: Install dependencies (exact versions from uv.lock)
         run: uv sync --locked --extra dev
 
-      - name: Start the API
+      - name: Start the API and run the benchmark
+        # One step on purpose: Windows runners kill a step's child processes when the
+        # step ends, so an API started in an earlier step is gone before the benchmark runs.
         # Hidden window: a visible console would sit on the desktop the agent is driving.
-        run: |
-          Start-Process -FilePath uv -WindowStyle Hidden `
-            -ArgumentList "run", "python", "-m", "uvicorn", "operon.api.server:app", "--host", "127.0.0.1", "--port", "8080" `
-            -RedirectStandardOutput uvicorn.log -RedirectStandardError uvicorn.err.log
-          for ($i = 0; $i -lt 60; $i++) {
-            try {
-              Invoke-WebRequest -Uri http://127.0.0.1:8080/health -UseBasicParsing -TimeoutSec 2 | Out-Null
-              exit 0
-            } catch { Start-Sleep -Seconds 2 }
-          }
-          Get-Content uvicorn.log, uvicorn.err.log -ErrorAction SilentlyContinue
-          exit 1
-
-      - name: Run the benchmark
         env:
           SUITE: ${{ inputs.suite }}
           EXTRA_ARGS: ${{ inputs.args }}
         run: |
+          Start-Process -FilePath uv -WindowStyle Hidden `
+            -ArgumentList "run", "python", "-m", "uvicorn", "operon.api.server:app", "--host", "127.0.0.1", "--port", "8080" `
+            -RedirectStandardOutput uvicorn.log -RedirectStandardError uvicorn.err.log
+          $up = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              Invoke-WebRequest -Uri http://127.0.0.1:8080/health -UseBasicParsing -TimeoutSec 2 | Out-Null
+              $up = $true
+              break
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $up) {
+            Get-Content uvicorn.log, uvicorn.err.log -ErrorAction SilentlyContinue
+            exit 1
+          }
           $extra = if ($env:EXTRA_ARGS) { $env:EXTRA_ARGS -split '\s+' } else { @() }
           uv run python -m tests.eval.live_desktop_bench --suite $env:SUITE --keep-screens @extra | Tee-Object -FilePath bench.txt
-          exit $LASTEXITCODE
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { Get-Content uvicorn.err.log -Tail 40 -ErrorAction SilentlyContinue }
+          exit $code
 
       - name: Summary
         if: always()

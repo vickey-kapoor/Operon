@@ -246,6 +246,30 @@ async def test_verifier_falls_back_when_model_critic_unavailable(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_verifier_skips_the_critic_when_the_after_screenshot_was_never_written(tmp_path: Path) -> None:
+    state = AgentState(run_id="run-8", intent="Create draft", status="running")
+    action = AgentAction(action_type=ActionType.CLICK, target_element_id="compose")
+    decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.2, active_subgoal="open compose")
+    missing = tmp_path / "step_3" / "after.png"
+    executed = ExecutedAction(action=action, success=True, detail="clicked compose", artifact_path=str(missing))
+    client = StubVerificationClient(response='{"status": "success"}')
+    calls: list[str] = []
+    original = client.generate_verification
+
+    async def recording(prompt: str, screenshot_path: str) -> str:
+        calls.append(screenshot_path)
+        return await original(prompt, screenshot_path)
+
+    client.generate_verification = recording  # type: ignore[method-assign]
+    service = DeterministicVerifierService(gemini_client=client, prompt_path=_prompt_path(tmp_path))
+
+    result = await service.verify(state, decision, executed)
+
+    assert calls == []
+    assert result.critic_model_used is False
+
+
+@pytest.mark.asyncio
 async def test_verifier_critic_failure_is_logged_and_persisted(tmp_path: Path, caplog) -> None:
     # A dead critic falls back to SUCCESS at confidence >= 0.5, so the failure
     # reason must reach both the log and the step's diagnostics file.

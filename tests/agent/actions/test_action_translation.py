@@ -142,3 +142,57 @@ def test_normalize_rejects_unknown_tool_function() -> None:
             screen_width=1200,
             screen_height=800,
         )
+
+
+@pytest.mark.parametrize(
+    ("function_call", "action_type", "key"),
+    [
+        ({"name": "go_back", "args": {}}, ActionType.HOTKEY, "alt+left"),
+        ({"name": "go_forward", "args": {}}, ActionType.HOTKEY, "alt+right"),
+        ({"name": "key_combination", "args": {"keys": "Control+A"}}, ActionType.HOTKEY, "Control+A"),
+        ({"name": "key_combination", "args": {"keys": "Enter"}}, ActionType.PRESS_KEY, "Enter"),
+    ],
+)
+def test_normalized_key_calls_translate_to_actions(function_call, action_type, key) -> None:
+    payload = normalize_computer_use_function_call(function_call, screen_width=1000, screen_height=1000)
+
+    action = translate_computer_use_action(payload)
+
+    assert action.action_type is action_type
+    assert action.key == key
+
+
+@pytest.mark.parametrize(("direction", "sign"), [("down", -1), ("up", 1)])
+def test_scroll_document_uses_the_executor_sign_convention(direction, sign) -> None:
+    """Executors scroll up for a positive amount; both scroll tools must agree."""
+    document = normalize_computer_use_function_call(
+        {"name": "scroll_document", "args": {"direction": direction}}, screen_width=1000, screen_height=1000
+    )
+    at = normalize_computer_use_function_call(
+        {"name": "scroll_at", "args": {"x": 500, "y": 500, "direction": direction}}, screen_width=1000, screen_height=1000
+    )
+
+    assert document["scroll_amount"] * sign > 0
+    assert at["scroll_amount"] * sign > 0
+
+
+@pytest.mark.parametrize(
+    ("function_call", "expected"),
+    [
+        ({"name": "click", "args": {"x": 500, "y": 500, "intent": "open it"}}, {"action_type": "click"}),
+        ({"name": "right_click", "args": {"x": 500, "y": 500, "intent": "menu"}}, {"action_type": "right_click"}),
+        ({"name": "move", "args": {"x": 500, "y": 500, "intent": "hover"}}, {"action_type": "hover"}),
+        ({"name": "type", "args": {"text": "Ada", "intent": "name"}}, {"action_type": "type", "text": "Ada", "press_enter": False}),
+        ({"name": "press_key", "args": {"key": "Enter", "intent": "submit"}}, {"action_type": "press_key", "key": "Enter"}),
+        ({"name": "hotkey", "args": {"keys": ["Control", "a"], "intent": "select"}}, {"action_type": "hotkey", "key": "Control+a"}),
+        ({"name": "wait", "args": {"seconds": 3, "intent": "load"}}, {"action_type": "wait", "wait_ms": 3000}),
+        ({"name": "take_screenshot", "args": {"intent": "look"}}, {"action_type": "wait"}),
+        ({"name": "scroll", "args": {"x": 500, "y": 500, "direction": "down", "magnitude_in_pixels": 400, "intent": "more"}}, {"action_type": "scroll", "scroll_amount": -400}),
+        ({"name": "drag_and_drop", "args": {"start_x": 0, "start_y": 0, "end_x": 999, "end_y": 999, "intent": "move"}}, {"action_type": "drag", "x": 0, "x_end": 999}),
+    ],
+)
+def test_gemini_3_computer_use_actions_translate(function_call, expected) -> None:
+    payload = normalize_computer_use_function_call(function_call, screen_width=1000, screen_height=1000)
+
+    assert {key: payload[key] for key in expected} == expected
+    translate_computer_use_action(payload)

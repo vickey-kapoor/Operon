@@ -76,7 +76,8 @@ def normalize_computer_use_function_call(
         return {"action_type": "press_key", "key": keys}
     if name == "scroll_document":
         direction = str(args["direction"]).lower()
-        amount = 800 if direction in {"down", "right"} else -800
+        # Executors scroll up for a positive amount (as scroll_at below assumes).
+        amount = 800 if direction in {"up", "right"} else -800
         return {
             "action_type": "scroll",
             "x": max(screen_width // 2, 0),
@@ -95,12 +96,48 @@ def normalize_computer_use_function_call(
             "scroll_amount": amount,
         }
     if name == "drag_and_drop":
+        # Gemini 2.5 names the ends x/y and destination_x/y; Gemini 3.x start_* and end_*.
         return {
             "action_type": "drag",
+            "x": _scale_grid_coord(args.get("start_x", args.get("x")), screen_width),
+            "y": _scale_grid_coord(args.get("start_y", args.get("y")), screen_height),
+            "x_end": _scale_grid_coord(args.get("end_x", args.get("destination_x")), screen_width),
+            "y_end": _scale_grid_coord(args.get("end_y", args.get("destination_y")), screen_height),
+        }
+    # Action set of the Gemini 3.x models' built-in computer_use tool. Every call
+    # carries an ``intent`` argument, which is the model's reasoning, not a target.
+    if name in {"click", "middle_click", "double_click", "right_click", "move"}:
+        action_type = {"click": "click", "middle_click": "click", "move": "hover"}.get(name, name)
+        return {
+            "action_type": action_type,
             "x": _scale_grid_coord(args["x"], screen_width),
             "y": _scale_grid_coord(args["y"], screen_height),
-            "x_end": _scale_grid_coord(args["destination_x"], screen_width),
-            "y_end": _scale_grid_coord(args["destination_y"], screen_height),
+        }
+    if name == "type":
+        return {
+            "action_type": "type",
+            "text": args["text"],
+            "clear_before_typing": False,
+            "press_enter": bool(args.get("press_enter", False)),
+        }
+    if name == "press_key":
+        return {"action_type": "press_key", "key": str(args["key"])}
+    if name == "hotkey":
+        keys = args["keys"]
+        return {"action_type": "hotkey", "key": "+".join(keys) if isinstance(keys, list) else str(keys)}
+    if name == "wait":
+        return {"action_type": "wait", "wait_ms": int(float(args.get("seconds", 1)) * 1000)}
+    if name == "take_screenshot":
+        # Nothing to do on screen; the next turn carries a fresh screenshot.
+        return {"action_type": "wait", "wait_ms": 250}
+    if name == "scroll":
+        direction = str(args["direction"]).lower()
+        magnitude = int(args.get("magnitude_in_pixels", 300))
+        return {
+            "action_type": "scroll",
+            "x": _scale_grid_coord(args["x"], screen_width),
+            "y": _scale_grid_coord(args["y"], screen_height),
+            "scroll_amount": magnitude if direction in {"up", "right"} else -magnitude,
         }
     raise BackendCompatibilityError(f"Unsupported Computer Use function call: {name}")
 
@@ -136,6 +173,13 @@ def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction
             y=action_payload["y"],
         )
 
+    if action_type == "right_click":
+        return AgentAction(
+            action_type=ActionType.RIGHT_CLICK,
+            x=action_payload["x"],
+            y=action_payload["y"],
+        )
+
     if action_type == "double_click":
         return AgentAction(
             action_type=ActionType.DOUBLE_CLICK,
@@ -165,6 +209,12 @@ def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction
         if "+" in key:
             return AgentAction(action_type=ActionType.HOTKEY, key=key)
         return AgentAction(action_type=ActionType.PRESS_KEY, key=key)
+
+    if action_type == "hotkey":
+        return AgentAction(action_type=ActionType.HOTKEY, key=action_payload["key"])
+
+    if action_type == "press_key":
+        return AgentAction(action_type=ActionType.PRESS_KEY, key=action_payload["key"])
 
     if action_type == "scroll":
         return AgentAction(

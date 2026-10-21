@@ -7,12 +7,16 @@ import pytest
 
 from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.clients.gemini import PlaceholderGeminiClient
-from operon.models.common import FailureCategory, LoopStage, StopReason
+from operon.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from operon.models.execution import ExecutedAction
 from operon.models.perception import ScreenPerception, UIElement, UIElementType
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
 from operon.models.state import AgentState
-from operon.models.verification import VerificationFailureType, VerificationStatus
+from operon.models.verification import (
+    VerificationFailureType,
+    VerificationResult,
+    VerificationStatus,
+)
 
 
 def _service() -> DeterministicVerifierService:
@@ -70,9 +74,14 @@ async def test_verifier_expected_outcome_not_met() -> None:
     assert result.failure_type is VerificationFailureType.ACTION_FAILED
 
 
+def _typed_draft() -> ExecutedAction:
+    typed = AgentAction(action_type=ActionType.TYPE, target_element_id="body", text="Hello")
+    return ExecutedAction(action=typed, success=True, detail="typed body")
+
+
 @pytest.mark.asyncio
 async def test_verifier_stop_before_send_boundary() -> None:
-    state = AgentState(run_id="run-3", intent="Create draft", status="running")
+    state = AgentState(run_id="run-3", intent="Create draft", status="running", action_history=[_typed_draft()])
     action = AgentAction(action_type=ActionType.STOP)
     decision = PolicyDecision(action=action, rationale="Stop before send.", confidence=1.0, active_subgoal="stop before send")
     executed = ExecutedAction(action=action, success=True, detail="stopped before send")
@@ -354,3 +363,118 @@ async def test_verifier_settle_reverify_never_returns_stable_wait(tmp_path: Path
     result = await _service().verify(*_stable_wait_inputs(after), allow_stable_wait=False)
 
     assert result.status is not VerificationStatus.STABLE_WAIT
+
+
+# ── STOP is a completion claim and gets verified ──────────────────────────
+
+
+def _stop(tmp_path: Path | None = None) -> tuple[PolicyDecision, ExecutedAction]:
+    action = AgentAction(action_type=ActionType.STOP)
+    decision = PolicyDecision(action=action, rationale="Done.", confidence=0.9, active_subgoal="complete task")
+    artifact = None
+    if tmp_path is not None:
+        artifact = tmp_path / "after.png"
+        artifact.write_bytes(b"fake")
+    return decision, ExecutedAction(action=action, success=True, detail="stopped", artifact_path=str(artifact) if artifact else None)
+
+
+def _critic(tmp_path: Path, status: str) -> DeterministicVerifierService:
+    client = StubVerificationClient(
+        response=json.dumps({"status": status, "expected_outcome_met": status == "success", "stop_condition_met": False, "reason": "judged"})
+    )
+    return DeterministicVerifierService(gemini_client=client, prompt_path=_prompt_path(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_stop_without_any_work_is_rejected() -> None:
+    state = AgentState(run_id="run-s1", intent="Create draft", status="running")
+    decision, executed = _stop()
+
+    result = await _service().verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.FAILURE
+    assert result.stop_condition_met is False
+    assert result.failure_category is FailureCategory.EXPECTED_OUTCOME_NOT_MET
+
+
+@pytest.mark.asyncio
+async def test_stop_after_a_failed_step_is_rejected() -> None:
+    failed = VerificationResult(
+        status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="form unchanged"
+    )
+    state = AgentState(
+        run_id="run-s2", intent="Create draft", status="running",
+        action_history=[_typed_draft()], verification_history=[failed],
+    )
+    decision, executed = _stop()
+
+    result = await _service().verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.FAILURE
+    assert result.stop_condition_met is False
+
+
+@pytest.mark.asyncio
+async def test_stop_rejected_when_the_critic_sees_the_task_incomplete(tmp_path: Path) -> None:
+    state = AgentState(run_id="run-s3", intent="Create draft", status="running", action_history=[_typed_draft()])
+    decision, executed = _stop(tmp_path)
+
+    result = await _critic(tmp_path, "failure").verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.FAILURE
+    assert "critic" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_stop_accepted_when_the_critic_sees_the_task_complete(tmp_path: Path) -> None:
+    state = AgentState(run_id="run-s4", intent="Create draft", status="running")
+    decision, executed = _stop(tmp_path)
+
+    result = await _critic(tmp_path, "success").verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.SUCCESS
+    assert result.stop_condition_met is True
+
+
+@pytest.mark.asyncio
+async def test_unsure_critic_falls_back_to_the_run_history(tmp_path: Path) -> None:
+    worked = AgentState(run_id="run-s5", intent="Create draft", status="running", action_history=[_typed_draft()])
+    idle = AgentState(run_id="run-s6", intent="Create draft", status="running")
+    decision, executed = _stop(tmp_path)
+    service = _critic(tmp_path, "uncertain")
+
+    assert (await service.verify(worked, decision, executed)).stop_condition_met is True
+    assert (await service.verify(idle, decision, executed)).stop_condition_met is False
+
+
+@pytest.mark.parametrize(
+    ("intent", "action_type", "completes"),
+    [
+        ("Hover over the Products menu", ActionType.HOVER, True),
+        ("Hover over the Products menu and click Pricing", ActionType.HOVER, False),
+        ("Hover over Products, then click Pricing", ActionType.HOVER, False),
+        ("Open the menu and hover over Products", ActionType.HOVER, True),
+        ("Drag and drop the file onto the folder", ActionType.DRAG, True),
+        ("Drag the card to Done and then refresh the page", ActionType.DRAG, False),
+        ("Right-click the file and choose Rename", ActionType.RIGHT_CLICK, False),
+    ],
+)
+def test_goal_completing_action_only_counts_the_final_step_of_the_intent(intent, action_type, completes) -> None:
+    state = AgentState(run_id="r", intent=intent, status=RunStatus.RUNNING)
+    action = AgentAction(action_type=action_type, x=10, y=10, x_end=20, y_end=20) if action_type is ActionType.DRAG else AgentAction(action_type=action_type, x=10, y=10)
+
+    assert DeterministicVerifierService._is_goal_completing_action(state, action) is completes
+
+
+@pytest.mark.parametrize(("elements_reported", "loading"), [(True, True), (False, False)])
+def test_page_loading_needs_a_backend_that_reports_elements(elements_reported, loading) -> None:
+    perception = ScreenPerception(
+        summary="",
+        page_hint="unknown",
+        visible_elements=[],
+        capture_artifact_path="after.png",
+        elements_reported=elements_reported,
+    )
+    click = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
+
+    assert DeterministicVerifierService._is_page_loading(click, perception) is loading

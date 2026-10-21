@@ -38,7 +38,7 @@ def browser_mode_config() -> RuntimeModeConfig:
         backend=os.getenv("OPERON_BROWSER_BACKEND", "computer_use"),
         primary_model=os.getenv(
             "OPERON_BROWSER_MODEL",
-            "gemini-2.5-computer-use-preview-10-2025",
+            "gemini-3.5-flash",
         ),
         planner_provider=os.getenv("OPERON_BROWSER_PLANNER_PROVIDER", "gemini"),
         planner_model=os.getenv("OPERON_BROWSER_PLANNER_MODEL"),

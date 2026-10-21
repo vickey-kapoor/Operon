@@ -22,7 +22,7 @@ class LiveTask:
     name: str
     category: str
     intent: str
-    start_url: str
+    start_url: str | None  # None: start from the current screen (desktop tasks)
     check: str
     max_steps: int = 15
     tags: frozenset[str] = field(default_factory=frozenset)

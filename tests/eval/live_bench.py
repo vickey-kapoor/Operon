@@ -1,4 +1,4 @@
-"""Live benchmark: real web tasks against a running Operon API, graded from the final screen.
+"""Live benchmark: real tasks against a running Operon API, graded from the final screen.
 
 The offline eval (``python -m tests.eval``) scripts the model. This runs the
 real agent on real pages and grades each run the same way: a run's own claim
@@ -7,6 +7,10 @@ It needs a server started with a real ``GEMINI_API_KEY``::
 
     .venv/bin/python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
     .venv/bin/python -m tests.eval.live_bench [--suite smoke|full] [--only NAME] [--category CAT]
+
+``--mode desktop`` (or ``python -m tests.eval.live_desktop_bench``) runs the
+desktop tasks in ``tests/eval/desktop_tasks.py`` through the ``/desktop`` routes
+instead; that needs a real Windows desktop session.
 
 Outcomes, per task:
 
@@ -29,6 +33,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -39,11 +44,13 @@ from pathlib import Path
 import httpx
 
 from operon.core.paths import runs_dir
+from tests.eval.desktop_tasks import DESKTOP_TASKS
 from tests.eval.live_tasks import TASKS, LiveTask
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error")
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
+MODES = ("browser", "desktop")
 
 Judge = Callable[[LiveTask, str], Awaitable["Verdict"]]
 
@@ -85,7 +92,7 @@ def classify(status: str, goal_visible: bool | None) -> str:
     return "missed" if goal_visible else "failure"
 
 
-JUDGE_PROMPT = """You grade a browser agent. Look only at the screenshot.
+JUDGE_PROMPT = """You grade a computer-use agent. Look only at the screenshot.
 
 The user asked the agent: {intent}
 The task is complete only if: {check}
@@ -153,29 +160,31 @@ async def run_task(
     *,
     timeout_s: float,
     approve_pauses: int,
+    mode: str = "browser",
 ) -> TaskResult:
+    prefix = "/desktop" if mode == "desktop" else ""
     started = time.monotonic()
     run_id, status, steps, pauses = None, "error", 0, 0
+    payload: dict = {"intent": task.intent, "max_steps": task.max_steps}
+    if task.start_url:
+        payload["start_url"] = task.start_url
     try:
-        created = await client.post(
-            "/run-task",
-            json={"intent": task.intent, "start_url": task.start_url, "max_steps": task.max_steps},
-        )
+        created = await client.post(f"{prefix}/run-task", json=payload)
         created.raise_for_status()
         run_id, status = created.json()["run_id"], created.json()["status"]
         while time.monotonic() - started < timeout_s:
             await asyncio.sleep(2)
-            response = await client.get(f"/run/{run_id}")
+            response = await client.get(f"{prefix}/run/{run_id}")
             response.raise_for_status()
             status, steps = response.json()["status"], response.json()["step_count"]
             if status == "waiting_for_user" and pauses < approve_pauses:
                 pauses += 1
-                (await client.post("/resume", json={"run_id": run_id})).raise_for_status()
+                (await client.post(f"{prefix}/resume", json={"run_id": run_id})).raise_for_status()
                 continue
             if status in TERMINAL or status == "waiting_for_user":
                 break
         if status not in TERMINAL and status != "waiting_for_user":
-            await client.post("/stop", json={"run_id": run_id})
+            await client.post(f"{prefix}/stop", json={"run_id": run_id})
     except httpx.HTTPError as exc:
         status = "error"
         print(f"  {task.name}: API error: {exc}", file=sys.stderr)
@@ -184,7 +193,14 @@ async def run_task(
     verdict = await judge(task, screenshot) if screenshot else Verdict(None, "no screenshot")
     # A run paused for the user did not claim success; grade it as ended.
     graded_status = "failed" if status == "waiting_for_user" else status
-    cu, other = _backends_used(run_id) if run_id else (0, 0)
+    # Only the browser loop has a primary backend with a fallback to count.
+    cu, other = _backends_used(run_id) if run_id and mode == "browser" else (0, 0)
+    if run_id and mode == "desktop":
+        # Close the apps this run opened so the next task starts from a clean desktop.
+        try:
+            await client.post("/desktop/cleanup", json={"run_id": run_id})
+        except httpx.HTTPError as exc:
+            print(f"  {task.name}: cleanup failed: {exc}", file=sys.stderr)
     return TaskResult(
         task=task.name,
         category=task.category,
@@ -257,8 +273,19 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
     return "\n".join(lines)
 
 
-def select_tasks(suite: str, only: list[str] | None, category: list[str] | None) -> list[LiveTask]:
-    tasks = [t for t in TASKS if suite == "full" or suite in t.tags]
+def save_final_screens(results: list[TaskResult], target: Path) -> None:
+    """Copy each task's graded screenshot to ``target/<task>.png`` for upload or review."""
+    target.mkdir(parents=True, exist_ok=True)
+    for r in results:
+        if r.final_screenshot != "-" and Path(r.final_screenshot).is_file():
+            shutil.copyfile(r.final_screenshot, target / f"{r.task}.png")
+
+
+def select_tasks(
+    suite: str, only: list[str] | None, category: list[str] | None, mode: str = "browser"
+) -> list[LiveTask]:
+    pool = DESKTOP_TASKS if mode == "desktop" else TASKS
+    tasks = [t for t in pool if suite == "full" or suite in t.tags]
     if only:
         tasks = [t for t in tasks if t.name in only]
     if category:
@@ -267,7 +294,7 @@ def select_tasks(suite: str, only: list[str] | None, category: list[str] | None)
 
 
 async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
-    tasks = select_tasks(args.suite, args.only, args.category)
+    tasks = select_tasks(args.suite, args.only, args.category, args.mode)
     if not tasks:
         print("No tasks match.", file=sys.stderr)
         return 2
@@ -280,6 +307,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                 client, task, judge,
                 timeout_s=args.timeout,
                 approve_pauses=0 if args.no_approve else 2,
+                mode=args.mode,
             )
             results.append(result)
             if not args.json:
@@ -287,11 +315,15 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
 
     summary = summarize(results)
     bench_dir = Path(args.out_dir)
-    previous = _previous_report(bench_dir, args.suite) if not (args.only or args.category) else None
+    # Desktop reports get their own prefix so they never compare against browser runs.
+    suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
+    previous = _previous_report(bench_dir, suite_name) if not (args.only or args.category) else None
+    model_key = f"{args.mode}_model"
     report = {
-        "suite": args.suite,
+        "suite": suite_name,
+        "mode": args.mode,
         "started_at": started_at,
-        "browser_model": os.getenv("OPERON_BROWSER_MODEL", "server default"),
+        model_key: os.getenv(f"OPERON_{args.mode.upper()}_MODEL", "server default"),
         "judge_model": args.judge_model,
         "summary": summary,
         "results": [asdict(r) for r in results],
@@ -299,8 +331,10 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     if args.only or args.category:
         name = f"partial-{started_at}.json"
     else:
-        name = f"{args.suite}-{started_at}.json"
+        name = f"{suite_name}-{started_at}.json"
     bench_dir.mkdir(parents=True, exist_ok=True)
+    if args.keep_screens:
+        save_final_screens(results, bench_dir / Path(name).stem)
     (bench_dir / name).write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     if args.json:
@@ -312,9 +346,10 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     return 0
 
 
-def build_parser(default_suite: str = "full") -> argparse.ArgumentParser:
+def build_parser(default_suite: str = "full", default_mode: str = "browser") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--suite", choices=("smoke", "full"), default=default_suite)
+    parser.add_argument("--mode", choices=MODES, default=default_mode, help="browser or desktop tasks")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--only", action="append", help="run only the named task(s)")
     parser.add_argument("--category", action="append", help="run only tasks in these categories")
@@ -322,15 +357,16 @@ def build_parser(default_suite: str = "full") -> argparse.ArgumentParser:
     parser.add_argument("--no-approve", action="store_true", help="do not approve pauses for confirmation")
     parser.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", "gemini-3.5-flash"))
     parser.add_argument("--out-dir", default=str(BENCH_DIR))
+    parser.add_argument("--keep-screens", action="store_true", help="copy each graded screenshot next to the report")
     parser.add_argument("--list", action="store_true", help="list the tasks and exit")
     parser.add_argument("--json", action="store_true")
     return parser
 
 
-def main(argv: list[str], default_suite: str = "full") -> int:
-    args = build_parser(default_suite).parse_args(argv)
+def main(argv: list[str], default_suite: str = "full", default_mode: str = "browser") -> int:
+    args = build_parser(default_suite, default_mode).parse_args(argv)
     if args.list:
-        for task in select_tasks(args.suite, args.only, args.category):
+        for task in select_tasks(args.suite, args.only, args.category, args.mode):
             print(f"{task.name:22} {task.category:11} {task.intent}")
         return 0
     return asyncio.run(run_bench(args, gemini_judge(args.judge_model)))

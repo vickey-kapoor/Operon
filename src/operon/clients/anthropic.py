@@ -102,6 +102,15 @@ class AnthropicHttpClient:
         return self._last_usage
 
     async def _post_message(self, payload: dict[str, Any], *, request_kind: str) -> str:
+        return _extract_text(await self._post_json(payload, request_kind=request_kind))
+
+    async def _post_json(
+        self,
+        payload: dict[str, Any],
+        *,
+        request_kind: str,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         api_key = self.api_key or os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise AnthropicClientError("ANTHROPIC_API_KEY is not configured.")
@@ -120,6 +129,7 @@ class AnthropicHttpClient:
                         "Content-Type": "application/json",
                         "x-api-key": api_key,
                         "anthropic-version": "2023-06-01",
+                        **(extra_headers or {}),
                     },
                 )
                 if response.status_code != 200:
@@ -131,7 +141,7 @@ class AnthropicHttpClient:
                 else:
                     response_payload = response.json()
                     self._last_usage = _extract_usage(payload=response_payload, model=self.model, request_kind=request_kind)
-                    return _extract_text(response_payload)
+                    return response_payload
             except httpx.TimeoutException as exc:
                 last_error = AnthropicClientError(
                     f"Anthropic request timed out after {self.timeout_seconds} seconds."

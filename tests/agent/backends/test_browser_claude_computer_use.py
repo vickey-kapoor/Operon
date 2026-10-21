@@ -286,3 +286,32 @@ def test_the_backend_flag_selects_claude_with_the_gemini_fallback(monkeypatch: p
     assert isinstance(backend, FallbackBackend)
     assert isinstance(backend.primary, BrowserClaudeComputerUseBackend)
     assert backend.primary.client.model == "claude-sonnet-5-5"
+
+
+def test_claude_is_the_default_browser_backend_when_an_anthropic_key_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.api.runtime_config import browser_mode_config, validate_modes
+
+    monkeypatch.delenv("OPERON_BROWSER_BACKEND", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key")
+
+    assert browser_mode_config().backend == "claude_computer_use"
+    assert validate_modes() == []
+
+
+def test_gemini_stays_the_default_without_an_anthropic_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.api.runtime_config import browser_mode_config, validate_modes
+
+    monkeypatch.delenv("OPERON_BROWSER_BACKEND", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    assert browser_mode_config().backend == "computer_use"
+    assert validate_modes() == []
+
+
+def test_an_explicit_backend_wins_over_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.api.runtime_config import browser_mode_config
+
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "computer_use")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key")
+
+    assert browser_mode_config().backend == "computer_use"

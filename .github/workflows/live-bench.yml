@@ -58,6 +58,18 @@ jobs:
       OPERON_BROWSER_CLAUDE_EFFORT: ${{ inputs.claude_effort }}
       BROWSER_HEADLESS: "true"
     steps:
+      - name: Check the secrets
+        run: |
+          missing=""
+          [ -n "$GEMINI_API_KEY" ] || missing="$missing GEMINI_API_KEY"
+          if [ "$OPERON_BROWSER_BACKEND" = "claude_computer_use" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+            missing="$missing ANTHROPIC_API_KEY"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing. Add them under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
       - uses: actions/checkout@v7.0.1
 
       - name: Install uv

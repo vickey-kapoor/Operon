@@ -38,6 +38,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 # Live benchmark: 44 real web tasks graded from the final screen; saves to .var/bench/
 .venv\Scripts\python -m tests.eval.live_bench [--category forms] [--only NAME]
 
+# Live desktop benchmark: 10 tasks on stock Windows apps; drives the real mouse and keyboard
+.venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
+
 # Single test / file
 .venv\Scripts\python -m pytest tests/agent/test_loop.py::test_name -q
 

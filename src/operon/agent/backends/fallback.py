@@ -62,6 +62,9 @@ class FallbackBackend(AgentBackend):
         self.primary.add_advisory_hints(hints, source=source, run_id=run_id)
         self.secondary.add_advisory_hints(hints, source=source, run_id=run_id)
 
+    def supports_resampling(self, run_id: str = "") -> bool:
+        return self._backend_for_run(run_id).supports_resampling(run_id)
+
     def _backend_for_run(self, run_id: str) -> AgentBackend:
         return self._active_backends.get(run_id, self.primary)
 

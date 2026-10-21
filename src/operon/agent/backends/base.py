@@ -37,3 +37,9 @@ class AgentBackend(ABC):
     def clear_advisory_hints(self, run_id: str = "") -> None:
         """Drop any queued advisory hints. Optional hook."""
         return None
+
+    def supports_resampling(self, run_id: str = "") -> bool:
+        """Whether a second ``choose_action`` for the same step yields a fresh
+        decision. Best-of-N sampling needs it; backends that only replay a
+        decision cached by ``perceive`` return False."""
+        return True

@@ -7,6 +7,9 @@ from pathlib import Path
 
 from operon.agent.backends.anthropic_policy import AnthropicPolicyService
 from operon.agent.backends.base import AgentBackend
+from operon.agent.backends.browser_claude_computer_use import (
+    BrowserClaudeComputerUseBackend,
+)
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.backends.browser_json import BrowserJsonBackend
 from operon.agent.backends.combined import CombinedPerceptionPolicyService
@@ -15,6 +18,7 @@ from operon.agent.perception import GeminiPerceptionService, PerceptionService
 from operon.agent.policy import GeminiPolicyService, PolicyService
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.clients.anthropic import AnthropicHttpClient
+from operon.clients.anthropic_computer_use import AnthropicComputerUseHttpClient
 from operon.clients.gemini import GeminiHttpClient
 from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
 from operon.core.paths import prompts_dir
@@ -73,7 +77,11 @@ def build_verifier_client(*, config):
     if verifier_provider == "anthropic":
         verifier_model = verifier_model or "claude-sonnet-5"
         return AnthropicHttpClient(model=verifier_model, timeout_seconds=120.0)
-    return GeminiHttpClient(model=verifier_model, timeout_seconds=120.0)
+    return GeminiHttpClient(
+        model=verifier_model,
+        timeout_seconds=120.0,
+        thinking=config.verifier_thinking,
+    )
 
 
 def build_browser_services(executor) -> RuntimeServices:
@@ -92,12 +100,25 @@ def build_browser_services(executor) -> RuntimeServices:
             prompt_path=_PROMPTS_DIR / "browser_combined_prompt.txt",
         )
         return RuntimeServices(perception_service=backend, policy_delegate=backend)
-    if config.backend == "computer_use":
-        primary = BrowserComputerUseBackend(
-            client=GeminiComputerUseHttpClient(model=config.primary_model),
-            prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
-            browser_runtime=executor,
-        )
+    if config.backend in {"computer_use", "claude_computer_use"}:
+        if config.backend == "claude_computer_use":
+            primary = BrowserClaudeComputerUseBackend(
+                client=AnthropicComputerUseHttpClient(
+                    model=config.claude_model or "claude-opus-5-5",
+                    effort=config.claude_effort,
+                ),
+                prompt_path=_PROMPTS_DIR / "browser_claude_computer_use_prompt.txt",
+                browser_runtime=executor,
+            )
+        else:
+            primary = BrowserComputerUseBackend(
+                client=GeminiComputerUseHttpClient(
+                    model=config.primary_model,
+                    thinking_level=config.thinking,
+                ),
+                prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
+                browser_runtime=executor,
+            )
         if config.fallback_backend == "json" and config.fallback_model:
             secondary = BrowserJsonBackend(
                 gemini_client=GeminiHttpClient(model=config.fallback_model, timeout_seconds=120.0),

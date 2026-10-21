@@ -79,8 +79,12 @@ class GeminiHttpClient(GeminiClient):
         vertex_project: str | None = None,
         vertex_location: str | None = None,
         cacheable_system_prompt: str | None = None,
+        thinking: str | None = None,
     ) -> None:
         self.api_key = api_key
+        # A thinking level ("low", "high") for Gemini 3 models, or a token budget
+        # ("0" turns it off) for Gemini 2.5. None leaves the model's default.
+        self.thinking = thinking
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.use_vertex = use_vertex if use_vertex is not None else os.getenv("OPERON_USE_VERTEX", "").lower() in ("1", "true", "yes")
         self.vertex_project = vertex_project or _VERTEX_PROJECT
@@ -143,7 +147,25 @@ class GeminiHttpClient(GeminiClient):
         """Send the policy prompt to Gemini and return raw JSON text."""
         await self._maybe_prime_cache()
         payload = self._build_text_payload(prompt=prompt)
-        return await self._post_json_payload(payload, request_kind="text")
+        return await self._post_json_payload(self._with_thinking(payload), request_kind="text")
+
+    async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
+        """Send the critic prompt with the post-action screenshot it judges."""
+        image_bytes, _ = await asyncio.to_thread(_optimize_screenshot, Path(screenshot_path))
+        payload = self._build_perception_payload(prompt=prompt, image_bytes=image_bytes, mime_type="image/jpeg")
+        return await self._post_json_payload(self._with_thinking(payload), request_kind="image")
+
+    def _with_thinking(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self.thinking:
+            return payload
+        if self.thinking.lstrip("-").isdigit():
+            config: dict[str, Any] = {"thinkingBudget": int(self.thinking)}
+        elif self.model.startswith("gemini-2"):
+            return payload  # Gemini 2.x has no thinking levels; leave its default
+        else:
+            config = {"thinkingLevel": self.thinking}
+        payload.setdefault("generationConfig", {})["thinkingConfig"] = config
+        return payload
 
     def latest_usage(self) -> ModelUsage | None:
         return self._last_usage

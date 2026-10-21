@@ -35,6 +35,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 # Live smoke: a few real browser tasks against a running API (real GEMINI_API_KEY)
 .venv\Scripts\python -m tests.eval.live_smoke
 
+# Live benchmark: 44 real web tasks graded from the final screen; saves to .var/bench/
+.venv\Scripts\python -m tests.eval.live_bench [--category forms] [--only NAME]
+
 # Single test / file
 .venv\Scripts\python -m pytest tests/agent/test_loop.py::test_name -q
 

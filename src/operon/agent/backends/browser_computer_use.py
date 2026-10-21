@@ -21,7 +21,7 @@ from operon.clients.gemini_computer_use import (
 from operon.models.capture import CaptureFrame
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import PageHint, ScreenPerception
-from operon.models.policy import PolicyDecision
+from operon.models.policy import ActionType, PolicyDecision
 from operon.models.state import AgentState
 from operon.store.background_writer import bg_writer
 
@@ -62,11 +62,13 @@ class BrowserComputerUseBackend(AgentBackend):
             "- If uncertain, choose a low-risk action like hover_at or scroll_at instead of waiting.\n"
         )
         self._cached_decision: PolicyDecision | None = None
+        self._last_frames: dict[str, CaptureFrame] = {}
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._conversations: dict[str, _ConversationState] = {}
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        self._last_frames[state.run_id] = screenshot
         step_dir = Path(screenshot.artifact_path).resolve().parent
         step_dir.mkdir(parents=True, exist_ok=True)
         prompt_path = step_dir / "computer_use_prompt.txt"
@@ -86,13 +88,23 @@ class BrowserComputerUseBackend(AgentBackend):
             screenshot_path=screenshot.artifact_path,
         )
         if "function_call" in response_payload:
+            function_calls = response_payload.get("function_calls") or [response_payload["function_call"]]
             response_payload = {
                 **response_payload,
                 "action": normalize_computer_use_actions(
-                    response_payload.get("function_calls") or [response_payload["function_call"]],
+                    function_calls,
                     screen_width=screenshot.width,
                     screen_height=screenshot.height,
                 ),
+                "active_subgoal": self._subgoal_for_calls(function_calls),
+            }
+        elif self._is_completion_text(response_payload, state):
+            # A text-only reply after the model has acted is how Computer Use says
+            # the task is done. Surface it as STOP so the verifier judges the claim.
+            response_payload = {
+                **response_payload,
+                "action": {"action_type": ActionType.STOP.value},
+                "active_subgoal": "complete task",
             }
         self._cached_decision = build_policy_decision(response_payload)
         bg_writer.enqueue(
@@ -119,7 +131,13 @@ class BrowserComputerUseBackend(AgentBackend):
         perception: ScreenPerception,
     ) -> PolicyDecision:
         if self._cached_decision is None:
-            raise RuntimeError("No cached computer-use decision available")
+            # perceive() was skipped (the loop reused a prior perception) or the
+            # coordinator is asking for a second decision this step: take a fresh
+            # turn on the current screenshot rather than failing the step.
+            frame = self._last_frames.get(state.run_id)
+            if frame is None or not perception.capture_artifact_path:
+                raise RuntimeError("No cached computer-use decision available")
+            await self.perceive(frame.model_copy(update={"artifact_path": perception.capture_artifact_path}), state)
         decision = self._cached_decision
         self._cached_decision = None
         return decision
@@ -191,14 +209,17 @@ class BrowserComputerUseBackend(AgentBackend):
 
     async def _run_turn(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
         conversation = self._conversations.setdefault(state.run_id, _ConversationState())
-        if conversation.pending_function_names and len(state.action_history) > conversation.acknowledged_actions:
+        if conversation.pending_function_names:
+            # Always answer the model's open tool call before asking again: the API
+            # rejects a request that ends with a model turn. A mid-step re-look (an
+            # execution or adaptation retry) arrives before the action is recorded,
+            # so the answer is just the current screen.
             current_url = None
             if self.browser_runtime is not None and hasattr(self.browser_runtime, "get_current_url"):
                 current_url = await self.browser_runtime.get_current_url()
             error = None
-            last_action = state.action_history[-1]
-            if not last_action.success:
-                error = last_action.detail
+            if len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
+                error = state.action_history[-1].detail
             function_response = self._build_function_response_content(
                 function_names=conversation.pending_function_names,
                 screenshot_path=screenshot.artifact_path,
@@ -208,7 +229,11 @@ class BrowserComputerUseBackend(AgentBackend):
             conversation.contents.append(function_response)
             conversation.acknowledged_actions = len(state.action_history)
             conversation.pending_function_names = []
-        elif not conversation.contents:
+        elif not conversation.contents or (
+            not conversation.pending_function_names and conversation.contents[-1].get("role") == "model"
+        ):
+            # First turn, or the model's last turn had no tool call to answer:
+            # show it the current screen so the conversation keeps alternating.
             conversation.contents.append(
                 self._build_user_content(
                     prompt=prompt,
@@ -247,6 +272,32 @@ class BrowserComputerUseBackend(AgentBackend):
         )
 
     @staticmethod
+    def _subgoal_for_calls(function_calls: list[dict]) -> str:
+        """Name the step by the call and its arguments, not the bare tool name.
+
+        The progress tracker blocks a subgoal already completed on the same page,
+        and this backend's page signature never changes, so a bare tool name would
+        block every second ``type_text_at`` (a form's second field) for the run.
+        """
+        described = []
+        for call in function_calls:
+            args = call.get("args") or {}
+            details = " ".join(f"{key}={args[key]}" for key in sorted(args) if key not in {"safety_decision", "intent"})
+            described.append(f"{call.get('name', 'browser step')} {details}".strip())
+        return "; ".join(described)
+
+    @staticmethod
+    def _is_completion_text(response_payload: dict, state: AgentState) -> bool:
+        if "function_call" in response_payload:
+            return False
+        if (response_payload.get("action") or {}).get("action_type") != "wait":
+            return False
+        return any(
+            executed.success and executed.action.action_type not in {ActionType.WAIT, ActionType.STOP, ActionType.WAIT_FOR_USER}
+            for executed in state.action_history
+        )
+
+    @staticmethod
     def _needs_stronger_retry(response_payload: dict) -> bool:
         if "function_call" in response_payload:
             return False
@@ -266,6 +317,7 @@ class BrowserComputerUseBackend(AgentBackend):
             focused_element_id=payload.get("focused_element_id"),
             capture_artifact_path=screenshot_path,
             confidence=float(payload.get("confidence", 0.5)),
+            elements_reported=False,
         )
 
     @staticmethod

@@ -170,7 +170,8 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         if not api_key:
             raise GeminiComputerUseError("GEMINI_API_KEY is not configured.")
 
-        url = f"{self.api_base_url}/{self.model}:generateContent?key={api_key}"
+        # Header rather than ?key= so the key never lands in a logged URL.
+        url = f"{self.api_base_url}/{self.model}:generateContent"
         client = await self._get_client()
         attempts = self.max_retries + 1
         payload_bytes = json.dumps(payload).encode("utf-8")
@@ -181,7 +182,7 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
                 response = await client.post(
                     url,
                     content=payload_bytes,
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 )
                 if response.status_code != 200:
                     detail = response.text

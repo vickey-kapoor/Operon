@@ -219,8 +219,9 @@ class GeminiHttpClient(GeminiClient):
             api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
             if not api_key:
                 raise GeminiClientError("Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured.")
-            url = f"https://generativelanguage.googleapis.com/v1beta/cachedContents?key={api_key}"
-            auth_headers = {}
+            url = "https://generativelanguage.googleapis.com/v1beta/cachedContents"
+            # Header rather than ?key= so the key never lands in a logged URL.
+            auth_headers = {"x-goog-api-key": api_key}
             model_ref = f"models/{self.model}"
 
         body = {
@@ -254,8 +255,8 @@ class GeminiHttpClient(GeminiClient):
             api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
             if not api_key:
                 raise GeminiClientError("Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured.")
-            url = f"{self.api_base_url}/{self.model}:generateContent?key={api_key}"
-            auth_headers = {}
+            url = f"{self.api_base_url}/{self.model}:generateContent"
+            auth_headers = {"x-goog-api-key": api_key}
 
         if self.cached_content_name:
             payload = {**payload, "cachedContent": self.cached_content_name}

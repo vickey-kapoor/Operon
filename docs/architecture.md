@@ -152,6 +152,11 @@ STABLE_WAIT
 
 The verifier is deterministic and does not use a separate video verifier module.
 
+A `STOP` is the policy's claim that the task is done, and it is verified like any
+other outcome: the critic judges the current screen when it can; if the critic is
+unavailable or unsure, the stop is accepted only when the run has done some work
+and its latest step did not fail. A rejected stop is a `FAILURE` that goes to recovery.
+
 ## Recovery
 
 `RuleBasedRecoveryManager` (`src/operon/agent/policy/recovery.py`) maps failed or

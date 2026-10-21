@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 from operon.agent.backends.base import AgentBackend
 from operon.models.capture import CaptureFrame
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import ScreenPerception
 from operon.models.policy import PolicyDecision
 from operon.models.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 class BackendCompatibilityError(RuntimeError):
@@ -23,9 +27,10 @@ class FallbackBackend(AgentBackend):
         backend = self._backend_for_run(state.run_id)
         try:
             perception = await backend.perceive(screenshot, state)
-        except BackendCompatibilityError:
+        except BackendCompatibilityError as exc:
             if backend is self.secondary:
                 raise
+            logger.warning("Switching run %s to the fallback backend for the rest of the run: %s", state.run_id, exc)
             self._active_backends[state.run_id] = self.secondary
             backend = self.secondary
             perception = await backend.perceive(screenshot, state)

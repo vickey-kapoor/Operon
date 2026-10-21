@@ -129,7 +129,9 @@ async def test_desktop_run_task_uses_the_desktop_routes_and_cleans_up(tmp_path, 
     async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler)) as client:
         result = await run_task(client, DESKTOP_TASKS[0], judge, timeout_s=60, approve_pauses=2, mode="desktop")
 
-    assert calls == ["POST /desktop/run-task", "GET /desktop/run/run-2", "POST /desktop/cleanup"]
+    # Desktop runs only advance when stepped, so the benchmark drives them step by step.
+    assert calls == ["POST /desktop/run-task", "POST /desktop/step", "POST /desktop/cleanup"]
+    assert bodies[1] == {"run_id": "run-2"}
     assert "start_url" not in bodies[0]
     assert result.outcome == "success"
     # The desktop loop has no fallback backend, so no step counts as a fallback.

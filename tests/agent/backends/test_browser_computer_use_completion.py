@@ -180,3 +180,31 @@ async def test_a_re_look_before_the_action_is_recorded_answers_the_open_tool_cal
     last = client.turns[-1][-1]
     assert last["role"] == "user"
     assert "function_response" in last["parts"][0]
+
+
+def _confirm_click_reply() -> dict:
+    call = {
+        "name": "click_at",
+        "args": {"x": 500, "y": 500, "safety_decision": {"decision": "require_confirmation", "explanation": "Submits a form."}},
+    }
+    reply = _click_reply()
+    return {**reply, "function_call": call, "function_calls": [call], "model_content": {"parts": [{"function_call": call}]}}
+
+
+async def test_a_confirmed_call_runs_after_resume_and_its_answer_acknowledges_the_safety_decision(tmp_path: Path) -> None:
+    client = ScriptedClient([_confirm_click_reply(), _text_reply("Done.")])
+    backend = _backend(client)
+
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+    paused = await backend.choose_action(_state(), ScreenPerception(summary="s", page_hint="unknown", visible_elements=[], capture_artifact_path=str(tmp_path / "a.png")))
+    assert paused.action.action_type is ActionType.WAIT_FOR_USER
+
+    # The user resumed: the held click runs without asking the model again.
+    await backend.perceive(_frame(tmp_path, "b.png"), _state())
+    approved = await backend.choose_action(_state(), ScreenPerception(summary="s", page_hint="unknown", visible_elements=[], capture_artifact_path=str(tmp_path / "b.png")))
+    assert approved.action.action_type is ActionType.CLICK
+    assert len(client.turns) == 1
+
+    await backend.perceive(_frame(tmp_path, "c.png"), _state(ActionType.CLICK))
+    answer = client.turns[-1][-1]
+    assert answer["parts"][0]["function_response"]["response"]["safety_acknowledgement"] == "true"

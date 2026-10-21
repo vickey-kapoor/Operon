@@ -230,7 +230,9 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
     def _normalize_response(payload: dict[str, Any]) -> dict[str, Any]:
         candidates = payload.get("candidates")
         if not isinstance(candidates, list) or not candidates:
-            raise GeminiComputerUseError("Gemini Computer Use response did not include any candidates.")
+            feedback = payload.get("promptFeedback") or payload.get("prompt_feedback")
+            detail = f" Prompt feedback: {json.dumps(feedback)}" if feedback else ""
+            raise GeminiComputerUseError(f"Gemini Computer Use response did not include any candidates.{detail}")
         first_candidate = candidates[0]
         content = first_candidate.get("content")
         if not isinstance(content, dict):

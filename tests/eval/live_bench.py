@@ -173,8 +173,12 @@ async def run_task(
         created.raise_for_status()
         run_id, status = created.json()["run_id"], created.json()["status"]
         while time.monotonic() - started < timeout_s:
-            await asyncio.sleep(2)
-            response = await client.get(f"{prefix}/run/{run_id}")
+            if mode == "desktop":
+                # The desktop API has no background loop: each POST advances the run one step.
+                response = await client.post(f"{prefix}/step", json={"run_id": run_id})
+            else:
+                await asyncio.sleep(2)
+                response = await client.get(f"{prefix}/run/{run_id}")
             response.raise_for_status()
             status, steps = response.json()["status"], response.json()["step_count"]
             if status == "waiting_for_user" and pauses < approve_pauses:

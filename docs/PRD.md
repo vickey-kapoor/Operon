@@ -133,7 +133,7 @@ Legend: **[Current]** implemented today (verified in code); **[Roadmap]** propos
 - **FR-4 [Current]** Visual click-servo stability check before browser/desktop clicks.
 
 ### 9.2 Backends & models
-- **FR-5 [Current]** Browser backend defaults to **Gemini 2.5 Computer Use** (`gemini-2.5-computer-use-preview-10-2025`) with an optional **JSON** perception/policy fallback.
+- **FR-5 [Current]** Browser backend defaults to **Gemini Computer Use** on `gemini-3.5-flash` with an optional **JSON** perception/policy fallback.
 - **FR-6 [Current]** Desktop backend uses the **JSON combined** backend.
 - **FR-7 [Current]** Pluggable planner/verifier provider: **Gemini or Anthropic** (`OPERON_*_PLANNER_PROVIDER`).
 - **FR-8 [Roadmap]** Pluggable grounding/vision models (e.g., OmniParser-style screen parsing [11], UI-TARS-style grounding [9]) to improve coordinate accuracy.

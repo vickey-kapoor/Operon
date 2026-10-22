@@ -3,8 +3,8 @@ name: Live desktop benchmark
 # Runs the live desktop benchmark (tests/eval/live_desktop_bench.py) on a
 # GitHub-hosted Windows runner, whose interactive session has a real desktop
 # for the agent to drive. Manual only: every run spends model credits.
-# Needs repo secret GEMINI_API_KEY (the desktop loop and the judge are Gemini),
-# and ANTHROPIC_API_KEY only when planner_provider is anthropic.
+# Needs repo secret GEMINI_API_KEY (the judge and verifier are Gemini), and
+# ANTHROPIC_API_KEY when desktop_backend is claude_computer_use or planner_provider is anthropic.
 
 on:
   workflow_dispatch:
@@ -14,6 +14,11 @@ on:
         type: choice
         options: [full, smoke]
         default: full
+      desktop_backend:
+        description: "OPERON_DESKTOP_BACKEND: json (Gemini) or claude_computer_use"
+        type: choice
+        options: [json, claude_computer_use]
+        default: json
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
@@ -43,12 +48,14 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPERON_DESKTOP_PLANNER_PROVIDER: ${{ inputs.planner_provider }}
+      OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
     steps:
       - name: Check the secrets
         run: |
           $missing = @()
           if (-not $env:GEMINI_API_KEY) { $missing += "GEMINI_API_KEY" }
-          if ($env:OPERON_DESKTOP_PLANNER_PROVIDER -eq "anthropic" -and -not $env:ANTHROPIC_API_KEY) { $missing += "ANTHROPIC_API_KEY" }
+          $needsClaude = $env:OPERON_DESKTOP_PLANNER_PROVIDER -eq "anthropic" -or $env:OPERON_DESKTOP_BACKEND -eq "claude_computer_use"
+          if ($needsClaude -and -not $env:ANTHROPIC_API_KEY) { $missing += "ANTHROPIC_API_KEY" }
           if ($missing.Count -gt 0) {
             Write-Output "::error::Missing repository secret(s): $($missing -join ', '). Add them under Settings > Secrets and variables > Actions."
             exit 1

@@ -528,6 +528,8 @@ class DesktopExecutor(Executor):
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
         """Execute a desktop action using pyautogui."""
+        if action.action_type is ActionType.BATCH:
+            return await self._execute_batch(action)
         at = action.action_type
         dispatch = {
             ActionType.CLICK: self._exec_click,
@@ -927,6 +929,28 @@ class DesktopExecutor(Executor):
         await asyncio.sleep(wait_s)
         after_path = await self._capture_after()
         return self._ok(action, f"Waited {wait_s:.1f}s", after_path)
+
+    async def _execute_batch(self, action: AgentAction) -> ExecutedAction:
+        """Run a computer use turn's actions in order, stopping at the first failure."""
+        if not action.actions:
+            return self._fail(action, "batch requires actions", FailureCategory.EXECUTION_ERROR)
+        completed: list[str] = []
+        last_artifact_path: str | None = None
+        for child_action in action.actions:
+            result = await self.execute(child_action)
+            completed.append(f"{child_action.action_type.value}:{'ok' if result.success else 'failed'}")
+            if not result.success:
+                return ExecutedAction(
+                    action=action,
+                    success=False,
+                    detail=f"Batch failed on {child_action.action_type.value}: {result.detail}",
+                    artifact_path=result.artifact_path,
+                    execution_trace=result.execution_trace,
+                    failure_category=result.failure_category,
+                    failure_stage=result.failure_stage,
+                )
+            last_artifact_path = result.artifact_path or last_artifact_path
+        return self._ok(action, f"Executed batch: {', '.join(completed)}", last_artifact_path)
 
     async def _exec_noop(self, action: AgentAction) -> ExecutedAction:
         detail = "Acknowledged stop" if action.action_type is ActionType.STOP else f"Waiting for user: {action.text}"

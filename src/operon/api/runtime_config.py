@@ -4,7 +4,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 
-_VALID_DESKTOP_BACKENDS = frozenset({"json"})
+_VALID_DESKTOP_BACKENDS = frozenset({"json", "claude_computer_use"})
 _VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "claude_computer_use"})
 _VALID_PROVIDERS = frozenset({"gemini", "anthropic"})
 
@@ -37,6 +37,8 @@ def desktop_mode_config() -> RuntimeModeConfig:
         fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-2.5-flash"),
         verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-2.5-flash"),
         verifier_thinking=os.getenv("OPERON_DESKTOP_VERIFIER_THINKING") or None,
+        claude_model=os.getenv("OPERON_DESKTOP_CLAUDE_MODEL", "claude-opus-5-5"),
+        claude_effort=os.getenv("OPERON_DESKTOP_CLAUDE_EFFORT", "low") or None,
     )
 
 

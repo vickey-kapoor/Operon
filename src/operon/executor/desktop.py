@@ -60,6 +60,9 @@ logger = logging.getLogger(__name__)
 # user's foreground app on every taskkill / app-launch invocation. 0 on
 # non-Windows is a no-op (creationflags is ignored outside win32).
 _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
+# Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
+_CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
 
 
 def _mss():
@@ -800,7 +803,7 @@ class DesktopExecutor(Executor):
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    creationflags=_NO_CONSOLE,
+                    creationflags=_NEW_CONSOLE if command in _CONSOLE_APPS else _NO_CONSOLE,
                 )
                 # Track process for cleanup
                 if self._current_run_id is not None:

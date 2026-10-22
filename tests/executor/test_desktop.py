@@ -179,7 +179,27 @@ async def test_hotkey_splits_keys() -> None:
         result = await executor.execute(action)
 
         assert result.success is True
-        mock_hotkey.assert_called_once_with("ctrl", "shift", "esc")
+        mock_hotkey.assert_called_once_with("ctrl", "shift", "escape")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [("Control+a", ("ctrl", "a")), ("Meta+r", ("win", "r")), ("Control+Shift+ArrowUp", ("ctrl", "shift", "up"))],
+)
+async def test_hotkey_maps_claude_key_names_to_pyautogui(key: str, expected: tuple[str, ...]) -> None:
+    """pyautogui silently ignores names it doesn't know, such as Control or ArrowUp."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.HOTKEY, key=key)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.hotkey") as mock_hotkey,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    mock_hotkey.assert_called_once_with(*expected)
 
 
 # ── launch_app tests ─────────────────────────────────────────────

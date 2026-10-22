@@ -227,6 +227,11 @@ _PYAUTOGUI_KEY_MAP: dict[str, str] = {
     "home": "home",
     "end": "end",
     "insert": "insert",
+    # Modifiers as Claude computer use names them (via Playwright-style names).
+    "control": "ctrl",
+    "meta": "win",
+    "super": "win",
+    "cmd": "win",
 }
 
 
@@ -767,7 +772,7 @@ class DesktopExecutor(Executor):
                 FailureCategory.EXECUTION_ERROR,
             )
         try:
-            keys = [k.strip() for k in action.key.split("+")]
+            keys = [_normalize_key_pyautogui(k.strip()) for k in action.key.split("+")]
             await asyncio.to_thread(pyautogui.hotkey, *keys)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()

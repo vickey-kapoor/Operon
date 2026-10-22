@@ -256,6 +256,19 @@ def test_coordinates_are_clamped_to_the_screen() -> None:
     assert _normalize(("mouse_move", {"coordinate": [5000, -10]})) == {"action_type": "hover", "x": 1919, "y": 0}
 
 
+def test_a_triple_click_selects_the_field_and_a_following_type_replaces_it() -> None:
+    assert _normalize(("triple_click", {"coordinate": [100, 200]})) == {
+        "action_type": "batch",
+        "actions": [
+            {"action_type": "click", "x": 150, "y": 300},
+            {"action_type": "hotkey", "key": "Control+a"},
+        ],
+    }
+    assert _normalize(("triple_click", {"coordinate": [100, 200]}), ("type", {"text": "C:\\Windows"})) == {
+        "action_type": "type", "text": "C:\\Windows", "x": 150, "y": 300, "clear_before_typing": True, "press_enter": False,
+    }
+
+
 def test_an_unsupported_member_is_a_compatibility_error() -> None:
     with pytest.raises(BackendCompatibilityError):
         _normalize(("zoom", {"region": [0, 0, 10, 10]}))

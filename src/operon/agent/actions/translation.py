@@ -250,6 +250,12 @@ def normalize_claude_computer_calls(
             x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
             action_type = {"left_click": "click", "middle_click": "click"}.get(name, name)
             actions.append({"action_type": action_type, "x": x, "y": y})
+        elif name == "triple_click":
+            # Disabled in the toolset, but Claude still sends it to select a field's
+            # contents: click into the field, then select all of it.
+            x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
+            actions.append({"action_type": "click", "x": x, "y": y})
+            actions.append(_claude_key("ctrl+a"))
         elif name == "mouse_move":
             x, y = point(args["coordinate"])
             actions.append({"action_type": "hover", "x": x, "y": y})
@@ -265,7 +271,16 @@ def normalize_claude_computer_calls(
                 "press_enter": False,
             }
             previous = actions[-1] if actions else None
-            if previous is not None and previous["action_type"] == "click":
+            if (
+                len(actions) >= 2
+                and previous == _claude_key("ctrl+a")
+                and actions[-2]["action_type"] == "click"
+            ):
+                # Select-then-type replaces the field's text: one atomic TYPE that clears first.
+                actions.pop()
+                clicked = actions.pop()
+                typed.update(x=clicked["x"], y=clicked["y"], clear_before_typing=True)
+            elif previous is not None and previous["action_type"] == "click":
                 # Focus and type in one atomic TYPE rather than a CLICK then a TYPE.
                 actions.pop()
                 typed.update(x=previous["x"], y=previous["y"])

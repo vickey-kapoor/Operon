@@ -94,7 +94,7 @@ async def test_first_turn_sends_the_task_and_a_downscaled_screenshot(tmp_path: P
 async def test_next_turn_answers_every_call_with_the_toolset_name_and_a_screenshot(tmp_path: Path) -> None:
     client = ScriptedClient(
         [
-            _reply(_call("left_click", "t1", coordinate=[10, 10]), _call("type", "t2", text="hello")),
+            _reply(_call("left_click", "t1", coordinate=[10, 10]), _call("key", "t2", text="Return")),
             _reply({"type": "text", "text": "Done."}, stop_reason="end_turn"),
         ]
     )

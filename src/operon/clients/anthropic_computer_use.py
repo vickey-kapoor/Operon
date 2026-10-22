@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.clients.anthropic import AnthropicClientError, AnthropicHttpClient
 
 TOOLSET_NAME = "computer"
@@ -40,6 +41,25 @@ NAVIGATE_TOOL: dict[str, Any] = {
     "strict": True,
 }
 
+# On the desktop, opening an app by name beats hunting through the Start menu.
+# Only catalog apps can be launched; the executor refuses anything else.
+LAUNCH_APP_TOOL: dict[str, Any] = {
+    "name": "launch_app",
+    "description": (
+        "Open a desktop application by name. Use this instead of clicking the Start menu, "
+        "taskbar or desktop icons. Opening an app that is already running opens another window."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "app": {"type": "string", "enum": sorted(APP_LAUNCH_TARGETS), "description": "Application to open."},
+        },
+        "required": ["app"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
 # Server-side refusal fallback: a declined turn is re-run on a fallback model in the same call.
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -54,18 +74,20 @@ class AnthropicComputerUseHttpClient(AnthropicHttpClient):
         effort: str | None = "low",
         timeout_seconds: float = 120.0,
         max_tokens: int = 16000,
+        custom_tools: tuple[dict[str, Any], ...] = (NAVIGATE_TOOL,),
         **kwargs: Any,
     ) -> None:
         super().__init__(model=model, timeout_seconds=timeout_seconds, **kwargs)
         self.effort = effort
         self.max_tokens = max_tokens
+        self.custom_tools = custom_tools
 
     def build_payload(self, *, system: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
             "system": system,
-            "tools": [COMPUTER_TOOLSET, NAVIGATE_TOOL],
+            "tools": [COMPUTER_TOOLSET, *self.custom_tools],
             "messages": messages,
             # Each turn resends the whole conversation; cache everything up to the newest turn.
             "cache_control": {"type": "ephemeral"},

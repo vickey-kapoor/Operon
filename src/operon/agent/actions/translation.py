@@ -285,6 +285,8 @@ def normalize_claude_computer_calls(
             actions.append({"action_type": "wait", "wait_ms": int(seconds * 1000)})
         elif name == "navigate":
             actions.append({"action_type": "navigate", "url": args["url"]})
+        elif name == "launch_app":
+            actions.append({"action_type": "launch_app", "text": args["app"]})
         else:
             raise BackendCompatibilityError(f"Unsupported Claude computer use call: {name}")
 

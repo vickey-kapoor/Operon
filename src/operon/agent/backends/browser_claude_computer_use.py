@@ -48,6 +48,10 @@ class _ConversationState:
     # tool_use blocks of the last assistant turn that still need a tool_result.
     pending_calls: list[dict[str, Any]] = field(default_factory=list)
     acknowledged_actions: int = 0
+    # Action types Claude's open calls translate to (a batch and its members). A
+    # deterministic rule can run something else in their place; Claude must hear
+    # that its calls did not run.
+    proposed_action_types: frozenset[ActionType] = frozenset()
 
 
 def encode_screenshot(path: Path, max_long_edge: int = _MAX_LONG_EDGE) -> tuple[str, str, int, int]:
@@ -78,6 +82,11 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
     and refusals surface as compatibility errors so the configured fallback
     backend can take over.
     """
+
+    system_prompt = _SYSTEM_PROMPT
+    # Custom tools answered alongside the computer toolset's members.
+    custom_tool_names: frozenset[str] = frozenset({"navigate"})
+    screen_name = "Browser"
 
     def __init__(
         self,
@@ -114,7 +123,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         conversation.messages.append(user_message)
 
         try:
-            response = await self.client.generate_turn(system=_SYSTEM_PROMPT, messages=conversation.messages)
+            response = await self.client.generate_turn(system=self.system_prompt, messages=conversation.messages)
         except AnthropicClientError as exc:
             # Leave the conversation as it was so a later turn can answer the same calls.
             conversation.messages.pop()
@@ -134,7 +143,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         calls = [
             block for block in content
             if block.get("type") == "tool_use"
-            and (block.get("toolset_name") == TOOLSET_NAME or block.get("name") == "navigate")
+            and (block.get("toolset_name") == TOOLSET_NAME or block.get("name") in self.custom_tool_names)
         ]
         conversation.pending_calls = calls
         text = " ".join(
@@ -142,7 +151,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         )
 
         perception = ScreenPerception(
-            summary=text or self._describe(calls) or "Browser screen observed",
+            summary=text or self._describe(calls) or f"{self.screen_name} screen observed",
             page_hint=PageHint.UNKNOWN,
             visible_elements=[],
             capture_artifact_path=screenshot.artifact_path,
@@ -179,9 +188,15 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 "action": {"action_type": "wait", "wait_ms": 1000},
                 "rationale": text or "No action proposed.",
                 "confidence": 0.4,
-                "active_subgoal": "gather more browser context",
+                "active_subgoal": f"gather more {self.screen_name.lower()} context",
             }
         self._cached_decision = build_policy_decision(decision_payload)
+        proposed = self._cached_decision.action
+        conversation.proposed_action_types = (
+            frozenset({proposed.action_type, *(child.action_type for child in proposed.actions or [])})
+            if calls
+            else frozenset()
+        )
         bg_writer.enqueue(
             parsed_path,
             json.dumps(
@@ -259,8 +274,14 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         # retry) arrives before the action is recorded, so it reports success
         # with the current screen.
         error = None
-        if len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
-            error = state.action_history[-1].detail or "The action failed."
+        if len(state.action_history) > conversation.acknowledged_actions:
+            executed = state.action_history[-1]
+            ran = executed.action.action_type
+            if conversation.proposed_action_types and ran not in conversation.proposed_action_types:
+                detail = f" ({executed.detail})" if executed.detail else ""
+                error = f"Not executed: the agent ran {ran.value}{detail} instead. Check the screen before going on."
+            elif not executed.success:
+                error = executed.detail or "The action failed."
         conversation.acknowledged_actions = len(state.action_history)
 
         results: list[dict[str, Any]] = []

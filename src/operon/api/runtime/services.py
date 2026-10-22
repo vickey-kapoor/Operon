@@ -13,12 +13,18 @@ from operon.agent.backends.browser_claude_computer_use import (
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.backends.browser_json import BrowserJsonBackend
 from operon.agent.backends.combined import CombinedPerceptionPolicyService
+from operon.agent.backends.desktop_claude_computer_use import (
+    DesktopClaudeComputerUseBackend,
+)
 from operon.agent.backends.fallback import FallbackBackend
 from operon.agent.perception import GeminiPerceptionService, PerceptionService
 from operon.agent.policy import GeminiPolicyService, PolicyService
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.clients.anthropic import AnthropicHttpClient
-from operon.clients.anthropic_computer_use import AnthropicComputerUseHttpClient
+from operon.clients.anthropic_computer_use import (
+    LAUNCH_APP_TOOL,
+    AnthropicComputerUseHttpClient,
+)
 from operon.clients.gemini import GeminiHttpClient
 from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
 from operon.core.paths import prompts_dir
@@ -132,10 +138,20 @@ def build_browser_services(executor) -> RuntimeServices:
 
 def build_desktop_services() -> RuntimeServices:
     config = desktop_mode_config()
+    if config.backend == "claude_computer_use":
+        backend = DesktopClaudeComputerUseBackend(
+            client=AnthropicComputerUseHttpClient(
+                model=config.claude_model or "claude-opus-5-5",
+                effort=config.claude_effort,
+                custom_tools=(LAUNCH_APP_TOOL,),
+            ),
+            prompt_path=_PROMPTS_DIR / "desktop_claude_computer_use_prompt.txt",
+        )
+        return RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend != "json":
         raise ValueError(
             f"Unsupported desktop backend {config.backend!r}. "
-            "Only 'json' is implemented in this slice."
+            "Use 'json' or 'claude_computer_use'."
         )
     if config.planner_provider.lower() == "anthropic":
         return RuntimeServices(

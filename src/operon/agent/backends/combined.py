@@ -75,12 +75,22 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
 
             try:
                 raw_output = await self.gemini_client.generate_perception(prompt, screenshot.artifact_path)
-            except GeminiClientError:
+                bg_writer.enqueue(raw_path, raw_output)
+                perception, decision = self._parse_combined_output(
+                    raw_output,
+                    screenshot.artifact_path,
+                    scale_ratio=self.gemini_client.latest_perception_scale_ratio(),
+                )
+            except (GeminiClientError, PerceptionError, PolicyError) as exc:
+                # An empty candidate or a response that breaks the schema is usually a
+                # one-off; ask again before the loop treats the step as a hard failure.
+                if attempt < _MAX_COMBINED_RETRIES:
+                    logger.warning(
+                        "Combined call failed (%s), attempt %d/%d.",
+                        exc, attempt + 1, _MAX_COMBINED_RETRIES + 1,
+                    )
+                    continue
                 raise
-
-            bg_writer.enqueue(raw_path, raw_output)
-
-            perception, decision = self._parse_combined_output(raw_output, screenshot.artifact_path)
 
             # Quality gate — same checks as GeminiPerceptionService
             quality_metrics = _quality_metrics(perception)
@@ -140,7 +150,9 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
             raise PolicyError("No cached decision and no screenshot path to re-plan from")
         prompt = self._render_prompt(state, semantic_retry=False)
         raw_output = await self.gemini_client.generate_perception(prompt, screenshot_path)
-        _, replanned_decision = self._parse_combined_output(raw_output, screenshot_path)
+        _, replanned_decision = self._parse_combined_output(
+            raw_output, screenshot_path, scale_ratio=self.gemini_client.latest_perception_scale_ratio(),
+        )
         return replanned_decision
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
@@ -213,8 +225,14 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         return "\n".join(lines)
 
     @staticmethod
-    def _parse_combined_output(raw_output: str, screenshot_path: str) -> tuple[ScreenPerception, PolicyDecision]:
-        """Parse the combined JSON response into separate perception and policy objects."""
+    def _parse_combined_output(
+        raw_output: str, screenshot_path: str, scale_ratio: float = 1.0,
+    ) -> tuple[ScreenPerception, PolicyDecision]:
+        """Parse the combined JSON response into separate perception and policy objects.
+
+        Gemini sees a downscaled screenshot, so every coordinate it returns, in the
+        perception and in the action, is mapped back to native screen pixels.
+        """
         cleaned = _strip_json_fence(raw_output)
         try:
             parsed = json.loads(cleaned)
@@ -231,7 +249,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         perception_data["capture_artifact_path"] = screenshot_path
         _normalize_visible_elements(perception_data)
         perception = parse_perception_output(
-            json.dumps(perception_data), screenshot_path
+            json.dumps(perception_data), screenshot_path, scale_ratio=scale_ratio
         )
 
         # Extract policy decision
@@ -245,6 +263,14 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
             "active_subgoal": parsed.get("active_subgoal", "combined step"),
         }
         decision = parse_policy_output(json.dumps(decision_data))
+        if scale_ratio != 1.0:
+            inverse = 1.0 / scale_ratio
+            action = decision.action
+            decision = decision.model_copy(update={"action": action.model_copy(update={
+                name: round(value * inverse)
+                for name in ("x", "y", "x_end", "y_end")
+                if (value := getattr(action, name)) is not None
+            })})
 
         return perception, decision
 

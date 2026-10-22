@@ -380,6 +380,9 @@ class FakeGeminiClient:
         self._world = world
         self.prompts: list[str] = []
 
+    def latest_perception_scale_ratio(self) -> float:
+        return 1.0
+
     async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
         self.prompts.append(prompt)
         self._world.model_calls += 1

@@ -24,6 +24,7 @@ from operon.models.policy import ActionType, AgentAction, PolicyDecision
 def _make_service(prompt_template: str = "intent={intent} subgoal={current_subgoal} step={step_count} prev={previous_summary} retries={retry_counts} hints={advisory_hints}") -> tuple[CombinedPerceptionPolicyService, MagicMock]:
     gemini = MagicMock()
     gemini.generate_perception = AsyncMock()
+    gemini.latest_perception_scale_ratio.return_value = 1.0
     svc = CombinedPerceptionPolicyService.__new__(CombinedPerceptionPolicyService)
     svc.gemini_client = gemini
     svc.prompt_path = Path("test_prompt.txt")

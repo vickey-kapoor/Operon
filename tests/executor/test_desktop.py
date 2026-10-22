@@ -203,6 +203,26 @@ async def test_launch_app_known_alias() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("app", "console"), [("command prompt", True), ("powershell", True), ("notepad", False)])
+async def test_launch_app_gives_console_apps_a_visible_window(app: str, console: bool) -> None:
+    """cmd and PowerShell launched without a console run with no window at all."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.LAUNCH_APP, text=app)
+
+    # The real flags are 0 off Windows, so stand in distinct values.
+    with (
+        patch("operon.executor.desktop._NEW_CONSOLE", 0x10),
+        patch("operon.executor.desktop._NO_CONSOLE", 0x08000000),
+        patch("operon.executor.desktop.subprocess.Popen") as mock_popen,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    assert mock_popen.call_args.kwargs["creationflags"] == (0x10 if console else 0x08000000)
+
+
+@pytest.mark.asyncio
 async def test_launch_app_unknown_denied() -> None:
     """launch_app with an app outside the trusted catalog is denied, not executed.
 

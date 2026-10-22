@@ -34,7 +34,7 @@ Return a single JSON object with this shape:
 }}
 
 Perception rules:
-- Report coordinates as absolute screen pixels (top-left of bounding box).
+- Report coordinates as pixels of the screenshot image (top-left of bounding box); the image size is given below.
 - EXCLUDE elements from browser windows showing localhost/Operon Pilot/agent UI.
 - Report native app elements, taskbar, desktop icons, dialogs.
 - page_hint values: desktop, application_window, start_menu, taskbar, file_dialog, calculator, notepad, file_explorer, settings, context_menu, run_dialog, unknown, etc.
@@ -81,7 +81,7 @@ MULTI-STEP WORKFLOWS:
 NAVIGATION:
 - To navigate File Explorer to a specific folder, click the address bar at the top and type the destination folder path, then press Enter. Do NOT try to click through the folder tree in the sidebar.
 - To navigate a browser to a URL: after launch_app opens the browser, click the address bar at the TOP of the browser window (NOT the taskbar at the bottom), then type the full URL, then press Enter.
-- The browser address bar is near the top of the window, typically around y=60-80 pixels. The taskbar is at y=1040+ — do NOT click there for URL input.
+- The browser address bar is near the top of the browser window. The taskbar is the strip along the bottom edge of the screen — do NOT click there for URL input.
 - To search on a website: navigate to the site first, then find and click the search input field, type the search term, and press Enter.
 
 DRAG OPERATIONS:

@@ -33,6 +33,7 @@ def _make_service(prompt_template: str = "intent={intent} subgoal={current_subgo
     svc._last_debug_artifacts = None
     svc._advisory_hints = {}
     svc._perception_only = False
+    svc._image_size = {}
     return svc, gemini
 
 

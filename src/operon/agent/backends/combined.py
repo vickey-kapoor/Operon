@@ -18,7 +18,7 @@ from operon.agent.perception import (
     parse_perception_output,
 )
 from operon.agent.policy import PolicyError, PolicyService, parse_policy_output
-from operon.clients.gemini import GeminiClient, GeminiClientError
+from operon.clients.gemini import GeminiClient, GeminiClientError, sent_image_size
 from operon.core.paths import prompts_dir
 from operon.models.capture import CaptureFrame
 from operon.models.logs import ModelDebugArtifacts
@@ -55,6 +55,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._perception_only: bool = False
+        self._image_size: dict[str, tuple[int, int]] = {}
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
         """Run combined perception+policy and cache both results.
@@ -69,6 +70,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         raw_path = step_dir / "combined_raw.txt"
         parsed_path = step_dir / "combined_parsed.json"
 
+        self._image_size[state.run_id] = sent_image_size(screenshot.width, screenshot.height)
         for attempt in range(_MAX_COMBINED_RETRIES + 1):
             prompt = self._render_prompt(state, semantic_retry=attempt > 0)
             bg_writer.enqueue(prompt_path, prompt)
@@ -202,6 +204,15 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             advisory_hints=hints_text,
         )
+        image_size = self._image_size.get(state.run_id)
+        if image_size is not None:
+            # Without the size the model guesses a coordinate space, sometimes the
+            # native screen and sometimes the downscaled image it was sent.
+            prompt += (
+                f"\n\nCoordinate space: the screenshot is {image_size[0]}x{image_size[1]} pixels. "
+                "Report every x, y, width, height, x_end and y_end in that image's pixels, "
+                f"with x in 0..{image_size[0] - 1} and y in 0..{image_size[1] - 1}."
+            )
         if semantic_retry:
             prompt += (
                 "\n\nRetry: Previous response had low-quality perception. "

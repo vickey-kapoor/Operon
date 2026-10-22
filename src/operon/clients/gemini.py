@@ -431,6 +431,14 @@ _MAX_SCREENSHOT_WIDTH = 1280
 _JPEG_QUALITY = 92
 
 
+def sent_image_size(width: int, height: int) -> tuple[int, int]:
+    """Size of the image Gemini actually receives for a screenshot of this size."""
+    if width <= _MAX_SCREENSHOT_WIDTH:
+        return width, height
+    scale_ratio = _MAX_SCREENSHOT_WIDTH / width
+    return int(width * scale_ratio), int(height * scale_ratio)
+
+
 def _optimize_screenshot(path: Path) -> tuple[bytes, float]:
     """Resize to max 1280px wide and convert to JPEG. Returns (bytes, scale_ratio).
 
@@ -442,8 +450,7 @@ def _optimize_screenshot(path: Path) -> tuple[bytes, float]:
         scale_ratio = 1.0
         if img.width > _MAX_SCREENSHOT_WIDTH:
             scale_ratio = _MAX_SCREENSHOT_WIDTH / img.width
-            new_size = (int(img.width * scale_ratio), int(img.height * scale_ratio))
-            img = img.resize(new_size, Image.LANCZOS)
+            img = img.resize(sent_image_size(img.width, img.height), Image.LANCZOS)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         buf = io.BytesIO()

@@ -794,6 +794,10 @@ class DesktopExecutor(Executor):
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
+            elif command in _CONSOLE_APPS:
+                # Its own console, and no redirected handles: an interactive shell
+                # handed the server's empty stdin reads EOF and closes at once.
+                proc = await asyncio.to_thread(subprocess.Popen, command, creationflags=_NEW_CONSOLE)
             else:
                 proc = await asyncio.to_thread(
                     subprocess.Popen,
@@ -803,7 +807,7 @@ class DesktopExecutor(Executor):
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    creationflags=_NEW_CONSOLE if command in _CONSOLE_APPS else _NO_CONSOLE,
+                    creationflags=_NO_CONSOLE,
                 )
                 # Track process for cleanup
                 if self._current_run_id is not None:

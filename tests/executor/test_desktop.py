@@ -219,7 +219,11 @@ async def test_launch_app_gives_console_apps_a_visible_window(app: str, console:
         result = await executor.execute(action)
 
     assert result.success is True
-    assert mock_popen.call_args.kwargs["creationflags"] == (0x10 if console else 0x08000000)
+    kwargs = mock_popen.call_args.kwargs
+    assert kwargs["creationflags"] == (0x10 if console else 0x08000000)
+    # A shell handed redirected handles inherits the server's empty stdin and exits at once.
+    assert ("stdout" in kwargs) is not console
+    assert ("stdin" in kwargs or "stderr" in kwargs) is not console
 
 
 @pytest.mark.asyncio

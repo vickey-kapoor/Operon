@@ -49,6 +49,7 @@ def _make_service(scale_ratio: float = 1280 / 1920) -> tuple[CombinedPerceptionP
     svc._last_debug_artifacts = None
     svc._advisory_hints = {}
     svc._perception_only = False
+    svc._image_size = {}
     return svc, gemini
 
 
@@ -137,3 +138,24 @@ async def test_perceive_gives_up_after_the_retry_also_fails(tmp_path) -> None:
 
     with pytest.raises(GeminiClientError):
         await svc.perceive(_frame(tmp_path), _make_state())
+
+
+@pytest.mark.asyncio
+async def test_prompt_states_the_size_of_the_image_gemini_receives(tmp_path) -> None:
+    """Told nothing, Gemini guesses: sometimes native screen pixels, sometimes the image's."""
+    svc, gemini = _make_service()
+    gemini.generate_perception.return_value = _raw({"action_type": "click", "x": 400, "y": 40})
+
+    await svc.perceive(_frame(tmp_path), _make_state())
+
+    prompt = gemini.generate_perception.call_args.args[0]
+    assert "the screenshot is 1280x720 pixels" in prompt
+    assert "y in 0..719" in prompt
+
+
+def test_sent_image_size_matches_the_downscale() -> None:
+    from operon.clients.gemini import sent_image_size
+
+    assert sent_image_size(1920, 1080) == (1280, 720)
+    assert sent_image_size(2560, 1440) == (1280, 720)
+    assert sent_image_size(1024, 768) == (1024, 768)

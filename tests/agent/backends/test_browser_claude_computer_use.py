@@ -293,6 +293,15 @@ def test_the_request_declares_the_toolset_and_navigate_tool() -> None:
     assert "thinking" not in payload and "tool_choice" not in payload
 
 
+def test_the_shared_tools_and_system_prompt_get_their_own_cache_breakpoint() -> None:
+    client = AnthropicComputerUseHttpClient(model="claude-opus-5-5", effort="low")
+    payload = client.build_payload(system="s", messages=[{"role": "user", "content": "hi"}])
+
+    # Render order is tools, system, messages: this breakpoint covers what every run shares.
+    assert payload["system"] == [{"type": "text", "text": "s", "cache_control": {"type": "ephemeral"}}]
+    assert payload["cache_control"] == {"type": "ephemeral"}
+
+
 def test_the_backend_flag_selects_claude_with_the_gemini_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     from operon.agent.backends.fallback import FallbackBackend
     from operon.api.runtime.services import build_browser_services

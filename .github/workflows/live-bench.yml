@@ -17,6 +17,11 @@ on:
       claude_effort:
         description: "Effort for claude_computer_use (low, medium, high)"
         default: "low"
+      harness_profile:
+        description: "OPERON_HARNESS_PROFILE: full, or thin (Claude only: no rules or per-step verifier)"
+        type: choice
+        options: [full, thin]
+        default: full
       suite:
         description: "smoke (5 tasks) or full (44 tasks)"
         type: choice
@@ -24,6 +29,19 @@ on:
         default: full
       args:
         description: "Extra live_bench arguments, e.g. --category forms --only slider"
+        default: ""
+  # Called by bench-command.yml when someone comments /bench on a PR.
+  workflow_call:
+    inputs:
+      backends: {type: string, default: "claude_computer_use"}
+      claude_model: {type: string, default: "claude-opus-5-5"}
+      claude_effort: {type: string, default: "low"}
+      harness_profile: {type: string, default: "full"}
+      suite: {type: string, default: "smoke"}
+      args: {type: string, default: ""}
+      ref:
+        description: "Git ref to benchmark (empty: the triggering ref)"
+        type: string
         default: ""
 
 permissions:
@@ -56,6 +74,7 @@ jobs:
       OPERON_BROWSER_BACKEND: ${{ matrix.backend }}
       OPERON_BROWSER_CLAUDE_MODEL: ${{ inputs.claude_model }}
       OPERON_BROWSER_CLAUDE_EFFORT: ${{ inputs.claude_effort }}
+      OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       BROWSER_HEADLESS: "true"
     steps:
       - name: Check the secrets
@@ -71,6 +90,8 @@ jobs:
           fi
 
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || '' }}
 
       - name: Install uv
         run: python -m pip install --upgrade pip uv

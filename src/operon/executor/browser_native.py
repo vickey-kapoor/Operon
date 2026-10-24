@@ -220,6 +220,15 @@ class NativeBrowserExecutor(Executor):
                     return self._fail(action, "click requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
                 await page.mouse.click(*point)
                 await self._adopt_new_tab_if_opened()
+            elif at in {ActionType.DOUBLE_CLICK, ActionType.TRIPLE_CLICK, ActionType.RIGHT_CLICK}:
+                page = await self._current_page()
+                point = self._action_point(action)
+                if point is None:
+                    return self._fail(action, f"{at.value} requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
+                if at is ActionType.RIGHT_CLICK:
+                    await page.mouse.click(*point, button="right")
+                else:
+                    await page.mouse.click(*point, click_count=2 if at is ActionType.DOUBLE_CLICK else 3)
             elif at is ActionType.HOVER:
                 page = await self._current_page()
                 point = self._action_point(action)
@@ -382,7 +391,7 @@ class NativeBrowserExecutor(Executor):
             else:
                 return self._fail(action, f"Action '{at}' is not supported on native browser executor", FailureCategory.EXECUTION_ERROR)
             # Only wait for page load after actions that can trigger navigation.
-            if at in {ActionType.NAVIGATE, ActionType.CLICK, ActionType.PRESS_KEY, ActionType.HOTKEY}:
+            if at in {ActionType.NAVIGATE, ActionType.CLICK, ActionType.DOUBLE_CLICK, ActionType.PRESS_KEY, ActionType.HOTKEY}:
                 await page.wait_for_load_state(timeout=5000)
             await asyncio.sleep(self._action_delay(at))
             after_path = await self._capture_after()
@@ -396,6 +405,8 @@ class NativeBrowserExecutor(Executor):
             ActionType.NAVIGATE: 1.0,
             ActionType.CLICK: 0.3,
             ActionType.DOUBLE_CLICK: 0.3,
+            ActionType.TRIPLE_CLICK: 0.3,
+            ActionType.RIGHT_CLICK: 0.3,
             ActionType.TYPE: 0.2,
             ActionType.UPLOAD_FILE: 0.5,
             ActionType.UPLOAD_FILE_NATIVE: 0.5,

@@ -227,11 +227,24 @@ _PYAUTOGUI_KEY_MAP: dict[str, str] = {
     "home": "home",
     "end": "end",
     "insert": "insert",
+    # Modifiers as Claude computer use names them (via Playwright-style names).
+    "control": "ctrl",
+    "meta": "win",
+    "super": "win",
+    "cmd": "win",
 }
 
 
 def _normalize_key_pyautogui(key: str) -> str:
     return _PYAUTOGUI_KEY_MAP.get(key.lower(), key.lower())
+
+
+def _unknown_keys(keys: list[str]) -> list[str]:
+    """Key names pyautogui would silently ignore (it presses nothing for them)."""
+    known = getattr(pyautogui, "KEYBOARD_KEYS", None)
+    if not isinstance(known, (list, tuple, set, frozenset)):
+        return []  # pyautogui unavailable or stubbed: nothing to check against
+    return [key for key in keys if key not in known]
 
 
 class DesktopExecutor(Executor):
@@ -534,6 +547,7 @@ class DesktopExecutor(Executor):
         dispatch = {
             ActionType.CLICK: self._exec_click,
             ActionType.DOUBLE_CLICK: self._exec_double_click,
+            ActionType.TRIPLE_CLICK: self._exec_triple_click,
             ActionType.RIGHT_CLICK: self._exec_right_click,
             ActionType.TYPE: self._exec_type,
             ActionType.PRESS_KEY: self._exec_press_key,
@@ -674,6 +688,18 @@ class DesktopExecutor(Executor):
         except Exception as exc:
             return self._fail(action, f"Double-click failed: {exc}", FailureCategory.EXECUTION_ERROR)
 
+    async def _exec_triple_click(self, action: AgentAction) -> ExecutedAction:
+        gate, variance = await self._click_preamble(action, "triple_click")
+        if gate is not None:
+            return gate
+        try:
+            await asyncio.to_thread(pyautogui.click, action.x, action.y, clicks=3, interval=0.05)
+            await asyncio.sleep(self._post_action_delay)
+            after_path = await self._capture_after()
+            return self._ok(action, f"Triple-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
+        except Exception as exc:
+            return self._fail(action, f"Triple-click failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
     async def _exec_right_click(self, action: AgentAction) -> ExecutedAction:
         gate, variance = await self._click_preamble(action, "right_click")
         if gate is not None:
@@ -747,6 +773,8 @@ class DesktopExecutor(Executor):
         if action.key is None:
             return self._fail(action, "press_key requires key", FailureCategory.EXECUTION_ERROR)
         key = _normalize_key_pyautogui(action.key)
+        if _unknown_keys([key]):
+            return self._fail(action, f"Unknown key name '{action.key}'; nothing was pressed", FailureCategory.EXECUTION_ERROR)
         try:
             await asyncio.to_thread(pyautogui.press, key)
             await asyncio.sleep(self._post_action_delay)
@@ -766,8 +794,13 @@ class DesktopExecutor(Executor):
                 "alt+f4 is blocked for safety — use the stop action instead of closing windows",
                 FailureCategory.EXECUTION_ERROR,
             )
+        keys = [_normalize_key_pyautogui(k.strip()) for k in action.key.split("+")]
+        unknown = _unknown_keys(keys)
+        if unknown:
+            return self._fail(
+                action, f"Unknown key name(s) {', '.join(unknown)} in '{action.key}'; nothing was pressed", FailureCategory.EXECUTION_ERROR
+            )
         try:
-            keys = [k.strip() for k in action.key.split("+")]
             await asyncio.to_thread(pyautogui.hotkey, *keys)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()

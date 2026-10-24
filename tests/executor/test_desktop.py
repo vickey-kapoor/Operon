@@ -179,7 +179,27 @@ async def test_hotkey_splits_keys() -> None:
         result = await executor.execute(action)
 
         assert result.success is True
-        mock_hotkey.assert_called_once_with("ctrl", "shift", "esc")
+        mock_hotkey.assert_called_once_with("ctrl", "shift", "escape")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [("Control+a", ("ctrl", "a")), ("Meta+r", ("win", "r")), ("Control+Shift+ArrowUp", ("ctrl", "shift", "up"))],
+)
+async def test_hotkey_maps_claude_key_names_to_pyautogui(key: str, expected: tuple[str, ...]) -> None:
+    """pyautogui silently ignores names it doesn't know, such as Control or ArrowUp."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.HOTKEY, key=key)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.hotkey") as mock_hotkey,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    mock_hotkey.assert_called_once_with(*expected)
 
 
 # ── launch_app tests ─────────────────────────────────────────────
@@ -359,6 +379,25 @@ async def test_launch_app_ms_settings() -> None:
 
         assert result.success is True
         mock_startfile.assert_called_once_with("ms-settings:")
+
+
+# ── triple_click tests ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_triple_click_clicks_three_times_at_the_point() -> None:
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.TRIPLE_CLICK, x=500, y=300)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_region_has_content", return_value=(True, 100.0)),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    mock_click.assert_called_once_with(500, 300, clicks=3, interval=0.05)
 
 
 # ── double_click tests ──────────────────────────────────────────
@@ -917,3 +956,19 @@ async def test_cleanup_skips_already_exited() -> None:
 
     assert closed == 0
     mock_proc.terminate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hotkey_with_an_unknown_key_name_fails_instead_of_pressing_nothing() -> None:
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.HOTKEY, key="ctrl+Fn_Lock")
+
+    with (
+        patch("operon.executor.desktop.pyautogui.KEYBOARD_KEYS", ["ctrl", "a"], create=True),
+        patch("operon.executor.desktop.pyautogui.hotkey") as mock_hotkey,
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is False
+    assert "fn_lock" in result.detail
+    mock_hotkey.assert_not_called()

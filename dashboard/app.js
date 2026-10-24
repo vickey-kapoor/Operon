@@ -1,6 +1,6 @@
-// Operon eval dashboard: renders data/index.json (one entry per benchmark run) and
-// loads data/reports/<key>.json for a run's per-task results. No build step; all
-// text from the data goes into the DOM through textContent.
+// Operon eval dashboard: renders /api/runs (one entry per benchmark run) and loads
+// /api/report?key=<key> for a run's per-task results; both read the benchmark
+// database. No build step; all text from the data goes into the DOM through textContent.
 "use strict";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -9,7 +9,6 @@ const BACKEND_NAMES = { claude_computer_use: "Claude", computer_use: "Gemini", j
 // anything new takes the next free slot in order of first appearance.
 const FIXED_SLOTS = { "Claude": 1, "Gemini": 2, "Claude · thin": 3 };
 const MAX_SLOTS = 6;
-const DATA_SOURCES = ["data"];
 const OUTCOME_LABELS = {
   success: "pass", false_success: "false pass", missed: "missed",
   failure: "fail", timeout: "timeout", error: "error",
@@ -25,7 +24,6 @@ const state = {
   costSelected: null,
   slots: {},
   reports: {},
-  dataBase: "data",
 };
 
 // ---------- small helpers ----------
@@ -167,9 +165,7 @@ function seriesFor(runs, value) {
 
 async function loadReport(run) {
   if (!state.reports[run.key]) {
-    const response = await fetch(`${state.dataBase}/${run.file}`, { cache: "no-cache" });
-    if (!response.ok) throw new Error(`${run.file}: ${response.status}`);
-    state.reports[run.key] = await response.json();
+    state.reports[run.key] = await getJson(`api/report?key=${encodeURIComponent(run.key)}`);
   }
   return state.reports[run.key];
 }
@@ -675,20 +671,13 @@ function bindControls() {
   window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150); });
 }
 
-async function loadIndex() {
-  let lastError;
-  for (const base of DATA_SOURCES) {
-    try {
-      const response = await fetch(`${base}/index.json`, { cache: "no-cache" });
-      if (!response.ok) throw new Error(`${base}/index.json: ${response.status}`);
-      const index = await response.json();
-      state.dataBase = base;
-      return index;
-    } catch (err) {
-      lastError = err;
-    }
+async function getJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `${url}: ${response.status}`);
   }
-  throw lastError;
+  return response.json();
 }
 
 async function main() {
@@ -697,7 +686,7 @@ async function main() {
   state.tab = store("operon-dash-tab") || state.tab;
   bindControls();
   try {
-    const index = await loadIndex();
+    const index = await getJson("api/runs");
     state.runs = index.runs || [];
     assignSlots(state.runs);
     const generated = index.generated_at ? new Date(index.generated_at) : null;

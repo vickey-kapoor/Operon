@@ -1,34 +1,78 @@
-"""Feed live benchmark reports to the eval dashboard in ``dashboard/``.
+"""Store live benchmark reports in the eval dashboard's Postgres database.
 
-The dashboard is a static site: ``dashboard/data/index.json`` lists every run
-with its summary, and ``dashboard/data/reports/<key>.json`` holds each run's
-per-task results. This script copies reports written by ``live_bench`` into that
-folder and rebuilds the index:
+The dashboard (``dashboard/``, deployed on Vercel) reads benchmark runs from a
+Neon Postgres database through its API routes. This script writes reports from
+``live_bench`` into that database: one ``bench_runs`` row per run and one
+``bench_task_results`` row per task. Importing the same report again replaces it.
 
-    .venv/bin/python -m tests.eval.dashboard import .var/bench/full-20261024T012945Z.json
-    .venv/bin/python -m tests.eval.dashboard import downloaded-artifacts/ --backend json
-    .venv/bin/python -m tests.eval.dashboard index
+    DATABASE_URL=postgres://... .venv/bin/python -m tests.eval.dashboard import .var/bench/full-20261024T012945Z.json
+    DATABASE_URL=postgres://... .venv/bin/python -m tests.eval.dashboard import downloaded-artifacts/ --backend json
+
+It needs ``psycopg`` (``pip install "psycopg[binary]"``), which is not a project
+dependency: only the "Dashboard data" workflow and a person backfilling by hand
+run it.
 
 The dashboard groups runs by ``config`` (backend, harness, model, commit, workflow
 run), filled from the report's own ``backend``/``claude_model``/``harness_profile``
 fields and from the options below. Older reports don't record the backend or
 harness; pass ``--backend``/``--harness``/``--model`` for those, and
-``--run-url``/``--git-sha`` to link a run to its workflow and commit. ``--flag REASON`` marks a run whose numbers are not comparable (a broken
-harness, a bad runner), which the dashboard leaves out of its trends by default.
+``--run-url``/``--git-sha`` to link a run to its workflow and commit. ``--flag
+REASON`` marks a run whose numbers are not comparable (a broken harness, a bad
+runner), which the dashboard leaves out of its trends by default.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "dashboard" / "data"
 # Per-task fields that only make sense on the machine that ran the benchmark.
 DROPPED_RESULT_FIELDS = ("final_screenshot",)
-INDEX_FIELDS = ("suite", "mode", "started_at", "judge_model", "summary")
+TASK_COLUMNS = (
+    "task", "category", "outcome", "steps", "seconds", "cost_usd", "input_tokens",
+    "output_tokens", "cache_read_tokens", "cache_write_tokens", "judge_cost_usd",
+)
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS bench_runs (
+    key             text PRIMARY KEY,
+    mode            text NOT NULL,
+    suite           text NOT NULL,
+    backend         text,
+    harness_profile text,
+    model           text,
+    started_at      timestamptz NOT NULL,
+    judge_model     text,
+    git_sha         text,
+    github_run_url  text,
+    flagged         text,
+    config          jsonb NOT NULL,
+    summary         jsonb NOT NULL,
+    imported_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS bench_runs_started_at ON bench_runs (started_at);
+CREATE TABLE IF NOT EXISTS bench_task_results (
+    run_key            text NOT NULL REFERENCES bench_runs (key) ON DELETE CASCADE,
+    position           integer NOT NULL,
+    task               text NOT NULL,
+    category           text,
+    outcome            text NOT NULL,
+    steps              integer,
+    seconds            integer,
+    cost_usd           double precision,
+    input_tokens       integer,
+    output_tokens      integer,
+    cache_read_tokens  integer,
+    cache_write_tokens integer,
+    judge_cost_usd     double precision,
+    result             jsonb NOT NULL,
+    PRIMARY KEY (run_key, task)
+);
+"""
 
 
 def is_report(data: object) -> bool:
@@ -87,38 +131,92 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
     return report
 
 
-def import_reports(paths: list[Path], data_dir: Path, overrides: dict[str, str | None], include_partial: bool = False) -> list[Path]:
-    target = data_dir / "reports"
-    target.mkdir(parents=True, exist_ok=True)
-    written = []
+def parse_started_at(stamp: str) -> datetime:
+    """live_bench stamps look like ``20261024T012945Z`` (UTC)."""
+    return datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+
+
+def to_rows(report: dict) -> tuple[dict, list[dict]]:
+    """A prepared report as one ``bench_runs`` row and its ``bench_task_results`` rows."""
+    config = report["config"]
+    run = {
+        "key": run_key(report),
+        "mode": report["mode"],
+        "suite": report["suite"],
+        "backend": config.get("backend"),
+        "harness_profile": config.get("harness_profile"),
+        "model": config.get("model"),
+        "started_at": parse_started_at(report["started_at"]),
+        "judge_model": report.get("judge_model"),
+        "git_sha": config.get("git_sha"),
+        "github_run_url": config.get("github_run_url"),
+        "flagged": config.get("flagged"),
+        "config": config,
+        "summary": report["summary"],
+    }
+    tasks = []
+    seen = set()
+    for position, result in enumerate(report["results"]):
+        if result["task"] in seen:  # a task listed twice keeps its first result
+            continue
+        seen.add(result["task"])
+        row = {column: result.get(column) for column in TASK_COLUMNS}
+        row.update(run_key=run["key"], position=position, result=result)
+        tasks.append(row)
+    return run, tasks
+
+
+def connect(database_url: str):
+    try:
+        import psycopg
+    except ImportError:
+        sys.exit('This needs psycopg: pip install "psycopg[binary]"')
+    return psycopg.connect(database_url)
+
+
+def write_report(conn, report: dict) -> str:
+    """Insert or replace one prepared report; returns its key."""
+    from psycopg.types.json import Jsonb
+
+    run, tasks = to_rows(report)
+    run_values = {**run, "config": Jsonb(run["config"]), "summary": Jsonb(run["summary"])}
+    columns = list(run_values)
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in columns if c != "key")
+    with conn.transaction():
+        conn.execute(
+            f"INSERT INTO bench_runs ({', '.join(columns)}, imported_at) "
+            f"VALUES ({', '.join('%(' + c + ')s' for c in columns)}, now()) "
+            f"ON CONFLICT (key) DO UPDATE SET {updates}, imported_at = now()",
+            run_values,
+        )
+        conn.execute("DELETE FROM bench_task_results WHERE run_key = %s", (run["key"],))
+        if tasks:
+            task_columns = ["run_key", "position", *TASK_COLUMNS, "result"]
+            with conn.cursor() as cur:
+                cur.executemany(
+                    f"INSERT INTO bench_task_results ({', '.join(task_columns)}) "
+                    f"VALUES ({', '.join('%(' + c + ')s' for c in task_columns)})",
+                    [{**t, "result": Jsonb(t["result"])} for t in tasks],
+                )
+    return run["key"]
+
+
+def import_reports(paths: list[Path], conn, overrides: dict[str, str | None], include_partial: bool = False) -> list[str]:
+    conn.execute(SCHEMA)
+    conn.commit()
+    keys = []
     for path in find_reports(paths, include_partial):
         report = prepare(json.loads(path.read_text(encoding="utf-8")), overrides)
-        out = target / f"{run_key(report)}.json"
-        out.write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
-        written.append(out)
-    return written
-
-
-def build_index(data_dir: Path) -> dict:
-    runs = []
-    for path in sorted((data_dir / "reports").glob("*.json")):
-        report = json.loads(path.read_text(encoding="utf-8"))
-        entry = {"key": path.stem, "file": f"reports/{path.name}"}
-        entry.update({field: report.get(field) for field in INDEX_FIELDS})
-        entry["config"] = report.get("config") or {}
-        runs.append(entry)
-    runs.sort(key=lambda run: run["started_at"])
-    index = {"generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "runs": runs}
-    (data_dir / "index.json").write_text(json.dumps(index, indent=1) + "\n", encoding="utf-8")
-    return index
+        keys.append(write_report(conn, report))
+    return keys
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
     commands = parser.add_subparsers(dest="command", required=True)
-    add = commands.add_parser("import", help="copy reports into the dashboard and rebuild the index")
+    add = commands.add_parser("import", help="write reports to the dashboard database")
     add.add_argument("paths", nargs="+", type=Path, help="report files or folders to search")
+    add.add_argument("--database-url", default=os.getenv("DATABASE_URL"), help="Postgres URL (default: $DATABASE_URL)")
     add.add_argument("--backend", help="config.backend for reports that lack it")
     add.add_argument("--harness", help="config.harness_profile (full or thin)")
     add.add_argument("--model", help="config.model")
@@ -126,28 +224,28 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--git-sha", help="config.git_sha")
     add.add_argument("--flag", help="why this run is left out of trends")
     add.add_argument("--include-partial", action="store_true", help="also import partial-*.json (--only/--category runs)")
-    commands.add_parser("index", help="rebuild dashboard/data/index.json from the stored reports")
     return parser
 
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "import":
-        overrides = {
-            "backend": args.backend,
-            "harness_profile": args.harness,
-            "model": args.model,
-            "github_run_url": args.run_url or None,
-            "git_sha": args.git_sha or None,
-            "flagged": args.flag,
-        }
-        written = import_reports(args.paths, args.data_dir, overrides, args.include_partial)
-        for path in written:
-            print(f"imported {path}")
-        if not written:
-            print("No benchmark reports found.", file=sys.stderr)
-    index = build_index(args.data_dir)
-    print(f"index: {len(index['runs'])} runs")
+    if not args.database_url:
+        print("Set DATABASE_URL (or pass --database-url) to the dashboard's Postgres database.", file=sys.stderr)
+        return 2
+    overrides = {
+        "backend": args.backend,
+        "harness_profile": args.harness,
+        "model": args.model,
+        "github_run_url": args.run_url or None,
+        "git_sha": args.git_sha or None,
+        "flagged": args.flag,
+    }
+    with connect(args.database_url) as conn:
+        keys = import_reports(args.paths, conn, overrides, args.include_partial)
+    for key in keys:
+        print(f"imported {key}")
+    if not keys:
+        print("No benchmark reports found.", file=sys.stderr)
     return 0
 
 

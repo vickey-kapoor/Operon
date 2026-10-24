@@ -41,9 +41,10 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 # Live desktop benchmark: 10 tasks on stock Windows apps; drives the real mouse and keyboard
 .venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
 
-# Eval dashboard (dashboard/, deployed on Vercel): add benchmark reports, then serve locally
-.venv\Scripts\python -m tests.eval.dashboard import .var\bench\full-<stamp>.json
-.venv\Scripts\python -m http.server 8000 --directory dashboard
+# Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
+# (the import needs `pip install "psycopg[binary]"`; the "Dashboard data" workflow does it after each benchmark)
+$env:DATABASE_URL = "postgres://..."; .venv\Scripts\python -m tests.eval.dashboard import .var\bench\full-<stamp>.json
+cd dashboard; npm install; npm run dev   # page + API on :3000, reads $env:DATABASE_URL
 
 # Single test / file
 .venv\Scripts\python -m pytest tests/agent/test_loop.py::test_name -q

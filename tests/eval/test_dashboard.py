@@ -1,10 +1,21 @@
-"""The eval dashboard's data step: live_bench reports in, dashboard/data out."""
+"""The eval dashboard's data step: live_bench reports in, database rows out."""
 
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timezone
 
-from tests.eval.dashboard import build_index, import_reports, main, prepare, run_key
+import pytest
+
+from tests.eval.dashboard import (
+    find_reports,
+    import_reports,
+    main,
+    prepare,
+    run_key,
+    to_rows,
+)
 
 
 def _report(**top) -> dict:
@@ -52,28 +63,56 @@ def test_desktop_reports_without_a_mode_are_keyed_as_desktop() -> None:
     assert run_key(report).startswith("desktop-smoke-json-full-")
 
 
-def test_import_finds_reports_in_artifact_folders_and_builds_the_index(tmp_path) -> None:
+def _artifacts(tmp_path):
     artifacts = tmp_path / "artifacts" / "bench-claude_computer_use" / ".var" / "bench"
     artifacts.mkdir(parents=True)
     (artifacts / "full-20261024T012945Z.json").write_text(json.dumps(_report(backend="claude_computer_use")))
     (artifacts / "partial-20261024T020000Z.json").write_text(json.dumps(_report(started_at="20261024T020000Z")))
     (artifacts / "state.json").write_text(json.dumps({"status": "succeeded"}))
-    data = tmp_path / "data"
+    return tmp_path / "artifacts"
 
-    written = import_reports([tmp_path / "artifacts"], data, {"flagged": "broken runner"})
-    index = build_index(data)
 
-    assert [p.name for p in written] == ["browser-full-claude_computer_use-full-20261024T012945Z.json"]
-    [run] = index["runs"]
-    assert run["file"] == f"reports/{written[0].name}"
+def test_find_reports_skips_partial_runs_and_other_json(tmp_path) -> None:
+    assert [p.name for p in find_reports([_artifacts(tmp_path)])] == ["full-20261024T012945Z.json"]
+
+
+def test_to_rows_splits_a_report_into_a_run_and_its_tasks() -> None:
+    report = _report(backend="claude_computer_use")
+    report["results"][0].update(category="navigation", steps=2, seconds=31, cost_usd=0.04, input_tokens=900)
+    report["results"].append({"task": "click_link", "outcome": "failure"})  # listed twice
+    run, tasks = to_rows(prepare(report, {"flagged": "broken runner", "git_sha": "abc123"}))
+
+    assert run["key"] == "browser-full-claude_computer_use-full-20261024T012945Z"
+    assert run["started_at"] == datetime(2026, 10, 24, 1, 29, 45, tzinfo=timezone.utc)
+    assert (run["backend"], run["flagged"], run["git_sha"]) == ("claude_computer_use", "broken runner", "abc123")
     assert run["summary"]["success"] == 1
-    assert run["config"]["flagged"] == "broken runner"
-    assert "results" not in run
+    assert [(t["task"], t["outcome"], t["position"]) for t in tasks] == [("click_link", "success", 0), ("go_back", "failure", 1)]
+    assert (tasks[0]["cost_usd"], tasks[0]["input_tokens"], tasks[1]["cost_usd"]) == (0.04, 900, None)
+    assert "final_screenshot" not in tasks[0]["result"]
 
 
-def test_main_treats_empty_options_as_unset(tmp_path) -> None:
-    report = tmp_path / "full-20261024T012945Z.json"
-    report.write_text(json.dumps(_report(backend="computer_use")))
-    assert main(["--data-dir", str(tmp_path / "data"), "import", str(report), "--git-sha", "", "--run-url", ""]) == 0
-    stored = json.loads(next((tmp_path / "data" / "reports").glob("*.json")).read_text())
-    assert "git_sha" not in stored["config"] and "github_run_url" not in stored["config"]
+def test_main_needs_a_database_url(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert main(["import", str(tmp_path)]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+# Runs against a real Postgres when one is given (CI has none):
+# OPERON_TEST_DATABASE_URL=postgresql://... pytest tests/eval/test_dashboard.py
+@pytest.mark.skipif(not os.getenv("OPERON_TEST_DATABASE_URL"), reason="no test database")
+def test_import_writes_runs_and_replaces_them_on_reimport(tmp_path) -> None:
+    psycopg = pytest.importorskip("psycopg")
+    with psycopg.connect(os.environ["OPERON_TEST_DATABASE_URL"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS bench_task_results, bench_runs")
+        conn.commit()
+        artifacts = _artifacts(tmp_path)
+        assert import_reports([artifacts], conn, {"flagged": "broken runner"}) == [
+            "browser-full-claude_computer_use-full-20261024T012945Z"
+        ]
+        assert import_reports([artifacts], conn, {}) == [
+            "browser-full-claude_computer_use-full-20261024T012945Z"
+        ]
+        runs = conn.execute("SELECT key, flagged, config->>'git_sha', summary->'success' FROM bench_runs").fetchall()
+        tasks = conn.execute("SELECT task, outcome, result ? 'final_screenshot' FROM bench_task_results ORDER BY position").fetchall()
+    assert runs == [("browser-full-claude_computer_use-full-20261024T012945Z", None, None, 1)]
+    assert tasks == [("click_link", "success", False), ("go_back", "failure", False)]

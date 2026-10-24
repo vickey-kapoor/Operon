@@ -15,8 +15,8 @@ Every model call writes a `*_usage.json` next to its step in `.var/runs/<run_id>
 The live benchmark (`tests.eval.live_bench`, desktop too) sums those files per task and
 reports `cost_usd`, token counts and a per-model breakdown for each task, plus
 `cost_per_task_usd`, `cost_per_success_usd` (failed tasks' spend charged to the
-successes) and the judge's cost in the summary. The eval dashboard reads the same
-report JSON.
+successes) and the judge's cost in the summary. The eval dashboard stores the same
+fields in its database.
 
 Limit: a step that calls the same backend twice (a mid-step re-look) overwrites its
 usage file, so a run's total can be slightly low.

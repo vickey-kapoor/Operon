@@ -15,6 +15,12 @@ export function db() {
 // live_bench's own stamp format (20261024T012945Z), which the page parses.
 export const STAMP = `to_char(started_at AT TIME ZONE 'UTC', 'YYYYMMDD"T"HH24MISS"Z"')`;
 
+// Before the first import the tables don't exist yet; the page then shows no runs.
+export async function tablesExist() {
+  const { rows } = await db().query("SELECT to_regclass('bench_runs') IS NOT NULL AS ok");
+  return rows[0].ok;
+}
+
 export function sendJson(res, status, body) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");

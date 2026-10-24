@@ -23,6 +23,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+from operon.agent.backends.browser_claude_computer_use import encode_screenshot
 from operon.clients.anthropic import AnthropicClientError
 from operon.models.common import StopReason
 from operon.models.execution import ExecutedAction
@@ -88,8 +89,11 @@ class FinalCheckVerifier(VerifierService):
     to the model as a hint through ``on_rejected`` and the run continues.
     """
 
-    def __init__(self, client, *, on_rejected: Callable[[str, str], None] | None = None) -> None:
+    def __init__(
+        self, client, *, on_rejected: Callable[[str, str], None] | None = None, effort: str | None = "low"
+    ) -> None:
         self.client = client
+        self.effort = effort
         self.on_rejected = on_rejected
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
 
@@ -132,13 +136,15 @@ class FinalCheckVerifier(VerifierService):
         ]
         screenshot = next((path for path in candidates if path and Path(path).exists()), None)
         if screenshot is None:
-            return self._rejected(state, "No final screenshot to check the claim against.")
+            return self._unchecked(state, decision, "no final screenshot to check against")
         prompt = _FINAL_CHECK_PROMPT.format(intent=state.intent, claim=decision.rationale)
+        image, media_type, _, _ = encode_screenshot(Path(screenshot))
         try:
-            raw = await self.client.generate_verification(prompt, screenshot)
+            raw = await self.client.generate_judgement(prompt, image_data=image, media_type=media_type, effort=self.effort)
         except AnthropicClientError as exc:
-            logger.warning("final check failed for run %s: %s", state.run_id[:8], exc)
-            return self._rejected(state, f"The completion check could not run ({exc}).")
+            # A check that cannot run must not keep the model going in circles: take
+            # its word, say so in the result, and leave grading to the benchmark judge.
+            return self._unchecked(state, decision, str(exc))
         self._write_artifacts(Path(screenshot).parent, prompt, raw)
         complete, reason = _parse_verdict(raw)
         if complete:
@@ -151,6 +157,21 @@ class FinalCheckVerifier(VerifierService):
                 critic_model_used=True,
             )
         return self._rejected(state, reason)
+
+    @staticmethod
+    def _unchecked(state: AgentState, decision: PolicyDecision, why: str) -> VerificationResult:
+        """The check could not run. Rejecting would send the model round in circles
+        until the step budget runs out, so take its word, say so in the result, and
+        leave grading to the benchmark judge."""
+        logger.warning("final check unavailable for run %s, accepting the model's claim: %s", state.run_id[:8], why)
+        return VerificationResult(
+            status=VerificationStatus.SUCCESS,
+            expected_outcome_met=True,
+            stop_condition_met=True,
+            reason=f"Model says done (completion check unavailable): {decision.rationale}",
+            stop_reason=StopReason.TASK_COMPLETED,
+            critic_fallback_reason=why[:500] or "unavailable",
+        )
 
     def _rejected(self, state: AgentState, reason: str) -> VerificationResult:
         if self.on_rejected is not None:

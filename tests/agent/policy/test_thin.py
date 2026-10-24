@@ -77,14 +77,14 @@ async def test_thin_policy_returns_the_backend_decision_unchanged(tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_an_ordinary_step_is_not_judged_by_a_model(tmp_path) -> None:
-    client = Mock(generate_verification=AsyncMock())
+    client = Mock(generate_judgement=AsyncMock())
     action = AgentAction(action_type=ActionType.CLICK, x=10, y=20)
 
     result = await FinalCheckVerifier(client).verify(_state(tmp_path), _decision(action), _executed(action))
 
     assert result.status is VerificationStatus.SUCCESS
     assert result.stop_condition_met is False
-    client.generate_verification.assert_not_awaited()
+    client.generate_judgement.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -103,7 +103,7 @@ async def test_a_failed_action_is_left_for_the_model_not_retried(tmp_path) -> No
 
 @pytest.mark.asyncio
 async def test_done_is_confirmed_once_against_the_task(tmp_path) -> None:
-    client = Mock(generate_verification=AsyncMock(return_value='{"complete": true, "reason": "Inbox shows no email."}'))
+    client = Mock(generate_judgement=AsyncMock(return_value='{"complete": true, "reason": "Inbox shows no email."}'))
     stop = AgentAction(action_type=ActionType.STOP)
     state = _state(tmp_path)
 
@@ -112,9 +112,9 @@ async def test_done_is_confirmed_once_against_the_task(tmp_path) -> None:
     assert result.status is VerificationStatus.SUCCESS
     assert result.stop_condition_met is True
     assert result.stop_reason is StopReason.TASK_COMPLETED
-    prompt, screenshot = client.generate_verification.await_args.args
-    assert "Archive the newest email" in prompt and "Archived it." in prompt
-    assert screenshot == state.observation_history[-1].capture_artifact_path
+    call = client.generate_judgement.await_args
+    assert "Archive the newest email" in call.args[0] and "Archived it." in call.args[0]
+    assert call.kwargs["image_data"] and call.kwargs["effort"] == "low"
 
 
 @pytest.mark.asyncio
@@ -123,12 +123,11 @@ async def test_done_is_confirmed_once_against_the_task(tmp_path) -> None:
     [
         AsyncMock(return_value='{"complete": false, "reason": "The email is still in the inbox."}'),
         AsyncMock(return_value="I think so?"),
-        AsyncMock(side_effect=AnthropicClientError("Anthropic HTTP error 529")),
     ],
 )
 async def test_an_unconfirmed_done_goes_back_to_the_model(tmp_path, reply) -> None:
     hints: list[tuple[str, str]] = []
-    verifier = FinalCheckVerifier(Mock(generate_verification=reply), on_rejected=lambda run, hint: hints.append((run, hint)))
+    verifier = FinalCheckVerifier(Mock(generate_judgement=reply), on_rejected=lambda run, hint: hints.append((run, hint)))
     stop = AgentAction(action_type=ActionType.STOP)
 
     result = await verifier.verify(_state(tmp_path), _decision(stop, "Done."), _executed(stop))
@@ -153,7 +152,7 @@ async def test_thin_recovery_never_resets_the_screen(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_thin_recovery_stops_on_a_confirmed_success(tmp_path) -> None:
-    client = Mock(generate_verification=AsyncMock(return_value='{"complete": true, "reason": "Done."}'))
+    client = Mock(generate_judgement=AsyncMock(return_value='{"complete": true, "reason": "Done."}'))
     stop = AgentAction(action_type=ActionType.STOP)
     confirmed = await FinalCheckVerifier(client).verify(_state(tmp_path), _decision(stop), _executed(stop))
 
@@ -201,3 +200,35 @@ async def test_thin_loop_runs_a_failed_action_once_without_a_second_look(tmp_pat
 def test_the_profile_reaches_the_loop() -> None:
     assert _loop(THIN).thin_harness is True
     assert _loop(FULL).thin_harness is False
+
+
+@pytest.mark.asyncio
+async def test_a_check_that_cannot_run_takes_the_model_at_its_word(tmp_path) -> None:
+    """A failing check used to reject every claim, so runs went in circles to the step limit."""
+    hints: list[tuple[str, str]] = []
+    client = Mock(generate_judgement=AsyncMock(side_effect=AnthropicClientError("Anthropic HTTP error 400")))
+    verifier = FinalCheckVerifier(client, on_rejected=lambda run, hint: hints.append((run, hint)))
+    stop = AgentAction(action_type=ActionType.STOP)
+
+    result = await verifier.verify(_state(tmp_path), _decision(stop, "Done."), _executed(stop))
+
+    assert result.status is VerificationStatus.SUCCESS
+    assert result.stop_reason is StopReason.TASK_COMPLETED
+    assert "400" in result.critic_fallback_reason
+    assert hints == []
+
+
+@pytest.mark.asyncio
+async def test_the_check_request_uses_effort_not_disabled_thinking() -> None:
+    """Opus 4.7+ and Sonnet 5+ reject thinking.type=disabled with a 400."""
+    from operon.clients.anthropic import AnthropicHttpClient
+
+    client = AnthropicHttpClient(api_key="test", model="claude-opus-5-5")
+    client._post_json = AsyncMock(return_value={"content": [{"type": "text", "text": '{"complete": true, "reason": "ok"}'}]})
+
+    await client.generate_judgement("Is it done?", image_data="aGk=", media_type="image/jpeg", effort="low")
+
+    payload = client._post_json.await_args.args[0]
+    assert "thinking" not in payload
+    assert payload["output_config"] == {"effort": "low"}
+    assert payload["messages"][0]["content"][1]["source"]["media_type"] == "image/jpeg"

@@ -150,6 +150,7 @@ class AgentLoop:
         memory_store: MemoryStore | None = None,
         gemini_client: GeminiClient | None = None,
         environment: UnifiedEnvironment = UnifiedEnvironment.BROWSER,
+        harness_profile: str = "full",
     ) -> None:
         self.capture_service = capture_service
         self.perception_service = perception_service
@@ -166,6 +167,11 @@ class AgentLoop:
         # deterministic baseline whose refine() is identity ⇒ no behavior change.
         self._grounder = make_grounder(self.target_selector)
         self.environment = environment
+        # "thin" (OPERON_HARNESS_PROFILE, see agent/policy/thin.py): the executor runs
+        # the model's action once, as chosen, and the model sees what happened. The
+        # loop's own corrections (redundant-action blocking, execution re-targeting,
+        # progress stops) are off; safety gates stay on.
+        self.thin_harness = harness_profile == "thin"
         self._artifacts = StepArtifactsManager(run_store)
         self._progress = ProgressTracker()
         # RFC 0001 Move 3: pre-execution candidate selection. Default critic is
@@ -557,7 +563,7 @@ class AgentLoop:
 
         while True:
             _trace("  4 EXECUTE", f"attempt={attempt_index}  action={decision.action.action_type.value!r}  executor={type(self.executor).__name__}")
-            blocked_action = self._block_redundant_action(state, decision.action, step_index)
+            blocked_action = None if self.thin_harness else self._block_redundant_action(state, decision.action, step_index)
             if blocked_action is None:
                 _t0 = time.perf_counter()
                 state, executed_action = await self._execute_with_hardening(
@@ -691,7 +697,8 @@ class AgentLoop:
             before_artifact_path=before_artifact_path,
             screen_change_ratio=_screen_change_ratio,
         )
-        recovery = self._apply_progress_stop_guard(recovery, progress_trace)
+        if not self.thin_harness:
+            recovery = self._apply_progress_stop_guard(recovery, progress_trace)
         progress_trace = progress_trace.model_copy(
             update={
                 "final_failure_category": progress_trace.final_failure_category
@@ -1407,7 +1414,7 @@ class AgentLoop:
         executed_action = await executor_runner.execute(decision_action)
         executed_action = self._apply_no_progress_detection(state, executed_action)
 
-        if not self._should_retry_execution(executed_action):
+        if self.thin_harness or not self._should_retry_execution(executed_action):
             return state, self._persist_execution_trace(record.run_id, step_index, executed_action)
 
         retry_action = decision_action

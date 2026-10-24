@@ -16,19 +16,56 @@ No DOM targeting, no CSS selectors, no XPath. Operon observes pixels, chooses co
 
 ## What It Does
 
-Operon runs browser and desktop automation through the same control loop:
+Operon runs browser and desktop automation through one control loop:
 
 ```text
 capture -> perceive -> decide -> execute -> verify -> recover
 ```
 
-Core runtime path:
+The loop has two harness profiles, chosen with `OPERON_HARNESS_PROFILE`.
+
+### Thin harness (target architecture, opt-in)
+
+With a model that acts reliably from pixels (Claude computer use), the model makes every
+decision and the harness stays literal. This is the direction Operon is moving in; it is
+behind `OPERON_HARNESS_PROFILE=thin` until it matches or beats the full harness on the
+live benchmarks.
+
+```mermaid
+flowchart TD
+    T["Task contract<br/>goal, constraints, completion criteria"] --> O
+    subgraph Step loop
+        O["Observe<br/>screenshot only"] --> M["Model decides<br/>one action, with no rules in front of it"]
+        M --> G["Action safety gate<br/>trust gate, file roots, approval for irreversible actions"]
+        G --> E["Executor<br/>runs exactly the chosen action; unknown actions fail loudly"]
+        E -- "result back to the model as the action's outcome" --> O
+    end
+    M -- "model says done" --> V["Outcome verification<br/>once, against the task, by Claude"]
+    V -- "not done: reason goes back to the model" --> O
+    V -- "confirmed" --> S["Success"]
+    G -- "needs approval, or repeated failures at one spot" --> H["Human escalation"]
+    O -. "step budget reached" .-> F["Stop"]
+```
+
+- **The model is the only decider.** No rule engine or post-model guard replaces its action
+  (`agent/policy/thin.py`, `ThinPolicy`).
+- **Failures go back to the model.** A failed action is reported as the result of the model's
+  tool call; the loop does not re-target, retry or reset the screen on its own.
+- **Verification runs once.** When the model says it is done, Claude checks the claim against
+  the task and the final screen (`FinalCheckVerifier`). There is no per-step verifier call.
+- **Safety stays around the loop.** The trust gate, allowed file roots, coordinate-thrash pause
+  and step budget apply to both profiles.
+
+### Full harness (default)
+
+The original scaffolding, kept for Gemini backends: deterministic rules before the model,
+post-model guards, a per-step critic, and a recovery ladder.
 
 ```text
 FastAPI routes
   -> AgentLoop
   -> ScreenCaptureService
-  -> Gemini Computer Use or JSON perception/policy backend
+  -> Claude computer use, Gemini Computer Use, or JSON perception/policy backend
   -> PolicyCoordinator and PolicyRuleEngine
   -> NativeBrowserExecutor or DesktopExecutor
   -> DeterministicVerifierService
@@ -148,6 +185,7 @@ WS   /ws/stream
 | `OPERON_BROWSER_CLAUDE_MODEL` | `claude-opus-5-5` | Model for `claude_computer_use` |
 | `OPERON_BROWSER_CLAUDE_EFFORT` | `low` | Claude effort level for `claude_computer_use` |
 | `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` | Desktop primary model |
+| `OPERON_HARNESS_PROFILE` | `full` | `thin` runs the thin harness (see above). Applies only to a `claude_computer_use` backend; other backends keep `full`. |
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |
 | `BROWSER_HEIGHT` | `1080` | Browser viewport height |

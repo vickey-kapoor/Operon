@@ -105,9 +105,12 @@ These are load-bearing — violating them silently breaks the agent.
   `locator()` in the perception/policy path. All targeting goes through `UIElement`
   coordinates from perception output. Improving perception is the intended fix for
   bad targeting.
-- **Rules before LLM.** Anything decidable deterministically belongs in
+- **Rules before LLM (full harness).** Anything decidable deterministically belongs in
   `PolicyRuleEngine` (`agent/policy/rules.py`). Post-LLM guards (e.g.
-  `_semantic_anchor_check`) live on `PolicyCoordinator`.
+  `_semantic_anchor_check`) live on `PolicyCoordinator`. The thin harness
+  (`OPERON_HARNESS_PROFILE=thin`, `agent/policy/thin.py`) runs none of them: Claude's
+  action is never replaced, retried or reset by the loop; fix failures there by
+  improving what the model sees or the executor, not by adding rules.
 - **No scenario hardcoding.** Never branch on a specific site, task, or benchmark
   in core policy. Site-specific behavior belongs in `agent/policy/site_adapters.py`.
 - **Atomic TYPE.** The executor merges focus+type into one call. Policy must never

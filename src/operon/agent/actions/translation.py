@@ -246,7 +246,7 @@ def normalize_claude_computer_calls(
         args = call.get("input") or {}
         if name == "screenshot":
             continue  # every answer already carries a fresh screenshot
-        if name in {"left_click", "middle_click", "double_click", "right_click"}:
+        if name in {"left_click", "middle_click", "double_click", "triple_click", "right_click"}:
             x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
             action_type = {"left_click": "click", "middle_click": "click"}.get(name, name)
             actions.append({"action_type": action_type, "x": x, "y": y})
@@ -265,7 +265,12 @@ def normalize_claude_computer_calls(
                 "press_enter": False,
             }
             previous = actions[-1] if actions else None
-            if previous is not None and previous["action_type"] == "click":
+            if previous is not None and previous["action_type"] == "triple_click":
+                # Triple-click selects the field's text and typing replaces it: one
+                # atomic TYPE that clears first, not a click followed by a type.
+                actions.pop()
+                typed.update(x=previous["x"], y=previous["y"], clear_before_typing=True)
+            elif previous is not None and previous["action_type"] == "click":
                 # Focus and type in one atomic TYPE rather than a CLICK then a TYPE.
                 actions.pop()
                 typed.update(x=previous["x"], y=previous["y"])
@@ -318,6 +323,13 @@ def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction
     if action_type == "double_click":
         return AgentAction(
             action_type=ActionType.DOUBLE_CLICK,
+            x=action_payload["x"],
+            y=action_payload["y"],
+        )
+
+    if action_type == "triple_click":
+        return AgentAction(
+            action_type=ActionType.TRIPLE_CLICK,
             x=action_payload["x"],
             y=action_payload["y"],
         )

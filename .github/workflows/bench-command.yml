@@ -1,0 +1,87 @@
+name: Bench command
+
+# Runs a live benchmark on a pull request's head when a repository owner, member
+# or collaborator comments on it:
+#
+#   /bench [browser|desktop] [thin|full] [smoke|all]
+#
+# Defaults: browser, full harness, smoke suite. "all" runs the full suite
+# (44 browser tasks or 10 desktop tasks). Claude is the backend on both.
+# Nothing runs on pushes or merges: every run spends model credits, so a run
+# happens only when someone asks for one. PRs from forks are refused, since the
+# run has the repository's API keys.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  parse:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/bench') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.args.outputs.target }}
+      profile: ${{ steps.args.outputs.profile }}
+      suite: ${{ steps.args.outputs.suite }}
+      sha: ${{ steps.pr.outputs.sha }}
+    steps:
+      - id: args
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          set -f  # no glob expansion of the comment's words
+          target=browser profile=full suite=smoke
+          # Only the first line is the command; words after it are ignored.
+          for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
+            case "$word" in
+              /bench) ;;
+              browser|desktop) target=$word ;;
+              thin|full) profile=$word ;;
+              smoke) suite=smoke ;;
+              all) suite=full ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all]"; exit 1 ;;
+            esac
+          done
+          echo "target=$target profile=$profile suite=$suite"
+          { echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"; } >> "$GITHUB_OUTPUT"
+
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.issue.pull_request.url }}
+        run: |
+          head_repo=$(gh api "$PR_URL" --jq '.head.repo.full_name')
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::Refusing to benchmark a PR from $head_repo: the run has this repository's API keys."
+            exit 1
+          fi
+          echo "sha=$(gh api "$PR_URL" --jq '.head.sha')" >> "$GITHUB_OUTPUT"
+
+  browser:
+    needs: parse
+    if: needs.parse.outputs.target == 'browser'
+    uses: ./.github/workflows/live-bench.yml
+    with:
+      backends: claude_computer_use
+      harness_profile: ${{ needs.parse.outputs.profile }}
+      suite: ${{ needs.parse.outputs.suite }}
+      ref: ${{ needs.parse.outputs.sha }}
+    secrets: inherit
+
+  desktop:
+    needs: parse
+    if: needs.parse.outputs.target == 'desktop'
+    uses: ./.github/workflows/live-desktop-bench.yml
+    with:
+      desktop_backend: claude_computer_use
+      harness_profile: ${{ needs.parse.outputs.profile }}
+      suite: ${{ needs.parse.outputs.suite }}
+      ref: ${{ needs.parse.outputs.sha }}
+    secrets: inherit

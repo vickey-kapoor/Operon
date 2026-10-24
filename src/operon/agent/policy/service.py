@@ -233,7 +233,7 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
     # CLICK/DOUBLE_CLICK/RIGHT_CLICK cannot carry text, key, url, or wait_ms.
     # LLMs sometimes annotate a click with the label of the element being clicked
     # (e.g. text="Water") — strip those fields before Pydantic validation rejects them.
-    if action_type in (ActionType.CLICK.value, ActionType.DOUBLE_CLICK.value, ActionType.RIGHT_CLICK.value):
+    if action_type in (ActionType.CLICK.value, ActionType.DOUBLE_CLICK.value, ActionType.TRIPLE_CLICK.value, ActionType.RIGHT_CLICK.value):
         for _f in ("text", "key", "url", "wait_ms"):
             normalized_action.pop(_f, None)
 

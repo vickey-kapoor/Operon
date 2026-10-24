@@ -1,0 +1,72 @@
+{
+ "suite": "desktop-smoke",
+ "mode": "desktop",
+ "started_at": "20261021T161425Z",
+ "desktop_model": "server default",
+ "judge_model": "gemini-3.5-flash",
+ "summary": {
+  "tasks": 3,
+  "success": 1,
+  "false_success": 0,
+  "missed": 0,
+  "failure": 2,
+  "timeout": 0,
+  "error": 0,
+  "success_rate": 0.333,
+  "mean_steps": 4.0,
+  "mean_seconds": 201.7,
+  "seconds_per_step": 50.4,
+  "fallback_steps": 0
+ },
+ "results": [
+  {
+   "task": "notepad_type",
+   "category": "text",
+   "run_id": "1229ce59-c27c-43ed-ac98-88c21fe39408",
+   "status": "succeeded",
+   "outcome": "success",
+   "stop_reason": "task_completed",
+   "steps": 3,
+   "pauses": 0,
+   "seconds": 50,
+   "cu_steps": 0,
+   "other_steps": 0,
+   "judge_reason": "A Notepad window is open and contains the text 'Hello from Operon'."
+  },
+  {
+   "task": "explorer_windows",
+   "category": "files",
+   "run_id": "ba654da3-04f9-4292-8678-d0018390964b",
+   "status": "failed",
+   "outcome": "failure",
+   "stop_reason": "no_meaningful_progress_across_steps",
+   "steps": 5,
+   "pauses": 0,
+   "seconds": 329,
+   "cu_steps": 0,
+   "other_steps": 0,
+   "judge_reason": "The File Explorer window is currently open to Home instead of displaying the contents of C:\\Windows."
+  },
+  {
+   "task": "cmd_echo",
+   "category": "shell",
+   "run_id": "8b048ead-1306-423d-a50e-bcd1f893ccc4",
+   "status": "failed",
+   "outcome": "failure",
+   "stop_reason": "no_meaningful_progress_across_steps",
+   "steps": 4,
+   "pauses": 0,
+   "seconds": 226,
+   "cu_steps": 0,
+   "other_steps": 0,
+   "judge_reason": "No Command Prompt window is visible on the desktop."
+  }
+ ],
+ "config": {
+  "backend": "json",
+  "harness_profile": "full",
+  "model": "gemini-2.5-flash",
+  "github_run_url": "https://github.com/vickey-kapoor/Operon/actions/runs/39632857291",
+  "git_sha": "0450b9e5b40fe63984e5c8f12a73bdef366e6756"
+ }
+}

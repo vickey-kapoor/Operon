@@ -1,0 +1,101 @@
+{
+ "suite": "smoke",
+ "started_at": "20261021T041659Z",
+ "browser_model": "server default",
+ "judge_model": "gemini-3.5-flash",
+ "summary": {
+  "tasks": 5,
+  "success": 0,
+  "false_success": 0,
+  "missed": 0,
+  "failure": 0,
+  "timeout": 0,
+  "error": 5,
+  "success_rate": 0.0,
+  "mean_steps": 2.8,
+  "mean_seconds": 28.6,
+  "seconds_per_step": 10.2,
+  "fallback_steps": 0
+ },
+ "results": [
+  {
+   "task": "click_link",
+   "category": "navigation",
+   "run_id": "e0f8d42a-691a-4dd5-8f48-ada4baed13a9",
+   "status": "succeeded",
+   "outcome": "error",
+   "stop_reason": "task_completed",
+   "steps": 2,
+   "pauses": 0,
+   "seconds": 25,
+   "cu_steps": 2,
+   "other_steps": 0,
+   "judge_reason": "judge call failed: Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured."
+  },
+  {
+   "task": "go_back",
+   "category": "navigation",
+   "run_id": "1ec4c428-a5af-40f8-afe9-3da39cf54bc7",
+   "status": "succeeded",
+   "outcome": "error",
+   "stop_reason": "task_completed",
+   "steps": 4,
+   "pauses": 0,
+   "seconds": 40,
+   "cu_steps": 4,
+   "other_steps": 0,
+   "judge_reason": "judge call failed: Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured."
+  },
+  {
+   "task": "search_enter",
+   "category": "search",
+   "run_id": "3773e0fe-bb04-4ba0-91d6-5c7764ce7fb1",
+   "status": "failed",
+   "outcome": "error",
+   "stop_reason": "repeated_action_without_progress",
+   "steps": 4,
+   "pauses": 0,
+   "seconds": 34,
+   "cu_steps": 4,
+   "other_steps": 0,
+   "judge_reason": "judge call failed: Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured."
+  },
+  {
+   "task": "scroll_down",
+   "category": "reading",
+   "run_id": "750e35bb-7d77-41f2-99cd-f1f70166091d",
+   "status": "succeeded",
+   "outcome": "error",
+   "stop_reason": "task_completed",
+   "steps": 2,
+   "pauses": 0,
+   "seconds": 22,
+   "cu_steps": 2,
+   "other_steps": 0,
+   "judge_reason": "judge call failed: Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured."
+  },
+  {
+   "task": "multi_field_form",
+   "category": "forms",
+   "run_id": "033ab65d-447c-4257-a96e-c8a45c0fbc19",
+   "status": "succeeded",
+   "outcome": "error",
+   "stop_reason": "task_completed",
+   "steps": 2,
+   "pauses": 0,
+   "seconds": 22,
+   "cu_steps": 2,
+   "other_steps": 0,
+   "judge_reason": "judge call failed: Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured."
+  }
+ ],
+ "mode": "browser",
+ "config": {
+  "backend": "claude_computer_use",
+  "harness_profile": "full",
+  "model": "claude-opus-5-5",
+  "github_run_url": "https://github.com/vickey-kapoor/Operon/actions/runs/39543112820",
+  "git_sha": "49361966aadab3af806570384e133bd4c6f235b2",
+  "flagged": "Workflow setup: GEMINI_API_KEY missing, every run errored"
+ }
+}

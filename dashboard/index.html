@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operon Evals</title>
+  <meta name="description" content="Live benchmark results for the Operon computer-use agent: pass rate, speed and cost by backend and harness.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M8 22l5-7 4 4 7-10' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <h1>Operon evals</h1>
+        <div class="meta" id="meta">Loading…</div>
+      </div>
+      <button class="theme-btn" id="theme" type="button">Theme: auto</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="evals">Evals</button>
+      <button role="tab" aria-selected="false" data-tab="cost">Cost</button>
+    </nav>
+
+    <div class="filters">
+      <div class="seg" id="f-mode" aria-label="Environment">
+        <button data-v="browser" aria-pressed="true">Browser</button>
+        <button data-v="desktop" aria-pressed="false">Desktop</button>
+      </div>
+      <div class="seg" id="f-suite" aria-label="Suite">
+        <button data-v="full" aria-pressed="true">Full suite</button>
+        <button data-v="smoke" aria-pressed="false">Smoke</button>
+      </div>
+      <label class="check"><input type="checkbox" id="f-flagged"> Show flagged runs</label>
+    </div>
+
+    <section id="tab-evals">
+      <div class="tiles" id="tiles"></div>
+      <div class="grid2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>Pass rate</h2>
+          <p class="sub">Tasks the judge saw completed on the final screen, per run</p>
+          <div class="legend" id="lg-pass"></div>
+          <div class="chart" id="ch-pass"></div>
+        </div>
+        <div class="card">
+          <h2>Seconds per task</h2>
+          <p class="sub">Mean wall-clock time per task, lower is better</p>
+          <div class="legend" id="lg-speed"></div>
+          <div class="chart" id="ch-speed"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Runs</h2>
+        <p class="sub">Every benchmark run for this environment and suite. Select a run to see its tasks.</p>
+        <div class="table-wrap"><table id="runs"></table></div>
+      </div>
+      <div class="card" id="detail" hidden>
+        <h2 id="detail-title"></h2>
+        <p class="sub" id="detail-sub"></p>
+        <div class="table-wrap"><table id="detail-table"></table></div>
+      </div>
+      <div class="card">
+        <h2>Tasks by configuration</h2>
+        <p class="sub">Outcome of each task in the latest run of each configuration. Tasks that any configuration missed come first; rows where configurations disagree are bold.</p>
+        <div class="table-wrap"><table class="matrix" id="matrix"></table></div>
+        <button class="theme-btn" id="matrix-more" type="button" style="margin-top:10px" hidden></button>
+      </div>
+    </section>
+
+    <section id="tab-cost" hidden>
+      <div id="cost-empty" class="card" hidden>
+        <h2>No cost data yet</h2>
+        <p class="note">Cost appears here for benchmark runs that record token usage and dollars
+          (<code>summary.cost_usd</code>, <code>summary.cost_per_task_usd</code>, <code>summary.by_model</code>, and per-task
+          <code>cost_usd</code>). Runs from before cost tracking don't have it.</p>
+      </div>
+      <div id="cost-body">
+        <div class="tiles" id="cost-tiles"></div>
+        <div class="grid2" style="margin-bottom:16px">
+          <div class="card">
+            <h2>Cost per task</h2>
+            <p class="sub">Agent model spend divided by tasks run, US dollars</p>
+            <div class="legend" id="lg-cpt"></div>
+            <div class="chart" id="ch-cpt"></div>
+          </div>
+          <div class="card">
+            <h2>Cost per successful task</h2>
+            <p class="sub">Agent model spend divided by tasks passed, US dollars</p>
+            <div class="legend" id="lg-cps"></div>
+            <div class="chart" id="ch-cps"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Runs with cost</h2>
+          <p class="sub">Select a run to see its spend by model and by task.</p>
+          <div class="table-wrap"><table id="cost-runs"></table></div>
+        </div>
+        <div class="stack" id="cost-detail" hidden>
+          <div class="card">
+            <h2>By model</h2>
+            <p class="sub" id="cost-detail-sub"></p>
+            <div class="table-wrap"><table id="cost-models"></table></div>
+          </div>
+          <div class="card">
+            <h2>By task</h2>
+            <p class="sub">Most expensive first</p>
+            <div class="table-wrap"><table id="cost-tasks"></table></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

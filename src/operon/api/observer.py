@@ -634,7 +634,7 @@ def summarize_run_usage(run_id: str) -> UsageAggregate:
         step_index = int(step_dir.name.split("_", 1)[1])
         if step_index <= latest_logged_step_index:
             return aggregate
-        for filename in ("combined_usage.json", "computer_use_usage.json", "perception_usage.json", "policy_usage.json", "verification_usage.json"):
+        for filename in ("combined_usage.json", "computer_use_usage.json", "perception_usage.json", "policy_usage.json", "verification_usage.json", "final_check_usage.json"):
             usage = _usage_from_path(step_dir / filename)
             if usage is not None:
                 _merge_usage(aggregate, usage)
@@ -736,32 +736,28 @@ def _usage_from_path(path: Path) -> ModelUsage | None:
 
 
 def _merge_usage(aggregate: UsageAggregate, usage: ModelUsage) -> None:
-    aggregate.request_count += 1
-    aggregate.input_tokens += usage.input_tokens or 0
-    aggregate.output_tokens += usage.output_tokens or 0
-    aggregate.total_tokens += usage.total_tokens or 0
-    aggregate.estimated_cost_usd = round(aggregate.estimated_cost_usd + (usage.estimated_cost_usd or 0.0), 8)
-    model_bucket = aggregate.by_model.setdefault(usage.model, UsageAggregate())
-    model_bucket.request_count += 1
-    model_bucket.input_tokens += usage.input_tokens or 0
-    model_bucket.output_tokens += usage.output_tokens or 0
-    model_bucket.total_tokens += usage.total_tokens or 0
-    model_bucket.estimated_cost_usd = round(model_bucket.estimated_cost_usd + (usage.estimated_cost_usd or 0.0), 8)
+    for bucket in (aggregate, aggregate.by_model.setdefault(usage.model, UsageAggregate())):
+        bucket.request_count += 1
+        bucket.input_tokens += usage.input_tokens or 0
+        bucket.output_tokens += usage.output_tokens or 0
+        bucket.total_tokens += usage.total_tokens or 0
+        bucket.cache_creation_input_tokens += usage.cache_creation_input_tokens or 0
+        bucket.cache_read_input_tokens += usage.cache_read_input_tokens or 0
+        bucket.estimated_cost_usd = round(bucket.estimated_cost_usd + (usage.estimated_cost_usd or 0.0), 8)
 
 
 def _merge_aggregate(target: UsageAggregate, source: UsageAggregate) -> None:
-    target.request_count += source.request_count
-    target.input_tokens += source.input_tokens
-    target.output_tokens += source.output_tokens
-    target.total_tokens += source.total_tokens
-    target.estimated_cost_usd = round(target.estimated_cost_usd + source.estimated_cost_usd, 8)
-    for model, bucket in source.by_model.items():
-        target_bucket = target.by_model.setdefault(model, UsageAggregate())
-        target_bucket.request_count += bucket.request_count
-        target_bucket.input_tokens += bucket.input_tokens
-        target_bucket.output_tokens += bucket.output_tokens
-        target_bucket.total_tokens += bucket.total_tokens
-        target_bucket.estimated_cost_usd = round(target_bucket.estimated_cost_usd + bucket.estimated_cost_usd, 8)
+    pairs = [(target, source)] + [
+        (target.by_model.setdefault(model, UsageAggregate()), bucket) for model, bucket in source.by_model.items()
+    ]
+    for into, src in pairs:
+        into.request_count += src.request_count
+        into.input_tokens += src.input_tokens
+        into.output_tokens += src.output_tokens
+        into.total_tokens += src.total_tokens
+        into.cache_creation_input_tokens += src.cache_creation_input_tokens
+        into.cache_read_input_tokens += src.cache_read_input_tokens
+        into.estimated_cost_usd = round(into.estimated_cost_usd + src.estimated_cost_usd, 8)
 
 
 def _image_dimensions(path_value: str | None) -> dict[str, int] | None:

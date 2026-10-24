@@ -1,0 +1,62 @@
+name: Dashboard data
+
+# After a live benchmark finishes, copy its reports into dashboard/data/ and push
+# them to main, so the eval dashboard (dashboard/, deployed on Vercel) shows the
+# run. Workflow artifacts expire after 14 days; the committed reports don't.
+# Reports carry task names, outcomes and the judge's one-line reasons, never
+# screenshots.
+
+on:
+  workflow_run:
+    workflows: ["Live benchmark", "Live desktop benchmark", "Bench command"]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: dashboard-data
+  cancel-in-progress: false
+
+jobs:
+  import:
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Download the benchmark reports
+        uses: actions/download-artifact@v7
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          pattern: bench-*
+          path: artifacts
+
+      - name: Import them into dashboard/data
+        env:
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          # A /bench comment runs on the default branch's workflow but benchmarks the
+          # PR's head, so its head_sha is not the commit that was measured.
+          GIT_SHA: ${{ github.event.workflow_run.event != 'issue_comment' && github.event.workflow_run.head_sha || '' }}
+        run: |
+          if [ ! -d artifacts ]; then echo "No benchmark artifacts in this run."; exit 0; fi
+          python3 -m tests.eval.dashboard import artifacts --run-url "$RUN_URL" --git-sha "$GIT_SHA"
+
+      - name: Commit and push
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          git add dashboard/data
+          if git diff --cached --quiet; then echo "Nothing new."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Chore: add benchmark run $RUN_ID to the eval dashboard [skip ci]"
+          for attempt in 1 2 3; do
+            git pull --rebase --quiet && git push && exit 0
+            sleep $((attempt * 5))
+          done
+          exit 1

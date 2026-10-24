@@ -23,6 +23,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+from operon.agent._agent_utils import collect_latest_usage
 from operon.agent.backends.browser_claude_computer_use import encode_screenshot
 from operon.clients.anthropic import AnthropicClientError
 from operon.models.common import StopReason
@@ -51,6 +52,15 @@ The agent says it is done: {claim}
 The image is the screen the agent saw when it said so. Judge only from the task and
 this screen. Reply with one JSON object and nothing else:
 {{"complete": true or false, "reason": "one sentence naming what on the screen shows it"}}"""
+
+
+def final_check_model(claude_model: str | None) -> str:
+    """Model for the completion check: ``OPERON_FINAL_CHECK_MODEL``, else the acting model.
+
+    The check is one image and a short answer per claimed finish, so a cheaper
+    model (``claude-sonnet-5-5``) can cut its cost without touching the actions.
+    """
+    return (os.getenv("OPERON_FINAL_CHECK_MODEL") or "").strip() or claude_model or "claude-opus-5-5"
 
 
 def harness_profile(backend: str) -> str:
@@ -195,10 +205,13 @@ class FinalCheckVerifier(VerifierService):
             raw_path.write_text(raw, encoding="utf-8")
         except OSError:
             return
+        usage_path = step_dir / "final_check_usage.json"
         self._last_debug_artifacts = ModelDebugArtifacts(
             prompt_artifact_path=str(prompt_path),
             raw_response_artifact_path=str(raw_path),
             parsed_artifact_path=str(raw_path),
+            usage_artifact_path=str(usage_path),
+            usage=collect_latest_usage(self.client, usage_path),
         )
 
 

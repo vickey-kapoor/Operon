@@ -165,3 +165,50 @@ def test_save_final_screens_copies_the_graded_screenshots(tmp_path, monkeypatch)
 
 async def _noop() -> None:
     return None
+
+
+def _write_usage(step_dir, **usage) -> None:
+    step_dir.mkdir(parents=True, exist_ok=True)
+    (step_dir / f"{usage.pop('kind')}_usage.json").write_text(json.dumps(usage), encoding="utf-8")
+
+
+def test_run_usage_sums_every_model_call_in_the_run(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)
+    run = tmp_path / "run-1"
+    _write_usage(
+        run / "step_1", kind="computer_use", model="claude-opus-5-5", input_tokens=10,
+        output_tokens=200, cache_creation_input_tokens=3000, cache_read_input_tokens=0, estimated_cost_usd=0.02,
+    )
+    _write_usage(
+        run / "step_2", kind="computer_use", model="claude-opus-5-5", input_tokens=10,
+        output_tokens=100, cache_creation_input_tokens=1500, cache_read_input_tokens=3000, estimated_cost_usd=0.01,
+    )
+    _write_usage(run / "step_2", kind="final_check", model="claude-opus-5-5", input_tokens=1200, output_tokens=50, estimated_cost_usd=0.006)
+    (run / "step_2" / "broken_usage.json").write_text("{not json", encoding="utf-8")
+
+    usage = live_bench.run_usage("run-1")
+
+    assert usage["cost_usd"] == 0.036
+    assert usage["cache_write_tokens"] == 4500 and usage["cache_read_tokens"] == 3000
+    assert usage["output_tokens"] == 350
+    assert usage["by_model"]["claude-opus-5-5"]["requests"] == 3
+
+
+def test_summary_reports_cost_per_task_and_per_success() -> None:
+    def result(outcome: str, cost: float) -> live_bench.TaskResult:
+        return live_bench.TaskResult(
+            "t", "c", "r", "succeeded", outcome, "-", 2, 0, 10, 2, 0, "", "-",
+            cost_usd=cost, judge_cost_usd=0.001,
+            by_model={"claude-opus-5-5": {"requests": 2, "input_tokens": 0, "output_tokens": 0,
+                                          "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": cost}},
+        )
+
+    summary = summarize([result("success", 0.03), result("failure", 0.05)])
+
+    assert summary["cost_usd"] == 0.08
+    assert summary["cost_per_task_usd"] == 0.04
+    # The failed task's spend is charged to the one success.
+    assert summary["cost_per_success_usd"] == 0.08
+    assert summary["judge_cost_usd"] == 0.002
+    assert summary["by_model"]["claude-opus-5-5"]["requests"] == 4
+    assert "per success" in live_bench.format_report([result("success", 0.03)], summarize([result("success", 0.03)]), None)

@@ -318,6 +318,8 @@ def _extract_usage(*, payload: dict[str, Any], model: str) -> ModelUsage | None:
         model=model,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+        thoughts_tokens=thoughts_tokens,
     )
     return ModelUsage(
         provider="gemini",

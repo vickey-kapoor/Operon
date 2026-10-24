@@ -49,14 +49,15 @@ def _executed(action: AgentAction, *, success: bool = True, detail: str = "ok") 
 @pytest.mark.parametrize(
     ("requested", "backend", "expected"),
     [
+        (None, "claude_computer_use", THIN),
         ("thin", "claude_computer_use", THIN),
-        ("THIN", "claude_computer_use", THIN),
+        ("FULL", "claude_computer_use", FULL),
+        (None, "computer_use", FULL),
         ("thin", "computer_use", FULL),
         ("thin", "json", FULL),
-        (None, "claude_computer_use", FULL),
     ],
 )
-def test_thin_profile_only_applies_to_claude(monkeypatch, requested, backend, expected) -> None:
+def test_claude_runs_thin_by_default_and_other_backends_run_full(monkeypatch, requested, backend, expected) -> None:
     if requested is None:
         monkeypatch.delenv("OPERON_HARNESS_PROFILE", raising=False)
     else:

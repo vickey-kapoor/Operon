@@ -20,10 +20,10 @@ on:
         options: [json, claude_computer_use]
         default: json
       harness_profile:
-        description: "OPERON_HARNESS_PROFILE: full, or thin (Claude only: no rules or per-step verifier)"
+        description: "OPERON_HARNESS_PROFILE for Claude: thin (default) or full. Gemini always runs full."
         type: choice
-        options: [full, thin]
-        default: full
+        options: [thin, full]
+        default: thin
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
@@ -40,7 +40,7 @@ on:
     inputs:
       suite: {type: string, default: "smoke"}
       desktop_backend: {type: string, default: "claude_computer_use"}
-      harness_profile: {type: string, default: "full"}
+      harness_profile: {type: string, default: "thin"}
       desktop_model: {type: string, default: ""}
       planner_provider: {type: string, default: "gemini"}
       args: {type: string, default: ""}

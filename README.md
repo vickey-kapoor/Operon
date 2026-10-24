@@ -24,12 +24,13 @@ capture -> perceive -> decide -> execute -> verify -> recover
 
 The loop has two harness profiles, chosen with `OPERON_HARNESS_PROFILE`.
 
-### Thin harness (target architecture, opt-in)
+### Thin harness (default for Claude)
 
 With a model that acts reliably from pixels (Claude computer use), the model makes every
-decision and the harness stays literal. This is the direction Operon is moving in; it is
-behind `OPERON_HARNESS_PROFILE=thin` until it matches or beats the full harness on the
-live benchmarks.
+decision and the harness stays literal. Claude runs use it by default; on the live
+benchmarks it matched or beat the full harness (browser 42/44 at 28.6 s per task against
+42/44 at 31 s; desktop smoke 3/3 at 24 s per task against 2/3 at 39 s).
+`OPERON_HARNESS_PROFILE=full` switches Claude back to the full harness.
 
 ```mermaid
 flowchart TD
@@ -56,9 +57,9 @@ flowchart TD
 - **Safety stays around the loop.** The trust gate, allowed file roots, coordinate-thrash pause
   and step budget apply to both profiles.
 
-### Full harness (default)
+### Full harness (Gemini backends)
 
-The original scaffolding, kept for Gemini backends: deterministic rules before the model,
+The original scaffolding, used for Gemini backends: deterministic rules before the model,
 post-model guards, a per-step critic, and a recovery ladder.
 
 ```text
@@ -185,7 +186,7 @@ WS   /ws/stream
 | `OPERON_BROWSER_CLAUDE_MODEL` | `claude-opus-5-5` | Model for `claude_computer_use` |
 | `OPERON_BROWSER_CLAUDE_EFFORT` | `low` | Claude effort level for `claude_computer_use` |
 | `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` | Desktop primary model |
-| `OPERON_HARNESS_PROFILE` | `full` | `thin` runs the thin harness (see above). Applies only to a `claude_computer_use` backend; other backends keep `full`. |
+| `OPERON_HARNESS_PROFILE` | `thin` for Claude | `full` switches a `claude_computer_use` backend back to the full harness. Other backends always run `full`. |
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |
 | `BROWSER_HEIGHT` | `1080` | Browser viewport height |

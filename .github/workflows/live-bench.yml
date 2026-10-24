@@ -18,10 +18,10 @@ on:
         description: "Effort for claude_computer_use (low, medium, high)"
         default: "low"
       harness_profile:
-        description: "OPERON_HARNESS_PROFILE: full, or thin (Claude only: no rules or per-step verifier)"
+        description: "OPERON_HARNESS_PROFILE for Claude: thin (default) or full. Gemini always runs full."
         type: choice
-        options: [full, thin]
-        default: full
+        options: [thin, full]
+        default: thin
       suite:
         description: "smoke (5 tasks) or full (44 tasks)"
         type: choice
@@ -36,7 +36,7 @@ on:
       backends: {type: string, default: "claude_computer_use"}
       claude_model: {type: string, default: "claude-opus-5-5"}
       claude_effort: {type: string, default: "low"}
-      harness_profile: {type: string, default: "full"}
+      harness_profile: {type: string, default: "thin"}
       suite: {type: string, default: "smoke"}
       args: {type: string, default: ""}
       ref:

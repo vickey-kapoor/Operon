@@ -5,7 +5,7 @@ name: Bench command
 #
 #   /bench [browser|desktop] [thin|full] [smoke|all]
 #
-# Defaults: browser, full harness, smoke suite. "all" runs the full suite
+# Defaults: browser, thin harness, smoke suite. "all" runs the full suite
 # (44 browser tasks or 10 desktop tasks). Claude is the backend on both.
 # Nothing runs on pushes or merges: every run spends model credits, so a run
 # happens only when someone asks for one. PRs from forks are refused, since the
@@ -37,7 +37,7 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           set -f  # no glob expansion of the comment's words
-          target=browser profile=full suite=smoke
+          target=browser profile=thin suite=smoke
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in

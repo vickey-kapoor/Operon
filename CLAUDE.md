@@ -112,7 +112,8 @@ These are load-bearing — violating them silently breaks the agent.
 - **Rules before LLM (full harness).** Anything decidable deterministically belongs in
   `PolicyRuleEngine` (`agent/policy/rules.py`). Post-LLM guards (e.g.
   `_semantic_anchor_check`) live on `PolicyCoordinator`. The thin harness
-  (`OPERON_HARNESS_PROFILE=thin`, `agent/policy/thin.py`) runs none of them: Claude's
+  (`agent/policy/thin.py`, the default for `claude_computer_use`; `OPERON_HARNESS_PROFILE=full`
+  opts out) runs none of them: Claude's
   action is never replaced, retried or reset by the loop; fix failures there by
   improving what the model sees or the executor, not by adding rules.
 - **No scenario hardcoding.** Never branch on a specific site, task, or benchmark

@@ -64,14 +64,15 @@ def final_check_model(claude_model: str | None) -> str:
 
 
 def harness_profile(backend: str) -> str:
-    """The harness profile for a backend: ``thin`` only when asked for and the
-    backend is Claude computer use, whose decisions need no rule scaffolding."""
-    requested = (os.getenv("OPERON_HARNESS_PROFILE") or FULL).strip().lower()
-    if requested == THIN and backend == "claude_computer_use":
-        return THIN
-    if requested == THIN:
-        logger.warning("OPERON_HARNESS_PROFILE=thin needs backend=claude_computer_use (got %r); using full", backend)
-    return FULL
+    """The harness profile for a backend. Claude computer use runs thin unless
+    ``OPERON_HARNESS_PROFILE=full`` asks for the old scaffolding; every other
+    backend runs full, since its decisions still need the rules and the critic."""
+    requested = (os.getenv("OPERON_HARNESS_PROFILE") or "").strip().lower()
+    if backend != "claude_computer_use":
+        if requested == THIN:
+            logger.warning("OPERON_HARNESS_PROFILE=thin needs backend=claude_computer_use (got %r); using full", backend)
+        return FULL
+    return FULL if requested == FULL else THIN
 
 
 class ThinPolicy(PolicyService):
@@ -184,6 +185,7 @@ class FinalCheckVerifier(VerifierService):
         )
 
     def _rejected(self, state: AgentState, reason: str) -> VerificationResult:
+        logger.warning("final check rejected the claim for run %s: %s", state.run_id[:8], reason)
         if self.on_rejected is not None:
             self.on_rejected(
                 state.run_id,

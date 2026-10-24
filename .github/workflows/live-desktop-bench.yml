@@ -24,6 +24,12 @@ on:
         type: choice
         options: [thin, full]
         default: thin
+      claude_model:
+        description: "OPERON_DESKTOP_CLAUDE_MODEL for claude_computer_use"
+        default: "claude-opus-5-5"
+      final_check_model:
+        description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
+        default: ""
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
@@ -41,6 +47,8 @@ on:
       suite: {type: string, default: "smoke"}
       desktop_backend: {type: string, default: "claude_computer_use"}
       harness_profile: {type: string, default: "thin"}
+      claude_model: {type: string, default: "claude-opus-5-5"}
+      final_check_model: {type: string, default: ""}
       desktop_model: {type: string, default: ""}
       planner_provider: {type: string, default: "gemini"}
       args: {type: string, default: ""}
@@ -68,6 +76,8 @@ jobs:
       OPERON_DESKTOP_PLANNER_PROVIDER: ${{ inputs.planner_provider }}
       OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
+      OPERON_DESKTOP_CLAUDE_MODEL: ${{ inputs.claude_model }}
+      OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
     steps:
       - name: Check the secrets
         run: |

@@ -14,6 +14,7 @@ from operon.agent.policy.thin import (
     FinalCheckVerifier,
     ThinPolicy,
     ThinRecovery,
+    final_check_model,
     harness_profile,
 )
 from operon.clients.anthropic import AnthropicClientError
@@ -23,6 +24,7 @@ from operon.models.perception import PageHint, ScreenPerception
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
 from operon.models.recovery import RecoveryStrategy
 from operon.models.state import AgentState
+from operon.models.usage import ModelUsage
 from operon.models.verification import VerificationStatus
 
 
@@ -233,3 +235,27 @@ async def test_the_check_request_uses_effort_not_disabled_thinking() -> None:
     assert "thinking" not in payload
     assert payload["output_config"] == {"effort": "low"}
     assert payload["messages"][0]["content"][1]["source"]["media_type"] == "image/jpeg"
+
+
+def test_the_completion_check_can_use_a_cheaper_model(monkeypatch) -> None:
+    monkeypatch.delenv("OPERON_FINAL_CHECK_MODEL", raising=False)
+    assert final_check_model("claude-opus-5-5") == "claude-opus-5-5"
+    monkeypatch.setenv("OPERON_FINAL_CHECK_MODEL", "claude-sonnet-5-5")
+    assert final_check_model("claude-opus-5-5") == "claude-sonnet-5-5"
+
+
+@pytest.mark.asyncio
+async def test_the_completion_check_records_its_usage(tmp_path) -> None:
+    usage = ModelUsage(provider="anthropic", model="claude-opus-5-5", request_kind="image", input_tokens=900, output_tokens=40)
+    client = Mock(
+        generate_judgement=AsyncMock(return_value='{"complete": true, "reason": "Done."}'),
+        latest_usage=Mock(return_value=usage),
+    )
+    stop = AgentAction(action_type=ActionType.STOP)
+    verifier = FinalCheckVerifier(client)
+
+    await verifier.verify(_state(tmp_path), _decision(stop, "Done."), _executed(stop))
+
+    debug = verifier.latest_debug_artifacts()
+    assert debug.usage == usage
+    assert debug.usage_artifact_path.endswith("final_check_usage.json")

@@ -89,7 +89,7 @@ Layer map:
 | Package | Role |
 |---|---|
 | `agent/perception/` | Screen capture, geometry, screen-diff, perception service |
-| `agent/backends/` | Model backends: `browser_computer_use` (Gemini CU, default), `browser_json`, `anthropic_policy`, plus `fallback`/`combined` wrappers |
+| `agent/backends/` | Model backends: `browser_claude_computer_use` / `desktop_claude_computer_use` (Claude, default with `ANTHROPIC_API_KEY`), `browser_computer_use` (Gemini CU), `browser_json`, plus `fallback`/`combined` wrappers |
 | `agent/policy/` | `rules.py` (deterministic engine), `coordinator.py` (post-LLM guards), `verifier.py`, `recovery.py`, `trust_gate.py`, `best_of_n.py` |
 | `agent/actions/` | Grounding, target selection, action translation, retry hardening |
 | `executor/` | `browser_native.py`, `desktop.py`, `os_picker_macro.py` + adapters to the unified contract |

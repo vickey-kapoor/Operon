@@ -85,7 +85,9 @@ class AnthropicComputerUseHttpClient(AnthropicHttpClient):
         payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "system": system,
+            # The tools and system prompt are the same for every run, so a breakpoint
+            # here lets each new run read them from the cache instead of writing them.
+            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             "tools": [COMPUTER_TOOLSET, *self.custom_tools],
             "messages": messages,
             # Each turn resends the whole conversation; cache everything up to the newest turn.

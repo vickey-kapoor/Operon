@@ -21,21 +21,22 @@ report JSON.
 Limit: a step that calls the same backend twice (a mid-step re-look) overwrites its
 usage file, so a run's total can be slightly low.
 
-## Where the money goes (estimate, to be confirmed by the next benchmark)
+## Where the money goes
 
-For the Claude browser backend (Opus 5.5, effort low, ~1.7 actions per task):
+Measured on the browser smoke suite, 2026-10-24 (Opus 5.5, effort low, full harness,
+5/5 success, 1.4 steps per task):
 
-| Item | Approx. per task |
+| Item | Per task |
 |---|---|
-| First turn: prompt, toolset and first screenshot written to cache | ~$0.02 |
-| Each later turn: new screenshot written, history read from cache | ~$0.008 |
-| Output, thinking included, ~300 tokens per turn at $20/MTok | ~$0.006 per turn |
-| Completion check (thin) or Gemini verifier (full) | ~$0.003-0.01 |
-| **Total** | **~$0.05-0.07** |
+| Opus 5.5 (the acting model) | $0.033 |
+| Gemini 3.5 Flash per-step verifier | $0.006 |
+| **Agent total** | **$0.040** |
+| Benchmark judge (Gemini 3.5 Flash) | $0.004 |
 
-So a full 44-task browser benchmark is roughly $2-3, a smoke run about $0.30. These
-numbers come from token arithmetic, not a bill; the first benchmark after this change
-replaces them with measured ones.
+About three quarters of the Opus spend went to cache writes (29.5k tokens written,
+15.2k read, 13.3k uncached, 2.0k output). Short runs write the whole prompt and end
+before reusing much of it. A full 44-task run comes to roughly $2 (more steps per task
+than the smoke suite).
 
 ## Levers, cheapest to try first
 
@@ -52,8 +53,9 @@ replaces them with measured ones.
    already on the report; the thin harness and Claude's batched actions keep it low.
 
 Already in place: prompt caching on every Claude turn (top-level `cache_control`; check
-`cache_read_tokens` on the report is non-zero), effort `low`, and screenshots
-downscaled to a 1280 px long edge.
+`cache_read_tokens` on the report is non-zero), plus a breakpoint on the system prompt
+so the tools and system prompt every run shares are written once and read by later
+runs within five minutes; effort `low`; screenshots downscaled to a 1280 px long edge.
 
 Not recommended:
 

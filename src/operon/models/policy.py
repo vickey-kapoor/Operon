@@ -38,6 +38,7 @@ class ActionType(StrEnum):
     BATCH = "batch"
     CLICK = "click"
     DOUBLE_CLICK = "double_click"
+    TRIPLE_CLICK = "triple_click"
     RIGHT_CLICK = "right_click"
     TYPE = "type"
     SELECT = "select"
@@ -123,7 +124,7 @@ class AgentAction(StrictModel):
             if any(v is not None for v in _new_fields):
                 raise ValueError("click cannot include x_end, y_end, or scroll_amount")
 
-        elif self.action_type in (ActionType.DOUBLE_CLICK, ActionType.RIGHT_CLICK):
+        elif self.action_type in (ActionType.DOUBLE_CLICK, ActionType.TRIPLE_CLICK, ActionType.RIGHT_CLICK):
             label = self.action_type.value
             if self.selector is None and (self.x is None or self.y is None) and self.target_element_id is None:
                 raise ValueError(f"{label} requires selector, coordinates, or target_element_id")

@@ -13,7 +13,6 @@ TOOLSET_NAME = "computer"
 # Claude from planning around actions that would fail.
 _DISABLED_MEMBERS = (
     "zoom",
-    "triple_click",
     "left_mouse_down",
     "left_mouse_up",
     "cursor_position",

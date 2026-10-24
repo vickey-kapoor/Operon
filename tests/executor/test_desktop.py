@@ -381,6 +381,25 @@ async def test_launch_app_ms_settings() -> None:
         mock_startfile.assert_called_once_with("ms-settings:")
 
 
+# ── triple_click tests ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_triple_click_clicks_three_times_at_the_point() -> None:
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.TRIPLE_CLICK, x=500, y=300)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_region_has_content", return_value=(True, 100.0)),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    mock_click.assert_called_once_with(500, 300, clicks=3, interval=0.05)
+
+
 # ── double_click tests ──────────────────────────────────────────
 
 

@@ -539,6 +539,7 @@ class DesktopExecutor(Executor):
         dispatch = {
             ActionType.CLICK: self._exec_click,
             ActionType.DOUBLE_CLICK: self._exec_double_click,
+            ActionType.TRIPLE_CLICK: self._exec_triple_click,
             ActionType.RIGHT_CLICK: self._exec_right_click,
             ActionType.TYPE: self._exec_type,
             ActionType.PRESS_KEY: self._exec_press_key,
@@ -678,6 +679,18 @@ class DesktopExecutor(Executor):
             return self._ok(action, f"Double-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
         except Exception as exc:
             return self._fail(action, f"Double-click failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
+    async def _exec_triple_click(self, action: AgentAction) -> ExecutedAction:
+        gate, variance = await self._click_preamble(action, "triple_click")
+        if gate is not None:
+            return gate
+        try:
+            await asyncio.to_thread(pyautogui.click, action.x, action.y, clicks=3, interval=0.05)
+            await asyncio.sleep(self._post_action_delay)
+            after_path = await self._capture_after()
+            return self._ok(action, f"Triple-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
+        except Exception as exc:
+            return self._fail(action, f"Triple-click failed: {exc}", FailureCategory.EXECUTION_ERROR)
 
     async def _exec_right_click(self, action: AgentAction) -> ExecutedAction:
         gate, variance = await self._click_preamble(action, "right_click")

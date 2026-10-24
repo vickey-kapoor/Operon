@@ -815,3 +815,25 @@ async def test_aclose_is_noop_when_no_persistent_browser(
     assert executor._obs_browser is None
     assert executor._obs_playwright is None
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action_type", "click_kwargs"),
+    [
+        (ActionType.DOUBLE_CLICK, {"click_count": 2}),
+        (ActionType.TRIPLE_CLICK, {"click_count": 3}),
+        (ActionType.RIGHT_CLICK, {"button": "right"}),
+    ],
+)
+async def test_multi_and_right_clicks_run_as_the_model_asked(tmp_path: Path, action_type, click_kwargs) -> None:
+    mouse = SimpleNamespace(click=AsyncMock())
+    page = SimpleNamespace(mouse=mouse, wait_for_load_state=AsyncMock())
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+
+    result = await executor.execute(AgentAction(action_type=action_type, x=120, y=45))
+
+    assert result.success is True
+    mouse.click.assert_awaited_once_with(120, 45, **click_kwargs)

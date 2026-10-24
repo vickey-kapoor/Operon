@@ -13,6 +13,7 @@ from operon.agent.policy.thin import (
     FinalCheckVerifier,
     ThinPolicy,
     ThinRecovery,
+    final_check_model,
     harness_profile,
 )
 from operon.agent.policy.verifier import DeterministicVerifierService
@@ -61,7 +62,7 @@ def _loop_layers(*, config, services, memory_store) -> dict:
         return {
             "policy_service": ThinPolicy(delegate),
             "verifier_service": FinalCheckVerifier(
-                AnthropicHttpClient(model=config.claude_model or "claude-opus-5-5", timeout_seconds=120.0),
+                AnthropicHttpClient(model=final_check_model(config.claude_model), timeout_seconds=120.0),
                 on_rejected=lambda run_id, hint: delegate.add_advisory_hints([hint], source="final_check", run_id=run_id),
                 effort=config.claude_effort,
             ),

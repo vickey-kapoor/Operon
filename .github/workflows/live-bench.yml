@@ -22,6 +22,9 @@ on:
         type: choice
         options: [full, thin]
         default: full
+      final_check_model:
+        description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
+        default: ""
       suite:
         description: "smoke (5 tasks) or full (44 tasks)"
         type: choice
@@ -37,6 +40,7 @@ on:
       claude_model: {type: string, default: "claude-opus-5-5"}
       claude_effort: {type: string, default: "low"}
       harness_profile: {type: string, default: "full"}
+      final_check_model: {type: string, default: ""}
       suite: {type: string, default: "smoke"}
       args: {type: string, default: ""}
       ref:
@@ -75,6 +79,7 @@ jobs:
       OPERON_BROWSER_CLAUDE_MODEL: ${{ inputs.claude_model }}
       OPERON_BROWSER_CLAUDE_EFFORT: ${{ inputs.claude_effort }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
+      OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
       BROWSER_HEADLESS: "true"
     steps:
       - name: Check the secrets

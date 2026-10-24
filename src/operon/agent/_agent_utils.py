@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from operon.models.usage import ModelUsage
 from operon.store.background_writer import bg_writer
 
 
@@ -13,6 +14,7 @@ def collect_latest_usage(client: Any, usage_artifact_path: Path):
     if not hasattr(client, "latest_usage"):
         return None
     usage = client.latest_usage()
-    if usage is not None:
-        bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
+    if not isinstance(usage, ModelUsage):
+        return None
+    bg_writer.enqueue(usage_artifact_path, usage.model_dump_json(indent=2))
     return usage

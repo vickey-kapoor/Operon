@@ -37,7 +37,7 @@ import shutil
 import sys
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,6 +59,7 @@ Judge = Callable[[LiveTask, str], Awaitable["Verdict"]]
 class Verdict:
     goal_visible: bool | None
     reason: str
+    cost_usd: float | None = None
 
 
 @dataclass
@@ -76,6 +77,14 @@ class TaskResult:
     other_steps: int
     judge_reason: str
     final_screenshot: str
+    # Agent model calls for this run, from the usage files in its run folder.
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cost_usd: float = 0.0
+    judge_cost_usd: float = 0.0
+    by_model: dict = field(default_factory=dict)
 
 
 def classify(status: str, goal_visible: bool | None) -> str:
@@ -123,9 +132,11 @@ def gemini_judge(model: str) -> Judge:
     async def judge(task: LiveTask, screenshot: str) -> Verdict:
         prompt = JUDGE_PROMPT.format(intent=task.intent, check=task.check)
         try:
-            return parse_verdict(await client.generate_perception(prompt, screenshot))
+            verdict = parse_verdict(await client.generate_perception(prompt, screenshot))
         except Exception as exc:  # the judge failing must not stop the benchmark
             return Verdict(None, f"judge call failed: {exc}")
+        usage = client.latest_usage()
+        return replace(verdict, cost_usd=usage.estimated_cost_usd if usage else None)
 
     return judge
 
@@ -138,6 +149,37 @@ def _backends_used(run_id: str) -> tuple[int, int]:
     steps = sorted(_run_dir(run_id).glob("step_*"))
     cu = sum((step / "computer_use_raw.json").exists() for step in steps)
     return cu, len(steps) - cu
+
+
+USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_usd")
+
+
+def run_usage(run_id: str) -> dict:
+    """Tokens and estimated USD of every model call a run saved (``step_*/*_usage.json``)."""
+    total = dict.fromkeys(USAGE_FIELDS, 0)
+    by_model: dict[str, dict] = {}
+    for path in sorted(_run_dir(run_id).glob("step_*/*_usage.json")):
+        try:
+            usage = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(usage, dict):
+            continue
+        row = {
+            "input_tokens": usage.get("input_tokens") or 0,
+            "output_tokens": (usage.get("output_tokens") or 0) + (usage.get("thoughts_tokens") or 0),
+            "cache_read_tokens": usage.get("cache_read_input_tokens") or 0,
+            "cache_write_tokens": usage.get("cache_creation_input_tokens") or 0,
+            "cost_usd": usage.get("estimated_cost_usd") or 0.0,
+        }
+        bucket = by_model.setdefault(str(usage.get("model") or "unknown"), {"requests": 0, **dict.fromkeys(USAGE_FIELDS, 0)})
+        bucket["requests"] += 1
+        for key, value in row.items():
+            total[key] += value
+            bucket[key] += value
+    for bucket in (total, *by_model.values()):
+        bucket["cost_usd"] = round(bucket["cost_usd"], 6)
+    return {**total, "by_model": by_model}
 
 
 def _final_screenshot(run_id: str) -> str | None:
@@ -205,6 +247,7 @@ async def run_task(
             await client.post("/desktop/cleanup", json={"run_id": run_id})
         except httpx.HTTPError as exc:
             print(f"  {task.name}: cleanup failed: {exc}", file=sys.stderr)
+    usage = run_usage(run_id) if run_id else {"by_model": {}}
     return TaskResult(
         task=task.name,
         category=task.category,
@@ -219,6 +262,9 @@ async def run_task(
         other_steps=other,
         judge_reason=verdict.reason,
         final_screenshot=screenshot or "-",
+        **{key: usage.get(key, 0) for key in USAGE_FIELDS},
+        judge_cost_usd=round(verdict.cost_usd or 0.0, 6),
+        by_model=usage["by_model"],
     )
 
 
@@ -234,6 +280,33 @@ def summarize(results: list[TaskResult]) -> dict:
         "mean_seconds": round(sum(r.seconds for r in results) / total, 1) if total else 0.0,
         "seconds_per_step": round(sum(r.seconds for r in results) / steps, 1) if steps else 0.0,
         "fallback_steps": sum(r.other_steps for r in results),
+        **cost_summary(results, counts["success"]),
+    }
+
+
+def cost_summary(results: list[TaskResult], successes: int) -> dict:
+    """Agent spend for the whole run, per task, per success and per model.
+
+    ``cost_per_success_usd`` charges failed tasks to the successes: it is what one
+    finished task actually costs. The judge is reported apart from the agent.
+    """
+    total = len(results)
+    cost = round(sum(r.cost_usd for r in results), 6)
+    by_model: dict[str, dict] = {}
+    for r in results:
+        for model, bucket in r.by_model.items():
+            into = by_model.setdefault(model, {"requests": 0, **dict.fromkeys(USAGE_FIELDS, 0)})
+            for key, value in bucket.items():
+                into[key] += value
+    for bucket in by_model.values():
+        bucket["cost_usd"] = round(bucket["cost_usd"], 6)
+    return {
+        "cost_usd": cost,
+        "judge_cost_usd": round(sum(r.judge_cost_usd for r in results), 6),
+        "cost_per_task_usd": round(cost / total, 6) if total else 0.0,
+        "cost_per_success_usd": round(cost / successes, 6) if successes else None,
+        **{key: sum(getattr(r, key) for r in results) for key in USAGE_FIELDS if key != "cost_usd"},
+        "by_model": by_model,
     }
 
 
@@ -249,7 +322,7 @@ def _previous_report(bench_dir: Path, suite: str) -> dict | None:
 
 def format_report(results: list[TaskResult], summary: dict, previous: dict | None) -> str:
     before = {r["task"]: r["outcome"] for r in previous["results"]} if previous else {}
-    lines = [f"{'task':22} {'category':11} {'outcome':14} {'steps':>5} {'secs':>5}  note"]
+    lines = [f"{'task':22} {'category':11} {'outcome':14} {'steps':>5} {'secs':>5} {'usd':>7}  note"]
     for r in results:
         change = ""
         if r.task in before and before[r.task] != r.outcome:
@@ -257,7 +330,7 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         note = change + (f"paused x{r.pauses} " if r.pauses else "") + (f"fallback x{r.other_steps} " if r.other_steps else "")
         if r.outcome != "success":
             note += r.judge_reason
-        lines.append(f"{r.task:22} {r.category:11} {r.outcome:14} {r.steps:>5} {r.seconds:>5}  {note.strip()}")
+        lines.append(f"{r.task:22} {r.category:11} {r.outcome:14} {r.steps:>5} {r.seconds:>5} {r.cost_usd:>7.4f}  {note.strip()}")
     lines.append("")
     lines.append(
         f"{summary['success']}/{summary['tasks']} success ({summary['success_rate']:.0%}) · "
@@ -268,6 +341,17 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         f"mean {summary['mean_steps']} steps, {summary['mean_seconds']} s per task, "
         f"{summary['seconds_per_step']} s per step · {summary['fallback_steps']} fallback steps"
     )
+    if "cost_usd" in summary:
+        per_success = summary["cost_per_success_usd"]
+        lines.append(
+            f"cost ${summary['cost_usd']:.4f} (${summary['cost_per_task_usd']:.4f} per task, "
+            + (f"${per_success:.4f} per success" if per_success is not None else "no successes")
+            + f") · judge ${summary['judge_cost_usd']:.4f} · tokens in {summary['input_tokens']}, "
+            f"cache read {summary['cache_read_tokens']}, cache write {summary['cache_write_tokens']}, "
+            f"out {summary['output_tokens']}"
+        )
+        for model, bucket in sorted(summary["by_model"].items()):
+            lines.append(f"  {model}: {bucket['requests']} calls, ${bucket['cost_usd']:.4f}")
     if previous:
         prev = previous["summary"]
         lines.append(
@@ -336,6 +420,9 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         "started_at": started_at,
         model_key: os.getenv(f"OPERON_{args.mode.upper()}_MODEL", "server default"),
         "judge_model": args.judge_model,
+        "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
+        "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
+        "harness_profile": os.getenv("OPERON_HARNESS_PROFILE", "full"),
         "summary": summary,
         "results": [asdict(r) for r in results],
     }

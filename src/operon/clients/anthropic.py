@@ -98,6 +98,34 @@ class AnthropicHttpClient:
             request_kind="image",
         )
 
+    async def generate_judgement(
+        self,
+        prompt: str,
+        *,
+        image_data: str,
+        media_type: str,
+        effort: str | None = "low",
+        max_tokens: int = 4096,
+    ) -> str:
+        """One text answer about one screenshot, for models that only take adaptive
+        thinking (Opus 4.7+, Sonnet 5+): no ``thinking`` setting, effort instead."""
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_data}},
+                    ],
+                }
+            ],
+        }
+        if effort:
+            payload["output_config"] = {"effort": effort}
+        return await self._post_message(payload=payload, request_kind="image")
+
     def latest_usage(self) -> ModelUsage | None:
         return self._last_usage
 

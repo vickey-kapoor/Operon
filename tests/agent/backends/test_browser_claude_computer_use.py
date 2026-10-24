@@ -160,6 +160,18 @@ async def test_text_only_reply_after_acting_is_a_stop(tmp_path: Path) -> None:
     assert perception.summary == "The Products page is showing."
 
 
+async def test_text_only_reply_after_a_step_reported_failed_is_still_a_stop(tmp_path: Path) -> None:
+    """A login whose submit was reported failed but worked used to loop on WAIT to max_steps."""
+    client = ScriptedClient([_reply({"type": "text", "text": "Logged in successfully."}, stop_reason="end_turn")])
+    backend = _backend(client)
+    state = _state((ActionType.CLICK, False))
+
+    perception = await backend.perceive(_frame(tmp_path), state)
+    decision = await backend.choose_action(state, perception)
+
+    assert decision.action.action_type is ActionType.STOP
+
+
 async def test_text_only_reply_before_acting_waits_and_the_next_turn_nudges_on(tmp_path: Path) -> None:
     client = ScriptedClient(
         [

@@ -323,3 +323,6 @@ tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   .card { padding: 16px; }
   .table-wrap { margin: 0 -16px; padding: 0 16px; }
 }
+.elsewhere { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; margin-top: 16px; }
+.elsewhere .note { width: 100%; margin: 0; }
+.elsewhere .ghost-btn { margin-top: 0; }

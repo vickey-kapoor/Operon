@@ -9,6 +9,7 @@ const BACKEND_NAMES = { claude_computer_use: "Claude", computer_use: "Gemini", j
 // anything new takes the next free slot in order of first appearance.
 const FIXED_SLOTS = { "Claude": 1, "Gemini": 2, "Claude · thin": 3 };
 const MAX_SLOTS = 6;
+const DATA_SOURCES = ["data"];
 const OUTCOME_LABELS = {
   success: "pass", false_success: "false pass", missed: "missed",
   failure: "fail", timeout: "timeout", error: "error",
@@ -24,6 +25,7 @@ const state = {
   costSelected: null,
   slots: {},
   reports: {},
+  dataBase: "data",
 };
 
 // ---------- small helpers ----------
@@ -165,7 +167,7 @@ function seriesFor(runs, value) {
 
 async function loadReport(run) {
   if (!state.reports[run.key]) {
-    const response = await fetch(`data/${run.file}`, { cache: "no-cache" });
+    const response = await fetch(`${state.dataBase}/${run.file}`, { cache: "no-cache" });
     if (!response.ok) throw new Error(`${run.file}: ${response.status}`);
     state.reports[run.key] = await response.json();
   }
@@ -481,11 +483,37 @@ function costPerTask(run) {
   return s.tasks ? s.cost_usd / s.tasks : null;
 }
 
+// When this environment and suite have no cost yet, offer the ones that do.
+function renderCostElsewhere() {
+  const host = document.getElementById("cost-elsewhere");
+  host.replaceChildren();
+  const groups = new Map();
+  for (const run of state.runs) {
+    if (!hasCost(run) || (!state.showFlagged && run.config && run.config.flagged)) continue;
+    const suite = (run.suite || "").replace(/^desktop-/, "");
+    const id = `${run.mode}|${suite}`;
+    groups.set(id, { mode: run.mode, suite, count: (groups.get(id)?.count || 0) + 1 });
+  }
+  if (!groups.size) return;
+  const names = { browser: "Browser", desktop: "Desktop", full: "full suite", smoke: "smoke" };
+  host.append(el("p", { class: "note" }, "Cost has been measured for:"));
+  for (const g of groups.values()) {
+    host.append(el("button", {
+      class: "ghost-btn",
+      type: "button",
+      onclick: () => { state.mode = g.mode; state.suite = g.suite; render(); },
+    }, `${names[g.mode] || g.mode} · ${names[g.suite] || g.suite} (${g.count} run${g.count > 1 ? "s" : ""})`));
+  }
+}
+
 function renderCost() {
   const runs = filteredRuns().filter(hasCost);
   document.getElementById("cost-empty").hidden = runs.length > 0;
   document.getElementById("cost-body").hidden = runs.length === 0;
-  if (!runs.length) return;
+  if (!runs.length) {
+    renderCostElsewhere();
+    return;
+  }
 
   const tiles = document.getElementById("cost-tiles");
   tiles.replaceChildren();
@@ -647,15 +675,29 @@ function bindControls() {
   window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150); });
 }
 
+async function loadIndex() {
+  let lastError;
+  for (const base of DATA_SOURCES) {
+    try {
+      const response = await fetch(`${base}/index.json`, { cache: "no-cache" });
+      if (!response.ok) throw new Error(`${base}/index.json: ${response.status}`);
+      const index = await response.json();
+      state.dataBase = base;
+      return index;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
 async function main() {
   state.mode = store("operon-dash-f-mode") || state.mode;
   state.suite = store("operon-dash-f-suite") || state.suite;
   state.tab = store("operon-dash-tab") || state.tab;
   bindControls();
   try {
-    const response = await fetch("data/index.json", { cache: "no-cache" });
-    if (!response.ok) throw new Error(`data/index.json: ${response.status}`);
-    const index = await response.json();
+    const index = await loadIndex();
     state.runs = index.runs || [];
     assignSlots(state.runs);
     const generated = index.generated_at ? new Date(index.generated_at) : null;

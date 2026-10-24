@@ -60,7 +60,7 @@ Teams that want to automate real UI workflows face three bad options:
 1. **Reliability as the product, not a feature.** Deterministic rules before LLM fallback, verify-after-every-action, an explicit recovery ladder, and HITL turn "impressive demo" into "trustworthy run."
 2. **One loop, two surfaces.** Browser and desktop share the loop, verifier, recovery, and persistence — covering the desktop gap browser-only and Gemini-CUA leave open [8].
 3. **Open and inspectable.** Apache-2.0, self-hostable, with every run producing screenshots, model I/O, policy decisions, execution traces, and logs — an auditable record that closed metered APIs do not surface.
-4. **Backend-agnostic.** Pluggable planner/verifier providers (Gemini, Anthropic) and a cheaper JSON perception/policy fallback give cost and vendor flexibility.
+4. **Backend-agnostic.** Pluggable backends (Claude or Gemini computer use, Gemini or Anthropic verifier) and a cheaper JSON perception/policy fallback give cost and vendor flexibility.
 
 ---
 
@@ -135,7 +135,7 @@ Legend: **[Current]** implemented today (verified in code); **[Roadmap]** propos
 ### 9.2 Backends & models
 - **FR-5 [Current]** Browser backend defaults to **Gemini Computer Use** on `gemini-3.5-flash` with an optional **JSON** perception/policy fallback.
 - **FR-6 [Current]** Desktop backend uses the **JSON combined** backend.
-- **FR-7 [Current]** Pluggable planner/verifier provider: **Gemini or Anthropic** (`OPERON_*_PLANNER_PROVIDER`).
+- **FR-7 [Current]** Pluggable backend and verifier provider: **Claude or Gemini** (`OPERON_*_BACKEND`, `OPERON_*_VERIFIER_PROVIDER`).
 - **FR-8 [Roadmap]** Pluggable grounding/vision models (e.g., OmniParser-style screen parsing [11], UI-TARS-style grounding [9]) to improve coordinate accuracy.
 
 ### 9.3 Policy & memory

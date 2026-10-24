@@ -178,8 +178,6 @@ WS   /ws/stream
 | `OPERON_BROWSER_BACKEND` | `claude_computer_use` with `ANTHROPIC_API_KEY`, else `computer_use` | `claude_computer_use` (Claude), `computer_use` (Gemini) or `json` |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend |
 | `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend |
-| `OPERON_BROWSER_PLANNER_PROVIDER` | `gemini` | `gemini` or `anthropic` |
-| `OPERON_DESKTOP_PLANNER_PROVIDER` | `gemini` | `gemini` or `anthropic` |
 | `OPERON_BROWSER_MODEL` | `gemini-3.5-flash` | Browser primary model |
 | `OPERON_BROWSER_THINKING` | `low` | Computer Use thinking level (Gemini 3) |
 | `OPERON_BROWSER_VERIFIER_THINKING` | `low` | Browser critic thinking level |

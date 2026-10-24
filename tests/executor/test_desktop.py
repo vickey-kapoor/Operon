@@ -956,3 +956,19 @@ async def test_cleanup_skips_already_exited() -> None:
 
     assert closed == 0
     mock_proc.terminate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hotkey_with_an_unknown_key_name_fails_instead_of_pressing_nothing() -> None:
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.HOTKEY, key="ctrl+Fn_Lock")
+
+    with (
+        patch("operon.executor.desktop.pyautogui.KEYBOARD_KEYS", ["ctrl", "a"], create=True),
+        patch("operon.executor.desktop.pyautogui.hotkey") as mock_hotkey,
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is False
+    assert "fn_lock" in result.detail
+    mock_hotkey.assert_not_called()

@@ -17,6 +17,11 @@ on:
       claude_effort:
         description: "Effort for claude_computer_use (low, medium, high)"
         default: "low"
+      harness_profile:
+        description: "OPERON_HARNESS_PROFILE: full, or thin (Claude only: no rules or per-step verifier)"
+        type: choice
+        options: [full, thin]
+        default: full
       suite:
         description: "smoke (5 tasks) or full (44 tasks)"
         type: choice
@@ -56,6 +61,7 @@ jobs:
       OPERON_BROWSER_BACKEND: ${{ matrix.backend }}
       OPERON_BROWSER_CLAUDE_MODEL: ${{ inputs.claude_model }}
       OPERON_BROWSER_CLAUDE_EFFORT: ${{ inputs.claude_effort }}
+      OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       BROWSER_HEADLESS: "true"
     steps:
       - name: Check the secrets

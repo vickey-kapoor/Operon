@@ -239,6 +239,14 @@ def _normalize_key_pyautogui(key: str) -> str:
     return _PYAUTOGUI_KEY_MAP.get(key.lower(), key.lower())
 
 
+def _unknown_keys(keys: list[str]) -> list[str]:
+    """Key names pyautogui would silently ignore (it presses nothing for them)."""
+    known = getattr(pyautogui, "KEYBOARD_KEYS", None)
+    if not isinstance(known, (list, tuple, set, frozenset)):
+        return []  # pyautogui unavailable or stubbed: nothing to check against
+    return [key for key in keys if key not in known]
+
+
 class DesktopExecutor(Executor):
     """Desktop executor using pyautogui/mss for full-screen automation."""
 
@@ -765,6 +773,8 @@ class DesktopExecutor(Executor):
         if action.key is None:
             return self._fail(action, "press_key requires key", FailureCategory.EXECUTION_ERROR)
         key = _normalize_key_pyautogui(action.key)
+        if _unknown_keys([key]):
+            return self._fail(action, f"Unknown key name '{action.key}'; nothing was pressed", FailureCategory.EXECUTION_ERROR)
         try:
             await asyncio.to_thread(pyautogui.press, key)
             await asyncio.sleep(self._post_action_delay)
@@ -784,8 +794,13 @@ class DesktopExecutor(Executor):
                 "alt+f4 is blocked for safety — use the stop action instead of closing windows",
                 FailureCategory.EXECUTION_ERROR,
             )
+        keys = [_normalize_key_pyautogui(k.strip()) for k in action.key.split("+")]
+        unknown = _unknown_keys(keys)
+        if unknown:
+            return self._fail(
+                action, f"Unknown key name(s) {', '.join(unknown)} in '{action.key}'; nothing was pressed", FailureCategory.EXECUTION_ERROR
+            )
         try:
-            keys = [_normalize_key_pyautogui(k.strip()) for k in action.key.split("+")]
             await asyncio.to_thread(pyautogui.hotkey, *keys)
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()

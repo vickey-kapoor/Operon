@@ -19,6 +19,11 @@ on:
         type: choice
         options: [json, claude_computer_use]
         default: json
+      harness_profile:
+        description: "OPERON_HARNESS_PROFILE: full, or thin (Claude only: no rules or per-step verifier)"
+        type: choice
+        options: [full, thin]
+        default: full
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
@@ -49,6 +54,7 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPERON_DESKTOP_PLANNER_PROVIDER: ${{ inputs.planner_provider }}
       OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
+      OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
     steps:
       - name: Check the secrets
         run: |

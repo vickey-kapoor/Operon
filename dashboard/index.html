@@ -5,24 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Operon Evals</title>
   <meta name="description" content="Live benchmark results for the Operon computer-use agent: pass rate, speed and cost by backend and harness.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M8 22l5-7 4 4 7-10' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234f8ff0'/%3E%3Cstop offset='1' stop-color='%236250d6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M8 21l5-6 4 4 7-9' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="wrap">
-    <header class="top">
+  <header class="appbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 16l4.5-5.5 3.5 3.5 6-8" /></svg>
+      </span>
       <div>
-        <h1>Operon evals</h1>
+        <div class="brand-name">Operon <span>Evals</span></div>
         <div class="meta" id="meta">Loading…</div>
       </div>
-      <button class="theme-btn" id="theme" type="button">Theme: auto</button>
-    </header>
-
+    </div>
     <nav class="tabs" role="tablist">
       <button role="tab" aria-selected="true" data-tab="evals">Evals</button>
       <button role="tab" aria-selected="false" data-tab="cost">Cost</button>
     </nav>
-
     <div class="filters">
       <div class="seg" id="f-mode" aria-label="Environment">
         <button data-v="browser" aria-pressed="true">Browser</button>
@@ -32,45 +35,45 @@
         <button data-v="full" aria-pressed="true">Full suite</button>
         <button data-v="smoke" aria-pressed="false">Smoke</button>
       </div>
-      <label class="check"><input type="checkbox" id="f-flagged"> Show flagged runs</label>
+      <label class="switch"><input type="checkbox" id="f-flagged"><span class="track"></span> Flagged runs</label>
+      <button class="icon-btn" id="theme" type="button" aria-label="Theme: auto" title="Theme: auto"></button>
     </div>
+  </header>
 
+  <main class="page">
     <section id="tab-evals">
       <div class="tiles" id="tiles"></div>
-      <div class="grid2" style="margin-bottom:16px">
+      <div class="charts two">
         <div class="card">
-          <h2>Pass rate</h2>
-          <p class="sub">Tasks the judge saw completed on the final screen, per run</p>
-          <div class="legend" id="lg-pass"></div>
+          <div class="card-head"><div><h2>Pass rate</h2><p class="sub">Tasks the judge saw completed on the final screen</p></div><div class="legend" id="lg-pass"></div></div>
           <div class="chart" id="ch-pass"></div>
         </div>
         <div class="card">
-          <h2>Seconds per task</h2>
-          <p class="sub">Mean wall-clock time per task, lower is better</p>
-          <div class="legend" id="lg-speed"></div>
+          <div class="card-head"><div><h2>Seconds per task</h2><p class="sub">Mean wall-clock time per task, lower is better</p></div><div class="legend" id="lg-speed"></div></div>
           <div class="chart" id="ch-speed"></div>
         </div>
       </div>
-      <div class="card">
-        <h2>Runs</h2>
-        <p class="sub">Every benchmark run for this environment and suite. Select a run to see its tasks.</p>
-        <div class="table-wrap"><table id="runs"></table></div>
+      <div class="split">
+        <div class="card">
+          <div class="card-head"><div><h2>Runs</h2><p class="sub">Every run for this environment and suite. Select one to see its tasks.</p></div></div>
+          <div class="table-wrap"><table id="runs"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Tasks by configuration</h2><p class="sub">Latest run of each configuration. Misses first; bold rows disagree.</p></div></div>
+          <div class="table-wrap"><table class="matrix" id="matrix"></table></div>
+          <button class="ghost-btn" id="matrix-more" type="button" hidden></button>
+        </div>
       </div>
       <div class="card" id="detail" hidden>
-        <h2 id="detail-title"></h2>
-        <p class="sub" id="detail-sub"></p>
+        <div class="card-head"><div><h2 id="detail-title"></h2><p class="sub" id="detail-sub"></p></div>
+          <button class="ghost-btn" id="detail-close" type="button">Close</button></div>
         <div class="table-wrap"><table id="detail-table"></table></div>
-      </div>
-      <div class="card">
-        <h2>Tasks by configuration</h2>
-        <p class="sub">Outcome of each task in the latest run of each configuration. Tasks that any configuration missed come first; rows where configurations disagree are bold.</p>
-        <div class="table-wrap"><table class="matrix" id="matrix"></table></div>
-        <button class="theme-btn" id="matrix-more" type="button" style="margin-top:10px" hidden></button>
       </div>
     </section>
 
     <section id="tab-cost" hidden>
-      <div id="cost-empty" class="card" hidden>
+      <div id="cost-empty" class="card empty-state" hidden>
+        <div class="empty-icon" aria-hidden="true">$</div>
         <h2>No cost data yet</h2>
         <p class="note">Cost appears here for benchmark runs that record token usage and dollars
           (<code>summary.cost_usd</code>, <code>summary.cost_per_task_usd</code>, <code>summary.by_model</code>, and per-task
@@ -78,40 +81,33 @@
       </div>
       <div id="cost-body">
         <div class="tiles" id="cost-tiles"></div>
-        <div class="grid2" style="margin-bottom:16px">
+        <div class="charts two">
           <div class="card">
-            <h2>Cost per task</h2>
-            <p class="sub">Agent model spend divided by tasks run, US dollars</p>
-            <div class="legend" id="lg-cpt"></div>
+            <div class="card-head"><div><h2>Cost per task</h2><p class="sub">Agent model spend divided by tasks run, US dollars</p></div><div class="legend" id="lg-cpt"></div></div>
             <div class="chart" id="ch-cpt"></div>
           </div>
           <div class="card">
-            <h2>Cost per successful task</h2>
-            <p class="sub">Agent model spend divided by tasks passed, US dollars</p>
-            <div class="legend" id="lg-cps"></div>
+            <div class="card-head"><div><h2>Cost per successful task</h2><p class="sub">Agent model spend divided by tasks passed, US dollars</p></div><div class="legend" id="lg-cps"></div></div>
             <div class="chart" id="ch-cps"></div>
           </div>
         </div>
         <div class="card">
-          <h2>Runs with cost</h2>
-          <p class="sub">Select a run to see its spend by model and by task.</p>
+          <div class="card-head"><div><h2>Runs with cost</h2><p class="sub">Select a run to see its spend by model and by task.</p></div></div>
           <div class="table-wrap"><table id="cost-runs"></table></div>
         </div>
-        <div class="stack" id="cost-detail" hidden>
+        <div class="split" id="cost-detail" hidden>
           <div class="card">
-            <h2>By model</h2>
-            <p class="sub" id="cost-detail-sub"></p>
+            <div class="card-head"><div><h2>By model</h2><p class="sub" id="cost-detail-sub"></p></div></div>
             <div class="table-wrap"><table id="cost-models"></table></div>
           </div>
           <div class="card">
-            <h2>By task</h2>
-            <p class="sub">Most expensive first</p>
+            <div class="card-head"><div><h2>By task</h2><p class="sub">Most expensive first</p></div></div>
             <div class="table-wrap"><table id="cost-tasks"></table></div>
           </div>
         </div>
       </div>
     </section>
-  </div>
+  </main>
   <script src="app.js"></script>
 </body>
 </html>

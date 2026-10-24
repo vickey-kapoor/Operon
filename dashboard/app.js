@@ -121,7 +121,7 @@ function runLink(run, text) {
 function commitLink(run) {
   const sha = run.config && run.config.git_sha;
   return sha
-    ? el("a", { href: `https://github.com/vickey-kapoor/Operon/commit/${sha}`, target: "_blank", rel: "noopener" }, sha.slice(0, 7))
+    ? el("a", { class: "sha", href: `https://github.com/vickey-kapoor/Operon/commit/${sha}`, target: "_blank", rel: "noopener" }, sha.slice(0, 7))
     : "–";
 }
 
@@ -193,7 +193,7 @@ function lineChart(host, legendHost, series, opts) {
   }
 
   const width = Math.max(host.clientWidth, 280);
-  const height = 240;
+  const height = 260;
   const m = { l: 48, r: 52, t: 12, b: 28 };
   const all = series.flatMap((s) => s.points);
   let x0 = Math.min(...all.map((p) => +p.x));
@@ -304,6 +304,29 @@ function lineChart(host, legendHost, series, opts) {
 
 // ---------- evals tab ----------
 
+function tile(run, { value, of, delta, meter, stats }) {
+  const label = configLabel(run);
+  return el("div", { class: "tile", style: `--tile-color:${seriesColor(label)}` },
+    el("div", { class: "who" }, key(label), label, el("span", { class: "model" }, (run.config && run.config.model) || "")),
+    el("div", { class: "big" }, el("strong", {}, value), of ? el("span", { class: "of" }, of) : null, delta || null),
+    meter === undefined ? null : el("div", { class: "meter", role: "img", "aria-label": fmtPct(meter) },
+      el("span", { style: `width:${Math.max(0, Math.min(1, meter)) * 100}%` })),
+    el("dl", {}, stats.map(([dt, dd, style]) => el("div", {}, el("dt", {}, dt), el("dd", { style: style || null }, dd)))),
+    el("div", { class: "when" }, el("span", {}, timeFmt.format(parseStamp(run.started_at))), runLink(run, "View run ↗")));
+}
+
+// Change in pass rate since this configuration's previous comparable run.
+function passDelta(run, runs) {
+  const label = configLabel(run);
+  const earlier = runs.filter((r) => configLabel(r) === label && r.started_at < run.started_at && !(r.config && r.config.flagged));
+  if (!earlier.length) return null;
+  const prev = earlier[earlier.length - 1];
+  const points = Math.round((run.summary.success_rate - prev.summary.success_rate) * 100);
+  const cls = points > 0 ? "delta up" : points < 0 ? "delta down" : "delta";
+  const text = points > 0 ? `▲ ${points} pts` : points < 0 ? `▼ ${-points} pts` : "no change";
+  return el("span", { class: cls, title: `vs ${timeFmt.format(parseStamp(prev.started_at))}` }, text);
+}
+
 function renderTiles(runs) {
   const host = document.getElementById("tiles");
   host.replaceChildren();
@@ -314,16 +337,18 @@ function renderTiles(runs) {
   }
   for (const run of latest) {
     const s = run.summary;
-    host.append(el("div", { class: "tile" },
-      el("div", { class: "who" }, key(configLabel(run)), configLabel(run),
-        el("span", { style: "font-weight:400;color:var(--text-muted)" }, (run.config && run.config.model) || "")),
-      el("div", { class: "big" }, `${s.success}/${s.tasks}`, el("small", {}, fmtPct(s.success_rate))),
-      el("dl", {},
-        el("dt", {}, "s / task"), el("dd", {}, fmtSec(s.mean_seconds)),
-        el("dt", {}, "s / step"), el("dd", {}, fmtSec(s.seconds_per_step)),
-        el("dt", {}, "steps"), el("dd", {}, fmtNum(s.mean_steps)),
-        el("dt", {}, "false pass"), el("dd", { style: s.false_success ? "color:var(--critical)" : "" }, fmtNum(s.false_success))),
-      el("div", { class: "when" }, `Latest run ${timeFmt.format(parseStamp(run.started_at))} · `, runLink(run))));
+    host.append(tile(run, {
+      value: fmtPct(s.success_rate),
+      of: `${s.success} of ${s.tasks} tasks`,
+      delta: passDelta(run, runs),
+      meter: s.success_rate,
+      stats: [
+        ["Per task", fmtSec(s.mean_seconds)],
+        ["Per step", fmtSec(s.seconds_per_step)],
+        ["Steps", fmtNum(s.mean_steps)],
+        ["False pass", fmtNum(s.false_success), s.false_success ? "color:var(--critical)" : ""],
+      ],
+    }));
   }
 }
 
@@ -466,16 +491,16 @@ function renderCost() {
   tiles.replaceChildren();
   for (const run of latestByConfig(runs)) {
     const s = run.summary;
-    tiles.append(el("div", { class: "tile" },
-      el("div", { class: "who" }, key(configLabel(run)), configLabel(run),
-        el("span", { style: "font-weight:400;color:var(--text-muted)" }, (run.config && run.config.model) || "")),
-      el("div", { class: "big" }, fmtUsd(costPerTask(run)), el("small", {}, "per task")),
-      el("dl", {},
-        el("dt", {}, "per success"), el("dd", {}, fmtUsd(costPerSuccess(run))),
-        el("dt", {}, "run total"), el("dd", {}, fmtUsd(s.cost_usd)),
-        el("dt", {}, "judge"), el("dd", {}, fmtUsd(s.judge_cost_usd)),
-        el("dt", {}, "passed"), el("dd", {}, `${s.success}/${s.tasks}`)),
-      el("div", { class: "when" }, `Latest run ${timeFmt.format(parseStamp(run.started_at))} · `, runLink(run))));
+    tiles.append(tile(run, {
+      value: fmtUsd(costPerTask(run)),
+      of: "per task",
+      stats: [
+        ["Per success", fmtUsd(costPerSuccess(run))],
+        ["Run total", fmtUsd(s.cost_usd)],
+        ["Judge", fmtUsd(s.judge_cost_usd)],
+        ["Passed", `${s.success}/${s.tasks}`],
+      ],
+    }));
   }
 
   lineChart(document.getElementById("ch-cpt"), document.getElementById("lg-cpt"), seriesFor(runs, costPerTask),
@@ -568,6 +593,18 @@ function render() {
   }
 }
 
+const THEME_ICONS = {
+  auto: [["M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z"], ["M12 3a9 9 0 0 0 0 18z", true]],
+  light: [["M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4"]],
+  dark: [["M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"]],
+};
+
+function themeIcon(theme) {
+  const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" });
+  for (const [d, filled] of THEME_ICONS[theme]) icon.append(svg("path", filled ? { d, fill: "currentColor" } : { d }));
+  return icon;
+}
+
 function bindControls() {
   for (const id of ["f-mode", "f-suite"]) {
     document.getElementById(id).addEventListener("click", (event) => {
@@ -591,7 +628,9 @@ function bindControls() {
   const applyTheme = () => {
     if (theme === "auto") document.documentElement.removeAttribute("data-theme");
     else document.documentElement.setAttribute("data-theme", theme);
-    themeBtn.textContent = `Theme: ${theme}`;
+    themeBtn.replaceChildren(themeIcon(theme));
+    themeBtn.title = `Theme: ${theme}`;
+    themeBtn.setAttribute("aria-label", `Theme: ${theme}`);
   };
   themeBtn.addEventListener("click", () => {
     theme = themes[(themes.indexOf(theme) + 1) % themes.length];
@@ -600,6 +639,10 @@ function bindControls() {
     render();
   });
   applyTheme();
+  document.getElementById("detail-close").addEventListener("click", () => {
+    state.selected = null;
+    render();
+  });
   let resizeTimer;
   window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150); });
 }

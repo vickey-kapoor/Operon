@@ -74,10 +74,11 @@
     <section id="tab-cost" hidden>
       <div id="cost-empty" class="card empty-state" hidden>
         <div class="empty-icon" aria-hidden="true">$</div>
-        <h2>No cost data yet</h2>
+        <h2>No cost data for this selection yet</h2>
         <p class="note">Cost appears here for benchmark runs that record token usage and dollars
           (<code>summary.cost_usd</code>, <code>summary.cost_per_task_usd</code>, <code>summary.by_model</code>, and per-task
           <code>cost_usd</code>). Runs from before cost tracking don't have it.</p>
+        <div class="elsewhere" id="cost-elsewhere"></div>
       </div>
       <div id="cost-body">
         <div class="tiles" id="cost-tiles"></div>

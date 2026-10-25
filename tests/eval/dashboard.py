@@ -18,7 +18,22 @@ fields and from the options below. Older reports don't record the backend or
 harness; pass ``--backend``/``--harness``/``--model`` for those, and
 ``--run-url``/``--git-sha`` to link a run to its workflow and commit. ``--flag
 REASON`` marks a run whose numbers are not comparable (a broken harness, a bad
-runner), which the dashboard leaves out of its trends by default.
+runner), which the dashboard leaves out of its trends by default. A run stopped at
+its cost cap (``budget_stop`` in the report) is flagged on its own.
+
+``--blob`` uploads each task's screenshots to Vercel Blob (``BLOB_READ_WRITE_TOKEN``)
+from the folder ``live_bench --keep-screens`` writes next to the report: the graded
+final screen for every task and, for tasks that did not pass, every step's screen
+and a zip of the whole run folder. The links go into the task's stored result
+(``screenshot_url``, ``step_screenshots``, ``trace_url``). The upload itself runs
+``dashboard/scripts/blob-upload.mjs`` (Vercel's ``@vercel/blob`` client), so it needs
+``npm ci`` in ``dashboard/`` first. The store is private; the dashboard reads the
+files through its ``/api/blob`` route.
+
+``--alert`` posts to a Slack incoming webhook (``SLACK_WEBHOOK_URL``) when a run's
+pass rate is 5 or more points below the previous comparable run (same mode, suite,
+backend, harness and model, not flagged), when its cost per task is 25% or more
+above it, or when it stopped at its cost cap.
 """
 
 from __future__ import annotations
@@ -26,7 +41,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import urllib.request
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,6 +94,17 @@ CREATE TABLE IF NOT EXISTS bench_task_results (
     PRIMARY KEY (run_key, task)
 );
 """
+
+
+DASHBOARD_URL = "https://operon-evals.vercel.app"
+BLOB_SCRIPT = Path(__file__).resolve().parents[2] / "dashboard" / "scripts" / "blob-upload.mjs"
+# A task's step screens beyond this many are left out of the dashboard (the zip has them all).
+MAX_STEP_SCREENS = 40
+PASS_DROP_POINTS = 5.0
+COST_RISE_PCT = 25.0
+
+# Takes (local file, blob pathname) pairs; returns each file's public URL, in order.
+Uploader = Callable[[list[tuple[Path, str]]], list[str]]
 
 
 def is_report(data: object) -> bool:
@@ -124,6 +156,11 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
         if value is not None:
             config[field] = value
     config.setdefault("harness_profile", "full")
+    stop = report.get("budget_stop")
+    if stop and not config.get("flagged"):
+        config["flagged"] = (
+            f"stopped at the ${stop['limit_usd']:g} cost cap after {stop['tasks_run']} of {stop['tasks_planned']} tasks"
+        )
     report["config"] = config
     report["results"] = [
         {k: v for k, v in result.items() if k not in DROPPED_RESULT_FIELDS} for result in report["results"]
@@ -201,13 +238,177 @@ def write_report(conn, report: dict) -> str:
     return run["key"]
 
 
-def import_reports(paths: list[Path], conn, overrides: dict[str, str | None], include_partial: bool = False) -> list[str]:
+# ---------- screenshots and traces (Vercel Blob) ----------
+
+
+def _step_number(path: Path) -> int:
+    match = re.search(r"step_(\d+)", path.parent.name)
+    return int(match.group(1)) if match else 0
+
+
+def trace_files(screens: Path, task: str) -> tuple[Path | None, list[tuple[int, Path]], Path | None]:
+    """A task's graded screen, its step screens (step number, file) and its run folder.
+
+    ``live_bench --keep-screens`` writes ``<task>.png`` for every task and, for a task
+    that did not pass, its run folder at ``<task>/`` with ``step_<n>/before.png``.
+    """
+    final = screens / f"{task}.png"
+    run_dir = screens / task
+    steps = sorted(((_step_number(p), p) for p in run_dir.glob("step_*/before.png")), key=lambda s: s[0])
+    return (final if final.is_file() else None), steps[:MAX_STEP_SCREENS], (run_dir if run_dir.is_dir() else None)
+
+
+def attach_traces(report: dict, screens: Path, uploader: Uploader, work_dir: Path) -> int:
+    """Upload a prepared report's screens and record their links in its results; returns the file count."""
+    key = run_key(report)
+    uploads: list[tuple[Path, str]] = []
+    slots: list[tuple[dict, str, int | None]] = []  # (result, field, step) for each upload, in order
+    for result in report["results"]:
+        task = str(result["task"])
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", task)
+        final, steps, run_dir = trace_files(screens, task)
+        if final:
+            uploads.append((final, f"bench/{key}/{safe}/final.png"))
+            slots.append((result, "screenshot_url", None))
+        for number, path in steps:
+            uploads.append((path, f"bench/{key}/{safe}/step_{number:03d}.png"))
+            slots.append((result, "step_screenshots", number))
+        if run_dir:
+            archive = shutil.make_archive(str(work_dir / f"{key}-{safe}"), "zip", run_dir)
+            uploads.append((Path(archive), f"bench/{key}/{safe}/trace.zip"))
+            slots.append((result, "trace_url", None))
+    if not uploads:
+        return 0
+    urls = uploader(uploads)
+    if len(urls) != len(uploads):
+        raise RuntimeError(f"uploaded {len(urls)} of {len(uploads)} files")
+    for (result, field, step), url in zip(slots, urls):
+        if field == "step_screenshots":
+            result.setdefault(field, []).append({"step": step, "url": url})
+        else:
+            result[field] = url
+    return len(uploads)
+
+
+def blob_uploader(token: str) -> Uploader:
+    """Upload through ``dashboard/scripts/blob-upload.mjs``, which uses Vercel's own client."""
+
+    def upload(files: list[tuple[Path, str]]) -> list[str]:
+        plan = [{"file": str(path), "pathname": pathname} for path, pathname in files]
+        done = subprocess.run(
+            ["node", str(BLOB_SCRIPT)],
+            input=json.dumps(plan), capture_output=True, text=True, check=False,
+            env={**os.environ, "BLOB_READ_WRITE_TOKEN": token},
+        )
+        if done.returncode != 0:
+            raise RuntimeError(f"blob upload failed: {done.stderr.strip()[-500:]}")
+        return json.loads(done.stdout)
+
+    return upload
+
+
+# ---------- alerts ----------
+
+
+def previous_comparable(conn, run: dict) -> dict | None:
+    """The latest unflagged run before ``run`` with the same mode, suite, backend, harness and model."""
+    row = conn.execute(
+        """SELECT key, summary, github_run_url FROM bench_runs
+            WHERE mode = %s AND suite = %s AND backend IS NOT DISTINCT FROM %s
+              AND harness_profile IS NOT DISTINCT FROM %s AND model IS NOT DISTINCT FROM %s
+              AND flagged IS NULL AND started_at < %s AND key <> %s
+            ORDER BY started_at DESC LIMIT 1""",
+        (run["mode"], run["suite"], run["backend"], run["harness_profile"], run["model"], run["started_at"], run["key"]),
+    ).fetchone()
+    return {"key": row[0], "summary": row[1], "github_run_url": row[2]} if row else None
+
+
+def regressions(
+    summary: dict, previous: dict | None, *, pass_drop: float = PASS_DROP_POINTS, cost_rise: float = COST_RISE_PCT
+) -> list[str]:
+    """Why a run's numbers are worse than the previous comparable run's, one line each."""
+    if not previous:
+        return []
+    found = []
+    rate, before = summary.get("success_rate"), previous.get("success_rate")
+    if rate is not None and before is not None and (before - rate) * 100 >= pass_drop - 1e-9:
+        found.append(
+            f"Pass rate fell {(before - rate) * 100:.0f} points: {rate:.0%} "
+            f"({summary.get('success')}/{summary.get('tasks')}), was {before:.0%} ({previous.get('success')}/{previous.get('tasks')})."
+        )
+    cost, cost_before = summary.get("cost_per_task_usd"), previous.get("cost_per_task_usd")
+    if cost is not None and cost_before and (cost / cost_before - 1) * 100 >= cost_rise - 1e-9:
+        found.append(
+            f"Cost per task rose {(cost / cost_before - 1) * 100:.0f}%: ${cost:.4f}, was ${cost_before:.4f}."
+        )
+    return found
+
+
+def alert_text(report: dict, problems: list[str]) -> str:
+    config = report["config"]
+    label = " · ".join(str(v) for v in (report["mode"], report["suite"], config.get("backend"), config.get("harness_profile"), config.get("model")) if v)
+    lines = [f":warning: *Operon benchmark* ({label}, {report['started_at']})", *(f"• {p}" for p in problems)]
+    links = [f"<{DASHBOARD_URL}|Dashboard>"]
+    if config.get("github_run_url"):
+        links.append(f"<{config['github_run_url']}|Workflow run>")
+    lines.append(" · ".join(links))
+    return "\n".join(lines)
+
+
+def post_slack(webhook_url: str, text: str) -> None:
+    request = urllib.request.Request(
+        webhook_url, data=json.dumps({"text": text}).encode(), headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310 - the webhook URL is ours
+        response.read()
+
+
+def check_alerts(conn, report: dict, notify: Callable[[str], None]) -> list[str]:
+    """Compare a just-written report with the previous comparable run; notify if it got worse."""
+    run, _ = to_rows(report)
+    problems = []
+    stop = report.get("budget_stop")
+    if stop:
+        problems.append(
+            f"Stopped at the ${stop['limit_usd']:g} cost cap after {stop['tasks_run']} of "
+            f"{stop['tasks_planned']} tasks (spent ${stop['spent_usd']:.2f})."
+        )
+    elif not run["flagged"]:
+        previous = previous_comparable(conn, run)
+        problems += regressions(report["summary"], previous["summary"] if previous else None)
+    if problems:
+        notify(alert_text(report, problems))
+    return problems
+
+
+def import_reports(
+    paths: list[Path],
+    conn,
+    overrides: dict[str, str | None],
+    include_partial: bool = False,
+    *,
+    uploader: Uploader | None = None,
+    notify: Callable[[str], None] | None = None,
+) -> list[str]:
     conn.execute(SCHEMA)
     conn.commit()
     keys = []
-    for path in find_reports(paths, include_partial):
-        report = prepare(json.loads(path.read_text(encoding="utf-8")), overrides)
-        keys.append(write_report(conn, report))
+    with tempfile.TemporaryDirectory() as work_dir:
+        for path in find_reports(paths, include_partial):
+            report = prepare(json.loads(path.read_text(encoding="utf-8")), overrides)
+            screens = path.with_suffix("")
+            if uploader and screens.is_dir():
+                try:
+                    count = attach_traces(report, screens, uploader, Path(work_dir))
+                    print(f"uploaded {count} screenshot and trace files for {path.name}")
+                except Exception as exc:  # the results matter more than their screenshots
+                    print(f"::warning::Could not upload the screenshots for {path.name}: {exc}", file=sys.stderr)
+            keys.append(write_report(conn, report))
+            if notify:
+                try:
+                    check_alerts(conn, report, notify)
+                except Exception as exc:  # an alert failing must not lose the import
+                    print(f"::warning::Could not check or send the alert for {path.name}: {exc}", file=sys.stderr)
     return keys
 
 
@@ -224,6 +425,8 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--git-sha", help="config.git_sha")
     add.add_argument("--flag", help="why this run is left out of trends")
     add.add_argument("--include-partial", action="store_true", help="also import partial-*.json (--only/--category runs)")
+    add.add_argument("--blob", action="store_true", help="upload screenshots and traces to Vercel Blob ($BLOB_READ_WRITE_TOKEN)")
+    add.add_argument("--alert", action="store_true", help="post regressions to Slack ($SLACK_WEBHOOK_URL)")
     return parser
 
 
@@ -240,8 +443,21 @@ def main(argv: list[str]) -> int:
         "git_sha": args.git_sha or None,
         "flagged": args.flag,
     }
+    uploader = notify = None
+    if args.blob:
+        token = os.getenv("BLOB_READ_WRITE_TOKEN")
+        if token:
+            uploader = blob_uploader(token)
+        else:
+            print("::warning::BLOB_READ_WRITE_TOKEN is not set; importing without screenshots.", file=sys.stderr)
+    if args.alert:
+        webhook = os.getenv("SLACK_WEBHOOK_URL")
+        if webhook:
+            notify = lambda text: post_slack(webhook, text)  # noqa: E731
+        else:
+            print("::warning::SLACK_WEBHOOK_URL is not set; no alerts.", file=sys.stderr)
     with connect(args.database_url) as conn:
-        keys = import_reports(args.paths, conn, overrides, args.include_partial)
+        keys = import_reports(args.paths, conn, overrides, args.include_partial, uploader=uploader, notify=notify)
     for key in keys:
         print(f"imported {key}")
     if not keys:

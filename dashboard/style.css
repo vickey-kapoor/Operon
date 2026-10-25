@@ -298,6 +298,16 @@ tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .pill.timeout, .pill.error, .pill.none { color: var(--text-secondary); background: var(--neutral-bg); }
 .flag { color: var(--warning); font-size: 12px; margin-top: 2px; }
 
+.thumb { display: inline-block; line-height: 0; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+.thumb img { width: 96px; height: 54px; object-fit: cover; object-position: top left; background: var(--surface-2); }
+.thumb:hover { border-color: var(--accent); }
+tbody tr.trace-row td { background: var(--surface-2); white-space: normal; }
+.filmstrip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 0 8px; }
+.filmstrip figure { margin: 0; flex: none; }
+.filmstrip .thumb img { width: 192px; height: 108px; }
+.filmstrip figcaption { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.trace-link { font-size: 12px; color: var(--accent); }
+
 .matrix td.cell, .matrix th.col { text-align: center; }
 .matrix th.col { white-space: normal; min-width: 110px; }
 .matrix th.col .config-cell { justify-content: center; }

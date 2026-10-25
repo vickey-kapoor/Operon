@@ -5,6 +5,7 @@ name: Live desktop benchmark
 # for the agent to drive. Manual only: every run spends model credits.
 # Needs repo secret GEMINI_API_KEY (the judge and verifier are Gemini), and
 # ANTHROPIC_API_KEY when desktop_backend is claude_computer_use.
+# The run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
 on:
   workflow_dispatch:
@@ -36,6 +37,9 @@ on:
       args:
         description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"
         default: ""
+      max_cost_usd:
+        description: "Stop the run once it has spent this many USD (0: no cap)"
+        default: "5"
   # Called by bench-command.yml when someone comments /bench desktop on a PR.
   workflow_call:
     inputs:
@@ -46,6 +50,7 @@ on:
       final_check_model: {type: string, default: ""}
       desktop_model: {type: string, default: ""}
       args: {type: string, default: ""}
+      max_cost_usd: {type: string, default: "5"}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
@@ -71,6 +76,7 @@ jobs:
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_DESKTOP_CLAUDE_MODEL: ${{ inputs.claude_model }}
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
+      MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
     steps:
       - name: Check the secrets
         run: |

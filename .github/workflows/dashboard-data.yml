@@ -1,18 +1,31 @@
 name: Dashboard data
 
-# After a live benchmark finishes, copy its reports into dashboard/data/ and push
-# them to main, so the eval dashboard (dashboard/, deployed on Vercel) shows the
-# run. Workflow artifacts expire after 14 days; the committed reports don't.
-# Reports carry task names, outcomes and the judge's one-line reasons, never
-# screenshots.
+# After a live benchmark finishes, write its reports to the eval dashboard's
+# Postgres database (Neon, connected to the operon-evals Vercel project); the
+# dashboard reads it through its API routes. Reports carry task names, outcomes,
+# cost and the judge's one-line reasons, never screenshots.
+#
+# Run it by hand to import an older workflow run (run_ids, while its artifacts
+# last, 14 days) or reports committed at a git ref (backfill_ref; the default is
+# the last commit that kept them in dashboard/data/reports).
 
 on:
   workflow_run:
     workflows: ["Live benchmark", "Live desktop benchmark", "Bench command"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_ids:
+        description: "Benchmark workflow run ids to import, space-separated"
+        required: false
+        default: ""
+      backfill_ref:
+        description: "Also import dashboard/data/reports from this git ref (empty to skip)"
+        required: false
+        default: ""
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 concurrency:
@@ -21,42 +34,58 @@ concurrency:
 
 jobs:
   import:
-    if: github.event.workflow_run.conclusion != 'cancelled'
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && 0 || 1 }}
 
-      - name: Download the benchmark reports
-        uses: actions/download-artifact@v7
-        with:
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-          pattern: bench-*
-          path: artifacts
+      - name: Check the database secret
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Add the dashboard database's connection string as the DATABASE_URL repository secret."
+            exit 1
+          fi
 
-      - name: Import them into dashboard/data
+      - name: Install the Postgres driver
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.9"
+
+      - name: Import the finished benchmark run
+        if: github.event_name == 'workflow_run'
         env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           # A /bench comment runs on the default branch's workflow but benchmarks the
           # PR's head, so its head_sha is not the commit that was measured.
           GIT_SHA: ${{ github.event.workflow_run.event != 'issue_comment' && github.event.workflow_run.head_sha || '' }}
         run: |
-          if [ ! -d artifacts ]; then echo "No benchmark artifacts in this run."; exit 0; fi
-          python3 -m tests.eval.dashboard import artifacts --run-url "$RUN_URL" --git-sha "$GIT_SHA"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --dir "artifacts/$RUN_ID" || true
+          if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
+          python3 -m tests.eval.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA"
 
-      - name: Commit and push
+      - name: Import the requested runs
+        if: github.event_name == 'workflow_dispatch' && inputs.run_ids != ''
         env:
-          RUN_ID: ${{ github.event.workflow_run.id }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_IDS: ${{ inputs.run_ids }}
         run: |
-          git add dashboard/data
-          if git diff --cached --quiet; then echo "Nothing new."; exit 0; fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Chore: add benchmark run $RUN_ID to the eval dashboard [skip ci]"
-          for attempt in 1 2 3; do
-            git pull --rebase --quiet && git push && exit 0
-            sleep $((attempt * 5))
+          for run_id in $RUN_IDS; do
+            read -r run_url event head_sha < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha --jq '[.url, .event, .headSha] | @tsv')
+            [ "$event" = "issue_comment" ] && head_sha=""
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --dir "artifacts/$run_id"
+            python3 -m tests.eval.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha"
           done
-          exit 1
+
+      - name: Import committed reports
+        if: github.event_name == 'workflow_dispatch' && inputs.backfill_ref != ''
+        env:
+          REF: ${{ inputs.backfill_ref }}
+        run: |
+          mkdir -p backfill
+          git archive "$REF" dashboard/data/reports | tar -x -C backfill
+          python3 -m tests.eval.dashboard import backfill/dashboard/data/reports

@@ -110,17 +110,6 @@ def _trace(stage: str, detail: str = "") -> None:
         print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
 
 
-def run_logger(run_id: str, step: int | None = None) -> logging.LoggerAdapter:
-    """Return a logger that binds run_id (and optionally step) to every record.
-
-    Lets oncall grep across many concurrent runs by run-id — without hand-threading
-    the field through every call site. Use as a drop-in replacement for `logger`
-    inside per-run code paths.
-    """
-    extra = {"run_id": run_id[:8] if run_id else "-", "step": step if step is not None else "-"}
-    return logging.LoggerAdapter(logger, extra)
-
-
 class AgentLoop:
     """Coordinates the MVP control loop and terminal benchmark boundaries."""
 

@@ -265,7 +265,6 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
     gemini_config = RuntimeModeConfig(
         backend="json",
         primary_model="gemini-3-flash-preview",
-        planner_provider="gemini",
         verifier_provider="gemini",
         verifier_model="gemini-3-flash-preview",
     )
@@ -294,8 +293,8 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
         routes_module._desktop_agent_loop = original
 
 
-def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
-    """Desktop Anthropic planner should split Gemini perception from planner selection."""
+def test_desktop_agent_loop_uses_anthropic_verifier_when_configured() -> None:
+    """The Gemini combined backend can pair with an Anthropic verifier."""
     import operon.api.runtime.loops as routes_module
     from operon.api.runtime_config import RuntimeModeConfig
 
@@ -306,8 +305,6 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
         anthropic_config = RuntimeModeConfig(
             backend="json",
             primary_model="gemini-3-flash-preview",
-            planner_provider="anthropic",
-            planner_model="claude-sonnet-5",
             verifier_provider="anthropic",
             fallback_model="gemini-2.5-flash",
             verifier_model="claude-sonnet-5",
@@ -321,8 +318,7 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
             patch("operon.api.runtime.services.GeminiHttpClient") as mock_gemini,
             patch("operon.api.runtime.services.AnthropicHttpClient") as mock_anthropic,
             patch("operon.api.runtime.loops.ScreenCaptureService"),
-            patch("operon.api.runtime.services.GeminiPerceptionService"),
-            patch("operon.api.runtime.services.AnthropicPolicyService"),
+            patch("operon.api.runtime.services.CombinedPerceptionPolicyService"),
             patch("operon.api.runtime.loops.PolicyCoordinator"),
             patch("operon.api.runtime.loops.DeterministicVerifierService"),
             patch("operon.api.runtime.loops.RuleBasedRecoveryManager"),
@@ -330,59 +326,12 @@ def test_desktop_agent_loop_uses_anthropic_planner_when_configured() -> None:
         ):
             routes_module.get_desktop_agent_loop()
 
-            # Anthropic path: Gemini perception = 1 Gemini call
+            # Gemini combined backend = 1 Gemini client; the verifier is Claude.
             assert mock_gemini.call_count == 1
-            assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in mock_gemini.call_args_list)
-            assert mock_anthropic.call_count == 2
-            assert all(c.kwargs["model"] == "claude-sonnet-5" for c in mock_anthropic.call_args_list)
+            assert mock_anthropic.call_count == 1
+            assert mock_anthropic.call_args.kwargs["model"] == "claude-sonnet-5"
     finally:
         routes_module._desktop_agent_loop = original
-
-
-def test_browser_json_loop_uses_anthropic_planner_when_configured() -> None:
-    """Browser JSON mode should support Gemini perception with Anthropic planner."""
-    import operon.api.runtime.loops as routes_module
-    from operon.api.runtime_config import RuntimeModeConfig
-
-    original = routes_module._agent_loop
-    routes_module._agent_loop = None
-
-    try:
-        anthropic_config = RuntimeModeConfig(
-            backend="json",
-            primary_model="gemini-3-flash-preview",
-            planner_provider="anthropic",
-            planner_model="claude-sonnet-5",
-            verifier_provider="anthropic",
-            fallback_backend="json",
-            fallback_model="gemini-3-flash-preview",
-            verifier_model="claude-sonnet-5",
-        )
-        with (
-            patch("operon.api.runtime.loops.browser_mode_config", return_value=anthropic_config),
-            patch("operon.api.runtime.services.browser_mode_config", return_value=anthropic_config),
-            patch("operon.api.runtime.loops.NativeBrowserExecutor"),
-            patch("operon.api.runtime.loops.FileBackedRunStore"),
-            patch("operon.api.runtime.loops.FileBackedMemoryStore"),
-            patch("operon.api.runtime.services.GeminiHttpClient") as mock_gemini,
-            patch("operon.api.runtime.services.AnthropicHttpClient") as mock_anthropic,
-            patch("operon.api.runtime.loops.ScreenCaptureService"),
-            patch("operon.api.runtime.services.GeminiPerceptionService"),
-            patch("operon.api.runtime.services.AnthropicPolicyService"),
-            patch("operon.api.runtime.loops.PolicyCoordinator"),
-            patch("operon.api.runtime.loops.DeterministicVerifierService"),
-            patch("operon.api.runtime.loops.RuleBasedRecoveryManager"),
-            patch("operon.api.runtime.loops.AgentLoop"),
-        ):
-            routes_module.get_agent_loop()
-
-            # Anthropic verifier path: Gemini perception (via fallback) = 1
-            assert mock_gemini.call_count == 1
-            assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in mock_gemini.call_args_list)
-            assert mock_anthropic.call_count == 2
-            assert all(c.kwargs["model"] == "claude-sonnet-5" for c in mock_anthropic.call_args_list)
-    finally:
-        routes_module._agent_loop = original
 
 
 # ── UIElementType._missing_ tests ──────────────────────────────

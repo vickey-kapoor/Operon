@@ -109,7 +109,7 @@ def test_parse_policy_output_rejects_schema_invalid_action() -> None:
 
 
 def test_parse_policy_output_defaults_expected_change_when_missing(caplog) -> None:
-    # Planners that don't include expected_change (e.g. Anthropic on desktop_policy_prompt)
+    # Planners that don't include expected_change
     # should get a silent default of "" and a WARNING log rather than a hard crash.
     raw_output = """
     {

@@ -448,17 +448,58 @@ async function selectRun(run) {
     const report = await loadReport(run);
     const order = { false_success: 0, failure: 1, missed: 2, timeout: 3, error: 4, success: 5 };
     const rows = [...report.results].sort((a, b) => (order[a.outcome] ?? 9) - (order[b.outcome] ?? 9));
+    const withScreens = rows.some((r) => safeUrl(r.screenshot_url));
+    const headers = ["Task", "Category", "Outcome", "Steps", "Seconds", "Stop reason", "Judge", ...(withScreens ? ["Screen"] : [])];
     table.replaceChildren(
-      el("thead", {}, el("tr", {}, ["Task", "Category", "Outcome", "Steps", "Seconds", "Stop reason", "Judge"]
-        .map((h, i) => el("th", { class: i === 3 || i === 4 ? "num" : "" }, h)))),
-      el("tbody", {}, rows.map((r) => el("tr", {},
-        el("td", {}, r.task), el("td", {}, r.category), el("td", {}, pill(r.outcome)),
-        el("td", { class: "num" }, fmtNum(r.steps)), el("td", { class: "num" }, fmtNum(r.seconds)),
-        el("td", {}, r.stop_reason || "–"), el("td", { class: "wrap-text" }, r.judge_reason || "")))));
+      el("thead", {}, el("tr", {}, headers.map((h, i) => el("th", { class: i === 3 || i === 4 ? "num" : "" }, h)))),
+      el("tbody", {}, rows.flatMap((r) => taskRows(r, withScreens, headers.length))));
   } catch (err) {
     table.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "empty" }, `Could not load the report: ${err.message}`))));
   }
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// Screenshots and traces live in a private Vercel Blob store; /api/blob reads them
+// with the store's token, so only links into that store are shown.
+function safeUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || !parsed.hostname.endsWith(".private.blob.vercel-storage.com")) return null;
+    return `/api/blob?url=${encodeURIComponent(parsed.href)}`;
+  } catch (_) {
+    return null;
+  }
+}
+
+function thumb(url, label) {
+  return el("a", { href: url, target: "_blank", rel: "noopener", class: "thumb", title: label },
+    el("img", { src: url, alt: label, loading: "lazy" }));
+}
+
+// A task's row, plus a hidden row with its step screens and trace when it has them.
+function taskRows(r, withScreens, columns) {
+  const steps = (Array.isArray(r.step_screenshots) ? r.step_screenshots : [])
+    .map((s) => ({ step: s.step, url: safeUrl(s.url) })).filter((s) => s.url);
+  const trace = safeUrl(r.trace_url);
+  const screen = safeUrl(r.screenshot_url);
+  const hasTrace = steps.length > 0 || trace;
+  let open = false;
+  const extra = el("tr", { class: "trace-row", hidden: true },
+    el("td", { colspan: columns },
+      el("div", { class: "filmstrip" },
+        steps.map((s) => el("figure", {}, thumb(s.url, `${r.task}, step ${s.step}`), el("figcaption", {}, `Step ${s.step}`))),
+        screen ? el("figure", {}, thumb(screen, `${r.task}, final screen`), el("figcaption", {}, "Final")) : null),
+      trace ? el("a", { href: trace, class: "trace-link" }, "Download the full trace (.zip)") : null));
+  const row = el("tr", {
+    class: hasTrace ? "clickable" : null,
+    title: hasTrace ? "Show the steps" : null,
+    onclick: hasTrace ? () => { open = !open; extra.hidden = !open; row.classList.toggle("selected", open); } : null,
+  },
+    el("td", {}, r.task), el("td", {}, r.category), el("td", {}, pill(r.outcome)),
+    el("td", { class: "num" }, fmtNum(r.steps)), el("td", { class: "num" }, fmtNum(r.seconds)),
+    el("td", {}, r.stop_reason || "–"), el("td", { class: "wrap-text" }, r.judge_reason || ""),
+    withScreens ? el("td", { onclick: (e) => e.stopPropagation() }, screen ? thumb(screen, `${r.task}, final screen`) : "–") : null);
+  return hasTrace ? [row, extra] : [row];
 }
 
 // ---------- cost tab ----------

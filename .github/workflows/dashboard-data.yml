@@ -3,7 +3,11 @@ name: Dashboard data
 # After a live benchmark finishes, write its reports to the eval dashboard's
 # Postgres database (Neon, connected to the operon-evals Vercel project); the
 # dashboard reads it through its API routes. Reports carry task names, outcomes,
-# cost and the judge's one-line reasons, never screenshots.
+# cost and the judge's one-line reasons. Screenshots and traces of a finished run
+# go to Vercel Blob (BLOB_READ_WRITE_TOKEN secret) and the database keeps their
+# links; a Slack alert (SLACK_WEBHOOK_URL secret) goes out when a run's pass rate
+# or cost per task got worse than the previous comparable run, or it hit its cost cap.
+# Both secrets are optional: without them the results are imported on their own.
 #
 # Run it by hand to import an older workflow run (run_ids, while its artifacts
 # last, 14 days) or reports committed at a git ref (backfill_ref; the default is
@@ -36,8 +40,11 @@ jobs:
   import:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -53,6 +60,10 @@ jobs:
       - name: Install the Postgres driver
         run: python3 -m pip install --quiet "psycopg[binary]==3.2.9"
 
+      - name: Install the Vercel Blob client
+        if: env.BLOB_READ_WRITE_TOKEN != ''
+        run: npm ci --prefix dashboard --no-audit --no-fund
+
       - name: Import the finished benchmark run
         if: github.event_name == 'workflow_run'
         env:
@@ -65,7 +76,7 @@ jobs:
         run: |
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --dir "artifacts/$RUN_ID" || true
           if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
-          python3 -m tests.eval.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA"
+          python3 -m tests.eval.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert
 
       - name: Import the requested runs
         if: github.event_name == 'workflow_dispatch' && inputs.run_ids != ''
@@ -77,7 +88,7 @@ jobs:
             read -r run_url event head_sha < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha --jq '[.url, .event, .headSha] | @tsv')
             [ "$event" = "issue_comment" ] && head_sha=""
             gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --dir "artifacts/$run_id"
-            python3 -m tests.eval.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha"
+            python3 -m tests.eval.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
           done
 
       - name: Import committed reports

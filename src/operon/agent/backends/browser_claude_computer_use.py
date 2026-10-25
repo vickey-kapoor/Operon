@@ -328,9 +328,12 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
 
     @staticmethod
     def _has_acted(state: AgentState) -> bool:
+        # A step reported as failed still counts: it may have done its job (a
+        # submit that navigated away mid-batch), and Claude, who sees the screen,
+        # is the one saying the task is done. The verifier judges that claim;
+        # treating it as a wait instead loops on the "say so" nudge until max_steps.
         return any(
-            executed.success
-            and executed.action.action_type not in {ActionType.WAIT, ActionType.STOP, ActionType.WAIT_FOR_USER}
+            executed.action.action_type not in {ActionType.WAIT, ActionType.STOP, ActionType.WAIT_FOR_USER}
             for executed in state.action_history
         )
 

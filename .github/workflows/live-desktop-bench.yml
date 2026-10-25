@@ -4,7 +4,7 @@ name: Live desktop benchmark
 # GitHub-hosted Windows runner, whose interactive session has a real desktop
 # for the agent to drive. Manual only: every run spends model credits.
 # Needs repo secret GEMINI_API_KEY (the judge and verifier are Gemini), and
-# ANTHROPIC_API_KEY when desktop_backend is claude_computer_use or planner_provider is anthropic.
+# ANTHROPIC_API_KEY when desktop_backend is claude_computer_use.
 # The run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
 on:
@@ -34,11 +34,6 @@ on:
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
-      planner_provider:
-        description: "OPERON_DESKTOP_PLANNER_PROVIDER"
-        type: choice
-        options: [gemini, anthropic]
-        default: gemini
       args:
         description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"
         default: ""
@@ -54,7 +49,6 @@ on:
       claude_model: {type: string, default: "claude-opus-5-5"}
       final_check_model: {type: string, default: ""}
       desktop_model: {type: string, default: ""}
-      planner_provider: {type: string, default: "gemini"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "5"}
       ref:
@@ -78,7 +72,6 @@ jobs:
       PYTHONUTF8: "1"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPERON_DESKTOP_PLANNER_PROVIDER: ${{ inputs.planner_provider }}
       OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_DESKTOP_CLAUDE_MODEL: ${{ inputs.claude_model }}
@@ -89,7 +82,7 @@ jobs:
         run: |
           $missing = @()
           if (-not $env:GEMINI_API_KEY) { $missing += "GEMINI_API_KEY" }
-          $needsClaude = $env:OPERON_DESKTOP_PLANNER_PROVIDER -eq "anthropic" -or $env:OPERON_DESKTOP_BACKEND -eq "claude_computer_use"
+          $needsClaude = $env:OPERON_DESKTOP_BACKEND -eq "claude_computer_use"
           if ($needsClaude -and -not $env:ANTHROPIC_API_KEY) { $missing += "ANTHROPIC_API_KEY" }
           if ($missing.Count -gt 0) {
             Write-Output "::error::Missing repository secret(s): $($missing -join ', '). Add them under Settings > Secrets and variables > Actions."

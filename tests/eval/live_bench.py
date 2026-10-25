@@ -25,6 +25,11 @@ Pauses for confirmation are approved automatically (``--no-approve`` turns
 that off) and counted. Every run's results are saved under
 ``.var/bench/`` and the report compares them with the previous saved run.
 The judge model is ``OPERON_BENCH_JUDGE_MODEL`` (default ``gemini-3.5-flash``).
+
+Spend is capped per benchmark run: after each task, the agent's and the judge's
+cost so far is checked against ``--max-cost-usd`` (``MAX_RUN_COST_USD``, default
+$5; 0 turns the cap off). Past it, the remaining tasks are skipped, the report
+records ``budget_stop`` and the command exits with status 3.
 """
 
 from __future__ import annotations
@@ -51,6 +56,8 @@ TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error")
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
 MODES = ("browser", "desktop")
+DEFAULT_MAX_COST_USD = 5.0
+BUDGET_EXIT_CODE = 3
 
 Judge = Callable[[LiveTask, str], Awaitable["Verdict"]]
 
@@ -310,14 +317,29 @@ def cost_summary(results: list[TaskResult], successes: int) -> dict:
     }
 
 
+def spent_usd(results: list[TaskResult]) -> float:
+    """What the run has cost so far: the agent's model calls plus the judge's."""
+    return round(sum(r.cost_usd + r.judge_cost_usd for r in results), 6)
+
+
+def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float) -> dict | None:
+    """The ``budget_stop`` record once a run has spent its cap with tasks left, else None."""
+    spent = spent_usd(results)
+    if max_cost_usd <= 0 or spent < max_cost_usd or len(results) >= planned:
+        return None
+    return {"limit_usd": max_cost_usd, "spent_usd": spent, "tasks_run": len(results), "tasks_planned": planned}
+
+
 def _previous_report(bench_dir: Path, suite: str) -> dict | None:
-    reports = sorted(bench_dir.glob(f"{suite}-*.json"))
-    if not reports:
-        return None
-    try:
-        return json.loads(reports[-1].read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    # A run stopped at the cost cap covers only some tasks, so it is no baseline.
+    for path in sorted(bench_dir.glob(f"{suite}-*.json"), reverse=True):
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not report.get("budget_stop"):
+            return report
+    return None
 
 
 def format_report(results: list[TaskResult], summary: dict, previous: dict | None) -> str:
@@ -395,6 +417,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         return 2
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results: list[TaskResult] = []
+    stopped = None
     async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0) as client:
         (await client.get("/health")).raise_for_status()
         for index, task in enumerate(tasks, 1):
@@ -407,6 +430,14 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
             results.append(result)
             if not args.json:
                 print(f"[{index}/{len(tasks)}] {result.task}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
+            stopped = budget_stop(results, len(tasks), args.max_cost_usd)
+            if stopped:
+                print(
+                    f"Stopping: spent ${stopped['spent_usd']:.2f}, over the ${args.max_cost_usd:.2f} cap "
+                    f"(--max-cost-usd / MAX_RUN_COST_USD), after {len(results)} of {len(tasks)} tasks.",
+                    file=sys.stderr, flush=True,
+                )
+                break
 
     summary = summarize(results)
     bench_dir = Path(args.out_dir)
@@ -423,6 +454,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
         "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
         "harness_profile": os.getenv("OPERON_HARNESS_PROFILE", "full"),
+        "budget_stop": stopped,
         "summary": summary,
         "results": [asdict(r) for r in results],
     }
@@ -441,7 +473,15 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         print()
         print(format_report(results, summary, previous))
         print(f"\nsaved {bench_dir / name}")
-    return 0
+    return BUDGET_EXIT_CODE if stopped else 0
+
+
+def _max_cost_default() -> float:
+    raw = os.getenv("MAX_RUN_COST_USD", "").strip()
+    try:
+        return float(raw) if raw else DEFAULT_MAX_COST_USD
+    except ValueError:
+        sys.exit(f"MAX_RUN_COST_USD must be a number of US dollars, not {raw!r}")
 
 
 def build_parser(default_suite: str = "full", default_mode: str = "browser") -> argparse.ArgumentParser:
@@ -456,6 +496,10 @@ def build_parser(default_suite: str = "full", default_mode: str = "browser") -> 
     parser.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", "gemini-3.5-flash"))
     parser.add_argument("--out-dir", default=str(BENCH_DIR))
     parser.add_argument("--keep-screens", action="store_true", help="copy each graded screenshot next to the report")
+    parser.add_argument(
+        "--max-cost-usd", type=float, default=_max_cost_default(),
+        help="stop once the run has spent this much on model calls (default $MAX_RUN_COST_USD or 5; 0: no cap)",
+    )
     parser.add_argument("--list", action="store_true", help="list the tasks and exit")
     parser.add_argument("--json", action="store_true")
     return parser

@@ -9,6 +9,7 @@ by task.
 - `api/runs.js` (`GET /api/runs`): every run with its summary and config.
 - `api/report.js` (`GET /api/report?key=<run key>`): one run with its per-task results.
 - `server/db.js`: the Postgres pool the routes share, from `DATABASE_URL`.
+- `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.
 
 ## Data
 
@@ -35,8 +36,34 @@ python -m tests.eval.dashboard import .var/bench/full-20261024T012945Z.json
 python -m tests.eval.dashboard import path/to/artifacts --backend json --flag "why it is not comparable"
 ```
 
-Flagged runs (a broken runner, a harness bug) stay in the data but are hidden
-unless "Flagged runs" is on.
+Flagged runs (a broken runner, a harness bug, a run stopped at its cost cap) stay
+in the data but are hidden unless "Flagged runs" is on.
+
+## Screenshots and traces
+
+The benchmark workflows run `live_bench --keep-screens`, which saves each task's
+graded screen and, for tasks that did not pass, the whole run folder. The **Dashboard
+data** workflow uploads them to Vercel Blob (`--blob`, `BLOB_READ_WRITE_TOKEN`
+repository secret): the final screen of every task, and every step's screen plus a
+zip of the run folder for the others. The links are stored in each task's result
+(`screenshot_url`, `step_screenshots`, `trace_url`). In a run's detail, the Screen
+column shows the final screen, and clicking a task that did not pass shows its
+steps and the trace download. Blob links are public but unguessable (random suffix);
+the screens show only the runner's browser or desktop.
+
+Without the secret, results are imported without screenshots.
+
+## Alerts
+
+After importing a finished benchmark run, the workflow (`--alert`) posts to a Slack
+incoming webhook (`SLACK_WEBHOOK_URL` repository secret) when:
+
+- its pass rate is 5 or more points below the previous comparable run (same mode,
+  suite, backend, harness and model, not flagged),
+- its agent cost per task is 25% or more above that run's, or
+- it stopped at its cost cap (`MAX_RUN_COST_USD`, the workflows' `max_cost_usd` input, $5 by default).
+
+Without the secret, no alerts are sent.
 
 ## Run it locally
 

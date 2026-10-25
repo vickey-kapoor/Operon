@@ -4,6 +4,7 @@ name: Live benchmark
 # server and real websites. Manual only: every run spends model credits.
 # Needs repo secrets GEMINI_API_KEY (always: the judge and critic are Gemini)
 # and ANTHROPIC_API_KEY (for the claude_computer_use backend).
+# Each backend's run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
 on:
   workflow_dispatch:
@@ -33,6 +34,9 @@ on:
       args:
         description: "Extra live_bench arguments, e.g. --category forms --only slider"
         default: ""
+      max_cost_usd:
+        description: "Stop a backend's run once it has spent this many USD (0: no cap)"
+        default: "5"
   # Called by bench-command.yml when someone comments /bench on a PR.
   workflow_call:
     inputs:
@@ -43,6 +47,7 @@ on:
       final_check_model: {type: string, default: ""}
       suite: {type: string, default: "smoke"}
       args: {type: string, default: ""}
+      max_cost_usd: {type: string, default: "5"}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
@@ -54,6 +59,7 @@ permissions:
 jobs:
   plan:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       backends: ${{ steps.split.outputs.backends }}
     steps:
@@ -80,6 +86,7 @@ jobs:
       OPERON_BROWSER_CLAUDE_EFFORT: ${{ inputs.claude_effort }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
+      MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       BROWSER_HEADLESS: "true"
     steps:
       - name: Check the secrets
@@ -122,7 +129,10 @@ jobs:
           SUITE: ${{ inputs.suite }}
           EXTRA_ARGS: ${{ inputs.args }}
         # EXTRA_ARGS is left unquoted on purpose: it is a list of arguments.
-        run: uv run python -m tests.eval.live_bench --suite "$SUITE" $EXTRA_ARGS | tee bench.txt
+        # --keep-screens saves the screenshots the dashboard shows; pipefail keeps the cost-cap exit.
+        run: |
+          set -o pipefail
+          uv run python -m tests.eval.live_bench --suite "$SUITE" --keep-screens $EXTRA_ARGS | tee bench.txt
 
       - name: Summary
         if: always()

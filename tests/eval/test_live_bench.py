@@ -212,3 +212,48 @@ def test_summary_reports_cost_per_task_and_per_success() -> None:
     assert summary["judge_cost_usd"] == 0.002
     assert summary["by_model"]["claude-opus-5-5"]["requests"] == 4
     assert "per success" in live_bench.format_report([result("success", 0.03)], summarize([result("success", 0.03)]), None)
+
+
+def _costly(name: str, cost: float) -> live_bench.TaskResult:
+    return live_bench.TaskResult(name, "c", "r", "succeeded", "success", "-", 1, 0, 5, 1, 0, "", "-", cost_usd=cost, judge_cost_usd=0.01)
+
+
+def test_budget_stop_needs_the_cap_spent_with_tasks_left() -> None:
+    spent = [_costly("a", 2.0), _costly("b", 3.0)]
+    assert live_bench.budget_stop(spent, planned=5, max_cost_usd=5.0) == {
+        "limit_usd": 5.0, "spent_usd": 5.02, "tasks_run": 2, "tasks_planned": 5,
+    }
+    assert live_bench.budget_stop(spent[:1], planned=5, max_cost_usd=5.0) is None
+    assert live_bench.budget_stop(spent, planned=2, max_cost_usd=5.0) is None  # nothing left to skip
+    assert live_bench.budget_stop(spent, planned=5, max_cost_usd=0) is None  # 0 turns the cap off
+
+
+async def test_run_bench_stops_at_the_cost_cap_and_records_it(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    async def fake_run_task(client, task, judge, **kwargs):
+        calls.append(task.name)
+        return _costly(task.name, 3.0)
+
+    monkeypatch.setattr(live_bench, "run_task", fake_run_task)
+    real_client = httpx.AsyncClient
+    health = httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True}))
+    monkeypatch.setattr(live_bench.httpx, "AsyncClient", lambda **kw: real_client(transport=health, **kw))
+    monkeypatch.delenv("MAX_RUN_COST_USD", raising=False)
+    args = live_bench.build_parser(default_suite="smoke").parse_args(["--out-dir", str(tmp_path), "--max-cost-usd", "5"])
+
+    assert await live_bench.run_bench(args, judge=None) == live_bench.BUDGET_EXIT_CODE
+
+    assert len(calls) == 2 < len(select_tasks("smoke", None, None))
+    (saved,) = tmp_path.glob("smoke-*.json")
+    report = json.loads(saved.read_text())
+    assert report["budget_stop"]["tasks_run"] == 2 and report["summary"]["tasks"] == 2
+    # A capped run is not the baseline the next run compares against.
+    assert live_bench._previous_report(tmp_path, "smoke") is None
+
+
+def test_max_cost_comes_from_the_environment(monkeypatch) -> None:
+    monkeypatch.setenv("MAX_RUN_COST_USD", "1.5")
+    assert live_bench.build_parser().parse_args([]).max_cost_usd == 1.5
+    monkeypatch.setenv("MAX_RUN_COST_USD", "")
+    assert live_bench.build_parser().parse_args([]).max_cost_usd == live_bench.DEFAULT_MAX_COST_USD

@@ -9,10 +9,13 @@ from datetime import datetime, timezone
 import pytest
 
 from tests.eval.dashboard import (
+    attach_traces,
+    check_alerts,
     find_reports,
     import_reports,
     main,
     prepare,
+    regressions,
     run_key,
     to_rows,
 )
@@ -116,3 +119,117 @@ def test_import_writes_runs_and_replaces_them_on_reimport(tmp_path) -> None:
         tasks = conn.execute("SELECT task, outcome, result ? 'final_screenshot' FROM bench_task_results ORDER BY position").fetchall()
     assert runs == [("browser-full-claude_computer_use-full-20261024T012945Z", None, None, 1)]
     assert tasks == [("click_link", "success", False), ("go_back", "failure", False)]
+
+
+def test_a_run_stopped_at_the_cost_cap_is_flagged() -> None:
+    stop = {"limit_usd": 5.0, "spent_usd": 5.1, "tasks_run": 12, "tasks_planned": 44}
+    assert prepare(_report(budget_stop=stop), {})["config"]["flagged"] == "stopped at the $5 cost cap after 12 of 44 tasks"
+    assert prepare(_report(budget_stop=stop), {"flagged": "broken runner"})["config"]["flagged"] == "broken runner"
+
+
+def test_attach_traces_uploads_every_final_screen_and_the_failures_steps(tmp_path) -> None:
+    screens = tmp_path / "full-20261024T012945Z"
+    screens.mkdir()
+    (screens / "click_link.png").write_bytes(b"png")
+    (screens / "go_back.png").write_bytes(b"png")
+    for step in (10, 2):
+        (screens / "go_back" / f"step_{step}").mkdir(parents=True)
+        (screens / "go_back" / f"step_{step}" / "before.png").write_bytes(b"png")
+    (screens / "go_back" / "state.json").write_text("{}")
+    report = prepare(_report(backend="claude_computer_use"), {})
+    uploaded = []
+
+    def uploader(files):
+        uploaded.extend(files)
+        return [f"https://blob.example/{pathname}" for _, pathname in files]
+
+    work = tmp_path / "work"
+    work.mkdir()
+    assert attach_traces(report, screens, uploader, work) == 5
+
+    key = run_key(report)
+    assert [pathname for _, pathname in uploaded] == [
+        f"bench/{key}/click_link/final.png",
+        f"bench/{key}/go_back/final.png",
+        f"bench/{key}/go_back/step_002.png",
+        f"bench/{key}/go_back/step_010.png",
+        f"bench/{key}/go_back/trace.zip",
+    ]
+    passed, failed = report["results"]
+    assert passed["screenshot_url"].endswith("click_link/final.png") and "trace_url" not in passed
+    assert [s["step"] for s in failed["step_screenshots"]] == [2, 10]
+    assert failed["trace_url"].endswith("go_back/trace.zip")
+
+
+def test_regressions_flag_a_pass_rate_drop_and_a_cost_rise() -> None:
+    before = {"success_rate": 0.95, "success": 42, "tasks": 44, "cost_per_task_usd": 0.02}
+    assert regressions({"success_rate": 0.93, "cost_per_task_usd": 0.024}, before) == []
+    problems = regressions({"success_rate": 0.9, "success": 40, "tasks": 44, "cost_per_task_usd": 0.025}, before)
+    assert len(problems) == 2
+    assert problems[0].startswith("Pass rate fell 5 points") and problems[1].startswith("Cost per task rose 25%")
+    assert regressions({"success_rate": 0.5}, None) == []
+    assert regressions({"success_rate": 0.95, "cost_per_task_usd": 0.05}, {"success_rate": 0.95}) == []  # no old cost
+
+
+class _OneRowConn:
+    def __init__(self, row):
+        self.row, self.queries = row, []
+
+    def execute(self, sql, params=None):
+        self.queries.append(params)
+        return self
+
+    def fetchone(self):
+        return self.row
+
+
+def test_check_alerts_compares_with_the_previous_comparable_run() -> None:
+    previous = ("old-key", {"success_rate": 1.0, "success": 2, "tasks": 2, "cost_per_task_usd": 0.02}, None)
+    conn, sent = _OneRowConn(previous), []
+    report = prepare(_report(backend="claude_computer_use", harness_profile="thin"), {"github_run_url": "https://gh/run/1"})
+
+    problems = check_alerts(conn, report, sent.append)
+
+    assert problems == ["Pass rate fell 50 points: 50% (1/2), was 100% (2/2)."]
+    assert conn.queries[0][:5] == ("browser", "full", "claude_computer_use", "thin", None)
+    assert "Pass rate fell 50 points" in sent[0] and "<https://gh/run/1|Workflow run>" in sent[0]
+
+
+def test_check_alerts_reports_a_budget_stop_without_comparing() -> None:
+    stop = {"limit_usd": 5.0, "spent_usd": 5.1, "tasks_run": 12, "tasks_planned": 44}
+    conn, sent = _OneRowConn(None), []
+    assert check_alerts(conn, prepare(_report(budget_stop=stop), {}), sent.append) == [
+        "Stopped at the $5 cost cap after 12 of 44 tasks (spent $5.10)."
+    ]
+    assert conn.queries == [] and len(sent) == 1
+
+
+def test_no_alert_without_a_previous_run() -> None:
+    sent = []
+    assert check_alerts(_OneRowConn(None), prepare(_report(), {}), sent.append) == [] and sent == []
+
+
+@pytest.mark.skipif(not os.getenv("OPERON_TEST_DATABASE_URL"), reason="no test database")
+def test_import_uploads_traces_and_alerts_against_the_previous_run(tmp_path) -> None:
+    psycopg = pytest.importorskip("psycopg")
+    folder = tmp_path / "bench"
+    folder.mkdir()
+    good = _report(backend="claude_computer_use", started_at="20261023T000000Z")
+    good["summary"] = {**good["summary"], "success": 2, "success_rate": 1.0}
+    (folder / "full-20261023T000000Z.json").write_text(json.dumps(good))
+    (folder / "full-20261024T012945Z.json").write_text(json.dumps(_report(backend="claude_computer_use")))
+    (folder / "full-20261024T012945Z").mkdir()
+    (folder / "full-20261024T012945Z" / "go_back.png").write_bytes(b"png")
+    sent: list[str] = []
+
+    def uploader(files):
+        return [f"https://blob.example/{pathname}" for _, pathname in files]
+
+    with psycopg.connect(os.environ["OPERON_TEST_DATABASE_URL"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS bench_task_results, bench_runs")
+        conn.commit()
+        import_reports([folder], conn, {}, uploader=uploader, notify=sent.append)
+        url = conn.execute("SELECT result->>'screenshot_url' FROM bench_task_results WHERE task = 'go_back'").fetchall()
+
+    assert ("https://blob.example/bench/browser-full-claude_computer_use-full-20261024T012945Z/go_back/final.png",) in url
+    assert len(sent) == 1 and "Pass rate fell 50 points" in sent[0]

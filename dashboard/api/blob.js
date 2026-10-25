@@ -1,13 +1,16 @@
 // GET /api/blob?url=<blob url>: streams one benchmark screenshot or trace from the
 // private Vercel Blob store, so the page never holds the store's token. Only
-// bench/ files of the store that BLOB_READ_WRITE_TOKEN belongs to are served.
+// bench/ files of the project's own store are served.
 import { Readable } from "node:stream";
 import { get } from "@vercel/blob";
 import { sendJson } from "../server/db.js";
 
-// The token's fourth "_" field is the store id, which is also the store's host name.
+// The store's host name is its id: BLOB_STORE_ID (set when the store is connected to
+// the Vercel project; the client then signs in with the deployment's OIDC token), or
+// the fourth "_" field of BLOB_READ_WRITE_TOKEN.
 function storeHost() {
-  const storeId = (process.env.BLOB_READ_WRITE_TOKEN || "").split("_")[3];
+  const storeId = (process.env.BLOB_STORE_ID || "").trim().replace(/^store_/, "") ||
+    (process.env.BLOB_READ_WRITE_TOKEN || "").split("_")[3];
   return storeId ? `${storeId.toLowerCase()}.private.blob.vercel-storage.com` : null;
 }
 

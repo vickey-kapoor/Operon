@@ -50,8 +50,10 @@ zip of the run folder for the others. The links are stored in each task's result
 (`screenshot_url`, `step_screenshots`, `trace_url`). In a run's detail, the Screen
 column shows the final screen, and clicking a task that did not pass shows its
 steps and the trace download. The Blob store is **private**: its files can't be read
-without the token, and the page loads them through `/api/blob`, which reads them with
-the project's `BLOB_READ_WRITE_TOKEN` environment variable. So the screenshots are
+without credentials, and the page loads them through `/api/blob`, which reads them as
+the Vercel project (`BLOB_STORE_ID`, set when the store is connected to the project, or
+`BLOB_READ_WRITE_TOKEN`). The benchmark workflows upload with the `BLOB_READ_WRITE_TOKEN`
+GitHub secret. So the screenshots are
 visible to whoever can open the dashboard, and to no one else.
 
 Without the secret, results are imported without screenshots.

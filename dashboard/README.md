@@ -8,6 +8,7 @@ by task.
 - `index.html`, `app.js`, `style.css`: the page. Plain JS and inline SVG charts, no build step.
 - `api/runs.js` (`GET /api/runs`): every run with its summary and config.
 - `api/report.js` (`GET /api/report?key=<run key>`): one run with its per-task results.
+- `api/blob.js` (`GET /api/blob?url=<blob url>`): one screenshot or trace from the private Blob store.
 - `server/db.js`: the Postgres pool the routes share, from `DATABASE_URL`.
 - `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.
 
@@ -48,8 +49,10 @@ repository secret): the final screen of every task, and every step's screen plus
 zip of the run folder for the others. The links are stored in each task's result
 (`screenshot_url`, `step_screenshots`, `trace_url`). In a run's detail, the Screen
 column shows the final screen, and clicking a task that did not pass shows its
-steps and the trace download. Blob links are public but unguessable (random suffix);
-the screens show only the runner's browser or desktop.
+steps and the trace download. The Blob store is **private**: its files can't be read
+without the token, and the page loads them through `/api/blob`, which reads them with
+the project's `BLOB_READ_WRITE_TOKEN` environment variable. So the screenshots are
+visible to whoever can open the dashboard, and to no one else.
 
 Without the secret, results are imported without screenshots.
 

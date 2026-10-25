@@ -1,7 +1,8 @@
 // Uploads benchmark screenshots and traces to Vercel Blob for tests/eval/dashboard.py.
 // Reads a JSON list of {file, pathname} on stdin and prints the public URLs, in the
 // same order, as a JSON list. BLOB_READ_WRITE_TOKEN comes from the environment.
-// A random suffix makes each URL unguessable; the links are stored in the database.
+// The store is private: nothing is readable without the token, and the dashboard
+// serves the files through its own /api/blob route.
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { put } from "@vercel/blob";
@@ -23,7 +24,7 @@ async function worker() {
     const i = next++;
     const { file, pathname } = plan[i];
     const blob = await put(pathname, await readFile(file), {
-      access: "public",
+      access: "private",
       addRandomSuffix: true,
       contentType: TYPES[extname(file).toLowerCase()] || "application/octet-stream",
     });

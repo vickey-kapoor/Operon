@@ -27,7 +27,8 @@ final screen for every task and, for tasks that did not pass, every step's scree
 and a zip of the whole run folder. The links go into the task's stored result
 (``screenshot_url``, ``step_screenshots``, ``trace_url``). The upload itself runs
 ``dashboard/scripts/blob-upload.mjs`` (Vercel's ``@vercel/blob`` client), so it needs
-``npm ci`` in ``dashboard/`` first.
+``npm ci`` in ``dashboard/`` first. The store is private; the dashboard reads the
+files through its ``/api/blob`` route.
 
 ``--alert`` posts to a Slack incoming webhook (``SLACK_WEBHOOK_URL``) when a run's
 pass rate is 5 or more points below the previous comparable run (same mode, suite,

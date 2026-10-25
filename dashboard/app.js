@@ -459,10 +459,13 @@ async function selectRun(run) {
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-// Screenshots and traces live in Vercel Blob; only plain https links are shown.
+// Screenshots and traces live in a private Vercel Blob store; /api/blob reads them
+// with the store's token, so only links into that store are shown.
 function safeUrl(url) {
   try {
-    return typeof url === "string" && new URL(url).protocol === "https:" ? url : null;
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" || !parsed.hostname.endsWith(".private.blob.vercel-storage.com")) return null;
+    return `/api/blob?url=${encodeURIComponent(parsed.href)}`;
   } catch (_) {
     return null;
   }

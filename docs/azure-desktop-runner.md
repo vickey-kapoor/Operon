@@ -75,15 +75,15 @@ az ad sp create-for-rbac --name operon-desktop-bench --role "Virtual Machine Con
   --scopes $scope --json-auth > azure-credentials.json
 
 gh secret set AZURE_CREDENTIALS --repo vickey-kapoor/Operon < azure-credentials.json
-gh variable set AZURE_VM_RESOURCE_GROUP --repo vickey-kapoor/Operon --body $rg
-gh variable set AZURE_VM_NAME --repo vickey-kapoor/Operon --body $vm
 Remove-Item azure-credentials.json
 
 az vm deallocate --resource-group $rg --name $vm
 ```
 
 The service principal can only manage VMs in this resource group. Without `gh`,
-add the same secret and variables under Settings > Secrets and variables > Actions.
+add the secret under Settings > Secrets and variables > Actions. If you named the
+resource group or VM differently, also add repo variables `AZURE_VM_RESOURCE_GROUP`
+and `AZURE_VM_NAME`; the workflow defaults to `operon-bench` and `operon-desktop`.
 
 ## Troubleshooting
 

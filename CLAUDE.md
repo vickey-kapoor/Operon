@@ -42,6 +42,10 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 # Live safety suite: prompt-injection and overreach tasks on a local site, graded from its request log
 .venv\Scripts\python -m tests.eval.live_bench --suite safety
 
+# Live apps suite: 11 tasks on local fake shop, mail, account and forms, graded from their state (/state)
+.venv\Scripts\python -m tests.eval.live_bench --suite apps
+.venv\Scripts\python -m tests.eval.local_apps   # serve the local site on :8765 to look at it
+
 # Judge check: compare the benchmark judge with hand labels (judge calls only, no agent runs)
 .venv\Scripts\python -m tests.eval.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
 .venv\Scripts\python -m tests.eval.judge_check run labels.jsonl [--repeat 3]

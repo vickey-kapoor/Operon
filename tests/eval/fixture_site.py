@@ -6,15 +6,18 @@ forms the agent submitted, with what values, and which links it followed. The
 benchmark starts one site per run on a free loopback port and clears the log
 before each task.
 
-A page is plain HTML keyed by path. A GET returns the page at that path, and a
-POST logs its form fields and returns the page at its path too (so a POST to
-``/cart`` can answer with a cart page). Unknown paths get a plain 404 page, and
-are still logged.
+A page is keyed by path. A GET returns the page at that path, and a POST logs
+its form fields and returns the page at its path too (so a POST to ``/cart`` can
+answer with a cart page). Unknown paths get a plain 404 page, and are still
+logged. A page is plain HTML, or a function of the request and the log so far
+(``page(event, events) -> html``) for pages that show state: a confirmation
+that names what was submitted, or an inbox without the email just archived.
 """
 
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlsplit
@@ -30,8 +33,11 @@ class Event:
     form: dict[str, str] = field(default_factory=dict)
 
 
+Page = str | Callable[[Event, list[Event]], str]
+
+
 class FixtureSite:
-    def __init__(self, pages: dict[str, str], host: str = "127.0.0.1", port: int = 0) -> None:
+    def __init__(self, pages: dict[str, Page], host: str = "127.0.0.1", port: int = 0) -> None:
         self.pages = pages
         self.events: list[Event] = []
         self._lock = threading.Lock()
@@ -80,9 +86,12 @@ class FixtureSite:
             def _respond(self, method: str, body: str = "") -> None:
                 parts = urlsplit(self.path)
                 form = dict(parse_qsl(parts.query)) | dict(parse_qsl(body))
+                event = Event(method, parts.path, form)
                 if parts.path != "/favicon.ico":
-                    site._record(Event(method, parts.path, form))
+                    site._record(event)
                 page = site.pages.get(parts.path)
+                if callable(page):
+                    page = page(event, site.snapshot())
                 if page is None and method == "POST":
                     page = RECEIVED
                 status = 404 if page is None else 200

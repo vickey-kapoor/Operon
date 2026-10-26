@@ -77,9 +77,12 @@ FastAPI routes
 ## Key Capabilities
 
 - Vision-only targeting with `UIElement` coordinates from perception output.
-- Gemini Computer Use browser backend by default, with optional JSON fallback.
-- Desktop JSON backend for native app control.
-- Deterministic policy rules before LLM fallback.
+- Claude computer use as the browser backend when `ANTHROPIC_API_KEY` is set, running the
+  thin harness; Gemini Computer Use otherwise. Gemini stays a supported backend, and the
+  Gemini JSON backend is the browser fallback when a Claude or Gemini Computer Use call fails.
+- Desktop control of native apps with the Gemini JSON backend (default) or Claude computer
+  use (`OPERON_DESKTOP_BACKEND=claude_computer_use`).
+- Deterministic policy rules before LLM fallback (full harness).
 - Rolling spatial memory for recent elements and ghost-element handling.
 - Adaptive click servo checks before browser/desktop clicks.
 - Human-in-the-loop pause/resume for uncertain or blocked states.
@@ -111,7 +114,17 @@ playwright install chromium
 copy .env.example .env
 ```
 
-Set `GOOGLE_API_KEY` or `GEMINI_API_KEY` in `.env`, then start the API:
+Set your model keys in `.env`:
+
+- `ANTHROPIC_API_KEY` makes Claude computer use the browser backend (recommended; it led the
+  live benchmark). Set `OPERON_DESKTOP_BACKEND=claude_computer_use` to use Claude on the
+  desktop too.
+- `GEMINI_API_KEY` runs the Gemini backends: the browser backend when there is no
+  Anthropic key, the browser fallback, and the default desktop backend. The benchmark
+  judge also uses it. The Gemini JSON backends also accept `GOOGLE_API_KEY`; Gemini
+  Computer Use reads `GEMINI_API_KEY` only.
+
+Then start the API:
 
 ```bash
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
@@ -172,7 +185,7 @@ WS   /ws/stream
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GOOGLE_API_KEY` / `GEMINI_API_KEY` | unset | Gemini API key |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | unset | Gemini API key (Gemini Computer Use reads `GEMINI_API_KEY` only) |
 | `ANTHROPIC_API_KEY` | unset | Anthropic key; when set, browser runs default to Claude computer use |
 | `API_KEYS` | unset | Comma-separated API keys. When set, every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires the key via `?api_key=` (or an `x-api-key` subprotocol). **Unset = no auth** — only safe on a trusted host, since the API can drive a real browser/desktop. |
 | `OPERON_BROWSER_BACKEND` | `claude_computer_use` with `ANTHROPIC_API_KEY`, else `computer_use` | `claude_computer_use` (Claude), `computer_use` (Gemini) or `json` |
@@ -183,8 +196,11 @@ WS   /ws/stream
 | `OPERON_BROWSER_VERIFIER_THINKING` | `low` | Browser critic thinking level |
 | `OPERON_BROWSER_CLAUDE_MODEL` | `claude-opus-5-5` | Model for `claude_computer_use` |
 | `OPERON_BROWSER_CLAUDE_EFFORT` | `low` | Claude effort level for `claude_computer_use` |
-| `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` | Desktop primary model |
+| `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` | Desktop primary model (Gemini JSON backend) |
+| `OPERON_DESKTOP_CLAUDE_MODEL` | `claude-opus-5-5` | Model for the desktop `claude_computer_use` backend |
+| `OPERON_DESKTOP_CLAUDE_EFFORT` | `low` | Claude effort level on the desktop |
 | `OPERON_HARNESS_PROFILE` | `thin` for Claude | `full` switches a `claude_computer_use` backend back to the full harness. Other backends always run `full`. |
+| `OPERON_FINAL_CHECK_MODEL` | the acting Claude model | Model for the thin harness's completion check; a cheaper model (e.g. `claude-sonnet-5-5`) cuts its cost |
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |
 | `BROWSER_HEIGHT` | `1080` | Browser viewport height |
@@ -202,6 +218,12 @@ WS   /ws/stream
 | `OPERON_TRUST_DENY` | unset | Comma-separated phrases that **block** an action (the run pauses for a human; the action never runs autonomously). Matched case-insensitively against the action text, URL, and target-element name. |
 | `OPERON_TRUST_CONFIRM` | built-in set | Comma-separated phrases that require **human approval** before running. Defaults to a conservative high-risk set (e.g. `delete account`, `place order`) when the gate is on and this is unset. |
 | `OPERON_TRUST_ALLOW_DOMAINS` | unset | Comma-separated domains (subdomains included). When set, navigation is **restricted to these domains** — any other URL is denied (fail-closed). Unset = no domain restriction. |
+| `OPERON_ALLOWED_FILE_ROOTS` | unset | Extra directories that `read_text` / `upload_file` may touch. The file guard is always on: any path not named in the task or inside the run directory pauses the run for a human. |
+| `OPERON_SITE_ADAPTERS` | unset | Built-in site adapters to load (`wikipedia`, `github`, or `all`) |
+| `OPERON_RUNS_RETAIN_DAYS` | `14` | Days of run directories kept by the startup sweep; `-1` disables it |
+| `HITL_WEBHOOK_URL` | unset | POST endpoint called when a run pauses for a human |
+
+`.env.example` lists every setting the server reads, with comments.
 
 Generated runtime output is intentionally kept under `.var/` and ignored by git. Legacy `runs/`, `.browser-artifacts/`, and `.desktop-artifacts/` paths may still appear in old logs or tests, but new default runtime output uses the `.var/` tree unless overridden by environment variables.
 
@@ -219,8 +241,11 @@ src/
   store/      run persistence, memory, replay, cleanup, background writer
 
 prompts/      Model prompt templates
-tests/        Pytest suite
-docs/         Architecture and product notes
+tests/        Pytest suite; tests/eval/ holds the offline eval and the live benchmarks
+ui/           Command Center (React + Vite)
+dashboard/    Eval dashboard (Vercel + Neon Postgres)
+scripts/      Azure desktop runner setup
+docs/         Architecture, cost, eval results, the Azure runner, RFCs
 ```
 
 ## Testing
@@ -236,8 +261,8 @@ $env:GEMINI_API_KEY = "fake-test-key"
 python -m pytest tests -q
 ```
 
-That runs the full offline suite — 551 passed and 3 skipped, roughly a minute, no API calls and
-no browser. No `--ignore` flags needed: `addopts = "-m 'not live_server'"` in
+That runs the full offline suite — about 840 passed and 15 skipped in under a minute, no API
+calls and no browser. No `--ignore` flags needed: `addopts = "-m 'not live_server'"` in
 `pyproject.toml` already deselects the suites that need a running server.
 
 A further 345 tests are marked `live_server` and are **not** covered by CI. They
@@ -254,3 +279,80 @@ Lint:
 ruff check src tests --select E,F,W,I --ignore E501
 ```
 
+
+## Evaluation
+
+Every live suite spends real model credits, so none of them run on pushes or merges.
+
+| Suite | Command | What it checks |
+|---|---|---|
+| Offline eval | `python -m tests.eval` | Scripted scenarios through the real loop, no network |
+| Live smoke | `python -m tests.eval.live_smoke` | A few real browser tasks against a running API |
+| Browser benchmark | `python -m tests.eval.live_bench [--suite smoke\|full] [--category forms] [--only NAME]` | 44 real web tasks (5 in smoke), graded from the final screen |
+| Safety suite | `python -m tests.eval.live_bench --suite safety` | 9 prompt-injection and overreach tasks on a local fixture site, graded from the site's request log |
+| Desktop benchmark | `python -m tests.eval.live_desktop_bench [--suite smoke\|full]` | 10 tasks on stock Windows apps (3 in smoke); **drives the real mouse and keyboard** |
+| Judge check | `python -m tests.eval.judge_check template <report.json> > labels.jsonl`, then `judge_check run labels.jsonl [--repeat 3]` | Compares the benchmark judge with hand labels |
+
+The browser benchmark grades each task with a Gemini judge that reads the final screenshot
+against a per-task success condition. The judge check measured it at 99% accuracy and 100%
+recall on 88 hand labels; see [docs/evals/safety-and-judge-check.md](docs/evals/safety-and-judge-check.md)
+for that and the first safety results.
+
+### Cost
+
+Each model call records its token usage next to its step, and the benchmarks report cost per
+task, cost per success and a per-model breakdown. A run stops once it has spent
+`--max-cost-usd` (`MAX_RUN_COST_USD`, default **$5** per backend; `0` = no cap) and exits
+with code 3. Prices, where the money goes and the levers to cut it are in [docs/cost.md](docs/cost.md).
+
+### Running benchmarks from a pull request
+
+Repository owners, members and collaborators can comment on a PR to benchmark its head
+commit (PRs from forks are refused):
+
+```text
+/bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+```
+
+Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. Examples:
+
+| Comment | Runs |
+|---|---|
+| `/bench` | Browser smoke (5 tasks) |
+| `/bench all` | Full browser benchmark (44 tasks) |
+| `/bench safety` | Safety suite (browser only) |
+| `/bench desktop` | Desktop smoke on GitHub's hosted Windows runner |
+| `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
+| `/bench sonnet check-haiku` | Sonnet acting, Haiku for the completion check |
+
+The **Live benchmark** and **Live desktop benchmark** workflows can also be started by hand,
+with inputs for backends, models, harness profile, suite and cost cap (`max_cost_usd`).
+
+### Eval dashboard
+
+Results are published at **https://operon-evals.vercel.app**: pass rate, seconds per task and
+step, false passes, cost, and per-task outcomes by configuration. After every benchmark
+workflow, the **Dashboard data** workflow writes the reports to a Neon Postgres database,
+uploads screenshots and traces to a private Vercel Blob store (the dashboard shows them for
+tasks that did not pass), and posts a Slack alert when a run's pass rate drops 5 points,
+its cost per task rises 25% against the previous comparable run, or it hits its cost cap.
+Run the workflow by hand to import older runs. See [dashboard/README.md](dashboard/README.md).
+
+### Azure desktop runner
+
+The desktop benchmark runs on GitHub's hosted `windows-latest` runner or, with the workflow's
+`runner: azure` input (or `/bench desktop azure`), on an on-demand Windows Server 2022 VM
+that the workflow starts before the run and deallocates after. Setup is in
+[docs/azure-desktop-runner.md](docs/azure-desktop-runner.md).
+
+### Repository secrets and variables
+
+| Name | Kind | Used by |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | secret | Claude backends in the live benchmarks |
+| `GEMINI_API_KEY` | secret | Gemini backends and the benchmark judge |
+| `DATABASE_URL` | secret | Dashboard data import (also set in the Vercel project) |
+| `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
+| `SLACK_WEBHOOK_URL` | secret | Regression alerts; optional |
+| `AZURE_CREDENTIALS` | secret | Starting and stopping the Azure VM |
+| `AZURE_VM_RESOURCE_GROUP`, `AZURE_VM_NAME` | variables | Which Azure VM to start |

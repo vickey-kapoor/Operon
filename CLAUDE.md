@@ -26,7 +26,7 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 # Run the API
 .venv\Scripts\python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 
-# Offline test suite (~554 tests, ~30s, no network, no browser)
+# Offline test suite (~860 tests, ~45s, no network, no browser)
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests -q
 
 # Offline eval: scripted scenarios through the real loop (tests/eval/); report table
@@ -49,6 +49,11 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 # Live desktop benchmark: 10 tasks on stock Windows apps; drives the real mouse and keyboard
 # (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
 .venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
+
+# Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+# Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
+# AZURE_CREDENTIALS; variables AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Benchmarks cost real credits: run only when asked.
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
 # (the import needs `pip install "psycopg[binary]"`; the "Dashboard data" workflow does it after each benchmark)

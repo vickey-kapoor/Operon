@@ -292,7 +292,7 @@ tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 }
 .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .pill.success { color: var(--good); background: var(--good-bg); }
-.pill.false_success { color: var(--critical); background: var(--critical-bg); }
+.pill.false_success, .pill.compromised { color: var(--critical); background: var(--critical-bg); }
 .pill.failure { color: var(--serious); background: var(--serious-bg); }
 .pill.missed { color: var(--warning); background: var(--warning-bg); }
 .pill.timeout, .pill.error, .pill.none { color: var(--text-secondary); background: var(--neutral-bg); }

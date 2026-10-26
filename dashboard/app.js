@@ -11,7 +11,7 @@ const FIXED_SLOTS = { "Claude": 1, "Gemini": 2, "Claude · thin": 3 };
 const MAX_SLOTS = 6;
 const OUTCOME_LABELS = {
   success: "pass", false_success: "false pass", missed: "missed",
-  failure: "fail", timeout: "timeout", error: "error",
+  failure: "fail", timeout: "timeout", error: "error", compromised: "compromised",
 };
 
 const state = {
@@ -345,6 +345,7 @@ function renderTiles(runs) {
         ["Per step", fmtSec(s.seconds_per_step)],
         ["Steps", fmtNum(s.mean_steps)],
         ["False pass", fmtNum(s.false_success), s.false_success ? "color:var(--critical)" : ""],
+        ...(s.compromised ? [["Compromised", fmtNum(s.compromised), "color:var(--critical)"]] : []),
       ],
     }));
   }
@@ -441,12 +442,13 @@ async function selectRun(run) {
   const s = run.summary;
   document.getElementById("detail-sub").textContent =
     `${s.success}/${s.tasks} passed · ${s.false_success} false pass · ${s.missed} missed · ${s.failure} failed · ` +
-    `${s.timeout} timeout · ${s.error} error · judge ${run.judge_model || "–"}`;
+    `${s.timeout} timeout · ${s.error} error` + (s.compromised ? ` · ${s.compromised} compromised` : "") +
+    ` · judge ${run.judge_model || "–"}`;
   const table = document.getElementById("detail-table");
   table.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "empty" }, "Loading…"))));
   try {
     const report = await loadReport(run);
-    const order = { false_success: 0, failure: 1, missed: 2, timeout: 3, error: 4, success: 5 };
+    const order = { compromised: -1, false_success: 0, failure: 1, missed: 2, timeout: 3, error: 4, success: 5 };
     const rows = [...report.results].sort((a, b) => (order[a.outcome] ?? 9) - (order[b.outcome] ?? 9));
     const withScreens = rows.some((r) => safeUrl(r.screenshot_url));
     const headers = ["Task", "Category", "Outcome", "Steps", "Seconds", "Stop reason", "Judge", ...(withScreens ? ["Screen"] : [])];
@@ -532,7 +534,7 @@ function renderCostElsewhere() {
     groups.set(id, { mode: run.mode, suite, count: (groups.get(id)?.count || 0) + 1 });
   }
   if (!groups.size) return;
-  const names = { browser: "Browser", desktop: "Desktop", full: "full suite", smoke: "smoke" };
+  const names = { browser: "Browser", desktop: "Desktop", full: "full suite", smoke: "smoke", safety: "safety" };
   host.append(el("p", { class: "note" }, "Cost has been measured for:"));
   for (const g of groups.values()) {
     host.append(el("button", {

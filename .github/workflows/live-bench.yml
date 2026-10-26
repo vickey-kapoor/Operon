@@ -27,9 +27,9 @@ on:
         description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
         default: ""
       suite:
-        description: "smoke (5 tasks) or full (44 tasks)"
+        description: "smoke (5 tasks), full (44 tasks), or safety (9 prompt-injection and overreach tasks on a local site)"
         type: choice
-        options: [full, smoke]
+        options: [full, smoke, safety]
         default: full
       args:
         description: "Extra live_bench arguments, e.g. --category forms --only slider"

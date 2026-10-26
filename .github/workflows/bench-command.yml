@@ -3,13 +3,14 @@ name: Bench command
 # Runs a live benchmark on a pull request's head when a repository owner, member
 # or collaborator comments on it:
 #
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
 #
 # Defaults: browser, thin harness, smoke suite, Opus 5.5. "all" runs the full
 # suite (44 browser tasks or 10 desktop tasks); "safety" runs the browser
 # prompt-injection and overreach tasks. Claude is the backend on both.
 # opus/sonnet/haiku pick the acting Claude model; check-sonnet/check-haiku pick a
-# cheaper model for the thin harness's completion check. Reports show the cost.
+# cheaper model for the thin harness's completion check. azure runs a desktop
+# benchmark on our Azure VM instead of GitHub's hosted runner. Reports show the cost.
 # Nothing runs on pushes or merges: every run spends model credits, so a run
 # happens only when someone asks for one. PRs from forks are refused, since the
 # run has the repository's API keys.
@@ -36,6 +37,7 @@ jobs:
       suite: ${{ steps.args.outputs.suite }}
       model: ${{ steps.args.outputs.model }}
       check_model: ${{ steps.args.outputs.check_model }}
+      runner: ${{ steps.args.outputs.runner }}
       sha: ${{ steps.pr.outputs.sha }}
     steps:
       - id: args
@@ -43,7 +45,7 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           set -f  # no glob expansion of the comment's words
-          target=browser profile=thin suite=smoke model=claude-opus-5-5 check_model=
+          target=browser profile=thin suite=smoke model=claude-opus-5-5 check_model= runner=github
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
@@ -58,16 +60,17 @@ jobs:
               haiku) model=claude-haiku-5-5 ;;
               check-sonnet) check_model=claude-sonnet-5-5 ;;
               check-haiku) check_model=claude-haiku-5-5 ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku]"; exit 1 ;;
+              azure) runner=azure ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]"; exit 1 ;;
             esac
           done
           if [ "$suite" = safety ] && [ "$target" = desktop ]; then
             echo "::error::The safety suite is browser only."; exit 1
           fi
-          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model"
+          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner"
           {
             echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
-            echo "model=$model"; echo "check_model=$check_model"
+            echo "model=$model"; echo "check_model=$check_model"; echo "runner=$runner"
           } >> "$GITHUB_OUTPUT"
 
       - id: pr
@@ -100,6 +103,7 @@ jobs:
     if: needs.parse.outputs.target == 'desktop'
     uses: ./.github/workflows/live-desktop-bench.yml
     with:
+      runner: ${{ needs.parse.outputs.runner }}
       desktop_backend: claude_computer_use
       claude_model: ${{ needs.parse.outputs.model }}
       final_check_model: ${{ needs.parse.outputs.check_model }}

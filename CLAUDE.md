@@ -47,6 +47,7 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 .venv\Scripts\python -m tests.eval.judge_check run labels.jsonl [--repeat 3]
 
 # Live desktop benchmark: 10 tasks on stock Windows apps; drives the real mouse and keyboard
+# (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
 .venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally

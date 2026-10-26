@@ -141,9 +141,6 @@ These are load-bearing — violating them silently breaks the agent.
   emit a CLICK immediately followed by a TYPE on the same element.
 - **Visual servo.** `_region_has_content()` runs before every click with an
   adaptively calibrated threshold. Never bypass it.
-- **Spatial persistence.** `RollingElementBuffer` tracks elements across steps;
-  ghost elements have TTL=2 and are auto-purged; the buffer clears when
-  `visual_velocity > 5%`.
 - **Verification states.** SUCCESS / FAILURE / UNCERTAIN / PENDING /
   PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify;
   `PROGRESSING_STABLE` advances immediately.

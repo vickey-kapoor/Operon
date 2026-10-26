@@ -140,8 +140,8 @@ Legend: **[Current]** implemented today (verified in code); **[Roadmap]** propos
 
 ### 9.3 Policy & memory
 - **FR-9 [Current]** Deterministic `PolicyRuleEngine` runs **before** LLM policy fallback (`PolicyCoordinator`).
-- **FR-10 [Current]** Rolling spatial memory of recent elements; ghost/stale element handling.
-- **FR-11 [Current]** Episodic memory and guardrails (`FileBackedMemoryStore`).
+- **FR-10 [Removed]** Rolling spatial memory of recent elements; ghost/stale element handling. It lived only in an unused Gemini perception service and was removed with it.
+- **FR-11 [Current]** Advisory memory hints and guardrails (`FileBackedMemoryStore`).
 - **FR-12 [Roadmap]** User-authored allow/deny action policies (e.g., never click "Delete account") surfaced as first-class config — aligning with OWASP least-privilege/human-approval guidance [13].
 
 ### 9.4 Verification & recovery

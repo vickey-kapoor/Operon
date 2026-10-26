@@ -18,6 +18,7 @@ from tests.eval.dashboard import (
     regressions,
     run_key,
     to_rows,
+    trace_files,
 )
 
 
@@ -159,6 +160,16 @@ def test_attach_traces_uploads_every_final_screen_and_the_failures_steps(tmp_pat
     assert passed["screenshot_url"].endswith("click_link/final.png") and "trace_url" not in passed
     assert [s["step"] for s in failed["step_screenshots"]] == [2, 10]
     assert failed["trace_url"].endswith("go_back/trace.zip")
+
+
+@pytest.mark.parametrize("task", ["..", "../outside", "/etc", "a/../../outside", ".hidden", "x\\..\\y"])
+def test_trace_files_refuse_task_names_that_leave_the_screens_folder(tmp_path, task) -> None:
+    screens = tmp_path / "screens"
+    screens.mkdir()
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "secret.txt").write_text("token")
+    (tmp_path / "outside.png").write_bytes(b"png")
+    assert trace_files(screens, task) == (None, [], None)
 
 
 def test_regressions_flag_a_pass_rate_drop_and_a_cost_rise() -> None:

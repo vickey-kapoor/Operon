@@ -136,6 +136,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || '' }}
+          # The benchmarked code (possibly a PR branch) needs no git token.
+          persist-credentials: false
 
       - name: Reset the desktop
         # The Azure VM keeps its state between runs, unlike a hosted runner: close the

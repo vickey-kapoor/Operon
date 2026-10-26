@@ -187,7 +187,8 @@ WS   /ws/stream
 |---|---|---|
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | unset | Gemini API key (Gemini Computer Use reads `GEMINI_API_KEY` only) |
 | `ANTHROPIC_API_KEY` | unset | Anthropic key; when set, browser runs default to Claude computer use |
-| `API_KEYS` | unset | Comma-separated API keys. When set, every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires the key via `?api_key=` (or an `x-api-key` subprotocol). **Unset = no auth** — only safe on a trusted host, since the API can drive a real browser/desktop. |
+| `API_KEYS` | unset | Comma-separated API keys. When set, every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires it as an `x-api-key` subprotocol (`["x-api-key", "<key>"]`). **Unset = no auth** — only safe on a trusted host, since the API can drive a real browser/desktop. |
+| `OPERON_ALLOWED_HOSTS` | unset | Extra host names the API answers to. Loopback names are always allowed; any other `Host` gets 400, which blocks DNS rebinding. |
 | `OPERON_BROWSER_BACKEND` | `claude_computer_use` with `ANTHROPIC_API_KEY`, else `computer_use` | `claude_computer_use` (Claude), `computer_use` (Gemini) or `json` |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend |
 | `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend |

@@ -27,14 +27,16 @@ def test_ws_rejected_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_ws_rejected_with_wrong_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_KEYS", "s3cret")
     with pytest.raises(WebSocketDisconnect):
-        with _client().websocket_connect("/ws/stream?api_key=nope"):
+        with _client().websocket_connect("/ws/stream", subprotocols=["x-api-key", "nope"]):
             pass
 
 
-def test_ws_opens_with_valid_query_param_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ws_refuses_a_query_param_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key in the URL would land in access logs, so it is not accepted."""
     monkeypatch.setenv("API_KEYS", "s3cret,other")
-    with _client().websocket_connect("/ws/stream?api_key=other") as ws:
-        ws.close()
+    with pytest.raises(WebSocketDisconnect):
+        with _client().websocket_connect("/ws/stream?api_key=other"):
+            pass
 
 
 def test_ws_opens_with_valid_subprotocol_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,7 +68,7 @@ def test_ws_rejects_bad_origin_even_with_valid_key(monkeypatch: pytest.MonkeyPat
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
     with pytest.raises(WebSocketDisconnect):
         with _client().websocket_connect(
-            "/ws/stream?api_key=s3cret", headers={"origin": "https://evil.example"}
+            "/ws/stream", subprotocols=["x-api-key", "s3cret"], headers={"origin": "https://evil.example"}
         ):
             pass
 

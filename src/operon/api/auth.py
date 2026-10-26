@@ -87,18 +87,15 @@ def websocket_api_key_ok(websocket: WebSocket) -> bool:
     """Whether a WebSocket handshake is authorized.
 
     No-op (returns True) when API_KEYS is unset. Browsers cannot set custom
-    headers on a WebSocket, so the key is read from the ``api_key`` query
-    parameter (primary) or, failing that, an ``x-api-key`` subprotocol value
-    (client connects with subprotocols ``["x-api-key", "<key>"]``).
+    headers on a WebSocket, so the key comes as an ``x-api-key`` subprotocol value
+    (client connects with subprotocols ``["x-api-key", "<key>"]``). A query-string
+    key is not accepted: it would be written to access logs.
     """
     accepted = configured_api_keys()
     if not accepted:
         return True
-    presented = websocket.query_params.get("api_key")
-    if presented is None:
-        protocols = _offered_subprotocols(websocket)
-        if len(protocols) >= 2 and protocols[0] == "x-api-key":
-            presented = protocols[1]
+    protocols = _offered_subprotocols(websocket)
+    presented = protocols[1] if len(protocols) >= 2 and protocols[0] == "x-api-key" else None
     return presented is not None and _key_matches(presented, accepted)
 
 

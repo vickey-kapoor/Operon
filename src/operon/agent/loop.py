@@ -475,7 +475,10 @@ class AgentLoop:
 
         # Pre-execution gates (confidence, trust, file guard): a blocked action is
         # never executed — the run pauses for a human with the gate's reason.
-        gate_text = self._pre_execution_gate_text(decision, intent=state.intent, run_id=record.run_id)
+        current_url = await self._current_url_for_trust_gate(record.run_id)
+        gate_text = self._pre_execution_gate_text(
+            decision, intent=state.intent, run_id=record.run_id, current_url=current_url
+        )
         if gate_text is not None:
             gate_decision = decision.model_copy(update={
                 "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
@@ -757,7 +760,22 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
-    def _pre_execution_gate_text(self, decision: PolicyDecision, *, intent: str, run_id: str) -> str | None:
+    async def _current_url_for_trust_gate(self, run_id: str) -> str | None:
+        """The browser's current URL, only when the trust gate has a domain allowlist
+        to judge it against; None otherwise or when the executor has no page."""
+        if not (self._trust_gate.enabled and self._trust_gate.allow_domains):
+            return None
+        if not hasattr(self.executor, "current_url_for_run"):
+            return None
+        try:
+            return await self.executor.current_url_for_run(run_id)
+        except Exception:
+            logger.debug("trust gate: current_url_for_run failed", exc_info=True)
+            return None
+
+    def _pre_execution_gate_text(
+        self, decision: PolicyDecision, *, intent: str, run_id: str, current_url: str | None = None
+    ) -> str | None:
         """Why ``decision`` must pause for a human before executing, or None to proceed.
 
         Gates run in order and the first block wins:
@@ -791,7 +809,7 @@ class AgentLoop:
                 "Click Proceed to approve or enter a correction hint."
             )
 
-        trust = self._trust_gate.evaluate(action)
+        trust = self._trust_gate.evaluate(action, current_url=current_url)
         if "trust" not in approved and trust.verdict is not TrustVerdict.ALLOW:
             _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
             self._pending_gate_approvals[run_id] = (fingerprint, "trust")

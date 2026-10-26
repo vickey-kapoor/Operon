@@ -231,7 +231,7 @@ async def test_browser_websocket_clients_receive_static_frame_and_reconnect(
             await client.evaluate(
                 """url => new Promise((resolve, reject) => {
                 window.framesReceived = 0;
-                window.ws = new WebSocket(url);
+                window.ws = new WebSocket(url, ['x-api-key', 'browser-regression-key']);
                 ws.binaryType = 'arraybuffer';
                 ws.onmessage = async event => {
                     if (event.data instanceof ArrayBuffer) {
@@ -246,7 +246,7 @@ async def test_browser_websocket_clients_receive_static_frame_and_reconnect(
                 ws.onopen = resolve;
                 ws.onerror = reject;
             })""",
-                f"ws://127.0.0.1:{ws_port}/ws/stream?api_key=browser-regression-key",
+                f"ws://127.0.0.1:{ws_port}/ws/stream",
             )
             await client.wait_for_function("window.framesReceived > 0", timeout=3000)
             pixel = await client.evaluate("window.pixel")

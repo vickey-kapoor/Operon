@@ -203,8 +203,8 @@ async def _frame_pusher(q: asyncio.Queue) -> None:
 async def stream(ws: WebSocket) -> None:
     # Auth gate: the stream both exposes live frames and accepts control messages
     # (inject_input, resume, ...), so it must honor API_KEYS like the HTTP routes.
-    # Browsers can't set headers on a WebSocket — the key comes via ?api_key= (or
-    # an x-api-key subprotocol). No-op when API_KEYS is unset.
+    # Browsers can't set headers on a WebSocket — the key comes as an x-api-key
+    # subprotocol. No-op when API_KEYS is unset.
     # The Origin gate is always on: CORS does not cover WebSockets, so without it
     # any page in a local browser could connect and drive the agent.
     from operon.api.auth import (

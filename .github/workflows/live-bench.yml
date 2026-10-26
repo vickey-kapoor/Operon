@@ -52,6 +52,10 @@ on:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
         default: ""
+    # Only these secrets reach a /bench run; the caller passes them by name.
+    secrets:
+      ANTHROPIC_API_KEY: {required: false}
+      GEMINI_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -101,9 +105,11 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || '' }}
+          # The benchmarked code (possibly a PR branch) needs no git token.
+          persist-credentials: false
 
       - name: Install uv
         run: python -m pip install --upgrade pip uv
@@ -148,7 +154,7 @@ jobs:
 
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: bench-${{ matrix.backend }}
           path: |

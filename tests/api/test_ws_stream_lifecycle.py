@@ -29,16 +29,16 @@ def stream_client(monkeypatch):
 
 def test_static_frame_replayed_on_initial_connection_and_reconnect(stream_client):
     for _ in range(10):
-        with stream_client.websocket_connect("/ws/stream?api_key=local-test-key") as ws:
+        with stream_client.websocket_connect("/ws/stream", subprotocols=["x-api-key", "local-test-key"]) as ws:
             assert ws.receive_bytes() == b"current frame"
 
 
 @pytest.mark.parametrize("manager", [None, SimpleNamespace(latest_frame=None)])
 def test_no_stale_frame_after_stream_is_cleared(stream_client, monkeypatch, manager):
-    with stream_client.websocket_connect("/ws/stream?api_key=local-test-key") as ws:
+    with stream_client.websocket_connect("/ws/stream", subprotocols=["x-api-key", "local-test-key"]) as ws:
         assert ws.receive_bytes() == b"current frame"
     monkeypatch.setattr(ws_stream, "_browser_manager", manager)
-    with stream_client.websocket_connect("/ws/stream?api_key=local-test-key") as ws:
+    with stream_client.websocket_connect("/ws/stream", subprotocols=["x-api-key", "local-test-key"]) as ws:
         ws.send_json({"type": "set_confidence_threshold", "threshold": 0.5})
         assert ws.receive_json() == {
             "type": "control_ack",
@@ -49,7 +49,7 @@ def test_no_stale_frame_after_stream_is_cleared(stream_client, monkeypatch, mana
 
 def test_cached_frame_still_requires_authentication(stream_client):
     with pytest.raises(WebSocketDisconnect):
-        with stream_client.websocket_connect("/ws/stream?api_key=wrong-key"):
+        with stream_client.websocket_connect("/ws/stream", subprotocols=["x-api-key", "wrong-key"]):
             pytest.fail("Unauthenticated viewer connected")
 
 

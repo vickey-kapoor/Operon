@@ -7,7 +7,8 @@ python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 
 When `API_KEYS` is set, every HTTP route except `/health` needs a matching `X-API-Key`
-header, and `/ws/stream` takes the key as `?api_key=` (or an `x-api-key` subprotocol).
+header, and `/ws/stream` takes it as an `x-api-key` subprotocol (never in the URL, which is logged).
+Any `Host` other than loopback or `OPERON_ALLOWED_HOSTS` gets 400, which blocks DNS rebinding.
 Unset means no authentication, which is only safe on a trusted host. See
 [configuration.md](configuration.md).
 

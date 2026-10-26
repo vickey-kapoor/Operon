@@ -246,16 +246,37 @@ def _step_number(path: Path) -> int:
     return int(match.group(1)) if match else 0
 
 
+# Task names become file names under the screens folder. The report comes from the
+# benchmarked commit, which may be a PR branch, so anything else (a path separator,
+# "..", an absolute path) is refused rather than followed out of that folder.
+_TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+
+
+def _inside(path: Path, root: Path) -> bool:
+    resolved, base = path.resolve(), root.resolve()
+    return resolved == base or base in resolved.parents
+
+
 def trace_files(screens: Path, task: str) -> tuple[Path | None, list[tuple[int, Path]], Path | None]:
     """A task's graded screen, its step screens (step number, file) and its run folder.
 
     ``live_bench --keep-screens`` writes ``<task>.png`` for every task and, for a task
     that did not pass, its run folder at ``<task>/`` with ``step_<n>/before.png``.
+    A task name that is not a plain file name gets nothing.
     """
+    if not _TASK_NAME_RE.match(task) or ".." in task:
+        return None, [], None
     final = screens / f"{task}.png"
     run_dir = screens / task
-    steps = sorted(((_step_number(p), p) for p in run_dir.glob("step_*/before.png")), key=lambda s: s[0])
-    return (final if final.is_file() else None), steps[:MAX_STEP_SCREENS], (run_dir if run_dir.is_dir() else None)
+    if not (_inside(final, screens) and _inside(run_dir, screens)):
+        return None, [], None
+    steps = sorted(
+        ((_step_number(p), p) for p in run_dir.glob("step_*/before.png") if _inside(p, run_dir)),
+        key=lambda s: s[0],
+    )
+    final_ok = final.is_file() and not final.is_symlink()
+    run_dir_ok = run_dir.is_dir() and not run_dir.is_symlink()
+    return (final if final_ok else None), steps[:MAX_STEP_SCREENS], (run_dir if run_dir_ok else None)
 
 
 def attach_traces(report: dict, screens: Path, uploader: Uploader, work_dir: Path) -> int:

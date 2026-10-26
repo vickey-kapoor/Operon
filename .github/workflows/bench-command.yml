@@ -13,8 +13,9 @@ name: Bench command
 # cheaper model for the thin harness's completion check. azure runs a desktop
 # benchmark on our Azure VM instead of GitHub's hosted runner. Reports show the cost.
 # Nothing runs on pushes or merges: every run spends model credits, so a run
-# happens only when someone asks for one. PRs from forks are refused, since the
-# run has the repository's API keys.
+# happens only when someone with write access asks for one. PRs from forks are
+# refused, since the run has the repository's API keys; only those two keys (and,
+# for the Azure VM, its start/stop credential) are passed on.
 
 on:
   issue_comment:
@@ -79,7 +80,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.issue.pull_request.url }}
+          COMMENTER: ${{ github.event.comment.user.login }}
         run: |
+          # COLLABORATOR also covers read-only collaborators; only people who can
+          # push to the repository may spend its API credits.
+          permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$COMMENTER/permission" --jq '.permission' || echo none)
+          case "$permission" in
+            admin|maintain|write) ;;
+            *) echo "::error::$COMMENTER has '$permission' access; /bench needs write access."; exit 1 ;;
+          esac
           head_repo=$(gh api "$PR_URL" --jq '.head.repo.full_name')
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             echo "::error::Refusing to benchmark a PR from $head_repo: the run has this repository's API keys."
@@ -98,11 +107,20 @@ jobs:
       harness_profile: ${{ needs.parse.outputs.profile }}
       suite: ${{ needs.parse.outputs.suite }}
       ref: ${{ needs.parse.outputs.sha }}
-    secrets: inherit
+    # Named, not inherited: the benchmarked branch never sees the dashboard,
+    # Blob, Slack or Azure secrets.
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
   desktop:
     needs: parse
     if: needs.parse.outputs.target == 'desktop'
+    # id-token reaches only the VM start/stop jobs, which ask for it; the bench job
+    # (the benchmarked branch's code) stays at contents: read.
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/live-desktop-bench.yml
     with:
       runner: ${{ needs.parse.outputs.runner }}
@@ -112,4 +130,9 @@ jobs:
       harness_profile: ${{ needs.parse.outputs.profile }}
       suite: ${{ needs.parse.outputs.suite }}
       ref: ${{ needs.parse.outputs.sha }}
-    secrets: inherit
+    # AZURE_CREDENTIALS is used only by the VM start and stop jobs, which run this
+    # repository's default-branch workflow code, never the benchmarked branch.
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}

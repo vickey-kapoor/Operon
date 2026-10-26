@@ -87,22 +87,69 @@ def websocket_api_key_ok(websocket: WebSocket) -> bool:
     """Whether a WebSocket handshake is authorized.
 
     No-op (returns True) when API_KEYS is unset. Browsers cannot set custom
-    headers on a WebSocket, so the key is read from the ``api_key`` query
-    parameter (primary) or, failing that, an ``x-api-key`` subprotocol value
-    (client connects with subprotocols ``["x-api-key", "<key>"]``).
+    headers on a WebSocket, so the key comes as an ``x-api-key`` subprotocol value
+    (client connects with subprotocols ``["x-api-key", "<key>"]``). A query-string
+    key is not accepted: it would be written to access logs.
     """
     accepted = configured_api_keys()
     if not accepted:
         return True
-    presented = websocket.query_params.get("api_key")
-    if presented is None:
-        protocols = _offered_subprotocols(websocket)
-        if len(protocols) >= 2 and protocols[0] == "x-api-key":
-            presented = protocols[1]
+    protocols = _offered_subprotocols(websocket)
+    presented = protocols[1] if len(protocols) >= 2 and protocols[0] == "x-api-key" else None
     return presented is not None and _key_matches(presented, accepted)
 
 
 _LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def configured_allowed_hosts() -> set[str]:
+    """Host names accepted in the ``Host`` header: loopback plus ``OPERON_ALLOWED_HOSTS``."""
+    raw = os.getenv("OPERON_ALLOWED_HOSTS", "")
+    return set(_LOOPBACK_HOSTS) | {host.strip().lower() for host in raw.split(",") if host.strip()}
+
+
+def _host_name(host_header: str) -> str:
+    """The name part of a ``Host`` header value, without port or IPv6 brackets."""
+    host = host_header.strip().lower()
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+class TrustedHostMiddleware:
+    """Refuse HTTP and WebSocket requests whose ``Host`` is not an allowed name.
+
+    Always on. A web page that re-points its own domain at 127.0.0.1 (DNS
+    rebinding) makes the browser treat this API as same-origin, which bypasses
+    CORS; its requests still carry the page's domain in ``Host``, so they stop
+    here. Extra names (a LAN host, a reverse proxy) go in ``OPERON_ALLOWED_HOSTS``.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        host = ""
+        for name, value in scope.get("headers", []):
+            if name == b"host":
+                host = value.decode("latin-1")
+                break
+        if _host_name(host) in configured_allowed_hosts():
+            await self.app(scope, receive, send)
+            return
+        logger.warning("refused request with untrusted Host header %r", host)
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await send({
+            "type": "http.response.start",
+            "status": 400,
+            "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+        })
+        await send({"type": "http.response.body", "body": b"Invalid host header"})
 
 
 def websocket_origin_ok(websocket: WebSocket) -> bool:

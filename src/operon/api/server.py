@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
     load_dotenv(find_dotenv(usecwd=True), override=True)
 
     from operon.api.auth import (
+        TrustedHostMiddleware,
         configured_api_keys,
         configured_cors_origins,
         require_api_key,
@@ -85,6 +86,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Outermost: a request for a host name other than loopback (or one listed in
+    # OPERON_ALLOWED_HOSTS) is refused before routing, which blocks DNS rebinding.
+    app.add_middleware(TrustedHostMiddleware)
     # API-key auth (opt-in): enforced on every HTTP route except /health when
     # API_KEYS is set; a no-op otherwise. The agent can drive a real machine, so
     # an unauthenticated server should never be exposed beyond a trusted host.

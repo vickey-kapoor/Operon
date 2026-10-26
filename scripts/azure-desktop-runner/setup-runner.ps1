@@ -4,18 +4,22 @@ Turns a fresh Azure Windows VM into the self-hosted runner for the live desktop
 benchmark (.github/workflows/live-desktop-bench.yml, runner input "azure").
 
 .DESCRIPTION
-Run once, in an elevated PowerShell, while signed in over RDP as the account the
-runner should use (the VM's admin account). It:
+Run once, in an elevated PowerShell, while signed in over RDP as the VM's admin
+account. Running it again rebuilds the runner (it needs a fresh token). It:
 
   - installs PowerShell 7, Git and Python 3.14 (the workflow's shell and toolchain)
   - turns off Windows Update, notifications, the lock screen, the screen saver,
     sleep, Server Manager at logon and the shutdown reason prompt, so nothing
     pops up over the desktop the agent drives
+  - creates a standard (non-admin) local account for the runner, "benchrunner" by
+    default, with a random password nobody sees; benchmarked code runs as that
+    account, so it can't change the system, other accounts or the admin's files
   - signs that account in automatically at boot (Sysinternals Autologon keeps the
     password as an LSA secret, not in plain text in the registry)
-  - registers the GitHub Actions runner with the "operon-desktop" label and starts
-    it at logon, hidden, inside the interactive session; a runner installed as a
-    Windows service has no desktop to screenshot, so it is not a service
+  - registers the GitHub Actions runner as that account with the "operon-desktop"
+    label and starts it at logon, hidden, unelevated, inside the interactive
+    session; a runner installed as a Windows service has no desktop to
+    screenshot, so it is not a service
   - sets the screen to 1920x1080 each time the runner starts
 
 Then it restarts the VM. After the restart the account signs in, the runner comes
@@ -26,15 +30,16 @@ A runner registration token: repository Settings > Actions > Runners > New
 self-hosted runner, or `gh api -X POST repos/vickey-kapoor/Operon/actions/runners/registration-token --jq .token`.
 It expires after an hour.
 
-.PARAMETER Password
-The password of the account you are signed in as, for auto-logon.
+.PARAMETER RunnerUser
+The standard account the runner runs as. Created if missing; its password is
+reset to a new random one on every run of this script.
 
 .EXAMPLE
-.\setup-runner.ps1 -RunnerToken AAAA... -Password (Read-Host -AsSecureString)
+.\setup-runner.ps1 -RunnerToken AAAA...
 #>
 param(
     [Parameter(Mandatory)] [string] $RunnerToken,
-    [Parameter(Mandatory)] [securestring] $Password,
+    [string] $RunnerUser = "benchrunner",
     [string] $Repo = "vickey-kapoor/Operon",
     [string] $RunnerName = "azure-desktop",
     [string] $Labels = "operon-desktop",
@@ -50,7 +55,7 @@ $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIde
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Run this from an elevated PowerShell (Run as administrator)."
 }
-$userName = $env:USERNAME
+$userName = $RunnerUser
 $downloads = Join-Path $env:TEMP "operon-runner-setup"
 New-Item -ItemType Directory -Force -Path $downloads | Out-Null
 
@@ -67,6 +72,25 @@ function Save-File([string] $url, [string] $name) {
     return $path
 }
 
+# Every download is checked before it runs: GitHub release assets against the
+# SHA-256 digest GitHub publishes for them, other installers by their Authenticode
+# signature. A mismatch stops the script.
+function Save-Asset($asset) {
+    $path = Save-File $asset.browser_download_url $asset.name
+    if ($asset.digest -notmatch '^sha256:([0-9a-fA-F]{64})$') { throw "No SHA-256 digest published for $($asset.name)." }
+    $expected = $Matches[1]
+    $actual = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
+    if ($actual -ne $expected.ToUpperInvariant()) { throw "SHA-256 mismatch for $($asset.name): got $actual, expected $expected." }
+    return $path
+}
+
+function Assert-Signed([string] $path, [string] $publisher) {
+    $signature = Get-AuthenticodeSignature -FilePath $path
+    if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch $publisher) {
+        throw "$path is not validly signed by $publisher (status $($signature.Status))."
+    }
+}
+
 function Set-Reg([string] $path, [string] $name, $value, [string] $type = "DWord") {
     if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
     New-ItemProperty -Path $path -Name $name -Value $value -PropertyType $type -Force | Out-Null
@@ -75,16 +99,17 @@ function Set-Reg([string] $path, [string] $name, $value, [string] $type = "DWord
 # --- toolchain ---------------------------------------------------------------
 Write-Output "Installing PowerShell 7..."
 $asset = Get-LatestAsset "PowerShell/PowerShell" '^PowerShell-[\d.]+-win-x64\.msi$'
-$msi = Save-File $asset.browser_download_url $asset.name
+$msi = Save-Asset $asset
 Start-Process msiexec.exe -Wait -ArgumentList "/i", "`"$msi`"", "/quiet", "/norestart", "ADD_PATH=1"
 
 Write-Output "Installing Git..."
 $asset = Get-LatestAsset "git-for-windows/git" '^Git-[\d.]+-64-bit\.exe$'
-$exe = Save-File $asset.browser_download_url $asset.name
+$exe = Save-Asset $asset
 Start-Process $exe -Wait -ArgumentList "/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES"
 
 Write-Output "Installing Python $PythonVersion..."
 $exe = Save-File "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-amd64.exe" "python.exe"
+Assert-Signed $exe "Python Software Foundation"
 Start-Process $exe -Wait -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_test=0"
 
 # --- keep the desktop quiet --------------------------------------------------
@@ -96,11 +121,11 @@ Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
 Set-Service wuauserv -StartupType Disabled
 
 Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableNotificationCenter" 1
-Set-Reg "HKCU:\Software\Policies\Microsoft\Windows\CurrentVersion\PushNotifications" "NoToastApplicationNotification" 1
-Set-Reg "HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications" "ToastEnabled" 0
+# Machine-wide policies, so they cover the runner account as well as this one.
+Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\PushNotifications" "NoToastApplicationNotification" 1
 Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" "NoLockScreen" 1
 Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE" "DisablePrivacyExperience" 1
-Set-Reg "HKCU:\Control Panel\Desktop" "ScreenSaveActive" "0" "String"
+Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop" "ScreenSaveActive" "0" "String"
 Set-Reg "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Reliability" "ShutdownReasonOn" 0
 # Server only: no Server Manager window at logon.
 Set-Reg "HKLM:\SOFTWARE\Microsoft\ServerManager" "DoNotOpenServerManagerAtLogon" 1
@@ -113,24 +138,49 @@ powercfg /change monitor-timeout-ac 0
 powercfg /change standby-timeout-ac 0
 powercfg /change hibernate-timeout-ac 0
 
+# --- the runner's standard account -------------------------------------------
+Write-Output "Setting up the standard account $userName..."
+# A random password, used below for auto-logon and registration and then dropped.
+$bytes = New-Object byte[] 24
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$plain = [Convert]::ToBase64String($bytes) + "aA1!"
+$secure = ConvertTo-SecureString $plain -AsPlainText -Force
+if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) {
+    Set-LocalUser -Name $userName -Password $secure -PasswordNeverExpires $true
+} else {
+    New-LocalUser -Name $userName -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
+        -Description "Runs the Operon desktop benchmark" | Out-Null
+}
+Add-LocalGroupMember -Group "Users" -Member $userName -ErrorAction SilentlyContinue
+# Never an administrator: the benchmark runs whatever code the PR branch carries.
+Remove-LocalGroupMember -Group "Administrators" -Member $userName -ErrorAction SilentlyContinue
+$credential = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$userName", $secure)
+
 # --- auto-logon --------------------------------------------------------------
 Write-Output "Setting up auto-logon for $userName..."
 $autologon = Save-File "https://live.sysinternals.com/Autologon64.exe" "Autologon64.exe"
-$plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
-    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password))
+Assert-Signed $autologon "Microsoft Corporation"
 Start-Process $autologon -Wait -ArgumentList $userName, $env:COMPUTERNAME, $plain, "/accepteula"
 $plain = $null
 
 # --- GitHub Actions runner ---------------------------------------------------
 Write-Output "Installing the GitHub Actions runner..."
+# A runner from an earlier setup (possibly under the admin account) goes first.
+Unregister-ScheduledTask -TaskName "OperonRunner" -Confirm:$false -ErrorAction SilentlyContinue
+Get-Process Runner.Listener, Runner.Worker -ErrorAction SilentlyContinue | Stop-Process -Force
+if (Test-Path $RunnerDir) { Remove-Item $RunnerDir -Recurse -Force }
 $asset = Get-LatestAsset "actions/runner" '^actions-runner-win-x64-[\d.]+\.zip$'
-$zip = Save-File $asset.browser_download_url $asset.name
+$zip = Save-Asset $asset
 New-Item -ItemType Directory -Force -Path $RunnerDir | Out-Null
 Expand-Archive -Path $zip -DestinationPath $RunnerDir -Force
-& "$RunnerDir\config.cmd" --unattended --replace `
-    --url "https://github.com/$Repo" --token $RunnerToken `
-    --name $RunnerName --labels $Labels --work "_work"
-if ($LASTEXITCODE -ne 0) { throw "Runner registration failed (is the token older than an hour?)." }
+# The runner account owns its folder so the runner can update itself.
+icacls $RunnerDir /grant "${userName}:(OI)(CI)F" /T /Q | Out-Null
+# Registered as the runner account: its credentials are encrypted for that account.
+$config = Start-Process cmd.exe -Credential $credential -LoadUserProfile -Wait -PassThru `
+    -WorkingDirectory $RunnerDir -ArgumentList "/c", "config.cmd", "--unattended", "--replace", `
+    "--url", "https://github.com/$Repo", "--token", $RunnerToken, `
+    "--name", $RunnerName, "--labels", $Labels, "--work", "_work"
+if ($config.ExitCode -ne 0) { throw "Runner registration failed (is the token older than an hour?)." }
 
 # Started at logon: sets the screen size, then runs the runner in this session.
 @'
@@ -170,14 +220,15 @@ Set-Location $PSScriptRoot
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$RunnerDir\start-runner.ps1`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\$userName"
-$taskPrincipal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$userName" -LogonType Interactive -RunLevel Highest
+$taskPrincipal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$userName" -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName "OperonRunner" -Action $action -Trigger $trigger `
     -Principal $taskPrincipal -Settings $settings -Force | Out-Null
 
-# Leaving RDP by closing the window locks the session, and a locked session has no
-# desktop to capture. This hands the session back to the console instead.
+# RDP in as the admin account: that is a separate session and leaves the runner's
+# console alone. Signing in over RDP as the runner account instead takes over its
+# session, and closing the window then locks it; this hands it back to the console.
 @'
 @echo off
 for /f "skip=1 tokens=3" %%s in ('query user %USERNAME%') do tscon %%s /dest:console

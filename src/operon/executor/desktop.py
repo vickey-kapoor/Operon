@@ -6,6 +6,7 @@ import asyncio
 import ctypes
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -63,6 +64,16 @@ _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 _NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
 # Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
 _CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
+
+# Environment variables an app the agent launches must not inherit: a shell the
+# model (or a prompt injection on screen) drives could otherwise print or send
+# the server's API keys and tokens.
+_SECRET_ENV_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|WEBHOOK|DATABASE_URL", re.IGNORECASE)
+
+
+def _launch_env() -> dict[str, str]:
+    """This process's environment minus anything that looks like a secret."""
+    return {name: value for name, value in os.environ.items() if not _SECRET_ENV_RE.search(name)}
 
 
 def _mss():
@@ -832,7 +843,9 @@ class DesktopExecutor(Executor):
             elif command in _CONSOLE_APPS:
                 # Its own console, and no redirected handles: an interactive shell
                 # handed the server's empty stdin reads EOF and closes at once.
-                proc = await asyncio.to_thread(subprocess.Popen, command, creationflags=_NEW_CONSOLE)
+                proc = await asyncio.to_thread(
+                    subprocess.Popen, command, creationflags=_NEW_CONSOLE, env=_launch_env()
+                )
             else:
                 proc = await asyncio.to_thread(
                     subprocess.Popen,
@@ -843,6 +856,7 @@ class DesktopExecutor(Executor):
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     creationflags=_NO_CONSOLE,
+                    env=_launch_env(),
                 )
                 # Track process for cleanup
                 if self._current_run_id is not None:

@@ -9,8 +9,29 @@ by task.
 - `api/runs.js` (`GET /api/runs`): every run with its summary and config.
 - `api/report.js` (`GET /api/report?key=<run key>`): one run with its per-task results.
 - `api/blob.js` (`GET /api/blob?url=<blob url>`): one screenshot or trace from the private Blob store.
+- `middleware.js`, `server/auth.js`: password protection for every request (see Access).
 - `server/db.js`: the Postgres pool the routes share, from `DATABASE_URL`.
 - `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.
+
+## Access
+
+Every request, the page included, needs the password in the `DASHBOARD_PASSWORD`
+environment variable of the Vercel project (Settings > Environment Variables). The
+browser asks for it once; any user name works. Without the variable the dashboard
+serves nothing (503), so set it before deploying. `npm test` checks the logic.
+The local `npm run dev` server skips the check and listens on 127.0.0.1 only.
+
+The page only reads the database, so give Vercel a read-only role rather than the
+owner connection string the importer uses. In the Neon SQL editor:
+
+```sql
+CREATE ROLE dashboard_reader LOGIN PASSWORD '<a new password>';
+GRANT USAGE ON SCHEMA public TO dashboard_reader;
+GRANT SELECT ON bench_runs, bench_task_results TO dashboard_reader;
+```
+
+Then set the Vercel project's `DATABASE_URL` to that role's connection string; the
+GitHub `DATABASE_URL` secret keeps the owner role, since the importer writes.
 
 ## Data
 
@@ -54,7 +75,7 @@ without credentials, and the page loads them through `/api/blob`, which reads th
 the Vercel project (`BLOB_STORE_ID`, set when the store is connected to the project, or
 `BLOB_READ_WRITE_TOKEN`). The benchmark workflows upload with the `BLOB_READ_WRITE_TOKEN`
 GitHub secret. So the screenshots are
-visible to whoever can open the dashboard, and to no one else.
+visible to whoever has the dashboard password, and to no one else.
 
 Without the secret, results are imported without screenshots.
 

@@ -8,6 +8,8 @@ import pytest
 # Prevent any AgentLoop from calling reset_desktop() (Win+D) or other
 # real desktop side-effects during the test suite.
 os.environ.setdefault("OPERON_TEST_SAFE_MODE", "true")
+# Starlette's TestClient and httpx test transports send Host: testserver / test.
+os.environ.setdefault("OPERON_ALLOWED_HOSTS", "testserver,test")
 
 # Pre-import modules that test stubs (test_phase4_integration.py) replace via
 # sys.modules.setdefault — ensures the real implementations are loaded first so

@@ -66,6 +66,11 @@ on:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
         default: ""
+    # Only these secrets reach a /bench run; the caller passes them by name.
+    secrets:
+      ANTHROPIC_API_KEY: {required: false}
+      GEMINI_API_KEY: {required: false}
+      AZURE_CREDENTIALS: {required: false}
 
 permissions:
   contents: read
@@ -82,20 +87,31 @@ jobs:
     if: inputs.runner == 'azure'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # id-token: sign in to Azure with GitHub's OIDC token when AZURE_CLIENT_ID is set.
+    permissions:
+      contents: read
+      id-token: write
     env:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
       VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
     steps:
       - name: Check the settings
         run: |
-          missing=""
-          [ -n "$AZURE_CREDENTIALS" ] || missing="$missing secret AZURE_CREDENTIALS"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing repository setting(s):$missing. See docs/azure-desktop-runner.md."
+          if [ -z "$AZURE_CLIENT_ID" ] && [ -z "$AZURE_CREDENTIALS" ]; then
+            echo "::error::Set repo variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID (or the older AZURE_CREDENTIALS secret). See docs/azure-desktop-runner.md."
             exit 1
           fi
-      - uses: azure/login@v2
+      # Preferred: OIDC, no stored secret. The AZURE_CREDENTIALS secret is the fallback.
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        if: env.AZURE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        if: env.AZURE_CLIENT_ID == ''
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       # The VM signs in automatically at boot and its runner comes online a minute or
@@ -133,9 +149,11 @@ jobs:
             exit 1
           }
 
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || '' }}
+          # The benchmarked code (possibly a PR branch) needs no git token.
+          persist-credentials: false
 
       - name: Reset the desktop
         # The Azure VM keeps its state between runs, unlike a hosted runner: close the
@@ -152,6 +170,26 @@ jobs:
             -Recurse -Force -ErrorAction SilentlyContinue
           Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue |
             ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+          # The VM is not wiped between runs and each run executes the benchmarked
+          # branch's code as the runner account, so remove the usual places that code
+          # could leave something to start later and see the next run's API keys.
+          foreach ($key in "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+                           "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce") {
+            if (Test-Path $key) {
+              (Get-Item $key).Property | ForEach-Object { Remove-ItemProperty -Path $key -Name $_ -ErrorAction SilentlyContinue }
+            }
+          }
+          Get-ChildItem ([Environment]::GetFolderPath("Startup")) -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          # Tasks this account registered itself (the runner's own task is the admin's).
+          Get-ScheduledTask -ErrorAction SilentlyContinue |
+            Where-Object { $_.Principal.UserId -match "\b$env:USERNAME$" -and $_.TaskName -ne "OperonRunner" -and $_.Author -match "\b$env:USERNAME$" } |
+            Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+          $docs = [Environment]::GetFolderPath("MyDocuments")
+          foreach ($dir in "PowerShell", "WindowsPowerShell") {
+            Remove-Item (Join-Path $docs "$dir\profile.ps1"), (Join-Path $docs "$dir\Microsoft.PowerShell_profile.ps1") `
+              -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Set the desktop model
         if: inputs.desktop_model != ''
@@ -168,7 +206,11 @@ jobs:
           [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 
       - name: Install uv
-        run: python -m pip install --upgrade pip uv
+        # A per-user install: the Azure runner is a standard account that can't write
+        # to the machine-wide Python, so put the user's scripts folder on PATH.
+        run: |
+          python -m pip install --user --upgrade uv
+          python -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))" | Add-Content -Path $env:GITHUB_PATH
 
       - name: Install dependencies (exact versions from uv.lock)
         run: uv sync --locked --extra dev
@@ -210,7 +252,7 @@ jobs:
 
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: bench-desktop
           # .var/bench holds the JSON report and each task's graded screenshot.
@@ -228,11 +270,22 @@ jobs:
     if: ${{ always() && inputs.runner == 'azure' && needs.start-vm.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
       VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
     steps:
-      - uses: azure/login@v2
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        if: env.AZURE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        if: env.AZURE_CLIENT_ID == ''
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       # Deallocated, not just stopped: a stopped VM still bills for compute.

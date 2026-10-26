@@ -83,7 +83,6 @@ FastAPI routes
 - Desktop control of native apps with the Gemini JSON backend (default) or Claude computer
   use (`OPERON_DESKTOP_BACKEND=claude_computer_use`).
 - Deterministic policy rules before LLM fallback (full harness).
-- Rolling spatial memory for recent elements and ghost-element handling.
 - Adaptive click servo checks before browser/desktop clicks.
 - Human-in-the-loop pause/resume for uncertain or blocked states.
 - Run artifacts under `.var/runs/<run_id>/` by default, including screenshots, model I/O, policy decisions, execution traces, and logs.

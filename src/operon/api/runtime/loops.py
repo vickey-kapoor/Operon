@@ -73,7 +73,6 @@ def _loop_layers(*, config, services, memory_store) -> dict:
         "policy_service": PolicyCoordinator(
             delegate=services.policy_delegate,
             memory_store=memory_store,
-            element_buffer=getattr(services.perception_service, "element_buffer", None),
         ),
         "verifier_service": DeterministicVerifierService(gemini_client=build_verifier_client(config=config)),
         "recovery_manager": RuleBasedRecoveryManager(),

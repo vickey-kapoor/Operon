@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from operon.agent.policy import GeminiPolicyService
 from operon.agent.policy.coordinator import PolicyCoordinator
 from operon.models.common import FailureCategory, LoopStage, RunStatus
 from operon.models.execution import ExecutedAction
@@ -20,6 +19,7 @@ from operon.models.verification import (
 )
 from operon.store.memory import FileBackedMemoryStore
 from tests.fixtures.paths import unique_artifact_dir
+from tests.fixtures.policy import PromptPolicyStub
 
 
 class StubGeminiClient:
@@ -124,7 +124,7 @@ async def test_llm_policy_used_only_when_no_rule_matches() -> None:
         response='{"action":{"action_type":"click","target_element_id":"help-link"},"rationale":"Inspect the help link.","confidence":0.9,"active_subgoal":"inspect page","expected_change":"navigation"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     state = AgentState(
@@ -174,7 +174,7 @@ async def test_type_action_reaches_executor_without_rule_interception() -> None:
         response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     state = AgentState(
@@ -200,7 +200,7 @@ async def test_search_query_rule_clicks_search_input_before_typing() -> None:
         response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     state = AgentState(
@@ -224,7 +224,7 @@ async def test_search_query_rule_types_and_submits_when_search_input_focused() -
         response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     state = AgentState(
@@ -253,7 +253,7 @@ async def test_no_identical_type_retry_is_enforced_after_failed_type() -> None:
         response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Retry name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     prior_type = AgentAction(action_type=ActionType.TYPE, target_element_id="name-input", text="Alice")
@@ -302,7 +302,7 @@ async def test_failed_type_target_not_found_forces_click_on_next_step() -> None:
         response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Retry name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     prior_type = AgentAction(action_type=ActionType.TYPE, target_element_id="name-input", text="Alice")
@@ -351,7 +351,7 @@ async def test_form_success_stop_confirmed_when_llm_agrees() -> None:
         response='{"action":{"action_type":"stop"},"rationale":"Task complete.","confidence":1.0,"active_subgoal":"verify_success","expected_change":"none"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     state = AgentState(
@@ -378,7 +378,7 @@ async def test_form_success_stop_overridden_when_llm_sees_error() -> None:
         response='{"action":{"action_type":"wait","wait_ms":500},"rationale":"Error page visible, not success.","confidence":0.9,"active_subgoal":"reassess","expected_change":"none"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     state = AgentState(
@@ -404,7 +404,7 @@ async def test_browser_navigation_summary_does_not_trigger_success_stop_rule() -
         response='{"action":{"action_type":"click","x":229,"y":257},"rationale":"Click the Learn more link.","confidence":0.8,"active_subgoal":"click_link","expected_change":"navigation"}'
     )
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
     state = AgentState(
@@ -433,21 +433,18 @@ async def test_browser_navigation_summary_does_not_trigger_success_stop_rule() -
 
 
 @pytest.mark.asyncio
-async def test_reset_run_context_clears_episode_and_hint_cache() -> None:
-    """Per project invariants: reset_run_context must clear active_episode, replay_state,
-    and the hint cache so context from a previous task does not bleed across runs.
+async def test_reset_run_context_clears_hint_cache() -> None:
+    """Per project invariants: reset_run_context must clear the hint cache so context from a previous task does not bleed across runs.
     Auth state is intentionally preserved at the executor layer — not asserted here."""
     root = _local_test_dir("test-reset-run-context")
     client = StubGeminiClient(response='{"action":{"action_type":"wait"},"rationale":"x","confidence":0.1,"active_subgoal":"x","expected_change":"none"}')
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root)),
+        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
     )
 
     # Simulate state populated during a prior run. Sentinel objects are sufficient
     # — we only assert the fields are cleared back to None / empty.
-    coordinator._active_episode = object()  # type: ignore[assignment]
-    coordinator._replay_state = object()  # type: ignore[assignment]
     coordinator._cached_hints = []
     coordinator._cached_hints_key = ("benchmark-prior", "form_page", None, None)
     coordinator.rule_engine._form_options_clicked["run-prior"] = {"x"}
@@ -455,8 +452,6 @@ async def test_reset_run_context_clears_episode_and_hint_cache() -> None:
 
     coordinator.reset_run_context("run-prior")
 
-    assert coordinator._active_episode is None
-    assert coordinator._replay_state is None
     assert coordinator._cached_hints is None
     assert coordinator._cached_hints_key is None
     assert "run-prior" not in coordinator.rule_engine._form_options_clicked
@@ -472,7 +467,7 @@ async def test_last_rule_trace_injected_as_advisory_hint_to_llm() -> None:
     client = StubGeminiClient(
         response='{"action":{"action_type":"click","target_element_id":"help-link"},"rationale":"x","confidence":0.9,"active_subgoal":"y","expected_change":"none"}'
     )
-    delegate = GeminiPolicyService(gemini_client=client, prompt_path=_prompt_path(root))
+    delegate = PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root))
     coordinator = PolicyCoordinator(
         delegate=delegate,
         memory_store=FileBackedMemoryStore(root_dir=root / "runs"),

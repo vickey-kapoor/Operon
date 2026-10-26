@@ -87,13 +87,6 @@ logger = logging.getLogger(__name__)
 
 _TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
 
-# Default demo target for run_live_benchmark: a public, auth-free form used as a
-# smoke/demo run. This is the one site-specific literal the loop carries; keep it
-# named here (rather than buried as a method default) so it is easy to find and
-# override via the benchmark_url / intent arguments for real tasks.
-DEFAULT_BENCHMARK_URL = "https://practice-automation.com/form-fields/"
-DEFAULT_BENCHMARK_INTENT = "Complete the auth-free form and submit it successfully."
-
 _LIVENESS_RETRY_MAX = 3
 _LIVENESS_RETRY_FIRST_SLEEP_S = 0.5   # fast recovery for brief UI transitions (e.g. search overlay animating in)
 _LIVENESS_RETRY_SLEEP_S = 1.5         # subsequent retries give slower loads more time
@@ -286,36 +279,6 @@ class AgentLoop:
         await asyncio.sleep(settle_delay)
         record.force_fresh_perception = False
 
-    async def run_live_benchmark(
-        self,
-        intent: str = DEFAULT_BENCHMARK_INTENT,
-        *,
-        benchmark_url: str = DEFAULT_BENCHMARK_URL,
-        max_steps: int = 12,
-    ) -> RunResponse:
-        response = await self.start_run(RunTaskRequest(intent=intent, start_url=benchmark_url))
-
-        while True:
-            state = await self.run_store.get_run(response.run_id)
-            if state is None:
-                raise ValueError(f"Run {response.run_id!r} not found")
-            if state.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.WAITING_FOR_USER, RunStatus.CANCELLED}:
-                return response
-            if state.step_count >= max_steps:
-                state.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
-                updated = await self.run_store.set_status(state.run_id, RunStatus.FAILED)
-                try:
-                    await self._cleanup_completed_run(state.run_id)
-                except Exception as exc:
-                    logger.warning("cleanup after max_steps failed: %s", exc)
-                return RunResponse(
-                    run_id=updated.run_id,
-                    status=updated.status,
-                    intent=updated.intent,
-                    step_count=updated.step_count,
-                )
-            response = await self.step_run(StepRequest(run_id=response.run_id))
-
     async def resume_run(self, run_id: str, *, approve_gated_action: bool = True) -> RunResponse:
         """Resume a run that was paused waiting for user input.
 
@@ -417,20 +380,6 @@ class AgentLoop:
         frame = await self.capture_service.capture(record)
         _trace("  1 CAPTURE OK", f"{_record_stage('capture', _t0):.2f}s  frame={type(frame).__name__}")
 
-        # High-velocity guard: if the screen changed by >5% since the last burst
-        # capture, the UI underwent a major transition (app switch, navigation, modal
-        # opening). Stale element coordinates in the rolling buffer would produce
-        # ghost elements from the previous context — clear it now to prevent
-        # cross-app state contamination.
-        if frame.visual_velocity > 0.05:
-            _element_buffer = getattr(self.perception_service, "element_buffer", None)
-            if _element_buffer is not None:
-                _element_buffer.clear()
-                logger.info(
-                    "element_buffer cleared: visual_velocity=%.3f > 0.05 — "
-                    "major UI transition detected, stale ghost elements purged (run=%s)",
-                    frame.visual_velocity, record.run_id[:8],
-                )
         # Inject memory hints before perceive() so combined mode includes them
         if hasattr(self.policy_service, "prepare_hints"):
             self.policy_service.prepare_hints(record, None)

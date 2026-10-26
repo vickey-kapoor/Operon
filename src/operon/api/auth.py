@@ -105,6 +105,56 @@ def websocket_api_key_ok(websocket: WebSocket) -> bool:
 _LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
+def configured_allowed_hosts() -> set[str]:
+    """Host names accepted in the ``Host`` header: loopback plus ``OPERON_ALLOWED_HOSTS``."""
+    raw = os.getenv("OPERON_ALLOWED_HOSTS", "")
+    return set(_LOOPBACK_HOSTS) | {host.strip().lower() for host in raw.split(",") if host.strip()}
+
+
+def _host_name(host_header: str) -> str:
+    """The name part of a ``Host`` header value, without port or IPv6 brackets."""
+    host = host_header.strip().lower()
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+class TrustedHostMiddleware:
+    """Refuse HTTP and WebSocket requests whose ``Host`` is not an allowed name.
+
+    Always on. A web page that re-points its own domain at 127.0.0.1 (DNS
+    rebinding) makes the browser treat this API as same-origin, which bypasses
+    CORS; its requests still carry the page's domain in ``Host``, so they stop
+    here. Extra names (a LAN host, a reverse proxy) go in ``OPERON_ALLOWED_HOSTS``.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        host = ""
+        for name, value in scope.get("headers", []):
+            if name == b"host":
+                host = value.decode("latin-1")
+                break
+        if _host_name(host) in configured_allowed_hosts():
+            await self.app(scope, receive, send)
+            return
+        logger.warning("refused request with untrusted Host header %r", host)
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await send({
+            "type": "http.response.start",
+            "status": 400,
+            "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+        })
+        await send({"type": "http.response.body", "body": b"Invalid host header"})
+
+
 def websocket_origin_ok(websocket: WebSocket) -> bool:
     """Whether a WebSocket handshake comes from an allowed browser origin.
 

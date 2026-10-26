@@ -170,6 +170,26 @@ jobs:
             -Recurse -Force -ErrorAction SilentlyContinue
           Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue |
             ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+          # The VM is not wiped between runs and each run executes the benchmarked
+          # branch's code as the runner account, so remove the usual places that code
+          # could leave something to start later and see the next run's API keys.
+          foreach ($key in "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+                           "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce") {
+            if (Test-Path $key) {
+              (Get-Item $key).Property | ForEach-Object { Remove-ItemProperty -Path $key -Name $_ -ErrorAction SilentlyContinue }
+            }
+          }
+          Get-ChildItem ([Environment]::GetFolderPath("Startup")) -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          # Tasks this account registered itself (the runner's own task is the admin's).
+          Get-ScheduledTask -ErrorAction SilentlyContinue |
+            Where-Object { $_.Principal.UserId -match "\b$env:USERNAME$" -and $_.TaskName -ne "OperonRunner" -and $_.Author -match "\b$env:USERNAME$" } |
+            Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+          $docs = [Environment]::GetFolderPath("MyDocuments")
+          foreach ($dir in "PowerShell", "WindowsPowerShell") {
+            Remove-Item (Join-Path $docs "$dir\profile.ps1"), (Join-Path $docs "$dir\Microsoft.PowerShell_profile.ps1") `
+              -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Set the desktop model
         if: inputs.desktop_model != ''
@@ -186,7 +206,11 @@ jobs:
           [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 
       - name: Install uv
-        run: python -m pip install --upgrade pip uv
+        # A per-user install: the Azure runner is a standard account that can't write
+        # to the machine-wide Python, so put the user's scripts folder on PATH.
+        run: |
+          python -m pip install --user --upgrade uv
+          python -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))" | Add-Content -Path $env:GITHUB_PATH
 
       - name: Install dependencies (exact versions from uv.lock)
         run: uv sync --locked --extra dev

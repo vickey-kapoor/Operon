@@ -9,9 +9,10 @@ the benchmark, and deallocates the VM again, so the VM costs nothing between run
 except its disk and IP (a few dollars a month). Only one Azure run happens at a time.
 
 The VM is a Standard_D4s_v5 (4 vCPU, 16 GB) running Windows Server 2022 with the
-desktop experience. The setup script signs its admin account in automatically at
-boot and starts the runner inside that interactive session at 1920x1080, with
-Windows Update, notifications and the lock screen off. Server has no Calculator
+desktop experience. The setup script creates a standard (non-admin) account,
+`benchrunner`, signs it in automatically at boot and starts the runner, unelevated,
+inside that interactive session at 1920x1080, with Windows Update, notifications
+and the lock screen off. The admin account `operon` is only for you, over RDP. Server has no Calculator
 app, so `calculator_multiply` fails there, as it does on the hosted runner.
 
 ## One-time setup
@@ -54,18 +55,34 @@ az vm auto-shutdown --resource-group $rg --name $vm --time 0700
 
    ```powershell
    Set-ExecutionPolicy -Scope Process Bypass
-   C:\setup-runner.ps1 -RunnerToken <token> -Password (Read-Host -AsSecureString "operon's password")
+   C:\setup-runner.ps1 -RunnerToken <token>
    ```
 
-The script installs PowerShell 7, Git and Python 3.14, quiets the desktop, sets up
-auto-logon, registers the runner (name `azure-desktop`, label `operon-desktop`)
-and restarts the VM, which drops your RDP session. A minute later the runner
-should show as **Idle** under Settings > Actions > Runners.
+The script installs PowerShell 7, Git and Python 3.14, quiets the desktop, creates
+the `benchrunner` account with a random password nobody sees, sets up auto-logon for
+it, registers the runner as that account (name `azure-desktop`, label
+`operon-desktop`) and restarts the VM, which drops your RDP session. A minute later
+the runner should show as **Idle** under Settings > Actions > Runners.
 
-Don't RDP in again unless you need to. Closing an RDP window locks the session,
-and a locked session has no desktop for the agent to see. If you do RDP in,
-leave by running `C:\actions-runner\leave-rdp.cmd`, which hands the session back
-to the console, or restart the VM.
+RDP in as `.\operon` when you need the VM. That is a separate session, so the
+runner's desktop keeps running. Don't sign in as `benchrunner`.
+
+### Why a standard account
+
+A `/bench desktop azure` run executes the benchmarked branch's code on this VM, and
+the VM is not wiped between runs. Under a standard account that code can't install
+services, change system settings or read the admin's files. Each run also starts by
+removing the usual places it could leave something to start later (the account's
+Run keys, Startup folder, its own scheduled tasks and PowerShell profiles), so a
+leftover can't see the next run's API keys. That cleanup is best effort. Rebuilding
+the VM from a fresh image is the only full reset, so rebuild it if a branch you
+didn't write was ever benchmarked on it.
+
+**Moving an existing VM to the standard account.** Older setups ran the runner as
+the admin account. Get a new runner token, RDP in as `.\operon`, copy the current
+`setup-runner.ps1` to the VM and run step 2 again. It creates `benchrunner`, removes
+the old runner and its logon task, registers the runner again and restarts. Do it
+while no benchmark is running.
 
 ### 3. Let the workflow start and stop the VM
 

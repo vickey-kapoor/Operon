@@ -106,9 +106,17 @@ class AnthropicHttpClient:
         media_type: str,
         effort: str | None = "low",
         max_tokens: int = 4096,
+        earlier_images: list[tuple[str, str]] | None = None,
     ) -> str:
         """One text answer about one screenshot, for models that only take adaptive
-        thinking (Opus 4.7+, Sonnet 5+): no ``thinking`` setting, effort instead."""
+        thinking (Opus 4.7+, Sonnet 5+): no ``thinking`` setting, effort instead.
+
+        ``earlier_images`` (``(data, media_type)`` pairs, oldest first) go before the
+        main image, for a question that needs what happened earlier too."""
+        earlier = [
+            {"type": "image", "source": {"type": "base64", "media_type": kind, "data": data}}
+            for data, kind in earlier_images or []
+        ]
         payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": max_tokens,
@@ -117,6 +125,7 @@ class AnthropicHttpClient:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
+                        *earlier,
                         {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_data}},
                     ],
                 }

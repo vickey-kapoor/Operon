@@ -259,3 +259,49 @@ async def test_the_completion_check_records_its_usage(tmp_path) -> None:
     debug = verifier.latest_debug_artifacts()
     assert debug.usage == usage
     assert debug.usage_artifact_path.endswith("final_check_usage.json")
+
+
+@pytest.mark.asyncio
+async def test_the_check_also_sees_earlier_screens_so_work_the_last_screen_hides_still_counts(tmp_path) -> None:
+    # Seen live: "change the password, then sign out" ends on a sign-in page that
+    # cannot show the change; with only that screen the check rejected "done" 20 times.
+    from PIL import Image
+
+    def screen(name: str) -> str:
+        path = tmp_path / name
+        Image.new("RGB", (64, 48), "white").save(path)
+        return str(path)
+
+    paths = [screen(f"step_{i}.png") for i in range(1, 6)]
+    state = AgentState(
+        run_id="run-thin", intent="Change my password, then sign out", status=RunStatus.RUNNING,
+        observation_history=[
+            ScreenPerception(summary=f"step {i}", page_hint=PageHint.UNKNOWN, capture_artifact_path=path,
+                             elements_reported=False)
+            for i, path in enumerate(paths, 1)
+        ],
+    )
+    client = Mock(generate_judgement=AsyncMock(return_value='{"complete": true, "reason": "Changed, then signed out."}'))
+    stop = AgentAction(action_type=ActionType.STOP)
+
+    result = await FinalCheckVerifier(client).verify(state, _decision(stop, "Done."), _executed(stop))
+
+    assert result.status is VerificationStatus.SUCCESS
+    call = client.generate_judgement.await_args
+    # The last three screens before the final one, oldest first; the final one is the main image.
+    assert len(call.kwargs["earlier_images"]) == 3
+    assert "first 3 images are earlier screens" in call.args[0]
+
+
+@pytest.mark.asyncio
+async def test_earlier_screens_go_before_the_final_one_in_the_request() -> None:
+    from operon.clients.anthropic import AnthropicHttpClient
+
+    client = AnthropicHttpClient(api_key="test", model="claude-opus-5-5")
+    client._post_json = AsyncMock(return_value={"content": [{"type": "text", "text": '{"complete": true, "reason": "ok"}'}]})
+
+    await client.generate_judgement("Is it done?", image_data="ZmluYWw=", media_type="image/jpeg",
+                                    earlier_images=[("b25l", "image/png"), ("dHdv", "image/png")])
+
+    content = client._post_json.await_args.args[0]["messages"][0]["content"]
+    assert [block.get("source", {}).get("data") for block in content[1:]] == ["b25l", "dHdv", "ZmluYWw="]

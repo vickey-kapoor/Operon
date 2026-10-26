@@ -534,7 +534,7 @@ function renderCostElsewhere() {
     groups.set(id, { mode: run.mode, suite, count: (groups.get(id)?.count || 0) + 1 });
   }
   if (!groups.size) return;
-  const names = { browser: "Browser", desktop: "Desktop", full: "full suite", smoke: "smoke", safety: "safety" };
+  const names = { browser: "Browser", desktop: "Desktop", full: "full suite", smoke: "smoke", safety: "safety", apps: "apps" };
   host.append(el("p", { class: "note" }, "Cost has been measured for:"));
   for (const g of groups.values()) {
     host.append(el("button", {

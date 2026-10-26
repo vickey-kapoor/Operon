@@ -696,8 +696,8 @@ async def test_policy_llm_fallback_is_used_when_no_rule_fires() -> None:
     memory_dir = test_root / "memory"
     memory_store = FileBackedMemoryStore(root_dir=memory_dir)
 
-    from operon.agent.policy import GeminiPolicyService
-    policy_service = GeminiPolicyService(
+    from tests.fixtures.policy import PromptPolicyStub
+    policy_service = PromptPolicyStub(
         gemini_client=_StubLLMClient(),  # type: ignore[arg-type]
         prompt_path=prompt_path,
     )

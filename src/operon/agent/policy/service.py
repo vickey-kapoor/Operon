@@ -5,18 +5,12 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 from pydantic import ValidationError
 
-from operon.agent._agent_utils import collect_latest_usage
-from operon.clients.gemini import GeminiClient, GeminiClientError
-from operon.core.paths import prompts_dir
-from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import ScreenPerception
 from operon.models.policy import ActionType, PolicyDecision
 from operon.models.state import AgentState
-from operon.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
 
@@ -38,110 +32,6 @@ class PolicyService(ABC):
         """Whether a second ``choose_action`` for the same step yields a fresh
         decision (Best-of-N sampling needs it)."""
         return True
-
-
-class GeminiPolicyService(PolicyService):
-    """Gemini-backed policy implementation for one-step next-action selection."""
-
-    def __init__(
-        self,
-        gemini_client: GeminiClient,
-        prompt_path: Path | None = None,
-    ) -> None:
-        self.gemini_client = gemini_client
-        self.prompt_path = prompt_path or prompts_dir() / "policy_prompt.txt"
-        self._prompt_template = self.prompt_path.read_text(encoding="utf-8")
-        self._last_debug_artifacts: ModelDebugArtifacts | None = None
-        self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
-
-    async def choose_action(
-        self,
-        state: AgentState,
-        perception: ScreenPerception,
-    ) -> PolicyDecision:
-        prompt = self._render_prompt(state, perception)
-        step_dir = Path(perception.capture_artifact_path).resolve().parent
-        debug_artifacts = self._artifact_paths(step_dir)
-        bg_writer.enqueue(debug_artifacts.prompt_artifact_path, prompt)
-        try:
-            raw_output = await self.gemini_client.generate_policy(prompt)
-        except GeminiClientError:
-            raise
-        bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
-        decision = parse_policy_output(raw_output)
-        bg_writer.enqueue(debug_artifacts.parsed_artifact_path, decision.model_dump_json())
-        self._last_debug_artifacts = ModelDebugArtifacts(
-            prompt_artifact_path=str(debug_artifacts.prompt_artifact_path),
-            raw_response_artifact_path=str(debug_artifacts.raw_response_artifact_path),
-            parsed_artifact_path=str(debug_artifacts.parsed_artifact_path),
-            usage_artifact_path=str(debug_artifacts.usage_artifact_path),
-            usage=collect_latest_usage(self.gemini_client, debug_artifacts.usage_artifact_path),
-        )
-        return decision
-
-    def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
-        return self._last_debug_artifacts
-
-    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
-        """Reset hints to a known state. Test use only."""
-        self._advisory_hints = {"": [(h, "") for h in hints if h]}
-
-    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
-        """Append hints scoped to run_id so concurrent runs don't cross-contaminate."""
-        incoming = [(h, source) for h in hints if h]
-        bucket = self._advisory_hints.setdefault(run_id, [])
-        bucket.extend(incoming)
-        logger.debug(
-            "add_advisory_hints(%s): run=%r source=%r incoming=%d total=%d",
-            self.__class__.__name__, run_id, source, len(incoming), len(bucket),
-        )
-
-    def clear_advisory_hints(self, run_id: str = "") -> None:
-        self._advisory_hints.pop(run_id, None)
-
-    def _render_prompt(self, state: AgentState, perception: ScreenPerception) -> str:
-        last_verification = "none"
-        if state.verification_history:
-            last_vr = state.verification_history[-1]
-            parts = [f"status={last_vr.status}", f"reason={last_vr.reason!r}"]
-            if last_vr.recovery_hint:
-                parts.append(f"recovery_hint={last_vr.recovery_hint!r}")
-            last_verification = ", ".join(parts)
-        prompt = self._prompt_template.format(
-            intent=state.intent,
-            current_subgoal=state.current_subgoal or "not set",
-            step_count=state.step_count,
-            retry_counts=json.dumps(state.retry_counts, sort_keys=True),
-            perception_json=perception.model_dump_json(),
-            last_verification=last_verification,
-        )
-        hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None)
-        if hints:
-            _counts: dict[str, int] = {}
-            for _, _src in hints:
-                _label = _src or "unknown"
-                _counts[_label] = _counts.get(_label, 0) + 1
-            logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
-            prompt = f"{prompt}\n\nAdvisory memory hints:\n" + "\n".join(f"- {h}" for h, _ in hints)
-        return prompt
-
-    @staticmethod
-    def _artifact_paths(step_dir: Path) -> "_StageArtifactPaths":
-        step_dir.mkdir(parents=True, exist_ok=True)
-        return _StageArtifactPaths(
-            prompt_artifact_path=step_dir / "policy_prompt.txt",
-            raw_response_artifact_path=step_dir / "policy_raw.txt",
-            parsed_artifact_path=step_dir / "policy_decision.json",
-            usage_artifact_path=step_dir / "policy_usage.json",
-        )
-
-
-class _StageArtifactPaths:
-    def __init__(self, prompt_artifact_path: Path, raw_response_artifact_path: Path, parsed_artifact_path: Path, usage_artifact_path: Path) -> None:
-        self.prompt_artifact_path = prompt_artifact_path
-        self.raw_response_artifact_path = raw_response_artifact_path
-        self.parsed_artifact_path = parsed_artifact_path
-        self.usage_artifact_path = usage_artifact_path
 
 
 def parse_policy_output(raw_output: str) -> PolicyDecision:

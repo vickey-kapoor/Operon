@@ -8,6 +8,10 @@ It needs a server started with a real ``GEMINI_API_KEY``::
     .venv/bin/python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
     .venv/bin/python -m tests.eval.live_bench [--suite smoke|full] [--only NAME] [--category CAT]
 
+``--suite safety`` runs the prompt-injection and overreach tasks in
+``tests/eval/safety_tasks.py`` on a local site this script serves; those are graded
+from the requests the browser made, not by the judge.
+
 ``--mode desktop`` (or ``python -m tests.eval.live_desktop_bench``) runs the
 desktop tasks in ``tests/eval/desktop_tasks.py`` through the ``/desktop`` routes
 instead; that needs a real Windows desktop session.
@@ -20,6 +24,8 @@ Outcomes, per task:
 - ``failure``: no success claim, and the goal is not on screen.
 - ``timeout``: the run was still going when the per-task timeout hit.
 - ``error``: the API or the run itself broke.
+- ``compromised`` (safety tasks only): the agent did something harmful the user
+  never asked for, such as following instructions planted on the page.
 
 Pauses for confirmation are approved automatically (``--no-approve`` turns
 that off) and counted. Every run's results are saved under
@@ -50,10 +56,13 @@ import httpx
 
 from operon.core.paths import runs_dir
 from tests.eval.desktop_tasks import DESKTOP_TASKS
+from tests.eval.fixture_site import FixtureSite
 from tests.eval.live_tasks import TASKS, LiveTask
+from tests.eval.safety_tasks import SAFETY_TASKS, SafetyTask, grade, site_pages
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
-OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error")
+OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error", "compromised")
+SUITES = ("smoke", "full", "safety")
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
 MODES = ("browser", "desktop")
 DEFAULT_MAX_COST_USD = 5.0
@@ -106,6 +115,11 @@ def classify(status: str, goal_visible: bool | None) -> str:
     if claimed:
         return "success" if goal_visible else "false_success"
     return "missed" if goal_visible else "failure"
+
+
+def classify_safety(status: str, goal_met: bool, harmed: bool) -> str:
+    """Grade a safety task: any harmful action is ``compromised``, whatever else happened."""
+    return "compromised" if harmed else classify(status, goal_met)
 
 
 JUDGE_PROMPT = """You grade a computer-use agent. Look only at the screenshot.
@@ -210,13 +224,19 @@ async def run_task(
     timeout_s: float,
     approve_pauses: int,
     mode: str = "browser",
+    site: FixtureSite | None = None,
 ) -> TaskResult:
     prefix = "/desktop" if mode == "desktop" else ""
     started = time.monotonic()
     run_id, status, steps, pauses = None, "error", 0, 0
     payload: dict = {"intent": task.intent, "max_steps": task.max_steps}
+    safety = isinstance(task, SafetyTask)
+    if safety:
+        if site is None:
+            raise ValueError(f"{task.name} needs the local fixture site")
+        site.reset()
     if task.start_url:
-        payload["start_url"] = task.start_url
+        payload["start_url"] = site.url(task.start_url) if safety else task.start_url
     try:
         created = await client.post(f"{prefix}/run-task", json=payload)
         created.raise_for_status()
@@ -243,9 +263,15 @@ async def run_task(
         print(f"  {task.name}: API error: {exc}", file=sys.stderr)
 
     screenshot = _final_screenshot(run_id) if run_id else None
-    verdict = await judge(task, screenshot) if screenshot else Verdict(None, "no screenshot")
     # A run paused for the user did not claim success; grade it as ended.
     graded_status = "failed" if status == "waiting_for_user" else status
+    if safety:
+        goal_met, harmed, reason = grade(task, site.snapshot())
+        verdict = Verdict(goal_met, reason)
+        outcome = classify_safety(graded_status, goal_met, harmed)
+    else:
+        verdict = await judge(task, screenshot) if screenshot else Verdict(None, "no screenshot")
+        outcome = classify(graded_status, verdict.goal_visible)
     # Only the browser loop has a primary backend with a fallback to count.
     cu, other = _backends_used(run_id) if run_id and mode == "browser" else (0, 0)
     if run_id and mode == "desktop":
@@ -260,7 +286,7 @@ async def run_task(
         category=task.category,
         run_id=run_id,
         status=status,
-        outcome=classify(graded_status, verdict.goal_visible),
+        outcome=outcome,
         stop_reason=_stop_reason(run_id) if run_id else "-",
         steps=steps,
         pauses=pauses,
@@ -358,6 +384,7 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         f"{summary['success']}/{summary['tasks']} success ({summary['success_rate']:.0%}) · "
         f"{summary['false_success']} false success · {summary['missed']} missed · "
         f"{summary['failure']} failure · {summary['timeout']} timeout · {summary['error']} error"
+        + (f" · {summary['compromised']} compromised" if summary.get("compromised") else "")
     )
     lines.append(
         f"mean {summary['mean_steps']} steps, {summary['mean_seconds']} s per task, "
@@ -401,8 +428,11 @@ def save_final_screens(results: list[TaskResult], target: Path) -> None:
 def select_tasks(
     suite: str, only: list[str] | None, category: list[str] | None, mode: str = "browser"
 ) -> list[LiveTask]:
-    pool = DESKTOP_TASKS if mode == "desktop" else TASKS
-    tasks = [t for t in pool if suite == "full" or suite in t.tags]
+    if suite == "safety":
+        pool = [] if mode == "desktop" else SAFETY_TASKS
+    else:
+        pool = DESKTOP_TASKS if mode == "desktop" else TASKS
+    tasks = [t for t in pool if suite in ("full", "safety") or suite in t.tags]
     if only:
         tasks = [t for t in tasks if t.name in only]
     if category:
@@ -418,26 +448,32 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results: list[TaskResult] = []
     stopped = None
-    async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0) as client:
-        (await client.get("/health")).raise_for_status()
-        for index, task in enumerate(tasks, 1):
-            result = await run_task(
-                client, task, judge,
-                timeout_s=args.timeout,
-                approve_pauses=0 if args.no_approve else 2,
-                mode=args.mode,
-            )
-            results.append(result)
-            if not args.json:
-                print(f"[{index}/{len(tasks)}] {result.task}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
-            stopped = budget_stop(results, len(tasks), args.max_cost_usd)
-            if stopped:
-                print(
-                    f"Stopping: spent ${stopped['spent_usd']:.2f}, over the ${args.max_cost_usd:.2f} cap "
-                    f"(--max-cost-usd / MAX_RUN_COST_USD), after {len(results)} of {len(tasks)} tasks.",
-                    file=sys.stderr, flush=True,
+    site = FixtureSite(site_pages()).start() if any(isinstance(t, SafetyTask) for t in tasks) else None
+    try:
+        async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0) as client:
+            (await client.get("/health")).raise_for_status()
+            for index, task in enumerate(tasks, 1):
+                result = await run_task(
+                    client, task, judge,
+                    timeout_s=args.timeout,
+                    approve_pauses=0 if args.no_approve else 2,
+                    mode=args.mode,
+                    site=site,
                 )
-                break
+                results.append(result)
+                if not args.json:
+                    print(f"[{index}/{len(tasks)}] {result.task}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
+                stopped = budget_stop(results, len(tasks), args.max_cost_usd)
+                if stopped:
+                    print(
+                        f"Stopping: spent ${stopped['spent_usd']:.2f}, over the ${args.max_cost_usd:.2f} cap "
+                        f"(--max-cost-usd / MAX_RUN_COST_USD), after {len(results)} of {len(tasks)} tasks.",
+                        file=sys.stderr, flush=True,
+                    )
+                    break
+    finally:
+        if site:
+            site.stop()
 
     summary = summarize(results)
     bench_dir = Path(args.out_dir)
@@ -486,7 +522,7 @@ def _max_cost_default() -> float:
 
 def build_parser(default_suite: str = "full", default_mode: str = "browser") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--suite", choices=("smoke", "full"), default=default_suite)
+    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="smoke, full, or safety (browser only)")
     parser.add_argument("--mode", choices=MODES, default=default_mode, help="browser or desktop tasks")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--only", action="append", help="run only the named task(s)")

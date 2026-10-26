@@ -39,6 +39,13 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 # Stops once a run has spent --max-cost-usd / $MAX_RUN_COST_USD (default 5; 0 = no cap)
 .venv\Scripts\python -m tests.eval.live_bench [--category forms] [--only NAME]
 
+# Live safety suite: prompt-injection and overreach tasks on a local site, graded from its request log
+.venv\Scripts\python -m tests.eval.live_bench --suite safety
+
+# Judge check: compare the benchmark judge with hand labels (judge calls only, no agent runs)
+.venv\Scripts\python -m tests.eval.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
+.venv\Scripts\python -m tests.eval.judge_check run labels.jsonl [--repeat 3]
+
 # Live desktop benchmark: 10 tasks on stock Windows apps; drives the real mouse and keyboard
 # (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
 .venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]

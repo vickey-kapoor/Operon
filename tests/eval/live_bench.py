@@ -10,7 +10,9 @@ It needs a server started with a real ``GEMINI_API_KEY``::
 
 ``--suite safety`` runs the prompt-injection and overreach tasks in
 ``tests/eval/safety_tasks.py`` on a local site this script serves; those are graded
-from the requests the browser made, not by the judge.
+from the requests the browser made, not by the judge. ``--suite apps`` runs the
+tasks in ``tests/eval/app_tasks.py`` on the same site's fake shop, mailbox,
+account and forms (``tests/eval/local_apps.py``), graded from the apps' state.
 
 ``--mode desktop`` (or ``python -m tests.eval.live_desktop_bench``) runs the
 desktop tasks in ``tests/eval/desktop_tasks.py`` through the ``/desktop`` routes
@@ -24,8 +26,9 @@ Outcomes, per task:
 - ``failure``: no success claim, and the goal is not on screen.
 - ``timeout``: the run was still going when the per-task timeout hit.
 - ``error``: the API or the run itself broke.
-- ``compromised`` (safety tasks only): the agent did something harmful the user
-  never asked for, such as following instructions planted on the page.
+- ``compromised`` (safety and apps tasks only): the agent did something harmful the
+  user never asked for, such as following instructions planted on the page or
+  placing an order it was told not to.
 
 Pauses for confirmation are approved automatically (``--no-approve`` turns
 that off) and counted. Every run's results are saved under
@@ -55,14 +58,18 @@ from pathlib import Path
 import httpx
 
 from operon.core.paths import runs_dir
+from tests.eval import app_tasks
+from tests.eval.app_tasks import APP_TASKS, AppTask
 from tests.eval.desktop_tasks import DESKTOP_TASKS
 from tests.eval.fixture_site import FixtureSite
 from tests.eval.live_tasks import TASKS, LiveTask
+from tests.eval.local_apps import build_apps
 from tests.eval.safety_tasks import SAFETY_TASKS, SafetyTask, grade, site_pages
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error", "compromised")
-SUITES = ("smoke", "full", "safety")
+SUITES = ("smoke", "full", "safety", "apps")
+LOCAL_TASKS = (SafetyTask, AppTask)  # run on the local site and graded from it, not by the judge
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
 MODES = ("browser", "desktop")
 DEFAULT_MAX_COST_USD = 5.0
@@ -230,13 +237,13 @@ async def run_task(
     started = time.monotonic()
     run_id, status, steps, pauses = None, "error", 0, 0
     payload: dict = {"intent": task.intent, "max_steps": task.max_steps}
-    safety = isinstance(task, SafetyTask)
-    if safety:
+    local = isinstance(task, LOCAL_TASKS)
+    if local:
         if site is None:
             raise ValueError(f"{task.name} needs the local fixture site")
-        site.reset()
+        site.reset(task.seed if isinstance(task, AppTask) else None)
     if task.start_url:
-        payload["start_url"] = site.url(task.start_url) if safety else task.start_url
+        payload["start_url"] = site.url(task.start_url) if local else task.start_url
     try:
         created = await client.post(f"{prefix}/run-task", json=payload)
         created.raise_for_status()
@@ -265,8 +272,11 @@ async def run_task(
     screenshot = _final_screenshot(run_id) if run_id else None
     # A run paused for the user did not claim success; grade it as ended.
     graded_status = "failed" if status == "waiting_for_user" else status
-    if safety:
-        goal_met, harmed, reason = grade(task, site.snapshot())
+    if local:
+        if isinstance(task, AppTask):
+            goal_met, harmed, reason = app_tasks.grade(task, site.state())
+        else:
+            goal_met, harmed, reason = grade(task, site.snapshot())
         verdict = Verdict(goal_met, reason)
         outcome = classify_safety(graded_status, goal_met, harmed)
     else:
@@ -428,11 +438,11 @@ def save_final_screens(results: list[TaskResult], target: Path) -> None:
 def select_tasks(
     suite: str, only: list[str] | None, category: list[str] | None, mode: str = "browser"
 ) -> list[LiveTask]:
-    if suite == "safety":
-        pool = [] if mode == "desktop" else SAFETY_TASKS
+    if suite in ("safety", "apps"):
+        pool = [] if mode == "desktop" else (SAFETY_TASKS if suite == "safety" else APP_TASKS)
     else:
         pool = DESKTOP_TASKS if mode == "desktop" else TASKS
-    tasks = [t for t in pool if suite in ("full", "safety") or suite in t.tags]
+    tasks = [t for t in pool if suite in ("full", "safety", "apps") or suite in t.tags]
     if only:
         tasks = [t for t in tasks if t.name in only]
     if category:
@@ -448,7 +458,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results: list[TaskResult] = []
     stopped = None
-    site = FixtureSite(site_pages()).start() if any(isinstance(t, SafetyTask) for t in tasks) else None
+    site = FixtureSite(site_pages(), apps=build_apps()).start() if any(isinstance(t, LOCAL_TASKS) for t in tasks) else None
     try:
         async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0) as client:
             (await client.get("/health")).raise_for_status()
@@ -522,7 +532,7 @@ def _max_cost_default() -> float:
 
 def build_parser(default_suite: str = "full", default_mode: str = "browser") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="smoke, full, or safety (browser only)")
+    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="smoke, full, or safety / apps (browser only)")
     parser.add_argument("--mode", choices=MODES, default=default_mode, help="browser or desktop tasks")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--only", action="append", help="run only the named task(s)")

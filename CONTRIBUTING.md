@@ -12,7 +12,7 @@ GEMINI_API_KEY=fake-test-key python -m pytest tests -q
 ruff check src tests --select E,F,W,I --ignore E501
 ```
 
-551 tests should pass (3 skip) in roughly a minute with no network access. If they don't,
+About 860 tests should pass (15 skip) in under a minute with no network access. If they don't,
 that's a bug in the setup instructions — please report it.
 
 ## Before you open a PR
@@ -48,8 +48,9 @@ point and data on where time goes is welcome.
 - **Vision-only is the constraint, not an implementation detail.** Proposals that
   reach for the DOM, accessibility tree, or app-specific APIs to make targeting
   easier defeat the point. Improving *perception* is the intended path.
-- **Deterministic rules run before the model.** If something can be handled by
-  `agent/policy/rules.py` without an LLM call, it should be.
+- **Deterministic rules run before the model (full harness).** If something can be handled by
+  `agent/policy/rules.py` without an LLM call, it should be. The thin harness for Claude
+  has no rules by design: fix failures there through what the model sees or the executor.
 - **Experimental work goes behind an env flag, defaulting to off.** See the
   `OPERON_BESTOFN_*`, `OPERON_GROUNDER`, and `OPERON_TRUST_*` flags for the
   pattern, and `docs/rfcs/` for the shape of a larger proposal.

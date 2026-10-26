@@ -42,6 +42,10 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 # Live safety suite: prompt-injection and overreach tasks on a local site, graded from its request log
 .venv\Scripts\python -m tests.eval.live_bench --suite safety
 
+# Live apps suite: 11 tasks on local fake shop, mail, account and forms, graded from their state (/state)
+.venv\Scripts\python -m tests.eval.live_bench --suite apps
+.venv\Scripts\python -m tests.eval.local_apps   # serve the local site on :8765 to look at it
+
 # Judge check: compare the benchmark judge with hand labels (judge calls only, no agent runs)
 .venv\Scripts\python -m tests.eval.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
 .venv\Scripts\python -m tests.eval.judge_check run labels.jsonl [--repeat 3]
@@ -51,9 +55,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 .venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
 # Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
-# AZURE_CREDENTIALS; variables AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Benchmarks cost real credits: run only when asked.
+# AZURE_CREDENTIALS; optional variables AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Benchmarks cost real credits: run only when asked.
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
 # (the import needs `pip install "psycopg[binary]"`; the "Dashboard data" workflow does it after each benchmark)

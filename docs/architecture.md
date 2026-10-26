@@ -1,5 +1,5 @@
 # Operon Architecture Reference
-_Last refreshed: 2026-06-13_
+_Last refreshed: 2026-10-26_
 
 This document describes the code currently present in this repository. It is the
 single canonical engineering reference; the product "why" lives in
@@ -58,20 +58,34 @@ src/
 
 ### Browser
 
-Default backend: `BrowserComputerUseBackend` using `GeminiComputerUseHttpClient`.
+Default backend: `BrowserClaudeComputerUseBackend` using `AnthropicComputerUseHttpClient`
+when `ANTHROPIC_API_KEY` is set (`OPERON_BROWSER_BACKEND=claude_computer_use`), otherwise
+`BrowserComputerUseBackend` using `GeminiComputerUseHttpClient` (`computer_use`).
+`OPERON_BROWSER_BACKEND=json` selects `BrowserJsonBackend` alone.
 
-Optional path:
-- `BrowserJsonBackend` fallback when configured.
+Fallback: with `OPERON_BROWSER_FALLBACK_BACKEND=json` (the default), `FallbackBackend`
+hands a step to the Gemini `BrowserJsonBackend` when the primary backend's call fails.
 
 Executor: `NativeBrowserExecutor`.
 
 ### Desktop
 
-Default backend: `CombinedPerceptionPolicyService` using Gemini JSON output.
+Default backend: `CombinedPerceptionPolicyService` using Gemini JSON output
+(`OPERON_DESKTOP_BACKEND=json`). `OPERON_DESKTOP_BACKEND=claude_computer_use` selects
+`DesktopClaudeComputerUseBackend`, which adds a `launch_app` tool. It has no fallback.
 
 Executor: `DesktopExecutor`.
 
-Only `OPERON_DESKTOP_BACKEND=json` is implemented.
+### Harness profiles
+
+`OPERON_HARNESS_PROFILE` (`agent/policy/thin.py`) picks how much scaffolding surrounds the
+model. A `claude_computer_use` backend runs **thin** by default: `ThinPolicy` passes Claude's
+action through with no rules, guards or retries, failures go back to Claude as tool results,
+and `FinalCheckVerifier` checks the outcome once with Claude when it says it is done
+(`OPERON_FINAL_CHECK_MODEL` can pick a cheaper model). Safety gates (trust gate, file guard,
+step budget) still apply. `OPERON_HARNESS_PROFILE=full` opts Claude back into the full
+harness described below. Every other backend always runs **full**: rules, post-LLM guards,
+the per-step verifier and recovery.
 
 ### Observable Browser Mode
 
@@ -240,6 +254,9 @@ Important variables:
 - `OPERON_BROWSER_BACKEND`
 - `OPERON_BROWSER_FALLBACK_BACKEND`
 - `OPERON_BROWSER_MODEL`
+- `OPERON_BROWSER_CLAUDE_MODEL` / `OPERON_DESKTOP_CLAUDE_MODEL`
+- `OPERON_HARNESS_PROFILE`
+- `OPERON_FINAL_CHECK_MODEL`
 - `OPERON_DESKTOP_BACKEND`
 - `OPERON_DESKTOP_MODEL`
 - `OPERON_BROWSER_VERIFIER_PROVIDER`

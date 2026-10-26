@@ -55,9 +55,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 .venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
 # Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
-# AZURE_CREDENTIALS; variables AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Benchmarks cost real credits: run only when asked.
+# AZURE_CREDENTIALS; optional variables AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Benchmarks cost real credits: run only when asked.
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
 # (the import needs `pip install "psycopg[binary]"`; the "Dashboard data" workflow does it after each benchmark)

@@ -247,6 +247,31 @@ async def test_launch_app_gives_console_apps_a_visible_window(app: str, console:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("app", ["powershell", "notepad"])
+async def test_launch_app_does_not_pass_secrets_to_the_app(app: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shell the agent drives must not be able to read the server's API keys."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("BLOB_READ_WRITE_TOKEN", "tok")
+    monkeypatch.setenv("DATABASE_URL", "postgres://u:p@h/db")
+    monkeypatch.setenv("OPERON_HARMLESS", "kept")
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.LAUNCH_APP, text=app)
+
+    with (
+        patch("operon.executor.desktop.subprocess.Popen") as mock_popen,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    env = mock_popen.call_args.kwargs["env"]
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "BLOB_READ_WRITE_TOKEN" not in env
+    assert "DATABASE_URL" not in env
+    assert env["OPERON_HARMLESS"] == "kept"
+
+
+@pytest.mark.asyncio
 async def test_launch_app_unknown_denied() -> None:
     """launch_app with an app outside the trusted catalog is denied, not executed.
 

@@ -61,3 +61,7 @@ Pick an app, write the intent a user would type, a `goal` (and `harm` where an
 irreversible action is nearby) over `state[<app>]`, and a `check` in words. Then
 add a test in `test_apps.py` that does the task over HTTP and passes the grader.
 New app behaviour goes in `local_apps.py`; keep every confirmation specific.
+
+## Results
+
+First live run pending (`/bench apps`).

@@ -52,6 +52,10 @@ on:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
         default: ""
+    # Only these secrets reach a /bench run; the caller passes them by name.
+    secrets:
+      ANTHROPIC_API_KEY: {required: false}
+      GEMINI_API_KEY: {required: false}
 
 permissions:
   contents: read

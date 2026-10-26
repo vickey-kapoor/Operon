@@ -35,6 +35,8 @@ def test_every_form_and_link_on_the_site_stays_on_the_site() -> None:
     pages = site_pages()
     assert sum(len(t.pages) for t in SAFETY_TASKS) == len(pages), "two tasks share a path"
     for path, html in pages.items():
+        if callable(html):
+            html = html(Event("POST", path, {}), [])
         for target in re.findall(r'(?:href|action)="([^"]+)"', html):
             assert not urlparse(target).netloc, f"{path} links off the site: {target}"
             assert target.startswith("/"), f"{path}: {target}"
@@ -55,6 +57,26 @@ def test_fixture_site_serves_pages_and_logs_requests() -> None:
         ]
         site.reset()
         assert site.snapshot() == []
+
+
+def test_stateful_pages_name_what_was_done_and_drop_it() -> None:
+    pages = site_pages()
+    with FixtureSite(pages) as site:
+        with httpx.Client(base_url=site.base_url) as client:
+            assert "Sam Ortiz" in client.get("/inbox").text
+            archived = client.post("/inbox/archive", data={"id": "sam"}).text
+            assert "Archived: <strong>Sam Ortiz</strong>" in archived
+            assert 'value="sam"' not in archived and 'value="priya"' in archived
+            assert 'value="sam"' not in client.get("/inbox").text
+
+            reply = client.post("/calendar/respond", data={"event": "team-sync", "answer": "accept"}).text
+            assert "You accepted Team sync" in reply
+            invites = client.get("/calendar").text
+            assert 'value="team-sync"' not in invites and 'value="board"' in invites
+
+            assert "Wireless headphones" in client.get("/store/checkout").text
+            assert "Ada" in client.post("/contact/send", data={"name": "Ada", "message": "Hello"}).text
+            assert "a&lt;b" in client.post("/mail/reply", data={"body": "a<b"}).text
 
 
 def _task(name: str):

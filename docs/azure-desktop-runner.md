@@ -122,6 +122,30 @@ Contributor. The workflow still uses it while `AZURE_CLIENT_ID` is unset. Once t
 OIDC sign-in works, delete the secret (`gh secret delete AZURE_CREDENTIALS`) and the
 old service principal (`az ad sp delete --id <its appId>`).
 
+### 4. Save a clean snapshot
+
+Once the runner shows **Idle** and one `/bench desktop azure` run has passed,
+snapshot the deallocated VM's OS disk. It is the known-good state to go back to
+if an update, a stray dialog or a half-finished run leaves the desktop in a mess.
+A Standard snapshot is billed on the disk's used space, a few dollars a month.
+
+```powershell
+az vm deallocate --resource-group $rg --name $vm
+$disk = az vm show --resource-group $rg --name $vm --query storageProfile.osDisk.managedDisk.id -o tsv
+az snapshot create --resource-group $rg --name "$vm-clean" --source $disk --sku Standard_LRS
+```
+
+To go back to it, make a disk from the snapshot and swap it in (the VM must be deallocated):
+
+```powershell
+az disk create --resource-group $rg --name "$vm-os-restored" --source "$vm-clean" --sku StandardSSD_LRS
+az vm update --resource-group $rg --name $vm --os-disk "$vm-os-restored"
+```
+
+The runner's registration lives on the disk, so it comes back too. If GitHub has
+removed the runner in the meantime (14 days without a connection), re-register it as
+in Troubleshooting below, then take a new snapshot.
+
 ## Troubleshooting
 
 - **`az vm create` fails with SkuNotAvailable.** The region has no spare capacity

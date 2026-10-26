@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from operon.agent.policy import GeminiPolicyService
 from operon.agent.policy.coordinator import PolicyCoordinator
 from operon.agent.policy.recovery import RuleBasedRecoveryManager
 from operon.models.common import FailureCategory, LoopStage
@@ -19,6 +18,7 @@ from operon.models.verification import (
     VerificationStatus,
 )
 from operon.store.memory import FileBackedMemoryStore
+from tests.fixtures.policy import PromptPolicyStub
 
 
 class _UnusedGeminiClient:
@@ -252,7 +252,7 @@ async def test_recovery_focus_subgoal_drives_next_policy_click(tmp_path: Path) -
             raise NotImplementedError
 
     coordinator = PolicyCoordinator(
-        delegate=GeminiPolicyService(gemini_client=_ClickStubClient(), prompt_path=prompt_path),
+        delegate=PromptPolicyStub(gemini_client=_ClickStubClient(), prompt_path=prompt_path),
         memory_store=FileBackedMemoryStore(root_dir=tmp_path / "runs"),
     )
     perception_path = tmp_path / "runs" / "run-6" / "step_2" / "before.png"

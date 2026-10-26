@@ -8,8 +8,8 @@ name: Live desktop benchmark
 # Manual only: every run spends model credits.
 # Needs repo secret GEMINI_API_KEY (the judge and verifier are Gemini), and
 # ANTHROPIC_API_KEY when desktop_backend is claude_computer_use. runner: azure
-# also needs secret AZURE_CREDENTIALS and repo variables AZURE_VM_RESOURCE_GROUP
-# and AZURE_VM_NAME.
+# also needs secret AZURE_CREDENTIALS; repo variables AZURE_VM_RESOURCE_GROUP and
+# AZURE_VM_NAME override the VM's default names (operon-bench, operon-desktop).
 # The run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
 on:
@@ -84,15 +84,13 @@ jobs:
     timeout-minutes: 15
     env:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP }}
-      VM_NAME: ${{ vars.AZURE_VM_NAME }}
+      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
+      VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
     steps:
       - name: Check the settings
         run: |
           missing=""
           [ -n "$AZURE_CREDENTIALS" ] || missing="$missing secret AZURE_CREDENTIALS"
-          [ -n "$RESOURCE_GROUP" ] || missing="$missing variable AZURE_VM_RESOURCE_GROUP"
-          [ -n "$VM_NAME" ] || missing="$missing variable AZURE_VM_NAME"
           if [ -n "$missing" ]; then
             echo "::error::Missing repository setting(s):$missing. See docs/azure-desktop-runner.md."
             exit 1
@@ -230,9 +228,12 @@ jobs:
     if: ${{ always() && inputs.runner == 'azure' && needs.start-vm.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
+      VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
     steps:
       - uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       # Deallocated, not just stopped: a stopped VM still bills for compute.
-      - run: az vm deallocate --resource-group "${{ vars.AZURE_VM_RESOURCE_GROUP }}" --name "${{ vars.AZURE_VM_NAME }}"
+      - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"

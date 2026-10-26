@@ -94,3 +94,21 @@ jobs:
       - name: Type-check and build
         # tsc runs as part of `npm run build` — the frontend's only automated gate.
         run: npm run build
+
+  dashboard:
+    name: Dashboard tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Run the dashboard's own tests (no install needed)
+        run: npm test

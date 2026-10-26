@@ -9,6 +9,7 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
 const port = Number(process.env.PORT || 3000);
 
+// Listens on loopback only: this server has the database URL and no password check.
 createServer(async (req, res) => {
   const path = new URL(req.url, "http://localhost").pathname;
   const route = path.match(/^\/api\/([a-z]+)$/);
@@ -34,4 +35,4 @@ createServer(async (req, res) => {
     res.statusCode = 404;
     res.end();
   }
-}).listen(port, () => console.log(`Eval dashboard on http://localhost:${port}`));
+}).listen(port, "127.0.0.1", () => console.log(`Eval dashboard on http://127.0.0.1:${port}`));

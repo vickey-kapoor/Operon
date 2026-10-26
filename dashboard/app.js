@@ -113,8 +113,18 @@ function configCell(run) {
   return el("span", { class: "config-cell" }, key(configLabel(run)), configLabel(run));
 }
 
+// Only GitHub links become hrefs: a stored value is never trusted to be a safe URL.
+function githubUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname === "github.com" ? parsed.href : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function runLink(run, text) {
-  const url = run.config && run.config.github_run_url;
+  const url = githubUrl(run.config && run.config.github_run_url);
   return url ? el("a", { href: url, target: "_blank", rel: "noopener" }, text || "run ↗") : "–";
 }
 

@@ -21,6 +21,18 @@ browser asks for it once; any user name works. Without the variable the dashboar
 serves nothing (503), so set it before deploying. `npm test` checks the logic.
 The local `npm run dev` server skips the check and listens on 127.0.0.1 only.
 
+The page only reads the database, so give Vercel a read-only role rather than the
+owner connection string the importer uses. In the Neon SQL editor:
+
+```sql
+CREATE ROLE dashboard_reader LOGIN PASSWORD '<a new password>';
+GRANT USAGE ON SCHEMA public TO dashboard_reader;
+GRANT SELECT ON bench_runs, bench_task_results TO dashboard_reader;
+```
+
+Then set the Vercel project's `DATABASE_URL` to that role's connection string; the
+GitHub `DATABASE_URL` secret keeps the owner role, since the importer writes.
+
 ## Data
 
 Results live in a Neon Postgres database connected to the Vercel project. Two

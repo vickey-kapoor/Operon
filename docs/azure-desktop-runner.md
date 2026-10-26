@@ -46,7 +46,8 @@ az vm auto-shutdown --resource-group $rg --name $vm --time 0700
 1. Get a runner token: repository **Settings > Actions > Runners > New self-hosted
    runner**, choose Windows, and copy the value after `--token` in the Configure
    step. It expires after an hour.
-2. RDP in as `operon`: `mstsc /v:$(az vm show -d -g $rg -n $vm --query publicIps -o tsv)`.
+2. RDP in: `mstsc /v:$(az vm show -d -g $rg -n $vm --query publicIps -o tsv)`. Sign in as
+   `.\operon`; the leading `.\` picks the VM's local account instead of your Microsoft account.
 3. Get the script onto the VM. Paste `scripts/azure-desktop-runner/setup-runner.ps1`
    into Notepad and save it as `C:\setup-runner.ps1`, or download it from the repository.
 4. In an elevated PowerShell on the VM:
@@ -74,18 +75,23 @@ az ad sp create-for-rbac --name operon-desktop-bench --role "Virtual Machine Con
   --scopes $scope --json-auth > azure-credentials.json
 
 gh secret set AZURE_CREDENTIALS --repo vickey-kapoor/Operon < azure-credentials.json
-gh variable set AZURE_VM_RESOURCE_GROUP --repo vickey-kapoor/Operon --body $rg
-gh variable set AZURE_VM_NAME --repo vickey-kapoor/Operon --body $vm
 Remove-Item azure-credentials.json
 
 az vm deallocate --resource-group $rg --name $vm
 ```
 
 The service principal can only manage VMs in this resource group. Without `gh`,
-add the same secret and variables under Settings > Secrets and variables > Actions.
+add the secret under Settings > Secrets and variables > Actions. If you named the
+resource group or VM differently, also add repo variables `AZURE_VM_RESOURCE_GROUP`
+and `AZURE_VM_NAME`; the workflow defaults to `operon-bench` and `operon-desktop`.
 
 ## Troubleshooting
 
+- **`az vm create` fails with SkuNotAvailable.** The region has no spare capacity
+  for that size on your subscription, which is common on new ones. Add `-l <region>`
+  (for example `westus2`) to try another region, or use Standard_D4as_v5 or
+  Standard_D4s_v6, which are the same 4 vCPU / 16 GB. The resource group can stay
+  where it is.
 - **The bench job sits at "Waiting for a runner".** The VM is up but the runner
   isn't online. Usually auto-logon failed (for example after a password change):
   RDP in, rerun the script with a new token, and let it restart.

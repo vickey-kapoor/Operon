@@ -67,6 +67,25 @@ function Save-File([string] $url, [string] $name) {
     return $path
 }
 
+# Every download is checked before it runs: GitHub release assets against the
+# SHA-256 digest GitHub publishes for them, other installers by their Authenticode
+# signature. A mismatch stops the script.
+function Save-Asset($asset) {
+    $path = Save-File $asset.browser_download_url $asset.name
+    if ($asset.digest -notmatch '^sha256:([0-9a-fA-F]{64})$') { throw "No SHA-256 digest published for $($asset.name)." }
+    $expected = $Matches[1]
+    $actual = (Get-FileHash -Algorithm SHA256 -Path $path).Hash
+    if ($actual -ne $expected.ToUpperInvariant()) { throw "SHA-256 mismatch for $($asset.name): got $actual, expected $expected." }
+    return $path
+}
+
+function Assert-Signed([string] $path, [string] $publisher) {
+    $signature = Get-AuthenticodeSignature -FilePath $path
+    if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch $publisher) {
+        throw "$path is not validly signed by $publisher (status $($signature.Status))."
+    }
+}
+
 function Set-Reg([string] $path, [string] $name, $value, [string] $type = "DWord") {
     if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
     New-ItemProperty -Path $path -Name $name -Value $value -PropertyType $type -Force | Out-Null
@@ -75,16 +94,17 @@ function Set-Reg([string] $path, [string] $name, $value, [string] $type = "DWord
 # --- toolchain ---------------------------------------------------------------
 Write-Output "Installing PowerShell 7..."
 $asset = Get-LatestAsset "PowerShell/PowerShell" '^PowerShell-[\d.]+-win-x64\.msi$'
-$msi = Save-File $asset.browser_download_url $asset.name
+$msi = Save-Asset $asset
 Start-Process msiexec.exe -Wait -ArgumentList "/i", "`"$msi`"", "/quiet", "/norestart", "ADD_PATH=1"
 
 Write-Output "Installing Git..."
 $asset = Get-LatestAsset "git-for-windows/git" '^Git-[\d.]+-64-bit\.exe$'
-$exe = Save-File $asset.browser_download_url $asset.name
+$exe = Save-Asset $asset
 Start-Process $exe -Wait -ArgumentList "/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES"
 
 Write-Output "Installing Python $PythonVersion..."
 $exe = Save-File "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-amd64.exe" "python.exe"
+Assert-Signed $exe "Python Software Foundation"
 Start-Process $exe -Wait -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_test=0"
 
 # --- keep the desktop quiet --------------------------------------------------
@@ -116,6 +136,7 @@ powercfg /change hibernate-timeout-ac 0
 # --- auto-logon --------------------------------------------------------------
 Write-Output "Setting up auto-logon for $userName..."
 $autologon = Save-File "https://live.sysinternals.com/Autologon64.exe" "Autologon64.exe"
+Assert-Signed $autologon "Microsoft Corporation"
 $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password))
 Start-Process $autologon -Wait -ArgumentList $userName, $env:COMPUTERNAME, $plain, "/accepteula"
@@ -124,7 +145,7 @@ $plain = $null
 # --- GitHub Actions runner ---------------------------------------------------
 Write-Output "Installing the GitHub Actions runner..."
 $asset = Get-LatestAsset "actions/runner" '^actions-runner-win-x64-[\d.]+\.zip$'
-$zip = Save-File $asset.browser_download_url $asset.name
+$zip = Save-Asset $asset
 New-Item -ItemType Directory -Force -Path $RunnerDir | Out-Null
 Expand-Archive -Path $zip -DestinationPath $RunnerDir -Force
 & "$RunnerDir\config.cmd" --unattended --replace `

@@ -354,5 +354,7 @@ that the workflow starts before the run and deallocates after. Setup is in
 | `DATABASE_URL` | secret | Dashboard data import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
 | `SLACK_WEBHOOK_URL` | secret | Regression alerts; optional |
-| `AZURE_CREDENTIALS` | secret | Starting and stopping the Azure VM |
+| `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | variables | Starting and stopping the Azure VM via OIDC (no stored secret) |
+| `AZURE_CREDENTIALS` | secret | Older fallback for the Azure VM while `AZURE_CLIENT_ID` is unset |
+| `DASHBOARD_PASSWORD` | Vercel env var | Password for the eval dashboard; it serves nothing without one |
 | `AZURE_VM_RESOURCE_GROUP`, `AZURE_VM_NAME` | variables | Which Azure VM to start |

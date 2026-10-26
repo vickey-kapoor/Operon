@@ -69,21 +69,58 @@ to the console, or restart the VM.
 
 ### 3. Let the workflow start and stop the VM
 
-```powershell
-$scope = az group show --name $rg --query id -o tsv
-az ad sp create-for-rbac --name operon-desktop-bench --role "Virtual Machine Contributor" `
-  --scopes $scope --json-auth > azure-credentials.json
+The workflow signs in to Azure with GitHub's OIDC token, so no Azure secret is
+stored in GitHub, and the identity can only start, stop and read the VM: a
+custom role, because the built-in Virtual Machine Contributor role also allows
+Run Command (code as SYSTEM on the VM) and password resets.
 
-gh secret set AZURE_CREDENTIALS --repo vickey-kapoor/Operon < azure-credentials.json
-Remove-Item azure-credentials.json
+```powershell
+$sub = az account show --query id -o tsv
+$tenant = az account show --query tenantId -o tsv
+$scope = az group show --name $rg --query id -o tsv
+
+# A role with only what the workflow does.
+@"
+{
+  "Name": "Operon bench VM operator",
+  "Description": "Start, deallocate and read the desktop benchmark VM",
+  "Actions": [
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Compute/virtualMachines/start/action",
+    "Microsoft.Compute/virtualMachines/deallocate/action",
+    "Microsoft.Compute/virtualMachines/instanceView/read"
+  ],
+  "AssignableScopes": ["$scope"]
+}
+"@ | Set-Content operon-role.json
+az role definition create --role-definition operon-role.json
+
+# An app registration GitHub can sign in as, trusted only for this repo's main branch
+# (/bench comments and manual runs both run main's workflow).
+$appId = az ad app create --display-name operon-desktop-bench --query appId -o tsv
+az ad sp create --id $appId
+az ad app federated-credential create --id $appId --parameters (@"
+{"name":"operon-main","issuer":"https://token.actions.githubusercontent.com","subject":"repo:vickey-kapoor/Operon:ref:refs/heads/main","audiences":["api://AzureADTokenExchange"]}
+"@)
+az role assignment create --assignee $appId --role "Operon bench VM operator" --scope $scope
+
+gh variable set AZURE_CLIENT_ID --repo vickey-kapoor/Operon --body $appId
+gh variable set AZURE_TENANT_ID --repo vickey-kapoor/Operon --body $tenant
+gh variable set AZURE_SUBSCRIPTION_ID --repo vickey-kapoor/Operon --body $sub
 
 az vm deallocate --resource-group $rg --name $vm
 ```
 
-The service principal can only manage VMs in this resource group. Without `gh`,
-add the secret under Settings > Secrets and variables > Actions. If you named the
-resource group or VM differently, also add repo variables `AZURE_VM_RESOURCE_GROUP`
-and `AZURE_VM_NAME`; the workflow defaults to `operon-bench` and `operon-desktop`.
+Without `gh`, add the three variables under Settings > Secrets and variables >
+Actions > Variables. If you named the resource group or VM differently, also add
+repo variables `AZURE_VM_RESOURCE_GROUP` and `AZURE_VM_NAME`; the workflow defaults
+to `operon-bench` and `operon-desktop`.
+
+**Moving off the older secret.** Earlier setups stored a service principal's
+client secret as the `AZURE_CREDENTIALS` repo secret, with Virtual Machine
+Contributor. The workflow still uses it while `AZURE_CLIENT_ID` is unset. Once the
+OIDC sign-in works, delete the secret (`gh secret delete AZURE_CREDENTIALS`) and the
+old service principal (`az ad sp delete --id <its appId>`).
 
 ## Troubleshooting
 

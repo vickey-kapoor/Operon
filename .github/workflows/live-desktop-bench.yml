@@ -87,20 +87,31 @@ jobs:
     if: inputs.runner == 'azure'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # id-token: sign in to Azure with GitHub's OIDC token when AZURE_CLIENT_ID is set.
+    permissions:
+      contents: read
+      id-token: write
     env:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
       VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
     steps:
       - name: Check the settings
         run: |
-          missing=""
-          [ -n "$AZURE_CREDENTIALS" ] || missing="$missing secret AZURE_CREDENTIALS"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing repository setting(s):$missing. See docs/azure-desktop-runner.md."
+          if [ -z "$AZURE_CLIENT_ID" ] && [ -z "$AZURE_CREDENTIALS" ]; then
+            echo "::error::Set repo variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID (or the older AZURE_CREDENTIALS secret). See docs/azure-desktop-runner.md."
             exit 1
           fi
+      # Preferred: OIDC, no stored secret. The AZURE_CREDENTIALS secret is the fallback.
       - uses: azure/login@v2
+        if: env.AZURE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/login@v2
+        if: env.AZURE_CLIENT_ID == ''
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       # The VM signs in automatically at boot and its runner comes online a minute or
@@ -235,11 +246,22 @@ jobs:
     if: ${{ always() && inputs.runner == 'azure' && needs.start-vm.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
       VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
     steps:
       - uses: azure/login@v2
+        if: env.AZURE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/login@v2
+        if: env.AZURE_CLIENT_ID == ''
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       # Deallocated, not just stopped: a stopped VM still bills for compute.

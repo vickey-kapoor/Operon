@@ -27,12 +27,12 @@ on:
         description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
         default: ""
       suite:
-        description: "smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), or apps (11 tasks on local fake apps, graded from their state)"
+        description: "smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), or hard (20 harder tasks from those suites and the full one, meant for --repeat 3)"
         type: choice
-        options: [full, smoke, safety, apps]
+        options: [full, smoke, safety, apps, hard]
         default: full
       args:
-        description: "Extra live_bench arguments, e.g. --category forms --only slider"
+        description: "Extra live_bench arguments, e.g. --category forms --only slider, or --repeat 3"
         default: ""
       max_cost_usd:
         description: "Stop a backend's run once it has spent this many USD (0: no cap)"

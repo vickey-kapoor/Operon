@@ -257,3 +257,65 @@ def test_max_cost_comes_from_the_environment(monkeypatch) -> None:
     assert live_bench.build_parser().parse_args([]).max_cost_usd == 1.5
     monkeypatch.setenv("MAX_RUN_COST_USD", "")
     assert live_bench.build_parser().parse_args([]).max_cost_usd == live_bench.DEFAULT_MAX_COST_USD
+
+
+def test_hard_suite_names_real_browser_tasks() -> None:
+    hard = select_tasks("hard", None, None)
+    assert [t.name for t in hard] == list(live_bench.HARD_TASK_NAMES)
+    assert 15 <= len(hard) <= 20
+    assert {type(t).__name__ for t in hard} == {"LiveTask", "AppTask", "SafetyTask"}
+    assert select_tasks("hard", None, None, "desktop") == []
+
+
+def _attempt(name: str, outcome: str, attempt: int) -> live_bench.TaskResult:
+    result = _costly(name, 0.01)
+    result.outcome, result.attempt = outcome, attempt
+    return result
+
+
+def test_repeat_summary_reports_pass_at_1_pass_k_and_flaky_tasks() -> None:
+    results = [
+        _attempt("steady", "success", 1), _attempt("flaky", "success", 1), _attempt("broken", "failure", 1),
+        _attempt("steady", "success", 2), _attempt("flaky", "failure", 2), _attempt("broken", "failure", 2),
+        _attempt("steady", "success", 3), _attempt("flaky", "success", 3), _attempt("broken", "timeout", 3),
+    ]
+    rep = summarize(results)["repeat"]
+
+    assert rep["k"] == 3 and rep["tasks"] == 3
+    assert rep["pass_at_1"] == round((1 + 2 / 3 + 0) / 3, 3)
+    low, high = rep["pass_at_1_ci95"]
+    assert 0.0 <= low < rep["pass_at_1"] < high <= 1.0
+    assert rep["pass_all_k"] == round(1 / 3, 3) and rep["pass_any_k"] == round(2 / 3, 3)
+    assert rep["flaky"] == ["flaky"]
+    assert rep["per_task"]["broken"] == ["failure", "failure", "timeout"]
+    report = live_bench.format_report(results, summarize(results), None)
+    assert "flaky #2" in report and "pass^3 33%" in report and "flaky: flaky" in report
+    # A single pass has no repeat block.
+    assert "repeat" not in summarize(results[:3])
+
+
+async def test_run_bench_repeats_every_task_pass_by_pass(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    async def fake_run_task(client, task, judge, **kwargs):
+        calls.append(task.name)
+        return _costly(task.name, 0.5)
+
+    monkeypatch.setattr(live_bench, "run_task", fake_run_task)
+    real_client = httpx.AsyncClient
+    health = httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True}))
+    monkeypatch.setattr(live_bench.httpx, "AsyncClient", lambda **kw: real_client(transport=health, **kw))
+    # 5 smoke tasks x 3 passes at $0.51 each is $7.65: over $5, but under the cap times --repeat.
+    args = live_bench.build_parser(default_suite="smoke").parse_args(
+        ["--out-dir", str(tmp_path), "--max-cost-usd", "5", "--repeat", "3"]
+    )
+
+    assert await live_bench.run_bench(args, judge=None) == 0
+
+    names = [t.name for t in select_tasks("smoke", None, None)]
+    assert calls == names * 3
+    (saved,) = tmp_path.glob("smoke-*.json")
+    report = json.loads(saved.read_text())
+    assert report["repeat"] == 3
+    assert [r["attempt"] for r in report["results"]] == [1] * 5 + [2] * 5 + [3] * 5
+    assert report["summary"]["repeat"]["pass_all_k"] == 1.0

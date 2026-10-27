@@ -14,6 +14,12 @@ const OUTCOME_LABELS = {
   failure: "fail", timeout: "timeout", error: "error", compromised: "compromised",
 };
 
+const OUTCOME_ORDER = ["success", "missed", "false_success", "failure", "timeout", "error", "compromised"];
+const OUTCOME_COLORS = {
+  success: "var(--good)", missed: "var(--warning)", false_success: "var(--critical)", failure: "var(--serious)",
+  timeout: "var(--text-muted)", error: "var(--border-strong)", compromised: "var(--series-5)",
+};
+
 const state = {
   runs: [],
   tab: "evals",
@@ -24,6 +30,9 @@ const state = {
   costSelected: null,
   slots: {},
   reports: {},
+  tasks: null,
+  judge: null,
+  budget: null,
 };
 
 // ---------- small helpers ----------
@@ -312,6 +321,109 @@ function lineChart(host, legendHost, series, opts) {
   });
 }
 
+// ---------- bar chart ----------
+// One bar per column in order, equal widths so runs launched together stay readable.
+// columns: [{ date, head, segments: [{ name, value, color }], notes: [text], onclick }]
+function barChart(host, columns, opts) {
+  host.replaceChildren();
+  if (!columns.length) {
+    host.append(el("div", { class: "empty" }, opts.empty || "No runs for this selection."));
+    return;
+  }
+  const width = Math.max(host.clientWidth, 280);
+  const height = 260;
+  const m = { l: 48, r: 12, t: 12, b: 28 };
+  const totals = columns.map((c) => c.segments.reduce((sum, g) => sum + g.value, 0));
+  const yMax = opts.yMax || niceMax(Math.max(...totals) * 1.1);
+  const band = (width - m.l - m.r) / columns.length;
+  const barW = Math.max(2, Math.min(36, band * 0.7));
+  const cx = (i) => m.l + band * (i + 0.5);
+  const sy = (y) => m.t + (1 - y / yMax) * (height - m.t - m.b);
+
+  const root = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": opts.title || "chart" });
+  const axis = svg("g", { class: "axis" });
+  for (let i = 0; i <= 4; i++) {
+    const v = (yMax * i) / 4;
+    axis.append(svg("line", { class: i === 0 ? "baseline" : "gridline", x1: m.l, x2: width - m.r, y1: sy(v), y2: sy(v) }));
+    const t = svg("text", { x: m.l - 8, y: sy(v) + 4, "text-anchor": "end" });
+    t.textContent = opts.fmtAxis(v);
+    axis.append(t);
+  }
+  // A date under the first column of each day, skipped when it would crowd the previous one.
+  let lastX = -Infinity;
+  let lastDay = "";
+  columns.forEach((c, i) => {
+    const day = dateFmt.format(c.date);
+    if (day === lastDay) return;
+    lastDay = day;
+    if (cx(i) - lastX < 56) return;
+    lastX = cx(i);
+    const t = svg("text", { x: cx(i), y: height - 8, "text-anchor": "middle" });
+    t.textContent = day;
+    axis.append(t);
+  });
+  root.append(axis);
+
+  const bars = columns.map((c, i) => {
+    const g = svg("g", { class: "bar" });
+    let base = 0;
+    for (const seg of c.segments) {
+      if (!(seg.value > 0)) continue;
+      const top = sy(base + seg.value);
+      g.append(svg("rect", { x: cx(i) - barW / 2, y: top, width: barW, height: Math.max(1, sy(base) - top), fill: seg.color }));
+      base += seg.value;
+    }
+    root.append(g);
+    return g;
+  });
+  const hit = svg("rect", { x: m.l, y: 0, width: width - m.l - m.r, height, fill: "transparent", tabindex: 0 });
+  root.append(hit);
+  host.append(root);
+  const tip = el("div", { class: "tooltip" });
+  host.append(tip);
+
+  let focus = columns.length - 1;
+  function show(i) {
+    const c = columns[i];
+    bars.forEach((b, j) => b.classList.toggle("dim", j !== i));
+    tip.replaceChildren(el("div", { class: "t-head" }, c.head),
+      c.segments.filter((g) => g.value > 0).map((g) => el("div", { class: "t-row" },
+        el("span", { class: "key", style: `background:${g.color}` }), el("strong", {}, opts.fmt(g.value)), el("span", {}, g.name))),
+      (c.notes || []).map((n) => el("div", { class: "t-row" }, el("span", {}, n))));
+    tip.style.display = "block";
+    const scale = root.getBoundingClientRect().width / width;
+    const left = cx(i) * scale + 12;
+    const maxLeft = host.clientWidth - tip.offsetWidth - 4;
+    tip.style.left = `${Math.max(0, left > maxLeft ? cx(i) * scale - tip.offsetWidth - 12 : left)}px`;
+    tip.style.top = `${Math.max(0, sy(totals[i]) * scale - tip.offsetHeight - 10)}px`;
+  }
+  function hide() { tip.style.display = "none"; bars.forEach((b) => b.classList.remove("dim")); }
+  const indexAt = (event) => {
+    const box = root.getBoundingClientRect();
+    const x = ((event.clientX - box.left) / box.width) * width;
+    return Math.max(0, Math.min(columns.length - 1, Math.floor((x - m.l) / band)));
+  };
+  const open = (i) => columns[i].onclick && columns[i].onclick();
+  hit.addEventListener("pointermove", (event) => { focus = indexAt(event); show(focus); });
+  hit.addEventListener("pointerleave", hide);
+  hit.addEventListener("click", (event) => open(indexAt(event)));
+  hit.addEventListener("focus", () => show(focus));
+  hit.addEventListener("blur", hide);
+  hit.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") focus = Math.max(0, focus - 1);
+    else if (event.key === "ArrowRight") focus = Math.min(columns.length - 1, focus + 1);
+    else if (event.key === "Enter") return open(focus);
+    else return;
+    event.preventDefault();
+    show(focus);
+  });
+}
+
+function legendItems(host, items) {
+  host.replaceChildren(...items.map(({ name, color }) =>
+    el("span", {}, el("span", { class: "key", style: `background:${color}` }), name)));
+}
+
 // ---------- evals tab ----------
 
 function tile(run, { value, of, delta, meter, stats }) {
@@ -371,6 +483,127 @@ function renderCharts(runs) {
   lineChart(document.getElementById("ch-speed"), document.getElementById("lg-speed"),
     seriesFor(runs, (r) => r.summary.mean_seconds),
     { fmt: (v, axis) => (axis ? `${Math.round(v)}` : fmtSec(v)), detail: (r) => `${r.summary.mean_steps} steps`, title: "Seconds per task by run" });
+}
+
+// Each run's outcome mix as a share of its tasks, so suites of any size compare.
+function renderOutcomes(runs) {
+  const present = OUTCOME_ORDER.filter((o) => runs.some((r) => r.summary[o]));
+  legendItems(document.getElementById("lg-outcomes"), present.map((o) => ({ name: OUTCOME_LABELS[o], color: OUTCOME_COLORS[o] })));
+  barChart(document.getElementById("ch-outcomes"), runs.map((run) => {
+    const s = run.summary;
+    return {
+      date: parseStamp(run.started_at),
+      head: `${timeFmt.format(parseStamp(run.started_at))} · ${configLabel(run)}`,
+      segments: present.map((o) => ({ name: `${OUTCOME_LABELS[o]} (${s[o] || 0})`, value: s.tasks ? (s[o] || 0) / s.tasks : 0, color: OUTCOME_COLORS[o] })),
+      notes: [`${s.success}/${s.tasks} passed`],
+      onclick: () => selectRun(run),
+    };
+  }), { yMax: 1, fmt: (v) => fmtPct(v), fmtAxis: (v) => fmtPct(v), title: "Outcomes by run" });
+}
+
+function runTasks(run) {
+  return (state.tasks || []).filter((t) => t.run_key === run.key);
+}
+
+function renderCategories(runs) {
+  const host = document.getElementById("category-bars");
+  const latest = latestByConfig(runs);
+  legendItems(document.getElementById("lg-category"), latest.length > 1
+    ? latest.map((r) => ({ name: configLabel(r), color: seriesColor(configLabel(r)) })) : []);
+  if (state.tasks === null) { host.replaceChildren(el("div", { class: "empty" }, "Loading…")); return; }
+  const cats = new Map();
+  latest.forEach((run, col) => {
+    for (const t of runTasks(run)) {
+      const name = t.category || "other";
+      if (!cats.has(name)) cats.set(name, latest.map(() => ({ passed: 0, tasks: 0 })));
+      const c = cats.get(name)[col];
+      c.tasks += 1;
+      c.passed += t.outcome === "success" ? 1 : 0;
+    }
+  });
+  if (!cats.size) { host.replaceChildren(el("div", { class: "empty" }, "No runs for this selection.")); return; }
+  // Weakest category first: that is where the next fix pays off.
+  const worst = (cells) => Math.min(...cells.filter((c) => c.tasks).map((c) => c.passed / c.tasks));
+  const rows = [...cats.entries()].sort((a, b) => worst(a[1]) - worst(b[1]));
+  host.replaceChildren(el("div", { class: "hbars" }, rows.map(([name, cells]) => el("div", { class: "hbar-row" },
+    el("div", { class: "hbar-label" }, name),
+    el("div", { class: "hbar-cells" }, cells.map((c, col) => c.tasks ? el("div", { class: "hbar" },
+      el("div", { class: "meter", style: `--tile-color:${seriesColor(configLabel(latest[col]))}` },
+        el("span", { style: `width:${(c.passed / c.tasks) * 100}%` })),
+      el("span", { class: "hbar-value" }, fmtPct(c.passed / c.tasks)), el("span", { class: "hbar-of" }, `${c.passed}/${c.tasks}`)) : null))))));
+}
+
+// Every task over the last runs: a row of outcome marks, flaky ones first.
+function renderHistory(runs) {
+  const table = document.getElementById("history");
+  if (state.tasks === null) { table.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "empty" }, "Loading…")))); return; }
+  const recent = runs.slice(-20);
+  const index = new Map(recent.map((r, i) => [r.key, i]));
+  const rows = new Map();
+  for (const t of state.tasks) {
+    if (!index.has(t.run_key)) continue;
+    if (!rows.has(t.task)) rows.set(t.task, { task: t.task, category: t.category, cells: recent.map(() => null) });
+    rows.get(t.task).cells[index.get(t.run_key)] = t;
+  }
+  const scored = [...rows.values()].map((r) => {
+    const seen = r.cells.filter(Boolean);
+    const passed = seen.filter((t) => t.outcome === "success").length;
+    return { ...r, seen: seen.length, passed, flaky: passed > 0 && passed < seen.length, never: passed === 0 };
+  });
+  // Flaky first, then never passing, then always passing.
+  const rank = (r) => (r.flaky ? 0 : r.never ? 1 : 2);
+  scored.sort((a, b) => rank(a) - rank(b) || a.passed / a.seen - b.passed / b.seen || a.task.localeCompare(b.task));
+  const steady = scored.filter((r) => rank(r) === 2).length;
+  table.replaceChildren(
+    el("thead", {}, el("tr", {}, el("th", {}, "Task"), el("th", {}, `Last ${recent.length} runs`), el("th", { class: "num" }, "Passed"), el("th", {}, ""))),
+    el("tbody", {}, scored.filter((r) => state.historyAll || rank(r) < 2 || steady === scored.length).map((r) => el("tr", {},
+      el("td", {}, r.task, el("div", { class: "muted-line" }, r.category || "")),
+      el("td", {}, el("div", { class: "marks" }, r.cells.map((t, i) => el("span", {
+        class: `mark ${t ? t.outcome : "none"}`,
+        title: t ? `${timeFmt.format(parseStamp(recent[i].started_at))} · ${configLabel(recent[i])} · ${OUTCOME_LABELS[t.outcome] || t.outcome}${t.stop_reason ? ` · ${t.stop_reason}` : ""}` : "not run",
+      })))),
+      el("td", { class: "num" }, `${r.passed}/${r.seen}`),
+      el("td", {}, r.flaky ? el("span", { class: "pill missed" }, "flaky") : r.never ? el("span", { class: "pill failure" }, "never passes") : null)))));
+  let more = document.getElementById("history-more");
+  if (!more) {
+    more = el("button", { class: "ghost-btn", id: "history-more", type: "button" });
+    table.parentElement.after(more);
+  }
+  more.hidden = steady === 0 || steady === scored.length;
+  more.textContent = state.historyAll ? "Hide tasks that always pass" : `Show ${steady} tasks that always pass`;
+  more.onclick = () => { state.historyAll = !state.historyAll; renderHistory(filteredRuns()); };
+}
+
+function renderJudge() {
+  const host = document.getElementById("judge");
+  if (state.judge === null) { host.replaceChildren(el("div", { class: "empty" }, "Loading…")); return; }
+  const checks = state.judge;
+  if (!checks.length) {
+    host.replaceChildren(el("p", { class: "note" }, "No judge check saved yet. Label final screens and run ",
+      el("code", {}, "python -m tests.eval.judge_check run labels.jsonl --save"), " to record one."));
+    return;
+  }
+  const c = checks[checks.length - 1];
+  const prev = checks.length > 1 ? checks[checks.length - 2] : null;
+  const delta = (key) => {
+    if (!prev || prev[key] === null || c[key] === null) return null;
+    const pts = Math.round((c[key] - prev[key]) * 100);
+    return pts ? el("span", { class: `delta ${pts > 0 ? "up" : "down"}` }, `${pts > 0 ? "▲" : "▼"} ${Math.abs(pts)}`) : null;
+  };
+  const metric = (label, key, hint) => el("div", { class: "jmetric" },
+    el("div", { class: "label" }, label), el("div", { class: "value" }, fmtPct(c[key]), delta(key)), el("div", { class: "hint" }, hint));
+  const wrong = Array.isArray(c.disagreements) ? c.disagreements : [];
+  host.replaceChildren(
+    el("div", { class: "jgrid" },
+      metric("Accuracy", "accuracy", "agrees with the label"),
+      metric("Precision", "precision", "its passes that are real"),
+      metric("Recall", "recall", "real passes it sees"),
+      metric("Self-agreement", "agreement", `same answer over ${c.repeats || 1} tries`)),
+    el("p", { class: "note" }, `${c.labels} hand labels · ${c.false_passes} false pass${c.false_passes === 1 ? "" : "es"} · ` +
+      `${c.false_fails} missed pass${c.false_fails === 1 ? "" : "es"} · ${c.judge_model || "judge"} · checked ${dateFmt.format(new Date(c.checked_at))}`),
+    wrong.length ? el("table", {}, el("thead", {}, el("tr", {}, ["Disagreement", "Label", "Judge"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, wrong.map((d) => el("tr", {}, el("td", {}, d.task), el("td", {}, d.label ? "done" : "not done"),
+        el("td", {}, d.judge === null || d.judge === undefined ? "no answer" : d.judge ? "done" : "not done"))))) : null);
 }
 
 async function renderMatrix(runs) {
@@ -563,8 +796,27 @@ function renderCostOverview(runs) {
   const weekSpend = week.reduce((sum, r) => sum + runSpend(r), 0);
   const priciest = runs.reduce((best, r) => (runSpend(r) > runSpend(best) ? r : best), runs[0]);
   const first = parseStamp(runs[0].started_at);
+  // This calendar month so far, and where it ends at the same daily pace.
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const month = runs.filter((r) => parseStamp(r.started_at) >= monthStart).reduce((sum, r) => sum + runSpend(r), 0);
+  const elapsed = Math.max(1, (now - monthStart) / 86400e3);
+  const projected = (month / elapsed) * monthDays;
+  const monthName = new Intl.DateTimeFormat(undefined, { month: "long" }).format(now);
+  const budget = state.budget;
+  const pace = el("div", { class: "hint" }, `on pace for ${fmtUsd(projected)}` + (budget ? ` of ${fmtUsd(budget)}` : ""));
+  const monthStat = stat(`${monthName} so far`, fmtUsd(month));
+  monthStat.append(pace);
+  if (budget) {
+    const over = projected > budget;
+    monthStat.append(el("div", { class: `meter budget${over ? " over" : ""}`, role: "img", "aria-label": `${fmtPct(month / budget)} of budget` },
+      el("span", { style: `width:${Math.min(1, month / budget) * 100}%` }),
+      el("i", { style: `left:${Math.min(1, projected / budget) * 100}%`, title: `Projected ${fmtUsd(projected)}` })));
+  }
   document.getElementById("cost-overview").replaceChildren(
     stat("Total spent", fmtUsd(total), `since ${dateFmt.format(first)}`),
+    monthStat,
     stat("Last 7 days", fmtUsd(weekSpend), `${week.length} run${week.length === 1 ? "" : "s"}`),
     stat("Runs with cost", String(runs.length), `${fmtUsd(total / runs.length)} on average`),
     stat("Priciest run", fmtUsd(runSpend(priciest)), `${suiteLabel(suiteId(priciest))} · ${dateFmt.format(parseStamp(priciest.started_at))}`));
@@ -581,100 +833,124 @@ function renderCumulative(runs) {
     { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)), detail: (r) => `+${fmtUsd(runSpend(r))} · ${suiteLabel(suiteId(r))}`, title: "Total spend over time" });
 }
 
-// One bar per run in time order; equal widths so runs launched together stay readable.
 function renderPerRun(runs) {
-  const host = document.getElementById("ch-per-run");
-  const legend = document.getElementById("lg-per-run");
-  host.replaceChildren();
-  legend.replaceChildren();
   const ids = [...new Set(runs.map(suiteId))].sort((a, b) => SUITE_SLOTS.indexOf(a) - SUITE_SLOTS.indexOf(b));
-  for (const id of ids) legend.append(el("span", {}, el("span", { class: "key", style: `background:${suiteColor(id)}` }), suiteLabel(id)));
+  legendItems(document.getElementById("lg-per-run"), ids.map((id) => ({ name: suiteLabel(id), color: suiteColor(id) })));
+  barChart(document.getElementById("ch-per-run"), runs.map((run) => ({
+    date: parseStamp(run.started_at),
+    head: timeFmt.format(parseStamp(run.started_at)),
+    segments: [{ name: suiteLabel(suiteId(run)), value: runSpend(run), color: suiteColor(suiteId(run)) }],
+    notes: [`${configLabel(run)} · ${run.summary.success}/${run.summary.tasks} passed`,
+      `agent ${fmtUsd(run.summary.cost_usd)} · judge ${fmtUsd(run.summary.judge_cost_usd)}`],
+    onclick: () => selectCostRun(run),
+  })), { fmt: fmtUsd, fmtAxis: fmtUsdAxis, title: "Spend per run" });
+}
 
-  const width = Math.max(host.clientWidth, 280);
-  const height = 260;
-  const m = { l: 48, r: 12, t: 12, b: 28 };
-  const yMax = niceMax(Math.max(...runs.map(runSpend)) * 1.1);
-  const band = (width - m.l - m.r) / runs.length;
-  const barW = Math.max(2, Math.min(36, band * 0.7));
-  const cx = (i) => m.l + band * (i + 0.5);
-  const sy = (y) => m.t + (1 - y / yMax) * (height - m.t - m.b);
-
-  const root = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Spend per run" });
-  const axis = svg("g", { class: "axis" });
-  for (let i = 0; i <= 4; i++) {
-    const v = (yMax * i) / 4;
-    axis.append(svg("line", { class: i === 0 ? "baseline" : "gridline", x1: m.l, x2: width - m.r, y1: sy(v), y2: sy(v) }));
-    const t = svg("text", { x: m.l - 8, y: sy(v) + 4, "text-anchor": "end" });
-    t.textContent = fmtUsdAxis(v);
-    axis.append(t);
-  }
-  // A date under the first run of each day, skipped when it would crowd the previous one.
-  let lastX = -Infinity;
-  let lastDay = "";
-  runs.forEach((run, i) => {
-    const day = dateFmt.format(parseStamp(run.started_at));
-    if (day === lastDay) return;
-    lastDay = day;
-    if (cx(i) - lastX < 56) return;
-    lastX = cx(i);
-    const t = svg("text", { x: cx(i), y: height - 8, "text-anchor": "middle" });
-    t.textContent = day;
-    axis.append(t);
-  });
-  root.append(axis);
-
-  const bars = runs.map((run, i) => {
-    const y = sy(runSpend(run));
-    const bar = svg("rect", {
-      x: cx(i) - barW / 2, y, width: barW, height: Math.max(1, sy(0) - y), rx: Math.min(3, barW / 4),
-      fill: suiteColor(suiteId(run)), class: "bar",
-    });
-    root.append(bar);
-    return bar;
-  });
-  const hit = svg("rect", { x: m.l, y: 0, width: width - m.l - m.r, height, fill: "transparent", tabindex: 0 });
-  root.append(hit);
-  host.append(root);
-  const tip = el("div", { class: "tooltip" });
-  host.append(tip);
-
-  let focus = runs.length - 1;
-  function show(i) {
-    const run = runs[i];
-    const s = run.summary;
-    bars.forEach((b, j) => b.classList.toggle("dim", j !== i));
-    tip.replaceChildren(
-      el("div", { class: "t-head" }, timeFmt.format(parseStamp(run.started_at))),
-      el("div", { class: "t-row" }, el("span", { class: "key", style: `background:${suiteColor(suiteId(run))}` }),
-        el("strong", {}, fmtUsd(runSpend(run))), el("span", {}, suiteLabel(suiteId(run)))),
-      el("div", { class: "t-row" }, el("span", {}, `${configLabel(run)} · ${s.success}/${s.tasks} passed`)),
-      el("div", { class: "t-row" }, el("span", {}, `agent ${fmtUsd(s.cost_usd)} · judge ${fmtUsd(s.judge_cost_usd)}`)));
-    tip.style.display = "block";
-    const scale = root.getBoundingClientRect().width / width;
-    const left = cx(i) * scale + 12;
-    const maxLeft = host.clientWidth - tip.offsetWidth - 4;
-    tip.style.left = `${Math.max(0, left > maxLeft ? cx(i) * scale - tip.offsetWidth - 12 : left)}px`;
-    tip.style.top = `${Math.max(0, sy(runSpend(run)) * scale - tip.offsetHeight - 10)}px`;
-  }
-  function hide() { tip.style.display = "none"; bars.forEach((b) => b.classList.remove("dim")); }
-  const indexAt = (event) => {
-    const box = root.getBoundingClientRect();
-    const x = ((event.clientX - box.left) / box.width) * width;
-    return Math.max(0, Math.min(runs.length - 1, Math.floor((x - m.l) / band)));
+// Agent spend by model plus the judge, summed per local day.
+function renderByModel(runs) {
+  const days = new Map();
+  const totals = new Map();
+  const add = (day, name, value) => {
+    if (!(value > 0)) return;
+    day.values.set(name, (day.values.get(name) || 0) + value);
+    totals.set(name, (totals.get(name) || 0) + value);
   };
-  hit.addEventListener("pointermove", (event) => { focus = indexAt(event); show(focus); });
-  hit.addEventListener("pointerleave", hide);
-  hit.addEventListener("click", (event) => selectCostRun(runs[indexAt(event)]));
-  hit.addEventListener("focus", () => show(focus));
-  hit.addEventListener("blur", hide);
-  hit.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowLeft") focus = Math.max(0, focus - 1);
-    else if (event.key === "ArrowRight") focus = Math.min(runs.length - 1, focus + 1);
-    else if (event.key === "Enter") return selectCostRun(runs[focus]);
-    else return;
-    event.preventDefault();
-    show(focus);
-  });
+  for (const run of runs) {
+    const when = parseStamp(run.started_at);
+    const id = `${when.getFullYear()}-${when.getMonth()}-${when.getDate()}`;
+    if (!days.has(id)) days.set(id, { date: new Date(when.getFullYear(), when.getMonth(), when.getDate()), values: new Map(), runs: 0 });
+    const day = days.get(id);
+    day.runs += 1;
+    const byModel = Object.entries(run.summary.by_model || {});
+    let attributed = 0;
+    for (const [name, bucket] of byModel) { add(day, name, bucket.cost_usd || 0); attributed += bucket.cost_usd || 0; }
+    add(day, "Unattributed", (run.summary.cost_usd || 0) - attributed > 0.0005 ? run.summary.cost_usd - attributed : 0);
+    add(day, "Judge", run.summary.judge_cost_usd || 0);
+  }
+  const names = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+  const color = (name) => `var(--series-${Math.min(names.indexOf(name) + 1, MAX_SLOTS)})`;
+  legendItems(document.getElementById("lg-models"), names.map((name) => ({ name, color: color(name) })));
+  barChart(document.getElementById("ch-models"), [...days.values()].map((day) => ({
+    date: day.date,
+    head: `${dateFmt.format(day.date)} · ${day.runs} run${day.runs === 1 ? "" : "s"}`,
+    segments: names.map((name) => ({ name, value: day.values.get(name) || 0, color: color(name) })),
+    notes: [`${fmtUsd([...day.values.values()].reduce((a, b) => a + b, 0))} that day`],
+  })), { fmt: fmtUsd, fmtAxis: fmtUsdAxis, title: "Spend by model per day" });
+}
+
+function cacheHitRate(run) {
+  const s = run.summary;
+  const all = (s.input_tokens || 0) + (s.cache_read_tokens || 0) + (s.cache_write_tokens || 0);
+  return all ? (s.cache_read_tokens || 0) / all : null;
+}
+
+function renderCacheRate(runs) {
+  const points = runs.filter((r) => cacheHitRate(r) !== null).map((run) => ({ x: parseStamp(run.started_at), y: cacheHitRate(run), run }));
+  lineChart(document.getElementById("ch-cache"), el("div"),
+    points.length ? [{ label: "Cache hit rate", color: "var(--series-3)", points }] : [],
+    { yMax: 1, fmt: (v) => fmtPct(v), title: "Cache hit rate by run",
+      detail: (r) => `${suiteLabel(suiteId(r))} · ${fmtTokens(r.summary.cache_read_tokens)} read, ${fmtTokens(r.summary.cache_write_tokens)} written` });
+}
+
+function costTasks(runs) {
+  const byKey = new Map(runs.map((r) => [r.key, r]));
+  return (state.tasks || []).filter((t) => byKey.has(t.run_key)).map((t) => ({ ...t, run: byKey.get(t.run_key) }));
+}
+
+function renderTopTasks(runs) {
+  const table = document.getElementById("cost-top-tasks");
+  if (state.tasks === null) { table.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "empty" }, "Loading…")))); return; }
+  const groups = new Map();
+  for (const t of costTasks(runs)) {
+    const id = `${t.run.mode}|${t.task}`;
+    const g = groups.get(id) || { task: t.task, mode: t.run.mode, attempts: 0, passed: 0, spend: 0, steps: 0 };
+    g.attempts += 1;
+    g.passed += t.outcome === "success" ? 1 : 0;
+    g.spend += (t.cost_usd || 0) + (t.judge_cost_usd || 0);
+    g.steps += t.steps || 0;
+    groups.set(id, g);
+  }
+  const rows = [...groups.values()].sort((a, b) => b.spend / b.attempts - a.spend / a.attempts).slice(0, 10);
+  table.replaceChildren(
+    el("thead", {}, el("tr", {}, ["Task", "Env", "Attempts", "Passed", "Avg steps", "Per attempt", "Total"]
+      .map((h, i) => el("th", { class: i >= 2 ? "num" : "" }, h)))),
+    el("tbody", {}, rows.length ? rows.map((g) => el("tr", {},
+      el("td", {}, g.task), el("td", {}, MODE_NAMES[g.mode] || g.mode),
+      el("td", { class: "num" }, String(g.attempts)), el("td", { class: "num" }, fmtPct(g.passed / g.attempts)),
+      el("td", { class: "num" }, (g.steps / g.attempts).toFixed(1)),
+      el("td", { class: "num" }, el("strong", {}, fmtUsd(g.spend / g.attempts))), el("td", { class: "num" }, fmtUsd(g.spend))))
+      : el("tr", {}, el("td", { class: "empty", colspan: 7 }, "No per-task cost recorded yet."))));
+}
+
+// Spend that bought no pass: every task in a flagged run, and failed tasks elsewhere.
+function renderWaste(runs) {
+  const host = document.getElementById("cost-waste");
+  if (state.tasks === null) { host.replaceChildren(el("div", { class: "empty" }, "Loading…")); return; }
+  const total = runs.reduce((sum, r) => sum + runSpend(r), 0);
+  const buckets = new Map();
+  const add = (name, value, color) => {
+    const b = buckets.get(name) || { name, value: 0, color, tasks: 0 };
+    b.value += value;
+    b.tasks += 1;
+    buckets.set(name, b);
+  };
+  for (const t of costTasks(runs)) {
+    const spend = (t.cost_usd || 0) + (t.judge_cost_usd || 0);
+    if (t.run.config && t.run.config.flagged) add("Flagged runs", spend, "var(--series-6)");
+    else if (t.outcome !== "success") add(OUTCOME_LABELS[t.outcome] || t.outcome, spend, OUTCOME_COLORS[t.outcome] || "var(--text-muted)");
+  }
+  const rows = [...buckets.values()].sort((a, b) => b.value - a.value);
+  const wasted = rows.reduce((sum, b) => sum + b.value, 0);
+  host.replaceChildren(
+    el("div", { class: "waste-head" }, el("strong", {}, fmtUsd(wasted)),
+      el("span", {}, `${fmtPct(total ? wasted / total : 0)} of ${fmtUsd(total)} spent`)),
+    el("div", { class: "stackbar", role: "img", "aria-label": "Wasted spend by reason" },
+      rows.map((b) => el("span", { style: `width:${(b.value / (total || 1)) * 100}%;background:${b.color}`, title: `${b.name}: ${fmtUsd(b.value)}` }))),
+    el("table", {}, el("tbody", {}, rows.length ? rows.map((b) => el("tr", {},
+      el("td", {}, el("span", { class: "config-cell" }, el("span", { class: "key", style: `background:${b.color}` }), b.name)),
+      el("td", { class: "num" }, `${b.tasks} task${b.tasks === 1 ? "" : "s"}`),
+      el("td", { class: "num" }, fmtUsd(b.value)), el("td", { class: "num" }, fmtPct(total ? b.value / total : 0))))
+      : el("tr", {}, el("td", { class: "empty" }, "Nothing wasted yet: every measured task passed.")))));
 }
 
 function renderCostSuites(runs) {
@@ -737,6 +1013,10 @@ function renderCost() {
   renderCostOverview(runs);
   renderCumulative(runs);
   renderPerRun(runs);
+  renderByModel(runs);
+  renderCacheRate(runs);
+  renderTopTasks(runs);
+  renderWaste(runs);
   renderCostRuns(runs);
   renderCostSuites(runs);
 }
@@ -791,6 +1071,10 @@ function render() {
     const runs = filteredRuns();
     renderTiles(runs);
     renderCharts(runs);
+    renderOutcomes(runs);
+    renderCategories(runs);
+    renderHistory(runs);
+    renderJudge();
     renderRuns(runs);
     renderMatrix(runs);
     const selected = runs.find((r) => r.key === state.selected);
@@ -869,9 +1153,15 @@ async function main() {
   state.suite = store("operon-dash-f-suite") || state.suite;
   state.tab = store("operon-dash-tab") || state.tab;
   bindControls();
+  // Task results and judge checks feed extra cards; the page renders without them.
+  const extras = Promise.all([
+    getJson("api/tasks").then((d) => { state.tasks = d.tasks || []; }).catch(() => { state.tasks = []; }),
+    getJson("api/judge").then((d) => { state.judge = d.checks || []; }).catch(() => { state.judge = []; }),
+  ]);
   try {
     const index = await getJson("api/runs");
     state.runs = index.runs || [];
+    state.budget = index.budget_usd || null;
     assignSlots(state.runs);
     const generated = index.generated_at ? new Date(index.generated_at) : null;
     document.getElementById("meta").textContent =
@@ -879,6 +1169,8 @@ async function main() {
   } catch (err) {
     document.getElementById("meta").textContent = `Could not load benchmark data: ${err.message}`;
   }
+  render();
+  await extras;
   render();
 }
 

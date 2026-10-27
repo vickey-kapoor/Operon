@@ -2,16 +2,24 @@
 
 Shows the live benchmark results: pass rate, seconds per task and per step, false
 passes, per-task outcomes by configuration (Claude or Gemini backend, full or thin
-harness), and, on the Cost tab, total spend over time: a running total and the
-spend of each run across every environment and suite (flagged runs included),
+harness), why tasks fail, pass rate by category, each task's history across runs
+(flaky ones first) and the judge's agreement with hand labels. The Cost tab shows
+total spend over time across every environment and suite (flagged runs included):
+a running total, spend per run, this month's pace against an optional budget,
+spend by model per day, cache hit rate, the most expensive tasks, wasted spend,
 spend by suite, and each run's spend by model and by task.
 
 - `index.html`, `app.js`, `style.css`: the page. Plain JS and inline SVG charts, no build step.
 - `api/runs.js` (`GET /api/runs`): every run with its summary and config.
 - `api/report.js` (`GET /api/report?key=<run key>`): one run with its per-task results.
+- `api/tasks.js` (`GET /api/tasks`): every task result of every run, slimmed for the history and cost cards.
+- `api/judge.js` (`GET /api/judge`): judge checks saved by `python -m tests.eval.judge_check run labels.jsonl --save`.
 - `api/blob.js` (`GET /api/blob?url=<blob url>`): one screenshot or trace from the private Blob store.
 - `server/db.js`: the Postgres pool the routes share, from `DATABASE_URL`.
 - `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.
+
+Set `MONTHLY_BUDGET_USD` in the Vercel project's environment variables to show a
+budget bar under this month's spend on the Cost tab. Without it the tab shows only the pace.
 
 ## Access
 
@@ -29,6 +37,8 @@ owner connection string the importer uses. In the Neon SQL editor:
 CREATE ROLE dashboard_reader LOGIN PASSWORD '<a new password>';
 GRANT USAGE ON SCHEMA public TO dashboard_reader;
 GRANT SELECT ON bench_runs, bench_task_results TO dashboard_reader;
+-- After the first `judge_check run --save` creates it:
+GRANT SELECT ON judge_checks TO dashboard_reader;
 ```
 
 Then set the Vercel project's `DATABASE_URL` to that role's connection string; the

@@ -24,6 +24,9 @@ The report gives precision (when the judge says "done", how often it is right),
 recall (how many done tasks it sees), accuracy, the disagreements, and with
 ``--repeat`` how often the judge gives the same answer twice on one screenshot.
 A judge false positive is the costly error: it turns a false success into a pass.
+
+4. Add ``--save`` to record the result in the benchmark database (``DATABASE_URL``),
+   where the dashboard's Judge accuracy card reads it.
 """
 
 from __future__ import annotations
@@ -145,6 +148,56 @@ def format_score(graded: list[Graded], summary: dict, unlabelled: int) -> str:
     return "\n".join(head + (["", "disagreements:"] + lines if lines else []))
 
 
+JUDGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS judge_checks (
+    id            bigserial PRIMARY KEY,
+    checked_at    timestamptz NOT NULL DEFAULT now(),
+    judge_model   text,
+    labels        integer NOT NULL,
+    repeats       integer NOT NULL,
+    accuracy      double precision,
+    precision     double precision,
+    recall        double precision,
+    agreement     double precision,
+    false_passes  integer NOT NULL,
+    false_fails   integer NOT NULL,
+    disagreements jsonb NOT NULL
+);
+"""
+
+
+def check_row(graded: list[Graded], summary: dict, judge_model: str, repeat: int) -> dict:
+    """One ``judge_checks`` row. Screenshots are named by file only: local paths stay local."""
+    return {
+        "judge_model": judge_model,
+        "labels": summary["labelled"],
+        "repeats": repeat,
+        "accuracy": summary["accuracy"],
+        "precision": summary["precision"],
+        "recall": summary["recall"],
+        "agreement": summary["self_agreement"],
+        "false_passes": summary["false_positive"],
+        "false_fails": summary["false_negative"],
+        "disagreements": [
+            {"task": g.label.task, "screenshot": Path(g.label.screenshot).name, "label": g.label.label, "judge": g.verdict}
+            for g in graded
+            if g.verdict is not g.label.label
+        ],
+    }
+
+
+def save_check(conn, row: dict) -> None:
+    from psycopg.types.json import Jsonb
+
+    with conn.transaction():
+        conn.execute(JUDGE_SCHEMA)
+        values = {**row, "disagreements": Jsonb(row["disagreements"])}
+        conn.execute(
+            f"INSERT INTO judge_checks ({', '.join(values)}) VALUES ({', '.join('%(' + c + ')s' for c in values)})",
+            values,
+        )
+
+
 async def judge_labels(labels: list[Label], judge, repeat: int = 1, concurrency: int = 4) -> list[Graded]:
     tasks: dict[str, LiveTask] = {t.name: t for t in [*TASKS, *DESKTOP_TASKS]}
     gate = asyncio.Semaphore(concurrency)
@@ -171,6 +224,7 @@ def main(argv: list[str]) -> int:
     run.add_argument("--repeat", type=int, default=1, help="judge each screenshot this many times")
     run.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", "gemini-3.5-flash"))
     run.add_argument("--json", action="store_true")
+    run.add_argument("--save", action="store_true", help="record the result in the benchmark database (DATABASE_URL)")
     args = parser.parse_args(argv)
 
     if args.command == "template":
@@ -180,6 +234,10 @@ def main(argv: list[str]) -> int:
 
     from tests.eval.live_bench import gemini_judge
 
+    database_url = os.getenv("DATABASE_URL")
+    if args.save and not database_url:
+        print("--save needs DATABASE_URL.", file=sys.stderr)
+        return 2
     labels, unlabelled = read_labels(args.labels)
     if not labels:
         print("No labelled lines: set \"label\" to true or false first.", file=sys.stderr)
@@ -191,6 +249,12 @@ def main(argv: list[str]) -> int:
     else:
         print(f"judge {args.judge_model}")
         print(format_score(graded, summary, unlabelled))
+    if args.save:
+        from tests.eval.dashboard import connect
+
+        with connect(database_url) as conn:
+            save_check(conn, check_row(graded, summary, args.judge_model, max(1, args.repeat)))
+        print("saved to judge_checks", file=sys.stderr)
     return 0
 
 

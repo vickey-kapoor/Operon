@@ -7,6 +7,7 @@ import json
 from tests.eval.judge_check import (
     Graded,
     Label,
+    check_row,
     judge_labels,
     read_labels,
     score,
@@ -79,3 +80,23 @@ async def test_judge_labels_repeats_and_skips_missing_screens(tmp_path) -> None:
     )
     assert calls == ["click_link", "click_link"]
     assert [g.verdict for g in graded] == [True, None, None]
+
+
+def test_check_row_keeps_disagreements_and_drops_local_paths() -> None:
+    graded = [
+        Graded(Label("click_link", "/home/me/screens/click_link.png", True), (True, True)),
+        Graded(Label("hn_new", "/home/me/screens/hn_new.png", False), (True, True)),
+        Graded(Label("go_back", "/home/me/screens/go_back.png", True), (None,)),
+    ]
+
+    row = check_row(graded, score(graded), "gemini-3.5-flash", 2)
+
+    assert row["labels"] == 3
+    assert row["repeats"] == 2
+    assert row["false_passes"] == 1
+    assert row["false_fails"] == 0
+    assert row["precision"] == 0.5
+    assert row["disagreements"] == [
+        {"task": "hn_new", "screenshot": "hn_new.png", "label": False, "judge": True},
+        {"task": "go_back", "screenshot": "go_back.png", "label": True, "judge": None},
+    ]

@@ -55,6 +55,26 @@
           <div class="chart" id="ch-speed"></div>
         </div>
       </div>
+      <div class="charts two">
+        <div class="card">
+          <div class="card-head"><div><h2>Why tasks fail</h2><p class="sub">Outcome of every task in each run, as a share of the run</p></div><div class="legend" id="lg-outcomes"></div></div>
+          <div class="chart" id="ch-outcomes"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Pass rate by category</h2><p class="sub">Latest run of each configuration</p></div><div class="legend" id="lg-category"></div></div>
+          <div id="category-bars"></div>
+        </div>
+      </div>
+      <div class="split">
+        <div class="card">
+          <div class="card-head"><div><h2>Task history</h2><p class="sub">Each task over the last runs, oldest left. Flaky tasks (mixed results) first.</p></div></div>
+          <div class="table-wrap"><table class="history" id="history"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Judge accuracy</h2><p class="sub">How often the benchmark judge agrees with hand labels on final screens</p></div></div>
+          <div id="judge"></div>
+        </div>
+      </div>
       <div class="split">
         <div class="card">
           <div class="card-head"><div><h2>Runs</h2><p class="sub">Every run for this environment and suite. Select one to see its tasks.</p></div></div>
@@ -90,6 +110,26 @@
           <div class="card">
             <div class="card-head"><div><h2>Spend per run</h2><p class="sub">Agent and judge spend of each run, colored by suite</p></div><div class="legend" id="lg-per-run"></div></div>
             <div class="chart" id="ch-per-run"></div>
+          </div>
+        </div>
+        <div class="charts two">
+          <div class="card">
+            <div class="card-head"><div><h2>Spend by model</h2><p class="sub">Per day: the agent's models and the judge, US dollars</p></div><div class="legend" id="lg-models"></div></div>
+            <div class="chart" id="ch-models"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h2>Cache hit rate</h2><p class="sub">Share of the agent's input tokens read from the prompt cache, by run. Higher is cheaper.</p></div></div>
+            <div class="chart" id="ch-cache"></div>
+          </div>
+        </div>
+        <div class="split">
+          <div class="card">
+            <div class="card-head"><div><h2>Most expensive tasks</h2><p class="sub">Average spend per attempt across every run</p></div></div>
+            <div class="table-wrap"><table id="cost-top-tasks"></table></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h2>Wasted spend</h2><p class="sub">Money spent on tasks that didn't pass, and on flagged runs</p></div></div>
+            <div id="cost-waste"></div>
           </div>
         </div>
         <div class="split">

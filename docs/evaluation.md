@@ -30,7 +30,7 @@ Every live suite spends real model credits, so none of them run on pushes or mer
 | Safety suite | `python -m tests.eval.live_bench --suite safety` | 9 prompt-injection and overreach tasks on a local fixture site, graded from the site's request log |
 | Local apps suite | `python -m tests.eval.live_bench --suite apps` | 11 tasks on local fake shop, mail, account and form apps, graded from the apps' state |
 | Desktop benchmark | `python -m tests.eval.live_desktop_bench [--suite smoke\|full]` | 10 tasks on stock Windows apps (3 in smoke); **drives the real mouse and keyboard** |
-| Judge check | `python -m tests.eval.judge_check template <report.json> > labels.jsonl`, then `judge_check run labels.jsonl [--repeat 3]` | Compares the benchmark judge with hand labels |
+| Judge check | `python -m tests.eval.judge_check template <report.json> > labels.jsonl`, then `judge_check run labels.jsonl [--repeat 3] [--save]` | Compares the benchmark judge with hand labels; `--save` records it for the dashboard (needs `DATABASE_URL`) |
 
 The browser benchmark grades each task with a Gemini judge that reads the final screenshot
 against a per-task success condition. The judge check measured it at 99% accuracy and 100%

@@ -49,15 +49,20 @@ _FINAL_CHECK_PROMPT = """You are checking whether a computer-use agent finished 
 Task: {intent}
 The agent says it is done: {claim}
 
-The image is the screen the agent saw when it said so. Judge only from the task and
-this screen. Reply with one JSON object and nothing else:
-{{"complete": true or false, "reason": "one sentence naming what on the screen shows it"}}"""
+{images}
+Judge only from the task and these screens. A step done earlier counts when an earlier
+screen shows it done and nothing after it undid it. Reply with one JSON object and nothing else:
+{{"complete": true or false, "reason": "one sentence naming what on the screens shows it"}}"""
+
+# Screens from before the claim that the check also sees, so work the final screen
+# can no longer show (a change confirmed, then a sign-out) still counts.
+_EARLIER_SCREENS = 3
 
 
 def final_check_model(claude_model: str | None) -> str:
     """Model for the completion check: ``OPERON_FINAL_CHECK_MODEL``, else the acting model.
 
-    The check is one image and a short answer per claimed finish, so a cheaper
+    The check is a few screenshots and a short answer per claimed finish, so a cheaper
     model (``claude-sonnet-5-5``) can cut its cost without touching the actions.
     """
     return (os.getenv("OPERON_FINAL_CHECK_MODEL") or "").strip() or claude_model or "claude-opus-5-5"
@@ -148,10 +153,21 @@ class FinalCheckVerifier(VerifierService):
         screenshot = next((path for path in candidates if path and Path(path).exists()), None)
         if screenshot is None:
             return self._unchecked(state, decision, "no final screenshot to check against")
-        prompt = _FINAL_CHECK_PROMPT.format(intent=state.intent, claim=decision.rationale)
+        earlier = _earlier_screens(state, screenshot)
+        if earlier:
+            images = (
+                f"The first {len(earlier)} images are earlier screens from the run, oldest first. "
+                "The last image is the screen the agent saw when it said it was done."
+            )
+        else:
+            images = "The image is the screen the agent saw when it said so."
+        prompt = _FINAL_CHECK_PROMPT.format(intent=state.intent, claim=decision.rationale, images=images)
         image, media_type, _, _ = encode_screenshot(Path(screenshot))
+        earlier_images = [encode_screenshot(Path(path))[:2] for path in earlier]
         try:
-            raw = await self.client.generate_judgement(prompt, image_data=image, media_type=media_type, effort=self.effort)
+            raw = await self.client.generate_judgement(
+                prompt, image_data=image, media_type=media_type, effort=self.effort, earlier_images=earlier_images
+            )
         except AnthropicClientError as exc:
             # A check that cannot run must not keep the model going in circles: take
             # its word, say so in the result, and leave grading to the benchmark judge.
@@ -215,6 +231,18 @@ class FinalCheckVerifier(VerifierService):
             usage_artifact_path=str(usage_path),
             usage=collect_latest_usage(self.client, usage_path),
         )
+
+
+def _earlier_screens(state: AgentState, final: str) -> list[str]:
+    """Up to ``_EARLIER_SCREENS`` distinct screens before ``final``, oldest first."""
+    paths: list[str] = []
+    for observation in reversed(state.observation_history):
+        path = observation.capture_artifact_path
+        if path and path != final and path not in paths and Path(path).exists():
+            paths.append(path)
+        if len(paths) == _EARLIER_SCREENS:
+            break
+    return paths[::-1]
 
 
 def _parse_verdict(raw: str) -> tuple[bool, str]:

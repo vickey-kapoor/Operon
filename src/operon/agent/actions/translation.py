@@ -215,6 +215,13 @@ def _claude_key(text: str) -> dict[str, Any]:
     }
 
 
+# Every call name ``normalize_claude_computer_calls`` translates.
+CLAUDE_COMPUTER_CALLS = frozenset({
+    "screenshot", "left_click", "middle_click", "double_click", "triple_click", "right_click", "mouse_move",
+    "left_click_drag", "type", "key", "scroll", "wait", "navigate", "launch_app",
+})
+
+
 def normalize_claude_computer_calls(
     calls: list[dict[str, Any]],
     *,

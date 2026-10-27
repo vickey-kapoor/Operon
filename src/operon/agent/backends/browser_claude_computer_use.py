@@ -12,6 +12,7 @@ from typing import Any
 
 from operon.agent._agent_utils import collect_latest_usage
 from operon.agent.actions.translation import (
+    CLAUDE_COMPUTER_CALLS,
     build_policy_decision,
     normalize_claude_computer_calls,
 )
@@ -52,6 +53,8 @@ class _ConversationState:
     # deterministic rule can run something else in their place; Claude must hear
     # that its calls did not run.
     proposed_action_types: frozenset[ActionType] = frozenset()
+    # Open calls naming a tool the executor doesn't have: answered with an error, never run.
+    unknown_call_ids: frozenset[str] = frozenset()
 
 
 def encode_screenshot(path: Path, max_long_edge: int = _MAX_LONG_EDGE) -> tuple[str, str, int, int]:
@@ -146,6 +149,10 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
             and (block.get("toolset_name") == TOOLSET_NAME or block.get("name") in self.custom_tool_names)
         ]
         conversation.pending_calls = calls
+        # A call to a tool that doesn't exist (Claude sometimes invents one) is
+        # answered with an error next turn; the rest of its batch still runs.
+        runnable = [call for call in calls if call.get("name") in CLAUDE_COMPUTER_CALLS]
+        conversation.unknown_call_ids = frozenset(call["id"] for call in calls if call not in runnable)
         text = " ".join(
             block["text"].strip() for block in content if block.get("type") == "text" and block.get("text", "").strip()
         )
@@ -158,11 +165,11 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
             confidence=0.5,
             elements_reported=False,
         )
-        if calls:
+        if runnable:
             scale_x = screenshot.width / sent_width if sent_width else 1.0
             scale_y = screenshot.height / sent_height if sent_height else 1.0
             action = normalize_claude_computer_calls(
-                [{"name": call.get("name"), "input": call.get("input") or {}} for call in calls],
+                [{"name": call.get("name"), "input": call.get("input") or {}} for call in runnable],
                 scale_x=scale_x,
                 scale_y=scale_y,
                 screen_width=screenshot.width,
@@ -174,7 +181,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 "confidence": 0.7,
                 "active_subgoal": self._describe(calls),
             }
-        elif self._has_acted(state):
+        elif not calls and self._has_acted(state):
             # A reply without tool calls after acting is Claude saying the task is
             # done. Surface it as STOP so the verifier judges the claim.
             decision_payload = {
@@ -194,7 +201,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         proposed = self._cached_decision.action
         conversation.proposed_action_types = (
             frozenset({proposed.action_type, *(child.action_type for child in proposed.actions or [])})
-            if calls
+            if runnable
             else frozenset()
         )
         bg_writer.enqueue(
@@ -285,26 +292,31 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         conversation.acknowledged_actions = len(state.action_history)
 
         results: list[dict[str, Any]] = []
-        for index, call in enumerate(conversation.pending_calls):
+        runnable_ids = [call["id"] for call in conversation.pending_calls if call["id"] not in conversation.unknown_call_ids]
+        for call in conversation.pending_calls:
             result: dict[str, Any] = {"type": "tool_result", "tool_use_id": call["id"]}
             if call.get("toolset_name") == TOOLSET_NAME:
                 result["toolset_name"] = TOOLSET_NAME
-            if error is not None:
+            if call["id"] in conversation.unknown_call_ids:
+                result["is_error"] = True
+                result["content"] = f"Error: there is no {call.get('name')} tool, so this call was not run."
+            elif error is not None:
                 # The batch ran as one action; report the failure on its first call
                 # and mark the rest as skipped, as the toolset expects.
                 result["is_error"] = True
-                result["content"] = f"Error: {error}" if index == 0 else _NOT_EXECUTED
+                result["content"] = f"Error: {error}" if call["id"] == runnable_ids[0] else _NOT_EXECUTED
             elif call.get("name") == "screenshot":
                 result["content"] = [image_block]
             else:
                 result["content"] = [{"type": "text", "text": "OK"}]
             results.append(result)
         conversation.pending_calls = []
+        conversation.unknown_call_ids = frozenset()
 
         extra: list[dict[str, Any]] = []
         answered_with_image = error is None and any(r.get("content") == [image_block] for r in results)
         if not answered_with_image:
-            if error is None:
+            if error is None and not results[-1].get("is_error"):
                 results[-1]["content"] = [*results[-1]["content"], image_block]
             else:
                 extra.append(image_block)

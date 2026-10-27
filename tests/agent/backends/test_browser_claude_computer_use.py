@@ -343,3 +343,33 @@ def test_an_explicit_backend_wins_over_the_default(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key")
 
     assert browser_mode_config().backend == "computer_use"
+
+
+async def test_a_call_to_a_tool_that_does_not_exist_is_answered_with_an_error_and_the_rest_runs(tmp_path: Path) -> None:
+    # Seen live: a batch ending in a made-up toolset member used to hand the whole run to the fallback.
+    client = ScriptedClient(
+        [
+            _reply(_call("left_click", "t1", coordinate=[10, 10]), _call("navigate_placeholder", "t2")),
+            _reply(_call("navigate_placeholder", "t3")),
+            _reply({"type": "text", "text": "Done."}, stop_reason="end_turn"),
+        ]
+    )
+    backend = _backend(client)
+
+    state = _state()
+    decision = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "a.png"), state))
+    assert decision.action.action_type is ActionType.CLICK
+
+    state = _state((ActionType.CLICK, True))
+    decision = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "b.png"), state))
+    content = client.requests[1][-1]["content"]
+    assert content[0]["tool_use_id"] == "t1" and content[0]["content"][0] == {"type": "text", "text": "OK"}
+    assert content[1]["is_error"] and "no navigate_placeholder tool" in content[1]["content"]
+    assert content[-1]["type"] == "image"
+    # A turn of only unknown calls runs nothing and is not taken as "done".
+    assert decision.action.action_type is ActionType.WAIT
+
+    await backend.perceive(_frame(tmp_path, "c.png"), _state((ActionType.CLICK, True), (ActionType.WAIT, True)))
+    content = client.requests[2][-1]["content"]
+    assert content[0]["tool_use_id"] == "t3" and content[0]["is_error"]
+    assert any(block["type"] == "image" for block in content[1:])

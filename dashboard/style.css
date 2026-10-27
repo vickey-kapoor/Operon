@@ -254,6 +254,8 @@ code, .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo
 .chart .gridline { stroke: var(--grid); stroke-width: 1; }
 .chart .baseline { stroke: var(--border-strong); stroke-width: 1; }
 .chart .crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart .bar { transition: opacity 0.12s; }
+.chart .bar.dim { opacity: 0.35; }
 .chart .dlabel { font-size: 11px; font-weight: 600; fill: var(--text-secondary); font-family: inherit; }
 .tooltip {
   position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);

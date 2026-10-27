@@ -72,9 +72,11 @@ function fmtUsd(v) {
   if (v === null || v === undefined) return "–";
   if (v === 0) return "$0";
   if (v < 0.01) return `$${v.toFixed(4)}`;
-  if (v < 10) return `$${v.toFixed(3)}`;
+  if (v < 1) return `$${v.toFixed(3)}`;
   return `$${v.toFixed(2)}`;
 }
+// Axis ticks: as few digits as the value needs ($0.25, $2.5, $10).
+const fmtUsdAxis = (v) => `$${Number(v.toFixed(v < 1 ? 3 : 2))}`;
 function fmtTokens(v) {
   if (v === null || v === undefined) return "–";
   if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
@@ -105,8 +107,8 @@ function assignSlots(runs) {
   }
 }
 
-function key(label, cls) {
-  return el("span", { class: cls || "key", style: `background:${seriesColor(label)}` });
+function key(label, cls, color) {
+  return el("span", { class: cls || "key", style: `background:${color || seriesColor(label)}` });
 }
 
 function configCell(run) {
@@ -197,7 +199,7 @@ function lineChart(host, legendHost, series, opts) {
     return;
   }
   if (series.length > 1) {
-    for (const s of series) legendHost.append(el("span", {}, key(s.label, "line-key"), s.label));
+    for (const s of series) legendHost.append(el("span", {}, key(s.label, "line-key", s.color), s.label));
   }
 
   const width = Math.max(host.clientWidth, 280);
@@ -280,7 +282,7 @@ function lineChart(host, legendHost, series, opts) {
     }).filter(Boolean);
     tip.replaceChildren(el("div", { class: "t-head" }, timeFmt.format(point.x)));
     for (const { s, p } of near) {
-      tip.append(el("div", { class: "t-row" }, key(s.label, "line-key"), el("strong", {}, opts.fmt(p.y)),
+      tip.append(el("div", { class: "t-row" }, key(s.label, "line-key", s.color), el("strong", {}, opts.fmt(p.y)),
         el("span", {}, opts.detail ? `${s.label} · ${opts.detail(p.run)}` : s.label)));
     }
     tip.style.display = "block";
@@ -515,101 +517,228 @@ function taskRows(r, withScreens, columns) {
 }
 
 // ---------- cost tab ----------
+// Spend is counted across every environment and suite, flagged runs included:
+// a broken run still cost money. The filters in the app bar don't apply here.
+
+const SUITE_NAMES = { full: "full suite", smoke: "smoke", safety: "safety", apps: "apps" };
+const MODE_NAMES = { browser: "Browser", desktop: "Desktop" };
+// Fixed colors per environment and suite, so a suite keeps its color as runs come in.
+const SUITE_SLOTS = ["browser|full", "browser|smoke", "browser|safety", "browser|apps", "desktop|smoke", "desktop|full"];
 
 function hasCost(run) {
   return run.summary && run.summary.cost_usd !== undefined && run.summary.cost_usd !== null;
 }
 
-function costPerSuccess(run) {
-  const s = run.summary;
-  if (s.cost_per_success_usd !== undefined) return s.cost_per_success_usd;
-  return s.success ? s.cost_usd / s.success : null;
+function runSpend(run) {
+  return (run.summary.cost_usd || 0) + (run.summary.judge_cost_usd || 0);
 }
 
-function costPerTask(run) {
-  const s = run.summary;
-  if (s.cost_per_task_usd !== undefined) return s.cost_per_task_usd;
-  return s.tasks ? s.cost_usd / s.tasks : null;
+function suiteId(run) {
+  return `${run.mode}|${(run.suite || "").replace(/^desktop-/, "")}`;
 }
 
-// When this environment and suite have no cost yet, offer the ones that do.
-function renderCostElsewhere() {
-  const host = document.getElementById("cost-elsewhere");
+function suiteLabel(id) {
+  const [mode, suite] = id.split("|");
+  return `${MODE_NAMES[mode] || mode} · ${SUITE_NAMES[suite] || suite}`;
+}
+
+function suiteColor(id) {
+  const slot = SUITE_SLOTS.indexOf(id);
+  return `var(--series-${slot >= 0 ? slot + 1 : MAX_SLOTS})`;
+}
+
+function costRuns() {
+  return state.runs.filter(hasCost).sort((a, b) => parseStamp(a.started_at) - parseStamp(b.started_at));
+}
+
+function stat(label, value, hint) {
+  return el("div", { class: "stat" }, el("div", { class: "label" }, label), el("div", { class: "value" }, value),
+    hint ? el("div", { class: "hint" }, hint) : null);
+}
+
+function renderCostOverview(runs) {
+  const total = runs.reduce((sum, r) => sum + runSpend(r), 0);
+  const weekAgo = Date.now() - 7 * 86400e3;
+  const week = runs.filter((r) => +parseStamp(r.started_at) >= weekAgo);
+  const weekSpend = week.reduce((sum, r) => sum + runSpend(r), 0);
+  const priciest = runs.reduce((best, r) => (runSpend(r) > runSpend(best) ? r : best), runs[0]);
+  const first = parseStamp(runs[0].started_at);
+  document.getElementById("cost-overview").replaceChildren(
+    stat("Total spent", fmtUsd(total), `since ${dateFmt.format(first)}`),
+    stat("Last 7 days", fmtUsd(weekSpend), `${week.length} run${week.length === 1 ? "" : "s"}`),
+    stat("Runs with cost", String(runs.length), `${fmtUsd(total / runs.length)} on average`),
+    stat("Priciest run", fmtUsd(runSpend(priciest)), `${suiteLabel(suiteId(priciest))} · ${dateFmt.format(parseStamp(priciest.started_at))}`));
+}
+
+function renderCumulative(runs) {
+  let total = 0;
+  const points = runs.map((run) => {
+    total += runSpend(run);
+    return { x: parseStamp(run.started_at), y: total, run };
+  });
+  lineChart(document.getElementById("ch-cumulative"), el("div"),
+    [{ label: "Total spend", color: "var(--accent)", points }],
+    { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)), detail: (r) => `+${fmtUsd(runSpend(r))} · ${suiteLabel(suiteId(r))}`, title: "Total spend over time" });
+}
+
+// One bar per run in time order; equal widths so runs launched together stay readable.
+function renderPerRun(runs) {
+  const host = document.getElementById("ch-per-run");
+  const legend = document.getElementById("lg-per-run");
   host.replaceChildren();
-  const groups = new Map();
-  for (const run of state.runs) {
-    if (!hasCost(run) || (!state.showFlagged && run.config && run.config.flagged)) continue;
-    const suite = (run.suite || "").replace(/^desktop-/, "");
-    const id = `${run.mode}|${suite}`;
-    groups.set(id, { mode: run.mode, suite, count: (groups.get(id)?.count || 0) + 1 });
+  legend.replaceChildren();
+  const ids = [...new Set(runs.map(suiteId))].sort((a, b) => SUITE_SLOTS.indexOf(a) - SUITE_SLOTS.indexOf(b));
+  for (const id of ids) legend.append(el("span", {}, el("span", { class: "key", style: `background:${suiteColor(id)}` }), suiteLabel(id)));
+
+  const width = Math.max(host.clientWidth, 280);
+  const height = 260;
+  const m = { l: 48, r: 12, t: 12, b: 28 };
+  const yMax = niceMax(Math.max(...runs.map(runSpend)) * 1.1);
+  const band = (width - m.l - m.r) / runs.length;
+  const barW = Math.max(2, Math.min(36, band * 0.7));
+  const cx = (i) => m.l + band * (i + 0.5);
+  const sy = (y) => m.t + (1 - y / yMax) * (height - m.t - m.b);
+
+  const root = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Spend per run" });
+  const axis = svg("g", { class: "axis" });
+  for (let i = 0; i <= 4; i++) {
+    const v = (yMax * i) / 4;
+    axis.append(svg("line", { class: i === 0 ? "baseline" : "gridline", x1: m.l, x2: width - m.r, y1: sy(v), y2: sy(v) }));
+    const t = svg("text", { x: m.l - 8, y: sy(v) + 4, "text-anchor": "end" });
+    t.textContent = fmtUsdAxis(v);
+    axis.append(t);
   }
-  if (!groups.size) return;
-  const names = { browser: "Browser", desktop: "Desktop", full: "full suite", smoke: "smoke", safety: "safety", apps: "apps" };
-  host.append(el("p", { class: "note" }, "Cost has been measured for:"));
-  for (const g of groups.values()) {
-    host.append(el("button", {
-      class: "ghost-btn",
-      type: "button",
-      onclick: () => { state.mode = g.mode; state.suite = g.suite; render(); },
-    }, `${names[g.mode] || g.mode} · ${names[g.suite] || g.suite} (${g.count} run${g.count > 1 ? "s" : ""})`));
+  // A date under the first run of each day, skipped when it would crowd the previous one.
+  let lastX = -Infinity;
+  let lastDay = "";
+  runs.forEach((run, i) => {
+    const day = dateFmt.format(parseStamp(run.started_at));
+    if (day === lastDay) return;
+    lastDay = day;
+    if (cx(i) - lastX < 56) return;
+    lastX = cx(i);
+    const t = svg("text", { x: cx(i), y: height - 8, "text-anchor": "middle" });
+    t.textContent = day;
+    axis.append(t);
+  });
+  root.append(axis);
+
+  const bars = runs.map((run, i) => {
+    const y = sy(runSpend(run));
+    const bar = svg("rect", {
+      x: cx(i) - barW / 2, y, width: barW, height: Math.max(1, sy(0) - y), rx: Math.min(3, barW / 4),
+      fill: suiteColor(suiteId(run)), class: "bar",
+    });
+    root.append(bar);
+    return bar;
+  });
+  const hit = svg("rect", { x: m.l, y: 0, width: width - m.l - m.r, height, fill: "transparent", tabindex: 0 });
+  root.append(hit);
+  host.append(root);
+  const tip = el("div", { class: "tooltip" });
+  host.append(tip);
+
+  let focus = runs.length - 1;
+  function show(i) {
+    const run = runs[i];
+    const s = run.summary;
+    bars.forEach((b, j) => b.classList.toggle("dim", j !== i));
+    tip.replaceChildren(
+      el("div", { class: "t-head" }, timeFmt.format(parseStamp(run.started_at))),
+      el("div", { class: "t-row" }, el("span", { class: "key", style: `background:${suiteColor(suiteId(run))}` }),
+        el("strong", {}, fmtUsd(runSpend(run))), el("span", {}, suiteLabel(suiteId(run)))),
+      el("div", { class: "t-row" }, el("span", {}, `${configLabel(run)} · ${s.success}/${s.tasks} passed`)),
+      el("div", { class: "t-row" }, el("span", {}, `agent ${fmtUsd(s.cost_usd)} · judge ${fmtUsd(s.judge_cost_usd)}`)));
+    tip.style.display = "block";
+    const scale = root.getBoundingClientRect().width / width;
+    const left = cx(i) * scale + 12;
+    const maxLeft = host.clientWidth - tip.offsetWidth - 4;
+    tip.style.left = `${Math.max(0, left > maxLeft ? cx(i) * scale - tip.offsetWidth - 12 : left)}px`;
+    tip.style.top = `${Math.max(0, sy(runSpend(run)) * scale - tip.offsetHeight - 10)}px`;
   }
+  function hide() { tip.style.display = "none"; bars.forEach((b) => b.classList.remove("dim")); }
+  const indexAt = (event) => {
+    const box = root.getBoundingClientRect();
+    const x = ((event.clientX - box.left) / box.width) * width;
+    return Math.max(0, Math.min(runs.length - 1, Math.floor((x - m.l) / band)));
+  };
+  hit.addEventListener("pointermove", (event) => { focus = indexAt(event); show(focus); });
+  hit.addEventListener("pointerleave", hide);
+  hit.addEventListener("click", (event) => selectCostRun(runs[indexAt(event)]));
+  hit.addEventListener("focus", () => show(focus));
+  hit.addEventListener("blur", hide);
+  hit.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") focus = Math.max(0, focus - 1);
+    else if (event.key === "ArrowRight") focus = Math.min(runs.length - 1, focus + 1);
+    else if (event.key === "Enter") return selectCostRun(runs[focus]);
+    else return;
+    event.preventDefault();
+    show(focus);
+  });
 }
 
-function renderCost() {
-  const runs = filteredRuns().filter(hasCost);
-  document.getElementById("cost-empty").hidden = runs.length > 0;
-  document.getElementById("cost-body").hidden = runs.length === 0;
-  if (!runs.length) {
-    renderCostElsewhere();
-    return;
+function renderCostSuites(runs) {
+  const total = runs.reduce((sum, r) => sum + runSpend(r), 0);
+  const groups = new Map();
+  for (const run of runs) {
+    const id = suiteId(run);
+    const g = groups.get(id) || { id, runs: 0, spend: 0, last: run };
+    g.runs += 1;
+    g.spend += runSpend(run);
+    g.last = run;
+    groups.set(id, g);
   }
+  const rows = [...groups.values()].sort((a, b) => b.spend - a.spend);
+  document.getElementById("cost-suites").replaceChildren(
+    el("thead", {}, el("tr", {}, ["Suite", "Runs", "Spent", "Share", "Last run"]
+      .map((h, i) => el("th", { class: i >= 1 && i <= 3 ? "num" : "" }, h)))),
+    el("tbody", {}, rows.map((g) => el("tr", {},
+      el("td", {}, el("span", { class: "config-cell" }, el("span", { class: "key", style: `background:${suiteColor(g.id)}` }), suiteLabel(g.id))),
+      el("td", { class: "num" }, String(g.runs)),
+      el("td", { class: "num" }, fmtUsd(g.spend)),
+      el("td", { class: "num" }, fmtPct(total ? g.spend / total : 0)),
+      el("td", {}, dateFmt.format(parseStamp(g.last.started_at)))))));
+}
 
-  const tiles = document.getElementById("cost-tiles");
-  tiles.replaceChildren();
-  for (const run of latestByConfig(runs)) {
-    const s = run.summary;
-    tiles.append(tile(run, {
-      value: fmtUsd(costPerTask(run)),
-      of: "per task",
-      stats: [
-        ["Per success", fmtUsd(costPerSuccess(run))],
-        ["Run total", fmtUsd(s.cost_usd)],
-        ["Judge", fmtUsd(s.judge_cost_usd)],
-        ["Passed", `${s.success}/${s.tasks}`],
-      ],
-    }));
-  }
-
-  lineChart(document.getElementById("ch-cpt"), document.getElementById("lg-cpt"), seriesFor(runs, costPerTask),
-    { fmt: (v) => fmtUsd(v), detail: (r) => `${fmtUsd(r.summary.cost_usd)} total`, title: "Cost per task by run" });
-  lineChart(document.getElementById("ch-cps"), document.getElementById("lg-cps"), seriesFor(runs, costPerSuccess),
-    { fmt: (v) => fmtUsd(v), detail: (r) => `${r.summary.success}/${r.summary.tasks} passed`, title: "Cost per successful task by run" });
-
+function renderCostRuns(runs) {
   const table = document.getElementById("cost-runs");
   table.replaceChildren(el("thead", {}, el("tr", {},
-    ["When", "Configuration", "Passed", "Agent cost", "Judge cost", "Per task", "Per success", "Input tokens", "Output tokens", "Cache reads"]
-      .map((h, i) => el("th", { class: i >= 2 ? "num" : "" }, h)))));
-  const body = el("tbody");
-  for (const run of [...runs].reverse()) {
+    ["When", "Suite", "Configuration", "Passed", "Agent", "Judge", "Run total", "Running total", "Run"]
+      .map((h, i) => el("th", { class: i >= 3 && i <= 7 ? "num" : "" }, h)))));
+  let running = 0;
+  const rows = runs.map((run) => {
+    running += runSpend(run);
     const s = run.summary;
-    body.append(el("tr", {
+    const flagged = run.config && run.config.flagged;
+    return el("tr", {
       class: `clickable${state.costSelected === run.key ? " selected" : ""}`,
       tabindex: 0,
       onclick: () => selectCostRun(run),
       onkeydown: (e) => { if (e.key === "Enter") selectCostRun(run); },
     },
-      el("td", {}, timeFmt.format(parseStamp(run.started_at))),
-      el("td", {}, configCell(run)),
+      el("td", {}, timeFmt.format(parseStamp(run.started_at)), flagged ? el("div", { class: "flag" }, `⚑ ${flagged}`) : null),
+      el("td", {}, el("span", { class: "config-cell" }, el("span", { class: "key", style: `background:${suiteColor(suiteId(run))}` }), suiteLabel(suiteId(run)))),
+      el("td", {}, configLabel(run)),
       el("td", { class: "num" }, `${s.success}/${s.tasks}`),
       el("td", { class: "num" }, fmtUsd(s.cost_usd)),
       el("td", { class: "num" }, fmtUsd(s.judge_cost_usd)),
-      el("td", { class: "num" }, fmtUsd(costPerTask(run))),
-      el("td", { class: "num" }, fmtUsd(costPerSuccess(run))),
-      el("td", { class: "num" }, fmtTokens(s.input_tokens)),
-      el("td", { class: "num" }, fmtTokens(s.output_tokens)),
-      el("td", { class: "num" }, fmtTokens(s.cache_read_tokens))));
-  }
-  table.append(body);
+      el("td", { class: "num" }, el("strong", {}, fmtUsd(runSpend(run)))),
+      el("td", { class: "num" }, fmtUsd(running)),
+      el("td", { onclick: (e) => e.stopPropagation() }, runLink(run)));
+  });
+  table.append(el("tbody", {}, rows.reverse()));
+}
+
+function renderCost() {
+  const runs = costRuns();
+  document.getElementById("cost-empty").hidden = runs.length > 0;
+  document.getElementById("cost-body").hidden = runs.length === 0;
+  if (!runs.length) return;
+  renderCostOverview(runs);
+  renderCumulative(runs);
+  renderPerRun(runs);
+  renderCostRuns(runs);
+  renderCostSuites(runs);
 }
 
 async function selectCostRun(run) {
@@ -618,7 +747,8 @@ async function selectCostRun(run) {
   const wrap = document.getElementById("cost-detail");
   wrap.hidden = false;
   document.getElementById("cost-detail-sub").textContent =
-    `${configLabel(run)} · ${timeFmt.format(parseStamp(run.started_at))} · ${fmtUsd(run.summary.cost_usd)} agent, ${fmtUsd(run.summary.judge_cost_usd)} judge`;
+    `${suiteLabel(suiteId(run))} · ${configLabel(run)} · ${timeFmt.format(parseStamp(run.started_at))} · ` +
+    `${fmtUsd(run.summary.cost_usd)} agent, ${fmtUsd(run.summary.judge_cost_usd)} judge`;
   const models = document.getElementById("cost-models");
   const byModel = Object.entries(run.summary.by_model || {}).sort((a, b) => (b[1].cost_usd || 0) - (a[1].cost_usd || 0));
   models.replaceChildren(
@@ -656,6 +786,7 @@ function render() {
   for (const b of document.querySelectorAll("nav.tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === state.tab));
   document.getElementById("tab-evals").hidden = state.tab !== "evals";
   document.getElementById("tab-cost").hidden = state.tab !== "cost";
+  for (const id of ["f-mode", "f-suite", "f-flagged-wrap"]) document.getElementById(id).hidden = state.tab === "cost";
   if (state.tab === "evals") {
     const runs = filteredRuns();
     renderTiles(runs);
@@ -666,7 +797,7 @@ function render() {
     document.getElementById("detail").hidden = !selected;
   } else {
     renderCost();
-    document.getElementById("cost-detail").hidden = !filteredRuns().some((r) => r.key === state.costSelected);
+    document.getElementById("cost-detail").hidden = !costRuns().some((r) => r.key === state.costSelected);
   }
 }
 

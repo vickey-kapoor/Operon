@@ -1,8 +1,9 @@
 /**
  * Connection settings for the Operon API.
  *
- * When the API runs with API_KEYS set, put one key in `ui/.env.local` as
- * VITE_OPERON_API_KEY. HTTP calls send it as `X-API-Key`; the WebSocket offers
+ * The API requires a key. vite.config.ts reads the one the API generated into
+ * `.var/api-key`; with API_KEYS set, put one key in `ui/.env.local` as
+ * VITE_OPERON_API_KEY instead. HTTP calls send it as `X-API-Key`; the WebSocket offers
  * it as the `x-api-key` subprotocol, because browsers can't set headers on a
  * WebSocket and a `?api_key=` query string would land in server access logs.
  */

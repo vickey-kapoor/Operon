@@ -67,6 +67,7 @@ def create_app() -> FastAPI:
 
     from operon.api.auth import (
         TrustedHostMiddleware,
+        api_key_file,
         configured_api_keys,
         configured_cors_origins,
         require_api_key,
@@ -89,14 +90,15 @@ def create_app() -> FastAPI:
     # Outermost: a request for a host name other than loopback (or one listed in
     # OPERON_ALLOWED_HOSTS) is refused before routing, which blocks DNS rebinding.
     app.add_middleware(TrustedHostMiddleware)
-    # API-key auth (opt-in): enforced on every HTTP route except /health when
-    # API_KEYS is set; a no-op otherwise. The agent can drive a real machine, so
-    # an unauthenticated server should never be exposed beyond a trusted host.
+    # API-key auth: enforced on every HTTP route except /health. The key is API_KEYS,
+    # or one generated now into .var/api-key; OPERON_ALLOW_UNAUTHENTICATED turns it off.
     if not configured_api_keys():
         logger.warning(
-            "API authentication is DISABLED (API_KEYS not set). Any client that can reach "
-            "this server can drive the agent — set API_KEYS to require an X-API-Key header."
+            "API authentication is DISABLED (OPERON_ALLOW_UNAUTHENTICATED is set). Any client "
+            "that can reach this server can drive the agent."
         )
+    elif not os.getenv("API_KEYS", "").strip():
+        logger.info("API_KEYS not set: clients must send the key in %s as X-API-Key", api_key_file())
     app.include_router(router, dependencies=[Depends(require_api_key)])
     app.include_router(ws_router)
     return app

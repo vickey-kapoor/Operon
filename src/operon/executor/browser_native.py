@@ -643,12 +643,12 @@ class NativeBrowserExecutor(Executor):
                 before_pids: set[int] = set()
             else:
                 before_pids = self._chrome_process_ids(chromium_executable) if chromium_executable else set()
-            # Port 9222 is always exposed so BrowserManager.connect() can attach
-            # for live CDP streaming regardless of how the run was started.
+            # No --remote-debugging-port: nothing attaches to a batch browser over
+            # CDP (observable mode owns port 9222), and an open port would let any
+            # local process read and drive this browser.
             launch_args = [
                 f"--window-size={self._viewport_width},{self._viewport_height}",
                 "--window-position=0,0",
-                "--remote-debugging-port=9222",
             ]
             browser = await playwright.chromium.launch(
                 headless=launch_headless,

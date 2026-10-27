@@ -125,7 +125,7 @@ Layer map:
 | `store/` | Run persistence, memory, replay, cleanup, background writer |
 | `models/` | Pydantic schemas shared across every layer |
 
-Browser modes: **batch** launches an isolated Chromium (no CDP); **observable**
+Browser modes: **batch** launches an isolated Chromium (no CDP, no debug port); **observable**
 owns CDP on port 9222 and streams JPEG frames over `/ws/stream`.
 
 ## Invariants

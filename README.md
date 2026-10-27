@@ -59,6 +59,7 @@ Give it a task:
 ```bash
 curl -X POST http://127.0.0.1:8080/run-task \
   -H 'Content-Type: application/json' \
+  -H "X-API-Key: $(cat .var/api-key)" \
   -d '{"intent": "Search Wikipedia for Alan Turing and open his article", "start_url": "https://www.wikipedia.org"}'
 ```
 
@@ -67,7 +68,7 @@ http://localhost:5173).
 
 > [!WARNING]
 > Desktop runs control your real mouse and keyboard. Use a machine you can spare, or a VM.
-> Set `API_KEYS` before exposing the API on a network.
+> The API requires the key it generates in `.var/api-key` (or one from `API_KEYS`).
 
 ## Documentation
 

@@ -14,8 +14,12 @@ import re
 import pytest
 import requests
 
+from operon.api.auth import client_api_key
+
 BASE_URL = "http://127.0.0.1:8080"
 SESSION = requests.Session()
+if _API_KEY := client_api_key():
+    SESSION.headers["X-API-Key"] = _API_KEY
 SESSION.headers["Content-Type"] = "application/json"
 _LIVE_SERVER_OPT_IN = os.getenv("OPERON_RUN_LIVE_SERVER_TESTS", "false").lower() == "true"
 

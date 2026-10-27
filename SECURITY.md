@@ -33,9 +33,9 @@ The security boundary is the host, not the agent. Operon does not sandbox itself
 
 ### Out of scope
 
-- **Running with `API_KEYS` unset.** This disables authentication and is
-  documented as such. Exposing an unauthenticated instance to a network is an
-  operator error, not a vulnerability.
+- **Running with `OPERON_ALLOW_UNAUTHENTICATED=true`.** This disables
+  authentication and is documented as such. Exposing an unauthenticated instance
+  to a network is an operator error, not a vulnerability.
 - The agent taking a wrong or destructive action from an ambiguous instruction.
   That is a correctness and alignment problem — file it as a normal issue.
 - Prompt injection from web page content steering a browser run. This is a real
@@ -47,7 +47,9 @@ The security boundary is the host, not the agent. Operon does not sandbox itself
 
 ## Operating safely
 
-- **Set `API_KEYS`** before the port is reachable by anything but localhost.
+- **Keep authentication on.** With `API_KEYS` unset the server generates a key in
+  `.var/api-key`; set your own `API_KEYS` before the port is reachable by anything
+  but localhost, and never set `OPERON_ALLOW_UNAUTHENTICATED` there.
 - **Set `CORS_ORIGINS` explicitly.** Empty means no origins are allowed, which is
   the safe default — do not widen it to `*`.
 - **Turn the trust gate on** for anything unattended: `OPERON_TRUST_GATE=on`,

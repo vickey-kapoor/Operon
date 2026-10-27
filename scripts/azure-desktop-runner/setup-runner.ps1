@@ -145,15 +145,24 @@ $bytes = New-Object byte[] 24
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $plain = [Convert]::ToBase64String($bytes) + "aA1!"
 $secure = ConvertTo-SecureString $plain -AsPlainText -Force
-if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) {
-    Set-LocalUser -Name $userName -Password $secure -PasswordNeverExpires $true
-} else {
-    New-LocalUser -Name $userName -Password $secure -PasswordNeverExpires -UserMayNotChangePassword `
-        -Description "Runs the Operon desktop benchmark" | Out-Null
+# Through ADSI, not the LocalAccounts cmdlets: some Server images (and any 32-bit
+# PowerShell) don't have that module.
+$computer = [ADSI]"WinNT://$env:COMPUTERNAME,computer"
+$account = $computer.Children | Where-Object { $_.SchemaClassName -eq "User" -and $_.Name -eq $userName }
+if (-not $account) {
+    $account = $computer.Create("User", $userName)
+    $account.Put("Description", "Runs the Operon desktop benchmark")
 }
-Add-LocalGroupMember -Group "Users" -Member $userName -ErrorAction SilentlyContinue
+$account.SetPassword($plain)
+# UF_DONT_EXPIRE_PASSWD | UF_PASSWD_CANT_CHANGE
+$flags = if ($account.UserFlags.Value) { [int]$account.UserFlags.Value } else { 0x201 }
+$account.Put("UserFlags", $flags -bor 0x10000 -bor 0x40)
+$account.SetInfo()
+$users = [ADSI]"WinNT://$env:COMPUTERNAME/Users,group"
+if (-not $users.IsMember($account.ADsPath)) { $users.Add($account.ADsPath) }
 # Never an administrator: the benchmark runs whatever code the PR branch carries.
-Remove-LocalGroupMember -Group "Administrators" -Member $userName -ErrorAction SilentlyContinue
+$admins = [ADSI]"WinNT://$env:COMPUTERNAME/Administrators,group"
+if ($admins.IsMember($account.ADsPath)) { $admins.Remove($account.ADsPath) }
 $credential = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$userName", $secure)
 
 # --- auto-logon --------------------------------------------------------------

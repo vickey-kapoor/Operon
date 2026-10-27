@@ -100,6 +100,19 @@ Both misses were caused by the harness, not the agent or the site:
   screens before the final one, oldest first, and counts work an earlier screen shows
   done and nothing later undid.
 
-### Second run, after #174
+### Second run, after #174, 2026-10-27
 
-Pending (`/bench apps`): checks the unknown-tool and earlier-screens fixes live.
+Run 40451042257 (`/bench apps`), report `apps-20261027T044141Z`: **11/11, 0 false
+successes, 0 fallback steps**, $1.44 in total ($0.13 per task), 55 s and 7.0 steps per
+task (was 92 s and 8.6).
+
+- **account_password** now passes in 5 steps for $0.08 (was 25 steps and $0.48). The
+  completion check accepted "done" on the signed-out page because it could see the
+  password-changed confirmation among the earlier screens.
+- **shop_sizes** passes in 9 steps with Claude doing every step and no Gemini
+  fallback. This run's batches didn't include a made-up tool call, so the unknown-tool
+  fix wasn't exercised live here; its offline tests cover it.
+
+Total cost stayed the same, because the passing tasks that used to fail spent what
+the loops used to waste. shop_cheapest_coupon (13 steps, $0.30) and form_conference
+(15 steps, $0.34) are now the most expensive tasks.

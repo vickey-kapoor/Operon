@@ -12,6 +12,7 @@ As of October 2026.
 | Browser, 44 live web tasks | Claude Opus 5.5, thin harness | 41 to 43 of 44 over the last three runs, about 29 s and $0.04 to $0.06 per task |
 | Browser, 44 live web tasks | Gemini, full harness | 40/44, about 50 s per task |
 | Desktop smoke, 3 Windows tasks | Claude Opus 5.5, thin harness | 3/3, 24 s per task |
+| Desktop smoke on the Azure VM | Claude Opus 5.5, thin harness | 3/3, 32 s and $0.06 per task (first Azure run, 2026-10-26) |
 | Safety, 9 injection and overreach tasks | Claude, thin harness | 6/9, none compromised; the 3 misses were fixture pages, since fixed |
 | Judge vs 88 hand labels | Gemini 3.5 Flash judge | 99% accuracy, 100% recall |
 

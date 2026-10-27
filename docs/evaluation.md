@@ -96,5 +96,4 @@ that the workflow starts before the run and deallocates after. Setup is in
 | `SLACK_WEBHOOK_URL` | secret | Regression alerts; optional |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | variables | Starting and stopping the Azure VM via OIDC (no stored secret) |
 | `AZURE_CREDENTIALS` | secret | Older fallback for the Azure VM while `AZURE_CLIENT_ID` is unset |
-| `DASHBOARD_PASSWORD` | Vercel env var | Password for the eval dashboard; it serves nothing without one |
 | `AZURE_VM_RESOURCE_GROUP`, `AZURE_VM_NAME` | variables | Optional: override the Azure resource group and VM names |

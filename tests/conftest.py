@@ -10,6 +10,9 @@ import pytest
 os.environ.setdefault("OPERON_TEST_SAFE_MODE", "true")
 # Starlette's TestClient and httpx test transports send Host: testserver / test.
 os.environ.setdefault("OPERON_ALLOWED_HOSTS", "testserver,test")
+# Offline tests call the API without a key; importing the server must not write
+# .var/api-key. Auth tests turn this off to check the default.
+os.environ.setdefault("OPERON_ALLOW_UNAUTHENTICATED", "true")
 
 # Pre-import modules that test stubs (test_phase4_integration.py) replace via
 # sys.modules.setdefault — ensures the real implementations are loaded first so

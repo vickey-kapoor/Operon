@@ -6,11 +6,17 @@ The API is a FastAPI app (`operon.api.server:app`). Start it with:
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 
-When `API_KEYS` is set, every HTTP route except `/health` needs a matching `X-API-Key`
-header, and `/ws/stream` takes it as an `x-api-key` subprotocol (never in the URL, which is logged).
+Every HTTP route except `/health` needs an `X-API-Key` header, and `/ws/stream` takes the key
+as an `x-api-key` subprotocol (never in the URL, which is logged). The key is one of `API_KEYS`,
+or, when that is unset, the one the server generates on first start in `.var/api-key`:
+
+```bash
+curl -H "X-API-Key: $(cat .var/api-key)" http://127.0.0.1:8080/run-task ...
+```
+
 Any `Host` other than loopback or `OPERON_ALLOWED_HOSTS` gets 400, which blocks DNS rebinding.
-Unset means no authentication, which is only safe on a trusted host. See
-[configuration.md](configuration.md).
+`OPERON_ALLOW_UNAUTHENTICATED=true` turns authentication off, which is only safe on a throwaway
+machine. See [configuration.md](configuration.md).
 
 ## Routes
 

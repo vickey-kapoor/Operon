@@ -1,15 +1,17 @@
-"""Optional API-key authentication for the Operon HTTP surface.
+"""API-key authentication for the Operon HTTP surface.
 
-Opt-in by design: when ``API_KEYS`` is unset or empty, authentication is
-**disabled** and every request passes — this preserves the existing local/dev
-experience. When ``API_KEYS`` is set (a comma-separated list), every request
-except a small allowlist (health probes) must present a matching ``X-API-Key``
-header, or it is rejected with 401.
+On by default. Every request except a small allowlist (health probes) must
+present a matching ``X-API-Key`` header, or it is rejected with 401. The
+accepted keys are ``API_KEYS`` (comma-separated) when it is set; otherwise the
+server generates one random key on first start and keeps it in
+``<runtime dir>/api-key`` (``.var/api-key``), where local clients (the UI's
+Vite config, the benchmark harness) read it. With ``API_KEYS`` unset,
+``OPERON_ALLOW_UNAUTHENTICATED=true`` turns authentication off, for a throwaway
+machine only.
 
 Why this matters: the Operon API can drive a real browser/desktop. An
-unauthenticated server is reachable by any local process — and by a web page via
-DNS-rebinding / CSRF to ``127.0.0.1`` — so setting ``API_KEYS`` is strongly
-recommended for any non-throwaway deployment.
+unauthenticated server is reachable by any local process, and a web page could
+reach it through DNS rebinding if the Host check were ever bypassed.
 
 Keys are compared in constant time to avoid leaking length/prefix via timing.
 """
@@ -19,9 +21,12 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import Header, HTTPException, Request, WebSocket, status
+
+from operon.core.paths import runtime_dir
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +34,75 @@ logger = logging.getLogger(__name__)
 _OPEN_PATHS: frozenset[str] = frozenset({"/health"})
 
 
-def configured_api_keys() -> set[str]:
-    """The set of accepted API keys from ``API_KEYS`` (comma-separated). Empty ⇒ auth off."""
+def auth_disabled() -> bool:
+    """Whether ``OPERON_ALLOW_UNAUTHENTICATED`` explicitly turns authentication off."""
+    return os.getenv("OPERON_ALLOW_UNAUTHENTICATED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_api_keys() -> set[str]:
     raw = os.getenv("API_KEYS", "")
     return {key.strip() for key in raw.split(",") if key.strip()}
+
+
+def api_key_file() -> Path:
+    """Where the generated local key lives when ``API_KEYS`` is unset."""
+    return runtime_dir() / "api-key"
+
+
+def _read_key_file(path: Path) -> str | None:
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return key or None
+
+
+# Generated keys by file path, so a request never re-reads the file and a key file
+# deleted while the server runs never turns authentication off.
+_local_keys: dict[Path, str] = {}
+
+
+def local_api_key() -> str:
+    """The generated local key: read from ``api_key_file()``, created on first use."""
+    path = api_key_file()
+    cached = _local_keys.get(path)
+    if cached is not None:
+        return cached
+    key = _read_key_file(path)
+    if key is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            # another process created it first
+            key = _read_key_file(path)
+        else:
+            key = secrets.token_urlsafe(32)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(key + "\n")
+            logger.info("generated a local API key in %s", path)
+        if key is None:
+            raise RuntimeError(f"API key file {path} exists but is empty or unreadable")
+    _local_keys[path] = key
+    return key
+
+
+def configured_api_keys() -> set[str]:
+    """The accepted API keys: ``API_KEYS``, else the generated local key. Empty ⇒ auth off,
+    which happens only when ``API_KEYS`` is unset and ``OPERON_ALLOW_UNAUTHENTICATED`` is on."""
+    env_keys = _env_api_keys()
+    if env_keys:
+        return env_keys
+    return set() if auth_disabled() else {local_api_key()}
+
+
+def client_api_key() -> str | None:
+    """The key a local client should send: the first of ``API_KEYS``, else the generated
+    key file if the server has written one. Never creates the file."""
+    env_keys = [key.strip() for key in os.getenv("API_KEYS", "").split(",") if key.strip()]
+    if env_keys:
+        return env_keys[0]
+    return _read_key_file(api_key_file())
 
 
 def configured_cors_origins() -> set[str]:
@@ -50,10 +120,10 @@ async def require_api_key(
     request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> None:
-    """FastAPI dependency enforcing ``X-API-Key`` when ``API_KEYS`` is configured."""
+    """FastAPI dependency enforcing ``X-API-Key`` unless authentication is turned off."""
     accepted = configured_api_keys()
     if not accepted:
-        return  # auth disabled — backward compatible
+        return  # OPERON_ALLOW_UNAUTHENTICATED
     if request.url.path in _OPEN_PATHS:
         return  # health probes stay open
     if x_api_key is None or not _key_matches(x_api_key, accepted):
@@ -86,7 +156,7 @@ def websocket_subprotocol(websocket: WebSocket) -> str | None:
 def websocket_api_key_ok(websocket: WebSocket) -> bool:
     """Whether a WebSocket handshake is authorized.
 
-    No-op (returns True) when API_KEYS is unset. Browsers cannot set custom
+    No-op (returns True) when authentication is turned off. Browsers cannot set custom
     headers on a WebSocket, so the key comes as an ``x-api-key`` subprotocol value
     (client connects with subprotocols ``["x-api-key", "<key>"]``). A query-string
     key is not accepted: it would be written to access logs.

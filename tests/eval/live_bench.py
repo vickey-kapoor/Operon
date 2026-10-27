@@ -57,6 +57,7 @@ from pathlib import Path
 
 import httpx
 
+from operon.api.auth import client_api_key
 from operon.core.paths import runs_dir
 from tests.eval import app_tasks
 from tests.eval.app_tasks import APP_TASKS, AppTask
@@ -460,7 +461,9 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     stopped = None
     site = FixtureSite(site_pages(), apps=build_apps()).start() if any(isinstance(t, LOCAL_TASKS) for t in tasks) else None
     try:
-        async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0) as client:
+        api_key = client_api_key()
+        headers = {"X-API-Key": api_key} if api_key else {}
+        async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0, headers=headers) as client:
             (await client.get("/health")).raise_for_status()
             for index, task in enumerate(tasks, 1):
                 result = await run_task(

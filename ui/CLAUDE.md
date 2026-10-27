@@ -91,4 +91,4 @@ Defined in `App.tsx` and re-exported from there. Child components import it from
 - All inline styles — no CSS files or CSS modules exist in this codebase.
 - `agentStore` state for settings (`disabledRules`, `cdpPort`, `sessionMode`) is session-scoped; it resets on page reload.
 - `tsconfig.json` targets ES2022 — `Array.at()` and other ES2022 APIs are available.
-- API base URL and auth live in `src/api.ts`. Use `API` and `apiHeaders()` for every `fetch`, never a hardcoded URL or header. When the server sets `API_KEYS`, put one key in `ui/.env.local` as `VITE_OPERON_API_KEY` (gitignored). HTTP calls send it as `X-API-Key`; the WebSocket offers it as the `x-api-key` subprotocol.
+- API base URL and auth live in `src/api.ts`. Use `API` and `apiHeaders()` for every `fetch`, never a hardcoded URL or header. The API always requires a key: `vite.config.ts` reads the one the API generated in `.var/api-key` (start the API first), and when the server sets `API_KEYS`, put one key in `ui/.env.local` as `VITE_OPERON_API_KEY` (gitignored) instead. HTTP calls send it as `X-API-Key`; the WebSocket offers it as the `x-api-key` subprotocol.

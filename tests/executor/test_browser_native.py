@@ -105,7 +105,7 @@ async def test_ensure_session_enables_recording_for_all_runs(tmp_path: Path, mon
     assert manager.playwright.browser.context_kwargs["record_video_size"] == {"width": 1920, "height": 1080}
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=False,
-        args=["--window-size=1920,1080", "--window-position=0,0", "--remote-debugging-port=9222"],
+        args=["--window-size=1920,1080", "--window-position=0,0"],
     )
     session.page.bring_to_front.assert_awaited_once()
     session.page.keyboard.press.assert_awaited_once_with("Control+0")
@@ -162,7 +162,7 @@ async def test_ensure_session_uses_per_run_headless_override(tmp_path: Path, mon
 
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=True,
-        args=["--window-size=1440,900", "--window-position=0,0", "--remote-debugging-port=9222"],
+        args=["--window-size=1440,900", "--window-position=0,0"],
     )
 
 
@@ -291,7 +291,7 @@ async def test_ensure_session_forces_headless_in_test_safe_mode(
 
     manager.playwright.chromium.launch.assert_awaited_once_with(
         headless=True,
-        args=["--window-size=1440,900", "--window-position=0,0", "--remote-debugging-port=9222"],
+        args=["--window-size=1440,900", "--window-position=0,0"],
     )
 
 
@@ -667,11 +667,11 @@ def _make_fake_playwright_manager(monkeypatch: pytest.MonkeyPatch, viewport_widt
 
 
 @pytest.mark.asyncio
-async def test_cdp_port_9222_always_present_regardless_of_env_var(
+async def test_batch_launch_opens_no_debug_port(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """--remote-debugging-port=9222 must appear in launch args whether
-    OPERON_COMMAND_CENTER_MODE is set or not — the env-var gate was removed."""
+    """A batch Chromium never opens a CDP debug port: nothing attaches to it, and an
+    open port would let any local process read and drive the agent's browser."""
     for env_value in ("true", "false", None):
         monkeypatch.delenv("OPERON_COMMAND_CENTER_MODE", raising=False)
         if env_value is not None:
@@ -683,41 +683,9 @@ async def test_cdp_port_9222_always_present_regardless_of_env_var(
         call_kwargs = manager.playwright.chromium.launch.call_args
         assert call_kwargs is not None, f"launch not called for env={env_value}"
         launch_args: list[str] = call_kwargs.kwargs.get("args", [])
-        assert "--remote-debugging-port=9222" in launch_args, (
-            f"Expected --remote-debugging-port=9222 in launch args but got {launch_args} "
-            f"(OPERON_COMMAND_CENTER_MODE={env_value!r})"
+        assert not any(a.startswith("--remote-debugging") for a in launch_args), (
+            f"batch launch opened a debug port: {launch_args} (OPERON_COMMAND_CENTER_MODE={env_value!r})"
         )
-
-
-@pytest.mark.asyncio
-async def test_second_local_browser_launch_inherits_same_port(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Every local browser launch always requests port 9222 — a second concurrent
-    launch would fail at the OS level (address in use), not silently bind a random
-    port. This test confirms the port is hardcoded so the failure is deterministic."""
-    manager, executor = _make_fake_playwright_manager(monkeypatch)
-    manager2 = None
-    executor2 = None
-    try:
-        await executor._ensure_session("run-first")
-        first_args = manager.playwright.chromium.launch.call_args.kwargs.get("args", [])
-
-        manager.playwright.chromium.launch.reset_mock()
-        manager2, executor2 = _make_fake_playwright_manager(monkeypatch)
-        await executor2._ensure_session("run-second")
-        second_args = manager2.playwright.chromium.launch.call_args.kwargs.get("args", [])
-
-        assert "--remote-debugging-port=9222" in first_args
-        assert "--remote-debugging-port=9222" in second_args
-        assert first_args == second_args, (
-            "Both launches must request the same port so a port-conflict error is "
-            "surfaced immediately rather than one run silently getting an unbound port."
-        )
-    finally:
-        await executor.aclose_run("run-first")
-        if executor2 is not None:
-            await executor2.aclose_run("run-second")
 
 
 # ── Observable mode tests ────────────────────────────────────────────────────

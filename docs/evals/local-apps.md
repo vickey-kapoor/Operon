@@ -99,3 +99,7 @@ Both misses were caused by the harness, not the agent or the site:
   ($0.48, a third of the run). Fixed in #174: the check also sees the last three
   screens before the final one, oldest first, and counts work an earlier screen shows
   done and nothing later undid.
+
+### Second run, after #174
+
+Pending (`/bench apps`): checks the unknown-tool and earlier-screens fixes live.

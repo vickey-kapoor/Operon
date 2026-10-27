@@ -58,7 +58,7 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 #   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
 # Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
-# optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Vercel needs DASHBOARD_PASSWORD. Benchmarks cost real credits: run only when asked.
+# optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard. Benchmarks cost real credits: run only when asked.
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
 # (the import needs `pip install "psycopg[binary]"`; the "Dashboard data" workflow does it after each benchmark)

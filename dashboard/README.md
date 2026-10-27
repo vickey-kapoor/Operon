@@ -9,17 +9,17 @@ by task.
 - `api/runs.js` (`GET /api/runs`): every run with its summary and config.
 - `api/report.js` (`GET /api/report?key=<run key>`): one run with its per-task results.
 - `api/blob.js` (`GET /api/blob?url=<blob url>`): one screenshot or trace from the private Blob store.
-- `middleware.js`, `server/auth.js`: password protection for every request (see Access).
 - `server/db.js`: the Postgres pool the routes share, from `DATABASE_URL`.
 - `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.
 
 ## Access
 
-Every request, the page included, needs the password in the `DASHBOARD_PASSWORD`
-environment variable of the Vercel project (Settings > Environment Variables). The
-browser asks for it once; any user name works. Without the variable the dashboard
-serves nothing (503), so set it before deploying. `npm test` checks the logic.
-The local `npm run dev` server skips the check and listens on 127.0.0.1 only.
+The dashboard is protected by Vercel's own login (Settings > Deployment Protection >
+Vercel Authentication, scope "All Deployments", which covers the production URL and
+is available on the Hobby plan). Only signed-in Vercel users with access to the
+project, or someone holding a shareable link, can open the page or the API. With
+protection turned off everything is public, screenshots included, so keep it on.
+The local `npm run dev` server listens on 127.0.0.1 only.
 
 The page only reads the database, so give Vercel a read-only role rather than the
 owner connection string the importer uses. In the Neon SQL editor:

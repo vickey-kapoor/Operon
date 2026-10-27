@@ -267,12 +267,12 @@ async def test_the_check_also_sees_earlier_screens_so_work_the_last_screen_hides
     # cannot show the change; with only that screen the check rejected "done" 20 times.
     from PIL import Image
 
-    def screen(name: str) -> str:
+    def screen(name: str, shade: int) -> str:
         path = tmp_path / name
-        Image.new("RGB", (64, 48), "white").save(path)
+        Image.new("RGB", (64, 48), (shade, shade, shade)).save(path)
         return str(path)
 
-    paths = [screen(f"step_{i}.png") for i in range(1, 6)]
+    paths = [screen(f"step_{i}.png", 40 * i) for i in range(1, 6)]
     state = AgentState(
         run_id="run-thin", intent="Change my password, then sign out", status=RunStatus.RUNNING,
         observation_history=[
@@ -305,3 +305,77 @@ async def test_earlier_screens_go_before_the_final_one_in_the_request() -> None:
 
     content = client._post_json.await_args.args[0]["messages"][0]["content"]
     assert [block.get("source", {}).get("data") for block in content[1:]] == ["b25l", "dHdv", "ZmluYWw="]
+
+
+def _screens_state(tmp_path: Path, shades: list[int], actions: list[ExecutedAction] | None = None) -> AgentState:
+    from PIL import Image
+
+    observations = []
+    for i, shade in enumerate(shades, 1):
+        path = tmp_path / f"step_{i}.png"
+        Image.new("RGB", (64, 48), (shade, shade, shade)).save(path)
+        observations.append(ScreenPerception(summary=f"step {i}", page_hint=PageHint.UNKNOWN,
+                                             capture_artifact_path=str(path), elements_reported=False))
+    return AgentState(run_id="run-thin", intent="Register for the conference", status=RunStatus.RUNNING,
+                      observation_history=observations, action_history=actions or [])
+
+
+@pytest.mark.asyncio
+async def test_repeated_identical_screens_do_not_crowd_out_the_proof(tmp_path) -> None:
+    # Seen live: each rejected claim added another copy of the confirmation page, until
+    # the screen showing the filled-in form fell out of the window the check sees.
+    state = _screens_state(tmp_path, [10, 60, 200, 200, 200, 200])
+    client = Mock(generate_judgement=AsyncMock(return_value='{"complete": true, "reason": "ok"}'))
+    stop = AgentAction(action_type=ActionType.STOP)
+
+    await FinalCheckVerifier(client).verify(state, _decision(stop, "Done."), _executed(stop))
+
+    call = client.generate_judgement.await_args
+    assert len(call.kwargs["earlier_images"]) == 2
+    assert "first 2 images are earlier screens" in call.args[0]
+
+
+@pytest.mark.asyncio
+async def test_the_check_sees_what_was_typed_even_when_no_screen_shows_it(tmp_path) -> None:
+    # Seen live: Claude typed the coupon and clicked Apply in one turn, so no screenshot
+    # ever showed the code in the field and the check kept saying it was never entered.
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[
+        AgentAction(action_type=ActionType.TYPE, text="SAVE10", x=120, y=80),
+        AgentAction(action_type=ActionType.CLICK, x=300, y=80),
+    ])
+    actions = [
+        _executed(AgentAction(action_type=ActionType.NAVIGATE, url="http://localhost:8765/shop")),
+        _executed(batch),
+        _executed(AgentAction(action_type=ActionType.PRESS_KEY, key="Enter"), success=False, detail="no focus"),
+    ]
+    state = _screens_state(tmp_path, [10, 60], actions)
+    client = Mock(generate_judgement=AsyncMock(return_value='{"complete": true, "reason": "ok"}'))
+    stop = AgentAction(action_type=ActionType.STOP)
+
+    await FinalCheckVerifier(client).verify(state, _decision(stop, "Done."), _executed(stop))
+
+    prompt = client.generate_judgement.await_args.args[0]
+    assert "1. navigate http://localhost:8765/shop (ok)" in prompt
+    assert '2. type "SAVE10" at (120, 80); click at (300, 80) (ok)' in prompt
+    assert "3. press_key key Enter (failed: no focus)" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_claim_rejected_twice_ends_the_run_as_unverified(tmp_path) -> None:
+    hints: list[tuple[str, str]] = []
+    client = Mock(generate_judgement=AsyncMock(return_value='{"complete": false, "reason": "No confirmation."}'))
+    verifier = FinalCheckVerifier(client, on_rejected=lambda run, hint: hints.append((run, hint)))
+    stop = AgentAction(action_type=ActionType.STOP)
+    state = _state(tmp_path)
+
+    first = await verifier.verify(state, _decision(stop, "Done."), _executed(stop))
+    state.verification_history.append(first)
+    second = await verifier.verify(state, _decision(stop, "Done, really."), _executed(stop))
+
+    assert first.stop_condition_met is False and len(hints) == 1
+    assert second.status is VerificationStatus.FAILURE
+    assert second.stop_condition_met is True
+    assert second.stop_reason is StopReason.COMPLETION_UNVERIFIED
+    assert len(hints) == 1
+    recovery = await ThinRecovery().recover(state, _decision(stop), _executed(stop), second)
+    assert recovery.strategy is RecoveryStrategy.STOP and recovery.stop_reason is StopReason.COMPLETION_UNVERIFIED

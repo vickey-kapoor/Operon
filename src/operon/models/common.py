@@ -85,6 +85,7 @@ class StopReason(StrEnum):
     STOP_BEFORE_SEND = "stop_before_send"
     FORM_SUBMITTED_SUCCESS = "form_submitted_success"
     TASK_COMPLETED = "task_completed"
+    COMPLETION_UNVERIFIED = "completion_unverified"
     BENCHMARK_PRECONDITION_FAILED = "benchmark_precondition_failed"
     PRE_STEP_PERCEPTION_FAILED = "pre_step_perception_failed"
     PERCEPTION_LOW_QUALITY = "perception_low_quality"

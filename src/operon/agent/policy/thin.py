@@ -6,9 +6,10 @@ replaces, retries or resets an action behind the model's back:
 - ``ThinPolicy`` passes the backend's decision through, with no rule engine or
   post-model guards in front of it.
 - ``FinalCheckVerifier`` lets a failed action stand as the model's tool result and
-  checks success once, against the task, when the model says it is done.
+  checks success once, against the task, when the model says it is done. After
+  two rejected claims the run ends as unverified.
 - ``ThinRecovery`` always hands the next step back to the model; the run's step
-  budget is the only stop besides a confirmed success.
+  budget and the completion check are the only stops.
 
 Safety gates (trust gate, file roots, coordinate-thrash pause, max steps) stay in
 the loop and apply to every profile.
@@ -16,6 +17,7 @@ the loop and apply to every profile.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -49,14 +51,24 @@ _FINAL_CHECK_PROMPT = """You are checking whether a computer-use agent finished 
 Task: {intent}
 The agent says it is done: {claim}
 
+What the agent did, oldest first, as the computer reported it:
+{actions}
+
 {images}
-Judge only from the task and these screens. A step done earlier counts when an earlier
-screen shows it done and nothing after it undid it. Reply with one JSON object and nothing else:
+Judge from the task, this action log and these screens. A step done earlier counts when an
+earlier screen shows it done, or the log shows it done and the screens are consistent with it,
+and nothing after it undid it. Reply with one JSON object and nothing else:
 {{"complete": true or false, "reason": "one sentence naming what on the screens shows it"}}"""
 
 # Screens from before the claim that the check also sees, so work the final screen
 # can no longer show (a change confirmed, then a sign-out) still counts.
 _EARLIER_SCREENS = 3
+# Most recent actions listed for the check; older ones are summarised as a count.
+_ACTION_LOG_LIMIT = 30
+# Rejections per run before the run ends as unverified. A check that keeps saying no
+# to the same claim would otherwise spend the rest of the step budget on it.
+_MAX_REJECTIONS = 2
+_REJECTED = "Completion check rejected the claim"
 
 
 def final_check_model(claude_model: str | None) -> str:
@@ -102,7 +114,8 @@ class FinalCheckVerifier(VerifierService):
 
     Every other step passes through: a failed action is reported to the model as
     its tool result by the backend, not retried here. A rejected claim goes back
-    to the model as a hint through ``on_rejected`` and the run continues.
+    to the model as a hint through ``on_rejected`` and the run continues, until
+    ``_MAX_REJECTIONS`` claims were rejected; then the run ends as unverified.
     """
 
     def __init__(
@@ -161,7 +174,9 @@ class FinalCheckVerifier(VerifierService):
             )
         else:
             images = "The image is the screen the agent saw when it said so."
-        prompt = _FINAL_CHECK_PROMPT.format(intent=state.intent, claim=decision.rationale, images=images)
+        prompt = _FINAL_CHECK_PROMPT.format(
+            intent=state.intent, claim=decision.rationale, actions=_action_log(state), images=images
+        )
         image, media_type, _, _ = encode_screenshot(Path(screenshot))
         earlier_images = [encode_screenshot(Path(path))[:2] for path in earlier]
         try:
@@ -202,6 +217,16 @@ class FinalCheckVerifier(VerifierService):
 
     def _rejected(self, state: AgentState, reason: str) -> VerificationResult:
         logger.warning("final check rejected the claim for run %s: %s", state.run_id[:8], reason)
+        rejections = 1 + sum(1 for past in state.verification_history if past.reason.startswith(_REJECTED))
+        if rejections >= _MAX_REJECTIONS:
+            return VerificationResult(
+                status=VerificationStatus.FAILURE,
+                expected_outcome_met=False,
+                stop_condition_met=True,
+                reason=f"{_REJECTED} {rejections} times; ending the run as unverified: {reason}",
+                stop_reason=StopReason.COMPLETION_UNVERIFIED,
+                critic_model_used=True,
+            )
         if self.on_rejected is not None:
             self.on_rejected(
                 state.run_id,
@@ -211,7 +236,7 @@ class FinalCheckVerifier(VerifierService):
             status=VerificationStatus.UNCERTAIN,
             expected_outcome_met=False,
             stop_condition_met=False,
-            reason=f"Completion check rejected the claim: {reason}",
+            reason=f"{_REJECTED}: {reason}",
             critic_model_used=True,
         )
 
@@ -234,15 +259,62 @@ class FinalCheckVerifier(VerifierService):
 
 
 def _earlier_screens(state: AgentState, final: str) -> list[str]:
-    """Up to ``_EARLIER_SCREENS`` distinct screens before ``final``, oldest first."""
+    """Up to ``_EARLIER_SCREENS`` screens before ``final`` that look different from it
+    and from each other, oldest first. Identical captures (the same confirmation page
+    after a rejected claim) count once, so they cannot crowd out the screen with the proof."""
     paths: list[str] = []
+    seen = {_digest(final)}
     for observation in reversed(state.observation_history):
         path = observation.capture_artifact_path
-        if path and path != final and path not in paths and Path(path).exists():
-            paths.append(path)
+        if not path or path == final or path in paths or not Path(path).exists():
+            continue
+        digest = _digest(path)
+        if digest in seen:
+            continue
+        seen.add(digest)
+        paths.append(path)
         if len(paths) == _EARLIER_SCREENS:
             break
     return paths[::-1]
+
+
+def _digest(path: str) -> str:
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return path
+
+
+def _action_log(state: AgentState) -> str:
+    """One line per executed action, so work the screens never caught (text typed and
+    submitted in one model turn) still reaches the check."""
+    lines = []
+    for executed in state.action_history:
+        actions = executed.action.actions or [executed.action]
+        steps = "; ".join(_describe(action) for action in actions)
+        outcome = "ok" if executed.success else f"failed: {executed.detail[:120]}"
+        lines.append(f"{steps} ({outcome})")
+    skipped = len(lines) - _ACTION_LOG_LIMIT
+    lines = lines[-_ACTION_LOG_LIMIT:]
+    numbered = [f"{i}. {line}" for i, line in enumerate(lines, max(skipped, 0) + 1)]
+    if skipped > 0:
+        numbered.insert(0, f"({skipped} earlier actions not shown)")
+    return "\n".join(numbered) or "(no actions)"
+
+
+def _describe(action) -> str:
+    parts = [action.action_type.value]
+    if action.text:
+        parts.append(json.dumps(action.text[:200]))
+    if action.key:
+        parts.append(f"key {action.key}")
+    if action.url:
+        parts.append(action.url)
+    if action.x is not None and action.y is not None:
+        parts.append(f"at ({action.x}, {action.y})")
+    if action.press_enter:
+        parts.append("then Enter")
+    return " ".join(parts)
 
 
 def _parse_verdict(raw: str) -> tuple[bool, str]:
@@ -258,7 +330,7 @@ def _parse_verdict(raw: str) -> tuple[bool, str]:
 
 
 class ThinRecovery(RecoveryManager):
-    """The model chooses the next step; only a confirmed success ends the run."""
+    """The model chooses the next step; only a completion check verdict ends the run."""
 
     async def recover(
         self,

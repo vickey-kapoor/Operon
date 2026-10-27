@@ -3,12 +3,17 @@ name: Bench command
 # Runs a live benchmark on a pull request's head when a repository owner, member
 # or collaborator comments on it:
 #
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+#   /bench grounding [opus|sonnet|haiku|gemini]
 #
 # Defaults: browser, thin harness, smoke suite, Opus 5.5. "all" runs the full
 # suite (44 browser tasks or 10 desktop tasks); "safety" runs the browser
 # prompt-injection and overreach tasks; "apps" runs the browser tasks on the local
-# fake shop, mailbox, account and forms, graded from the apps' state. Claude is the backend on both.
+# fake shop, mailbox, account and forms, graded from the apps' state; "hard" runs the
+# 20-task hard subset (tests/eval/hard_tasks.py). x2/x3/x5 run every task that many
+# times to measure flakiness (the cost cap scales with it). "grounding" runs the
+# ScreenSpot grounding eval instead (one model call per sample, no browser); gemini
+# picks the Gemini backend for it. Claude is the backend otherwise.
 # opus/sonnet/haiku pick the acting Claude model; check-sonnet/check-haiku pick a
 # cheaper model for the thin harness's completion check. azure runs a desktop
 # benchmark on our Azure VM instead of GitHub's hosted runner. Reports show the cost.
@@ -40,6 +45,8 @@ jobs:
       model: ${{ steps.args.outputs.model }}
       check_model: ${{ steps.args.outputs.check_model }}
       runner: ${{ steps.args.outputs.runner }}
+      repeat: ${{ steps.args.outputs.repeat }}
+      backend: ${{ steps.args.outputs.backend }}
       sha: ${{ steps.pr.outputs.sha }}
     steps:
       - id: args
@@ -47,33 +54,41 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           set -f  # no glob expansion of the comment's words
-          target=browser profile=thin suite=smoke model=claude-opus-5-5 check_model= runner=github
+          target=browser profile=thin suite=smoke model=claude-opus-5-5 check_model= runner=github repeat=1 backend=claude_computer_use
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
               /bench) ;;
-              browser|desktop) target=$word ;;
+              browser|desktop|grounding) target=$word ;;
               thin|full) profile=$word ;;
               smoke) suite=smoke ;;
               all) suite=full ;;
               safety) suite=safety ;;
               apps) suite=apps ;;
+              hard) suite=hard ;;
+              x2|x3|x5) repeat=${word#x} ;;
+              gemini) backend=computer_use ;;
               opus) model=claude-opus-5-5 ;;
               sonnet) model=claude-sonnet-5-5 ;;
               haiku) model=claude-haiku-5-5 ;;
               check-sonnet) check_model=claude-sonnet-5-5 ;;
               check-haiku) check_model=claude-haiku-5-5 ;;
               azure) runner=azure ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure], or /bench grounding [opus|sonnet|haiku|gemini]"; exit 1 ;;
             esac
           done
-          if { [ "$suite" = safety ] || [ "$suite" = apps ]; } && [ "$target" = desktop ]; then
+          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ]; } && [ "$target" = desktop ]; then
             echo "::error::The $suite suite is browser only."; exit 1
           fi
-          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner"
+          if [ "$backend" = computer_use ] && [ "$target" != grounding ]; then
+            echo "::error::gemini is only an option for /bench grounding."; exit 1
+          fi
+          if [ "$backend" = computer_use ]; then model=; fi  # Gemini's own default model
+          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend"
           {
             echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
             echo "model=$model"; echo "check_model=$check_model"; echo "runner=$runner"
+            echo "repeat=$repeat"; echo "backend=$backend"
           } >> "$GITHUB_OUTPUT"
 
       - id: pr
@@ -106,6 +121,7 @@ jobs:
       final_check_model: ${{ needs.parse.outputs.check_model }}
       harness_profile: ${{ needs.parse.outputs.profile }}
       suite: ${{ needs.parse.outputs.suite }}
+      args: ${{ needs.parse.outputs.repeat != '1' && format('--repeat {0}', needs.parse.outputs.repeat) || '' }}
       ref: ${{ needs.parse.outputs.sha }}
     # Named, not inherited: the benchmarked branch never sees the dashboard,
     # Blob, Slack or Azure secrets.
@@ -129,6 +145,7 @@ jobs:
       final_check_model: ${{ needs.parse.outputs.check_model }}
       harness_profile: ${{ needs.parse.outputs.profile }}
       suite: ${{ needs.parse.outputs.suite }}
+      args: ${{ needs.parse.outputs.repeat != '1' && format('--repeat {0}', needs.parse.outputs.repeat) || '' }}
       ref: ${{ needs.parse.outputs.sha }}
     # AZURE_CREDENTIALS is used only by the VM start and stop jobs, which run this
     # repository's default-branch workflow code, never the benchmarked branch.
@@ -136,3 +153,15 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+
+  grounding:
+    needs: parse
+    if: needs.parse.outputs.target == 'grounding'
+    uses: ./.github/workflows/grounding.yml
+    with:
+      backend: ${{ needs.parse.outputs.backend }}
+      model: ${{ needs.parse.outputs.model }}
+      ref: ${{ needs.parse.outputs.sha }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

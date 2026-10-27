@@ -13,6 +13,14 @@ It needs a server started with a real ``GEMINI_API_KEY``::
 from the requests the browser made, not by the judge. ``--suite apps`` runs the
 tasks in ``tests/eval/app_tasks.py`` on the same site's fake shop, mailbox,
 account and forms (``tests/eval/local_apps.py``), graded from the apps' state.
+``--suite hard`` runs the 20 tasks named in ``tests/eval/hard_tasks.py``, a mix of
+all three, picked to measure flakiness with ``--repeat``.
+
+``--repeat N`` runs the whole task list N times over (all tasks once, then again),
+so time-of-day noise on live sites spreads across tasks. The report then adds
+pass@1 (the mean success rate) with a 95% confidence interval over tasks, pass^N
+(the share of tasks that succeeded every time), pass@N (at least once) and the
+flaky tasks, those that both passed and failed.
 
 ``--mode desktop`` (or ``python -m tests.eval.live_desktop_bench``) runs the
 desktop tasks in ``tests/eval/desktop_tasks.py`` through the ``/desktop`` routes
@@ -37,8 +45,9 @@ The judge model is ``OPERON_BENCH_JUDGE_MODEL`` (default ``gemini-3.5-flash``).
 
 Spend is capped per benchmark run: after each task, the agent's and the judge's
 cost so far is checked against ``--max-cost-usd`` (``MAX_RUN_COST_USD``, default
-$5; 0 turns the cap off). Past it, the remaining tasks are skipped, the report
-records ``budget_stop`` and the command exits with status 3.
+$5; 0 turns the cap off). With ``--repeat N`` the cap is N times that, since each
+pass costs about as much as one run. Past it, the remaining tasks are skipped, the
+report records ``budget_stop`` and the command exits with status 3.
 """
 
 from __future__ import annotations
@@ -62,13 +71,14 @@ from tests.eval import app_tasks
 from tests.eval.app_tasks import APP_TASKS, AppTask
 from tests.eval.desktop_tasks import DESKTOP_TASKS
 from tests.eval.fixture_site import FixtureSite
+from tests.eval.hard_tasks import HARD_TASK_NAMES
 from tests.eval.live_tasks import TASKS, LiveTask
 from tests.eval.local_apps import build_apps
 from tests.eval.safety_tasks import SAFETY_TASKS, SafetyTask, grade, site_pages
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error", "compromised")
-SUITES = ("smoke", "full", "safety", "apps")
+SUITES = ("smoke", "full", "safety", "apps", "hard")
 LOCAL_TASKS = (SafetyTask, AppTask)  # run on the local site and graded from it, not by the judge
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
 MODES = ("browser", "desktop")
@@ -108,6 +118,8 @@ class TaskResult:
     cost_usd: float = 0.0
     judge_cost_usd: float = 0.0
     by_model: dict = field(default_factory=dict)
+    # Which pass of a --repeat run this result is from (1 when not repeated).
+    attempt: int = 1
 
 
 def classify(status: str, goal_visible: bool | None) -> str:
@@ -324,6 +336,38 @@ def summarize(results: list[TaskResult]) -> dict:
         "seconds_per_step": round(sum(r.seconds for r in results) / steps, 1) if steps else 0.0,
         "fallback_steps": sum(r.other_steps for r in results),
         **cost_summary(results, counts["success"]),
+        **({"repeat": repeat_summary(results)} if any(r.attempt > 1 for r in results) else {}),
+    }
+
+
+def repeat_summary(results: list[TaskResult]) -> dict:
+    """Flakiness over a ``--repeat`` run: pass@1 with a 95% CI, pass^k, pass@k and the flaky tasks.
+
+    The interval treats tasks, not attempts, as the samples (attempts of one task are
+    not independent): mean of the per-task success rates plus or minus 1.96 standard
+    errors, clipped to [0, 1]. pass^k and pass@k count only tasks that ran all k times.
+    """
+    runs: dict[str, list[str]] = {}
+    for r in results:
+        runs.setdefault(r.task, []).append(r.outcome)
+    k = max(len(outcomes) for outcomes in runs.values())
+    rates = [sum(o == "success" for o in outcomes) / len(outcomes) for outcomes in runs.values()]
+    n = len(rates)
+    mean = sum(rates) / n
+    spread = (sum((rate - mean) ** 2 for rate in rates) / (n - 1)) ** 0.5 if n > 1 else 0.0
+    half = 1.96 * spread / n**0.5
+    complete = {task: outcomes for task, outcomes in runs.items() if len(outcomes) == k}
+    every = sum(all(o == "success" for o in outcomes) for outcomes in complete.values())
+    once = sum(any(o == "success" for o in outcomes) for outcomes in complete.values())
+    return {
+        "k": k,
+        "tasks": n,
+        "pass_at_1": round(mean, 3),
+        "pass_at_1_ci95": [round(max(0.0, mean - half), 3), round(min(1.0, mean + half), 3)],
+        "pass_all_k": round(every / len(complete), 3) if complete else None,
+        "pass_any_k": round(once / len(complete), 3) if complete else None,
+        "flaky": sorted(t for t, o in runs.items() if "success" in o and any(x != "success" for x in o)),
+        "per_task": {task: outcomes for task, outcomes in runs.items()},
     }
 
 
@@ -388,7 +432,8 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         note = change + (f"paused x{r.pauses} " if r.pauses else "") + (f"fallback x{r.other_steps} " if r.other_steps else "")
         if r.outcome != "success":
             note += r.judge_reason
-        lines.append(f"{r.task:22} {r.category:11} {r.outcome:14} {r.steps:>5} {r.seconds:>5} {r.cost_usd:>7.4f}  {note.strip()}")
+        label = r.task if r.attempt == 1 else f"{r.task} #{r.attempt}"
+        lines.append(f"{label:22} {r.category:11} {r.outcome:14} {r.steps:>5} {r.seconds:>5} {r.cost_usd:>7.4f}  {note.strip()}")
     lines.append("")
     lines.append(
         f"{summary['success']}/{summary['tasks']} success ({summary['success_rate']:.0%}) · "
@@ -411,6 +456,14 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         )
         for model, bucket in sorted(summary["by_model"].items()):
             lines.append(f"  {model}: {bucket['requests']} calls, ${bucket['cost_usd']:.4f}")
+    if summary.get("repeat"):
+        rep = summary["repeat"]
+        low, high = rep["pass_at_1_ci95"]
+        lines.append(
+            f"repeated x{rep['k']} over {rep['tasks']} tasks: pass@1 {rep['pass_at_1']:.0%} (95% CI {low:.0%} to {high:.0%})"
+            + (f", pass^{rep['k']} {rep['pass_all_k']:.0%}, pass@{rep['k']} {rep['pass_any_k']:.0%}" if rep["pass_all_k"] is not None else "")
+        )
+        lines.append("flaky: " + (", ".join(rep["flaky"]) or "none"))
     if previous:
         prev = previous["summary"]
         lines.append(
@@ -425,24 +478,28 @@ def save_final_screens(results: list[TaskResult], target: Path) -> None:
 
     A task that did not succeed also gets its whole run folder (every step's
     screenshots and model decisions) at ``target/<task>/``, so the failure can be
-    traced from the report alone.
+    traced from the report alone. A repeated task's later attempts go to ``<task>-try<n>``.
     """
     target.mkdir(parents=True, exist_ok=True)
     for r in results:
+        name = r.task if r.attempt == 1 else f"{r.task}-try{r.attempt}"
         if r.final_screenshot != "-" and Path(r.final_screenshot).is_file():
-            shutil.copyfile(r.final_screenshot, target / f"{r.task}.png")
+            shutil.copyfile(r.final_screenshot, target / f"{name}.png")
         if r.outcome != "success" and r.run_id and _run_dir(r.run_id).is_dir():
-            shutil.copytree(_run_dir(r.run_id), target / r.task, dirs_exist_ok=True)
+            shutil.copytree(_run_dir(r.run_id), target / name, dirs_exist_ok=True)
 
 
 def select_tasks(
     suite: str, only: list[str] | None, category: list[str] | None, mode: str = "browser"
 ) -> list[LiveTask]:
-    if suite in ("safety", "apps"):
+    if suite == "hard":
+        by_name = {t.name: t for t in [*TASKS, *APP_TASKS, *SAFETY_TASKS]}
+        pool = [] if mode == "desktop" else [by_name[name] for name in HARD_TASK_NAMES]
+    elif suite in ("safety", "apps"):
         pool = [] if mode == "desktop" else (SAFETY_TASKS if suite == "safety" else APP_TASKS)
     else:
         pool = DESKTOP_TASKS if mode == "desktop" else TASKS
-    tasks = [t for t in pool if suite in ("full", "safety", "apps") or suite in t.tags]
+    tasks = [t for t in pool if suite in ("full", "safety", "apps", "hard") or suite in t.tags]
     if only:
         tasks = [t for t in tasks if t.name in only]
     if category:
@@ -458,11 +515,14 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results: list[TaskResult] = []
     stopped = None
+    repeat = max(1, args.repeat)
+    planned = [(attempt, task) for attempt in range(1, repeat + 1) for task in tasks]
+    max_cost_usd = args.max_cost_usd * repeat
     site = FixtureSite(site_pages(), apps=build_apps()).start() if any(isinstance(t, LOCAL_TASKS) for t in tasks) else None
     try:
         async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0) as client:
             (await client.get("/health")).raise_for_status()
-            for index, task in enumerate(tasks, 1):
+            for index, (attempt, task) in enumerate(planned, 1):
                 result = await run_task(
                     client, task, judge,
                     timeout_s=args.timeout,
@@ -470,14 +530,16 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                     mode=args.mode,
                     site=site,
                 )
+                result.attempt = attempt
                 results.append(result)
                 if not args.json:
-                    print(f"[{index}/{len(tasks)}] {result.task}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
-                stopped = budget_stop(results, len(tasks), args.max_cost_usd)
+                    label = result.task if repeat == 1 else f"{result.task} #{attempt}"
+                    print(f"[{index}/{len(planned)}] {label}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
+                stopped = budget_stop(results, len(planned), max_cost_usd)
                 if stopped:
                     print(
-                        f"Stopping: spent ${stopped['spent_usd']:.2f}, over the ${args.max_cost_usd:.2f} cap "
-                        f"(--max-cost-usd / MAX_RUN_COST_USD), after {len(results)} of {len(tasks)} tasks.",
+                        f"Stopping: spent ${stopped['spent_usd']:.2f}, over the ${max_cost_usd:.2f} cap "
+                        f"(--max-cost-usd / MAX_RUN_COST_USD, times --repeat), after {len(results)} of {len(planned)} tasks.",
                         file=sys.stderr, flush=True,
                     )
                     break
@@ -500,6 +562,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
         "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
         "harness_profile": os.getenv("OPERON_HARNESS_PROFILE", "full"),
+        "repeat": repeat,
         "budget_stop": stopped,
         "summary": summary,
         "results": [asdict(r) for r in results],
@@ -532,7 +595,7 @@ def _max_cost_default() -> float:
 
 def build_parser(default_suite: str = "full", default_mode: str = "browser") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="smoke, full, or safety / apps (browser only)")
+    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="smoke, full, or safety / apps / hard (browser only)")
     parser.add_argument("--mode", choices=MODES, default=default_mode, help="browser or desktop tasks")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--only", action="append", help="run only the named task(s)")
@@ -542,6 +605,7 @@ def build_parser(default_suite: str = "full", default_mode: str = "browser") -> 
     parser.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", "gemini-3.5-flash"))
     parser.add_argument("--out-dir", default=str(BENCH_DIR))
     parser.add_argument("--keep-screens", action="store_true", help="copy each graded screenshot next to the report")
+    parser.add_argument("--repeat", type=int, default=1, help="run every task this many times (measures flakiness)")
     parser.add_argument(
         "--max-cost-usd", type=float, default=_max_cost_default(),
         help="stop once the run has spent this much on model calls (default $MAX_RUN_COST_USD or 5; 0: no cap)",

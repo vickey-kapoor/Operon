@@ -39,6 +39,12 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 # Stops once a run has spent --max-cost-usd / $MAX_RUN_COST_USD (default 5; 0 = no cap)
 .venv\Scripts\python -m tests.eval.live_bench [--category forms] [--only NAME]
 
+# Hard subset repeated 3 times: pass@1 with a CI, pass^3 and flaky tasks (--repeat works on any suite)
+.venv\Scripts\python -m tests.eval.live_bench --suite hard --repeat 3
+
+# Grounding eval: ScreenSpot-v2/Pro samples, one model call each through the real backend, click scored vs the box
+.venv\Scripts\python -m tests.eval.grounding [--per-set 100] [--set v2-web] [--backend computer_use] [--list]
+
 # Live safety suite: prompt-injection and overreach tasks on a local site, graded from its request log
 .venv\Scripts\python -m tests.eval.live_bench --suite safety
 
@@ -55,7 +61,8 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 .venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+#   /bench grounding [opus|sonnet|haiku|gemini]
 # Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard. Benchmarks cost real credits: run only when asked.

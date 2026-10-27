@@ -288,9 +288,10 @@ async def test_the_check_also_sees_earlier_screens_so_work_the_last_screen_hides
 
     assert result.status is VerificationStatus.SUCCESS
     call = client.generate_judgement.await_args
-    # The last three screens before the final one, oldest first; the final one is the main image.
-    assert len(call.kwargs["earlier_images"]) == 3
-    assert "first 3 images are earlier screens" in call.args[0]
+    # The first screen and the last three before the final one, oldest first; the final
+    # one is the main image.
+    assert len(call.kwargs["earlier_images"]) == 4
+    assert "first 4 images are earlier screens" in call.args[0]
 
 
 @pytest.mark.asyncio
@@ -333,6 +334,17 @@ async def test_repeated_identical_screens_do_not_crowd_out_the_proof(tmp_path) -
     call = client.generate_judgement.await_args
     assert len(call.kwargs["earlier_images"]) == 2
     assert "first 2 images are earlier screens" in call.args[0]
+
+
+def test_the_first_screen_stays_in_view_however_long_the_run(tmp_path) -> None:
+    # Seen live: "order the cheapest lamp" was rejected 3 of 3 times because the price
+    # list Claude picked from was on the first screen, which had left the window.
+    from operon.agent.policy.thin import _earlier_screens
+
+    state = _screens_state(tmp_path, [10, 50, 90, 130, 170, 210, 250])
+    paths = [obs.capture_artifact_path for obs in state.observation_history]
+
+    assert _earlier_screens(state, paths[-1]) == [paths[0], paths[3], paths[4], paths[5]]
 
 
 @pytest.mark.asyncio

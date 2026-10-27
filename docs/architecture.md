@@ -82,8 +82,8 @@ Executor: `DesktopExecutor`.
 model. A `claude_computer_use` backend runs **thin** by default: `ThinPolicy` passes Claude's
 action through with no rules, guards or retries, failures go back to Claude as tool results,
 and `FinalCheckVerifier` checks the outcome once with Claude when it says it is done
-(`OPERON_FINAL_CHECK_MODEL` can pick a cheaper model). The check sees the final screen,
-up to 3 earlier screens that differ from it, and a log of every action taken; after two
+(`OPERON_FINAL_CHECK_MODEL` can pick a cheaper model). The check sees the final screen, the run's
+first screen, up to 3 recent ones that differ from it, and a log of every action taken; after two
 rejected claims the run ends as failed (`completion_unverified`). Safety gates (trust gate, file guard,
 step budget) still apply. `OPERON_HARNESS_PROFILE=full` opts Claude back into the full
 harness described below. Every other backend always runs **full**: rules, post-LLM guards,

@@ -60,8 +60,9 @@ earlier screen shows it done, or the log shows it done and the screens are consi
 and nothing after it undid it. Reply with one JSON object and nothing else:
 {{"complete": true or false, "reason": "one sentence naming what on the screens shows it"}}"""
 
-# Screens from before the claim that the check also sees, so work the final screen
-# can no longer show (a change confirmed, then a sign-out) still counts.
+# Recent screens from before the claim that the check also sees (besides the run's
+# first one), so work the final screen can no longer show (a change confirmed, then
+# a sign-out) still counts.
 _EARLIER_SCREENS = 3
 # Most recent actions listed for the check; older ones are summarised as a count.
 _ACTION_LOG_LIMIT = 30
@@ -259,23 +260,35 @@ class FinalCheckVerifier(VerifierService):
 
 
 def _earlier_screens(state: AgentState, final: str) -> list[str]:
-    """Up to ``_EARLIER_SCREENS`` screens before ``final`` that look different from it
-    and from each other, oldest first. Identical captures (the same confirmation page
-    after a rejected claim) count once, so they cannot crowd out the screen with the proof."""
+    """The run's first screen plus up to ``_EARLIER_SCREENS`` recent ones before
+    ``final``, oldest first, each different from ``final`` and from the others.
+    Identical captures (the same confirmation page after a rejected claim) count once,
+    so they cannot crowd out the screen with the proof; the first screen keeps what the
+    agent read before acting (a price list it picked from)."""
+    candidates = [
+        observation.capture_artifact_path
+        for observation in state.observation_history
+        if observation.capture_artifact_path
+        and observation.capture_artifact_path != final
+        and Path(observation.capture_artifact_path).exists()
+    ]
     paths: list[str] = []
     seen = {_digest(final)}
-    for observation in reversed(state.observation_history):
-        path = observation.capture_artifact_path
-        if not path or path == final or path in paths or not Path(path).exists():
-            continue
+
+    def take(path: str) -> None:
         digest = _digest(path)
-        if digest in seen:
-            continue
-        seen.add(digest)
-        paths.append(path)
-        if len(paths) == _EARLIER_SCREENS:
+        if digest not in seen:
+            seen.add(digest)
+            paths.append(path)
+
+    if candidates:
+        take(candidates[0])
+    first = paths[:1]
+    for path in reversed(candidates[1:]):
+        if len(paths) - len(first) == _EARLIER_SCREENS:
             break
-    return paths[::-1]
+        take(path)
+    return first + paths[len(first):][::-1]
 
 
 def _digest(path: str) -> str:

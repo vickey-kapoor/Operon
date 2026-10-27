@@ -14,15 +14,14 @@ from operon.agent.policy.rules import (
     _nearest_element_by_box,
 )
 from operon.models.common import FailureCategory
-from operon.models.episode import Episode, EpisodeReplayState
 from operon.models.logs import ModelDebugArtifacts
-from operon.models.memory import MemoryHint, RollingElementBuffer
+from operon.models.memory import MemoryHint
 from operon.models.perception import ScreenPerception
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
 from operon.models.selector import SelectorTrace
 from operon.models.state import AgentState
 from operon.store.background_writer import bg_writer
-from operon.store.memory import MemoryStore, normalize_intent
+from operon.store.memory import MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -36,18 +35,14 @@ class PolicyCoordinator(PolicyService):
         delegate: PolicyService,
         memory_store: MemoryStore,
         rule_engine: PolicyRuleEngine | None = None,
-        element_buffer: RollingElementBuffer | None = None,
     ) -> None:
         self.delegate = delegate
         self.memory_store = memory_store
         self.rule_engine = rule_engine or PolicyRuleEngine()
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
-        self._active_episode: Episode | None = None
-        self._replay_state: EpisodeReplayState | None = None
         # Single-step hint cache: avoids re-loading memory JSONL twice per step.
         self._cached_hints: list[MemoryHint] | None = None
         self._cached_hints_key: tuple | None = None
-        self._element_buffer: RollingElementBuffer | None = element_buffer
 
     def _get_hints(self, state: AgentState, perception: ScreenPerception | None) -> list[MemoryHint]:
         """Fetch hints, using a single-step in-memory cache to avoid double JSONL reads."""
@@ -69,7 +64,7 @@ class PolicyCoordinator(PolicyService):
     def reset_run_context(self, run_id: str) -> None:
         """Reset per-run coordinator state for a new task.
 
-        Called at the start of each new run so episode replay and hint caches
+        Called at the start of each new run so hint caches and form-fill state
         from a previous task do not bleed into the new one.
 
         Auth-related browser state (cookies, session tokens) is NOT cleared here —
@@ -77,18 +72,13 @@ class PolicyCoordinator(PolicyService):
         across runs of authenticated benchmarks (e.g. WebArena/GitLab).
 
         Clears:
-        - Active episode and replay state (episodic memory is task-keyed)
         - Hint cache (benchmark/page_hint context changes per run)
         - Last rule trace (stale rule context from a prior run)
         """
-        self._active_episode = None
-        self._replay_state = None
         self._cached_hints = None
         self._cached_hints_key = None
         self.rule_engine._form_options_clicked.pop(run_id, None)
         self.rule_engine._form_fields_filled.pop(run_id, None)
-        if self._element_buffer is not None:
-            self._element_buffer.clear()
         logger.debug("PolicyCoordinator: run context reset for run_id=%r", run_id)
 
     def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
@@ -110,9 +100,6 @@ class PolicyCoordinator(PolicyService):
         state: AgentState,
         perception: ScreenPerception,
     ) -> PolicyDecision:
-        # Inject episode advisory hint if a matching trajectory exists
-        self._try_episode_hint(state, perception)
-
         memory_hints = self._get_hints(state, perception)
 
         decision = self.rule_engine.choose_action(state, perception, memory_hints)
@@ -445,68 +432,6 @@ class PolicyCoordinator(PolicyService):
         if selector_trace_path is None:
             return debug_artifacts
         return debug_artifacts.model_copy(update={"selector_trace_artifact_path": str(selector_trace_path)})
-
-    # ------------------------------------------------------------------
-    # Episode replay (advisory hints)
-    # ------------------------------------------------------------------
-
-    def _try_episode_hint(self, state: AgentState, perception: ScreenPerception) -> None:
-        """Inject an advisory hint from a matching episode trajectory."""
-        # Initialize replay on first step
-        if self._replay_state is None and state.step_count <= 1:
-            benchmark = state.benchmark or "generic_task"
-            norm = normalize_intent(state.intent)
-            episode = self.memory_store.get_episode(norm, benchmark)
-            if episode is not None:
-                self._active_episode = episode
-                self._replay_state = EpisodeReplayState(episode_id=episode.episode_id)
-                logger.info(
-                    "Episode replay activated: %s (%d steps, %dx success)",
-                    episode.episode_id[:8],
-                    len(episode.steps),
-                    episode.success_count,
-                )
-
-        if self._replay_state is None or not self._replay_state.active:
-            return
-
-        episode = self._active_episode
-        if episode is None:
-            return
-
-        idx = self._replay_state.current_step_index
-        if idx >= len(episode.steps):
-            self._replay_state.active = False
-            return
-
-        expected = episode.steps[idx]
-
-        # Divergence check: page_hint mismatch
-        if perception.page_hint != expected.page_hint:
-            self._replay_state.deviations += 1
-            if self._replay_state.deviations >= self._replay_state.max_deviations:
-                self._replay_state.active = False
-                logger.info("Episode replay deactivated: too many divergences")
-                return
-
-        # Build advisory hint
-        total = len(episode.steps)
-        parts = [f"Episode replay (step {idx + 1}/{total}):"]
-        parts.append(f"perform {expected.action_type.value}")
-        if expected.target_description:
-            parts.append(f"on '{expected.target_description}'")
-        if expected.text:
-            parts.append(f"with text '{expected.text}'")
-        if expected.key:
-            parts.append(f"key '{expected.key}'")
-        parts.append(f"[subgoal: {expected.subgoal}]")
-        parts.append("Follow this if the screen matches.")
-        hint = " ".join(parts)
-
-        if hasattr(self.delegate, "add_advisory_hints"):
-            self.delegate.add_advisory_hints([hint], source="episode", run_id=state.run_id)
-
-        self._replay_state.current_step_index += 1
 
 
 def _is_rule_success_stop(decision: PolicyDecision) -> bool:

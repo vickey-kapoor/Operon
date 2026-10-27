@@ -55,9 +55,10 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 .venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
 # Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
-# AZURE_CREDENTIALS; variables AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Benchmarks cost real credits: run only when asked.
+# AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
+# optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Vercel needs DASHBOARD_PASSWORD. Benchmarks cost real credits: run only when asked.
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
 # (the import needs `pip install "psycopg[binary]"`; the "Dashboard data" workflow does it after each benchmark)
@@ -141,9 +142,6 @@ These are load-bearing — violating them silently breaks the agent.
   emit a CLICK immediately followed by a TYPE on the same element.
 - **Visual servo.** `_region_has_content()` runs before every click with an
   adaptively calibrated threshold. Never bypass it.
-- **Spatial persistence.** `RollingElementBuffer` tracks elements across steps;
-  ghost elements have TTL=2 and are auto-purged; the buffer clears when
-  `visual_velocity > 5%`.
 - **Verification states.** SUCCESS / FAILURE / UNCERTAIN / PENDING /
   PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify;
   `PROGRESSING_STABLE` advances immediately.

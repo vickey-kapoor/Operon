@@ -9,9 +9,10 @@ the benchmark, and deallocates the VM again, so the VM costs nothing between run
 except its disk and IP (a few dollars a month). Only one Azure run happens at a time.
 
 The VM is a Standard_D4s_v5 (4 vCPU, 16 GB) running Windows Server 2022 with the
-desktop experience. The setup script signs its admin account in automatically at
-boot and starts the runner inside that interactive session at 1920x1080, with
-Windows Update, notifications and the lock screen off. Server has no Calculator
+desktop experience. The setup script creates a standard (non-admin) account,
+`benchrunner`, signs it in automatically at boot and starts the runner, unelevated,
+inside that interactive session at 1920x1080, with Windows Update, notifications
+and the lock screen off. The admin account `operon` is only for you, over RDP. Server has no Calculator
 app, so `calculator_multiply` fails there, as it does on the hosted runner.
 
 ## One-time setup
@@ -54,36 +55,89 @@ az vm auto-shutdown --resource-group $rg --name $vm --time 0700
 
    ```powershell
    Set-ExecutionPolicy -Scope Process Bypass
-   C:\setup-runner.ps1 -RunnerToken <token> -Password (Read-Host -AsSecureString "operon's password")
+   C:\setup-runner.ps1 -RunnerToken <token>
    ```
 
-The script installs PowerShell 7, Git and Python 3.14, quiets the desktop, sets up
-auto-logon, registers the runner (name `azure-desktop`, label `operon-desktop`)
-and restarts the VM, which drops your RDP session. A minute later the runner
-should show as **Idle** under Settings > Actions > Runners.
+The script installs PowerShell 7, Git and Python 3.14, quiets the desktop, creates
+the `benchrunner` account with a random password nobody sees, sets up auto-logon for
+it, registers the runner as that account (name `azure-desktop`, label
+`operon-desktop`) and restarts the VM, which drops your RDP session. A minute later
+the runner should show as **Idle** under Settings > Actions > Runners.
 
-Don't RDP in again unless you need to. Closing an RDP window locks the session,
-and a locked session has no desktop for the agent to see. If you do RDP in,
-leave by running `C:\actions-runner\leave-rdp.cmd`, which hands the session back
-to the console, or restart the VM.
+RDP in as `.\operon` when you need the VM. That is a separate session, so the
+runner's desktop keeps running. Don't sign in as `benchrunner`.
+
+### Why a standard account
+
+A `/bench desktop azure` run executes the benchmarked branch's code on this VM, and
+the VM is not wiped between runs. Under a standard account that code can't install
+services, change system settings or read the admin's files. Each run also starts by
+removing the usual places it could leave something to start later (the account's
+Run keys, Startup folder, its own scheduled tasks and PowerShell profiles), so a
+leftover can't see the next run's API keys. That cleanup is best effort. Rebuilding
+the VM from a fresh image is the only full reset, so rebuild it if a branch you
+didn't write was ever benchmarked on it.
+
+**Moving an existing VM to the standard account.** Older setups ran the runner as
+the admin account. Get a new runner token, RDP in as `.\operon`, copy the current
+`setup-runner.ps1` to the VM and run step 2 again. It creates `benchrunner`, removes
+the old runner and its logon task, registers the runner again and restarts. Do it
+while no benchmark is running.
 
 ### 3. Let the workflow start and stop the VM
 
-```powershell
-$scope = az group show --name $rg --query id -o tsv
-az ad sp create-for-rbac --name operon-desktop-bench --role "Virtual Machine Contributor" `
-  --scopes $scope --json-auth > azure-credentials.json
+The workflow signs in to Azure with GitHub's OIDC token, so no Azure secret is
+stored in GitHub, and the identity can only start, stop and read the VM: a
+custom role, because the built-in Virtual Machine Contributor role also allows
+Run Command (code as SYSTEM on the VM) and password resets.
 
-gh secret set AZURE_CREDENTIALS --repo vickey-kapoor/Operon < azure-credentials.json
-Remove-Item azure-credentials.json
+```powershell
+$sub = az account show --query id -o tsv
+$tenant = az account show --query tenantId -o tsv
+$scope = az group show --name $rg --query id -o tsv
+
+# A role with only what the workflow does.
+@"
+{
+  "Name": "Operon bench VM operator",
+  "Description": "Start, deallocate and read the desktop benchmark VM",
+  "Actions": [
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Compute/virtualMachines/start/action",
+    "Microsoft.Compute/virtualMachines/deallocate/action",
+    "Microsoft.Compute/virtualMachines/instanceView/read"
+  ],
+  "AssignableScopes": ["$scope"]
+}
+"@ | Set-Content operon-role.json
+az role definition create --role-definition operon-role.json
+
+# An app registration GitHub can sign in as, trusted only for this repo's main branch
+# (/bench comments and manual runs both run main's workflow).
+$appId = az ad app create --display-name operon-desktop-bench --query appId -o tsv
+az ad sp create --id $appId
+az ad app federated-credential create --id $appId --parameters (@"
+{"name":"operon-main","issuer":"https://token.actions.githubusercontent.com","subject":"repo:vickey-kapoor/Operon:ref:refs/heads/main","audiences":["api://AzureADTokenExchange"]}
+"@)
+az role assignment create --assignee $appId --role "Operon bench VM operator" --scope $scope
+
+gh variable set AZURE_CLIENT_ID --repo vickey-kapoor/Operon --body $appId
+gh variable set AZURE_TENANT_ID --repo vickey-kapoor/Operon --body $tenant
+gh variable set AZURE_SUBSCRIPTION_ID --repo vickey-kapoor/Operon --body $sub
 
 az vm deallocate --resource-group $rg --name $vm
 ```
 
-The service principal can only manage VMs in this resource group. Without `gh`,
-add the secret under Settings > Secrets and variables > Actions. If you named the
-resource group or VM differently, also add repo variables `AZURE_VM_RESOURCE_GROUP`
-and `AZURE_VM_NAME`; the workflow defaults to `operon-bench` and `operon-desktop`.
+Without `gh`, add the three variables under Settings > Secrets and variables >
+Actions > Variables. If you named the resource group or VM differently, also add
+repo variables `AZURE_VM_RESOURCE_GROUP` and `AZURE_VM_NAME`; the workflow defaults
+to `operon-bench` and `operon-desktop`.
+
+**Moving off the older secret.** Earlier setups stored a service principal's
+client secret as the `AZURE_CREDENTIALS` repo secret, with Virtual Machine
+Contributor. The workflow still uses it while `AZURE_CLIENT_ID` is unset. Once the
+OIDC sign-in works, delete the secret (`gh secret delete AZURE_CREDENTIALS`) and the
+old service principal (`az ad sp delete --id <its appId>`).
 
 ### 4. Save a clean snapshot
 

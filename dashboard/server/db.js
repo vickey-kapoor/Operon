@@ -24,8 +24,8 @@ export async function tablesExist() {
 export function sendJson(res, status, body) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  // Fresh within a minute of a benchmark landing, without a query on every view.
-  res.setHeader("Cache-Control", status === 200 ? "public, s-maxage=60, stale-while-revalidate=300" : "no-store");
+  // Behind a password (middleware.js), so only the viewer's browser may cache it.
+  res.setHeader("Cache-Control", status === 200 ? "private, max-age=60" : "no-store");
   res.end(JSON.stringify(body));
 }
 

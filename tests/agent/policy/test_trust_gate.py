@@ -148,3 +148,35 @@ def test_make_trust_gate_reads_allow_domains(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("OPERON_TRUST_ALLOW_DOMAINS", "example.com, Foo.ORG")
     gate = make_trust_gate()
     assert gate.allow_domains == ("example.com", "foo.org")  # normalized to lowercase
+
+
+# ── current page outside the allowlist ────────────────────────────────────
+
+
+def test_action_on_off_allowlist_page_is_denied() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    result = gate.evaluate(_action(element_name="Submit"), current_url="https://evil.test/form")
+    assert result.verdict is TrustVerdict.DENY
+    assert result.matched == "evil.test"
+
+
+def test_action_on_allowlisted_page_is_allowed() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    result = gate.evaluate(_action(element_name="Submit"), current_url="https://shop.example.com/cart")
+    assert result.verdict is TrustVerdict.ALLOW
+
+
+def test_blank_page_is_not_judged() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    assert gate.evaluate(_action(text="hi"), current_url="about:blank").verdict is TrustVerdict.ALLOW
+
+
+def test_navigate_back_to_allowlist_is_allowed_from_an_off_list_page() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    result = gate.evaluate(_action(url="https://example.com/"), current_url="https://evil.test/")
+    assert result.verdict is TrustVerdict.ALLOW
+
+
+def test_current_page_is_ignored_without_an_allowlist() -> None:
+    gate = TrustGate(enabled=True)
+    assert gate.evaluate(_action(text="hi"), current_url="https://evil.test/").verdict is TrustVerdict.ALLOW

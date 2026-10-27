@@ -22,7 +22,9 @@ Config:
                                                  (default: a conservative built-in set)
     OPERON_TRUST_ALLOW_DOMAINS  comma-separated  if set, navigation is restricted to
                                                  these domains (and subdomains); any
-                                                 other URL is denied (fail-closed)
+                                                 other URL is denied (fail-closed), and
+                                                 so is any action taken while the page
+                                                 itself is off the list (a followed link)
 """
 
 from __future__ import annotations
@@ -103,7 +105,10 @@ class TrustGate:
         url = getattr(action, "url", None)
         if not url:
             return None
-        host = (urlparse(str(url)).hostname or "").lower()
+        return self._host_blocked(str(url))
+
+    def _host_blocked(self, url: str) -> str | None:
+        host = (urlparse(url).hostname or "").lower()
         if not host:
             return "(unparseable url)"
         for domain in self.allow_domains:
@@ -111,7 +116,17 @@ class TrustGate:
                 return None
         return host
 
-    def evaluate(self, action: object) -> TrustResult:
+    def _page_blocked(self, current_url: str | None) -> str | None:
+        """The page's host when the browser already sits outside the allowlist, e.g.
+        after the model clicked a link; only web pages are judged (about:blank and
+        the like are not a destination)."""
+        if not self.allow_domains or not current_url:
+            return None
+        if urlparse(current_url).scheme not in ("http", "https"):
+            return None
+        return self._host_blocked(current_url)
+
+    def evaluate(self, action: object, current_url: str | None = None) -> TrustResult:
         if not self.enabled:
             return TrustResult(TrustVerdict.ALLOW)
         description = self.describe(action)
@@ -121,6 +136,10 @@ class TrustGate:
         blocked_host = self._domain_blocked(action)
         if blocked_host is not None:
             return TrustResult(TrustVerdict.DENY, "domain not in allowlist", blocked_host)
+        if getattr(action, "url", None) is None:
+            blocked_page = self._page_blocked(current_url)
+            if blocked_page is not None:
+                return TrustResult(TrustVerdict.DENY, "current page not in allowlist", blocked_page)
         for keyword in self.confirm:
             if keyword in description:
                 return TrustResult(TrustVerdict.CONFIRM, "matched high-risk rule", keyword)

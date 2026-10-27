@@ -129,7 +129,6 @@ There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`,
 `PolicyCoordinator` wraps:
 - memory hint lookup from `FileBackedMemoryStore`
 - `PolicyRuleEngine`
-- optional episode advisory hints
 - the configured policy delegate
 - post-LLM guards such as `_semantic_anchor_check`
 
@@ -239,7 +238,6 @@ Memory is stored under `memory/` when enabled by the store:
 
 ```text
 memory/memory.jsonl
-memory/episodes.jsonl
 ```
 
 Browser session videos are written under `.var/browser-artifacts/` by default. Desktop artifacts use `.var/desktop-artifacts/`. Set `OPERON_RUNTIME_ROOT`, `OPERON_RUNS_ROOT`, `OPERON_BROWSER_ARTIFACTS_ROOT`, or `OPERON_DESKTOP_ARTIFACTS_ROOT` to override these locations.

@@ -94,7 +94,7 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
                     continue
                 raise
 
-            # Quality gate — same checks as GeminiPerceptionService
+            # Quality gate on the parsed perception
             quality_metrics = _quality_metrics(perception)
             low_quality_reason = _low_quality_reason(perception, quality_metrics=quality_metrics)
             if low_quality_reason is not None:

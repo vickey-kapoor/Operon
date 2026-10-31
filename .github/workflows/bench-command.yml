@@ -3,7 +3,7 @@ name: Bench command
 # Runs a live benchmark on a pull request's head when a repository owner, member
 # or collaborator comments on it:
 #
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom]
 #   /bench grounding [opus|sonnet|haiku|gemini] [zoom]
 #
 # Defaults: browser, thin harness, smoke suite, Opus 5.5. "all" runs the full
@@ -77,7 +77,7 @@ jobs:
               check-sonnet) check_model=claude-sonnet-5-5 ;;
               check-haiku) check_model=claude-haiku-5-5 ;;
               azure) runner=azure ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure], or /bench grounding [opus|sonnet|haiku|gemini] [zoom]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom], or /bench grounding [opus|sonnet|haiku|gemini] [zoom]"; exit 1 ;;
             esac
           done
           if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ]; } && [ "$target" = desktop ]; then
@@ -86,8 +86,8 @@ jobs:
           if [ "$backend" = computer_use ] && [ "$target" != grounding ]; then
             echo "::error::gemini is only an option for /bench grounding."; exit 1
           fi
-          if [ "$zoom" = true ] && { [ "$target" != grounding ] || [ "$backend" = computer_use ]; }; then
-            echo "::error::zoom is only an option for /bench grounding with Claude."; exit 1
+          if [ "$zoom" = true ] && { [ "$target" = browser ] || [ "$backend" = computer_use ]; }; then
+            echo "::error::zoom is only an option for /bench desktop and /bench grounding with Claude."; exit 1
           fi
           if [ "$backend" = computer_use ]; then model=; fi  # Gemini's own default model
           echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend zoom=$zoom"
@@ -151,6 +151,7 @@ jobs:
       final_check_model: ${{ needs.parse.outputs.check_model }}
       harness_profile: ${{ needs.parse.outputs.profile }}
       suite: ${{ needs.parse.outputs.suite }}
+      zoom: ${{ needs.parse.outputs.zoom == 'true' }}
       args: ${{ needs.parse.outputs.repeat != '1' && format('--repeat {0}', needs.parse.outputs.repeat) || '' }}
       ref: ${{ needs.parse.outputs.sha }}
     # AZURE_CREDENTIALS is used only by the VM start and stop jobs, which run this

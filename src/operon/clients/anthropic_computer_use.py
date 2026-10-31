@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
@@ -23,6 +24,17 @@ COMPUTER_TOOLSET: dict[str, Any] = {
     "type": "computer_toolset_20260801",
     "configs": {member: {"enabled": False} for member in _DISABLED_MEMBERS},
 }
+
+# Zoom is answered by the backend with a crop of the current screenshot rather than
+# by the executor. Experimental: on only with OPERON_CLAUDE_ZOOM=true.
+COMPUTER_TOOLSET_WITH_ZOOM: dict[str, Any] = {
+    "type": "computer_toolset_20260801",
+    "configs": {member: {"enabled": False} for member in _DISABLED_MEMBERS if member != "zoom"},
+}
+
+
+def zoom_enabled() -> bool:
+    return os.getenv("OPERON_CLAUDE_ZOOM", "").strip().lower() in {"1", "true", "yes", "on"}
 
 # The screenshot shows only the page, with no address bar, so opening a URL needs a tool.
 NAVIGATE_TOOL: dict[str, Any] = {
@@ -74,12 +86,14 @@ class AnthropicComputerUseHttpClient(AnthropicHttpClient):
         timeout_seconds: float = 120.0,
         max_tokens: int = 16000,
         custom_tools: tuple[dict[str, Any], ...] = (NAVIGATE_TOOL,),
+        zoom: bool | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(model=model, timeout_seconds=timeout_seconds, **kwargs)
         self.effort = effort
         self.max_tokens = max_tokens
         self.custom_tools = custom_tools
+        self.zoom = zoom_enabled() if zoom is None else zoom
 
     def build_payload(self, *, system: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -88,7 +102,7 @@ class AnthropicComputerUseHttpClient(AnthropicHttpClient):
             # The tools and system prompt are the same for every run, so a breakpoint
             # here lets each new run read them from the cache instead of writing them.
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            "tools": [COMPUTER_TOOLSET, *self.custom_tools],
+            "tools": [COMPUTER_TOOLSET_WITH_ZOOM if self.zoom else COMPUTER_TOOLSET, *self.custom_tools],
             "messages": messages,
             # Each turn resends the whole conversation; cache everything up to the newest turn.
             "cache_control": {"type": "ephemeral"},

@@ -72,7 +72,7 @@ commit (PRs from forks are refused):
 
 ```text
 /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
-/bench grounding [opus|sonnet|haiku|gemini]
+/bench grounding [opus|sonnet|haiku|gemini] [zoom]
 ```
 
 Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. Examples:
@@ -86,6 +86,7 @@ Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. Examples:
 | `/bench hard x3` | Hard subset, every task 3 times (about $5.50 with Opus) |
 | `/bench grounding` | Grounding eval, 300 samples on Claude Opus 5.5 |
 | `/bench grounding gemini` | Grounding eval on Gemini |
+| `/bench grounding zoom` | Grounding eval on Claude with zoom on (`OPERON_CLAUDE_ZOOM`) |
 | `/bench desktop` | Desktop smoke on GitHub's hosted Windows runner |
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
 | `/bench sonnet check-haiku` | Sonnet acting, Haiku for the completion check |

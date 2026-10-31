@@ -580,7 +580,7 @@ function renderJudge() {
   const checks = state.judge;
   if (!checks.length) {
     host.replaceChildren(el("p", { class: "note" }, "No judge check saved yet. Label final screens and run ",
-      el("code", {}, "python -m tests.eval.judge_check run labels.jsonl --save"), " to record one."));
+      el("code", {}, "python -m evals.judge_check run labels.jsonl --save"), " to record one."));
     return;
   }
   const c = checks[checks.length - 1];

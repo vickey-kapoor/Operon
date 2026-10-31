@@ -12,7 +12,7 @@ Every model call writes a `*_usage.json` next to its step in `.var/runs/<run_id>
   read rate: $0.20/MTok on Opus 5.5) and output (thinking included) each at their own rate.
 - Gemini: cached prompt tokens at the cached rate, thinking tokens billed as output.
 
-The live benchmark (`tests.eval.live_bench`, desktop too) sums those files per task and
+The live benchmark (`evals.live_bench`, desktop too) sums those files per task and
 reports `cost_usd`, token counts and a per-model breakdown for each task, plus
 `cost_per_task_usd`, `cost_per_success_usd` (failed tasks' spend charged to the
 successes) and the judge's cost in the summary. The eval dashboard stores the same

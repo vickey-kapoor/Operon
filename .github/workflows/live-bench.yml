@@ -1,6 +1,6 @@
 name: Live benchmark
 
-# Runs the live web benchmark (tests/eval/live_bench.py) against a real API
+# Runs the live web benchmark (evals/live_bench.py) against a real API
 # server and real websites. Manual only: every run spends model credits.
 # Needs repo secrets GEMINI_API_KEY (always: the judge and critic are Gemini)
 # and ANTHROPIC_API_KEY (for the claude_computer_use backend).
@@ -138,7 +138,7 @@ jobs:
         # --keep-screens saves the screenshots the dashboard shows; pipefail keeps the cost-cap exit.
         run: |
           set -o pipefail
-          uv run python -m tests.eval.live_bench --suite "$SUITE" --keep-screens $EXTRA_ARGS | tee bench.txt
+          uv run python -m evals.live_bench --suite "$SUITE" --keep-screens $EXTRA_ARGS | tee bench.txt
 
       - name: Summary
         if: always()

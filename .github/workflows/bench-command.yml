@@ -10,7 +10,7 @@ name: Bench command
 # suite (44 browser tasks or 10 desktop tasks); "safety" runs the browser
 # prompt-injection and overreach tasks; "apps" runs the browser tasks on the local
 # fake shop, mailbox, account and forms, graded from the apps' state; "hard" runs the
-# 20-task hard subset (tests/eval/hard_tasks.py). x2/x3/x5 run every task that many
+# 20-task hard subset (evals/hard_tasks.py). x2/x3/x5 run every task that many
 # times to measure flakiness (the cost cap scales with it). "grounding" runs the
 # ScreenSpot grounding eval instead (one model call per sample, no browser); gemini
 # picks the Gemini backend for it and zoom lets Claude zoom into the screenshot

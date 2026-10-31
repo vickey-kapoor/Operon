@@ -76,7 +76,7 @@ jobs:
         run: |
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --dir "artifacts/$RUN_ID" || true
           if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
-          python3 -m tests.eval.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert
+          python3 -m evals.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert
 
       - name: Import the requested runs
         if: github.event_name == 'workflow_dispatch' && inputs.run_ids != ''
@@ -88,7 +88,7 @@ jobs:
             read -r run_url event head_sha < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha --jq '[.url, .event, .headSha] | @tsv')
             [ "$event" = "issue_comment" ] && head_sha=""
             gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --dir "artifacts/$run_id"
-            python3 -m tests.eval.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
+            python3 -m evals.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
           done
 
       - name: Import committed reports
@@ -100,4 +100,4 @@ jobs:
           git fetch --quiet --depth=1 origin "$REF"
           mkdir -p backfill
           git archive FETCH_HEAD dashboard/data/reports | tar -x -C backfill
-          python3 -m tests.eval.dashboard import backfill/dashboard/data/reports
+          python3 -m evals.dashboard import backfill/dashboard/data/reports

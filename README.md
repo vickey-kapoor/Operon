@@ -16,6 +16,8 @@ the result. No DOM, no selectors, no accessibility tree.
 
 <p align="center">
   <img src="docs/assets/claude-vs-gemini-benchmark.png" alt="Claude vs Gemini on 44 live web tasks: Claude completed 96% in 30 s and 1.7 steps per task, Gemini 91% in 48 s and 3.6 steps" width="480">
+  <br>
+  <sub>44 live web tasks, one run each, 25 Oct 2026. Rolling results across runs are in <a href="docs/evaluation.md#latest-results">Evaluation</a>.</sub>
 </p>
 
 ## Highlights
@@ -68,7 +70,10 @@ http://localhost:5173).
 
 > [!WARNING]
 > Desktop runs control your real mouse and keyboard. Use a machine you can spare, or a VM.
-> The API requires the key it generates in `.var/api-key` (or one from `API_KEYS`).
+> Set `OPERON_TRUST_GATE=on` to pause for approval before risky actions, and
+> `OPERON_TRUST_ALLOW_DOMAINS` to pin browser runs to the sites you expect
+> ([configuration](docs/configuration.md)). The API requires the key it generates in
+> `.var/api-key` (or one from `API_KEYS`).
 
 ## Documentation
 
@@ -85,7 +90,7 @@ http://localhost:5173).
 
 ```bash
 GEMINI_API_KEY=fake-test-key python -m pytest tests -q   # offline, no browser, under a minute
-ruff check src tests --select E,F,W,I --ignore E501
+ruff check src tests evals --select E,F,W,I --ignore E501
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and how to report agent failures.

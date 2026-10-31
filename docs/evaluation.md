@@ -24,27 +24,27 @@ Every live suite spends real model credits, so none of them run on pushes or mer
 
 | Suite | Command | What it checks |
 |---|---|---|
-| Offline eval | `python -m tests.eval` | Scripted scenarios through the real loop, no network |
-| Live smoke | `python -m tests.eval.live_smoke` | A few real browser tasks against a running API |
-| Browser benchmark | `python -m tests.eval.live_bench [--suite smoke\|full] [--category forms] [--only NAME]` | 44 real web tasks (5 in smoke), graded from the final screen |
-| Safety suite | `python -m tests.eval.live_bench --suite safety` | 9 prompt-injection and overreach tasks on a local fixture site, graded from the site's request log |
-| Local apps suite | `python -m tests.eval.live_bench --suite apps` | 11 tasks on local fake shop, mail, account and form apps, graded from the apps' state |
-| Hard subset, repeated | `python -m tests.eval.live_bench --suite hard --repeat 3` | 20 of the harder app, live and safety tasks, each run 3 times: pass@1 with a 95% CI, pass^3, flaky tasks |
-| Grounding | `python -m tests.eval.grounding [--per-set 100] [--set v2-web] [--backend computer_use]` | 300 ScreenSpot-v2 and ScreenSpot-Pro samples (one screenshot and instruction each) through Operon's own backend; scores whether the first click lands in the target's box |
-| Desktop benchmark | `python -m tests.eval.live_desktop_bench [--suite smoke\|full]` | 10 tasks on stock Windows apps (3 in smoke); **drives the real mouse and keyboard** |
-| Judge check | `python -m tests.eval.judge_check template <report.json> > labels.jsonl`, then `judge_check run labels.jsonl [--repeat 3] [--save]` | Compares the benchmark judge with hand labels; `--save` records it for the dashboard (needs `DATABASE_URL`) |
+| Offline eval | `python -m evals` | Scripted scenarios through the real loop, no network |
+| Live smoke | `python -m evals.live_smoke` | A few real browser tasks against a running API |
+| Browser benchmark | `python -m evals.live_bench [--suite smoke\|full] [--category forms] [--only NAME]` | 44 real web tasks (5 in smoke), graded from the final screen |
+| Safety suite | `python -m evals.live_bench --suite safety` | 9 prompt-injection and overreach tasks on a local fixture site, graded from the site's request log |
+| Local apps suite | `python -m evals.live_bench --suite apps` | 11 tasks on local fake shop, mail, account and form apps, graded from the apps' state |
+| Hard subset, repeated | `python -m evals.live_bench --suite hard --repeat 3` | 20 of the harder app, live and safety tasks, each run 3 times: pass@1 with a 95% CI, pass^3, flaky tasks |
+| Grounding | `python -m evals.grounding [--per-set 100] [--set v2-web] [--backend computer_use]` | 300 ScreenSpot-v2 and ScreenSpot-Pro samples (one screenshot and instruction each) through Operon's own backend; scores whether the first click lands in the target's box |
+| Desktop benchmark | `python -m evals.live_desktop_bench [--suite smoke\|full]` | 10 tasks on stock Windows apps (3 in smoke); **drives the real mouse and keyboard** |
+| Judge check | `python -m evals.judge_check template <report.json> > labels.jsonl`, then `judge_check run labels.jsonl [--repeat 3] [--save]` | Compares the benchmark judge with hand labels; `--save` records it for the dashboard (needs `DATABASE_URL`) |
 
 The browser benchmark grades each task with a Gemini judge that reads the final screenshot
 against a per-task success condition. The judge check measured it at 99% accuracy and 100%
-recall on 88 hand labels; see [evals/safety-and-judge-check.md](evals/safety-and-judge-check.md)
+recall on 88 hand labels; see [reports/safety-and-judge-check.md](reports/safety-and-judge-check.md)
 for that and the first safety results, and
-[evals/local-apps.md](evals/local-apps.md) for how the local apps are graded.
+[reports/local-apps.md](reports/local-apps.md) for how the local apps are graded.
 
 `--repeat N` works with any live suite: it runs the whole task list N times over and adds
 pass@1 (the mean success rate, with a 95% interval that treats tasks, not attempts, as the
 samples), pass^N (every attempt succeeded), pass@N (at least one did) and the list of flaky
 tasks to the report. The cost cap is multiplied by N. The `hard` suite
-([tests/eval/hard_tasks.py](../tests/eval/hard_tasks.py)) is the set meant for it: all 11
+([evals/hard_tasks.py](../evals/hard_tasks.py)) is the set meant for it: all 11
 local app tasks, the 5 longest or past-failing live tasks and 4 safety tasks. A single run
 cannot tell a 40/44 backend from a 42/44 one; a repeated hard run shows how much of that
 gap is noise.

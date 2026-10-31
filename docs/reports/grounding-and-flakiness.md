@@ -106,3 +106,8 @@ now always included (follow-up commit on #189), which is not yet measured live.
 successes, $1.06. `shop_cheapest_coupon`, which missed 3 of 3 in the rerun above,
 passed in 6 steps with its first "done" accepted (`task_completed`). This is one run,
 not a repeat, so it shows the fix works rather than how stable it is.
+
+## Grounding with zoom (2026-10-31)
+
+Claude Opus 5.5 with `OPERON_CLAUDE_ZOOM=true` (#190) on the same 300 samples
+(`/bench grounding zoom`). Results pending.

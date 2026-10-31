@@ -44,6 +44,10 @@ on:
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
+      zoom:
+        description: "Let Claude zoom into the screenshot (OPERON_CLAUDE_ZOOM)"
+        type: boolean
+        default: false
       args:
         description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"
         default: ""
@@ -60,6 +64,7 @@ on:
       claude_model: {type: string, default: "claude-opus-5-5"}
       final_check_model: {type: string, default: ""}
       desktop_model: {type: string, default: ""}
+      zoom: {type: boolean, default: false}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "5"}
       ref:
@@ -136,6 +141,7 @@ jobs:
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_DESKTOP_CLAUDE_MODEL: ${{ inputs.claude_model }}
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
+      OPERON_CLAUDE_ZOOM: ${{ inputs.zoom && 'true' || 'false' }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
     steps:
       - name: Check the secrets

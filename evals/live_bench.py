@@ -565,6 +565,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
         "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
         "harness_profile": os.getenv("OPERON_HARNESS_PROFILE", "full"),
+        "zoom": os.getenv("OPERON_CLAUDE_ZOOM", "").strip().lower() in {"1", "true", "yes", "on"},
         "repeat": repeat,
         "budget_stop": stopped,
         "summary": summary,

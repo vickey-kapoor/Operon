@@ -22,6 +22,10 @@ on:
       max_cost_usd:
         description: "Stop once the run has spent this many USD (0: no cap)"
         default: "5"
+      zoom:
+        description: "Let Claude zoom into the screenshot (OPERON_CLAUDE_ZOOM)"
+        type: boolean
+        default: false
   # Called by bench-command.yml for /bench grounding.
   workflow_call:
     inputs:
@@ -29,6 +33,7 @@ on:
       model: {type: string, default: ""}
       per_set: {type: string, default: "100"}
       max_cost_usd: {type: string, default: "5"}
+      zoom: {type: boolean, default: false}
       ref:
         description: "Git ref to evaluate (empty: the triggering ref)"
         type: string
@@ -49,6 +54,7 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
+      OPERON_CLAUDE_ZOOM: ${{ inputs.zoom && 'true' || 'false' }}
     steps:
       - name: Check the secrets
         env:
@@ -96,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           # Not bench-*: the Dashboard data workflow imports those as benchmark runs.
-          name: grounding-${{ inputs.backend }}
+          name: grounding-${{ inputs.backend }}${{ inputs.zoom && '-zoom' || '' }}
           path: |
             grounding.txt
             .var/bench/grounding-*.json

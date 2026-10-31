@@ -47,6 +47,7 @@ the details.
 | `OPERON_BROWSER_VERIFIER_THINKING` | `low` | Browser critic thinking level |
 | `OPERON_BROWSER_CLAUDE_MODEL` | `claude-opus-5-5` | Model for `claude_computer_use` |
 | `OPERON_BROWSER_CLAUDE_EFFORT` | `low` | Claude effort level for `claude_computer_use` |
+| `OPERON_CLAUDE_ZOOM` | `false` | Experimental: turn on the toolset's `zoom` member (browser and desktop); each zoom is answered with a full-resolution crop of the current screenshot, up to 3 per step |
 | `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` | Desktop primary model (Gemini JSON backend) |
 | `OPERON_DESKTOP_CLAUDE_MODEL` | `claude-opus-5-5` | Model for the desktop `claude_computer_use` backend |
 | `OPERON_DESKTOP_CLAUDE_EFFORT` | `low` | Claude effort level on the desktop |

@@ -106,3 +106,28 @@ now always included (follow-up commit on #189), which is not yet measured live.
 successes, $1.06. `shop_cheapest_coupon`, which missed 3 of 3 in the rerun above,
 passed in 6 steps with its first "done" accepted (`task_completed`). This is one run,
 not a repeat, so it shows the fix works rather than how stable it is.
+
+## Grounding with zoom (2026-10-31)
+
+Claude Opus 5.5 with `OPERON_CLAUDE_ZOOM=true` (#190) on the same 300 samples
+(`/bench grounding zoom`, Bench command run 41250144567), against the baseline above:
+
+| Set | Baseline | With zoom |
+|---|---|---|
+| ScreenSpot-v2 desktop | 100% | 100% |
+| ScreenSpot-v2 web | 97% | 97% |
+| ScreenSpot-Pro | 70% | **83%** (icons 76%, text 90%) |
+| All 300 | 89% | **93.3%** |
+| Cost | $3.20 | $3.48 ($0.012 per sample) |
+| No click | 9 (all Pro) | 3 (all Pro) |
+
+- **Zoom fixes most of what the baseline lost on dense screens.** Pro gained 13 points
+  and no-clicks fell from 9 to 3. None of the 3 left asks to zoom; Claude either proposed
+  nothing or said the target was elsewhere.
+- **It costs little where it isn't needed.** v2 desktop and web are unchanged at about
+  $1.08 each and 2.6 s per sample; Pro took 3.6 s and $1.30, consistent with Claude
+  zooming mostly on the dense screens. The report does not record zoom calls, so this is
+  inferred from time and cost, not counted.
+- **Not yet measured on real tasks.** Grounding is one model call per sample. Zoom is
+  still off by default; the next check is a desktop benchmark run with it on before
+  deciding whether to make it the default.

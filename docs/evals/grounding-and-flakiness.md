@@ -75,3 +75,27 @@ visual proof of every part of the task:
 So the harness's flakiness here is mostly one bug in the completion check, not
 the agent failing its tasks. Before #174 these tasks passed: on the 2026-10-26 full
 run `sauce_checkout` took 6 steps.
+
+## Hard subset rerun with the completion-check fix (2026-10-27)
+
+Same 20 tasks x3 on #189 (`/bench hard x3`, Bench command run 40567969830). The check
+now also gets an action log, counts identical earlier screens once, and ends a run as
+`completion_unverified` after two rejected claims.
+
+| Metric | Before (#188) | After (#189) |
+|---|---|---|
+| pass@1 | 85% (CI 70% to 100%) | **95%** (CI 85% to 100%) |
+| pass^3 | 80% | **95%** |
+| pass@3 | 90% | 95% |
+| Flaky tasks | 2 | **0** |
+| False successes, compromised | 0, 0 | 0, 0 |
+| Cost | $10.13 | **$5.00** ($0.083 per task) |
+| Spent on misses | $6.28 | $0.55 |
+
+`sauce_checkout`, `form_conference` and `pypi_search` now pass 3 of 3 (PyPI showed no
+CAPTCHA this time). No run reached the step limit.
+
+The 3 remaining misses are all `shop_cheapest_coupon`: the order was right every time,
+but the check could not see the price list Claude chose from. It was on the run's first
+screen, which had dropped out of the recent-screens window. The run's first screen is
+now always included (follow-up commit on #189), which is not yet measured live.

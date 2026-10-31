@@ -561,6 +561,7 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         "backend": args.backend,
         "model": model,
         "effort": effort,
+        "zoom": args.backend != "computer_use" and _zoom_enabled(),
         "per_set": args.per_set,
         "datasets": {V2_REPO: V2_REVISION, PRO_REPO: PRO_REVISION},
         "budget_stop": stopped,
@@ -581,6 +582,12 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
             print(f"Stopped at the ${args.max_cost_usd:.2f} cost cap after {stopped['tasks_run']} of {len(samples)} samples.")
         print(f"\nsaved {path}")
     return BUDGET_EXIT_CODE if stopped else 0
+
+
+def _zoom_enabled() -> bool:
+    from operon.clients.anthropic_computer_use import zoom_enabled
+
+    return zoom_enabled()
 
 
 def main(argv: list[str]) -> int:

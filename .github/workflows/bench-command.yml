@@ -4,7 +4,7 @@ name: Bench command
 # or collaborator comments on it:
 #
 #   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
-#   /bench grounding [opus|sonnet|haiku|gemini]
+#   /bench grounding [opus|sonnet|haiku|gemini] [zoom]
 #
 # Defaults: browser, thin harness, smoke suite, Opus 5.5. "all" runs the full
 # suite (44 browser tasks or 10 desktop tasks); "safety" runs the browser
@@ -13,7 +13,8 @@ name: Bench command
 # 20-task hard subset (evals/hard_tasks.py). x2/x3/x5 run every task that many
 # times to measure flakiness (the cost cap scales with it). "grounding" runs the
 # ScreenSpot grounding eval instead (one model call per sample, no browser); gemini
-# picks the Gemini backend for it. Claude is the backend otherwise.
+# picks the Gemini backend for it and zoom lets Claude zoom into the screenshot
+# (OPERON_CLAUDE_ZOOM). Claude is the backend otherwise.
 # opus/sonnet/haiku pick the acting Claude model; check-sonnet/check-haiku pick a
 # cheaper model for the thin harness's completion check. azure runs a desktop
 # benchmark on our Azure VM instead of GitHub's hosted runner. Reports show the cost.
@@ -47,6 +48,7 @@ jobs:
       runner: ${{ steps.args.outputs.runner }}
       repeat: ${{ steps.args.outputs.repeat }}
       backend: ${{ steps.args.outputs.backend }}
+      zoom: ${{ steps.args.outputs.zoom }}
       sha: ${{ steps.pr.outputs.sha }}
     steps:
       - id: args
@@ -54,7 +56,7 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           set -f  # no glob expansion of the comment's words
-          target=browser profile=thin suite=smoke model=claude-opus-5-5 check_model= runner=github repeat=1 backend=claude_computer_use
+          target=browser profile=thin suite=smoke model=claude-opus-5-5 check_model= runner=github repeat=1 backend=claude_computer_use zoom=false
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
@@ -68,13 +70,14 @@ jobs:
               hard) suite=hard ;;
               x2|x3|x5) repeat=${word#x} ;;
               gemini) backend=computer_use ;;
+              zoom) zoom=true ;;
               opus) model=claude-opus-5-5 ;;
               sonnet) model=claude-sonnet-5-5 ;;
               haiku) model=claude-haiku-5-5 ;;
               check-sonnet) check_model=claude-sonnet-5-5 ;;
               check-haiku) check_model=claude-haiku-5-5 ;;
               azure) runner=azure ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure], or /bench grounding [opus|sonnet|haiku|gemini]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure], or /bench grounding [opus|sonnet|haiku|gemini] [zoom]"; exit 1 ;;
             esac
           done
           if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ]; } && [ "$target" = desktop ]; then
@@ -83,12 +86,15 @@ jobs:
           if [ "$backend" = computer_use ] && [ "$target" != grounding ]; then
             echo "::error::gemini is only an option for /bench grounding."; exit 1
           fi
+          if [ "$zoom" = true ] && { [ "$target" != grounding ] || [ "$backend" = computer_use ]; }; then
+            echo "::error::zoom is only an option for /bench grounding with Claude."; exit 1
+          fi
           if [ "$backend" = computer_use ]; then model=; fi  # Gemini's own default model
-          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend"
+          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend zoom=$zoom"
           {
             echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
             echo "model=$model"; echo "check_model=$check_model"; echo "runner=$runner"
-            echo "repeat=$repeat"; echo "backend=$backend"
+            echo "repeat=$repeat"; echo "backend=$backend"; echo "zoom=$zoom"
           } >> "$GITHUB_OUTPUT"
 
       - id: pr
@@ -161,6 +167,7 @@ jobs:
     with:
       backend: ${{ needs.parse.outputs.backend }}
       model: ${{ needs.parse.outputs.model }}
+      zoom: ${{ needs.parse.outputs.zoom == 'true' }}
       ref: ${{ needs.parse.outputs.sha }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from operon.agent._agent_utils import collect_latest_usage
 from operon.agent.actions.translation import (
     CLAUDE_COMPUTER_CALLS,
     build_policy_decision,
@@ -28,6 +27,7 @@ from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import PageHint, ScreenPerception
 from operon.models.policy import ActionType, PolicyDecision
 from operon.models.state import AgentState
+from operon.models.usage import ModelUsage
 from operon.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,12 @@ _SYSTEM_PROMPT = "You are a browser automation agent. You see the browser throug
 _MAX_LONG_EDGE = 1280
 
 _NOT_EXECUTED = "Not executed: an earlier computer action in this turn failed."
+# Zoom turns answered within one step before the step goes on without them.
+_MAX_ZOOMS = 3
+_ZOOM_NOT_RUN = (
+    "Error: zoom was not run. Call zoom on its own, with no other actions in the turn, "
+    f"and at most {_MAX_ZOOMS} times in a row."
+)
 _CONTINUE = "Continue with the task using the tools. If it is already done, say so in one sentence."
 
 
@@ -118,6 +124,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
 
         conversation = self._conversations.setdefault(state.run_id, _ConversationState())
         open_calls, acknowledged = list(conversation.pending_calls), conversation.acknowledged_actions
+        history_length = len(conversation.messages)
         image, media_type, sent_width, sent_height = encode_screenshot(Path(screenshot.artifact_path))
         user_message = await self._next_user_message(
             conversation, state=state, image=image, media_type=media_type
@@ -125,29 +132,53 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         bg_writer.enqueue(prompt_path, json.dumps(_without_images(user_message), indent=2))
         conversation.messages.append(user_message)
 
-        try:
-            response = await self.client.generate_turn(system=self.system_prompt, messages=conversation.messages)
-        except AnthropicClientError as exc:
-            # Leave the conversation as it was so a later turn can answer the same calls.
-            conversation.messages.pop()
-            conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
-            raise BackendCompatibilityError(str(exc)) from exc
-        bg_writer.enqueue(raw_path, json.dumps(response, indent=2))
+        usages: list[ModelUsage] = []
+        zooms = 0
+        while True:
+            try:
+                response = await self.client.generate_turn(system=self.system_prompt, messages=conversation.messages)
+            except AnthropicClientError as exc:
+                # Leave the conversation as it was so a later turn can answer the same calls.
+                del conversation.messages[history_length:]
+                conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
+                raise BackendCompatibilityError(str(exc)) from exc
+            if isinstance(usage := self.client.latest_usage(), ModelUsage):
+                usages.append(usage)
+            bg_writer.enqueue(raw_path, json.dumps(response, indent=2))
 
-        if response.get("stop_reason") == "refusal":
-            conversation.messages.pop()
-            conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
-            details = response.get("stop_details") or {}
-            raise BackendCompatibilityError(f"Claude declined the turn ({details.get('category') or 'refusal'}).")
+            if response.get("stop_reason") == "refusal":
+                del conversation.messages[history_length:]
+                conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
+                details = response.get("stop_details") or {}
+                raise BackendCompatibilityError(f"Claude declined the turn ({details.get('category') or 'refusal'}).")
 
-        content = response["content"]
-        # Pass every block back unchanged, thinking blocks included.
-        conversation.messages.append({"role": "assistant", "content": content})
-        calls = [
-            block for block in content
-            if block.get("type") == "tool_use"
-            and (block.get("toolset_name") == TOOLSET_NAME or block.get("name") in self.custom_tool_names)
-        ]
+            content = response["content"]
+            # Pass every block back unchanged, thinking blocks included.
+            conversation.messages.append({"role": "assistant", "content": content})
+            calls = [
+                block for block in content
+                if block.get("type") == "tool_use"
+                and (block.get("toolset_name") == TOOLSET_NAME or block.get("name") in self.custom_tool_names)
+            ]
+            # A turn of only zooms is answered here with crops of this screenshot, and
+            # Claude goes on in the same step; nothing on the screen changes meanwhile.
+            if not (
+                getattr(self.client, "zoom", False) is True
+                and calls
+                and all(call.get("name") == "zoom" for call in calls)
+                and zooms < _MAX_ZOOMS
+            ):
+                break
+            zooms += 1
+            conversation.messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        _zoom_result(call, Path(screenshot.artifact_path), sent_width, sent_height)
+                        for call in calls
+                    ],
+                }
+            )
         conversation.pending_calls = calls
         # A call to a tool that doesn't exist (Claude sometimes invents one) is
         # answered with an error next turn; the rest of its batch still runs.
@@ -218,7 +249,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
             raw_response_artifact_path=str(raw_path),
             parsed_artifact_path=str(parsed_path),
             usage_artifact_path=str(step_dir / "computer_use_usage.json"),
-            usage=collect_latest_usage(self.client, step_dir / "computer_use_usage.json"),
+            usage=_record_usage(usages, step_dir / "computer_use_usage.json"),
         )
         return perception
 
@@ -299,7 +330,10 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 result["toolset_name"] = TOOLSET_NAME
             if call["id"] in conversation.unknown_call_ids:
                 result["is_error"] = True
-                result["content"] = f"Error: there is no {call.get('name')} tool, so this call was not run."
+                if call.get("name") == "zoom" and getattr(self.client, "zoom", False) is True:
+                    result["content"] = _ZOOM_NOT_RUN
+                else:
+                    result["content"] = f"Error: there is no {call.get('name')} tool, so this call was not run."
             elif error is not None:
                 # The batch ran as one action; report the failure on its first call
                 # and mark the rest as skipped, as the toolset expects.
@@ -359,6 +393,67 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
             details = " ".join(f"{key}={args[key]}" for key in sorted(args))
             described.append(f"{call.get('name', 'browser step')} {details}".strip())
         return "; ".join(described)
+
+
+def _zoom_result(call: dict[str, Any], screenshot: Path, sent_width: int, sent_height: int) -> dict[str, Any]:
+    """Answer a zoom call with the asked region of the full-resolution screenshot.
+
+    ``region`` is ``[x0, y0, x1, y1]`` in the pixel space of the screenshots Claude is
+    sent; the crop comes from the original capture, so it holds detail the downscaled
+    screenshot lost, and is enlarged to fit ``_MAX_LONG_EDGE``."""
+    result: dict[str, Any] = {"type": "tool_result", "tool_use_id": call["id"], "toolset_name": TOOLSET_NAME}
+    region = (call.get("input") or {}).get("region")
+    try:
+        from PIL import Image
+
+        x0, y0, x1, y1 = (float(value) for value in region)
+        with Image.open(screenshot) as image:
+            width, height = image.size
+            scale_x = width / sent_width if sent_width else 1.0
+            scale_y = height / sent_height if sent_height else 1.0
+            box = (
+                max(0, round(min(x0, x1) * scale_x)),
+                max(0, round(min(y0, y1) * scale_y)),
+                min(width, round(max(x0, x1) * scale_x)),
+                min(height, round(max(y0, y1) * scale_y)),
+            )
+            if box[2] - box[0] < 2 or box[3] - box[1] < 2:
+                raise ValueError("empty region")
+            crop = image.crop(box).convert("RGB")
+        ratio = _MAX_LONG_EDGE / max(crop.size)
+        crop = crop.resize(
+            (max(1, round(crop.width * ratio)), max(1, round(crop.height * ratio))), Image.Resampling.LANCZOS
+        )
+        buffer = io.BytesIO()
+        crop.save(buffer, format="JPEG", quality=85)
+    except Exception:  # noqa: BLE001 - a bad region is Claude's to fix, never a crash
+        result["is_error"] = True
+        result["content"] = "Error: zoom needs region [x0, y0, x1, y1] inside the screenshot."
+        return result
+    data = base64.b64encode(buffer.getvalue()).decode("ascii")
+    result["content"] = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}}]
+    return result
+
+
+def _record_usage(usages: list[ModelUsage], path: Path) -> ModelUsage | None:
+    """The step's usage: one request's, or the sum when zoom turns added more."""
+    if not usages:
+        return None
+    if len(usages) == 1:
+        total = usages[0]
+    else:
+        fields = (
+            "input_tokens", "output_tokens", "total_tokens", "cache_creation_input_tokens",
+            "cache_read_input_tokens", "thoughts_tokens", "input_cost_usd", "output_cost_usd",
+            "estimated_cost_usd",
+        )
+        summed = {}
+        for name in fields:
+            values = [getattr(usage, name) for usage in usages if getattr(usage, name) is not None]
+            summed[name] = sum(values) if values else None
+        total = usages[-1].model_copy(update=summed)
+    bg_writer.enqueue(path, total.model_dump_json(indent=2))
+    return total
 
 
 def _hint_text(hints: list[str]) -> str:

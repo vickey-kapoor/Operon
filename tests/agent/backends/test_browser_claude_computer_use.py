@@ -373,3 +373,86 @@ async def test_a_call_to_a_tool_that_does_not_exist_is_answered_with_an_error_an
     content = client.requests[2][-1]["content"]
     assert content[0]["tool_use_id"] == "t3" and content[0]["is_error"]
     assert any(block["type"] == "image" for block in content[1:])
+
+
+def _zoom_client(replies: list[dict | Exception]) -> ScriptedClient:
+    client = ScriptedClient(replies)
+    client.zoom = True
+    return client
+
+
+async def test_a_zoom_is_answered_with_a_full_resolution_crop_in_the_same_step(tmp_path: Path) -> None:
+    # Seen on ScreenSpot-Pro: on dense 4K screens Claude asks to zoom and, with zoom off, stops.
+    client = _zoom_client(
+        [
+            _reply(_call("zoom", "z1", region=[0, 0, 640, 360])),
+            _reply(_call("left_click", "t1", coordinate=[100, 50])),
+        ]
+    )
+    backend = _backend(client)
+    state = _state()
+
+    decision = await backend.choose_action(state, await backend.perceive(_frame(tmp_path), state))
+
+    assert len(client.requests) == 2
+    result = client.requests[1][-1]["content"][0]
+    assert result["tool_use_id"] == "z1" and result["toolset_name"] == "computer"
+    image = result["content"][0]
+    assert image["type"] == "image"
+    import base64
+    import io
+
+    with Image.open(io.BytesIO(base64.b64decode(image["source"]["data"]))) as crop:
+        # The top-left quarter of the 1920x1080 capture (960x540), enlarged to 1280 wide.
+        assert crop.size == (1280, 720)
+    # Coordinates stay in the full screenshot's space after a zoom.
+    assert decision.action.action_type is ActionType.CLICK
+    assert (decision.action.x, decision.action.y) == (150, 75)
+
+
+async def test_zooms_stop_after_three_in_a_step_and_the_next_turn_says_why(tmp_path: Path) -> None:
+    client = _zoom_client([_reply(_call("zoom", f"z{i}", region=[0, 0, 100, 100])) for i in range(5)])
+    backend = _backend(client)
+
+    state = _state()
+    decision = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "a.png"), state))
+    assert len(client.requests) == 4
+    assert decision.action.action_type is ActionType.WAIT
+
+    await backend.perceive(_frame(tmp_path, "b.png"), _state((ActionType.WAIT, True)))
+    result = client.requests[4][-1]["content"][0]
+    assert result["is_error"] and "Call zoom on its own" in result["content"]
+
+
+async def test_a_zoom_with_a_bad_region_is_an_error_result(tmp_path: Path) -> None:
+    client = _zoom_client(
+        [_reply(_call("zoom", "z1", region=[5, 5, 5, 5])), _reply(_call("left_click", "t1", coordinate=[1, 1]))]
+    )
+    backend = _backend(client)
+    state = _state()
+
+    await backend.choose_action(state, await backend.perceive(_frame(tmp_path), state))
+
+    result = client.requests[1][-1]["content"][0]
+    assert result["is_error"] and "region" in result["content"]
+
+
+async def test_without_the_flag_a_zoom_is_not_run(tmp_path: Path) -> None:
+    client = ScriptedClient([_reply(_call("zoom", "z1", region=[0, 0, 10, 10])), _reply(_call("wait", "w1"))])
+    backend = _backend(client)
+
+    state = _state()
+    decision = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "a.png"), state))
+    assert len(client.requests) == 1 and decision.action.action_type is ActionType.WAIT
+    await backend.perceive(_frame(tmp_path, "b.png"), _state((ActionType.WAIT, True)))
+    assert "no zoom tool" in client.requests[1][-1]["content"][0]["content"]
+
+
+def test_the_zoom_flag_turns_the_zoom_member_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPERON_CLAUDE_ZOOM", raising=False)
+    assert AnthropicComputerUseHttpClient().zoom is False
+    monkeypatch.setenv("OPERON_CLAUDE_ZOOM", "true")
+    client = AnthropicComputerUseHttpClient()
+    toolset = client.build_payload(system="s", messages=[])["tools"][0]
+    assert client.zoom is True
+    assert "zoom" not in toolset["configs"] and toolset["configs"]["hold_key"] == {"enabled": False}

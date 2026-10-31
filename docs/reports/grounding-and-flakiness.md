@@ -99,3 +99,10 @@ The 3 remaining misses are all `shop_cheapest_coupon`: the order was right every
 but the check could not see the price list Claude chose from. It was on the run's first
 screen, which had dropped out of the recent-screens window. The run's first screen is
 now always included (follow-up commit on #189), which is not yet measured live.
+
+## Apps check of the first-screen fix (2026-10-31)
+
+`/bench apps` on main after #189 (Bench command run 41216784014): **11 of 11**, 0 false
+successes, $1.06. `shop_cheapest_coupon`, which missed 3 of 3 in the rerun above,
+passed in 6 steps with its first "done" accepted (`task_completed`). This is one run,
+not a repeat, so it shows the fix works rather than how stable it is.

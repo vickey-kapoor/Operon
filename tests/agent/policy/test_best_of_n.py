@@ -222,16 +222,16 @@ def test_best_of_n_confidence_ceiling_env(monkeypatch: pytest.MonkeyPatch) -> No
 # ── backends that cannot re-sample ────────────────────────────────────────
 
 def test_resampling_support_propagates_through_fallback_and_coordinator(tmp_path) -> None:
-    from pathlib import Path
     from types import SimpleNamespace
 
     from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
     from operon.agent.backends.combined import CombinedPerceptionPolicyService
     from operon.agent.backends.fallback import FallbackBackend
     from operon.agent.policy.coordinator import PolicyCoordinator
+    from operon.core.paths import prompts_dir
 
     computer_use = BrowserComputerUseBackend(
-        client=SimpleNamespace(), prompt_path=Path("prompts/browser_computer_use_prompt.txt")
+        client=SimpleNamespace(), prompt_path=prompts_dir() / "browser_computer_use_prompt.txt"
     )
     combined = CombinedPerceptionPolicyService(gemini_client=SimpleNamespace())
     fallback = FallbackBackend(primary=computer_use, secondary=combined)

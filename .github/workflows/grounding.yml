@@ -1,6 +1,6 @@
 name: Grounding eval
 
-# Runs the ScreenSpot grounding eval (tests/eval/grounding.py): one model call per
+# Runs the ScreenSpot grounding eval (evals/grounding.py): one model call per
 # sample through Operon's computer-use backend, scored hit or miss against the
 # target's box. No browser and no API server. Manual only: every run spends model
 # credits. Stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
@@ -79,7 +79,7 @@ jobs:
           PER_SET: ${{ inputs.per_set }}
         run: |
           set -o pipefail
-          uv run python -m tests.eval.grounding --backend "$BACKEND" --per-set "$PER_SET" ${MODEL:+--model "$MODEL"} | tee grounding.txt
+          uv run python -m evals.grounding --backend "$BACKEND" --per-set "$PER_SET" ${MODEL:+--model "$MODEL"} | tee grounding.txt
 
       - name: Summary
         if: always()

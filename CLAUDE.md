@@ -29,36 +29,36 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 # Offline test suite (~860 tests, ~45s, no network, no browser)
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests -q
 
-# Offline eval: scripted scenarios through the real loop (tests/eval/); report table
-$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
+# Offline eval: scripted scenarios through the real loop (evals/); report table
+$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 
 # Live smoke: a few real browser tasks against a running API (real GEMINI_API_KEY)
-.venv\Scripts\python -m tests.eval.live_smoke
+.venv\Scripts\python -m evals.live_smoke
 
 # Live benchmark: 44 real web tasks graded from the final screen; saves to .var/bench/
 # Stops once a run has spent --max-cost-usd / $MAX_RUN_COST_USD (default 5; 0 = no cap)
-.venv\Scripts\python -m tests.eval.live_bench [--category forms] [--only NAME]
+.venv\Scripts\python -m evals.live_bench [--category forms] [--only NAME]
 
 # Hard subset repeated 3 times: pass@1 with a CI, pass^3 and flaky tasks (--repeat works on any suite)
-.venv\Scripts\python -m tests.eval.live_bench --suite hard --repeat 3
+.venv\Scripts\python -m evals.live_bench --suite hard --repeat 3
 
 # Grounding eval: ScreenSpot-v2/Pro samples, one model call each through the real backend, click scored vs the box
-.venv\Scripts\python -m tests.eval.grounding [--per-set 100] [--set v2-web] [--backend computer_use] [--list]
+.venv\Scripts\python -m evals.grounding [--per-set 100] [--set v2-web] [--backend computer_use] [--list]
 
 # Live safety suite: prompt-injection and overreach tasks on a local site, graded from its request log
-.venv\Scripts\python -m tests.eval.live_bench --suite safety
+.venv\Scripts\python -m evals.live_bench --suite safety
 
 # Live apps suite: 11 tasks on local fake shop, mail, account and forms, graded from their state (/state)
-.venv\Scripts\python -m tests.eval.live_bench --suite apps
-.venv\Scripts\python -m tests.eval.local_apps   # serve the local site on :8765 to look at it
+.venv\Scripts\python -m evals.live_bench --suite apps
+.venv\Scripts\python -m evals.local_apps   # serve the local site on :8765 to look at it
 
 # Judge check: compare the benchmark judge with hand labels (judge calls only, no agent runs)
-.venv\Scripts\python -m tests.eval.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
-.venv\Scripts\python -m tests.eval.judge_check run labels.jsonl [--repeat 3]
+.venv\Scripts\python -m evals.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
+.venv\Scripts\python -m evals.judge_check run labels.jsonl [--repeat 3]
 
 # Live desktop benchmark: 10 tasks on stock Windows apps; drives the real mouse and keyboard
 # (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
-.venv\Scripts\python -m tests.eval.live_desktop_bench [--suite smoke] [--keep-screens]
+.venv\Scripts\python -m evals.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
 #   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure]
@@ -69,14 +69,14 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m tests.eval
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
 # (the import needs `pip install "psycopg[binary]"`; the "Dashboard data" workflow does it after each benchmark)
-$env:DATABASE_URL = "postgres://..."; .venv\Scripts\python -m tests.eval.dashboard import .var\bench\full-<stamp>.json
+$env:DATABASE_URL = "postgres://..."; .venv\Scripts\python -m evals.dashboard import .var\bench\full-<stamp>.json
 cd dashboard; npm install; npm run dev   # page + API on :3000, reads $env:DATABASE_URL
 
 # Single test / file
 .venv\Scripts\python -m pytest tests/agent/test_loop.py::test_name -q
 
 # Lint (exactly what CI runs)
-.venv\Scripts\ruff check src tests --select E,F,W,I --ignore E501
+.venv\Scripts\ruff check src tests evals --select E,F,W,I --ignore E501
 
 # Frontend (from ui/)
 npm run dev      # Vite dev server on :5173
@@ -92,7 +92,7 @@ that will drive the real mouse and keyboard:
 $env:OPERON_RUN_LIVE_SERVER_TESTS = "true"; .venv\Scripts\python -m pytest tests -m live_server
 ```
 
-Opt-in suites: `test_e2e_quick_tasks.py`, `test_bug_fixes_verification.py` (live
+Opt-in suites (in `tests/integration/`): `test_e2e_quick_tasks.py`, `test_bug_fixes_verification.py` (live
 server), `test_live_execution.py` (capability regression gate),
 `test_upload_file_native_integration.py` (headed Windows, native OS file picker).
 
@@ -124,6 +124,13 @@ Layer map:
 | `api/routes/` | `browser.py`, `desktop.py`, `observer.py`; `ws_stream.py` serves `/ws/stream` |
 | `store/` | Run persistence, memory, replay, cleanup, background writer |
 | `models/` | Pydantic schemas shared across every layer |
+| `prompts/` | Model prompt templates (package data, loaded via `core.paths.prompts_dir()`) |
+
+Outside the package: `evals/` holds the benchmarks and eval tools (run as
+`python -m evals.<tool>`), `tests/` the pytest suite (eval-tool tests in `tests/evals/`,
+opt-in live suites in `tests/integration/`), `docs/reports/` the benchmark write-ups,
+`scripts/` maintenance scripts, `ui/` the React frontend and `dashboard/` the Vercel eval
+dashboard (Vercel's root directory, so don't move it).
 
 Browser modes: **batch** launches an isolated Chromium (no CDP, no debug port); **observable**
 owns CDP on port 9222 and streams JPEG frames over `/ws/stream`.

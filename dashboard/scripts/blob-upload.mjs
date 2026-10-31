@@ -1,4 +1,4 @@
-// Uploads benchmark screenshots and traces to Vercel Blob for tests/eval/dashboard.py.
+// Uploads benchmark screenshots and traces to Vercel Blob for evals/dashboard.py.
 // Reads a JSON list of {file, pathname} on stdin and prints the public URLs, in the
 // same order, as a JSON list. BLOB_READ_WRITE_TOKEN comes from the environment.
 // The store is private: nothing is readable without the token, and the dashboard

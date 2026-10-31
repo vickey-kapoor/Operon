@@ -9,7 +9,7 @@ See [Quick Start](README.md#quick-start). Then confirm your environment is sane:
 
 ```bash
 GEMINI_API_KEY=fake-test-key python -m pytest tests -q
-ruff check src tests --select E,F,W,I --ignore E501
+ruff check src tests evals --select E,F,W,I --ignore E501
 ```
 
 About 860 tests should pass (15 skip) in under a minute with no network access. If they don't,
@@ -17,7 +17,7 @@ that's a bug in the setup instructions — please report it.
 
 ## Before you open a PR
 
-- `ruff check src tests --select E,F,W,I --ignore E501` is clean
+- `ruff check src tests evals --select E,F,W,I --ignore E501` is clean
 - The offline suite passes
 - New behaviour has a test that runs **without** a live server or a real screen.
   If you genuinely can't test it offline, mark it `@pytest.mark.live_server` and

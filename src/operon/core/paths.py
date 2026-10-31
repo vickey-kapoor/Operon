@@ -16,8 +16,8 @@ def project_root() -> Path:
 
 
 def prompts_dir() -> Path:
-    """Return the repository-level prompts directory."""
-    return project_root() / "prompts"
+    """Return the prompts directory shipped inside the ``operon`` package."""
+    return Path(__file__).resolve().parents[1] / "prompts"
 
 
 def runtime_dir() -> Path:

@@ -2,7 +2,7 @@
 _For AI coding agents and contributors._
 
 ## Project Structure & Module Organization
-Operon uses a Python `src/` layout. Core orchestration lives in `src/operon/agent/`, with focused `actions/`, `artifacts/`, `backends/`, `perception/`, and `policy/` subpackages. API routes live in `src/operon/api/routes/`, shared API runtime construction in `src/operon/api/runtime/`, CDP-based browser observation in `src/operon/browser/`, executors in `src/operon/executor/`, Gemini clients in `src/operon/clients/`, shared schemas in `src/operon/models/`, and persistence in `src/operon/store/`. Tests live in `tests/` and generally mirror the package they cover. Supporting material is kept in `prompts/` and `docs/`.
+Operon uses a Python `src/` layout. Core orchestration lives in `src/operon/agent/`, with focused `actions/`, `artifacts/`, `backends/`, `perception/`, and `policy/` subpackages. API routes live in `src/operon/api/routes/`, shared API runtime construction in `src/operon/api/runtime/`, CDP-based browser observation in `src/operon/browser/`, executors in `src/operon/executor/`, Gemini clients in `src/operon/clients/`, shared schemas in `src/operon/models/`, and persistence in `src/operon/store/`. Model prompts ship as package data in `src/operon/prompts/`. Tests live in `tests/` and mirror the package they cover; the opt-in live suites are in `tests/integration/`. Benchmarks and eval tools (`python -m evals.<tool>`) live in `evals/`, with their unit tests in `tests/evals/`. Long-form docs are in `docs/` (benchmark write-ups in `docs/reports/`), and maintenance scripts in `scripts/`.
 
 ## Build, Test, and Development Commands
 Use Python 3.14 locally. Package metadata remains compatible with Python 3.11+.
@@ -25,7 +25,7 @@ $env:GEMINI_API_KEY = "fake-test-key"
 
 No `--ignore` flags needed: `addopts = "-m 'not live_server'"` in `pyproject.toml` already deselects the suites that require a running server.
 
-Lint with `ruff check src tests --select E,F,W,I --ignore E501`.
+Lint with `ruff check src tests evals --select E,F,W,I --ignore E501`.
 
 ## Coding Style & Naming Conventions
 Follow existing Python conventions: 4-space indentation, type hints, `snake_case` for modules/functions/variables, and `PascalCase` for classes and Pydantic models. Keep modules focused and prefer explicit names such as `browser_native.py` or `policy_coordinator.py`. Ruff enforces import sorting and core lint rules; long lines are tolerated.
@@ -39,9 +39,9 @@ The full set of load-bearing invariants (spatial buffer TTLs, verification state
 Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs Python 3.11 and 3.14 plus Ruff.
 
 Live-server and real-environment tests are opt-in and excluded from the default CI path:
-- `tests/test_e2e_quick_tasks.py`, `tests/test_bug_fixes_verification.py` - require a live server
-- `tests/test_live_execution.py` - capability regression gate
-- `tests/test_upload_file_native_integration.py` - headed Windows-only, native OS file picker
+- `tests/integration/test_e2e_quick_tasks.py`, `tests/integration/test_bug_fixes_verification.py` - require a live server
+- `tests/integration/test_live_execution.py` - capability regression gate
+- `tests/integration/test_upload_file_native_integration.py` - headed Windows-only, native OS file picker
 
 ## Commit & Pull Request Guidelines
 Recent commits use short imperative subjects with prefixes like `Fix:`, `Docs:`, `CI:`, `Chore:`, `Refactor:`, and `Feat:`. Keep commit titles specific and one line. PRs should summarize the behavioral change, list validation performed, link related issues, and include screenshots only for UI or desktop-behavior changes.

@@ -1,5 +1,5 @@
 // GET /api/judge: the judge's agreement with hand labels, one row per check, oldest first.
-// tests/eval/judge_check.py writes the judge_checks table; before its first save there is none.
+// evals/judge_check.py writes the judge_checks table; before its first save there is none.
 import { db, handle } from "../server/db.js";
 
 export default function handler(req, res) {

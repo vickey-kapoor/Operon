@@ -1,5 +1,5 @@
 // Shared Postgres access for the API routes. Vercel's Neon integration sets
-// DATABASE_URL (POSTGRES_URL on older setups); tests/eval/dashboard.py writes the
+// DATABASE_URL (POSTGRES_URL on older setups); evals/dashboard.py writes the
 // tables. One small pool per function instance is plenty for a dashboard.
 import pg from "pg";
 

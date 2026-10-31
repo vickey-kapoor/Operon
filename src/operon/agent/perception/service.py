@@ -108,7 +108,7 @@ def _check_coord_bounds(perception: "ScreenPerception", screenshot_path: str) ->
     dimensions, then log native dims alongside the coord ranges found.
 
     This is the runtime guard for the coordinate-space contract documented in
-    the JSON backend prompts (prompts/*_combined_prompt.txt). A violation means a model upgrade or prompt
+    the JSON backend prompts (src/operon/prompts/*_combined_prompt.txt). A violation means a model upgrade or prompt
     edit broke the raw-pixel assumption — coords will be silently wrong at
     execution time without this check.
 

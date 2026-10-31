@@ -13,7 +13,7 @@ spend by suite, and each run's spend by model and by task.
 - `api/runs.js` (`GET /api/runs`): every run with its summary and config.
 - `api/report.js` (`GET /api/report?key=<run key>`): one run with its per-task results.
 - `api/tasks.js` (`GET /api/tasks`): every task result of every run, slimmed for the history and cost cards.
-- `api/judge.js` (`GET /api/judge`): judge checks saved by `python -m tests.eval.judge_check run labels.jsonl --save`.
+- `api/judge.js` (`GET /api/judge`): judge checks saved by `python -m evals.judge_check run labels.jsonl --save`.
 - `api/blob.js` (`GET /api/blob?url=<blob url>`): one screenshot or trace from the private Blob store.
 - `server/db.js`: the Postgres pool the routes share, from `DATABASE_URL`.
 - `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.
@@ -65,8 +65,8 @@ From a terminal:
 ```bash
 pip install "psycopg[binary]"
 export DATABASE_URL=postgres://...
-python -m tests.eval.dashboard import .var/bench/full-20261024T012945Z.json
-python -m tests.eval.dashboard import path/to/artifacts --backend json --flag "why it is not comparable"
+python -m evals.dashboard import .var/bench/full-20261024T012945Z.json
+python -m evals.dashboard import path/to/artifacts --backend json --flag "why it is not comparable"
 ```
 
 Flagged runs (a broken runner, a harness bug, a run stopped at its cost cap) stay

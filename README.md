@@ -85,7 +85,7 @@ http://localhost:5173).
 
 ```bash
 GEMINI_API_KEY=fake-test-key python -m pytest tests -q   # offline, no browser, under a minute
-ruff check src tests --select E,F,W,I --ignore E501
+ruff check src tests evals --select E,F,W,I --ignore E501
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and how to report agent failures.

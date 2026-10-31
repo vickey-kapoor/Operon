@@ -1,6 +1,6 @@
 name: Live desktop benchmark
 
-# Runs the live desktop benchmark (tests/eval/live_desktop_bench.py) on a Windows
+# Runs the live desktop benchmark (evals/live_desktop_bench.py) on a Windows
 # runner whose interactive session has a real desktop for the agent to drive:
 # GitHub's hosted windows-latest (runner: github) or our Azure VM (runner: azure,
 # set up per docs/azure-desktop-runner.md). For azure, the run starts the VM,
@@ -239,7 +239,7 @@ jobs:
             exit 1
           }
           $extra = if ($env:EXTRA_ARGS) { $env:EXTRA_ARGS -split '\s+' } else { @() }
-          uv run python -m tests.eval.live_desktop_bench --suite $env:SUITE --keep-screens @extra | Tee-Object -FilePath bench.txt
+          uv run python -m evals.live_desktop_bench --suite $env:SUITE --keep-screens @extra | Tee-Object -FilePath bench.txt
           $code = $LASTEXITCODE
           if ($code -ne 0) { Get-Content uvicorn.err.log -Tail 40 -ErrorAction SilentlyContinue }
           exit $code

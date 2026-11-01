@@ -131,3 +131,25 @@ Claude Opus 5.5 with `OPERON_CLAUDE_ZOOM=true` (#190) on the same 300 samples
 - **Not yet measured on real tasks.** Grounding is one model call per sample. Zoom is
   still off by default; the next check is a desktop benchmark run with it on before
   deciding whether to make it the default.
+
+## Desktop benchmark with zoom (2026-11-01)
+
+Full 10-task desktop suite on the Azure VM, Claude Opus 5.5, thin harness, without and with
+`OPERON_CLAUDE_ZOOM` (`/bench desktop azure all` and `/bench desktop azure all zoom` after #194;
+Bench command runs 41252995423 and 41253100629):
+
+| | Without zoom | With zoom |
+|---|---|---|
+| Passed | 10/10 | 10/10 |
+| Steps per task | 3.3 | 3.9 |
+| Seconds per task | 28.5 | 29.2 |
+| Cost per task | $0.055 | $0.064 |
+
+- **No gain on these tasks.** Every task already passes without zoom, so zoom can only add cost.
+  It added about 17%, mostly from `explorer_new_folder` (3 to 6 steps), `explorer_windows`
+  (5 to 6) and `calculator_multiply` (2 to 4).
+- **Grounding and real tasks disagree for now.** Zoom lifted ScreenSpot-Pro from 70% to 83%, but
+  the desktop suite's stock Windows apps have large, clear targets. Zoom stays off by default; it is
+  worth turning on for dense professional apps once a task suite covers them.
+- The VM's runner took about 2 hours 15 minutes to come back online when the zoom run started the
+  VM seconds after the previous run deallocated it, so the VM sat running and idle in between.

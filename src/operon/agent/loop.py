@@ -103,6 +103,12 @@ def _trace(stage: str, detail: str = "") -> None:
         print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
 
 
+def _leaf_actions(action: AgentAction) -> list[AgentAction]:
+    """The actions a batch actually runs, nested batches flattened; a plain action is its own leaf."""
+    if action.action_type is not ActionType.BATCH:
+        return [action]
+    return [leaf for child in action.actions or [] for leaf in _leaf_actions(child)]
+
 class AgentLoop:
     """Coordinates the MVP control loop and terminal benchmark boundaries."""
 
@@ -809,29 +815,39 @@ class AgentLoop:
                 "Click Proceed to approve or enter a correction hint."
             )
 
-        trust = self._trust_gate.evaluate(action, current_url=current_url)
-        if "trust" not in approved and trust.verdict is not TrustVerdict.ALLOW:
-            _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
-            self._pending_gate_approvals[run_id] = (fingerprint, "trust")
-            if trust.verdict is TrustVerdict.DENY:
+        # A batch runs each of its actions straight through the executor, so the
+        # trust gate and file guard judge every one of them, not the container.
+        leaves = _leaf_actions(action)
+        if "trust" not in approved:
+            verdicts = [(leaf, self._trust_gate.evaluate(leaf, current_url=current_url)) for leaf in leaves]
+            blocked = [pair for pair in verdicts if pair[1].verdict is not TrustVerdict.ALLOW]
+            # A DENY anywhere in the batch outranks a CONFIRM.
+            blocked.sort(key=lambda pair: pair[1].verdict is not TrustVerdict.DENY)
+            if blocked:
+                leaf, trust = blocked[0]
+                _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
+                self._pending_gate_approvals[run_id] = (fingerprint, "trust")
+                if trust.verdict is TrustVerdict.DENY:
+                    return (
+                        f"Blocked by policy: {leaf.action_type.value} action "
+                        f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
+                        "review and resume to override, or stop the run."
+                    )
                 return (
-                    f"Blocked by policy: {action.action_type.value} action "
-                    f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
-                    "review and resume to override, or stop the run."
+                    f"High-risk action needs approval: {leaf.action_type.value} "
+                    f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
                 )
-            return (
-                f"High-risk action needs approval: {action.action_type.value} "
-                f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
-            )
 
-        if action.action_type in FILE_PATH_ACTIONS:
+        for leaf in leaves:
+            if leaf.action_type not in FILE_PATH_ACTIONS:
+                continue
             blocked_path = blocked_file_path(
-                action, intent=intent, run_dir=Path(self.run_store.root_dir) / run_id
+                leaf, intent=intent, run_dir=Path(self.run_store.root_dir) / run_id
             )
             if blocked_path is not None:
                 _trace("  3 POLICY -> FILE_GUARD", f"blocked path {blocked_path!r}")
                 return (
-                    f"Blocked {action.action_type.value}: the path {blocked_path!r} is not "
+                    f"Blocked {leaf.action_type.value}: the path {blocked_path!r} is not "
                     "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
                     "Restart with the path in the task, allow its folder, or stop the run."
                 )
@@ -852,6 +868,9 @@ class AgentLoop:
         """What a human approves at a gate pause: the action's type plus the text, URL
         and target name the trust gate judges — not coordinates, which shift between
         perceptions of the same screen."""
+        if action.action_type is ActionType.BATCH:
+            # Approving one batch must not approve a different one.
+            return "batch[" + ";".join(self._gate_fingerprint(child) for child in action.actions or []) + "]"
         return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
 
     async def _pause_for_user(

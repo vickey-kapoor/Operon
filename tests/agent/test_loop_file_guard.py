@@ -86,3 +86,14 @@ async def test_read_text_path_named_in_intent_executes(monkeypatch: pytest.Monke
     await loop.step_run(StepRequest(run_id="run-1"))
 
     executor.execute.assert_called_once()
+
+
+async def test_unnamed_path_inside_a_batch_pauses_without_executing(monkeypatch: pytest.MonkeyPatch) -> None:
+    read = AgentAction(action_type=ActionType.READ_TEXT, selector="main", text="/home/me/.bashrc")
+    action = AgentAction(action_type=ActionType.BATCH, actions=[AgentAction(action_type=ActionType.CLICK, x=5, y=5), read])
+    loop, executor = _loop("Read the GPT-4 article and save it", action, monkeypatch)
+
+    response = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert response.status is RunStatus.WAITING_FOR_USER
+    executor.execute.assert_not_called()

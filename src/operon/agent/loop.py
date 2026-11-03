@@ -173,6 +173,8 @@ class AgentLoop:
         # or awaits it, so the map does not grow with every run ever started.
         self._run_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         self._executor_lock = asyncio.Lock()
+        # Whether a human approved the trust gate for the action about to run.
+        self._trust_approved: dict[str, bool] = {}
         # Human approval of a gate pause, per run. A pause records (action fingerprint,
         # gate) as pending; a resume that approves adds that gate to the action's
         # approved set. The same action then passes the gates it was approved for, and
@@ -495,14 +497,19 @@ class AgentLoop:
             blocked_action = None if self.thin_harness else self._block_redundant_action(state, decision.action, step_index)
             if blocked_action is None:
                 _t0 = time.perf_counter()
-                state, executed_action = await self._execute_with_hardening(
-                    record=record,
-                    state=state,
-                    perception=perception,
-                    decision_action=decision.action,
-                    step_index=step_index,
-                    use_unified_executor=True,
-                )
+                self._install_batch_child_check(record.run_id, decision.action)
+                try:
+                    state, executed_action = await self._execute_with_hardening(
+                        record=record,
+                        state=state,
+                        perception=perception,
+                        decision_action=decision.action,
+                        step_index=step_index,
+                        use_unified_executor=True,
+                    )
+                finally:
+                    if hasattr(self.executor, "batch_child_check"):
+                        self.executor.batch_child_check = None
                 _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{_record_stage('execute', _t0):.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
             else:
                 _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
@@ -800,6 +807,7 @@ class AgentLoop:
         action = decision.action
         fingerprint = self._gate_fingerprint(action)
         approved = self._approved_gates(run_id, action)
+        self._trust_approved[run_id] = "trust" in approved
         threshold = run_control.get_confidence_threshold()
         if (
             "confidence" not in approved
@@ -871,7 +879,8 @@ class AgentLoop:
         perceptions of the same screen."""
         if action.action_type is ActionType.BATCH:
             # Approving one batch must not approve a different one.
-            return "batch[" + ";".join(self._gate_fingerprint(child) for child in action.actions or []) + "]"
+            # JSON keeps child boundaries unambiguous whatever text the children carry.
+            return "batch" + json.dumps([self._gate_fingerprint(child) for child in action.actions or []])
         return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
 
     async def _gate_pause_decision(self, record, state, decision: PolicyDecision) -> PolicyDecision | None:
@@ -914,6 +923,27 @@ class AgentLoop:
         return decision.model_copy(update={
             "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
         })
+
+    def _install_batch_child_check(self, run_id: str, action: AgentAction) -> None:
+        """With a domain allowlist, a batch's later children may run on a page an
+        earlier child opened, which the pre-execution check never saw. Have the
+        executor check the live page before each of them."""
+        if (
+            action.action_type is not ActionType.BATCH
+            or not hasattr(self.executor, "batch_child_check")
+            or not (self._trust_gate.enabled and self._trust_gate.allow_domains)
+            or self._trust_approved.get(run_id)
+        ):
+            return
+
+        async def check(child: AgentAction) -> str | None:
+            current_url = await self._current_url_for_trust_gate(run_id)
+            result = self._trust_gate.evaluate(child, current_url=current_url)
+            if result.verdict is TrustVerdict.DENY:
+                return f"blocked by policy ({result.reason}: '{result.matched}')"
+            return None
+
+        self.executor.batch_child_check = check
 
     def _note_not_executed(self, run_id: str, reason: str) -> None:
         """Tell the policy a gate stopped its decision before it ran, so a backend

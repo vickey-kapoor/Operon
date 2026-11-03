@@ -237,3 +237,30 @@ async def test_approving_one_batch_does_not_approve_another(monkeypatch: pytest.
 
     execute.assert_not_called()
     assert second.status is RunStatus.WAITING_FOR_USER
+
+
+def test_batch_fingerprints_keep_child_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, _, _ = _loop(monkeypatch, [])
+    one = _batch(AgentAction(action_type=ActionType.TYPE, text="complete purchase;type|send money"))
+    two = _batch(
+        AgentAction(action_type=ActionType.TYPE, text="complete purchase"),
+        AgentAction(action_type=ActionType.TYPE, text="send money"),
+    )
+
+    assert loop._gate_fingerprint(one) != loop._gate_fingerprint(two)
+
+
+async def test_batch_children_are_checked_against_the_live_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With a domain allowlist, a child that runs after an earlier one left the
+    allowed site is stopped, even though the batch passed on the starting page."""
+    loop, _, _ = _loop(monkeypatch, [])
+    loop._trust_gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    urls = iter(["https://example.com/", "https://evil.test/"])
+    loop.executor = SimpleNamespace(batch_child_check=None, current_url_for_run=AsyncMock(side_effect=lambda _run: next(urls)))
+    batch = _batch(CLICK, AgentAction(action_type=ActionType.TYPE, text="hello"))
+
+    loop._install_batch_child_check("run-1", batch)
+    check = loop.executor.batch_child_check
+
+    assert await check(batch.actions[1]) is None
+    assert "not in allowlist" in await check(batch.actions[1])

@@ -66,7 +66,8 @@ curl -X POST http://127.0.0.1:8080/run-task \
 ```
 
 Or run the Command Center UI from `ui/` (`npm install && npm run dev`, then open
-http://localhost:5173).
+http://localhost:5173). It picks up the key in `.var/api-key` itself; if you set `API_KEYS`,
+put one of them in `ui/.env.local` as `VITE_OPERON_API_KEY`.
 
 > [!WARNING]
 > Desktop runs control your real mouse and keyboard. Use a machine you can spare, or a VM.

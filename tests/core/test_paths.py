@@ -49,3 +49,10 @@ def test_specific_artifact_root_overrides_win_over_runtime_root(monkeypatch, tmp
     assert paths.desktop_artifacts_dir() == tmp_path / "custom-desktop"
     assert paths.test_artifacts_dir() == tmp_path / "custom-tests"
 
+
+
+def test_blank_override_falls_back_to_default(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setenv("OPERON_RUNS_ROOT", "  ")
+
+    assert paths.runs_dir() == tmp_path / "runtime" / "runs"

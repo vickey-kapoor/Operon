@@ -198,3 +198,42 @@ async def test_resume_after_coordinate_thrash_runs_the_click(monkeypatch: pytest
     third = await loop.step_run(StepRequest(run_id="run-1"))  # still thrashing: asks again
     assert third.status is RunStatus.WAITING_FOR_USER
     assert clicks() == ran
+
+
+def _batch(*children: AgentAction) -> AgentAction:
+    return AgentAction(action_type=ActionType.BATCH, actions=list(children))
+
+
+CLICK = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
+
+
+async def test_a_risky_action_inside_a_batch_is_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, _ = _loop(monkeypatch, [_batch(CLICK, _batch(PURCHASE))])
+
+    first = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert first.status is RunStatus.WAITING_FOR_USER
+    execute.assert_not_called()
+
+
+async def test_resume_approves_the_paused_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    batch = _batch(CLICK, PURCHASE)
+    loop, execute, _ = _loop(monkeypatch, [batch, batch])
+
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert [c.args[0] for c in execute.call_args_list] == [batch]
+
+
+async def test_approving_one_batch_does_not_approve_another(monkeypatch: pytest.MonkeyPatch) -> None:
+    other = _batch(CLICK, AgentAction(action_type=ActionType.TYPE, text="purchase the upgrade too", target_element_id="buy"))
+    loop, execute, _ = _loop(monkeypatch, [_batch(CLICK, PURCHASE), other])
+
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    second = await loop.step_run(StepRequest(run_id="run-1"))
+
+    execute.assert_not_called()
+    assert second.status is RunStatus.WAITING_FOR_USER

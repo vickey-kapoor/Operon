@@ -216,20 +216,24 @@ class AgentLoop:
         # Browser auth state (cookies/session tokens) is preserved at the executor level.
         if hasattr(self.policy_service, "reset_run_context"):
             self.policy_service.reset_run_context(record.run_id)
-        if hasattr(self.executor, "set_current_run_id"):
-            self.executor.set_current_run_id(record.run_id)
-        if hasattr(self.executor, "configure_run"):
-            self.executor.configure_run(record.run_id, headless=request.headless, mode=record.mode)
-        if hasattr(self.executor, "start_run_recording"):
-            try:
-                await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
-            except Exception as exc:
-                logger.warning("start_run_recording failed for %s: %s", record.run_id, exc)
-        if request.start_url:
-            _trace("START_RUN -> NAVIGATE", request.start_url)
-            await self.executor.execute(
-                AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
-            )
+        # Selecting this run on the executor must wait for any other run's step in
+        # flight, or that step's next capture or batch child would land in this run's
+        # browser (see step_run).
+        async with self._executor_lock:
+            if hasattr(self.executor, "set_current_run_id"):
+                self.executor.set_current_run_id(record.run_id)
+            if hasattr(self.executor, "configure_run"):
+                self.executor.configure_run(record.run_id, headless=request.headless, mode=record.mode)
+            if hasattr(self.executor, "start_run_recording"):
+                try:
+                    await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
+                except Exception as exc:
+                    logger.warning("start_run_recording failed for %s: %s", record.run_id, exc)
+            if request.start_url:
+                _trace("START_RUN -> NAVIGATE", request.start_url)
+                await self.executor.execute(
+                    AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
+                )
         return RunResponse(
             run_id=record.run_id,
             status=record.status,

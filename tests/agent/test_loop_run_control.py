@@ -64,6 +64,25 @@ async def test_steps_on_different_runs_take_turns_on_the_executor() -> None:
     assert timeline == ["start:a", "end:a", "start:b", "end:b"]
 
 
+async def test_starting_a_run_waits_for_another_runs_step() -> None:
+    """Starting run B selects B on the shared executor; doing that while run A's step
+    is mid-flight would send A's next capture or batch child to B's browser."""
+    from operon.models.common import RunTaskRequest
+
+    loop, timeline = _bare_loop(), []
+    await _record_steps(loop, timeline)
+    loop.run_store.create_run = Mock(
+        return_value=SimpleNamespace(run_id="b", status=RunStatus.PENDING, intent="x", step_count=0, mode=None)
+    )
+    loop.executor = SimpleNamespace(set_current_run_id=lambda run_id: timeline.append(f"select:{run_id}"))
+    await asyncio.gather(
+        loop.step_run(StepRequest(run_id="a")),
+        loop.start_run(RunTaskRequest(intent="x")),
+    )
+
+    assert timeline.index("select:b") > timeline.index("end:a")
+
+
 async def test_run_locks_are_released_after_steps() -> None:
     loop, timeline = _bare_loop(), []
     await _record_steps(loop, timeline)

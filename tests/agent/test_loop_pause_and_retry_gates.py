@@ -10,6 +10,7 @@ from operon.agent import control
 from operon.models.common import RunStatus, StepRequest
 from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.verification import VerificationResult, VerificationStatus
 from tests.agent.test_trust_gate_resume import PURCHASE, _loop
 
@@ -64,17 +65,28 @@ async def test_a_correction_reaches_the_backend_before_it_decides(monkeypatch: p
 
 
 async def test_a_retry_decision_passes_the_gates(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, execute, state = _loop(monkeypatch, [SAFE, PURCHASE])
+    loop, execute, state = _loop(monkeypatch, [SAFE, PURCHASE, PURCHASE])
     loop.verifier_service.verify = AsyncMock(
         return_value=VerificationResult(
             status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="no"
         )
     )
+    loop.recovery_manager.recover = AsyncMock(
+        return_value=RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="go on")
+    )
 
-    response = await loop.step_run(StepRequest(run_id="run-1"))
+    first = await loop.step_run(StepRequest(run_id="run-1"))
 
-    assert response.status is RunStatus.WAITING_FOR_USER
-    assert [c.args[0].text for c in execute.call_args_list] == ["hello"]  # the purchase never ran
+    # The gated retry did not run, and the step that ran is logged as an ordinary step.
+    assert first.status is RunStatus.RUNNING
+    assert [c.args[0].text for c in execute.call_args_list] == ["hello"]
+    assert any(getattr(entry.action, "text", None) == "hello" for entry in state.action_history)
+
+    second = await loop.step_run(StepRequest(run_id="run-1"))
+
+    # Proposed again, it pauses for a human through the normal path.
+    assert second.status is RunStatus.WAITING_FOR_USER
+    assert [c.args[0].text for c in execute.call_args_list] == ["hello"]
 
 
 async def test_each_step_selects_its_run_on_the_executor(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -604,25 +604,21 @@ class AgentLoop:
             perception = self._infer_focused_element(state, perception)
             state.observation_history.append(perception)
             self._sync_progress_state_with_perception(state, perception)
+            attempted_decision = decision
             decision = await self.policy_service.choose_action(state, perception)
             _enriched = self._attach_target_context(decision.action, perception, state.benchmark)
             if _enriched is not decision.action:
                 decision = decision.model_copy(update={"action": _enriched})
             state.current_subgoal = decision.active_subgoal
             # A retry's decision is a new action: it passes the same gates as the first.
-            pause_decision = await self._gate_pause_decision(record, state, decision)
-            if pause_decision is not None:
-                return await self._pause_for_user(
-                    record=record,
-                    state=state,
-                    perception=perception,
-                    decision=pause_decision,
-                    perception_debug=perception_debug,
-                    policy_debug=policy_debug,
-                    step_index=step_index,
-                    before_artifact_path=before_artifact_path,
-                    after_artifact_path=after_artifact_path,
-                )
+            # If it needs a human, it does not run here. The step ends with the attempt
+            # that did run, so that attempt is logged and counted, and the next step's
+            # decision pauses through the normal path.
+            if await self._gate_pause_decision(record, state, decision) is not None:
+                self._pending_gate_approvals.pop(record.run_id, None)
+                decision = attempted_decision
+                _trace("  RETRY_LOOP -> gated", "retry decision needs a human; ending the step")
+                break
             attempt_index += 1
 
         _trace("  7 RECOVER", f"RuleBasedRecoveryManager  verification={verification.status.value!r}")

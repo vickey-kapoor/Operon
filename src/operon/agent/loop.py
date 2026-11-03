@@ -489,6 +489,7 @@ class AgentLoop:
         if hasattr(self.executor, "set_current_run_id"):
             self.executor.set_current_run_id(record.run_id)
         adaptation_trace: list[str] = []
+        deferred_pause: PolicyDecision | None = None
         retries_used = 0
         attempt_index = 1
 
@@ -611,13 +612,12 @@ class AgentLoop:
                 decision = decision.model_copy(update={"action": _enriched})
             state.current_subgoal = decision.active_subgoal
             # A retry's decision is a new action: it passes the same gates as the first.
-            # If it needs a human, it does not run here. The step ends with the attempt
-            # that did run, so that attempt is logged and counted, and the next step's
-            # decision pauses through the normal path.
-            if await self._gate_pause_decision(record, state, decision) is not None:
-                self._pending_gate_approvals.pop(record.run_id, None)
+            # If it needs a human, it does not run. The step is recorded with the
+            # attempt that did run, then the run pauses for the human.
+            deferred_pause = await self._gate_pause_decision(record, state, decision)
+            if deferred_pause is not None:
                 decision = attempted_decision
-                _trace("  RETRY_LOOP -> gated", "retry decision needs a human; ending the step")
+                _trace("  RETRY_LOOP -> gated", "retry decision needs a human; pausing after this step is recorded")
                 break
             attempt_index += 1
 
@@ -761,6 +761,22 @@ class AgentLoop:
         # Persist per-stage durations for tail-latency analysis. Best-effort —
         # the step has already completed by this point.
         self._persist_step_timing(record.run_id, step_index, stage_timings)
+
+        if deferred_pause is not None and final_status is RunStatus.RUNNING:
+            # A retry asked for a human (or a gate blocked it) after this step's
+            # attempt ran; that attempt is recorded above, now pause.
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=deferred_pause,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+                log_step=False,
+            )
 
         _trace("STEP DONE", f"step={step_index}  status={final_status.value!r}")
         return RunResponse(
@@ -933,8 +949,13 @@ class AgentLoop:
             return
 
         async def check(child: AgentAction) -> str | None:
+            # A nested batch runs its first leaf next (its later children get their
+            # own check), so judge that leaf, not the container.
+            leaves = _leaf_actions(child)
+            if not leaves:
+                return None
             current_url = await self._current_url_for_trust_gate(run_id)
-            result = self._trust_gate.evaluate(child, current_url=current_url)
+            result = self._trust_gate.evaluate(leaves[0], current_url=current_url)
             if result.verdict is TrustVerdict.DENY:
                 return f"blocked by policy ({result.reason}: '{result.matched}')"
             return None
@@ -964,8 +985,11 @@ class AgentLoop:
         step_index: int,
         before_artifact_path: str,
         after_artifact_path: str,
+        log_step: bool = True,
     ) -> RunResponse:
-        """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer."""
+        """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer.
+
+        ``log_step=False`` when the step was already logged with the action it ran."""
         from operon.agent.hitl import (
             generate_hitl_message,
             notify_desktop,
@@ -984,38 +1008,39 @@ class AgentLoop:
         )
         state.hitl_message = hitl_message
 
-        executed_action = ExecutedAction(
-            action=decision.action,
-            success=True,
-            detail=f"Paused for user: {decision.action.text}",
-        )
-        verification = await self.verifier_service.verify(state, decision, executed_action)
-        recovery = RecoveryDecision(
-            strategy=RecoveryStrategy.STOP,
-            message=hitl_message,
-            failure_category=FailureCategory.HUMAN_INTERVENTION_REQUIRED,
-            terminal=False,
-            recoverable=True,
-            stop_reason=StopReason.WAITING_FOR_USER,
-        )
-        append_step_log(
-            self._run_log_path(record.run_id),
-            StepLog(
-                run_id=record.run_id,
-                step_id=f"step_{step_index}",
-                step_index=step_index,
-                before_artifact_path=before_artifact_path,
-                after_artifact_path=after_artifact_path,
-                perception_debug=perception_debug,
-                policy_debug=policy_debug,
-                perception=perception,
-                policy_decision=decision,
-                executed_action=executed_action,
-                verification_result=verification,
-                recovery_decision=recovery,
-                decision_source=f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini",
-            ),
-        )
+        if log_step:
+            executed_action = ExecutedAction(
+                action=decision.action,
+                success=True,
+                detail=f"Paused for user: {decision.action.text}",
+            )
+            verification = await self.verifier_service.verify(state, decision, executed_action)
+            recovery = RecoveryDecision(
+                strategy=RecoveryStrategy.STOP,
+                message=hitl_message,
+                failure_category=FailureCategory.HUMAN_INTERVENTION_REQUIRED,
+                terminal=False,
+                recoverable=True,
+                stop_reason=StopReason.WAITING_FOR_USER,
+            )
+            append_step_log(
+                self._run_log_path(record.run_id),
+                StepLog(
+                    run_id=record.run_id,
+                    step_id=f"step_{step_index}",
+                    step_index=step_index,
+                    before_artifact_path=before_artifact_path,
+                    after_artifact_path=after_artifact_path,
+                    perception_debug=perception_debug,
+                    policy_debug=policy_debug,
+                    perception=perception,
+                    policy_decision=decision,
+                    executed_action=executed_action,
+                    verification_result=verification,
+                    recovery_decision=recovery,
+                    decision_source=f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini",
+                ),
+            )
         state.stop_reason = StopReason.WAITING_FOR_USER
         state.step_count = step_index
         await self.run_store.save_state(state)

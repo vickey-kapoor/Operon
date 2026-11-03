@@ -264,3 +264,17 @@ async def test_batch_children_are_checked_against_the_live_page(monkeypatch: pyt
 
     assert await check(batch.actions[1]) is None
     assert "not in allowlist" in await check(batch.actions[1])
+
+
+async def test_the_live_check_judges_a_nested_batch_by_its_next_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Navigating back to an allowed site from a nested batch is not blocked just
+    because the container has no URL."""
+    loop, _, _ = _loop(monkeypatch, [])
+    loop._trust_gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    loop.executor = SimpleNamespace(batch_child_check=None, current_url_for_run=AsyncMock(return_value="https://evil.test/"))
+    back = _batch(AgentAction(action_type=ActionType.NAVIGATE, url="https://example.com/"), CLICK)
+    batch = _batch(CLICK, back)
+
+    loop._install_batch_child_check("run-1", batch)
+
+    assert await loop.executor.batch_child_check(back) is None

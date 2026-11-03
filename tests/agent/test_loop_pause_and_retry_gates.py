@@ -65,7 +65,7 @@ async def test_a_correction_reaches_the_backend_before_it_decides(monkeypatch: p
 
 
 async def test_a_retry_decision_passes_the_gates(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, execute, state = _loop(monkeypatch, [SAFE, PURCHASE, PURCHASE])
+    loop, execute, state = _loop(monkeypatch, [SAFE, PURCHASE])
     loop.verifier_service.verify = AsyncMock(
         return_value=VerificationResult(
             status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="no"
@@ -75,17 +75,30 @@ async def test_a_retry_decision_passes_the_gates(monkeypatch: pytest.MonkeyPatch
         return_value=RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="go on")
     )
 
-    first = await loop.step_run(StepRequest(run_id="run-1"))
+    response = await loop.step_run(StepRequest(run_id="run-1"))
 
-    # The gated retry did not run, and the step that ran is logged as an ordinary step.
-    assert first.status is RunStatus.RUNNING
+    # The gated retry never ran and the run pauses for a human; the attempt that
+    # did run is still recorded as the step's action.
+    assert response.status is RunStatus.WAITING_FOR_USER
     assert [c.args[0].text for c in execute.call_args_list] == ["hello"]
     assert any(getattr(entry.action, "text", None) == "hello" for entry in state.action_history)
 
-    second = await loop.step_run(StepRequest(run_id="run-1"))
 
-    # Proposed again, it pauses for a human through the normal path.
-    assert second.status is RunStatus.WAITING_FOR_USER
+async def test_a_retry_asking_for_help_pauses_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    ask = AgentAction(action_type=ActionType.WAIT_FOR_USER, text="Please solve the CAPTCHA")
+    loop, execute, _ = _loop(monkeypatch, [SAFE, ask])
+    loop.verifier_service.verify = AsyncMock(
+        return_value=VerificationResult(
+            status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="no"
+        )
+    )
+    loop.recovery_manager.recover = AsyncMock(
+        return_value=RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="go on")
+    )
+
+    response = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert response.status is RunStatus.WAITING_FOR_USER
     assert [c.args[0].text for c in execute.call_args_list] == ["hello"]
 
 

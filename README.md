@@ -65,8 +65,11 @@ curl -X POST http://127.0.0.1:8080/run-task \
   -d '{"intent": "Search Wikipedia for Alan Turing and open his article", "start_url": "https://www.wikipedia.org"}'
 ```
 
-Or run the Command Center UI from `ui/` (`npm install && npm run dev`, then open
-http://localhost:5173).
+Or run the Command Center UI from `ui/`. Add `CORS_ORIGINS=http://localhost:5173` to `.env`
+and start the API first: the dev server reads the API's key from `.var/api-key` once, when it
+starts. Then `npm install && npm run dev` and open http://localhost:5173. If you set `API_KEYS`,
+put one of them in `ui/.env.local` as `VITE_OPERON_API_KEY`; if you set `OPERON_RUNTIME_ROOT`,
+export it in the UI's shell too.
 
 > [!WARNING]
 > Desktop runs control your real mouse and keyboard. Use a machine you can spare, or a VM.

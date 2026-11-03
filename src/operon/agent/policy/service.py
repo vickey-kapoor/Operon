@@ -33,6 +33,13 @@ class PolicyService(ABC):
         decision (Best-of-N sampling needs it)."""
         return True
 
+    def note_not_executed(self, run_id: str, reason: str) -> None:
+        """The last decision was stopped by a gate before it ran. Wrappers pass it
+        to their delegate; a backend holding open tool calls reports it to the model."""
+        note = getattr(getattr(self, "delegate", None), "note_not_executed", None)
+        if note is not None:
+            note(run_id, reason)
+
 
 def parse_policy_output(raw_output: str) -> PolicyDecision:
     cleaned = _strip_json_fence(raw_output)

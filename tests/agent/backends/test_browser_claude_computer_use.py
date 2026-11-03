@@ -134,6 +134,45 @@ async def test_a_failed_batch_reports_the_error_and_skips_the_rest(tmp_path: Pat
     assert any(block["type"] == "image" for block in content[2:])
 
 
+async def test_calls_a_gate_blocked_are_reported_as_not_executed(tmp_path: Path) -> None:
+    client = ScriptedClient(
+        [
+            _reply(_call("left_click", "t1", coordinate=[10, 10]), _call("key", "t2", text="Return")),
+            _reply(_call("left_click", "t3", coordinate=[10, 10])),
+            _reply(_call("screenshot", "t4")),
+        ]
+    )
+    backend = _backend(client)
+
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+    backend.note_not_executed("run-1", "Trust gate: purchase needs approval")
+    # Resumed: nothing ran, so action_history did not grow.
+    await backend.perceive(_frame(tmp_path, "b.png"), _state())
+
+    results = [b for b in client.requests[1][-1]["content"] if b["type"] == "tool_result"]
+    assert [r["tool_use_id"] for r in results] == ["t1", "t2"]
+    assert all(r["is_error"] and "paused for a human" in r["content"] for r in results)
+    assert "Trust gate: purchase needs approval" in results[0]["content"]
+
+    # Reported once: the next turn's answer is back to normal.
+    await backend.perceive(_frame(tmp_path, "c.png"), _state((ActionType.CLICK, True)))
+    assert client.requests[2][-1]["content"][0]["content"][0] == {"type": "text", "text": "OK"}
+
+
+async def test_a_gate_note_reaches_the_backend_through_the_wrappers() -> None:
+    from operon.agent.backends.fallback import FallbackBackend
+    from operon.agent.policy.thin import ThinPolicy
+
+    primary, secondary = _backend(ScriptedClient([])), _backend(ScriptedClient([]))
+    seen: list[tuple[str, str]] = []
+    primary.note_not_executed = lambda run_id, reason: seen.append((run_id, reason))
+    secondary.note_not_executed = lambda run_id, reason: pytest.fail("the inactive backend was told")
+
+    ThinPolicy(FallbackBackend(primary=primary, secondary=secondary)).note_not_executed("run-1", "gated")
+
+    assert seen == [("run-1", "gated")]
+
+
 async def test_a_screenshot_call_is_answered_with_the_image(tmp_path: Path) -> None:
     client = ScriptedClient([_reply(_call("screenshot", "t1")), _reply(_call("scroll", "t2", scroll_direction="down", scroll_amount=3))])
     backend = _backend(client)
@@ -270,8 +309,19 @@ def test_coordinates_are_clamped_to_the_screen() -> None:
 
 def test_a_triple_click_runs_as_a_triple_click_and_a_following_type_replaces_the_text() -> None:
     assert _normalize(("triple_click", {"coordinate": [100, 200]})) == {"action_type": "triple_click", "x": 150, "y": 300}
-    assert _normalize(("triple_click", {"coordinate": [100, 200]}), ("type", {"text": "C:\\Windows"})) == {
-        "action_type": "type", "text": "C:\\Windows", "x": 150, "y": 300, "clear_before_typing": True, "press_enter": False,
+
+
+def test_a_type_after_a_triple_click_replaces_only_the_selection() -> None:
+    """Merging them into a clearing TYPE clicked once and pressed Ctrl+A, so replacing
+    one line of a document wiped the whole document."""
+    batch = _normalize(("triple_click", {"coordinate": [100, 200]}), ("type", {"text": "C:\\Windows"}))
+
+    assert batch == {
+        "action_type": "batch",
+        "actions": [
+            {"action_type": "triple_click", "x": 150, "y": 300},
+            {"action_type": "type", "text": "C:\\Windows", "clear_before_typing": False, "press_enter": False},
+        ],
     }
 
 
@@ -302,12 +352,27 @@ def test_the_shared_tools_and_system_prompt_get_their_own_cache_breakpoint() -> 
     assert payload["cache_control"] == {"type": "ephemeral"}
 
 
-def test_the_backend_flag_selects_claude_with_the_gemini_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_thin_harness_runs_claude_without_the_gemini_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The loop keeps the thin harness for the whole run, so a Gemini fallback would
+    act with no rules, guards or critic."""
+    from operon.api.runtime.services import build_browser_services
+
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "claude_computer_use")
+    monkeypatch.setenv("OPERON_BROWSER_FALLBACK_BACKEND", "json")
+    monkeypatch.delenv("OPERON_HARNESS_PROFILE", raising=False)
+    services = build_browser_services(executor=None)
+
+    assert isinstance(services.policy_delegate, BrowserClaudeComputerUseBackend)
+    assert services.perception_service is services.policy_delegate
+
+
+def test_the_full_harness_keeps_the_gemini_fallback_for_claude(monkeypatch: pytest.MonkeyPatch) -> None:
     from operon.agent.backends.fallback import FallbackBackend
     from operon.api.runtime.services import build_browser_services
 
     monkeypatch.setenv("OPERON_BROWSER_BACKEND", "claude_computer_use")
     monkeypatch.setenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-sonnet-5-5")
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
     services = build_browser_services(executor=None)
 
     backend = services.policy_delegate

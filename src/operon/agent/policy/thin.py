@@ -185,8 +185,6 @@ class FinalCheckVerifier(VerifierService):
                 prompt, image_data=image, media_type=media_type, effort=self.effort, earlier_images=earlier_images
             )
         except AnthropicClientError as exc:
-            # A check that cannot run must not keep the model going in circles: take
-            # its word, say so in the result, and leave grading to the benchmark judge.
             return self._unchecked(state, decision, str(exc))
         self._write_artifacts(Path(screenshot).parent, prompt, raw)
         complete, reason = _parse_verdict(raw)
@@ -204,15 +202,16 @@ class FinalCheckVerifier(VerifierService):
     @staticmethod
     def _unchecked(state: AgentState, decision: PolicyDecision, why: str) -> VerificationResult:
         """The check could not run. Rejecting would send the model round in circles
-        until the step budget runs out, so take its word, say so in the result, and
-        leave grading to the benchmark judge."""
-        logger.warning("final check unavailable for run %s, accepting the model's claim: %s", state.run_id[:8], why)
+        until the step budget runs out, and accepting would report an unchecked
+        claim as a success. So end the run as not succeeded, with a stop reason
+        that says the claim went unverified."""
+        logger.warning("final check unavailable for run %s, ending the run unverified: %s", state.run_id[:8], why)
         return VerificationResult(
-            status=VerificationStatus.SUCCESS,
-            expected_outcome_met=True,
+            status=VerificationStatus.UNCERTAIN,
+            expected_outcome_met=False,
             stop_condition_met=True,
-            reason=f"Model says done (completion check unavailable): {decision.rationale}",
-            stop_reason=StopReason.TASK_COMPLETED,
+            reason=f"Model says done but the completion check could not run: {decision.rationale}",
+            stop_reason=StopReason.COMPLETION_UNVERIFIED,
             critic_fallback_reason=why[:500] or "unavailable",
         )
 

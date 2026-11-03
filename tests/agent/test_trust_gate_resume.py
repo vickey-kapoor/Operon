@@ -103,6 +103,18 @@ async def test_resume_approves_the_paused_action_once(monkeypatch: pytest.Monkey
     assert state.status is not RunStatus.WAITING_FOR_USER
 
 
+async def test_a_gate_pause_tells_the_policy_its_action_did_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without this the Claude backend answered the blocked call 'OK' on resume, so
+    Claude never proposed it again and the approved action never ran."""
+    loop, _, _ = _loop(monkeypatch, [PURCHASE])
+    notes: list[tuple[str, str]] = []
+    loop.policy_service.note_not_executed = lambda run_id, reason: notes.append((run_id, reason))
+
+    await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert len(notes) == 1 and notes[0][0] == "run-1" and notes[0][1]
+
+
 async def test_approval_is_single_use(monkeypatch: pytest.MonkeyPatch) -> None:
     loop, execute, state = _loop(monkeypatch, [PURCHASE, PURCHASE, PURCHASE])
 
@@ -186,3 +198,83 @@ async def test_resume_after_coordinate_thrash_runs_the_click(monkeypatch: pytest
     third = await loop.step_run(StepRequest(run_id="run-1"))  # still thrashing: asks again
     assert third.status is RunStatus.WAITING_FOR_USER
     assert clicks() == ran
+
+
+def _batch(*children: AgentAction) -> AgentAction:
+    return AgentAction(action_type=ActionType.BATCH, actions=list(children))
+
+
+CLICK = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
+
+
+async def test_a_risky_action_inside_a_batch_is_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, _ = _loop(monkeypatch, [_batch(CLICK, _batch(PURCHASE))])
+
+    first = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert first.status is RunStatus.WAITING_FOR_USER
+    execute.assert_not_called()
+
+
+async def test_resume_approves_the_paused_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    batch = _batch(CLICK, PURCHASE)
+    loop, execute, _ = _loop(monkeypatch, [batch, batch])
+
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert [c.args[0] for c in execute.call_args_list] == [batch]
+
+
+async def test_approving_one_batch_does_not_approve_another(monkeypatch: pytest.MonkeyPatch) -> None:
+    other = _batch(CLICK, AgentAction(action_type=ActionType.TYPE, text="purchase the upgrade too", target_element_id="buy"))
+    loop, execute, _ = _loop(monkeypatch, [_batch(CLICK, PURCHASE), other])
+
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    second = await loop.step_run(StepRequest(run_id="run-1"))
+
+    execute.assert_not_called()
+    assert second.status is RunStatus.WAITING_FOR_USER
+
+
+def test_batch_fingerprints_keep_child_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, _, _ = _loop(monkeypatch, [])
+    one = _batch(AgentAction(action_type=ActionType.TYPE, text="complete purchase;type|send money"))
+    two = _batch(
+        AgentAction(action_type=ActionType.TYPE, text="complete purchase"),
+        AgentAction(action_type=ActionType.TYPE, text="send money"),
+    )
+
+    assert loop._gate_fingerprint(one) != loop._gate_fingerprint(two)
+
+
+async def test_batch_children_are_checked_against_the_live_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With a domain allowlist, a child that runs after an earlier one left the
+    allowed site is stopped, even though the batch passed on the starting page."""
+    loop, _, _ = _loop(monkeypatch, [])
+    loop._trust_gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    urls = iter(["https://example.com/", "https://evil.test/"])
+    loop.executor = SimpleNamespace(batch_child_check=None, current_url_for_run=AsyncMock(side_effect=lambda _run: next(urls)))
+    batch = _batch(CLICK, AgentAction(action_type=ActionType.TYPE, text="hello"))
+
+    loop._install_batch_child_check("run-1", batch)
+    check = loop.executor.batch_child_check
+
+    assert await check(batch.actions[1]) is None
+    assert "not in allowlist" in await check(batch.actions[1])
+
+
+async def test_the_live_check_judges_a_nested_batch_by_its_next_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Navigating back to an allowed site from a nested batch is not blocked just
+    because the container has no URL."""
+    loop, _, _ = _loop(monkeypatch, [])
+    loop._trust_gate = TrustGate(enabled=True, allow_domains=("example.com",))
+    loop.executor = SimpleNamespace(batch_child_check=None, current_url_for_run=AsyncMock(return_value="https://evil.test/"))
+    back = _batch(AgentAction(action_type=ActionType.NAVIGATE, url="https://example.com/"), CLICK)
+    batch = _batch(CLICK, back)
+
+    loop._install_batch_child_check("run-1", batch)
+
+    assert await loop.executor.batch_child_check(back) is None

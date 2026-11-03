@@ -103,6 +103,12 @@ def _trace(stage: str, detail: str = "") -> None:
         print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
 
 
+def _leaf_actions(action: AgentAction) -> list[AgentAction]:
+    """The actions a batch actually runs, nested batches flattened; a plain action is its own leaf."""
+    if action.action_type is not ActionType.BATCH:
+        return [action]
+    return [leaf for child in action.actions or [] for leaf in _leaf_actions(child)]
+
 class AgentLoop:
     """Coordinates the MVP control loop and terminal benchmark boundaries."""
 
@@ -166,11 +172,17 @@ class AgentLoop:
         # steps on the same run. Weak values: a lock lives only while a step holds
         # or awaits it, so the map does not grow with every run ever started.
         self._run_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+        self._executor_lock = asyncio.Lock()
+        # Whether a human approved the trust gate for the action about to run.
+        self._trust_approved: dict[str, bool] = {}
         # Human approval of a gate pause, per run. A pause records (action fingerprint,
         # gate) as pending; a resume that approves adds that gate to the action's
         # approved set. The same action then passes the gates it was approved for, and
         # the approval is used up once it gets through (or the policy picks another).
         self._pending_gate_approvals: dict[str, tuple[str, str]] = {}
+        # Runs a human paused by hand (UI Pause, POST /run/{id}/pause). A step already
+        # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
+        self._pause_requests: set[str] = set()
         self._approved_gate_actions: dict[str, tuple[str, frozenset[str]]] = {}
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
@@ -204,20 +216,24 @@ class AgentLoop:
         # Browser auth state (cookies/session tokens) is preserved at the executor level.
         if hasattr(self.policy_service, "reset_run_context"):
             self.policy_service.reset_run_context(record.run_id)
-        if hasattr(self.executor, "set_current_run_id"):
-            self.executor.set_current_run_id(record.run_id)
-        if hasattr(self.executor, "configure_run"):
-            self.executor.configure_run(record.run_id, headless=request.headless, mode=record.mode)
-        if hasattr(self.executor, "start_run_recording"):
-            try:
-                await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
-            except Exception as exc:
-                logger.warning("start_run_recording failed for %s: %s", record.run_id, exc)
-        if request.start_url:
-            _trace("START_RUN -> NAVIGATE", request.start_url)
-            await self.executor.execute(
-                AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
-            )
+        # Selecting this run on the executor must wait for any other run's step in
+        # flight, or that step's next capture or batch child would land in this run's
+        # browser (see step_run).
+        async with self._executor_lock:
+            if hasattr(self.executor, "set_current_run_id"):
+                self.executor.set_current_run_id(record.run_id)
+            if hasattr(self.executor, "configure_run"):
+                self.executor.configure_run(record.run_id, headless=request.headless, mode=record.mode)
+            if hasattr(self.executor, "start_run_recording"):
+                try:
+                    await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
+                except Exception as exc:
+                    logger.warning("start_run_recording failed for %s: %s", record.run_id, exc)
+            if request.start_url:
+                _trace("START_RUN -> NAVIGATE", request.start_url)
+                await self.executor.execute(
+                    AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
+                )
         return RunResponse(
             run_id=record.run_id,
             status=record.status,
@@ -279,6 +295,17 @@ class AgentLoop:
         await asyncio.sleep(settle_delay)
         record.force_fresh_perception = False
 
+    async def pause_run(self, run_id: str) -> AgentState:
+        """Pause a running run for a human. Takes effect now if no step is running;
+        a step in flight runs its action, then ends paused instead of RUNNING."""
+        record = await self.run_store.get_run(run_id)
+        if record is None:
+            raise ValueError(f"Run {run_id!r} not found")
+        if record.status in {RunStatus.PENDING, RunStatus.RUNNING}:
+            self._pause_requests.add(run_id)
+            record = await self.run_store.set_status(run_id, RunStatus.WAITING_FOR_USER)
+        return record
+
     async def resume_run(self, run_id: str, *, approve_gated_action: bool = True) -> RunResponse:
         """Resume a run that was paused waiting for user input.
 
@@ -298,6 +325,7 @@ class AgentLoop:
             prior = self._approved_gate_actions.get(run_id)
             gates = prior[1] if prior is not None and prior[0] == fingerprint else frozenset()
             self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
+        self._pause_requests.discard(run_id)
         record.stop_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
         return RunResponse(
@@ -312,13 +340,21 @@ class AgentLoop:
         if lock is None:
             lock = self._run_locks[request.run_id] = asyncio.Lock()
         async with lock:
-            return await self._step_run_locked(request)
+            # The executor has one "current run" that capture and execute read, so
+            # steps of different runs must not interleave on it: each step selects
+            # its run first and holds the executor until it ends.
+            async with self._executor_lock:
+                if hasattr(self.executor, "set_current_run_id"):
+                    self.executor.set_current_run_id(request.run_id)
+                return await self._step_run_locked(request)
 
     async def _step_run_locked(self, request: StepRequest) -> RunResponse:
         record = await self.run_store.get_run(request.run_id)
         if record is None:
             raise ValueError(f"Run {request.run_id!r} not found")
-        if record.status is RunStatus.CANCELLED:
+        if record.status is RunStatus.CANCELLED or (
+            record.status is RunStatus.WAITING_FOR_USER and record.run_id in self._pause_requests
+        ):
             return RunResponse(
                 run_id=record.run_id,
                 status=record.status,
@@ -380,6 +416,23 @@ class AgentLoop:
         frame = await self.capture_service.capture(record)
         _trace("  1 CAPTURE OK", f"{_record_stage('capture', _t0):.2f}s  frame={type(frame).__name__}")
 
+        # Consume any correction the user sent during a HITL pause before perceive():
+        # combined backends (Claude, Gemini) choose the action inside perceive(), so a
+        # hint added after it would only reach the model a step late.
+        _override_text = None
+        _override_sent = False
+        _override_hint = run_control.consume_override_hint(record.run_id)
+        if _override_hint:
+            _override_text = (
+                f"[USER OVERRIDE HINT] The user provided this correction at step {step_index}: "
+                f"'{_override_hint}'. Incorporate it into your next action decision."
+            )
+            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+            if callable(add_hints):
+                add_hints([_override_text], source="user_override", run_id=record.run_id)
+                _override_sent = True
+            logger.info("Consumed user override hint for step %d: %r", step_index, _override_hint)
+
         # Inject memory hints before perceive() so combined mode includes them
         if hasattr(self.policy_service, "prepare_hints"):
             self.policy_service.prepare_hints(record, None)
@@ -403,15 +456,9 @@ class AgentLoop:
         state = await self.run_store.update_state(record.run_id, perception)
         self._sync_progress_state_with_perception(state, perception)
 
-        # Consume any override hint the user sent during a HITL pause.
-        # Inject it as a rule trace so the LLM policy sees it this step.
-        _override_hint = run_control.consume_override_hint(record.run_id)
-        if _override_hint:
-            state.last_rule_trace = (
-                f"[USER OVERRIDE HINT] The user provided this correction at step {step_index}: "
-                f"'{_override_hint}'. Incorporate it into your next action decision."
-            )
-            logger.info("Consumed user override hint for step %d: %r", step_index, _override_hint)
+        if _override_text and not _override_sent:
+            # A backend without advisory hints: the policy reads it from the rule trace.
+            state.last_rule_trace = _override_text
 
         _trace("  3 POLICY", "PolicyCoordinator -> rule engine first, then LLM fallback")
         _t0 = time.perf_counter()
@@ -426,68 +473,15 @@ class AgentLoop:
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
 
-        # Human-in-the-loop: pause the run and wait for user input
-        if decision.action.action_type is ActionType.WAIT_FOR_USER:
-            _trace("  3 POLICY -> WAIT_FOR_USER", "pausing run")
+        # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
+        # action never runs; the run pauses for a human instead.
+        pause_decision = await self._gate_pause_decision(record, state, decision)
+        if pause_decision is not None:
             return await self._pause_for_user(
                 record=record,
                 state=state,
                 perception=perception,
-                decision=decision,
-                perception_debug=perception_debug,
-                policy_debug=policy_debug,
-                step_index=step_index,
-                before_artifact_path=before_artifact_path,
-                after_artifact_path=after_artifact_path,
-            )
-
-        # Retry Exhaustion / Coordinate Thrash guard: if this action targets a (x, y)
-        # that has already failed 3 times, escalate to HITL instead of attempting again.
-        if (
-            "coordinate_thrash" not in self._approved_gates(record.run_id, decision.action)
-            and self._coordinate_thrash_detected(state, decision.action)
-        ):
-            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash")
-            _trace("  3 POLICY -> COORDINATE_THRASH_HITL", "3 coord failures at same point — escalating to HITL")
-            thrash_x, thrash_y = decision.action.x, decision.action.y
-            hitl_decision = decision.model_copy(update={
-                "action": AgentAction(
-                    action_type=ActionType.WAIT_FOR_USER,
-                    text=(
-                        f"Coordinate thrashing detected: the target at ({thrash_x}, {thrash_y}) "
-                        "has failed 3 consecutive times. The element may have shifted, be obscured, "
-                        "or be unreachable at these coordinates. Please manually verify the target "
-                        "location and click Resume when ready."
-                    ),
-                )
-            })
-            return await self._pause_for_user(
-                record=record,
-                state=state,
-                perception=perception,
-                decision=hitl_decision,
-                perception_debug=perception_debug,
-                policy_debug=policy_debug,
-                step_index=step_index,
-                before_artifact_path=before_artifact_path,
-                after_artifact_path=after_artifact_path,
-            )
-
-        # Pre-execution gates (confidence, trust, file guard): a blocked action is
-        # never executed — the run pauses for a human with the gate's reason.
-        current_url = await self._current_url_for_trust_gate(record.run_id)
-        gate_text = self._pre_execution_gate_text(
-            decision, intent=state.intent, run_id=record.run_id, current_url=current_url
-        )
-        if gate_text is not None:
-            gate_decision = decision.model_copy(update={
-                "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
-            })
-            return await self._pause_for_user(
-                record=record,
-                state=state,
-                perception=perception,
-                decision=gate_decision,
+                decision=pause_decision,
                 perception_debug=perception_debug,
                 policy_debug=policy_debug,
                 step_index=step_index,
@@ -499,6 +493,7 @@ class AgentLoop:
         if hasattr(self.executor, "set_current_run_id"):
             self.executor.set_current_run_id(record.run_id)
         adaptation_trace: list[str] = []
+        deferred_pause: PolicyDecision | None = None
         retries_used = 0
         attempt_index = 1
 
@@ -507,14 +502,19 @@ class AgentLoop:
             blocked_action = None if self.thin_harness else self._block_redundant_action(state, decision.action, step_index)
             if blocked_action is None:
                 _t0 = time.perf_counter()
-                state, executed_action = await self._execute_with_hardening(
-                    record=record,
-                    state=state,
-                    perception=perception,
-                    decision_action=decision.action,
-                    step_index=step_index,
-                    use_unified_executor=True,
-                )
+                self._install_batch_child_check(record.run_id, decision.action)
+                try:
+                    state, executed_action = await self._execute_with_hardening(
+                        record=record,
+                        state=state,
+                        perception=perception,
+                        decision_action=decision.action,
+                        step_index=step_index,
+                        use_unified_executor=True,
+                    )
+                finally:
+                    if hasattr(self.executor, "batch_child_check"):
+                        self.executor.batch_child_check = None
                 _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{_record_stage('execute', _t0):.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
             else:
                 _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
@@ -609,11 +609,20 @@ class AgentLoop:
             perception = self._infer_focused_element(state, perception)
             state.observation_history.append(perception)
             self._sync_progress_state_with_perception(state, perception)
+            attempted_decision = decision
             decision = await self.policy_service.choose_action(state, perception)
             _enriched = self._attach_target_context(decision.action, perception, state.benchmark)
             if _enriched is not decision.action:
                 decision = decision.model_copy(update={"action": _enriched})
             state.current_subgoal = decision.active_subgoal
+            # A retry's decision is a new action: it passes the same gates as the first.
+            # If it needs a human, it does not run. The step is recorded with the
+            # attempt that did run, then the run pauses for the human.
+            deferred_pause = await self._gate_pause_decision(record, state, decision)
+            if deferred_pause is not None:
+                decision = attempted_decision
+                _trace("  RETRY_LOOP -> gated", "retry decision needs a human; pausing after this step is recorded")
+                break
             attempt_index += 1
 
         _trace("  7 RECOVER", f"RuleBasedRecoveryManager  verification={verification.status.value!r}")
@@ -737,6 +746,11 @@ class AgentLoop:
         else:
             state.stop_reason = None
 
+        if final_status is RunStatus.RUNNING and record.run_id in self._pause_requests:
+            # Paused by hand while this step ran: don't overwrite the pause.
+            final_status = RunStatus.WAITING_FOR_USER
+        if final_status is not RunStatus.WAITING_FOR_USER:
+            self._pause_requests.discard(record.run_id)
         if final_status is RunStatus.RUNNING:
             await self._apply_recovery_actions(state, recovery)
 
@@ -751,6 +765,22 @@ class AgentLoop:
         # Persist per-stage durations for tail-latency analysis. Best-effort —
         # the step has already completed by this point.
         self._persist_step_timing(record.run_id, step_index, stage_timings)
+
+        if deferred_pause is not None and final_status is RunStatus.RUNNING:
+            # A retry asked for a human (or a gate blocked it) after this step's
+            # attempt ran; that attempt is recorded above, now pause.
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=deferred_pause,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+                log_step=False,
+            )
 
         _trace("STEP DONE", f"step={step_index}  status={final_status.value!r}")
         return RunResponse(
@@ -793,6 +823,7 @@ class AgentLoop:
         action = decision.action
         fingerprint = self._gate_fingerprint(action)
         approved = self._approved_gates(run_id, action)
+        self._trust_approved[run_id] = "trust" in approved
         threshold = run_control.get_confidence_threshold()
         if (
             "confidence" not in approved
@@ -809,29 +840,39 @@ class AgentLoop:
                 "Click Proceed to approve or enter a correction hint."
             )
 
-        trust = self._trust_gate.evaluate(action, current_url=current_url)
-        if "trust" not in approved and trust.verdict is not TrustVerdict.ALLOW:
-            _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
-            self._pending_gate_approvals[run_id] = (fingerprint, "trust")
-            if trust.verdict is TrustVerdict.DENY:
+        # A batch runs each of its actions straight through the executor, so the
+        # trust gate and file guard judge every one of them, not the container.
+        leaves = _leaf_actions(action)
+        if "trust" not in approved:
+            verdicts = [(leaf, self._trust_gate.evaluate(leaf, current_url=current_url)) for leaf in leaves]
+            blocked = [pair for pair in verdicts if pair[1].verdict is not TrustVerdict.ALLOW]
+            # A DENY anywhere in the batch outranks a CONFIRM.
+            blocked.sort(key=lambda pair: pair[1].verdict is not TrustVerdict.DENY)
+            if blocked:
+                leaf, trust = blocked[0]
+                _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
+                self._pending_gate_approvals[run_id] = (fingerprint, "trust")
+                if trust.verdict is TrustVerdict.DENY:
+                    return (
+                        f"Blocked by policy: {leaf.action_type.value} action "
+                        f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
+                        "review and resume to override, or stop the run."
+                    )
                 return (
-                    f"Blocked by policy: {action.action_type.value} action "
-                    f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
-                    "review and resume to override, or stop the run."
+                    f"High-risk action needs approval: {leaf.action_type.value} "
+                    f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
                 )
-            return (
-                f"High-risk action needs approval: {action.action_type.value} "
-                f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
-            )
 
-        if action.action_type in FILE_PATH_ACTIONS:
+        for leaf in leaves:
+            if leaf.action_type not in FILE_PATH_ACTIONS:
+                continue
             blocked_path = blocked_file_path(
-                action, intent=intent, run_dir=Path(self.run_store.root_dir) / run_id
+                leaf, intent=intent, run_dir=Path(self.run_store.root_dir) / run_id
             )
             if blocked_path is not None:
                 _trace("  3 POLICY -> FILE_GUARD", f"blocked path {blocked_path!r}")
                 return (
-                    f"Blocked {action.action_type.value}: the path {blocked_path!r} is not "
+                    f"Blocked {leaf.action_type.value}: the path {blocked_path!r} is not "
                     "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
                     "Restart with the path in the task, allow its folder, or stop the run."
                 )
@@ -852,7 +893,89 @@ class AgentLoop:
         """What a human approves at a gate pause: the action's type plus the text, URL
         and target name the trust gate judges — not coordinates, which shift between
         perceptions of the same screen."""
+        if action.action_type is ActionType.BATCH:
+            # Approving one batch must not approve a different one.
+            # JSON keeps child boundaries unambiguous whatever text the children carry.
+            return "batch" + json.dumps([self._gate_fingerprint(child) for child in action.actions or []])
         return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
+
+    async def _gate_pause_decision(self, record, state, decision: PolicyDecision) -> PolicyDecision | None:
+        """The WAIT_FOR_USER decision to pause on before ``decision`` runs, or None
+        when it may run: the policy asked for a human, the target thrashed, or a
+        pre-execution gate (confidence, trust, file guard) blocked it."""
+        if decision.action.action_type is ActionType.WAIT_FOR_USER:
+            _trace("  3 POLICY -> WAIT_FOR_USER", "pausing run")
+            return decision
+
+        # Retry Exhaustion / Coordinate Thrash guard: if this action targets a (x, y)
+        # that has already failed 3 times, escalate to HITL instead of attempting again.
+        if (
+            "coordinate_thrash" not in self._approved_gates(record.run_id, decision.action)
+            and self._coordinate_thrash_detected(state, decision.action)
+        ):
+            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash")
+            _trace("  3 POLICY -> COORDINATE_THRASH_HITL", "3 coord failures at same point — escalating to HITL")
+            thrash_x, thrash_y = decision.action.x, decision.action.y
+            self._note_not_executed(record.run_id, "repeated failures at the same point")
+            return decision.model_copy(update={
+                "action": AgentAction(
+                    action_type=ActionType.WAIT_FOR_USER,
+                    text=(
+                        f"Coordinate thrashing detected: the target at ({thrash_x}, {thrash_y}) "
+                        "has failed 3 consecutive times. The element may have shifted, be obscured, "
+                        "or be unreachable at these coordinates. Please manually verify the target "
+                        "location and click Resume when ready."
+                    ),
+                )
+            })
+
+        current_url = await self._current_url_for_trust_gate(record.run_id)
+        gate_text = self._pre_execution_gate_text(
+            decision, intent=state.intent, run_id=record.run_id, current_url=current_url
+        )
+        if gate_text is None:
+            return None
+        self._note_not_executed(record.run_id, gate_text)
+        return decision.model_copy(update={
+            "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
+        })
+
+    def _install_batch_child_check(self, run_id: str, action: AgentAction) -> None:
+        """With a domain allowlist, a batch's later children may run on a page an
+        earlier child opened, which the pre-execution check never saw. Have the
+        executor check the live page before each of them."""
+        if (
+            action.action_type is not ActionType.BATCH
+            or not hasattr(self.executor, "batch_child_check")
+            or not (self._trust_gate.enabled and self._trust_gate.allow_domains)
+            or self._trust_approved.get(run_id)
+        ):
+            return
+
+        async def check(child: AgentAction) -> str | None:
+            # A nested batch runs its first leaf next (its later children get their
+            # own check), so judge that leaf, not the container.
+            leaves = _leaf_actions(child)
+            if not leaves:
+                return None
+            current_url = await self._current_url_for_trust_gate(run_id)
+            result = self._trust_gate.evaluate(leaves[0], current_url=current_url)
+            if result.verdict is TrustVerdict.DENY:
+                return f"blocked by policy ({result.reason}: '{result.matched}')"
+            return None
+
+        self.executor.batch_child_check = check
+
+    def _note_not_executed(self, run_id: str, reason: str) -> None:
+        """Tell the policy a gate stopped its decision before it ran, so a backend
+        that answers the model's tool calls does not report it as done."""
+        note = getattr(self.policy_service, "note_not_executed", None)
+        if note is None:
+            return
+        try:
+            note(run_id, reason)
+        except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
+            logger.warning("note_not_executed failed for run %s: %s", run_id[:8], exc)
 
     async def _pause_for_user(
         self,
@@ -866,8 +989,11 @@ class AgentLoop:
         step_index: int,
         before_artifact_path: str,
         after_artifact_path: str,
+        log_step: bool = True,
     ) -> RunResponse:
-        """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer."""
+        """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer.
+
+        ``log_step=False`` when the step was already logged with the action it ran."""
         from operon.agent.hitl import (
             generate_hitl_message,
             notify_desktop,
@@ -886,38 +1012,39 @@ class AgentLoop:
         )
         state.hitl_message = hitl_message
 
-        executed_action = ExecutedAction(
-            action=decision.action,
-            success=True,
-            detail=f"Paused for user: {decision.action.text}",
-        )
-        verification = await self.verifier_service.verify(state, decision, executed_action)
-        recovery = RecoveryDecision(
-            strategy=RecoveryStrategy.STOP,
-            message=hitl_message,
-            failure_category=FailureCategory.HUMAN_INTERVENTION_REQUIRED,
-            terminal=False,
-            recoverable=True,
-            stop_reason=StopReason.WAITING_FOR_USER,
-        )
-        append_step_log(
-            self._run_log_path(record.run_id),
-            StepLog(
-                run_id=record.run_id,
-                step_id=f"step_{step_index}",
-                step_index=step_index,
-                before_artifact_path=before_artifact_path,
-                after_artifact_path=after_artifact_path,
-                perception_debug=perception_debug,
-                policy_debug=policy_debug,
-                perception=perception,
-                policy_decision=decision,
-                executed_action=executed_action,
-                verification_result=verification,
-                recovery_decision=recovery,
-                decision_source=f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini",
-            ),
-        )
+        if log_step:
+            executed_action = ExecutedAction(
+                action=decision.action,
+                success=True,
+                detail=f"Paused for user: {decision.action.text}",
+            )
+            verification = await self.verifier_service.verify(state, decision, executed_action)
+            recovery = RecoveryDecision(
+                strategy=RecoveryStrategy.STOP,
+                message=hitl_message,
+                failure_category=FailureCategory.HUMAN_INTERVENTION_REQUIRED,
+                terminal=False,
+                recoverable=True,
+                stop_reason=StopReason.WAITING_FOR_USER,
+            )
+            append_step_log(
+                self._run_log_path(record.run_id),
+                StepLog(
+                    run_id=record.run_id,
+                    step_id=f"step_{step_index}",
+                    step_index=step_index,
+                    before_artifact_path=before_artifact_path,
+                    after_artifact_path=after_artifact_path,
+                    perception_debug=perception_debug,
+                    policy_debug=policy_debug,
+                    perception=perception,
+                    policy_decision=decision,
+                    executed_action=executed_action,
+                    verification_result=verification,
+                    recovery_decision=recovery,
+                    decision_source=f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini",
+                ),
+            )
         state.stop_reason = StopReason.WAITING_FOR_USER
         state.step_count = step_index
         await self.run_store.save_state(state)

@@ -57,11 +57,15 @@ export type HitlRequiredEvent = {
 
 export type AgentEvent = StepEvent | RunEvent | ControlAck | ActionIntentEvent | HitlRequiredEvent;
 
+/** An event as retained by the hook: `seq` increases by one per event received, so
+ *  consumers can tell new events apart even after old ones are trimmed. */
+export type SequencedEvent = AgentEvent & { seq: number };
+
 // ── Hook state ────────────────────────────────────────────────────────────────
 
 export type StreamState = {
   connected: boolean;
-  events: AgentEvent[];
+  events: SequencedEvent[];
   frameUrl: string | null;
   latestActionIntent: ActionIntentEvent | null;
   pendingDecision: HitlRequiredEvent | null;
@@ -83,21 +87,28 @@ export function useAgentStream() {
   const frameUrlRef = useRef<string | null>(null);
   // Frame callbacks: registered by canvas components to avoid React re-renders on every frame.
   const frameCallbacksRef = useRef<Set<(blob: Blob) => void>>(new Set());
+  const seqRef = useRef(0);
+  // Set on unmount so a closing socket does not schedule another connection.
+  const disposedRef = useRef(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const connect = useCallback(() => {
+    if (disposedRef.current) return;
     const ws = new WebSocket(WS_URL, wsProtocols());
     wsRef.current = ws;
 
     ws.onopen = () => setState((s) => ({ ...s, connected: true }));
 
     ws.onclose = () => {
+      if (disposedRef.current || wsRef.current !== ws) return;
       setState((s) => ({ ...s, connected: false }));
-      setTimeout(connect, RECONNECT_MS);
+      reconnectTimerRef.current = setTimeout(connect, RECONNECT_MS);
     };
 
     ws.onerror = () => ws.close();
 
     ws.onmessage = (evt) => {
+      if (disposedRef.current || wsRef.current !== ws) return;
       if (evt.data instanceof Blob) {
         // Binary JPEG frame — deliver to registered canvas callbacks directly (zero React overhead).
         const blob = evt.data as Blob;
@@ -111,7 +122,8 @@ export function useAgentStream() {
       }
 
       try {
-        const event: AgentEvent = JSON.parse(evt.data as string);
+        const event = JSON.parse(evt.data as string) as SequencedEvent;
+        event.seq = ++seqRef.current;
         if (event.type === "step") {
           (event as StepEvent).receivedAt = Date.now();
         }
@@ -139,10 +151,20 @@ export function useAgentStream() {
   }, []);
 
   useEffect(() => {
+    disposedRef.current = false;
     connect();
     return () => {
-      wsRef.current?.close();
+      disposedRef.current = true;
+      if (reconnectTimerRef.current !== null) clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+      const ws = wsRef.current;
+      wsRef.current = null;
+      if (ws) {
+        ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+        ws.close();
+      }
       if (frameUrlRef.current) URL.revokeObjectURL(frameUrlRef.current);
+      frameUrlRef.current = null;
     };
   }, [connect]);
 

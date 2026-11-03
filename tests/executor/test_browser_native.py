@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from operon.executor.browser_native import NativeBrowserExecutor, _BrowserSession
+from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
 
 
@@ -805,3 +806,31 @@ async def test_multi_and_right_clicks_run_as_the_model_asked(tmp_path: Path, act
 
     assert result.success is True
     mouse.click.assert_awaited_once_with(120, 45, **click_kwargs)
+
+
+async def test_batch_child_check_stops_a_batch_before_a_blocked_child(tmp_path: Path) -> None:
+    """A later batch child may run on a page an earlier one opened; the loop's check
+    gets a say before it runs."""
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    ran: list[str] = []
+
+    async def fake_execute(action: AgentAction) -> ExecutedAction:
+        if action.action_type is ActionType.BATCH:
+            return await NativeBrowserExecutor.execute(executor, action)
+        ran.append(action.text or action.action_type.value)
+        return ExecutedAction(action=action, success=True, detail="ok")
+
+    async def check(child: AgentAction) -> str | None:
+        return "page left the allowlist" if child.text == "secret" else None
+
+    executor.execute = fake_execute  # type: ignore[method-assign]
+    executor.batch_child_check = check
+    batch = AgentAction(
+        action_type=ActionType.BATCH,
+        actions=[AgentAction(action_type=ActionType.CLICK, x=1, y=1), AgentAction(action_type=ActionType.TYPE, text="secret")],
+    )
+
+    result = await executor._execute_batch(batch)
+
+    assert ran == ["click"]
+    assert result.success is False and "page left the allowlist" in result.detail

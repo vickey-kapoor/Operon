@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from operon.agent.backends.base import AgentBackend
@@ -17,6 +18,7 @@ from operon.agent.backends.desktop_claude_computer_use import (
 from operon.agent.backends.fallback import FallbackBackend
 from operon.agent.perception import PerceptionService
 from operon.agent.policy import PolicyService
+from operon.agent.policy.thin import THIN, harness_profile
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.clients.anthropic import AnthropicHttpClient
 from operon.clients.anthropic_computer_use import (
@@ -28,6 +30,7 @@ from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
 from operon.core.paths import prompts_dir
 
 _PROMPTS_DIR = prompts_dir()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,13 @@ def build_browser_services(executor) -> RuntimeServices:
                 prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
                 browser_runtime=executor,
             )
+        if harness_profile(config.backend) == THIN:
+            # The loop's policy, verifier and recovery are fixed for the profile when it
+            # is built. A JSON fallback would run Gemini's decisions with no rules, guards
+            # or critic, so under the thin harness a Claude failure ends the run instead.
+            if config.fallback_backend:
+                logger.debug("OPERON_BROWSER_FALLBACK_BACKEND is ignored under the thin harness")
+            return RuntimeServices(perception_service=primary, policy_delegate=primary)
         if config.fallback_backend == "json" and config.fallback_model:
             secondary = BrowserJsonBackend(
                 gemini_client=GeminiHttpClient(model=config.fallback_model, timeout_seconds=120.0),

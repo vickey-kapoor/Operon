@@ -9,6 +9,7 @@ import logging
 import os
 import subprocess
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -104,6 +105,10 @@ class NativeBrowserExecutor(Executor):
         self._record_video = record_video
         self._post_action_delay = post_action_delay
         self._current_run_id: str | None = None
+        # Set by the loop for one step: called before each child of a batch runs,
+        # returns why that child must not run (e.g. the page left the allowed
+        # domains after an earlier child), or None to go on.
+        self.batch_child_check: Callable[[AgentAction], Awaitable[str | None]] | None = None
         self._sessions: dict[str, _BrowserSession] = {}
         # Serializes opening and closing sessions: a run that starts while the
         # previous run's browser is still closing otherwise hangs its launch.
@@ -460,7 +465,20 @@ class NativeBrowserExecutor(Executor):
             return self._fail(action, "batch requires actions", FailureCategory.EXECUTION_ERROR)
         completed: list[str] = []
         last_artifact_path: str | None = None
-        for child_action in action.actions:
+        for index, child_action in enumerate(action.actions):
+            # The first child was checked before the batch started; later ones may
+            # run on a page an earlier child opened.
+            blocked = None
+            if index > 0 and self.batch_child_check is not None:
+                blocked = await self.batch_child_check(child_action)
+            if blocked is not None:
+                return ExecutedAction(
+                    action=action,
+                    success=False,
+                    detail=f"Batch stopped before {child_action.action_type.value}: {blocked}",
+                    artifact_path=last_artifact_path,
+                    failure_category=FailureCategory.EXECUTION_ERROR,
+                )
             result = await self.execute(child_action)
             completed.append(f"{child_action.action_type.value}:{'ok' if result.success else 'failed'}")
             if not result.success:

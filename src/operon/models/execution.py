@@ -96,3 +96,6 @@ class ExecutedAction(StrictModel):
     failure_stage: LoopStage | None = None
     anchor_snap: AnchorSnapInfo | None = None
     visual_variance: float | None = None
+    # For a failed batch: the index of the action it stopped on. Every action before
+    # it ran; none after it did.
+    batch_failed_index: int | None = Field(default=None, ge=0)

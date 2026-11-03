@@ -236,6 +236,28 @@ def normalize_claude_computer_calls(
     pixel space of the screenshot Claude saw and are multiplied by ``scale_x`` /
     ``scale_y`` to reach screen space.
     """
+    payload, _ = translate_claude_computer_calls(
+        calls, scale_x=scale_x, scale_y=scale_y, screen_width=screen_width, screen_height=screen_height
+    )
+    return payload
+
+
+def translate_claude_computer_calls(
+    calls: list[dict[str, Any]],
+    *,
+    scale_x: float,
+    scale_y: float,
+    screen_width: int,
+    screen_height: int,
+) -> tuple[dict[str, Any], list[tuple[int, int]]]:
+    """``normalize_claude_computer_calls`` plus, per call, the half-open range
+    ``(start, end)`` of batch actions it maps to.
+
+    A screenshot maps to the empty range at its position. A key with ``repeat``
+    maps to all its presses, and a click merged into the TYPE after it shares
+    that TYPE's action. A batch that fails on action ``f`` then answers each call
+    exactly: done if ``end <= f``, failed if ``start <= f < end``, else not run.
+    """
 
     def point(value: Any) -> tuple[int, int]:
         x, y = value
@@ -248,10 +270,14 @@ def normalize_claude_computer_calls(
         return screen_width // 2, screen_height // 2
 
     actions: list[dict[str, Any]] = []
+    spans: list[tuple[int, int]] = []
     for call in calls:
         name = call.get("name")
         args = call.get("input") or {}
+        start = len(actions)
         if name == "screenshot":
+            # Runs nothing; it is answered once everything before it has run.
+            spans.append((start, start))
             continue  # every answer already carries a fresh screenshot
         if name in {"left_click", "middle_click", "double_click", "triple_click", "right_click"}:
             x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
@@ -299,13 +325,17 @@ def normalize_claude_computer_calls(
             actions.append({"action_type": "launch_app", "text": args["app"]})
         else:
             raise BackendCompatibilityError(f"Unsupported Claude computer use call: {name}")
+        # A TYPE that absorbed the click before it replaced that action in place, so
+        # it starts there too; both calls then map to the one TYPE action.
+        start = min(start, len(actions) - 1)
+        spans.append((start, len(actions)))
 
     if not actions:
         # Only screenshots were asked for: nothing to do on screen this step.
-        return {"action_type": "wait", "wait_ms": 250}
+        return {"action_type": "wait", "wait_ms": 250}, spans
     if len(actions) == 1:
-        return actions[0]
-    return {"action_type": "batch", "actions": actions}
+        return actions[0], spans
+    return {"action_type": "batch", "actions": actions}, spans
 
 
 def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction:

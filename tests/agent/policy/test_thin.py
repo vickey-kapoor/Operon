@@ -200,6 +200,24 @@ async def test_thin_loop_runs_a_failed_action_once_without_a_second_look(tmp_pat
     loop.perception_service.perceive.assert_not_awaited()
 
 
+@pytest.mark.parametrize(("profile", "hinted"), [(THIN, False), (FULL, True)])
+def test_the_stagnation_hint_is_full_harness_only_and_scoped_to_its_run(tmp_path, profile, hinted) -> None:
+    """Under the thin harness it named a stop action Claude does not have, and its
+    unscoped bucket could surface in another run's turn."""
+    loop = _loop(profile)
+    state = _state(tmp_path)
+    state.progress_state.no_progress_streak = 3
+
+    loop._inject_stagnation_hint(state)
+
+    add = loop.perception_service.add_advisory_hints
+    if hinted:
+        add.assert_called_once()
+        assert add.call_args.kwargs["run_id"] == "run-thin"
+    else:
+        add.assert_not_called()
+
+
 def test_the_profile_reaches_the_loop() -> None:
     assert _loop(THIN).thin_harness is True
     assert _loop(FULL).thin_harness is False
@@ -250,6 +268,44 @@ def test_the_completion_check_can_use_a_cheaper_model(monkeypatch) -> None:
     assert final_check_model("claude-opus-5-5") == "claude-opus-5-5"
     monkeypatch.setenv("OPERON_FINAL_CHECK_MODEL", "claude-sonnet-5-5")
     assert final_check_model("claude-opus-5-5") == "claude-sonnet-5-5"
+
+
+@pytest.mark.asyncio
+async def test_a_billed_check_with_no_usable_reply_still_counts_its_usage(tmp_path) -> None:
+    """Thinking can use every output token, leaving no text: the call is still billed."""
+    usage = ModelUsage(provider="anthropic", model="claude-opus-5-5", request_kind="image", input_tokens=900, output_tokens=4096)
+    client = Mock(
+        generate_judgement=AsyncMock(side_effect=AnthropicClientError("Anthropic response did not contain text content.")),
+        latest_usage=Mock(return_value=usage),
+    )
+    stop = AgentAction(action_type=ActionType.STOP)
+    verifier = FinalCheckVerifier(client)
+
+    result = await verifier.verify(_state(tmp_path), _decision(stop, "Done."), _executed(stop))
+
+    assert result.stop_reason is StopReason.COMPLETION_UNVERIFIED
+    debug = verifier.latest_debug_artifacts()
+    assert debug is not None and debug.usage == usage
+
+
+@pytest.mark.asyncio
+async def test_a_failed_request_does_not_leave_the_previous_usage_behind(monkeypatch) -> None:
+    from operon.clients.anthropic import AnthropicHttpClient
+
+    client = AnthropicHttpClient(api_key="test", model="claude-opus-5-5", max_retries=0)
+    client._last_usage = ModelUsage(provider="anthropic", model="claude-opus-5-5", request_kind="image", input_tokens=1, output_tokens=1)
+
+    class _Failing:
+        is_closed = False
+
+        async def post(self, *args, **kwargs):
+            return Mock(status_code=400, text="bad request")
+
+    client._get_client = AsyncMock(return_value=_Failing())
+    with pytest.raises(AnthropicClientError):
+        await client.generate_judgement("Is it done?", image_data="aGk=", media_type="image/jpeg")
+
+    assert client.latest_usage() is None
 
 
 @pytest.mark.asyncio

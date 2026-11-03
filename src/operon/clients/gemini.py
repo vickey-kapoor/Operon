@@ -78,7 +78,6 @@ class GeminiHttpClient(GeminiClient):
         use_vertex: bool | None = None,
         vertex_project: str | None = None,
         vertex_location: str | None = None,
-        cacheable_system_prompt: str | None = None,
         thinking: str | None = None,
     ) -> None:
         self.api_key = api_key
@@ -113,12 +112,6 @@ class GeminiHttpClient(GeminiClient):
         self._last_usage: ModelUsage | None = None
         self._last_perception_scale_ratio: float = 1.0
         self._vertex_credentials: Any = None
-        self.cached_content_name: str | None = None
-        # Lazy cache priming â€” see _maybe_prime_cache(). On Vertex AI the static
-        # system prompt is cached once on first call; on the public API this is
-        # a no-op (prompts are too small for the >=32k token minimum).
-        self._cacheable_system_prompt: str | None = cacheable_system_prompt
-        self._cache_primed: bool = False
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazy-init a persistent async client with connection pooling."""
@@ -132,7 +125,6 @@ class GeminiHttpClient(GeminiClient):
 
     async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
         """Send the screenshot and prompt to Gemini and return raw JSON text."""
-        await self._maybe_prime_cache()
         image_bytes, scale_ratio = await asyncio.to_thread(_optimize_screenshot, Path(screenshot_path))
         self._last_perception_scale_ratio = scale_ratio
         payload = self._build_perception_payload(prompt=prompt, image_bytes=image_bytes, mime_type="image/jpeg")
@@ -145,7 +137,6 @@ class GeminiHttpClient(GeminiClient):
 
     async def generate_policy(self, prompt: str) -> str:
         """Send the policy prompt to Gemini and return raw JSON text."""
-        await self._maybe_prime_cache()
         payload = self._build_text_payload(prompt=prompt)
         return await self._post_json_payload(self._with_thinking(payload), request_kind="text")
 
@@ -184,90 +175,6 @@ class GeminiHttpClient(GeminiClient):
         self._vertex_credentials.refresh(req)
         return self._vertex_credentials.token
 
-    async def _maybe_prime_cache(self) -> None:
-        """Prime the prompt cache on first generate_* call. No-op if already
-        primed, no static prompt was supplied, or we're on the public API."""
-        if self._cache_primed or not self._cacheable_system_prompt:
-            return
-        self._cache_primed = True  # set first so a failure doesn't keep retrying
-        await self.try_enable_prompt_cache(self._cacheable_system_prompt)
-
-    async def try_enable_prompt_cache(self, system_prompt: str, ttl: str = "7200s") -> bool:
-        """Best-effort prompt caching. Returns True if a cache was created.
-
-        Behavior:
-        - Vertex AI: creates a cache (Vertex supports small minimums). Returns True.
-        - Public Gemini API: no-op (the public API requires >=32k tokens and our
-          prompt prefixes don't qualify). Returns False with an info-level log.
-        - Cache already enabled: returns True without re-creating.
-        - Any failure: returns False; the error is logged but not raised so callers
-          can continue without caching.
-        """
-        if self.cached_content_name:
-            return True
-        if not self.use_vertex:
-            logger.info(
-                "Prompt cache not enabled: public Gemini API requires >=32k tokens. "
-                "Set OPERON_USE_VERTEX=true and VERTEX_PROJECT to enable caching.",
-            )
-            return False
-        try:
-            await self.create_cache(system_prompt, ttl=ttl)
-            return True
-        except Exception as exc:
-            logger.warning("Prompt cache creation failed (continuing without): %s", exc)
-            return False
-
-    async def create_cache(self, system_prompt: str, ttl: str = "7200s") -> str:
-        """Create a Gemini cached content resource and store its name on this client.
-
-        Subsequent generate_* calls will automatically reference the cache,
-        cutting input token costs by ~90% for repeated requests with the same
-        static context. Requires the model to support caching (>=32k tokens
-        for Developer API; Vertex AI supports smaller minimums).
-
-        Returns the cache resource name (e.g. 'cachedContents/abc123').
-        """
-        if self.use_vertex:
-            token = await asyncio.to_thread(self._vertex_auth_header)
-            url = (
-                f"https://{self.vertex_location}-aiplatform.googleapis.com/v1"
-                f"/projects/{self.vertex_project}/locations/{self.vertex_location}"
-                f"/cachedContents"
-            )
-            auth_headers = {"Authorization": f"Bearer {token}"}
-            model_ref = f"projects/{self.vertex_project}/locations/{self.vertex_location}/publishers/google/models/{self.model}"
-        else:
-            api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise GeminiClientError("Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured.")
-            url = "https://generativelanguage.googleapis.com/v1beta/cachedContents"
-            # Header rather than ?key= so the key never lands in a logged URL.
-            auth_headers = {"x-goog-api-key": api_key}
-            model_ref = f"models/{self.model}"
-
-        body = {
-            "model": model_ref,
-            "systemInstruction": {"parts": [{"text": system_prompt}]},
-            "contents": [],
-            "ttl": ttl,
-        }
-        client = await self._get_client()
-        response = await client.post(
-            url,
-            content=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json", **auth_headers},
-        )
-        if response.status_code not in (200, 201):
-            raise GeminiClientError(f"Cache creation failed {response.status_code}: {response.text}")
-        data = response.json()
-        name = data.get("name", "")
-        if not name:
-            raise GeminiClientError(f"Cache creation response missing 'name': {data}")
-        self.cached_content_name = name
-        logger.info("Context cache created: %s  ttl=%s", name, ttl)
-        return name
-
     async def _post_json_payload(self, payload: dict[str, Any], *, request_kind: str) -> str:
         if self.use_vertex:
             token = await asyncio.to_thread(self._vertex_auth_header)
@@ -279,9 +186,6 @@ class GeminiHttpClient(GeminiClient):
                 raise GeminiClientError("Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured.")
             url = f"{self.api_base_url}/{self.model}:generateContent"
             auth_headers = {"x-goog-api-key": api_key}
-
-        if self.cached_content_name:
-            payload = {**payload, "cachedContent": self.cached_content_name}
 
         client = await self._get_client()
         attempts = self.max_retries + 1

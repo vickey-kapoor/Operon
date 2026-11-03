@@ -983,7 +983,7 @@ class DesktopExecutor(Executor):
             return self._fail(action, "batch requires actions", FailureCategory.EXECUTION_ERROR)
         completed: list[str] = []
         last_artifact_path: str | None = None
-        for child_action in action.actions:
+        for index, child_action in enumerate(action.actions):
             result = await self.execute(child_action)
             completed.append(f"{child_action.action_type.value}:{'ok' if result.success else 'failed'}")
             if not result.success:
@@ -995,6 +995,7 @@ class DesktopExecutor(Executor):
                     execution_trace=result.execution_trace,
                     failure_category=result.failure_category,
                     failure_stage=result.failure_stage,
+                    batch_failed_index=index,
                 )
             last_artifact_path = result.artifact_path or last_artifact_path
         return self._ok(action, f"Executed batch: {', '.join(completed)}", last_artifact_path)

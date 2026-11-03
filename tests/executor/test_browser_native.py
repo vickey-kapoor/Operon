@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from operon.executor.browser_native import NativeBrowserExecutor, _BrowserSession
+from operon.models.common import FailureCategory
 from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
 
@@ -792,10 +793,9 @@ async def test_aclose_is_noop_when_no_persistent_browser(
     [
         (ActionType.DOUBLE_CLICK, {"click_count": 2}),
         (ActionType.TRIPLE_CLICK, {"click_count": 3}),
-        (ActionType.RIGHT_CLICK, {"button": "right"}),
     ],
 )
-async def test_multi_and_right_clicks_run_as_the_model_asked(tmp_path: Path, action_type, click_kwargs) -> None:
+async def test_multi_clicks_run_as_the_model_asked(tmp_path: Path, action_type, click_kwargs) -> None:
     mouse = SimpleNamespace(click=AsyncMock())
     page = SimpleNamespace(mouse=mouse, wait_for_load_state=AsyncMock())
     executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
@@ -834,3 +834,97 @@ async def test_batch_child_check_stops_a_batch_before_a_blocked_child(tmp_path: 
 
     assert ran == ["click"]
     assert result.success is False and "page left the allowlist" in result.detail
+    assert result.batch_failed_index == 1
+
+
+def _png(draw_menu: bool = False) -> bytes:
+    import io
+
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (400, 300), "white")
+    if draw_menu:
+        ImageDraw.Draw(image).rectangle((120, 45, 260, 200), fill="#dddddd", outline="black")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _right_click_executor(tmp_path: Path, screens: list[bytes]):
+    mouse = SimpleNamespace(click=AsyncMock(), move=AsyncMock())
+    page = SimpleNamespace(mouse=mouse, screenshot=AsyncMock(side_effect=screens), wait_for_load_state=AsyncMock())
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_page = AsyncMock(return_value=page)
+    executor._capture_after = AsyncMock(return_value=str(tmp_path / "after.png"))
+    return executor, mouse
+
+
+@pytest.mark.asyncio
+async def test_a_right_click_that_opens_a_page_menu_succeeds(tmp_path: Path) -> None:
+    executor, mouse = _right_click_executor(tmp_path, [_png(), _png(draw_menu=True)])
+
+    result = await executor.execute(AgentAction(action_type=ActionType.RIGHT_CLICK, x=120, y=45))
+
+    assert result.success is True
+    mouse.click.assert_awaited_once_with(120, 45, button="right")
+
+
+@pytest.mark.asyncio
+async def test_a_right_click_that_shows_nothing_says_the_native_menu_is_invisible(tmp_path: Path) -> None:
+    """Chromium's own context menu never appears in page screenshots; calling that a
+    success left the model acting against a menu it could not see."""
+    executor, _ = _right_click_executor(tmp_path, [_png(), _png()])
+
+    result = await executor.execute(AgentAction(action_type=ActionType.RIGHT_CLICK, x=120, y=45))
+
+    assert result.success is False
+    assert result.failure_category is FailureCategory.CLICK_NO_EFFECT
+    assert "not visible in screenshots" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_a_failed_batch_names_the_action_it_stopped_on(tmp_path: Path) -> None:
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    ok = SimpleNamespace(success=True, artifact_path=None)
+    executor.execute = AsyncMock(
+        side_effect=[
+            ok,
+            ExecutedAction(
+                action=AgentAction(action_type=ActionType.PRESS_KEY, key="Enter"), success=False, detail="no page"
+            ),
+        ]
+    )
+    batch = AgentAction(
+        action_type=ActionType.BATCH,
+        actions=[
+            AgentAction(action_type=ActionType.TYPE, text="hello", x=5, y=5),
+            AgentAction(action_type=ActionType.PRESS_KEY, key="Enter"),
+        ],
+    )
+
+    result = await executor._execute_batch(batch)
+
+    assert result.success is False
+    assert result.batch_failed_index == 1
+
+
+@pytest.mark.asyncio
+async def test_a_right_click_hovers_before_its_first_screenshot(tmp_path: Path) -> None:
+    """A hover highlight under the pointer must already be in the 'before' screen, or
+    it is mistaken for a menu and an invisible native menu goes unreported."""
+    executor, mouse = _right_click_executor(tmp_path, [_png(), _png()])
+    page = await executor._current_page()
+    order: list[str] = []
+    mouse.move.side_effect = lambda *a, **k: order.append("move")
+    screenshot = page.screenshot.side_effect
+
+    async def tracked_screenshot(**kwargs):
+        order.append("screenshot")
+        return next(screenshot)
+
+    page.screenshot = AsyncMock(side_effect=tracked_screenshot)
+    screenshot = iter([_png(), _png()])
+
+    await executor.execute(AgentAction(action_type=ActionType.RIGHT_CLICK, x=120, y=45))
+
+    assert order[:2] == ["move", "screenshot"]

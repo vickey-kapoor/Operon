@@ -1763,7 +1763,12 @@ class AgentLoop:
         self._artifacts.persist_step_timing(run_id, step_index, stage_timings)
 
     def _inject_stagnation_hint(self, state) -> None:
-        """If the same subgoal persists for 3+ steps without progress, inject a hint."""
+        """If the same subgoal persists for 3+ steps without progress, inject a hint.
+
+        Not under the thin harness: the model sees every screen itself, and the hint
+        names a stop action Claude computer use does not have."""
+        if self.thin_harness:
+            return
         ps = state.progress_state
         if ps.no_progress_streak >= 3 and hasattr(self.perception_service, "add_advisory_hints"):
             hint = (
@@ -1772,7 +1777,8 @@ class AgentLoop:
                 "Try a DIFFERENT action or update your subgoal. "
                 "If the task is already complete, use the stop action."
             )
-            self.perception_service.add_advisory_hints([hint], source="no_progress")
+            # Scoped to this run: an unscoped hint can surface in another run's turn.
+            self.perception_service.add_advisory_hints([hint], source="no_progress", run_id=state.run_id)
 
     def _sync_progress_state_with_perception(self, state, perception) -> None:
         self._progress.sync_with_perception(state, perception)

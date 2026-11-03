@@ -25,7 +25,7 @@ the result. No DOM, no selectors, no accessibility tree.
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages and native Windows apps.
 - **Claude or Gemini.** Claude computer use is the default when an Anthropic key is set;
-  Gemini is fully supported and serves as the fallback.
+  Gemini is fully supported, and is the fallback when Claude runs with the full harness.
 - **A thin harness for strong models.** Claude makes every decision and checks its own
   result once at the end; Gemini gets rules, guards and recovery around it.
 - **Safety around the loop.** A file guard and step budget on every run, plus an optional

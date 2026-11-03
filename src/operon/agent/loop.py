@@ -461,6 +461,7 @@ class AgentLoop:
                     ),
                 )
             })
+            self._note_not_executed(record.run_id, "repeated failures at the same point")
             return await self._pause_for_user(
                 record=record,
                 state=state,
@@ -483,6 +484,7 @@ class AgentLoop:
             gate_decision = decision.model_copy(update={
                 "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
             })
+            self._note_not_executed(record.run_id, gate_text)
             return await self._pause_for_user(
                 record=record,
                 state=state,
@@ -853,6 +855,17 @@ class AgentLoop:
         and target name the trust gate judges — not coordinates, which shift between
         perceptions of the same screen."""
         return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
+
+    def _note_not_executed(self, run_id: str, reason: str) -> None:
+        """Tell the policy a gate stopped its decision before it ran, so a backend
+        that answers the model's tool calls does not report it as done."""
+        note = getattr(self.policy_service, "note_not_executed", None)
+        if note is None:
+            return
+        try:
+            note(run_id, reason)
+        except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
+            logger.warning("note_not_executed failed for run %s: %s", run_id[:8], exc)
 
     async def _pause_for_user(
         self,

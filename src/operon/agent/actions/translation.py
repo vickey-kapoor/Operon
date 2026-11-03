@@ -272,12 +272,10 @@ def normalize_claude_computer_calls(
                 "press_enter": False,
             }
             previous = actions[-1] if actions else None
-            if previous is not None and previous["action_type"] == "triple_click":
-                # Triple-click selects the field's text and typing replaces it: one
-                # atomic TYPE that clears first, not a click followed by a type.
-                actions.pop()
-                typed.update(x=previous["x"], y=previous["y"], clear_before_typing=True)
-            elif previous is not None and previous["action_type"] == "click":
+            # A triple-click is left as its own action: typing without coordinates
+            # replaces exactly the line or paragraph it selected. Merging it into a
+            # clearing TYPE would click once and Ctrl+A, wiping the whole field.
+            if previous is not None and previous["action_type"] == "click":
                 # Focus and type in one atomic TYPE rather than a CLICK then a TYPE.
                 actions.pop()
                 typed.update(x=previous["x"], y=previous["y"])

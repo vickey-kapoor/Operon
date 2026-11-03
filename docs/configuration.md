@@ -9,7 +9,7 @@ it to `.env` to start.
 - `ANTHROPIC_API_KEY` makes Claude computer use the browser backend, running the thin
   harness. Set `OPERON_DESKTOP_BACKEND=claude_computer_use` to use Claude on the desktop too.
 - `GEMINI_API_KEY` runs the Gemini backends: the browser backend when there is no Anthropic
-  key, the browser fallback, and the default desktop backend. The benchmark judge also uses
+  key, the browser fallback (full harness only), and the default desktop backend. The benchmark judge also uses
   it. The Gemini JSON backends also accept `GOOGLE_API_KEY`; Gemini Computer Use reads
   `GEMINI_API_KEY` only.
 
@@ -40,7 +40,7 @@ the details.
 | `OPERON_ALLOW_UNAUTHENTICATED` | `false` | With `API_KEYS` unset, `true` turns authentication off. Only safe on a throwaway machine, since the API can drive a real browser/desktop. |
 | `OPERON_ALLOWED_HOSTS` | unset | Extra host names the API answers to. Loopback names are always allowed; any other `Host` gets 400, which blocks DNS rebinding. |
 | `OPERON_BROWSER_BACKEND` | `claude_computer_use` with `ANTHROPIC_API_KEY`, else `computer_use` | `claude_computer_use` (Claude), `computer_use` (Gemini) or `json` |
-| `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend |
+| `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend. Ignored under the thin harness, so a Claude error ends the run |
 | `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend |
 | `OPERON_BROWSER_MODEL` | `gemini-3.5-flash` | Browser primary model |
 | `OPERON_BROWSER_THINKING` | `low` | Computer Use thinking level (Gemini 3) |

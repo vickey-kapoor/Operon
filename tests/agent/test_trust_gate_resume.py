@@ -103,6 +103,18 @@ async def test_resume_approves_the_paused_action_once(monkeypatch: pytest.Monkey
     assert state.status is not RunStatus.WAITING_FOR_USER
 
 
+async def test_a_gate_pause_tells_the_policy_its_action_did_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without this the Claude backend answered the blocked call 'OK' on resume, so
+    Claude never proposed it again and the approved action never ran."""
+    loop, _, _ = _loop(monkeypatch, [PURCHASE])
+    notes: list[tuple[str, str]] = []
+    loop.policy_service.note_not_executed = lambda run_id, reason: notes.append((run_id, reason))
+
+    await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert len(notes) == 1 and notes[0][0] == "run-1" and notes[0][1]
+
+
 async def test_approval_is_single_use(monkeypatch: pytest.MonkeyPatch) -> None:
     loop, execute, state = _loop(monkeypatch, [PURCHASE, PURCHASE, PURCHASE])
 

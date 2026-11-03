@@ -61,6 +61,9 @@ class _ConversationState:
     proposed_action_types: frozenset[ActionType] = frozenset()
     # Open calls naming a tool the executor doesn't have: answered with an error, never run.
     unknown_call_ids: frozenset[str] = frozenset()
+    # Set when a gate paused the run before the open calls ran: the next answer
+    # reports them as not executed instead of "OK".
+    not_executed_reason: str | None = None
 
 
 def encode_screenshot(path: Path, max_long_edge: int = _MAX_LONG_EDGE) -> tuple[str, str, int, int]:
@@ -125,6 +128,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         conversation = self._conversations.setdefault(state.run_id, _ConversationState())
         open_calls, acknowledged = list(conversation.pending_calls), conversation.acknowledged_actions
         history_length = len(conversation.messages)
+        not_executed_reason = conversation.not_executed_reason
         image, media_type, sent_width, sent_height = encode_screenshot(Path(screenshot.artifact_path))
         user_message = await self._next_user_message(
             conversation, state=state, image=image, media_type=media_type
@@ -141,6 +145,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 # Leave the conversation as it was so a later turn can answer the same calls.
                 del conversation.messages[history_length:]
                 conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
+                conversation.not_executed_reason = not_executed_reason
                 raise BackendCompatibilityError(str(exc)) from exc
             if isinstance(usage := self.client.latest_usage(), ModelUsage):
                 usages.append(usage)
@@ -149,6 +154,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
             if response.get("stop_reason") == "refusal":
                 del conversation.messages[history_length:]
                 conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
+                conversation.not_executed_reason = not_executed_reason
                 details = response.get("stop_details") or {}
                 raise BackendCompatibilityError(f"Claude declined the turn ({details.get('category') or 'refusal'}).")
 
@@ -282,6 +288,11 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._advisory_hints.pop(run_id, None)
 
+    def note_not_executed(self, run_id: str, reason: str) -> None:
+        conversation = self._conversations.get(run_id)
+        if conversation is not None and conversation.pending_calls:
+            conversation.not_executed_reason = reason.strip()[:300] or "blocked by a gate"
+
     async def _next_user_message(
         self,
         conversation: _ConversationState,
@@ -312,7 +323,16 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         # retry) arrives before the action is recorded, so it reports success
         # with the current screen.
         error = None
-        if len(state.action_history) > conversation.acknowledged_actions:
+        gated = conversation.not_executed_reason is not None
+        if gated:
+            # A gate paused the run before these calls ran. Say so, so Claude proposes
+            # the action again once the human has looked; an approval then lets it run.
+            error = (
+                f"Not executed: the run paused for a human before this action ran "
+                f"({conversation.not_executed_reason}). Check the screen and propose the next action again."
+            )
+            conversation.not_executed_reason = None
+        elif len(state.action_history) > conversation.acknowledged_actions:
             executed = state.action_history[-1]
             ran = executed.action.action_type
             if conversation.proposed_action_types and ran not in conversation.proposed_action_types:
@@ -338,7 +358,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 # The batch ran as one action; report the failure on its first call
                 # and mark the rest as skipped, as the toolset expects.
                 result["is_error"] = True
-                result["content"] = f"Error: {error}" if call["id"] == runnable_ids[0] else _NOT_EXECUTED
+                result["content"] = f"Error: {error}" if gated or call["id"] == runnable_ids[0] else _NOT_EXECUTED
             elif call.get("name") == "screenshot":
                 result["content"] = [image_block]
             else:

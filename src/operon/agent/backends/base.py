@@ -38,6 +38,11 @@ class AgentBackend(ABC):
         """Drop any queued advisory hints. Optional hook."""
         return None
 
+    def note_not_executed(self, run_id: str, reason: str) -> None:
+        """The last decision was stopped by a gate before it ran. Optional hook for
+        backends that answer the model's calls with their outcome."""
+        return None
+
     def supports_resampling(self, run_id: str = "") -> bool:
         """Whether a second ``choose_action`` for the same step yields a fresh
         decision. Best-of-N sampling needs it; backends that only replay a

@@ -206,19 +206,27 @@ def test_the_profile_reaches_the_loop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_check_that_cannot_run_takes_the_model_at_its_word(tmp_path) -> None:
-    """A failing check used to reject every claim, so runs went in circles to the step limit."""
+async def test_a_check_that_cannot_run_ends_the_run_unverified(tmp_path) -> None:
+    """Rejecting sent runs in circles to the step limit; accepting reported unchecked
+    claims as successes. The run stops, but not as a success."""
     hints: list[tuple[str, str]] = []
     client = Mock(generate_judgement=AsyncMock(side_effect=AnthropicClientError("Anthropic HTTP error 400")))
     verifier = FinalCheckVerifier(client, on_rejected=lambda run, hint: hints.append((run, hint)))
     stop = AgentAction(action_type=ActionType.STOP)
+    state = _state(tmp_path)
 
-    result = await verifier.verify(_state(tmp_path), _decision(stop, "Done."), _executed(stop))
+    result = await verifier.verify(state, _decision(stop, "Done."), _executed(stop))
 
-    assert result.status is VerificationStatus.SUCCESS
-    assert result.stop_reason is StopReason.TASK_COMPLETED
+    assert result.status is VerificationStatus.UNCERTAIN
+    assert result.stop_condition_met is True
+    assert result.stop_reason is StopReason.COMPLETION_UNVERIFIED
+    assert result.stop_reason not in AgentLoop.SUCCESS_STOP_REASONS
     assert "400" in result.critic_fallback_reason
     assert hints == []
+
+    recovery = await ThinRecovery().recover(state, _decision(stop), _executed(stop), result)
+    assert recovery.strategy is RecoveryStrategy.STOP
+    assert recovery.stop_reason is StopReason.COMPLETION_UNVERIFIED
 
 
 @pytest.mark.asyncio

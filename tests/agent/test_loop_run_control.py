@@ -53,13 +53,15 @@ async def test_concurrent_steps_on_one_run_do_not_interleave() -> None:
     assert timeline == ["start:a", "end:a", "start:a", "end:a"]
 
 
-async def test_steps_on_different_runs_still_overlap() -> None:
+async def test_steps_on_different_runs_take_turns_on_the_executor() -> None:
+    """The executor has one current run that capture and execute read, so a step of
+    run B must not start while a step of run A is using it."""
     loop, timeline = _bare_loop(), []
     await _record_steps(loop, timeline)
 
     await asyncio.gather(loop.step_run(StepRequest(run_id="a")), loop.step_run(StepRequest(run_id="b")))
 
-    assert timeline[:2] == ["start:a", "start:b"]
+    assert timeline == ["start:a", "end:a", "start:b", "end:b"]
 
 
 async def test_run_locks_are_released_after_steps() -> None:

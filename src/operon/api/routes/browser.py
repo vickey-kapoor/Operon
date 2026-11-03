@@ -155,10 +155,8 @@ async def stop_run_by_id(run_id: str) -> dict:
 async def pause_run(run_id: str) -> dict:
     """Pause an active browser run by transitioning it to waiting_for_user."""
     validate_run_id(run_id)
-    run_store = get_agent_loop().run_store
-    run = await run_store.get_run(run_id)
-    if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-    if run.status == RunStatus.RUNNING:
-        run = await run_store.set_status(run_id, RunStatus.WAITING_FOR_USER)
+    try:
+        run = await get_agent_loop().pause_run(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found") from exc
     return {"run_id": run_id, "status": run.status.value}

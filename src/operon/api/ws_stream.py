@@ -142,7 +142,17 @@ async def _handle_control(msg: dict) -> None:
         publish_event({"type": "control_ack", "action": "set_confidence_threshold", "threshold": threshold})
 
     elif msg_type == "pause":
-        publish_event({"type": "control_ack", "action": "pause"})
+        # Pause the active run for real: the auto-run loop stops at the next step
+        # boundary, and a step in flight ends paused instead of RUNNING.
+        if _agent_loop is None or _active_run_id is None:
+            publish_event({"type": "control_ack", "action": "pause", "error": "no active run"})
+            return
+        try:
+            run = await _agent_loop.pause_run(_active_run_id)
+        except Exception as exc:
+            publish_event({"type": "control_ack", "action": "pause", "error": str(exc)})
+            return
+        publish_event({"type": "control_ack", "action": "pause", "status": run.status.value})
 
     elif msg_type == "resume":
         # Resume a HITL-paused run from the UI "Proceed" button.

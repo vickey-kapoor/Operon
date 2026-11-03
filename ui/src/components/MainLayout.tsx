@@ -38,13 +38,14 @@ function useAgentSync(
   const setConfidenceScore = useAgentStore((s) => s.setConfidenceScore);
   const setPendingDecision = useAgentStore((s) => s.setPendingDecision);
 
-  // Track how many events we have already processed to avoid reprocessing on re-render.
-  const processedRef = useRef(0);
+  // The last event seq already processed. The hook trims its list to 300 events,
+  // so the list's length stops growing; the seq keeps counting.
+  const processedSeqRef = useRef(0);
 
   // AGENT_UPDATE events → store: run_started, step, run_completed.
   useEffect(() => {
-    const newEvents = events.slice(processedRef.current);
-    processedRef.current = events.length;
+    const newEvents = events.filter((event) => event.seq > processedSeqRef.current);
+    if (events.length > 0) processedSeqRef.current = events[events.length - 1].seq;
 
     for (const event of newEvents) {
       if (event.type === "run_started") {

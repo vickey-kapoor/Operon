@@ -46,9 +46,12 @@ requires_headed_integration = pytest.mark.skipif(
 
 def _create_temp_upload_file() -> Path:
     """Create a small temp file to upload during the test."""
-    tmp = Path(tempfile.mktemp(suffix=".txt", prefix="operon_upload_test_"))
-    tmp.write_text("operon upload integration test payload\n")
-    return tmp
+    # NamedTemporaryFile creates the file atomically, unlike mktemp's bare name.
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".txt", prefix="operon_upload_test_", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write("operon upload integration test payload\n")
+    return Path(handle.name)
 
 
 def _open_windows_file_dialog_async() -> None:
@@ -137,9 +140,11 @@ _UPLOAD_HTML = """<!DOCTYPE html>
 
 
 def _write_upload_html() -> Path:
-    tmp = Path(tempfile.mktemp(suffix=".html", prefix="operon_upload_page_"))
-    tmp.write_text(_UPLOAD_HTML, encoding="utf-8")
-    return tmp
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".html", prefix="operon_upload_page_", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(_UPLOAD_HTML)
+    return Path(handle.name)
 
 
 @requires_headed_integration

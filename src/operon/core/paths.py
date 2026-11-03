@@ -12,8 +12,8 @@ def _env_path(name: str, default: Path) -> Path:
     A blank value (``OPERON_RUNS_ROOT=``) would otherwise become ``Path("")``,
     which silently means the current working directory.
     """
-    value = os.getenv(name, "").strip()
-    return Path(value) if value else default
+    value = os.getenv(name, "")
+    return Path(value) if value.strip() else default
 
 
 def project_root() -> Path:

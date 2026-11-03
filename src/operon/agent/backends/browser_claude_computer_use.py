@@ -130,7 +130,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         conversation = self._conversations.setdefault(state.run_id, _ConversationState())
         open_calls, acknowledged = list(conversation.pending_calls), conversation.acknowledged_actions
         history_length = len(conversation.messages)
-        open_spans = dict(conversation.call_spans)
+        open_spans, open_unknown = dict(conversation.call_spans), conversation.unknown_call_ids
         not_executed_reason = conversation.not_executed_reason
         image, media_type, sent_width, sent_height = encode_screenshot(Path(screenshot.artifact_path))
         user_message = await self._next_user_message(
@@ -148,7 +148,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 # Leave the conversation as it was so a later turn can answer the same calls.
                 del conversation.messages[history_length:]
                 conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
-                conversation.call_spans = open_spans
+                conversation.call_spans, conversation.unknown_call_ids = open_spans, open_unknown
                 conversation.not_executed_reason = not_executed_reason
                 raise BackendCompatibilityError(str(exc)) from exc
             if isinstance(usage := self.client.latest_usage(), ModelUsage):
@@ -158,7 +158,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
             if response.get("stop_reason") == "refusal":
                 del conversation.messages[history_length:]
                 conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
-                conversation.call_spans = open_spans
+                conversation.call_spans, conversation.unknown_call_ids = open_spans, open_unknown
                 conversation.not_executed_reason = not_executed_reason
                 details = response.get("stop_details") or {}
                 raise BackendCompatibilityError(f"Claude declined the turn ({details.get('category') or 'refusal'}).")

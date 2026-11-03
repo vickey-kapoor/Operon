@@ -212,6 +212,44 @@ async def test_a_failed_batch_with_an_invented_tool_still_reports_each_call(tmp_
     assert results["t3"]["is_error"] and "page closed" in results["t3"]["content"]
     assert results["t4"]["is_error"] and results["t4"]["content"].startswith("Not executed")
 
+async def test_a_failed_request_keeps_the_invented_tool_calls_for_the_next_answer(tmp_path: Path) -> None:
+    """A failed request rolls the conversation back; without the unknown-call ids the
+    next answer looked an invented call up in the batch spans and crashed."""
+    client = ScriptedClient(
+        [
+            _reply(
+                _call("key", "t1", text="Tab"),
+                _call("navigate_placeholder", "t2", url="https://example.com"),
+                _call("key", "t3", text="Return"),
+            ),
+            AnthropicClientError("Anthropic HTTP error 529: overloaded"),
+            _reply(_call("screenshot", "t4")),
+        ]
+    )
+    backend = _backend(client)
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+    failed = ExecutedAction(
+        action=AgentAction(action_type=ActionType.BATCH, actions=[
+            AgentAction(action_type=ActionType.PRESS_KEY, key="Tab"),
+            AgentAction(action_type=ActionType.PRESS_KEY, key="Enter"),
+        ]),
+        success=False,
+        detail="Batch failed on press_key: page closed",
+        batch_failed_index=1,
+    )
+    state = _state()
+    state.action_history.append(failed)
+
+    with pytest.raises(BackendCompatibilityError):
+        await backend.perceive(_frame(tmp_path, "b.png"), state)
+    state.action_history.append(failed)  # still unanswered on the retry
+    await backend.perceive(_frame(tmp_path, "c.png"), state)
+
+    results = {r["tool_use_id"]: r for r in client.requests[2][-1]["content"] if r["type"] == "tool_result"}
+    assert results["t2"]["is_error"] and "no navigate_placeholder tool" in results["t2"]["content"]
+    assert results["t3"]["is_error"] and "page closed" in results["t3"]["content"]
+
+
 def test_each_call_maps_to_the_batch_actions_it_became() -> None:
     from operon.agent.actions.translation import translate_claude_computer_calls
 

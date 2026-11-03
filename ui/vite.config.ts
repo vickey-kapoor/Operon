@@ -9,7 +9,9 @@ import react from "@vitejs/plugin-react";
 function localApiKey(mode: string): string {
   const env = loadEnv(mode, process.cwd(), "VITE_");
   if (env.VITE_OPERON_API_KEY) return env.VITE_OPERON_API_KEY;
-  const runtimeRoot = process.env.OPERON_RUNTIME_ROOT ?? resolve(__dirname, "..", ".var");
+  // Match operon.core.paths: a blank override means "use the default".
+  const override = process.env.OPERON_RUNTIME_ROOT;
+  const runtimeRoot = override?.trim() ? override : resolve(__dirname, "..", ".var");
   try {
     return readFileSync(resolve(runtimeRoot, "api-key"), "utf-8").trim();
   } catch {

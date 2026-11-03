@@ -412,6 +412,10 @@ class NativeBrowserExecutor(Executor):
         success left the model acting against a menu it could not see, so an
         unchanged screen is reported as a failure that says why.
         """
+        # Hover first and let hover effects settle, so a highlight under the pointer
+        # is not mistaken for a menu.
+        await page.mouse.move(*point)
+        await asyncio.sleep(0.15)
         before = await page.screenshot(type="png")
         await page.mouse.click(*point, button="right")
         await asyncio.sleep(self._action_delay(ActionType.RIGHT_CLICK))

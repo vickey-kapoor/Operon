@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from operon.agent.actions.grounding import DeterministicGrounder, element_center
 from operon.models.common import FailureCategory, LoopStage
 from operon.models.execution import ExecutionReresolutionTrace
-from operon.models.policy import AgentAction
+from operon.models.policy import ActionType, AgentAction
 
 
 @dataclass(slots=True)
@@ -50,7 +50,19 @@ _RERESOLVE_CATEGORIES: frozenset[FailureCategory] = frozenset({
 
 
 def should_retry(executed_action) -> bool:
-    return executed_action.failure_category in _RETRYABLE_CATEGORIES
+    if executed_action.failure_category not in _RETRYABLE_CATEGORIES:
+        return False
+    # A retry re-runs the whole action. A batch that failed after its first child
+    # already typed, clicked or submitted those children; running them again would
+    # repeat them, so it goes back to the model instead.
+    if (getattr(executed_action, "batch_failed_index", None) or 0) > 0:
+        return False
+    # A right-click whose menu is invisible to screenshots shows nothing again on a
+    # retry; the failure tells the model what to do instead.
+    action = getattr(executed_action, "action", None)
+    if getattr(action, "action_type", None) is ActionType.RIGHT_CLICK:
+        return False
+    return True
 
 
 def refresh_action_coordinates(action, perception):

@@ -851,7 +851,7 @@ def _png(draw_menu: bool = False) -> bytes:
 
 
 def _right_click_executor(tmp_path: Path, screens: list[bytes]):
-    mouse = SimpleNamespace(click=AsyncMock())
+    mouse = SimpleNamespace(click=AsyncMock(), move=AsyncMock())
     page = SimpleNamespace(mouse=mouse, screenshot=AsyncMock(side_effect=screens), wait_for_load_state=AsyncMock())
     executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
     executor._current_page = AsyncMock(return_value=page)
@@ -906,3 +906,25 @@ async def test_a_failed_batch_names_the_action_it_stopped_on(tmp_path: Path) -> 
 
     assert result.success is False
     assert result.batch_failed_index == 1
+
+
+@pytest.mark.asyncio
+async def test_a_right_click_hovers_before_its_first_screenshot(tmp_path: Path) -> None:
+    """A hover highlight under the pointer must already be in the 'before' screen, or
+    it is mistaken for a menu and an invisible native menu goes unreported."""
+    executor, mouse = _right_click_executor(tmp_path, [_png(), _png()])
+    page = await executor._current_page()
+    order: list[str] = []
+    mouse.move.side_effect = lambda *a, **k: order.append("move")
+    screenshot = page.screenshot.side_effect
+
+    async def tracked_screenshot(**kwargs):
+        order.append("screenshot")
+        return next(screenshot)
+
+    page.screenshot = AsyncMock(side_effect=tracked_screenshot)
+    screenshot = iter([_png(), _png()])
+
+    await executor.execute(AgentAction(action_type=ActionType.RIGHT_CLICK, x=120, y=45))
+
+    assert order[:2] == ["move", "screenshot"]

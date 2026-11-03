@@ -134,6 +134,101 @@ async def test_a_failed_batch_reports_the_error_and_skips_the_rest(tmp_path: Pat
     assert any(block["type"] == "image" for block in content[2:])
 
 
+async def test_a_failed_batch_reports_each_call_by_where_it_stopped(tmp_path: Path) -> None:
+    """Steps before the failure ran. Calling them 'not executed' made Claude type
+    the same text twice or resubmit a form that went through."""
+    client = ScriptedClient(
+        [
+            _reply(
+                _call("left_click", "t1", coordinate=[10, 10]),
+                _call("type", "t2", text="hello"),
+                _call("key", "t3", text="Return"),
+                _call("key", "t4", text="Tab"),
+            ),
+            _reply(_call("screenshot", "t5")),
+        ]
+    )
+    backend = _backend(client)
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+
+    # The click merges into the TYPE: batch [type, Return, Tab], stopping on Return.
+    failed = ExecutedAction(
+        action=AgentAction(action_type=ActionType.BATCH, actions=[
+            AgentAction(action_type=ActionType.TYPE, text="hello", x=1, y=1),
+            AgentAction(action_type=ActionType.PRESS_KEY, key="Enter"),
+            AgentAction(action_type=ActionType.PRESS_KEY, key="Tab"),
+        ]),
+        success=False,
+        detail="Batch failed on press_key: page closed",
+        batch_failed_index=1,
+    )
+    state = _state()
+    state.action_history.append(failed)
+    await backend.perceive(_frame(tmp_path, "b.png"), state)
+
+    results = {r["tool_use_id"]: r for r in client.requests[1][-1]["content"] if r["type"] == "tool_result"}
+    assert results["t1"]["content"] == [{"type": "text", "text": "OK"}] and not results["t1"].get("is_error")
+    assert results["t2"]["content"] == [{"type": "text", "text": "OK"}] and not results["t2"].get("is_error")
+    assert results["t3"]["is_error"] and "page closed" in results["t3"]["content"]
+    assert results["t4"]["is_error"] and results["t4"]["content"].startswith("Not executed")
+
+
+
+async def test_a_failed_batch_with_an_invented_tool_still_reports_each_call(tmp_path: Path) -> None:
+    """A call to a tool that doesn't exist adds no batch action, so it must not shift
+    which call the failure is pinned on."""
+    client = ScriptedClient(
+        [
+            _reply(
+                _call("key", "t1", text="Tab"),
+                _call("navigate_placeholder", "t2", url="https://example.com"),
+                _call("key", "t3", text="Return"),
+                _call("key", "t4", text="Escape"),
+            ),
+            _reply(_call("screenshot", "t5")),
+        ]
+    )
+    backend = _backend(client)
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+
+    # Batch [Tab, Return, Escape] stopping on Return (index 1): t2 never became an action.
+    failed = ExecutedAction(
+        action=AgentAction(action_type=ActionType.BATCH, actions=[
+            AgentAction(action_type=ActionType.PRESS_KEY, key="Tab"),
+            AgentAction(action_type=ActionType.PRESS_KEY, key="Enter"),
+            AgentAction(action_type=ActionType.PRESS_KEY, key="Escape"),
+        ]),
+        success=False,
+        detail="Batch failed on press_key: page closed",
+        batch_failed_index=1,
+    )
+    state = _state()
+    state.action_history.append(failed)
+    await backend.perceive(_frame(tmp_path, "b.png"), state)
+
+    results = {r["tool_use_id"]: r for r in client.requests[1][-1]["content"] if r["type"] == "tool_result"}
+    assert results["t1"]["content"] == [{"type": "text", "text": "OK"}] and not results["t1"].get("is_error")
+    assert results["t2"]["is_error"] and "no navigate_placeholder tool" in results["t2"]["content"]
+    assert results["t3"]["is_error"] and "page closed" in results["t3"]["content"]
+    assert results["t4"]["is_error"] and results["t4"]["content"].startswith("Not executed")
+
+def test_each_call_maps_to_the_batch_actions_it_became() -> None:
+    from operon.agent.actions.translation import translate_claude_computer_calls
+
+    calls = [
+        {"name": "left_click", "input": {"coordinate": [1, 1]}},
+        {"name": "type", "input": {"text": "x"}},
+        {"name": "screenshot", "input": {}},
+        {"name": "key", "input": {"text": "Tab", "repeat": 3}},
+        {"name": "screenshot", "input": {}},
+    ]
+    payload, spans = translate_claude_computer_calls(calls, scale_x=1, scale_y=1, screen_width=100, screen_height=100)
+
+    assert [a["action_type"] for a in payload["actions"]] == ["type", "press_key", "press_key", "press_key"]
+    # click and type share the TYPE; each screenshot sits between actions; the key spans its presses.
+    assert spans == [(0, 1), (0, 1), (1, 1), (1, 4), (4, 4)]
+
+
 async def test_calls_a_gate_blocked_are_reported_as_not_executed(tmp_path: Path) -> None:
     client = ScriptedClient(
         [

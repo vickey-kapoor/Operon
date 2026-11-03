@@ -231,7 +231,7 @@ class NativeBrowserExecutor(Executor):
                 if point is None:
                     return self._fail(action, f"{at.value} requires x,y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
                 if at is ActionType.RIGHT_CLICK:
-                    await page.mouse.click(*point, button="right")
+                    return await self._right_click(page, action, point)
                 else:
                     await page.mouse.click(*point, click_count=2 if at is ActionType.DOUBLE_CLICK else 3)
             elif at is ActionType.HOVER:
@@ -404,6 +404,28 @@ class NativeBrowserExecutor(Executor):
         except Exception as exc:
             return self._fail(action, f"{at.value} failed: {exc}", FailureCategory.EXECUTION_ERROR)
 
+    async def _right_click(self, page, action: AgentAction, point: tuple[int, int]) -> ExecutedAction:
+        """Right-click, and fail when nothing visible appeared.
+
+        A page's own context menu shows up in the next screenshot. Chromium's native
+        menu does not: page screenshots never include it. Reporting that as a plain
+        success left the model acting against a menu it could not see, so an
+        unchanged screen is reported as a failure that says why.
+        """
+        before = await page.screenshot(type="png")
+        await page.mouse.click(*point, button="right")
+        await asyncio.sleep(self._action_delay(ActionType.RIGHT_CLICK))
+        after = await page.screenshot(type="png")
+        if not _screens_differ(before, after):
+            return self._fail(
+                action,
+                "Right-click showed nothing on the page. A native browser context menu is not "
+                "visible in screenshots; use a left-click, a keyboard shortcut or the page's own controls.",
+                FailureCategory.CLICK_NO_EFFECT,
+            )
+        after_path = await self._capture_after()
+        return self._ok(action, "Executed right_click", after_path)
+
     def _action_delay(self, action_type: ActionType) -> float:
         """Return the post-action settle delay appropriate for each action type."""
         delays = {
@@ -478,6 +500,7 @@ class NativeBrowserExecutor(Executor):
                     detail=f"Batch stopped before {child_action.action_type.value}: {blocked}",
                     artifact_path=last_artifact_path,
                     failure_category=FailureCategory.EXECUTION_ERROR,
+                    batch_failed_index=index,
                 )
             result = await self.execute(child_action)
             completed.append(f"{child_action.action_type.value}:{'ok' if result.success else 'failed'}")
@@ -490,6 +513,7 @@ class NativeBrowserExecutor(Executor):
                     execution_trace=result.execution_trace,
                     failure_category=result.failure_category,
                     failure_stage=result.failure_stage,
+                    batch_failed_index=index,
                 )
             last_artifact_path = result.artifact_path
         return self._ok(action, f"Executed batch: {', '.join(completed)}", last_artifact_path)
@@ -1097,3 +1121,22 @@ class NativeBrowserExecutor(Executor):
             failure_category=failure_category,
             failure_stage=LoopStage.EXECUTE,
         )
+
+
+# A pixel counts as changed past this intensity difference (out of 255), and the
+# screen as changed past this share of pixels. A blinking caret stays far below;
+# any menu or popover is well above.
+_PIXEL_DELTA = 16
+_CHANGED_SHARE = 0.001
+
+
+def _screens_differ(before: bytes, after: bytes) -> bool:
+    """Whether two page screenshots differ by more than a caret blink."""
+    if before == after:
+        return False
+    first = cv2.imdecode(np.frombuffer(before, np.uint8), cv2.IMREAD_GRAYSCALE)
+    second = cv2.imdecode(np.frombuffer(after, np.uint8), cv2.IMREAD_GRAYSCALE)
+    if first is None or second is None or first.shape != second.shape:
+        return True  # cannot compare: do not claim that nothing happened
+    changed = np.count_nonzero(cv2.absdiff(first, second) > _PIXEL_DELTA)
+    return changed / first.size > _CHANGED_SHARE

@@ -152,6 +152,8 @@ class AnthropicHttpClient:
         if not api_key:
             raise AnthropicClientError("ANTHROPIC_API_KEY is not configured.")
 
+        # A failed request must not leave the previous call's usage to be counted again.
+        self._last_usage = None
         payload_bytes = json.dumps(payload).encode("utf-8")
         client = await self._get_client()
         attempts = self.max_retries + 1

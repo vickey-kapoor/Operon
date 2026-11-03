@@ -36,6 +36,7 @@ from operon.models.policy import ActionType, PolicyDecision
 from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.state import AgentState
 from operon.models.verification import VerificationResult, VerificationStatus
+from operon.store.background_writer import bg_writer
 
 from .recovery import RecoveryManager
 from .service import PolicyService
@@ -180,13 +181,16 @@ class FinalCheckVerifier(VerifierService):
         )
         image, media_type, _, _ = encode_screenshot(Path(screenshot))
         earlier_images = [encode_screenshot(Path(path))[:2] for path in earlier]
+        step_dir = Path(screenshot).parent
         try:
             raw = await self.client.generate_judgement(
                 prompt, image_data=image, media_type=media_type, effort=self.effort, earlier_images=earlier_images
             )
         except AnthropicClientError as exc:
+            # A billed reply with no text (thinking used every token) still costs money.
+            self._record(step_dir, prompt, f"(no usable reply: {exc})")
             return self._unchecked(state, decision, str(exc))
-        self._write_artifacts(Path(screenshot).parent, prompt, raw)
+        self._record(step_dir, prompt, raw)
         complete, reason = _parse_verdict(raw)
         if complete:
             return VerificationResult(
@@ -240,14 +244,14 @@ class FinalCheckVerifier(VerifierService):
             critic_model_used=True,
         )
 
-    def _write_artifacts(self, step_dir: Path, prompt: str, raw: str) -> None:
+    def _record(self, step_dir: Path, prompt: str, raw: str) -> None:
+        """Queue the check's prompt and reply for the background writer and take its
+        usage. Usage is collected whatever happens to the files, so a billed call is
+        always counted, and nothing here blocks the event loop."""
         prompt_path = step_dir / "final_check_prompt.txt"
         raw_path = step_dir / "final_check_raw.txt"
-        try:
-            prompt_path.write_text(prompt, encoding="utf-8")
-            raw_path.write_text(raw, encoding="utf-8")
-        except OSError:
-            return
+        bg_writer.enqueue(prompt_path, prompt)
+        bg_writer.enqueue(raw_path, raw)
         usage_path = step_dir / "final_check_usage.json"
         self._last_debug_artifacts = ModelDebugArtifacts(
             prompt_artifact_path=str(prompt_path),

@@ -13,7 +13,7 @@ from typing import Any
 from operon.agent.actions.translation import (
     CLAUDE_COMPUTER_CALLS,
     build_policy_decision,
-    normalize_claude_computer_calls,
+    translate_claude_computer_calls,
 )
 from operon.agent.backends.base import AgentBackend
 from operon.agent.backends.fallback import BackendCompatibilityError
@@ -54,6 +54,8 @@ class _ConversationState:
     messages: list[dict[str, Any]] = field(default_factory=list)
     # tool_use blocks of the last assistant turn that still need a tool_result.
     pending_calls: list[dict[str, Any]] = field(default_factory=list)
+    # Per runnable pending call, by id: the half-open range of batch actions it maps to.
+    call_spans: dict[str, tuple[int, int]] = field(default_factory=dict)
     acknowledged_actions: int = 0
     # Action types Claude's open calls translate to (a batch and its members). A
     # deterministic rule can run something else in their place; Claude must hear
@@ -128,6 +130,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         conversation = self._conversations.setdefault(state.run_id, _ConversationState())
         open_calls, acknowledged = list(conversation.pending_calls), conversation.acknowledged_actions
         history_length = len(conversation.messages)
+        open_spans = dict(conversation.call_spans)
         not_executed_reason = conversation.not_executed_reason
         image, media_type, sent_width, sent_height = encode_screenshot(Path(screenshot.artifact_path))
         user_message = await self._next_user_message(
@@ -145,6 +148,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 # Leave the conversation as it was so a later turn can answer the same calls.
                 del conversation.messages[history_length:]
                 conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
+                conversation.call_spans = open_spans
                 conversation.not_executed_reason = not_executed_reason
                 raise BackendCompatibilityError(str(exc)) from exc
             if isinstance(usage := self.client.latest_usage(), ModelUsage):
@@ -154,6 +158,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
             if response.get("stop_reason") == "refusal":
                 del conversation.messages[history_length:]
                 conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
+                conversation.call_spans = open_spans
                 conversation.not_executed_reason = not_executed_reason
                 details = response.get("stop_details") or {}
                 raise BackendCompatibilityError(f"Claude declined the turn ({details.get('category') or 'refusal'}).")
@@ -190,6 +195,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         # answered with an error next turn; the rest of its batch still runs.
         runnable = [call for call in calls if call.get("name") in CLAUDE_COMPUTER_CALLS]
         conversation.unknown_call_ids = frozenset(call["id"] for call in calls if call not in runnable)
+        conversation.call_spans = {}
         text = " ".join(
             block["text"].strip() for block in content if block.get("type") == "text" and block.get("text", "").strip()
         )
@@ -205,13 +211,14 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         if runnable:
             scale_x = screenshot.width / sent_width if sent_width else 1.0
             scale_y = screenshot.height / sent_height if sent_height else 1.0
-            action = normalize_claude_computer_calls(
+            action, spans = translate_claude_computer_calls(
                 [{"name": call.get("name"), "input": call.get("input") or {}} for call in runnable],
                 scale_x=scale_x,
                 scale_y=scale_y,
                 screen_width=screenshot.width,
                 screen_height=screenshot.height,
             )
+            conversation.call_spans = {call["id"]: span for call, span in zip(runnable, spans, strict=True)}
             decision_payload = {
                 "action": action,
                 "rationale": text or "computer_use",
@@ -323,6 +330,9 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         # retry) arrives before the action is recorded, so it reports success
         # with the current screen.
         error = None
+        # Index of the batch action a failed batch stopped on, when the calls can be
+        # matched to the batch's actions: then each call is answered for itself.
+        failed_at: int | None = None
         gated = conversation.not_executed_reason is not None
         if gated:
             # A gate paused the run before these calls ran. Say so, so Claude proposes
@@ -340,6 +350,8 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 error = f"Not executed: the agent ran {ran.value}{detail} instead. Check the screen before going on."
             elif not executed.success:
                 error = executed.detail or "The action failed."
+                if executed.batch_failed_index is not None and conversation.call_spans:
+                    failed_at = executed.batch_failed_index
         conversation.acknowledged_actions = len(state.action_history)
 
         results: list[dict[str, Any]] = []
@@ -354,9 +366,22 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                     result["content"] = _ZOOM_NOT_RUN
                 else:
                     result["content"] = f"Error: there is no {call.get('name')} tool, so this call was not run."
+            elif failed_at is not None:
+                # Answer each call by where the batch stopped: calls whose actions all
+                # ran are OK, the call on the failing action gets the error, and the
+                # rest did not run. A wrong "did not run" makes Claude repeat a step.
+                start, end = conversation.call_spans[call["id"]]
+                if end <= failed_at:
+                    result["content"] = [{"type": "text", "text": "OK"}]
+                elif start <= failed_at:
+                    result["is_error"] = True
+                    result["content"] = f"Error: {error}"
+                else:
+                    result["is_error"] = True
+                    result["content"] = _NOT_EXECUTED
             elif error is not None:
-                # The batch ran as one action; report the failure on its first call
-                # and mark the rest as skipped, as the toolset expects.
+                # The calls cannot be matched to the batch's actions: report the
+                # failure on the first call and mark the rest as skipped.
                 result["is_error"] = True
                 result["content"] = f"Error: {error}" if gated or call["id"] == runnable_ids[0] else _NOT_EXECUTED
             elif call.get("name") == "screenshot":
@@ -366,6 +391,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
             results.append(result)
         conversation.pending_calls = []
         conversation.unknown_call_ids = frozenset()
+        conversation.call_spans = {}
 
         extra: list[dict[str, Any]] = []
         answered_with_image = error is None and any(r.get("content") == [image_block] for r in results)

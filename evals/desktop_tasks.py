@@ -1,15 +1,17 @@
 """Real desktop tasks for the live benchmark (``python -m evals.live_desktop_bench``).
 
 Each task starts from whatever is on screen (the desktop loop minimizes windows
-first) and names what the final screen must show (``check``). A judge model
-reads the run's final screenshot against it, as in the browser benchmark.
+first) and names what the final screen must show (``check``). It is graded from
+the machine's state against that, not by a judge model: each task has a check in
+``evals/desktop_state.py`` that reads the open windows, their text and files.
 
 Tasks use apps that ship with Windows, so they also run on a GitHub-hosted
 ``windows-latest`` runner. Nothing here deletes or sends anything; the one task
 that writes to disk creates a folder in the runner's Documents folder.
 
-To add a task: write the intent the way a user would, and make ``check``
-something a person could confirm from one screenshot.
+To add a task: write the intent the way a user would, make ``check`` something a
+person could confirm from one screenshot, and add its state check to
+``desktop_state.CHECKS``.
 """
 
 from __future__ import annotations

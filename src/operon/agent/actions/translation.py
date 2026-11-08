@@ -106,7 +106,7 @@ def normalize_computer_use_function_call(
         }
     # Action set of the Gemini 3.x models' built-in computer_use tool. Every call
     # carries an ``intent`` argument, which is the model's reasoning, not a target.
-    if name in {"click", "middle_click", "double_click", "right_click", "move"}:
+    if name in {"click", "middle_click", "double_click", "triple_click", "right_click", "move"}:
         action_type = {"click": "click", "middle_click": "click", "move": "hover"}.get(name, name)
         return {
             "action_type": action_type,
@@ -127,6 +127,9 @@ def normalize_computer_use_function_call(
         return {"action_type": "hotkey", "key": "+".join(keys) if isinstance(keys, list) else str(keys)}
     if name == "wait":
         return {"action_type": "wait", "wait_ms": int(float(args.get("seconds", 1)) * 1000)}
+    if name == "launch_app":
+        # Operon's custom desktop tool: the desktop environment has no navigate.
+        return {"action_type": "launch_app", "text": str(args["app"])}
     if name == "take_screenshot":
         # Nothing to do on screen; the next turn carries a fresh screenshot.
         return {"action_type": "wait", "wait_ms": 250}

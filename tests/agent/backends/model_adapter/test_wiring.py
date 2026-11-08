@@ -14,6 +14,7 @@ from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.backends.desktop_claude_computer_use import (
     DesktopClaudeComputerUseBackend,
 )
+from operon.agent.backends.desktop_computer_use import DesktopComputerUseBackend
 from operon.agent.backends.model_adapter.backend import (
     GAVE_UP_PREFIX,
     ModelAdapterBackend,
@@ -79,12 +80,34 @@ def test_native_profiles_reuse_operons_backends(monkeypatch) -> None:
     assert isinstance(build_browser_services(executor=None).policy_delegate, BrowserComputerUseBackend)
 
 
-def test_browser_only_profile_is_refused_on_the_desktop(monkeypatch) -> None:
+def _browser_only_registry(tmp_path: Path, monkeypatch) -> None:
+    registry = tmp_path / "models.yaml"
+    registry.write_text(
+        "web-only:\n  adapter: gemini_native\n  model: gemini-3.5-flash\n  environments: [browser]\n"
+        "  pricing: {input_per_mtok: 1.5, output_per_mtok: 9.0}\n"
+    )
+    monkeypatch.setenv("OPERON_MODEL_REGISTRY", str(registry))
+    monkeypatch.setenv("OPERON_MODEL_PROFILE", "web-only")
+
+
+def test_browser_only_profile_is_refused_on_the_desktop(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("OPERON_DESKTOP_BACKEND", "model")
-    monkeypatch.setenv("OPERON_MODEL_PROFILE", "gemini-computer-use")
+    _browser_only_registry(tmp_path, monkeypatch)
     with pytest.raises(ModelRegistryError, match="desktop"):
         build_desktop_services()
     assert any("does not support desktop" in error for error in validate_modes())
+
+
+def test_gemini_profile_builds_the_desktop_backend(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_DESKTOP_BACKEND", "model")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    monkeypatch.setenv("OPERON_MODEL_PROFILE", "gemini-computer-use")
+    desktop = build_desktop_services().policy_delegate
+    assert isinstance(desktop, DesktopComputerUseBackend)
+    assert desktop.client.environment == "ENVIRONMENT_DESKTOP"
+    assert [tool["name"] for tool in desktop.client.function_declarations] == ["launch_app"]
+    assert desktop.browser_runtime is None
+    assert not any("gemini" in error for error in validate_modes())
 
 
 def test_validation_names_the_missing_setting(monkeypatch) -> None:

@@ -54,8 +54,7 @@ def test_model_flag_checks_the_profile_and_the_server_settings(monkeypatch) -> N
     assert live_bench.resolve_model_profile("qwen3-vl-32b", "browser").name == "qwen3-vl-32b"
     with pytest.raises(SystemExit, match="unknown model profile"):
         live_bench.resolve_model_profile("nope", "browser")
-    with pytest.raises(SystemExit, match="does not support desktop"):
-        live_bench.resolve_model_profile("gemini-computer-use", "desktop")
+    assert live_bench.resolve_model_profile("gemini-computer-use", "desktop").name == "gemini-computer-use"
     monkeypatch.setenv("OPERON_BROWSER_BACKEND", "claude_computer_use")
     with pytest.raises(SystemExit, match="backend=model"):
         live_bench.resolve_model_profile("qwen3-vl-32b", "browser")

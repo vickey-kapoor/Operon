@@ -135,6 +135,7 @@ async def test_desktop_run_task_uses_the_desktop_routes_and_cleans_up(tmp_path, 
 
     monkeypatch.setattr(live_bench.desktop_state, "probe", probe)
     monkeypatch.setattr(live_bench.desktop_state, "prepare", lambda name: [])
+    monkeypatch.setattr(live_bench, "_run_dir", lambda run_id: tmp_path / run_id)
     async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler)) as client:
         result = await run_task(client, DESKTOP_TASKS[0], judge, timeout_s=60, approve_pauses=2, mode="desktop")
 

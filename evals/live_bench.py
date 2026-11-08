@@ -330,6 +330,16 @@ def _stop_reason(run_id: str) -> str:
     return state.get("stop_reason") or "-"
 
 
+def _save_state(run_id: str, snapshot: dict) -> None:
+    """Keep what the desktop grader saw next to the run, so a verdict can be checked."""
+    try:
+        path = _run_dir(run_id) / "desktop_state.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(snapshot, indent=1, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        print(f"  could not save the desktop state: {exc}", file=sys.stderr)
+
+
 class _Skipped(Exception):
     """The task was not run (its desktop could not be reset)."""
 
@@ -416,7 +426,9 @@ async def run_task(
                 raise desktop_state.ProbeError(reset_error)
             if not run_id or status == "error":
                 raise desktop_state.ProbeError("the run did not finish, so it was not graded")
-            goal_met, reason = desktop_state.grade(task.name, desktop_state.probe(started_at, task.name, baseline))
+            snapshot = desktop_state.probe(started_at, task.name, baseline)
+            _save_state(run_id, snapshot)
+            goal_met, reason = desktop_state.grade(task.name, snapshot)
             verdict = Verdict(goal_met, reason)
         except desktop_state.ProbeError as exc:
             verdict = Verdict(None, str(exc))
@@ -667,6 +679,7 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
 def save_final_screens(results: list[TaskResult], target: Path) -> None:
     """Copy each task's graded screenshot to ``target/<task>.png`` for upload or review.
 
+    A desktop task's grader snapshot goes to ``target/<task>.state.json``.
     A task that did not succeed also gets its whole run folder (every step's
     screenshots and model decisions) at ``target/<task>/``, so the failure can be
     traced from the report alone. A repeated task's later attempts go to ``<task>-try<n>``.
@@ -676,6 +689,9 @@ def save_final_screens(results: list[TaskResult], target: Path) -> None:
         name = r.task if r.attempt == 1 else f"{r.task}-try{r.attempt}"
         if r.final_screenshot != "-" and Path(r.final_screenshot).is_file():
             shutil.copyfile(r.final_screenshot, target / f"{name}.png")
+        state = _run_dir(r.run_id) / "desktop_state.json" if r.run_id else None
+        if state and state.is_file():
+            shutil.copyfile(state, target / f"{name}.state.json")
         if r.outcome != "success" and r.run_id and _run_dir(r.run_id).is_dir():
             shutil.copytree(_run_dir(r.run_id), target / name, dirs_exist_ok=True)
 

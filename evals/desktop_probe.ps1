@@ -21,39 +21,50 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $A = [System.Windows.Automation.AutomationElement]
 $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 
-function Get-Texts($element, [ref]$names, [ref]$selected, [ref]$texts) {
-    $stack = New-Object System.Collections.Stack
-    $stack.Push($element)
+function Get-Texts($element, [ref]$names, [ref]$selected, [ref]$texts, [ref]$stats) {
+    # Each read has its own try: one control that refuses a pattern must not hide the rest.
+    # Breadth first, so a window's tabs and headers are read before deep lists use up $MaxNodes.
+    $queue = New-Object System.Collections.Queue
+    $queue.Enqueue($element)
     $seen = 0
-    while ($stack.Count -gt 0 -and $seen -lt $MaxNodes) {
-        $node = $stack.Pop()
+    $errors = 0
+    while ($queue.Count -gt 0 -and $seen -lt $MaxNodes) {
+        $node = $queue.Dequeue()
         $seen++
+        $name = $null
         try {
             $name = $node.Current.Name
             if ($name) { $names.Value.Add($name) | Out-Null }
+        } catch { $errors++ }
+        try {
             $pattern = $null
             if ($node.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {
                 if ($pattern.Current.IsSelected -and $name) { $selected.Value.Add($name) | Out-Null }
             }
+        } catch { $errors++ }
+        try {
             $pattern = $null
             if ($node.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {
                 $text = $pattern.DocumentRange.GetText($MaxText)
                 if ($text) { $texts.Value.Add($text) | Out-Null }
             }
+        } catch { $errors++ }
+        try {
             $pattern = $null
             if ($node.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
                 $value = $pattern.Current.Value
                 if ($value) { $texts.Value.Add($value) | Out-Null }
             }
-        } catch { }
+        } catch { $errors++ }
         try {
             $child = $walker.GetFirstChild($node)
             while ($child -ne $null) {
-                $stack.Push($child)
+                $queue.Enqueue($child)
                 $child = $walker.GetNextSibling($child)
             }
-        } catch { }
+        } catch { $errors++ }
     }
+    $stats.Value = @{ walked = $seen; errors = $errors }
 }
 
 function Split-Names([string]$list) {
@@ -86,8 +97,9 @@ foreach ($w in $top) {
         $selected = New-Object System.Collections.ArrayList
         $texts = New-Object System.Collections.ArrayList
         $procName = $(if ($proc) { $proc.ProcessName } else { "" })
+        $stats = @{ walked = 0; errors = 0 }
         if (-not $offscreen -and $inspectNames -contains $procName.ToLower()) {
-            Get-Texts $w ([ref]$names) ([ref]$selected) ([ref]$texts)
+            Get-Texts $w ([ref]$names) ([ref]$selected) ([ref]$texts) ([ref]$stats)
         }
         $r = $c.BoundingRectangle
         $windows += [ordered]@{
@@ -95,6 +107,7 @@ foreach ($w in $top) {
             process = $procName; started = $started; offscreen = $offscreen
             rect = @([int]$r.Left, [int]$r.Top, [int]$r.Width, [int]$r.Height)
             names = @($names); selected = @($selected); texts = @($texts)
+            walked = $stats.walked; errors = $stats.errors
         }
     } catch { }
 }

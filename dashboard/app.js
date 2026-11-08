@@ -853,7 +853,7 @@ function entrySpend(e) {
   return e.agent + e.judge + e.gpu;
 }
 
-function monthTotals(entries) {
+function monthTotals(entries, now = new Date()) {
   const months = new Map();
   for (const e of entries) {
     const key = monthKey(e.at);
@@ -865,7 +865,6 @@ function monthTotals(entries) {
     months.set(key, m);
   }
   // Every month from the first to now, so a month with no spend still shows.
-  const now = new Date();
   const keys = [...months.keys()].sort();
   const out = [];
   if (!keys.length) return out;
@@ -992,15 +991,17 @@ function renderCostOverview(runs, entries) {
     stat("Priciest run", fmtUsd(runSpend(priciest)), `${suiteLabel(suiteId(priciest))} · ${dateFmt.format(parseStamp(priciest.started_at))}`));
 }
 
-function renderCumulative(runs) {
+// Runs and judge checks, so the line ends at the same total as the headline.
+function renderCumulative(entries) {
   let total = 0;
-  const points = runs.map((run) => {
-    total += runSpend(run);
-    return { x: parseStamp(run.started_at), y: total, run };
+  const points = [...entries].sort((a, b) => a.at - b.at).map((e) => {
+    total += entrySpend(e);
+    return { x: e.at, y: total, run: e };
   });
   lineChart(document.getElementById("ch-cumulative"), el("div"),
     [{ label: "Total spend", color: "var(--accent)", points }],
-    { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)), detail: (r) => `+${fmtUsd(runSpend(r))} · ${suiteLabel(suiteId(r))}`, title: "Total spend over time" });
+    { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)),
+      detail: (e) => `+${fmtUsd(entrySpend(e))} · ${e.run ? suiteLabel(suiteId(e.run)) : "judge check"}`, title: "Total spend over time" });
 }
 
 function renderPerRun(runs) {
@@ -1017,8 +1018,8 @@ function renderPerRun(runs) {
   })), { fmt: fmtUsd, fmtAxis: fmtUsdAxis, title: "Spend per run" });
 }
 
-// Agent spend by model plus the judge, summed per local day.
-function renderByModel(runs) {
+// Agent spend by model plus the judge and GPU time, summed per UTC day; judge checks count as Judge.
+function renderByModel(entries) {
   const days = new Map();
   const totals = new Map();
   const add = (day, name, value) => {
@@ -1026,11 +1027,13 @@ function renderByModel(runs) {
     day.values.set(name, (day.values.get(name) || 0) + value);
     totals.set(name, (totals.get(name) || 0) + value);
   };
-  for (const run of runs) {
-    const when = parseStamp(run.started_at);
+  for (const entry of [...entries].sort((a, b) => a.at - b.at)) {
+    const when = entry.at;
     const id = `${when.getUTCFullYear()}-${when.getUTCMonth()}-${when.getUTCDate()}`;
     if (!days.has(id)) days.set(id, { date: new Date(Date.UTC(when.getUTCFullYear(), when.getUTCMonth(), when.getUTCDate())), values: new Map(), runs: 0 });
     const day = days.get(id);
+    const run = entry.run;
+    if (!run) { add(day, "Judge", entry.judge); continue; }
     day.runs += 1;
     const byModel = Object.entries(run.summary.by_model || {});
     let attributed = 0;
@@ -1064,9 +1067,26 @@ function renderCacheRate(runs) {
       detail: (r) => `${suiteLabel(suiteId(r))} · ${fmtTokens(r.summary.cache_read_tokens)} read, ${fmtTokens(r.summary.cache_write_tokens)} written` });
 }
 
+// A run's GPU time split over its tasks by their seconds (evenly when none are recorded).
+function taskGpuShare(t, siblings) {
+  const gpu = t.run.summary.gpu_cost_usd || 0;
+  if (!gpu) return 0;
+  const seconds = siblings.reduce((sum, s) => sum + (s.seconds || 0), 0);
+  return seconds ? gpu * (t.seconds || 0) / seconds : gpu / siblings.length;
+}
+
 function costTasks(runs) {
   const byKey = new Map(runs.map((r) => [r.key, r]));
-  return (state.tasks || []).filter((t) => byKey.has(t.run_key)).map((t) => ({ ...t, run: byKey.get(t.run_key) }));
+  const tasks = (state.tasks || []).filter((t) => byKey.has(t.run_key)).map((t) => ({ ...t, run: byKey.get(t.run_key) }));
+  const byRun = new Map();
+  for (const t of tasks) byRun.set(t.run_key, [...(byRun.get(t.run_key) || []), t]);
+  for (const t of tasks) t.gpu_cost_usd = taskGpuShare(t, byRun.get(t.run_key));
+  return tasks;
+}
+
+// What one task attempt spent: agent, judge and its share of GPU time.
+function taskSpend(t) {
+  return (t.cost_usd || 0) + (t.judge_cost_usd || 0) + (t.gpu_cost_usd || 0);
 }
 
 function renderTopTasks(runs) {
@@ -1078,7 +1098,7 @@ function renderTopTasks(runs) {
     const g = groups.get(id) || { task: t.task, mode: t.run.mode, attempts: 0, passed: 0, spend: 0, steps: 0 };
     g.attempts += 1;
     g.passed += t.outcome === "success" ? 1 : 0;
-    g.spend += (t.cost_usd || 0) + (t.judge_cost_usd || 0);
+    g.spend += taskSpend(t);
     g.steps += t.steps || 0;
     groups.set(id, g);
   }
@@ -1107,7 +1127,7 @@ function renderWaste(runs) {
     buckets.set(name, b);
   };
   for (const t of costTasks(runs)) {
-    const spend = (t.cost_usd || 0) + (t.judge_cost_usd || 0);
+    const spend = taskSpend(t);
     if (t.run.config && t.run.config.flagged) add("Flagged runs", spend, "var(--series-6)");
     else if (t.outcome !== "success") add(OUTCOME_LABELS[t.outcome] || t.outcome, spend, OUTCOME_COLORS[t.outcome] || "var(--text-muted)");
   }
@@ -1187,9 +1207,9 @@ function renderCost() {
   renderBurn(entries, runs);
   renderCostOverview(runs, entries);
   renderMonths(entries);
-  renderCumulative(runs);
+  renderCumulative(entries);
   renderPerRun(runs);
-  renderByModel(runs);
+  renderByModel(entries);
   renderCacheRate(runs);
   renderTopTasks(runs);
   renderWaste(runs);

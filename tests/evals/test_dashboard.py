@@ -119,6 +119,33 @@ def test_grounding_reports_are_imported_as_cost_only_runs(tmp_path) -> None:
     assert tasks == []
 
 
+def test_grounding_spend_is_keyed_by_the_model_and_carries_unpriced_calls() -> None:
+    raw = {**_grounding_report(), "backend": "model", "model": "gemini-computer-use", "model_id": "gemini-3.5-flash"}
+    raw["summary"] = {**raw["summary"], "unpriced_calls": 4, "unpriced_models": ["gemini-3.5-flash"]}
+    report = prepare(raw, {})
+    assert list(report["summary"]["by_model"]) == ["gemini-3.5-flash"]
+    assert report["config"]["flagged"] == "4 model calls had no price (gemini-3.5-flash): their cost counts as $0"
+
+
+def test_attach_traces_uploads_a_repeated_tasks_own_screen(tmp_path) -> None:
+    screens = tmp_path / "screens"
+    screens.mkdir()
+    (screens / "click_link.png").write_bytes(b"first")
+    (screens / "click_link-try2.png").write_bytes(b"second")
+    report = prepare(_report(), {})
+    first = {**report["results"][0], "attempt": 1}
+    report["results"] = [first, {**first, "attempt": 2}]
+    uploaded = []
+
+    def uploader(files):
+        uploaded.extend(files)
+        return [f"https://blob.example/{pathname}" for _, pathname in files]
+
+    assert attach_traces(report, screens, uploader, tmp_path) == 2
+    assert [path.name for path, _ in uploaded] == ["click_link.png", "click_link-try2.png"]
+    assert report["results"][1]["screenshot_url"].endswith("click_link-try2/final.png")
+
+
 def test_every_attempt_of_a_repeated_run_gets_its_own_row() -> None:
     report = _report()
     report["results"] = [
@@ -168,10 +195,11 @@ def test_import_writes_runs_and_replaces_them_on_reimport(tmp_path) -> None:
         conn.execute("DROP TABLE IF EXISTS bench_task_results, bench_runs")
         conn.commit()
         artifacts = _artifacts(tmp_path)
-        assert import_reports([artifacts], conn, {"flagged": "broken runner"}) == [
+        # Only the full report: partial-run import is covered by the find_reports tests.
+        assert import_reports([artifacts], conn, {"flagged": "broken runner"}, include_partial=False) == [
             "browser-full-claude_computer_use-full-20261024T012945Z"
         ]
-        assert import_reports([artifacts], conn, {}) == [
+        assert import_reports([artifacts], conn, {}, include_partial=False) == [
             "browser-full-claude_computer_use-full-20261024T012945Z"
         ]
         runs = conn.execute("SELECT key, flagged, config->>'git_sha', summary->'success' FROM bench_runs").fetchall()

@@ -177,7 +177,10 @@ def grounding_as_run(report: dict) -> dict:
         "cost_per_task_usd": s.get("cost_per_sample_usd"),
         **{k: s.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")},
         **({"gpu_cost_usd": s["gpu_cost_usd"]} if s.get("gpu_cost_usd") is not None else {}),
-        "by_model": {report.get("model") or "unknown": {"requests": samples, "cost_usd": s.get("cost_usd", 0.0)}},
+        # model_id is the model itself (model is the registry profile): the same key as benchmark usage.
+        "by_model": {report.get("model_id") or report.get("model") or "unknown": {"requests": samples, "cost_usd": s.get("cost_usd", 0.0)}},
+        "unpriced_calls": s.get("unpriced_calls", 0),
+        "unpriced_models": s.get("unpriced_models", []),
         "grounding": {k: v for k, v in s.items() if k in ("hit", "miss", "no_click", "error", "accuracy", "by_set")},
     }
     config = {
@@ -369,7 +372,9 @@ def attach_traces(report: dict, screens: Path, uploader: Uploader, work_dir: Pat
     uploads: list[tuple[Path, str]] = []
     slots: list[tuple[dict, str, int | None]] = []  # (result, field, step) for each upload, in order
     for result in report["results"]:
-        task = str(result["task"])
+        # save_final_screens names a repeated task's later attempts <task>-try<n>.
+        attempt = int(result.get("attempt") or 1)
+        task = str(result["task"]) if attempt == 1 else f"{result['task']}-try{attempt}"
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", task)
         final, steps, run_dir = trace_files(screens, task)
         if final:

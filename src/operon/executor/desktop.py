@@ -61,6 +61,17 @@ logger = logging.getLogger(__name__)
 # user's foreground app on every taskkill / app-launch invocation. 0 on
 # non-Windows is a no-op (creationflags is ignored outside win32).
 _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+_MOUSEEVENTF_HWHEEL = 0x01000
+
+
+def _hscroll(amount: int, x: int, y: int) -> None:
+    """Scroll sideways at (x, y); positive = right. pyautogui's hscroll scrolls
+    vertically on Windows, so send a horizontal wheel event there."""
+    pyautogui.moveTo(x, y)
+    if sys.platform == "win32":
+        ctypes.windll.user32.mouse_event(_MOUSEEVENTF_HWHEEL, 0, 0, int(amount), 0)  # type: ignore[attr-defined]
+    else:
+        pyautogui.hscroll(amount, x=x, y=y)
 _NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
 # Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
 _CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
@@ -923,10 +934,14 @@ class DesktopExecutor(Executor):
         if action.x is None or action.y is None:
             return self._fail(action, "scroll requires x, y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
         try:
-            await asyncio.to_thread(pyautogui.scroll, action.scroll_amount, x=action.x, y=action.y)
+            if action.horizontal:
+                await asyncio.to_thread(_hscroll, action.scroll_amount, action.x, action.y)
+                direction = "right" if action.scroll_amount > 0 else "left"
+            else:
+                await asyncio.to_thread(pyautogui.scroll, action.scroll_amount, x=action.x, y=action.y)
+                direction = "up" if action.scroll_amount > 0 else "down"
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
-            direction = "up" if action.scroll_amount > 0 else "down"
             return self._ok(
                 action,
                 f"Scrolled {direction} by {abs(action.scroll_amount)} at ({action.x}, {action.y})",

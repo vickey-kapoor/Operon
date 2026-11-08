@@ -92,8 +92,9 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
             normalized_payload["rationale"] = nested_rationale
         normalized_action.pop("rationale", None)
 
-    # STOP/WAIT_FOR_USER must not carry payload fields (LLMs sometimes put answer text in text=)
-    _PAYLOAD_FIELDS = {"text", "url", "key", "selector", "x", "y", "wait_ms", "scroll_amount"}
+    # STOP/WAIT_FOR_USER carry no action payload. Their text stays: it is STOP's
+    # answer and WAIT_FOR_USER's (required) reason for the human.
+    _PAYLOAD_FIELDS = {"url", "key", "selector", "x", "y", "wait_ms", "scroll_amount"}
     if action_type in (ActionType.STOP.value, ActionType.WAIT_FOR_USER.value):
         for _f in _PAYLOAD_FIELDS:
             normalized_action.pop(_f, None)
@@ -117,10 +118,16 @@ def _normalize_policy_payload(parsed: dict[str, object]) -> dict[str, object]:
                     normalized_action.pop("y", None)
         else:
             normalized_action.pop("pixels", None)
-        # Apply direction sign: "up" → negative, "down" → positive
-        if isinstance(direction, str) and normalized_action.get("scroll_amount") is not None:
-            amt = normalized_action["scroll_amount"]
-            if direction.lower() == "up" and isinstance(amt, int) and amt > 0:
+        # Apply the direction sign. Executors scroll up (or right) for a positive
+        # amount, so "up"/"right" make it positive and "down"/"left" negative.
+        if isinstance(direction, str) and isinstance(normalized_action.get("scroll_amount"), int):
+            amt = abs(normalized_action["scroll_amount"])
+            word = direction.strip().lower()
+            if word in {"left", "right"}:
+                normalized_action["horizontal"] = True
+            if word in {"up", "right"}:
+                normalized_action["scroll_amount"] = amt
+            elif word in {"down", "left"}:
                 normalized_action["scroll_amount"] = -amt
         if normalized_action.get("x") is None:
             normalized_action["x"] = 960

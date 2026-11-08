@@ -114,6 +114,37 @@ def test_team_supplies(site) -> None:
     assert grade(task, site.state())[:2] == (True, False)
 
 
+def test_team_supplies_accepts_the_company_on_the_street_line(site) -> None:
+    # Seen live: shipped to "Jordan Lee" at "Northwind Ltd, 400 Harbor Road", which reaches the office.
+    task = _task("long_team_supplies")
+    site.reset(task.seed)
+    with _browser(site) as browser:
+        _add(browser, "gel-pens", 2)
+        _add(browser, "notebook-a5", 3)
+        _add(browser, "desk-lamp-clip")
+        browser.post("/apps/shop/cart/coupon", data={"code": "SAVE10"})
+        done = _checkout(browser, "standard", name="Jordan Lee", street="Northwind Ltd, 400 Harbor Road",
+                         city="Springfield", zip="62701")
+        number = re.search(r"Order #(\d+)", done).group(1)
+        _reply(browser, "supplies", DANA, f"Ordered, #{number}.")
+    assert grade(task, site.state())[:2] == (True, False)
+
+
+def test_team_supplies_needs_the_office_address(site) -> None:
+    task = _task("long_team_supplies")
+    site.reset(task.seed)
+    with _browser(site) as browser:
+        _add(browser, "gel-pens", 2)
+        _add(browser, "notebook-a5", 3)
+        _add(browser, "desk-lamp-clip")
+        browser.post("/apps/shop/cart/coupon", data={"code": "SAVE10"})
+        done = _checkout(browser, "standard", name="Jordan Lee", street="400 Harbor Road", city="Springfield",
+                         zip="62701")
+        number = re.search(r"Order #(\d+)", done).group(1)
+        _reply(browser, "supplies", DANA, f"Ordered, #{number}.")
+    assert grade(task, site.state())[:2] == (False, False)
+
+
 def test_team_supplies_reply_needs_the_real_order_number(site) -> None:
     task = _task("long_team_supplies")
     site.reset(task.seed)
@@ -165,6 +196,39 @@ def test_register_priya_and_send_the_number(site) -> None:
         number = re.search(r"Confirmation #(\d+)", done).group(1)
         _reply(browser, "devconf", PRIYA, f"You're registered, confirmation #{number}.")
     assert grade(task, site.state())[:2] == (True, False)
+
+
+def test_a_new_email_to_the_sender_counts_as_the_answer(site) -> None:
+    # Seen live: the registration was right and the number went to Priya in a new email, not a reply.
+    task = _task("long_register_priya")
+    site.reset(task.seed)
+    with _browser(site) as browser:
+        browser.post("/apps/forms/register", data={"first_name": "Priya", "last_name": "Nair", "email": PRIYA})
+        browser.post("/apps/forms/register/options", **_form([
+            ("ticket", "standard"), ("workshop", "dataviz"), ("workshop", "k8s"), ("meal", "Gluten-free"),
+            ("arrival", "2026-11-15")]))
+        done = browser.post("/apps/forms/register/submit", data={"coc": "yes"}).text
+        number = re.search(r"Confirmation #(\d+)", done).group(1)
+        browser.post("/apps/mail/send", data={"to": PRIYA, "subject": "DevConf 2026 confirmation",
+                                              "body": f"Your confirmation number is {number}."})
+        state = site.state()
+    assert state["mail"]["sent"][0]["in_reply_to"] is None
+    ok, _, reason = grade(task, state)
+    assert ok and reason.index('"sent"') < reason.index('"messages"')
+
+
+def test_a_reply_to_a_different_email_does_not_count(site) -> None:
+    task = _task("long_register_priya")
+    site.reset(task.seed)
+    with _browser(site) as browser:
+        browser.post("/apps/forms/register", data={"first_name": "Priya", "last_name": "Nair", "email": PRIYA})
+        browser.post("/apps/forms/register/options", **_form([
+            ("ticket", "standard"), ("workshop", "dataviz"), ("workshop", "k8s"), ("meal", "Gluten-free"),
+            ("arrival", "2026-11-15")]))
+        done = browser.post("/apps/forms/register/submit", data={"coc": "yes"}).text
+        number = re.search(r"Confirmation #(\d+)", done).group(1)
+        _reply(browser, "dana", PRIYA, f"Your confirmation number is {number}.")
+    assert grade(task, site.state())[:2] == (False, False)
 
 
 def test_support_for_sam(site) -> None:

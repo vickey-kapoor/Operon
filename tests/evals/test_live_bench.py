@@ -418,3 +418,13 @@ async def test_a_judge_model_with_no_price_is_counted_as_unpriced(monkeypatch) -
     monkeypatch.setattr(gemini, "GeminiHttpClient", FakeClient)
     verdict = await live_bench.gemini_judge("gemini-next")(TASKS[0], "screen.png")
     assert verdict.goal_visible is True and verdict.cost_usd is None and verdict.unpriced_model == "gemini-next"
+
+
+def test_long_tasks_get_more_pauses_approved() -> None:
+    from evals.app_tasks import LONG_TASKS
+    from evals.live_bench import DEFAULT_PAUSES, LONG_PAUSES, TASKS, pause_budget
+
+    assert pause_budget(LONG_TASKS[0], None, False) == LONG_PAUSES
+    assert pause_budget(TASKS[0], None, False) == DEFAULT_PAUSES
+    assert pause_budget(LONG_TASKS[0], 3, False) == 3
+    assert pause_budget(LONG_TASKS[0], 3, True) == 0

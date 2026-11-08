@@ -150,3 +150,20 @@ def test_backend_refuses_a_browser_client() -> None:
     no_launch_app = GeminiComputerUseHttpClient(api_key="k", model="gemini-3.5-flash", environment="ENVIRONMENT_DESKTOP")
     with pytest.raises(ValueError, match="launch_app"):
         DesktopComputerUseBackend(client=no_launch_app, prompt_path=prompts_dir() / "desktop_computer_use_prompt.txt")
+
+
+def test_click_then_type_in_one_turn_is_one_atomic_type() -> None:
+    from operon.agent.actions.translation import normalize_computer_use_actions
+
+    calls = [
+        {"name": "click", "args": {"x": 500, "y": 500, "intent": "focus the field"}},
+        {"name": "type", "args": {"text": "hello", "intent": "type"}},
+    ]
+    action = normalize_computer_use_actions(calls, screen_width=1000, screen_height=1000)
+    assert action["action_type"] == "type" and action["text"] == "hello"
+    assert (action["x"], action["y"]) == (500, 500)
+    # A click on its own, or a type with its own target, is left alone.
+    batch = normalize_computer_use_actions(
+        [calls[0], {"name": "type_text_at", "args": {"x": 10, "y": 10, "text": "a"}}], screen_width=1000, screen_height=1000
+    )
+    assert [a["action_type"] for a in batch["actions"]] == ["click", "type"]

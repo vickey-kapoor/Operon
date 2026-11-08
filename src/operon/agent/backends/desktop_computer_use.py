@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.clients.anthropic_computer_use import LAUNCH_APP_TOOL
+from operon.clients.gemini_computer_use import GeminiComputerUseClient
 
 DESKTOP_ENVIRONMENT = "ENVIRONMENT_DESKTOP"
 
@@ -36,7 +38,7 @@ class DesktopComputerUseBackend(BrowserComputerUseBackend):
         "- Take one concrete action: launch_app to open the app the task needs, or click in its window.\n"
     )
 
-    def __init__(self, *, client, prompt_path) -> None:
+    def __init__(self, *, client: GeminiComputerUseClient, prompt_path: Path) -> None:
         environment = getattr(client, "environment", DESKTOP_ENVIRONMENT)
         declared = {tool.get("name") for tool in getattr(client, "function_declarations", [GEMINI_LAUNCH_APP_FUNCTION])}
         if environment != DESKTOP_ENVIRONMENT or "launch_app" not in declared:

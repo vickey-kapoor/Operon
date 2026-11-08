@@ -156,14 +156,25 @@ def normalize_computer_use_actions(
 ) -> dict[str, Any]:
     if not function_calls:
         raise BackendCompatibilityError("No Computer Use function calls were provided.")
-    normalized = [
-        normalize_computer_use_function_call(
+    normalized: list[dict[str, Any]] = []
+    for function_call in function_calls:
+        action = normalize_computer_use_function_call(
             function_call,
             screen_width=screen_width,
             screen_height=screen_height,
         )
-        for function_call in function_calls
-    ]
+        previous = normalized[-1] if normalized else None
+        if (
+            action["action_type"] == "type"
+            and "x" not in action
+            and previous is not None
+            and previous["action_type"] == "click"
+        ):
+            # Gemini 3.x's ``type`` has no target: focus and type in one atomic TYPE
+            # at the click's point rather than a CLICK then a TYPE.
+            normalized.pop()
+            action = {**action, "x": previous["x"], "y": previous["y"]}
+        normalized.append(action)
     if len(normalized) == 1:
         return normalized[0]
     return {"action_type": "batch", "actions": normalized}

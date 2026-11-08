@@ -34,6 +34,7 @@ const state = {
   judge: null,
   budget: null,
   registry: [],
+  trendMetric: "pass",
 };
 
 // ---------- small helpers ----------
@@ -445,63 +446,202 @@ function legendItems(host, items) {
 
 // ---------- evals tab ----------
 
-function tile(run, { value, of, delta, meter, stats }) {
-  const label = configLabel(run);
-  return el("div", { class: "tile", style: `--tile-color:${seriesColor(label)}` },
-    el("div", { class: "who" }, key(label), label, el("span", { class: "model" }, (run.config && run.config.model) || "")),
-    el("div", { class: "big" }, el("strong", {}, value), of ? el("span", { class: "of" }, of) : null, delta || null),
-    meter === undefined ? null : el("div", { class: "meter", role: "img", "aria-label": fmtPct(meter) },
-      el("span", { style: `width:${Math.max(0, Math.min(1, meter)) * 100}%` })),
-    el("dl", {}, stats.map(([dt, dd, style]) => el("div", {}, el("dt", {}, dt), el("dd", { style: style || null }, dd)))),
-    el("div", { class: "when" }, el("span", {}, timeFmt.format(parseStamp(run.started_at))), runLink(run, "View run ↗")));
-}
+// ---------- latest-run briefing ----------
+// The headline, "what changed" list and number tiles are built here from the runs and
+// task results already loaded: a fixed sentence template, no model call, so they
+// refresh on their own after every imported run.
 
-// Change in pass rate since this configuration's previous comparable run.
-function passDelta(run, runs) {
+// This configuration's run just before this one, flagged runs left out.
+function previousRun(run, runs) {
   const label = configLabel(run);
   const earlier = runs.filter((r) => configLabel(r) === label && r.started_at < run.started_at && !(r.config && r.config.flagged));
-  if (!earlier.length) return null;
-  const prev = earlier[earlier.length - 1];
-  const points = Math.round((run.summary.success_rate - prev.summary.success_rate) * 100);
-  const cls = points > 0 ? "delta up" : points < 0 ? "delta down" : "delta";
-  const text = points > 0 ? `▲ ${points} pts` : points < 0 ? `▼ ${-points} pts` : "no change";
-  return el("span", { class: cls, title: `vs ${timeFmt.format(parseStamp(prev.started_at))}` }, text);
+  return earlier.length ? earlier.reduce((a, b) => (b.started_at > a.started_at ? b : a)) : null;
 }
 
-function renderTiles(runs) {
-  const host = document.getElementById("tiles");
-  host.replaceChildren();
+// One result per task: the first attempt of a repeated (--repeat) run.
+function firstAttempts(tasks) {
+  const out = new Map();
+  for (const t of tasks) {
+    const have = out.get(t.task);
+    if (!have || (t.attempt || 1) < (have.attempt || 1)) out.set(t.task, t);
+  }
+  return out;
+}
+
+// Why a task did not pass: the judge's or grader's reason when the run has one, otherwise
+// what the run itself recorded (how it ended and why the agent stopped).
+function likelyCause(t) {
+  if (!t) return "";
+  const reason = (t.judge_reason || "").trim();
+  if (reason) return reason;
+  const how = { false_success: "Said done, but the goal wasn't reached", missed: "Goal reached, but never said done",
+    failure: "Failed", timeout: "Ran out of time", error: "The run crashed", compromised: "Followed an injected instruction" }[t.outcome]
+    || OUTCOME_LABELS[t.outcome] || t.outcome || "Unknown";
+  const stop = (t.stop_reason || "").trim();
+  return stop && stop !== "-" ? `${how} (stopped: ${stop.replace(/_/g, " ")})` : how;
+}
+
+// Tasks that started passing, started failing, or still fail, between two runs' results.
+function runChanges(prevTasks, curTasks) {
+  const prev = firstAttempts(prevTasks);
+  const cur = firstAttempts(curTasks);
+  const fixed = [], broke = [], still = [];
+  for (const [name, t] of cur) {
+    const p = prev.get(name);
+    const pass = t.outcome === "success";
+    if (!p) { if (!pass) broke.push(t); continue; }
+    const wasPass = p.outcome === "success";
+    if (pass && !wasPass) fixed.push(t);
+    else if (!pass && wasPass) broke.push(t);
+    else if (!pass) still.push(t);
+  }
+  return { fixed, broke, still };
+}
+
+// "passed 42 of 44 tasks (95%), the same as last run, in 27.1 s per task."
+function briefHeadline(run, prev) {
+  const s = run.summary;
+  let change = "its first run";
+  if (prev) {
+    const pts = Math.round((s.success_rate - prev.summary.success_rate) * 100);
+    change = pts > 0 ? `up ${pts} point${pts === 1 ? "" : "s"} from last run` : pts < 0 ? `down ${-pts} point${pts === -1 ? "" : "s"} from last run` : "the same as last run";
+  }
+  return { lead: `${configLabel(run)} passed `, count: `${s.success} of ${s.tasks}`,
+    rest: ` tasks (${fmtPct(s.success_rate)}), ${change}, in ${fmtSec(s.mean_seconds)} per task.` };
+}
+
+function change(kind, ...parts) {
+  return el("div", { class: "chg" }, el("span", { class: `ic ${kind}`, "aria-hidden": "true" }, { up: "↑", down: "↓", warn: "!" }[kind]),
+    el("div", {}, ...parts));
+}
+
+function taskList(tasks, max = 3) {
+  const names = tasks.slice(0, max).map((t) => t.task).join(", ");
+  return tasks.length > max ? `${names} and ${tasks.length - max} more` : names;
+}
+
+function renderBrief(runs) {
+  const host = document.getElementById("brief");
   const latest = latestByConfig(runs);
   if (!latest.length) {
-    host.append(el("div", { class: "card empty" }, "No runs yet for this environment and suite."));
+    host.replaceChildren(el("div", { class: "eyebrow" }, "No runs yet"),
+      el("h1", { class: "headline" }, "No runs for this environment and suite yet."),
+      el("p", { class: "lede" }, "Results appear here after the next benchmark run, started with a /bench comment on a pull request."));
     return;
   }
-  for (const run of latest) {
-    const s = run.summary;
-    host.append(tile(run, {
-      value: fmtPct(s.success_rate),
-      of: `${s.success} of ${s.tasks} tasks`,
-      delta: passDelta(run, runs),
-      meter: s.success_rate,
-      stats: [
-        ["Per task", fmtSec(s.mean_seconds)],
-        ["Per step", fmtSec(s.seconds_per_step)],
-        ["Steps", fmtNum(s.mean_steps)],
-        ["False pass", fmtNum(s.false_success), s.false_success ? "color:var(--critical)" : ""],
-        ...(s.compromised ? [["Compromised", fmtNum(s.compromised), "color:var(--critical)"]] : []),
-      ],
-    }));
+  const [run, ...others] = latest;
+  const prev = previousRun(run, runs);
+  const h = briefHeadline(run, prev);
+  const s = run.summary;
+  const otherText = others.map((r) => {
+    const o = r.summary;
+    return `${configLabel(r)} passed ${o.success} of ${o.tasks} (${fmtPct(o.success_rate)})` +
+      (o.false_success ? ` with ${o.false_success} false pass${o.false_success === 1 ? "" : "es"}` : "") + ".";
+  }).join(" ");
+
+  const items = [];
+  if (!prev) {
+    items.push(change("warn", "First run of this configuration, so there is nothing to compare yet."));
+  } else if (state.tasks !== null) {
+    const byRun = (r) => runTasks(r);
+    const { fixed, broke, still } = runChanges(byRun(prev), byRun(run));
+    if (fixed.length) items.push(change("up", el("strong", {}, taskList(fixed)), fixed.length === 1 ? " passes again" : " pass again"));
+    for (const t of broke.slice(0, 3)) items.push(change("down", el("strong", {}, t.task), " started failing: ", el("span", { class: "muted" }, likelyCause(t))));
+    if (broke.length > 3) items.push(change("down", `${broke.length - 3} more tasks started failing`));
+    if (still.length) items.push(change("down", el("strong", {}, taskList(still)), ` still fail${still.length === 1 ? "s" : ""}`,
+      still.length === 1 ? el("span", { class: "muted" }, `: ${likelyCause(still[0])}`) : null));
+    const dSec = (s.mean_seconds || 0) - (prev.summary.mean_seconds || 0);
+    if (Math.abs(dSec) >= 0.5) {
+      items.push(change(dSec < 0 ? "up" : "down", `${dSec < 0 ? "Faster" : "Slower"} by `, el("strong", {}, `${Math.abs(dSec).toFixed(1)} s per task`),
+        ` (${fmtSec(prev.summary.mean_seconds)} → ${fmtSec(s.mean_seconds)})`));
+    }
+    if (!fixed.length && !broke.length && !still.length && Math.abs(dSec) < 0.5) items.push(change("up", "Every task gave the same result as last run."));
   }
+  for (const r of latest) {
+    if (r.summary.false_success) items.push(change("warn", `${configLabel(r)} had `, el("strong", {}, `${r.summary.false_success} false pass${r.summary.false_success === 1 ? "" : "es"}`)));
+    if (r.summary.compromised) items.push(change("down", `${configLabel(r)} was `, el("strong", {}, `compromised ${r.summary.compromised} time${r.summary.compromised === 1 ? "" : "s"}`)));
+  }
+
+  host.replaceChildren(
+    el("div", { class: "hero-main" },
+      el("div", { class: "eyebrow" }, `Latest run · ${timeFmt.format(parseStamp(run.started_at))}`, " ", runLink(run, "View run ↗")),
+      el("h1", { class: "headline" }, h.lead, el("em", {}, h.count), h.rest),
+      otherText ? el("p", { class: "lede" }, otherText) : null,
+      latest.length > 1 ? el("div", { class: "legend" }, latest.map((r) => el("span", {}, key(configLabel(r)), configLabel(r)))) : null),
+    el("div", { class: "changes" },
+      el("div", { class: "changes-title" }, prev ? "What changed since the last run" : "What changed"),
+      state.tasks === null ? el("div", { class: "muted" }, "Loading…") : items));
 }
 
+function sparkline(values, color) {
+  const vals = values.filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
+  if (vals.length < 2) return null;
+  const w = 120, h = 32;
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const d = vals.map((v, i) => `${i ? "L" : "M"}${((i * w) / (vals.length - 1)).toFixed(1)},${(h - 3 - ((v - lo) / span) * (h - 6)).toFixed(1)}`).join("");
+  const root = svg("svg", { class: "spark", viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", "aria-hidden": "true" });
+  root.append(svg("path", { d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke" }));
+  return root;
+}
+
+// One tile per headline number for the lead configuration, with its trend and the
+// other configurations' latest values underneath.
+function renderTiles(runs) {
+  const host = document.getElementById("tiles");
+  const latest = latestByConfig(runs);
+  if (!latest.length) { host.replaceChildren(); return; }
+  const [run, ...others] = latest;
+  const prev = previousRun(run, runs);
+  const history = runs.filter((r) => configLabel(r) === configLabel(run) && !(r.config && r.config.flagged)).slice(-12);
+  const perTask = (r) => (hasCost(r) && r.summary.tasks ? runSpend(r) / r.summary.tasks : null);
+  const metrics = [
+    { label: "Pass rate", get: (r) => r.summary.success_rate, fmt: fmtPct, of: (r) => `${r.summary.success}/${r.summary.tasks}`, better: 1,
+      diff: (a, b) => { const p = Math.round((a - b) * 100); return p ? `${Math.abs(p)} pts` : null; } },
+    { label: "Seconds per task", get: (r) => r.summary.mean_seconds, fmt: fmtSec, better: -1,
+      diff: (a, b) => (Math.abs(a - b) >= 0.1 ? `${Math.abs(a - b).toFixed(1)} s` : null) },
+    { label: "False passes", get: (r) => r.summary.false_success, fmt: fmtNum, better: -1,
+      diff: (a, b) => (a !== b ? String(Math.abs(a - b)) : null) },
+    { label: "Cost per task", get: perTask, fmt: fmtUsd, better: -1,
+      diff: (a, b) => (b && Math.abs(a / b - 1) >= 0.01 ? `${Math.round(Math.abs(a / b - 1) * 100)}%` : null) },
+  ];
+  if (latest.some((r) => r.summary.compromised)) {
+    metrics.push({ label: "Compromised", get: (r) => r.summary.compromised || 0, fmt: fmtNum, better: -1, diff: (a, b) => (a !== b ? String(Math.abs(a - b)) : null) });
+  }
+  const color = seriesColor(configLabel(run));
+  host.replaceChildren(...metrics.map((m) => {
+    const value = m.get(run);
+    const before = prev ? m.get(prev) : null;
+    let delta = el("span", { class: "delta" }, prev ? "no change" : "first run");
+    if (value !== null && value !== undefined && before !== null && before !== undefined) {
+      const text = m.diff(value, before);
+      if (text) {
+        const good = (value - before) * m.better > 0;
+        delta = el("span", { class: `delta ${good ? "up" : "down"}`, title: `vs ${timeFmt.format(parseStamp(prev.started_at))}` },
+          `${value > before ? "▲" : "▼"} ${text}`);
+      }
+    }
+    return el("div", { class: "kpi" },
+      el("div", { class: "kpi-label" }, m.label),
+      el("div", { class: "kpi-value" }, el("strong", {}, m.fmt(value)), m.of ? el("span", {}, m.of(run)) : null),
+      el("div", { class: "kpi-delta" }, delta),
+      sparkline(history.map(m.get), color),
+      others.length ? el("div", { class: "kpi-others" }, others.map((r) => el("span", {}, key(configLabel(r)), `${configLabel(r)} ${m.fmt(m.get(r))}`))) : null);
+  }));
+}
+
+const TREND_METRICS = {
+  pass: { get: (r) => r.summary.success_rate, opts: { yMax: 1, fmt: (v) => fmtPct(v) }, sub: "Pass rate of every run, by configuration. Higher is better." },
+  speed: { get: (r) => r.summary.mean_seconds, opts: { fmt: (v, axis) => (axis ? `${Math.round(v)} s` : fmtSec(v)) }, sub: "Mean seconds per task of every run. Lower is better." },
+  steps: { get: (r) => r.summary.mean_steps, opts: { fmt: (v, axis) => (axis ? `${Math.round(v * 10) / 10}` : `${Number(v).toFixed(1)} steps`) }, sub: "Mean steps per task of every run. Fewer is usually better." },
+  cost: { get: (r) => (hasCost(r) && r.summary.tasks ? runSpend(r) / r.summary.tasks : null), opts: { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)) }, sub: "Agent, judge and GPU spend per task of every run. Lower is better." },
+};
+
 function renderCharts(runs) {
-  const detail = (run) => `${run.summary.success}/${run.summary.tasks}`;
-  lineChart(document.getElementById("ch-pass"), document.getElementById("lg-pass"),
-    seriesFor(runs, (r) => r.summary.success_rate),
-    { yMax: 1, fmt: (v) => fmtPct(v), detail, title: "Pass rate by run" });
-  lineChart(document.getElementById("ch-speed"), document.getElementById("lg-speed"),
-    seriesFor(runs, (r) => r.summary.mean_seconds),
-    { fmt: (v, axis) => (axis ? `${Math.round(v)}` : fmtSec(v)), detail: (r) => `${r.summary.mean_steps} steps`, title: "Seconds per task by run" });
+  const m = TREND_METRICS[state.trendMetric] || TREND_METRICS.pass;
+  for (const b of document.getElementById("trend-metric").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.v === state.trendMetric));
+  document.getElementById("trend-sub").textContent = `${m.sub} Hover a point for the run.`;
+  lineChart(document.getElementById("ch-trend"), document.getElementById("lg-trend"), seriesFor(runs, m.get),
+    { ...m.opts, detail: (r) => `${r.summary.success}/${r.summary.tasks} · ${r.summary.mean_steps} steps`, title: "Trend by run" });
 }
 
 // Each run's outcome mix as a share of its tasks, so suites of any size compare.
@@ -574,7 +714,7 @@ function renderHistory(runs) {
   scored.sort((a, b) => rank(a) - rank(b) || a.passed / a.seen - b.passed / b.seen || a.task.localeCompare(b.task));
   const steady = scored.filter((r) => rank(r) === 2).length;
   table.replaceChildren(
-    el("thead", {}, el("tr", {}, el("th", {}, "Task"), el("th", {}, `Last ${recent.length} runs`), el("th", { class: "num" }, "Passed"), el("th", {}, ""))),
+    el("thead", {}, el("tr", {}, el("th", {}, "Task"), el("th", {}, `Last ${recent.length} runs`), el("th", { class: "num" }, "Passed"), el("th", {}, ""), el("th", {}, "Likely cause"))),
     el("tbody", {}, scored.filter((r) => state.historyAll || rank(r) < 2 || steady === scored.length).map((r) => el("tr", {},
       el("td", {}, r.task, el("div", { class: "muted-line" }, r.category || "")),
       el("td", {}, el("div", { class: "marks" }, r.cells.map((t, i) => el("span", {
@@ -582,14 +722,15 @@ function renderHistory(runs) {
         title: t ? `${timeFmt.format(parseStamp(recent[i].started_at))} · ${configLabel(recent[i])} · ${OUTCOME_LABELS[t.outcome] || t.outcome}${t.stop_reason ? ` · ${t.stop_reason}` : ""}` : "not run",
       })))),
       el("td", { class: "num" }, `${r.passed}/${r.seen}`),
-      el("td", {}, r.flaky ? el("span", { class: "pill missed" }, "flaky") : r.never ? el("span", { class: "pill failure" }, "never passes") : null)))));
+      el("td", {}, r.flaky ? el("span", { class: "pill missed" }, "flaky") : r.never ? el("span", { class: "pill failure" }, "never passes") : null),
+      el("td", { class: "wrap-text cause" }, rank(r) < 2 ? likelyCause([...r.cells].reverse().find((t) => t && t.outcome !== "success")) : "")))));
   let more = document.getElementById("history-more");
   if (!more) {
     more = el("button", { class: "ghost-btn", id: "history-more", type: "button" });
     table.parentElement.after(more);
   }
   more.hidden = steady === 0 || steady === scored.length;
-  more.textContent = state.historyAll ? "Hide tasks that always pass" : `Show ${steady} tasks that always pass`;
+  more.textContent = state.historyAll ? "Hide tasks that always pass" : `${steady} other task${steady === 1 ? "" : "s"} passed every run. Show them`;
   more.onclick = () => { state.historyAll = !state.historyAll; renderHistory(filteredRuns()); };
 }
 
@@ -896,11 +1037,20 @@ function monthBurn(entries, now = new Date(), budget = state.budget) {
   };
 }
 
+// "$38.40 spent of the $100 budget. At this pace November ends near $71, inside the budget."
+function burnHeadline(b, monthName) {
+  if (!b.budget) return `${fmtUsd(b.spent)} spent in ${monthName} so far. At this pace the month ends near ${fmtUsd(b.projected)}.`;
+  if (b.spent >= b.budget) return `${fmtUsd(b.spent)} spent: the ${fmtUsd(b.budget)} budget for ${monthName} is used up.`;
+  return `${fmtUsd(b.spent)} spent of the ${fmtUsd(b.budget)} budget. At this pace ${monthName} ends near ${fmtUsd(b.projected)}, ` +
+    (b.projected > b.budget ? `${fmtUsd(b.projected - b.budget)} over the budget.` : "inside the budget.");
+}
+
 function renderBurn(entries, runs) {
   const host = document.getElementById("cost-burn");
   const b = monthBurn(entries);
   const monthName = monthLongFmt.format(monthStart(b.key));
-  document.getElementById("burn-title").textContent = `${monthName} so far`;
+  document.getElementById("burn-title").textContent = `Month to date · ${monthName} (UTC)`;
+  document.getElementById("burn-headline").textContent = burnHeadline(b, monthName);
   const over = b.budget && b.projected > b.budget;
   const status = !b.budget ? null
     : b.spent >= b.budget ? ["over", "Budget spent"]
@@ -916,6 +1066,7 @@ function renderBurn(entries, runs) {
         b.budget ? el("div", { class: `meter budget big${over ? " over" : ""}`, role: "img",
           "aria-label": `${fmtPct(b.used)} of the ${fmtUsd(b.budget)} budget spent, projected ${fmtUsd(b.projected)}` },
         el("span", { style: `width:${Math.min(1, b.used) * 100}%` }),
+        b.projected > b.spent ? el("b", { class: "proj", style: `left:${Math.min(1, b.used) * 100}%;width:${Math.max(0, Math.min(1, b.projected / b.budget) - Math.min(1, b.used)) * 100}%` }) : null,
         el("i", { style: `left:${Math.min(1, b.projected / b.budget) * 100}%`, title: `Projected ${fmtUsd(b.projected)}` })) : null,
         b.budget ? null : el("p", { class: "note" }, "Set MONTHLY_BUDGET_USD in Vercel to see how much of a budget is used.")),
       el("div", { class: "burn-stats" },
@@ -1316,14 +1467,16 @@ function lbColor(index) {
 
 function renderLeaderboardMatrix(data) {
   const table = document.getElementById("lb-matrix");
-  table.replaceChildren(el("thead", {}, el("tr", {}, el("th", {}, "Model"),
+  table.replaceChildren(el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Model"),
     data.suites.map((id) => el("th", { class: "num" }, suiteLabel(id))))));
   const body = el("tbody");
   data.models.forEach((m, i) => {
-    body.append(el("tr", {},
+    body.append(el("tr", { class: m.notRun ? "not-run-row" : null },
+      el("td", {}, el("span", { class: "rank" }, m.notRun ? "–" : String(i + 1))),
       el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model,
         m.ownDone ? null : el("span", { class: "sub", title: "Judged by Operon's completion check, not the model's own done" }, " (check)"))),
-      m.notRun ? el("td", { class: "num not-run", colspan: Math.max(1, data.suites.length) }, "not run yet") : data.suites.map((id) => {
+      m.notRun ? el("td", { class: "num not-run", colspan: Math.max(1, data.suites.length) }, "not run yet · ",
+        el("code", {}, `/bench model=${m.model}`)) : data.suites.map((id) => {
         const run = m.bySuite.get(id);
         if (!run) return el("td", { class: "num" }, "–");
         const s = run.summary;
@@ -1333,7 +1486,8 @@ function renderLeaderboardMatrix(data) {
           `${s.mean_seconds} s/task`, hasCost(run) ? `${fmtUsd(runTotalCost(run) / (s.tasks || 1))}/task` : null,
           s.invalid_action_rate !== undefined ? `${(s.invalid_action_rate * 100).toFixed(1)}% invalid replies` : null,
         ].filter(Boolean).join(" · ");
-        return el("td", { class: "num", title }, `${Math.round((s.success_rate || 0) * 100)}%`,
+        const rate = s.success_rate || 0;
+        return el("td", { class: "num", title }, el("span", { class: `pill ${rate >= 0.9 ? "success" : rate >= 0.6 ? "missed" : "failure"}` }, `${Math.round(rate * 100)}%`),
           el("span", { class: "sub" }, ` ${s.success}/${s.tasks}`));
       })));
   });
@@ -1405,11 +1559,32 @@ function renderLeaderboardScatter(data) {
   host.append(root);
 }
 
+function renderLeaderboardBrief(data) {
+  const ran = data.models.filter((m) => !m.notRun);
+  const total = data.models.length;
+  const lead = ran[0];
+  let text = `${ran.length} of ${total} model${total === 1 ? "" : "s"} ${ran.length === 1 ? "has" : "have"} run.`;
+  if (lead && lead.rate !== null) {
+    text += ` ${lead.model} leads at ${fmtPct(lead.rate)}`;
+    const cheaper = ran.slice(1).filter((m) => m.costPerTask > 0 && lead.costPerTask > 0)
+      .sort((a, b) => a.costPerTask - b.costPerTask)[0];
+    if (cheaper && lead.costPerTask > cheaper.costPerTask * 1.2) {
+      text += `, at ${(lead.costPerTask / cheaper.costPerTask).toFixed(1)}x ${cheaper.model}'s cost per task`;
+    }
+    text += ".";
+  }
+  document.getElementById("lb-brief").replaceChildren(
+    el("div", { class: "eyebrow" }, "Same tasks and graders for every model, each judged by its own \"done\""),
+    el("h1", { class: "headline" }, text),
+    el("p", { class: "lede" }, "Ranked by pass rate over each model's latest unflagged run per suite. Models that haven't run show the command that runs them."));
+}
+
 function renderLeaderboard() {
   const data = leaderboardData();
   document.getElementById("lb-empty").hidden = data.models.length > 0;
   document.getElementById("lb-body").hidden = data.models.length === 0;
   if (!data.models.length) return;
+  renderLeaderboardBrief(data);
   renderLeaderboardMatrix(data);
   renderLeaderboardModels(data);
   renderLeaderboardScatter(data);
@@ -1424,11 +1599,12 @@ function render() {
   document.getElementById("tab-evals").hidden = state.tab !== "evals";
   document.getElementById("tab-cost").hidden = state.tab !== "cost";
   document.getElementById("tab-leaderboard").hidden = state.tab !== "leaderboard";
-  for (const id of ["f-mode", "f-suite", "f-flagged-wrap"]) document.getElementById(id).hidden = state.tab !== "evals";
+  document.getElementById("filterbar").hidden = state.tab !== "evals";
   if (state.tab === "leaderboard") {
     renderLeaderboard();
   } else if (state.tab === "evals") {
     const runs = filteredRuns();
+    renderBrief(runs);
     renderTiles(runs);
     renderCharts(runs);
     renderOutcomes(runs);
@@ -1467,6 +1643,13 @@ function bindControls() {
       render();
     });
   }
+  document.getElementById("trend-metric").addEventListener("click", (event) => {
+    const value = event.target.dataset && event.target.dataset.v;
+    if (!value) return;
+    state.trendMetric = value;
+    store("operon-dash-trend", value);
+    renderCharts(filteredRuns());
+  });
   document.getElementById("f-flagged").addEventListener("change", (event) => {
     state.showFlagged = event.target.checked;
     render();
@@ -1512,6 +1695,7 @@ async function main() {
   state.mode = store("operon-dash-f-mode") || state.mode;
   state.suite = store("operon-dash-f-suite") || state.suite;
   state.tab = store("operon-dash-tab") || state.tab;
+  state.trendMetric = TREND_METRICS[store("operon-dash-trend")] ? store("operon-dash-trend") : state.trendMetric;
   bindControls();
   // Task results and judge checks feed extra cards; the page renders without them.
   const extras = Promise.all([

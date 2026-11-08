@@ -132,6 +132,8 @@ def test_apps_open_before_the_task_never_count() -> None:
                        texts=["PS C:\\> Get-Date\n\nSunday, November 8, 2026 3:01:12 PM"])
     ok, reason = desktop_state.grade("powershell_date", _snap(terminal, baseline=[9]))
     assert not ok and "no PowerShell window" in reason
+    minimized = _window("notepad", texts=["Hello from Operon"], hwnd=4) | {"offscreen": True}
+    assert not _grade("notepad_type", _snap(minimized, baseline=[]))
     old = {"path": "C:\\Windows", "hwnd": 5}
     assert not _grade("explorer_windows", _snap(explorer=[old], baseline=[5]))
     assert _grade("explorer_windows", _snap(explorer=[{"path": "C:\\Windows", "hwnd": 6}], baseline=[5]))

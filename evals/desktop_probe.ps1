@@ -75,7 +75,10 @@ $top = $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, 
 foreach ($w in $top) {
     try {
         $c = $w.Current
-        if ($c.IsOffscreen -or -not $c.Name) { continue }
+        if (-not $c.Name) { continue }
+        # Minimized windows are listed too (so a reset's baseline includes them), but
+        # marked offscreen and not read in depth; the checks only grade visible ones.
+        $offscreen = [bool]$c.IsOffscreen
         $proc = Get-Process -Id $c.ProcessId -ErrorAction SilentlyContinue
         $started = $null
         try { $started = $proc.StartTime.ToUniversalTime().ToString("o") } catch { }
@@ -83,13 +86,13 @@ foreach ($w in $top) {
         $selected = New-Object System.Collections.ArrayList
         $texts = New-Object System.Collections.ArrayList
         $procName = $(if ($proc) { $proc.ProcessName } else { "" })
-        if ($inspectNames -contains $procName.ToLower()) {
+        if (-not $offscreen -and $inspectNames -contains $procName.ToLower()) {
             Get-Texts $w ([ref]$names) ([ref]$selected) ([ref]$texts)
         }
         $r = $c.BoundingRectangle
         $windows += [ordered]@{
             title = $c.Name; class = $c.ClassName; pid = $c.ProcessId; hwnd = $c.NativeWindowHandle
-            process = $procName; started = $started
+            process = $procName; started = $started; offscreen = $offscreen
             rect = @([int]$r.Left, [int]$r.Top, [int]$r.Width, [int]$r.Height)
             names = @($names); selected = @($selected); texts = @($texts)
         }

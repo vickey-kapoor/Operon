@@ -241,7 +241,7 @@ def windows(snapshot: Snapshot, *processes: str, title: str = "") -> list[dict]:
     found = []
     for w in snapshot.get("windows") or []:
         matches = _proc(w) in wanted or (title and title.lower() in str(w.get("title", "")).lower())
-        if matches and _fresh(w, since, baseline):
+        if matches and not w.get("offscreen") and _fresh(w, since, baseline):
             found.append(w)
     return found
 

@@ -8,7 +8,13 @@
 # and from its UI Automation tree the element names, the selected items' names and
 # the text of text controls (Notepad's document, a console's buffer). Also the
 # folder each File Explorer window shows.
-param([int]$MaxNodes = 2500, [int]$MaxText = 20000)
+#
+# -Inspect: comma-separated process names whose windows get the UI Automation walk;
+#   other windows are listed (title, process, handle) without it, which keeps the probe fast.
+# -Close: comma-separated process names to stop first; -CloseExplorer closes File
+#   Explorer's folder windows first. Used to reset the desktop before a task.
+param([int]$MaxNodes = 2500, [int]$MaxText = 20000, [string]$Inspect = "", [string]$Close = "",
+      [switch]$CloseExplorer)
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
@@ -50,6 +56,20 @@ function Get-Texts($element, [ref]$names, [ref]$selected, [ref]$texts) {
     }
 }
 
+function Split-Names([string]$list) {
+    @($list.Split(",") | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+}
+$inspectNames = Split-Names $Inspect
+foreach ($name in (Split-Names $Close)) {
+    Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+if ($CloseExplorer) {
+    try {
+        foreach ($ew in @((New-Object -ComObject Shell.Application).Windows())) { try { $ew.Quit() } catch { } }
+    } catch { }
+}
+if ($Close -or $CloseExplorer) { Start-Sleep -Milliseconds 1500 }
+
 $windows = @()
 $top = $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
 foreach ($w in $top) {
@@ -62,11 +82,14 @@ foreach ($w in $top) {
         $names = New-Object System.Collections.ArrayList
         $selected = New-Object System.Collections.ArrayList
         $texts = New-Object System.Collections.ArrayList
-        Get-Texts $w ([ref]$names) ([ref]$selected) ([ref]$texts)
+        $procName = $(if ($proc) { $proc.ProcessName } else { "" })
+        if ($inspectNames -contains $procName.ToLower()) {
+            Get-Texts $w ([ref]$names) ([ref]$selected) ([ref]$texts)
+        }
         $r = $c.BoundingRectangle
         $windows += [ordered]@{
             title = $c.Name; class = $c.ClassName; pid = $c.ProcessId; hwnd = $c.NativeWindowHandle
-            process = $(if ($proc) { $proc.ProcessName } else { "" }); started = $started
+            process = $procName; started = $started
             rect = @([int]$r.Left, [int]$r.Top, [int]$r.Width, [int]$r.Height)
             names = @($names); selected = @($selected); texts = @($texts)
         }
@@ -76,7 +99,7 @@ foreach ($w in $top) {
 $explorer = @()
 try {
     foreach ($ew in (New-Object -ComObject Shell.Application).Windows()) {
-        try { $explorer += $ew.Document.Folder.Self.Path } catch { }
+        try { $explorer += [ordered]@{ path = $ew.Document.Folder.Self.Path; hwnd = [int64]$ew.HWND } } catch { }
     }
 } catch { }
 

@@ -3,8 +3,10 @@ stale windows ignored, and live_bench using the probe instead of the judge."""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
 from evals import desktop_state, live_bench
@@ -20,9 +22,9 @@ def _window(process: str, title: str = "", *, started: str = AFTER, names=(), se
             "rect": [0, 0, 800, 600], "names": list(names), "selected": list(selected), "texts": list(texts)}
 
 
-def _snap(*wins: dict, explorer=(), folder=False, canvas=None) -> dict:
+def _snap(*wins: dict, explorer=(), folder=False, canvas=None, baseline=None) -> dict:
     return {"windows": list(wins), "explorer": list(explorer), "documents": r"C:\Users\bench\Documents",
-            "since": T0.isoformat(), "bench_folder_exists": folder, "paint_canvas": canvas}
+            "since": T0.isoformat(), "bench_folder_exists": folder, "paint_canvas": canvas, "baseline": baseline}
 
 
 def _grade(name: str, snapshot: dict) -> bool:
@@ -72,9 +74,16 @@ def test_console_checks_read_the_buffer() -> None:
 
 
 def test_uia_checks_for_settings_task_manager_and_calculator() -> None:
-    settings = _window("ApplicationFrameHost", "Settings", names=["Settings", "Display", "Scale and layout"])
+    settings = _window("ApplicationFrameHost", "Settings", names=["Settings", "Display", "Scale and layout"],
+                       selected=["Display"])
     assert _grade("settings_display", _snap(settings))
+    win11 = _window("ApplicationFrameHost", "Settings", names=["System > Display", "Display resolution"])
+    assert _grade("settings_display", _snap(win11))
     assert not _grade("settings_display", _snap(_window("ApplicationFrameHost", "Settings", names=["Settings", "Home"])))
+    # Searching "resolution" on the System page lists a Display entry but isn't the Display page.
+    search = _window("ApplicationFrameHost", "Settings", selected=["System"],
+                     names=["System", "Display", "Change the resolution of the display"])
+    assert not _grade("settings_display", _snap(search))
     assert _grade("taskmgr_performance", _snap(_window("Taskmgr", "Task Manager", selected=["Performance"])))
     assert not _grade("taskmgr_performance", _snap(_window("Taskmgr", "Task Manager", selected=["Processes"])))
     calc = _window("ApplicationFrameHost", "Calculator", names=["Calculator", "Display is 444"])
@@ -110,7 +119,32 @@ def test_canvas_stats_counts_dark_pixels_and_their_box() -> None:
 def test_probe_refuses_on_other_platforms(monkeypatch) -> None:
     monkeypatch.setattr(desktop_state.sys, "platform", "linux")
     with pytest.raises(desktop_state.ProbeError, match="Windows"):
-        desktop_state.probe(T0)
+        desktop_state.probe(T0, "notepad_type")
+
+
+def test_apps_open_before_the_task_never_count() -> None:
+    # Hosts like ApplicationFrameHost, Explorer and Windows Terminal outlive tasks:
+    # with a baseline, only windows opened during the task are graded.
+    calc = _window("ApplicationFrameHost", "Calculator", names=["Display is 444"], hwnd=7)
+    assert not _grade("calculator_multiply", _snap(calc, baseline=[7]))
+    assert _grade("calculator_multiply", _snap(calc, baseline=[3]))
+    terminal = _window("WindowsTerminal", "Windows PowerShell", hwnd=9,
+                       texts=["PS C:\\> Get-Date\n\nSunday, November 8, 2026 3:01:12 PM"])
+    ok, reason = desktop_state.grade("powershell_date", _snap(terminal, baseline=[9]))
+    assert not ok and "no PowerShell window" in reason
+    old = {"path": "C:\\Windows", "hwnd": 5}
+    assert not _grade("explorer_windows", _snap(explorer=[old], baseline=[5]))
+    assert _grade("explorer_windows", _snap(explorer=[{"path": "C:\\Windows", "hwnd": 6}], baseline=[5]))
+
+
+def test_single_items_from_the_probe_are_read_as_lists() -> None:
+    raw = {"windows": {"process": "notepad", "hwnd": 2, "texts": "Hello from Operon", "names": None},
+           "explorer": "C:\\Windows", "documents": "C:\\Docs"}
+    snap = desktop_state._normalize(raw)
+    snap.update(since=T0.isoformat(), baseline=[], bench_folder_exists=False, paint_canvas=None)
+    assert snap["windows"][0]["texts"] == ["Hello from Operon"] and snap["windows"][0]["names"] == []
+    assert _grade("explorer_windows", snap)
+    assert _grade("notepad_type", snap)
 
 
 class _Done:
@@ -124,18 +158,20 @@ def test_reset_closes_explorer_and_clears_the_folder_the_probe_reads(monkeypatch
     calls = []
 
     def run(cmd, **kwargs):
-        calls.append(cmd[-1])
-        return _Done(f"{documents}\r\n")
+        calls.append(cmd)
+        return _Done(json.dumps({"windows": [{"hwnd": 11, "process": "WindowsTerminal"}],
+                                 "explorer": [{"path": "C:\\Users", "hwnd": 12}], "documents": str(documents)}))
 
     monkeypatch.setattr(desktop_state.sys, "platform", "win32")
     monkeypatch.setattr(desktop_state.subprocess, "run", run)
-    desktop_state.prepare("explorer_new_folder")
+    assert desktop_state.prepare("explorer_new_folder") == [11, 12]
     assert not (documents / desktop_state.BENCH_FOLDER).exists()
-    assert "Quit()" in calls[0] and "MyDocuments" in calls[0]
-    desktop_state.prepare("explorer_windows")  # closes old windows too
-    assert len(calls) == 2
-    desktop_state.prepare("notepad_type")  # nothing to reset
-    assert len(calls) == 2
+    assert "-CloseExplorer" in calls[0]
+    desktop_state.prepare("calculator_multiply")  # stops a leftover Calculator, keeps consoles
+    close = calls[1][calls[1].index("-Close") + 1]
+    assert "calculatorapp" in close and "-CloseExplorer" not in calls[1]
+    desktop_state.prepare("cmd_echo")
+    assert calls[2][calls[2].index("-Close") + 1] == ""
 
 
 def test_reset_refuses_a_folder_with_files_in_it(monkeypatch, tmp_path) -> None:
@@ -143,7 +179,8 @@ def test_reset_refuses_a_folder_with_files_in_it(monkeypatch, tmp_path) -> None:
     folder.mkdir()
     (folder / "keep.txt").write_text("x")
     monkeypatch.setattr(desktop_state.sys, "platform", "win32")
-    monkeypatch.setattr(desktop_state.subprocess, "run", lambda cmd, **kw: _Done(str(tmp_path)))
+    monkeypatch.setattr(desktop_state.subprocess, "run",
+                        lambda cmd, **kw: _Done(json.dumps({"windows": [], "documents": str(tmp_path)})))
     with pytest.raises(desktop_state.ProbeError, match="not empty"):
         desktop_state.prepare("explorer_new_folder")
     assert (folder / "keep.txt").exists()
@@ -173,8 +210,10 @@ async def test_desktop_tasks_are_graded_by_state_not_by_the_judge(monkeypatch) -
 
     seen = {}
 
-    def probe(since):
-        seen["since"] = since
+    monkeypatch.setattr(desktop_state, "prepare", lambda name: [99])
+
+    def probe(since, task_name, baseline):
+        seen["since"], seen["baseline"] = since, baseline
         return _snap(_window("notepad", texts=["Hello from Operon"]))
 
     monkeypatch.setattr(desktop_state, "probe", probe)
@@ -183,11 +222,13 @@ async def test_desktop_tasks_are_graded_by_state_not_by_the_judge(monkeypatch) -
     result = await live_bench.run_task(_Client(), task, judge, timeout_s=30, approve_pauses=0, mode="desktop")
     assert result.outcome == "success" and "Notepad" in result.judge_reason
     assert result.judge_cost_usd == 0.0
-    assert seen["since"].tzinfo is not None
+    assert seen["since"].tzinfo is not None and seen["baseline"] == [99]
 
 
 async def test_an_unreadable_desktop_is_an_error_not_a_pass(monkeypatch) -> None:
-    def probe(since):
+    monkeypatch.setattr(desktop_state, "prepare", lambda name: [])
+
+    def probe(since, task_name, baseline):
         raise desktop_state.ProbeError("desktop probe failed: boom")
 
     async def judge(task, screenshot):
@@ -215,3 +256,21 @@ async def test_a_failed_reset_skips_the_run_and_is_an_error(monkeypatch) -> None
     task = next(t for t in DESKTOP_TASKS if t.name == "explorer_windows")
     result = await live_bench.run_task(_NoRunClient(), task, judge, timeout_s=30, approve_pauses=0, mode="desktop")
     assert result.outcome == "error" and "boom" in result.judge_reason and result.run_id is None
+
+
+async def test_a_run_that_never_started_is_not_probed(monkeypatch) -> None:
+    class _DownClient:
+        async def post(self, path, json):
+            raise httpx.ConnectError("API down")
+
+    def probe(*args):
+        raise AssertionError("no probe for a run that never ran")
+
+    async def judge(task, screenshot):
+        raise AssertionError("no judge fallback")
+
+    monkeypatch.setattr(desktop_state, "prepare", lambda name: [])
+    monkeypatch.setattr(desktop_state, "probe", probe)
+    task = next(t for t in DESKTOP_TASKS if t.name == "notepad_type")
+    result = await live_bench.run_task(_DownClient(), task, judge, timeout_s=30, approve_pauses=0, mode="desktop")
+    assert result.outcome == "error"

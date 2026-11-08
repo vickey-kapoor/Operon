@@ -10,10 +10,12 @@ reads that snapshot and says whether the task is done, and why.
 This is grading only. The agent never sees any of it; its perception and policy
 stay vision-only.
 
-Windows from before the task started don't count: a window passes only if its
-process started after the task did, or belongs to a long-lived host (File
-Explorer, UWP apps' ApplicationFrameHost, Windows Terminal) that the benchmark
-closes between tasks anyway.
+Windows from before the task don't count. Before each task ``prepare()`` stops the
+task's app if it is already running, closes File Explorer's folder windows for the
+Explorer tasks, and records which windows are still open; only windows outside that
+baseline are graded, so a console or app left open earlier can't pass a task. (When
+no baseline is given, a window counts if its process started after the task did, or
+belongs to a long-lived host such as File Explorer or ApplicationFrameHost.)
 """
 
 from __future__ import annotations
@@ -43,80 +45,132 @@ class ProbeError(RuntimeError):
 
 # --- reading the machine ---------------------------------------------------------
 
-def probe(since: datetime) -> Snapshot:
-    """Snapshot the desktop. ``since`` is when the task started (UTC)."""
+_CONSOLE_HOSTS = ("conhost", "openconsole", "windowsterminal")
+# Per task: the processes whose windows the probe reads in depth, and the app
+# processes stopped before the task so an earlier attempt's window can't be reused.
+# Consoles are never stopped (the person running the benchmark may be in one);
+# the baseline below keeps their windows out of the grade instead.
+INSPECT: dict[str, tuple[str, ...]] = {
+    "notepad_type": ("notepad",),
+    "notepad_two_lines": ("notepad",),
+    "explorer_windows": (),
+    "explorer_new_folder": (),
+    "cmd_echo": ("cmd", *_CONSOLE_HOSTS),
+    "powershell_date": ("powershell", "pwsh", *_CONSOLE_HOSTS),
+    "settings_display": ("systemsettings", "applicationframehost"),
+    "taskmgr_performance": ("taskmgr",),
+    "calculator_multiply": ("calculatorapp", "calc", "win32calc", "applicationframehost"),
+    "paint_rectangle": ("mspaint",),
+}
+CLOSE_FIRST: dict[str, tuple[str, ...]] = {
+    "notepad_type": ("notepad",),
+    "notepad_two_lines": ("notepad",),
+    "settings_display": ("systemsettings",),
+    "taskmgr_performance": ("taskmgr",),
+    "calculator_multiply": ("calculatorapp", "calc", "win32calc"),
+    "paint_rectangle": ("mspaint",),
+}
+EXPLORER_TASKS = frozenset({"explorer_windows", "explorer_new_folder"})
+
+
+def _run_probe(*args: str, timeout: float = 120) -> Snapshot:
     if sys.platform != "win32":
         raise ProbeError("desktop state checks only run on Windows")
     try:
         done = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE_SCRIPT)],
-            capture_output=True, text=True, timeout=120, check=True,
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE_SCRIPT), *args],
+            capture_output=True, text=True, timeout=timeout, check=True,
         )
         snapshot = json.loads(done.stdout)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         raise ProbeError(f"desktop probe failed: {exc}") from exc
-    if isinstance(snapshot.get("windows"), dict):  # ConvertTo-Json unwraps a one-item list
-        snapshot["windows"] = [snapshot["windows"]]
-    snapshot["since"] = since.isoformat()
-    if not snapshot.get("documents"):
-        raise ProbeError("desktop probe failed: Windows gave no Documents folder")
-    documents = Path(snapshot["documents"])
-    snapshot["bench_folder_exists"] = (documents / BENCH_FOLDER).is_dir()
-    snapshot["paint_canvas"] = _paint_canvas([w for w in snapshot["windows"] if _proc(w) == "mspaint"])
+    return _normalize(snapshot)
+
+
+def _as_list(value) -> list:
+    """ConvertTo-Json writes a one-item list as the bare item, and an empty one as null."""
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _normalize(snapshot: Snapshot) -> Snapshot:
+    snapshot["windows"] = _as_list(snapshot.get("windows"))
+    for w in snapshot["windows"]:
+        for key in ("names", "selected", "texts"):
+            w[key] = _as_list(w.get(key))
+    snapshot["explorer"] = [e if isinstance(e, dict) else {"path": e, "hwnd": None}
+                            for e in _as_list(snapshot.get("explorer"))]
     return snapshot
 
 
-EXPLORER_TASKS = frozenset({"explorer_windows", "explorer_new_folder"})
-# Closes every File Explorer folder window, then prints the Documents folder the probe reads.
-_PREPARE_SCRIPT = (
-    "$ErrorActionPreference = 'SilentlyContinue'; "
-    "foreach ($w in @((New-Object -ComObject Shell.Application).Windows())) { $w.Quit() }; "
-    "[Environment]::GetFolderPath('MyDocuments')"
-)
+def prepare(task_name: str) -> list[int]:
+    """Reset the desktop for a task and return the windows already open (their handles).
 
-
-def prepare(task_name: str) -> None:
-    """Undo what an earlier attempt left behind, so the check can't pass on it.
-
-    Explorer tasks: closes the File Explorer folder windows that are open (they live in
-    explorer.exe, which outlives a task, so an earlier attempt's window would otherwise
-    still count). explorer_new_folder also removes the benchmark's own folder, only
-    while it is empty, from the same Documents folder the probe checks (it may be
-    redirected, e.g. to OneDrive)."""
-    if task_name not in EXPLORER_TASKS or sys.platform != "win32":
-        return
+    Stops the task's app if it is running (an earlier attempt's window would otherwise
+    still count) and, for the Explorer tasks, closes File Explorer's folder windows.
+    explorer_new_folder also removes the benchmark's own folder, only while it is empty,
+    from the same Documents folder the probe checks (it may be redirected, e.g. to
+    OneDrive). Windows in the returned baseline never count towards the grade, so a
+    console or app left open by anyone before the task can't pass it."""
+    args = ["-Close", ",".join(CLOSE_FIRST.get(task_name, ()))]
+    if task_name in EXPLORER_TASKS:
+        args.append("-CloseExplorer")
     try:
-        done = subprocess.run(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", _PREPARE_SCRIPT],
-            capture_output=True, text=True, timeout=60, check=True,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+        snapshot = _run_probe(*args, timeout=60)
+    except ProbeError as exc:
         raise ProbeError(f"desktop reset failed: {exc}") from exc
-    if task_name != "explorer_new_folder":
-        return
-    documents = done.stdout.strip()
-    if not documents:
-        raise ProbeError("desktop reset failed: Windows gave no Documents folder")
-    try:
-        (Path(documents) / BENCH_FOLDER).rmdir()
-    except FileNotFoundError:
-        pass
-    except OSError as exc:  # not empty: an earlier attempt or a person put files there
-        raise ProbeError(f"{BENCH_FOLDER} in Documents is not empty, so the task can't be graded: {exc}") from exc
+    if task_name == "explorer_new_folder":
+        documents = snapshot.get("documents")
+        if not documents:
+            raise ProbeError("desktop reset failed: Windows gave no Documents folder")
+        try:
+            (Path(documents) / BENCH_FOLDER).rmdir()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:  # not empty: an earlier attempt or a person put files there
+            raise ProbeError(f"{BENCH_FOLDER} in Documents is not empty, so the task can't be graded: {exc}") from exc
+    return sorted({int(w["hwnd"]) for w in snapshot["windows"] if w.get("hwnd")}
+                  | {int(e["hwnd"]) for e in snapshot["explorer"] if e.get("hwnd")})
 
 
-def _paint_canvas(windows: list[dict]) -> dict | None:
+def probe(since: datetime, task_name: str, baseline: list[int] | None = None) -> Snapshot:
+    """Snapshot the desktop after a task. ``since`` is when it started (UTC) and
+    ``baseline`` the windows open before it (from ``prepare``)."""
+    snapshot = _run_probe("-Inspect", ",".join(INSPECT.get(task_name, ())))
+    snapshot["since"] = since.isoformat()
+    snapshot["baseline"] = list(baseline) if baseline is not None else None
+    if not snapshot.get("documents"):
+        raise ProbeError("desktop probe failed: Windows gave no Documents folder")
+    snapshot["bench_folder_exists"] = (Path(snapshot["documents"]) / BENCH_FOLDER).is_dir()
+    snapshot["paint_canvas"] = (_paint_canvas(windows(snapshot, "mspaint"))
+                                if task_name == "paint_rectangle" else None)
+    return snapshot
+
+
+def _paint_canvas(found: list[dict]) -> dict | None:
     """How much is drawn on Paint's canvas: dark pixels and their bounding box."""
-    if not windows:
+    if not found:
         return None
     try:
         import ctypes
+        import time
         from ctypes import wintypes
 
         import mss
 
         user32 = ctypes.windll.user32
-        found: list[int] = []
+        # Window rectangles must be in physical pixels, the same ones mss grabs.
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            user32.SetProcessDPIAware()
+        top = found[-1]["hwnd"]
+        # Bring Paint to the front so nothing covers the canvas when it is grabbed.
+        user32.ShowWindow(top, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(top)
+        time.sleep(0.5)
+        canvas: list[int] = []
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def visit(hwnd, _):
@@ -125,15 +179,15 @@ def _paint_canvas(windows: list[dict]) -> dict | None:
             if name.value == "MSPaintView":
                 child = user32.GetWindow(hwnd, 5)  # GW_CHILD: the canvas itself
                 if child:
-                    found.append(child)
+                    canvas.append(child)
                 return False
             return True
 
-        user32.EnumChildWindows(windows[0]["hwnd"], visit, 0)
-        if not found:
+        user32.EnumChildWindows(top, visit, 0)
+        if not canvas:
             return {"found": False, "error": "Paint's canvas (MSPaintView) was not found"}
         rect = wintypes.RECT()
-        user32.GetWindowRect(found[0], ctypes.byref(rect))
+        user32.GetWindowRect(canvas[0], ctypes.byref(rect))
         # Leave out the canvas edge and its resize handles.
         box = {"left": rect.left + 4, "top": rect.top + 4,
                "width": max(1, rect.right - rect.left - 8), "height": max(1, rect.bottom - rect.top - 8)}
@@ -164,7 +218,9 @@ def _proc(window: dict) -> str:
     return str(window.get("process") or "").lower()
 
 
-def _fresh(window: dict, since: datetime) -> bool:
+def _fresh(window: dict, since: datetime, baseline: list[int] | None) -> bool:
+    if baseline is not None:  # a window counts only if it wasn't open before the task
+        return window.get("hwnd") is not None and int(window["hwnd"]) not in set(baseline)
     if _proc(window) in LONG_LIVED_HOSTS:
         return True
     started = window.get("started")
@@ -180,11 +236,12 @@ def _fresh(window: dict, since: datetime) -> bool:
 def windows(snapshot: Snapshot, *processes: str, title: str = "") -> list[dict]:
     """The task's windows: from ``processes`` (or with ``title`` in the title), opened after the task started."""
     since = datetime.fromisoformat(snapshot["since"])
+    baseline = snapshot.get("baseline")
     wanted = {p.lower() for p in processes}
     found = []
     for w in snapshot.get("windows") or []:
         matches = _proc(w) in wanted or (title and title.lower() in str(w.get("title", "")).lower())
-        if matches and _fresh(w, since):
+        if matches and _fresh(w, since, baseline):
             found.append(w)
     return found
 
@@ -228,13 +285,25 @@ def _two_lines(text: str) -> bool:
 
 
 def _explorer_at(snapshot: Snapshot, folder: str) -> bool:
-    return any(_path(p) == _path(folder) for p in snapshot.get("explorer") or [])
+    baseline = snapshot.get("baseline")
+    for entry in snapshot.get("explorer") or []:
+        if not isinstance(entry, dict):
+            entry = {"path": entry, "hwnd": None}
+        if baseline is not None and entry.get("hwnd") is not None and int(entry["hwnd"]) in set(baseline):
+            continue  # open before the task
+        if _path(entry.get("path") or "") == _path(folder):
+            return True
+    return False
+
+
+def _explorer_paths(snapshot: Snapshot) -> list[str]:
+    return [e.get("path") if isinstance(e, dict) else e for e in snapshot.get("explorer") or []]
 
 
 def explorer_windows(snapshot: Snapshot) -> tuple[bool, str]:
     if _explorer_at(snapshot, r"C:\Windows"):
         return True, r"a File Explorer window shows C:\Windows"
-    return False, f"no File Explorer window at C:\\Windows (open: {snapshot.get('explorer') or 'none'})"
+    return False, f"no File Explorer window at C:\\Windows (open: {_explorer_paths(snapshot) or 'none'})"
 
 
 def explorer_new_folder(snapshot: Snapshot) -> tuple[bool, str]:
@@ -253,7 +322,7 @@ def _console(snapshot: Snapshot, shell: str, title: str) -> list[str]:
 
 
 def cmd_echo(snapshot: Snapshot) -> tuple[bool, str]:
-    texts = _console(snapshot, "cmd", "Command Prompt") + _console(snapshot, "cmd", "cmd.exe")
+    texts = list(dict.fromkeys(_console(snapshot, "cmd", "Command Prompt") + _console(snapshot, "cmd", "cmd.exe")))
     if not texts:
         return False, "no Command Prompt window opened during the task"
     for text in texts:
@@ -284,7 +353,11 @@ def settings_display(snapshot: Snapshot) -> tuple[bool, str]:
     if not found:
         return False, "no Settings window opened during the task"
     names = [n.casefold() for n in _names(found)]
-    on_display = "display" in [n.casefold() for n in _selected(found)] or "display" in names
+    # The Display page is open when its nav item is selected (Windows 10 / Server) or
+    # the page header reads "System > Display" (Windows 11). A "Display" search hit
+    # or nav entry alone is not enough.
+    on_display = ("display" in [n.casefold() for n in _selected(found)]
+                  or any(re.fullmatch(r"system\s*[>›]\s*display", n) for n in names))
     if on_display and any("scale" in n or "resolution" in n for n in names):
         return True, "Settings shows the Display page (scale or resolution options listed)"
     return False, "Settings is open but not on the Display page"

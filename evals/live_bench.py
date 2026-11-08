@@ -326,10 +326,10 @@ async def run_task(
     started = time.monotonic()
     started_at = datetime.now(timezone.utc)
     state_graded = mode == "desktop" and task.name in desktop_state.CHECKS
-    reset_error = None
+    reset_error, baseline = None, None
     if state_graded:
         try:
-            desktop_state.prepare(task.name)
+            baseline = desktop_state.prepare(task.name)
         except desktop_state.ProbeError as exc:
             # The leftover state could make the check pass on its own: don't spend a run.
             reset_error = str(exc)
@@ -388,7 +388,9 @@ async def run_task(
         try:
             if reset_error:
                 raise desktop_state.ProbeError(reset_error)
-            goal_met, reason = desktop_state.grade(task.name, desktop_state.probe(started_at))
+            if not run_id or status == "error":
+                raise desktop_state.ProbeError("the run did not finish, so it was not graded")
+            goal_met, reason = desktop_state.grade(task.name, desktop_state.probe(started_at, task.name, baseline))
             verdict = Verdict(goal_met, reason)
         except desktop_state.ProbeError as exc:
             verdict = Verdict(None, str(exc))

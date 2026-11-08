@@ -112,8 +112,46 @@ def test_canvas_stats_counts_dark_pixels_and_their_box() -> None:
     for x in range(2, 12):  # a 10 px dark line on row 3
         i = (3 * width + x) * 3
         rgb[i:i + 3] = b"\x00\x00\x00"
-    assert desktop_state.canvas_stats(bytes(rgb), width, height) == {"dark_pixels": 10, "bbox": [10, 1]}
+    stats = desktop_state.canvas_stats(bytes(rgb), width, height)
+    assert stats["dark_pixels"] == 10 and stats["bbox"] == [10, 1]
     assert desktop_state.canvas_stats(b"\xff" * 30, 5, 2)["dark_pixels"] == 0
+
+
+def test_canvas_stats_ignore_the_gray_backdrop_around_the_canvas() -> None:
+    # Paint's view: a white 40x20 canvas at the top left, gray (200, 210, 225) backdrop
+    # to the right and below, with a dark resize handle and shadow outside the canvas.
+    width, height = 80, 40
+    rgb = bytearray(bytes([200, 210, 225]) * width * height)
+
+    def put(x, y, color):
+        i = (y * width + x) * 3
+        rgb[i:i + 3] = color
+
+    for y in range(20):
+        for x in range(40):
+            put(x, y, b"\xff\xff\xff")
+    for x in range(40, 80):
+        put(x, 21, b"\x60\x60\x60")  # shadow below and beside the canvas
+    put(79, 39, b"\x00\x00\x00")  # resize handle
+    blank = desktop_state.canvas_stats(bytes(rgb), width, height)
+    assert blank["dark_pixels"] == 0 and blank["canvas"][0] <= 40
+    for x in range(10, 30):  # a 20x8 rectangle outline on the canvas
+        put(x, 5, b"\x00\x00\x00")
+        put(x, 12, b"\x00\x00\x00")
+    for y in range(5, 13):
+        put(10, y, b"\x00\x00\x00")
+        put(29, y, b"\x00\x00\x00")
+    drawn = desktop_state.canvas_stats(bytes(rgb), width, height)
+    assert drawn["bbox"] == [20, 8]
+
+
+def test_notepad_text_is_also_read_from_the_window(monkeypatch) -> None:
+    raw = {"windows": [{"process": "notepad", "hwnd": 21, "title": "*Untitled - Notepad", "started": AFTER,
+                        "names": ["Text Editor"], "texts": []}], "explorer": [], "documents": "C:\\Docs"}
+    monkeypatch.setattr(desktop_state, "_run_probe", lambda *a, **k: desktop_state._normalize(raw))
+    monkeypatch.setattr(desktop_state, "_edit_text", lambda hwnd: "Hello from Operon" if hwnd == 21 else "")
+    snap = desktop_state.probe(T0, "notepad_type", baseline=[])
+    assert _grade("notepad_type", snap)
 
 
 def test_probe_refuses_on_other_platforms(monkeypatch) -> None:
@@ -206,7 +244,7 @@ class _Client:
         return _Response({"status": "succeeded", "step_count": 3})
 
 
-async def test_desktop_tasks_are_graded_by_state_not_by_the_judge(monkeypatch) -> None:
+async def test_desktop_tasks_are_graded_by_state_not_by_the_judge(monkeypatch, tmp_path) -> None:
     async def judge(task, screenshot):
         raise AssertionError("the judge must not be called for desktop tasks")
 
@@ -220,11 +258,17 @@ async def test_desktop_tasks_are_graded_by_state_not_by_the_judge(monkeypatch) -
 
     monkeypatch.setattr(desktop_state, "probe", probe)
     monkeypatch.setattr(live_bench, "_final_screenshot", lambda run_id: None)
+    monkeypatch.setattr(live_bench, "_run_dir", lambda run_id: tmp_path / run_id)
     task = next(t for t in DESKTOP_TASKS if t.name == "notepad_type")
     result = await live_bench.run_task(_Client(), task, judge, timeout_s=30, approve_pauses=0, mode="desktop")
     assert result.outcome == "success" and "Notepad" in result.judge_reason
     assert result.judge_cost_usd == 0.0
     assert seen["since"].tzinfo is not None and seen["baseline"] == [99]
+    # What the grader saw is kept with the run and copied next to the report's screenshot.
+    saved = json.loads((tmp_path / "run-1" / "desktop_state.json").read_text(encoding="utf-8"))
+    assert saved["windows"][0]["texts"] == ["Hello from Operon"]
+    live_bench.save_final_screens([result], tmp_path / "report")
+    assert (tmp_path / "report" / "notepad_type.state.json").is_file()
 
 
 async def test_an_unreadable_desktop_is_an_error_not_a_pass(monkeypatch) -> None:

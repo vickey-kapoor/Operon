@@ -145,7 +145,44 @@ def probe(since: datetime, task_name: str, baseline: list[int] | None = None) ->
     snapshot["bench_folder_exists"] = (Path(snapshot["documents"]) / BENCH_FOLDER).is_dir()
     snapshot["paint_canvas"] = (_paint_canvas(windows(snapshot, "mspaint"))
                                 if task_name == "paint_rectangle" else None)
+    if "notepad" in INSPECT.get(task_name, ()):
+        # Notepad's text control doesn't always answer UI Automation; read it directly.
+        for w in windows(snapshot, "notepad"):
+            text = _edit_text(w.get("hwnd"))
+            if text:
+                w["texts"].append(text)
     return snapshot
+
+
+def _edit_text(hwnd) -> str:
+    """The text of the first Edit or RichEdit child of ``hwnd`` (WM_GETTEXT)."""
+    if not hwnd:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        found: list[int] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def visit(child, _):
+            name = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(child, name, 256)
+            if name.value == "Edit" or name.value.startswith("RichEdit"):
+                found.append(child)
+                return False
+            return True
+
+        user32.EnumChildWindows(int(hwnd), visit, 0)
+        if not found:
+            return ""
+        length = user32.SendMessageW(found[0], 0x000E, 0, 0)  # WM_GETTEXTLENGTH
+        buffer = ctypes.create_unicode_buffer(min(int(length), 200_000) + 1)
+        user32.SendMessageW(found[0], 0x000D, len(buffer), buffer)  # WM_GETTEXT
+        return buffer.value
+    except Exception:  # the UI Automation read may still have the text
+        return ""
 
 
 def _paint_canvas(found: list[dict]) -> dict | None:
@@ -198,18 +235,34 @@ def _paint_canvas(found: list[dict]) -> dict | None:
         return {"found": False, "error": str(exc)}
 
 
-def canvas_stats(rgb: bytes, width: int, height: int, threshold: int = 200) -> dict:
-    """Count pixels darker than ``threshold`` in any channel and their bounding box."""
+def canvas_stats(rgb: bytes, width: int, height: int, threshold: int = 200, white: int = 250) -> dict:
+    """Measure what is drawn on Paint's canvas.
+
+    The grab covers Paint's whole view, which is the white canvas on a gray backdrop
+    with resize handles and a shadow. The canvas is taken to be the box around the
+    white pixels; inside it, pixels darker than ``threshold`` in any channel count as
+    drawing, and their bounding box is returned."""
+    n = min(len(rgb) // 3, width * height)
+    lows = [min(rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]) for i in range(n)]
+    whites = [i for i, low in enumerate(lows) if low >= white]
+    if whites:
+        wx = [i % width for i in whites]
+        left, right = min(wx) + 1, max(wx) - 1
+        top, bottom = whites[0] // width + 1, whites[-1] // width - 1
+    else:  # the canvas is fully painted over
+        left, right, top, bottom = 0, width - 1, 0, height - 1
     count, xs, ys = 0, [], []
-    for i in range(0, min(len(rgb), width * height * 3), 3):
-        if min(rgb[i], rgb[i + 1], rgb[i + 2]) < threshold:
-            count += 1
-            pixel = i // 3
-            xs.append(pixel % width)
-            ys.append(pixel // width)
+    for y in range(max(top, 0), min(bottom, height - 1) + 1):
+        row = y * width
+        for x in range(max(left, 0), min(right, width - 1) + 1):
+            if row + x < n and lows[row + x] < threshold:
+                count += 1
+                xs.append(x)
+                ys.append(y)
+    canvas = [max(0, right - left + 1), max(0, bottom - top + 1)]
     if not count:
-        return {"dark_pixels": 0, "bbox": [0, 0]}
-    return {"dark_pixels": count, "bbox": [max(xs) - min(xs) + 1, max(ys) - min(ys) + 1]}
+        return {"dark_pixels": 0, "bbox": [0, 0], "canvas": canvas}
+    return {"dark_pixels": count, "bbox": [max(xs) - min(xs) + 1, max(ys) - min(ys) + 1], "canvas": canvas}
 
 
 # --- reading the snapshot ---------------------------------------------------------

@@ -15,6 +15,11 @@ from operon.agent.backends.combined import CombinedPerceptionPolicyService
 from operon.agent.backends.desktop_claude_computer_use import (
     DesktopClaudeComputerUseBackend,
 )
+from operon.agent.backends.desktop_computer_use import (
+    DESKTOP_ENVIRONMENT,
+    GEMINI_LAUNCH_APP_FUNCTION,
+    DesktopComputerUseBackend,
+)
 from operon.agent.backends.fallback import FallbackBackend
 from operon.agent.backends.model_adapter.backend import ModelAdapterBackend
 from operon.agent.backends.model_adapter.openai_native import OpenAIComputerUseBackend
@@ -93,8 +98,17 @@ def build_model_backend(
             **({"browser_runtime": executor} if environment == "browser" else {}),
         )
     if profile.adapter == "gemini_native":
-        if environment != "browser":
-            raise ModelRegistryError(f"profile {profile.name}: Gemini computer use is browser only")
+        if environment == "desktop":
+            return DesktopComputerUseBackend(
+                client=client
+                or GeminiComputerUseHttpClient(
+                    model=profile.model,
+                    thinking_level=profile.effort,
+                    environment=DESKTOP_ENVIRONMENT,
+                    function_declarations=[GEMINI_LAUNCH_APP_FUNCTION],
+                ),
+                prompt_path=_PROMPTS_DIR / "desktop_computer_use_prompt.txt",
+            )
         return BrowserComputerUseBackend(
             client=client or GeminiComputerUseHttpClient(model=profile.model, thinking_level=profile.effort),
             prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",

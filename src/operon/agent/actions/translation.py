@@ -106,7 +106,7 @@ def normalize_computer_use_function_call(
         }
     # Action set of the Gemini 3.x models' built-in computer_use tool. Every call
     # carries an ``intent`` argument, which is the model's reasoning, not a target.
-    if name in {"click", "middle_click", "double_click", "right_click", "move"}:
+    if name in {"click", "middle_click", "double_click", "triple_click", "right_click", "move"}:
         action_type = {"click": "click", "middle_click": "click", "move": "hover"}.get(name, name)
         return {
             "action_type": action_type,
@@ -127,6 +127,12 @@ def normalize_computer_use_function_call(
         return {"action_type": "hotkey", "key": "+".join(keys) if isinstance(keys, list) else str(keys)}
     if name == "wait":
         return {"action_type": "wait", "wait_ms": int(float(args.get("seconds", 1)) * 1000)}
+    if name == "launch_app":
+        # Operon's custom desktop tool: the desktop environment has no navigate.
+        app = args.get("app")
+        if not isinstance(app, str) or not app.strip():
+            raise BackendCompatibilityError("launch_app needs an app name.")
+        return {"action_type": "launch_app", "text": app.strip()}
     if name == "take_screenshot":
         # Nothing to do on screen; the next turn carries a fresh screenshot.
         return {"action_type": "wait", "wait_ms": 250}
@@ -150,14 +156,25 @@ def normalize_computer_use_actions(
 ) -> dict[str, Any]:
     if not function_calls:
         raise BackendCompatibilityError("No Computer Use function calls were provided.")
-    normalized = [
-        normalize_computer_use_function_call(
+    normalized: list[dict[str, Any]] = []
+    for function_call in function_calls:
+        action = normalize_computer_use_function_call(
             function_call,
             screen_width=screen_width,
             screen_height=screen_height,
         )
-        for function_call in function_calls
-    ]
+        previous = normalized[-1] if normalized else None
+        if (
+            action["action_type"] == "type"
+            and "x" not in action
+            and previous is not None
+            and previous["action_type"] == "click"
+        ):
+            # Gemini 3.x's ``type`` has no target: focus and type in one atomic TYPE
+            # at the click's point rather than a CLICK then a TYPE.
+            normalized.pop()
+            action = {**action, "x": previous["x"], "y": previous["y"]}
+        normalized.append(action)
     if len(normalized) == 1:
         return normalized[0]
     return {"action_type": "batch", "actions": normalized}

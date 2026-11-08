@@ -110,7 +110,7 @@ false passes count the same way for every model.
 | Adapter | Models | How Operon talks to them |
 |---|---|---|
 | `claude_native` | Claude Opus, Sonnet, Haiku | Claude's computer-use toolset (the existing backend) |
-| `gemini_native` | Gemini computer use (browser only) | Gemini Computer Use (the existing backend) |
+| `gemini_native` | Gemini computer use (browser and desktop) | Gemini Computer Use: `environment: browser`, or `desktop` with a `launch_app` function |
 | `openai_native` | OpenAI computer use | Responses API with the `computer` tool, chained by `previous_response_id` |
 | `openai_compat` | Open-weight models on vLLM, SGLang or a hosted endpoint | `/v1/chat/completions`, with a parser per model family: `neutral_tools` (tool calling, e.g. Qwen3-VL), `ui_tars` (UI-TARS text actions), `opencua` (OpenCUA pyautogui code) |
 

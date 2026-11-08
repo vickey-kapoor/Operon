@@ -124,8 +124,16 @@ async def test_desktop_run_task_uses_the_desktop_routes_and_cleans_up(tmp_path, 
         return httpx.Response(200, json={"status": "succeeded", "step_count": 1})
 
     async def judge(task, screenshot):
-        return Verdict(True, "Notepad shows the text")
+        raise AssertionError("desktop tasks are graded from state, not by the judge")
 
+    def probe(since):
+        # Graded before /desktop/cleanup closes the run's windows.
+        assert "POST /desktop/cleanup" not in calls
+        return {"since": since.isoformat(), "explorer": [], "documents": "", "bench_folder_exists": False,
+                "paint_canvas": None, "windows": [{"process": "notepad", "title": "Notepad", "started": since.isoformat(),
+                                                   "names": [], "selected": [], "texts": ["Hello from Operon"]}]}
+
+    monkeypatch.setattr(live_bench.desktop_state, "probe", probe)
     async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler)) as client:
         result = await run_task(client, DESKTOP_TASKS[0], judge, timeout_s=60, approve_pauses=2, mode="desktop")
 

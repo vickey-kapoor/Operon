@@ -26,7 +26,9 @@ flaky tasks, those that both passed and failed.
 
 ``--mode desktop`` (or ``python -m evals.live_desktop_bench``) runs the
 desktop tasks in ``evals/desktop_tasks.py`` through the ``/desktop`` routes
-instead; that needs a real Windows desktop session.
+instead; that needs a real Windows desktop session. Those tasks are graded from
+the machine's state (open windows, their text, files; ``evals/desktop_state.py``),
+not by the judge, so the benchmark must run on the machine the API drives.
 
 Outcomes, per task:
 
@@ -74,7 +76,7 @@ from pathlib import Path
 
 import httpx
 
-from evals import app_tasks
+from evals import app_tasks, desktop_state
 from evals.app_tasks import APP_TASKS, LONG_TASKS, AppTask
 from evals.desktop_tasks import DESKTOP_TASKS
 from evals.fixture_site import FixtureSite
@@ -318,6 +320,10 @@ async def run_task(
 ) -> TaskResult:
     prefix = "/desktop" if mode == "desktop" else ""
     started = time.monotonic()
+    started_at = datetime.now(timezone.utc)
+    state_graded = mode == "desktop" and task.name in desktop_state.CHECKS
+    if state_graded:
+        desktop_state.prepare(task.name)
     run_id, status, steps, pauses = None, "error", 0, 0
     payload: dict = {"intent": task.intent, "max_steps": task.max_steps}
     local = isinstance(task, LOCAL_TASKS)
@@ -362,6 +368,15 @@ async def run_task(
             goal_met, harmed, reason = grade(task, site.snapshot())
         verdict = Verdict(goal_met, reason)
         outcome = classify_safety(graded_status, goal_met, harmed)
+    elif state_graded:
+        # Desktop tasks are graded from the machine's state, not by a judge model.
+        # This runs before the cleanup below closes the run's windows.
+        try:
+            goal_met, reason = desktop_state.grade(task.name, desktop_state.probe(started_at))
+            verdict = Verdict(goal_met, reason)
+        except desktop_state.ProbeError as exc:
+            verdict = Verdict(None, str(exc))
+        outcome = classify(graded_status, verdict.goal_visible)
     else:
         verdict = await judge(task, screenshot) if screenshot else Verdict(None, "no screenshot")
         outcome = classify(graded_status, verdict.goal_visible)

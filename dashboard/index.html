@@ -25,6 +25,7 @@
     <nav class="tabs" role="tablist">
       <button role="tab" aria-selected="true" data-tab="evals">Evals</button>
       <button role="tab" aria-selected="false" data-tab="cost">Cost</button>
+      <button role="tab" aria-selected="false" data-tab="leaderboard">Leaderboard</button>
     </nav>
     <div class="filters">
       <div class="seg" id="f-mode" aria-label="Environment">
@@ -151,6 +152,30 @@
             <div class="card-head"><div><h2>By task</h2><p class="sub">Most expensive first</p></div></div>
             <div class="table-wrap"><table id="cost-tasks"></table></div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-leaderboard" hidden>
+      <div id="lb-empty" class="card empty-state" hidden>
+        <div class="empty-icon" aria-hidden="true">#</div>
+        <h2>No model runs yet</h2>
+        <p class="note">Models appear here once a benchmark runs with a model registry profile
+          (<code>/bench model=&lt;profile&gt;</code>, or <code>live_bench --model</code>). Each model is
+          judged by its own "done" and the same graders.</p>
+      </div>
+      <div id="lb-body">
+        <div class="card">
+          <div class="card-head"><div><h2>Models by suite</h2><p class="sub">Pass rate of each model's latest unflagged run per suite. Hover a cell for false passes, cost and speed.</p></div></div>
+          <div class="table-wrap"><table class="matrix" id="lb-matrix"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Models</h2><p class="sub">Totals over each model's latest run per suite. Invalid: replies the adapter could not turn into an action.</p></div></div>
+          <div class="table-wrap"><table id="lb-models"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Cost against success</h2><p class="sub">Each model over its latest runs: cost per task (agent plus GPU time, log scale) against pass rate. Up and left is better.</p></div><div class="legend" id="lg-lb-scatter"></div></div>
+          <div class="chart" id="ch-lb-scatter"></div>
         </div>
       </div>
     </section>

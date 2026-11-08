@@ -58,7 +58,7 @@ PRO_REPO, PRO_REVISION = "likaixin/ScreenSpot-Pro", "210e78d3844251110bff86c9583
 V2_ZIP = "screenspotv2_image.zip"
 SETS = ("v2-desktop", "v2-web", "pro")
 OUTCOMES = ("hit", "miss", "no_click", "error")
-BACKENDS = ("claude_computer_use", "computer_use")
+BACKENDS = ("claude_computer_use", "computer_use", "model")
 DEFAULT_PER_SET = 100
 DEFAULT_MAX_COST_USD = 5.0
 BUDGET_EXIT_CODE = 3
@@ -307,6 +307,8 @@ class BackendFactory:
         self._clients: dict[str, Any] = {}
 
     def __call__(self, sample: Sample) -> Backend:
+        if self.backend == "model":
+            return self._model_backend(sample)
         from operon.agent.backends.browser_claude_computer_use import (
             BrowserClaudeComputerUseBackend,
         )
@@ -336,6 +338,17 @@ class BackendFactory:
         return backend_cls(
             client=self._clients[kind], prompt_path=prompts_dir() / f"{kind}_claude_computer_use_prompt.txt"
         )
+
+
+    def _model_backend(self, sample: Sample) -> Backend:
+        """A registry profile (``--backend model --model <profile>``): desktop and Pro
+        samples go to its desktop backend when it has one, else everything is browser."""
+        from operon.agent.backends.model_adapter.registry import resolve_profile
+        from operon.api.runtime.services import build_model_backend
+
+        profile = resolve_profile(self.model)
+        kind = "browser" if sample.set == "v2-web" or "desktop" not in profile.environments else "desktop"
+        return build_model_backend(kind, profile=profile)
 
 
 def _image_size(data: bytes) -> tuple[int, int]:
@@ -487,6 +500,11 @@ def format_report(summary: dict) -> str:
 
 
 def _default_model(backend: str) -> str:
+    if backend == "model":
+        profile = (os.getenv("OPERON_MODEL_PROFILE") or "").strip()
+        if not profile:
+            sys.exit("--backend model needs --model <profile> (evals/models.yaml) or OPERON_MODEL_PROFILE")
+        return profile
     if backend == "computer_use":
         return os.getenv("OPERON_BROWSER_MODEL", "gemini-3.5-flash")
     return os.getenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-opus-5-5")
@@ -512,7 +530,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--set", action="append", choices=SETS, help="sets to run (default: all)")
     parser.add_argument("--per-set", type=int, default=DEFAULT_PER_SET, help="samples per set")
     parser.add_argument("--backend", choices=BACKENDS, default=_default_backend())
-    parser.add_argument("--model", help="model (default: the backend's server default)")
+    parser.add_argument(
+        "--model",
+        help="model (default: the backend's server default); with --backend model, the registry profile",
+    )
     parser.add_argument("--effort", help="Claude effort, or Gemini thinking level (default: low)")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument(
@@ -538,7 +559,20 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
     model = args.model or _default_model(args.backend)
     effort = args.effort or (os.getenv("OPERON_BROWSER_CLAUDE_EFFORT", "low") if args.backend != "computer_use"
                              else os.getenv("OPERON_BROWSER_THINKING", "low")) or None
+    profile = None
+    if args.backend == "model":
+        from operon.agent.backends.model_adapter.registry import (
+            ModelRegistryError,
+            resolve_profile,
+        )
+
+        try:
+            profile = resolve_profile(model)
+        except ModelRegistryError as exc:
+            sys.exit(f"--model: {exc}")
+        effort = profile.effort
     make_backend = make_backend or BackendFactory(args.backend, model, effort)
+    wall_started = time.monotonic()
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = Path(args.out_dir)
     work_dir = Path(".var/grounding") / started_at
@@ -552,6 +586,12 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         concurrency=args.concurrency, max_cost_usd=args.max_cost_usd, on_result=progress,
     )
     summary = summarize(results)
+    if profile is not None:
+        summary["invalid_replies"] = sum(1 for r in results if r.detail.startswith("wait: Invalid model reply"))
+        summary["invalid_action_rate"] = round(summary["invalid_replies"] / len(results), 4) if results else 0.0
+        if profile.pricing.gpu_hour_usd is not None:
+            # A lower bound: the GPU VM also bills while it starts and idles.
+            summary["gpu_cost_usd"] = round((time.monotonic() - wall_started) / 3600 * profile.pricing.gpu_hour_usd, 4)
     # "samples", not "results": the dashboard importer takes any JSON with both
     # "summary" and "results" for a live benchmark report.
     report = {
@@ -561,7 +601,9 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         "backend": args.backend,
         "model": model,
         "effort": effort,
-        "zoom": args.backend != "computer_use" and _zoom_enabled(),
+        "zoom": args.backend == "claude_computer_use" and _zoom_enabled(),
+        "model_profile": profile.name if profile is not None else None,
+        "model_id": profile.model if profile is not None else None,
         "per_set": args.per_set,
         "datasets": {V2_REPO: V2_REVISION, PRO_REPO: PRO_REVISION},
         "budget_stop": stopped,

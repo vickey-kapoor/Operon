@@ -28,7 +28,7 @@ on:
       desktop_backend:
         description: "OPERON_DESKTOP_BACKEND: json (Gemini) or claude_computer_use"
         type: choice
-        options: [json, claude_computer_use]
+        options: [json, claude_computer_use, model]
         default: json
       harness_profile:
         description: "OPERON_HARNESS_PROFILE for Claude: thin (default) or full. Gemini always runs full."
@@ -54,6 +54,9 @@ on:
       max_cost_usd:
         description: "Stop the run once it has spent this many USD (0: no cap)"
         default: "5"
+      model_profile:
+        description: "Registry profile (evals/models.yaml) for desktop_backend 'model' (experimental)"
+        default: ""
   # Called by bench-command.yml when someone comments /bench desktop on a PR.
   workflow_call:
     inputs:
@@ -67,6 +70,7 @@ on:
       zoom: {type: boolean, default: false}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "5"}
+      model_profile: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
@@ -76,6 +80,9 @@ on:
       ANTHROPIC_API_KEY: {required: false}
       GEMINI_API_KEY: {required: false}
       AZURE_CREDENTIALS: {required: false}
+      OPENAI_API_KEY: {required: false}
+      OPENWEIGHT_BASE_URL: {required: false}
+      OPENWEIGHT_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -143,6 +150,11 @@ jobs:
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
       OPERON_CLAUDE_ZOOM: ${{ inputs.zoom && 'true' || 'false' }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
+      # Registry models (model_profile): the adapter's keys and the self-hosted endpoint.
+      OPERON_MODEL_PROFILE: ${{ inputs.model_profile }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENWEIGHT_BASE_URL: ${{ secrets.OPENWEIGHT_BASE_URL }}
+      OPENWEIGHT_API_KEY: ${{ secrets.OPENWEIGHT_API_KEY }}
     steps:
       - name: Check the secrets
         run: |
@@ -150,6 +162,10 @@ jobs:
           if (-not $env:GEMINI_API_KEY) { $missing += "GEMINI_API_KEY" }
           $needsClaude = $env:OPERON_DESKTOP_BACKEND -eq "claude_computer_use"
           if ($needsClaude -and -not $env:ANTHROPIC_API_KEY) { $missing += "ANTHROPIC_API_KEY" }
+          if ($env:OPERON_DESKTOP_BACKEND -eq "model" -and -not $env:OPERON_MODEL_PROFILE) {
+            Write-Output "::error::desktop_backend 'model' needs a model_profile (evals/models.yaml)."
+            exit 1
+          }
           if ($missing.Count -gt 0) {
             Write-Output "::error::Missing repository secret(s): $($missing -join ', '). Add them under Settings > Secrets and variables > Actions."
             exit 1
@@ -260,7 +276,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: bench-desktop
+          name: bench-desktop${{ inputs.model_profile && format('-{0}', inputs.model_profile) || '' }}
           # .var/bench holds the JSON report and each task's graded screenshot.
           path: |
             bench.txt

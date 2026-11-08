@@ -57,6 +57,8 @@ class Label:
 class Graded:
     label: Label
     verdicts: tuple[bool | None, ...]
+    # What the judge calls for this label cost, over all repeats.
+    cost_usd: float = 0.0
 
     @property
     def verdict(self) -> bool | None:
@@ -163,6 +165,8 @@ CREATE TABLE IF NOT EXISTS judge_checks (
     false_fails   integer NOT NULL,
     disagreements jsonb NOT NULL
 );
+-- What the check's judge calls cost; the Cost tab adds it to the month's spend.
+ALTER TABLE judge_checks ADD COLUMN IF NOT EXISTS cost_usd double precision;
 """
 
 
@@ -178,6 +182,7 @@ def check_row(graded: list[Graded], summary: dict, judge_model: str, repeat: int
         "agreement": summary["self_agreement"],
         "false_passes": summary["false_positive"],
         "false_fails": summary["false_negative"],
+        "cost_usd": round(sum(g.cost_usd for g in graded), 6),
         "disagreements": [
             {"task": g.label.task, "screenshot": Path(g.label.screenshot).name, "label": g.label.label, "judge": g.verdict}
             for g in graded
@@ -207,8 +212,8 @@ async def judge_labels(labels: list[Label], judge, repeat: int = 1, concurrency:
         if task is None or not Path(label.screenshot).is_file():
             return Graded(label, (None,))
         async with gate:
-            verdicts = [(await judge(task, label.screenshot)).goal_visible for _ in range(repeat)]
-        return Graded(label, tuple(verdicts))
+            answers = [await judge(task, label.screenshot) for _ in range(repeat)]
+        return Graded(label, tuple(a.goal_visible for a in answers), round(sum(a.cost_usd or 0.0 for a in answers), 6))
 
     return list(await asyncio.gather(*(one(label) for label in labels)))
 
@@ -249,6 +254,7 @@ def main(argv: list[str]) -> int:
     else:
         print(f"judge {args.judge_model}")
         print(format_score(graded, summary, unlabelled))
+        print(f"judge calls cost ${sum(g.cost_usd for g in graded):.4f}")
     if args.save:
         from evals.dashboard import connect
 

@@ -142,7 +142,10 @@ workflow, the **Dashboard data** workflow writes the reports to a Neon Postgres 
 uploads screenshots and traces to a private Vercel Blob store (the dashboard shows them for
 tasks that did not pass), and posts a Slack alert when a run's pass rate drops 5 points,
 its cost per task rises 25% against the previous comparable run, or it hits its cost cap.
-Run the workflow by hand to import older runs. See [dashboard/README.md](../dashboard/README.md).
+Run the workflow by hand to import older runs. The Cost tab shows this month's spend against
+the `MONTHLY_BUDGET_USD` budget (Vercel env) and spend by month (UTC), counting every
+benchmark run (incomplete and partial ones too), grounding evals and judge checks. See
+[dashboard/README.md](../dashboard/README.md).
 
 ## Azure desktop runner
 

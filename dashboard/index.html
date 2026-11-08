@@ -37,6 +37,8 @@
         <button data-v="smoke" aria-pressed="false">Smoke</button>
         <button data-v="safety" aria-pressed="false">Safety</button>
         <button data-v="apps" aria-pressed="false">Apps</button>
+        <button data-v="hard" aria-pressed="false">Hard</button>
+        <button data-v="long" aria-pressed="false">Long</button>
       </div>
       <label class="switch" id="f-flagged-wrap"><input type="checkbox" id="f-flagged"><span class="track"></span> Flagged runs</label>
       <button class="icon-btn" id="theme" type="button" aria-label="Theme: auto" title="Theme: auto"></button>
@@ -56,8 +58,7 @@
           <div class="chart" id="ch-speed"></div>
         </div>
       </div>
-      <div class="charts two">
-        <div class="card">
+      <div class="card">
           <div class="card-head"><div><h2>Why tasks fail</h2><p class="sub">Outcome of every task in each run, as a share of the run</p></div><div class="legend" id="lg-outcomes"></div></div>
           <div class="chart" id="ch-outcomes"></div>
         </div>
@@ -65,8 +66,6 @@
           <div class="card-head"><div><h2>Pass rate by category</h2><p class="sub">Latest run of each configuration</p></div><div class="legend" id="lg-category"></div></div>
           <div id="category-bars"></div>
         </div>
-      </div>
-      <div class="split">
         <div class="card">
           <div class="card-head"><div><h2>Task history</h2><p class="sub">Each task over the last runs, oldest left. Flaky tasks (mixed results) first.</p></div></div>
           <div class="table-wrap"><table class="history" id="history"></table></div>
@@ -75,8 +74,6 @@
           <div class="card-head"><div><h2>Judge accuracy</h2><p class="sub">How often the benchmark judge agrees with hand labels on final screens</p></div></div>
           <div id="judge"></div>
         </div>
-      </div>
-      <div class="split">
         <div class="card">
           <div class="card-head"><div><h2>Runs</h2><p class="sub">Every run for this environment and suite. Select one to see its tasks.</p></div></div>
           <div class="table-wrap"><table id="runs"></table></div>
@@ -86,7 +83,6 @@
           <div class="table-wrap"><table class="matrix" id="matrix"></table></div>
           <button class="ghost-btn" id="matrix-more" type="button" hidden></button>
         </div>
-      </div>
       <div class="card" id="detail" hidden>
         <div class="card-head"><div><h2 id="detail-title"></h2><p class="sub" id="detail-sub"></p></div>
           <button class="ghost-btn" id="detail-close" type="button">Close</button></div>
@@ -102,14 +98,23 @@
           (<code>summary.cost_usd</code> and <code>summary.judge_cost_usd</code>). Runs from before cost tracking don't have it.</p>
       </div>
       <div id="cost-body">
+        <div class="card budget-card">
+          <div class="card-head"><div><h2 id="burn-title">This month</h2><p class="sub" id="burn-sub">Spend so far this calendar month (UTC) against the monthly budget</p></div></div>
+          <div id="cost-burn"></div>
+        </div>
         <div class="overview" id="cost-overview"></div>
+        <div class="card">
+          <div class="card-head"><div><h2>Spend by month</h2><p class="sub">Agent, judge and GPU spend per calendar month (UTC). The dashed line is the monthly budget; this month adds its projected rest.</p></div><div class="legend" id="lg-months"></div></div>
+          <div class="chart" id="ch-months"></div>
+          <div class="table-wrap"><table id="cost-months"></table></div>
+        </div>
         <div class="charts two">
           <div class="card">
-            <div class="card-head"><div><h2>Total spend over time</h2><p class="sub">Running total of agent and judge spend across every environment and suite, US dollars</p></div></div>
+            <div class="card-head"><div><h2>Total spend over time</h2><p class="sub">Running total of agent, judge and GPU spend across every environment and suite, US dollars</p></div></div>
             <div class="chart" id="ch-cumulative"></div>
           </div>
           <div class="card">
-            <div class="card-head"><div><h2>Spend per run</h2><p class="sub">Agent and judge spend of each run, colored by suite</p></div><div class="legend" id="lg-per-run"></div></div>
+            <div class="card-head"><div><h2>Spend per run</h2><p class="sub">Agent, judge and GPU spend of each run, colored by suite</p></div><div class="legend" id="lg-per-run"></div></div>
             <div class="chart" id="ch-per-run"></div>
           </div>
         </div>
@@ -123,25 +128,21 @@
             <div class="chart" id="ch-cache"></div>
           </div>
         </div>
-        <div class="split">
-          <div class="card">
-            <div class="card-head"><div><h2>Most expensive tasks</h2><p class="sub">Average spend per attempt across every run</p></div></div>
-            <div class="table-wrap"><table id="cost-top-tasks"></table></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><div><h2>Wasted spend</h2><p class="sub">Money spent on tasks that didn't pass, and on flagged runs</p></div></div>
-            <div id="cost-waste"></div>
-          </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Most expensive tasks</h2><p class="sub">Average spend per attempt across every run, every attempt of a repeated run included</p></div></div>
+          <div class="table-wrap"><table id="cost-top-tasks"></table></div>
         </div>
-        <div class="split">
-          <div class="card">
-            <div class="card-head"><div><h2>Runs</h2><p class="sub">Every run that recorded cost, flagged ones included. Select one to see its spend by model and by task.</p></div></div>
-            <div class="table-wrap"><table id="cost-runs"></table></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><div><h2>By suite</h2><p class="sub">Where the money went</p></div></div>
-            <div class="table-wrap"><table id="cost-suites"></table></div>
-          </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Wasted spend</h2><p class="sub">Money spent on tasks that didn't pass, and on flagged runs</p></div></div>
+          <div id="cost-waste"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Runs</h2><p class="sub">Every run that recorded cost, flagged ones included (incomplete and partial runs still cost money). Select one to see its spend by model and by task.</p></div></div>
+          <div class="table-wrap"><table id="cost-runs"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>By suite</h2><p class="sub">Where the money went</p></div></div>
+          <div class="table-wrap"><table id="cost-suites"></table></div>
         </div>
         <div class="split" id="cost-detail" hidden>
           <div class="card">
@@ -153,6 +154,8 @@
             <div class="table-wrap"><table id="cost-tasks"></table></div>
           </div>
         </div>
+        <p class="note" id="cost-scope">Counts what benchmark runs, grounding evals and judge checks spent on model calls, plus GPU time of self-hosted models while they ran.
+          It leaves out spend outside them: local runs, the Azure desktop VM and GPU VM hours while idle. Each provider's billing page has the full bill.</p>
       </div>
     </section>
 
@@ -170,7 +173,7 @@
           <div class="table-wrap"><table class="matrix" id="lb-matrix"></table></div>
         </div>
         <div class="card">
-          <div class="card-head"><div><h2>Models</h2><p class="sub">Totals over each model's latest run per suite. Invalid: replies the adapter could not turn into an action.</p></div></div>
+          <div class="card-head"><div><h2>Models</h2><p class="sub">Totals over each model's latest run per suite; every registry model is listed, run or not. Cost is the agent's model calls plus GPU time, without the judge (every model has the same one). Invalid: replies the adapter could not turn into an action.</p></div></div>
           <div class="table-wrap"><table id="lb-models"></table></div>
         </div>
         <div class="card">

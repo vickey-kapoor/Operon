@@ -7,8 +7,10 @@ export default function handler(req, res) {
     if (!(await tablesExist())) return { tasks: [] };
     const { rows } = await db().query(
       `SELECT run_key, task, category, outcome, steps, seconds, cost_usd, judge_cost_usd,
-              result->>'stop_reason' AS stop_reason
-         FROM bench_task_results ORDER BY run_key, position`,
+              result->>'stop_reason' AS stop_reason,
+              -- Read through the row so this works before the import adds the column.
+              COALESCE((to_jsonb(t)->>'attempt')::int, 1) AS attempt
+         FROM bench_task_results t ORDER BY run_key, position`,
     );
     return { tasks: rows };
   });

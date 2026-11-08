@@ -130,6 +130,10 @@ class TaskResult:
     invalid_replies: int = 0
     model_replies: int = 0
     by_model: dict = field(default_factory=dict)
+    # Model calls with tokens but no price (a model missing from the price table): they
+    # count as $0, so the report says how many there were and for which models.
+    unpriced_calls: int = 0
+    unpriced_models: list = field(default_factory=list)
     # Which pass of a --repeat run this result is from (1 when not repeated).
     attempt: int = 1
 
@@ -207,9 +211,16 @@ USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_wri
 
 
 def run_usage(run_id: str) -> dict:
-    """Tokens and estimated USD of every model call a run saved (``step_*/*_usage.json``)."""
+    """Tokens and estimated USD of every model call a run saved (``step_*/*_usage.json``).
+
+    A call that used tokens but has no estimated cost is counted in ``unpriced_calls``:
+    its model is missing from the price table, so it would otherwise add $0 silently.
+    Self-hosted models (``openai_compat``) are priced by GPU time instead and never count.
+    """
     total = dict.fromkeys(USAGE_FIELDS, 0)
     by_model: dict[str, dict] = {}
+    unpriced = 0
+    unpriced_models: set[str] = set()
     for path in sorted(_run_dir(run_id).glob("step_*/*_usage.json")):
         try:
             usage = json.loads(path.read_text(encoding="utf-8"))
@@ -224,6 +235,10 @@ def run_usage(run_id: str) -> dict:
             "cache_write_tokens": usage.get("cache_creation_input_tokens") or 0,
             "cost_usd": usage.get("estimated_cost_usd") or 0.0,
         }
+        used_tokens = row["input_tokens"] or row["output_tokens"] or row["cache_read_tokens"] or row["cache_write_tokens"]
+        if usage.get("estimated_cost_usd") is None and used_tokens and usage.get("provider") != "openai_compat":
+            unpriced += 1
+            unpriced_models.add(str(usage.get("model") or "unknown"))
         bucket = by_model.setdefault(str(usage.get("model") or "unknown"), {"requests": 0, **dict.fromkeys(USAGE_FIELDS, 0)})
         bucket["requests"] += 1
         for key, value in row.items():
@@ -231,7 +246,7 @@ def run_usage(run_id: str) -> dict:
             bucket[key] += value
     for bucket in (total, *by_model.values()):
         bucket["cost_usd"] = round(bucket["cost_usd"], 6)
-    return {**total, "by_model": by_model}
+    return {**total, "by_model": by_model, "unpriced_calls": unpriced, "unpriced_models": sorted(unpriced_models)}
 
 
 def run_replies(run_id: str) -> tuple[int, int]:
@@ -392,6 +407,8 @@ async def run_task(
         **{key: usage.get(key, 0) for key in USAGE_FIELDS},
         judge_cost_usd=round(verdict.cost_usd or 0.0, 6),
         by_model=usage["by_model"],
+        unpriced_calls=usage.get("unpriced_calls", 0),
+        unpriced_models=usage.get("unpriced_models", []),
         invalid_replies=invalid_replies,
         model_replies=model_replies,
     )
@@ -478,6 +495,8 @@ def cost_summary(results: list[TaskResult], successes: int) -> dict:
         "cost_per_success_usd": round(cost / successes, 6) if successes else None,
         **{key: sum(getattr(r, key) for r in results) for key in USAGE_FIELDS if key != "cost_usd"},
         "by_model": by_model,
+        "unpriced_calls": sum(r.unpriced_calls for r in results),
+        "unpriced_models": sorted({m for r in results for m in r.unpriced_models}),
     }
 
 
@@ -506,7 +525,8 @@ def _previous_report(
             report = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if report.get("budget_stop") or report.get("model_profile") != model_profile:
+        # An incomplete report (the run died midway) is no baseline either.
+        if report.get("budget_stop") or report.get("complete") is False or report.get("model_profile") != model_profile:
             continue
         if harness_profile is None or report.get("harness_profile") in {None, harness_profile}:
             return report
@@ -617,6 +637,58 @@ def select_tasks(
     return tasks
 
 
+def build_report(
+    args: argparse.Namespace,
+    started_at: str,
+    results: list[TaskResult],
+    *,
+    profile,
+    repeat: int,
+    planned: int,
+    stopped: dict | None,
+    complete: bool,
+) -> dict:
+    """The saved report. ``complete`` is False while the run is still going: a run that
+    dies midway (a crash, a timeout, a cancelled workflow) leaves that version behind,
+    so the tasks it did run, and what they cost, still reach the dashboard."""
+    summary = summarize(results)
+    if profile is not None:
+        gpu = gpu_cost_usd(results, profile)
+        summary["gpu_cost_usd"] = gpu
+        summary["total_cost_usd"] = round(summary["cost_usd"] + (gpu or 0.0), 6)
+    suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
+    model_key = f"{args.mode}_model"
+    return {
+        "suite": suite_name,
+        "mode": args.mode,
+        "started_at": started_at,
+        model_key: os.getenv(f"OPERON_{args.mode.upper()}_MODEL", "server default"),
+        "judge_model": args.judge_model,
+        "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
+        "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
+        "harness_profile": harness_label(profile),
+        "model_profile": profile.name if profile is not None else None,
+        "model_adapter": profile.adapter if profile is not None else None,
+        "model_id": profile.model if profile is not None else None,
+        "zoom": os.getenv("OPERON_CLAUDE_ZOOM", "").strip().lower() in {"1", "true", "yes", "on"},
+        "repeat": repeat,
+        # --only / --category: some of the suite's tasks; spend counts, pass rates don't.
+        "partial": bool(args.only or args.category),
+        "complete": complete,
+        "tasks_planned": planned,
+        "budget_stop": stopped,
+        "summary": summary,
+        "results": [asdict(r) for r in results],
+    }
+
+
+def report_name(args: argparse.Namespace, started_at: str) -> str:
+    if args.only or args.category:
+        return f"partial-{started_at}.json"
+    suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
+    return f"{suite_name}-{started_at}.json"
+
+
 async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     tasks = select_tasks(args.suite, args.only, args.category, args.mode)
     profile = resolve_model_profile(getattr(args, "model", None), args.mode)
@@ -629,6 +701,21 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     repeat = max(1, args.repeat)
     planned = [(attempt, task) for attempt in range(1, repeat + 1) for task in tasks]
     max_cost_usd = args.max_cost_usd * repeat
+    bench_dir = Path(args.out_dir)
+    # Desktop reports get their own prefix so they never compare against browser runs.
+    suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
+    # Found before this run's own report is first written below.
+    previous = _previous_report(bench_dir, suite_name, profile.name if profile else None, harness_label(profile)) if not (args.only or args.category) else None
+    name = report_name(args, started_at)
+    bench_dir.mkdir(parents=True, exist_ok=True)
+
+    def save(complete: bool) -> dict:
+        report = build_report(
+            args, started_at, results, profile=profile, repeat=repeat, planned=len(planned), stopped=stopped, complete=complete,
+        )
+        (bench_dir / name).write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return report
+
     site = FixtureSite(site_pages(), apps=build_apps()).start() if any(isinstance(t, LOCAL_TASKS) for t in tasks) else None
     try:
         api_key = client_api_key()
@@ -656,46 +743,15 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                         file=sys.stderr, flush=True,
                     )
                     break
+                save(complete=False)
     finally:
         if site:
             site.stop()
 
-    summary = summarize(results)
-    bench_dir = Path(args.out_dir)
-    # Desktop reports get their own prefix so they never compare against browser runs.
-    suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
-    previous = _previous_report(bench_dir, suite_name, profile.name if profile else None, harness_label(profile)) if not (args.only or args.category) else None
-    model_key = f"{args.mode}_model"
-    if profile is not None:
-        gpu = gpu_cost_usd(results, profile)
-        summary["gpu_cost_usd"] = gpu
-        summary["total_cost_usd"] = round(summary["cost_usd"] + (gpu or 0.0), 6)
-    report = {
-        "suite": suite_name,
-        "mode": args.mode,
-        "started_at": started_at,
-        model_key: os.getenv(f"OPERON_{args.mode.upper()}_MODEL", "server default"),
-        "judge_model": args.judge_model,
-        "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
-        "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
-        "harness_profile": harness_label(profile),
-        "model_profile": profile.name if profile is not None else None,
-        "model_adapter": profile.adapter if profile is not None else None,
-        "model_id": profile.model if profile is not None else None,
-        "zoom": os.getenv("OPERON_CLAUDE_ZOOM", "").strip().lower() in {"1", "true", "yes", "on"},
-        "repeat": repeat,
-        "budget_stop": stopped,
-        "summary": summary,
-        "results": [asdict(r) for r in results],
-    }
-    if args.only or args.category:
-        name = f"partial-{started_at}.json"
-    else:
-        name = f"{suite_name}-{started_at}.json"
-    bench_dir.mkdir(parents=True, exist_ok=True)
+    report = save(complete=True)
+    summary = report["summary"]
     if args.keep_screens:
         save_final_screens(results, bench_dir / Path(name).stem)
-    (bench_dir / name).write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     if args.json:
         print(json.dumps(report, indent=2))

@@ -4,22 +4,33 @@ Shows the live benchmark results: pass rate, seconds per task and per step, fals
 passes, per-task outcomes by configuration (Claude or Gemini backend, full or thin
 harness), why tasks fail, pass rate by category, each task's history across runs
 (flaky ones first) and the judge's agreement with hand labels. The Cost tab shows
-total spend over time across every environment and suite (flagged runs included):
-a running total, spend per run, this month's pace against an optional budget,
-spend by model per day, cache hit rate, the most expensive tasks, wasted spend,
-spend by suite, and each run's spend by model and by task.
+spend across every environment and suite (flagged, incomplete and partial runs
+included, plus grounding evals and judge checks): this month's spend against the
+monthly budget (used, left, per-day pace, month-end projection), spend by month,
+a running total, spend per run, spend by model per day, cache hit rate, the most
+expensive tasks, wasted spend, spend by suite, and each run's spend by model and by
+task. Spend is the agent's model calls, the judge and a self-hosted model's GPU
+time; months are calendar months in UTC. The Leaderboard lists every model in the
+registry (`models.json`, written from `evals/models.yaml` by
+`python -m evals.dashboard models`), with "not run yet" until a model has a run.
 
 - `index.html`, `app.js`, `style.css`: the page. Plain JS and inline SVG charts, no build step.
 - `api/runs.js` (`GET /api/runs`): every run with its summary and config.
 - `api/report.js` (`GET /api/report?key=<run key>`): one run with its per-task results.
 - `api/tasks.js` (`GET /api/tasks`): every task result of every run, slimmed for the history and cost cards.
-- `api/judge.js` (`GET /api/judge`): judge checks saved by `python -m evals.judge_check run labels.jsonl --save`.
+- `api/judge.js` (`GET /api/judge`): judge checks saved by `python -m evals.judge_check run labels.jsonl --save`, with what their judge calls cost.
+- `models.json`: the model registry for the Leaderboard; a test keeps it in step with `evals/models.yaml`.
 - `api/blob.js` (`GET /api/blob?url=<blob url>`): one screenshot or trace from the private Blob store.
 - `server/db.js`: the Postgres pool the routes share, from `DATABASE_URL`.
 - `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.
 
-Set `MONTHLY_BUDGET_USD` in the Vercel project's environment variables to show a
-budget bar under this month's spend on the Cost tab. Without it the tab shows only the pace.
+Set `MONTHLY_BUDGET_USD` in the Vercel project's environment variables to see how
+much of the monthly budget is used, the budget line on the month chart and what can
+still be spent per day. Without it the tab shows spend and pace only.
+
+The Cost tab counts what benchmark runs, grounding evals and judge checks spent. It
+leaves out spend outside them: local runs, the Azure desktop VM, and GPU VM hours
+while idle. Each provider's billing page has the full bill.
 
 ## Access
 
@@ -51,13 +62,18 @@ tables, created by the importer if missing:
 
 - `bench_runs`: one row per benchmark run (mode, suite, backend, harness, model,
   start time, commit, workflow run, flag reason, `config` and `summary` as JSON).
-- `bench_task_results`: one row per task in a run (outcome, steps, seconds, cost
-  and tokens as columns, the full result as JSON). Deleting a run deletes its tasks.
+- `bench_task_results`: one row per task in a run, and per attempt in a `--repeat`
+  run (outcome, steps, seconds, cost and tokens as columns, the full result as JSON).
+  Deleting a run deletes its tasks.
+
+Grounding evals (`evals.grounding`) are stored as runs with mode and suite
+`grounding` and no task rows: the Cost tab counts them, the Evals tab and the
+Leaderboard leave them out.
 
 The **Dashboard data** workflow (`.github/workflows/dashboard-data.yml`) runs after
-every "Live benchmark", "Live desktop benchmark" or "Bench command" run and writes
-its reports to the database, using the `DATABASE_URL` repository secret. Importing a
-report again replaces it. Run the workflow by hand to import older workflow runs
+every "Live benchmark", "Live desktop benchmark", "Bench command" or "Grounding eval"
+run, cancelled ones included, and writes its reports to the database, using the
+`DATABASE_URL` repository secret. Importing a report again replaces it. Run the workflow by hand to import older workflow runs
 (`run_ids`) or reports committed at a git ref (`backfill_ref`).
 
 From a terminal:
@@ -69,8 +85,13 @@ python -m evals.dashboard import .var/bench/full-20261024T012945Z.json
 python -m evals.dashboard import path/to/artifacts --backend json --flag "why it is not comparable"
 ```
 
-Flagged runs (a broken runner, a harness bug, a run stopped at its cost cap) stay
-in the data but are hidden unless "Flagged runs" is on.
+Flagged runs stay in the data but are hidden unless "Flagged runs" is on. A run is
+flagged on its own when it stopped at its cost cap, ended early (`live_bench` saves
+its report after every task, marked incomplete until the run finishes, so a crash,
+timeout or cancelled workflow keeps what it spent), ran only some tasks
+(`--only`/`--category`, saved as `partial-*.json`; `--skip-partial` leaves those out),
+or made model calls with no price (a model missing from the price table, which would
+count as $0).
 
 ## Screenshots and traces
 

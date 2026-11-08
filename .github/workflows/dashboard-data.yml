@@ -15,7 +15,7 @@ name: Dashboard data
 
 on:
   workflow_run:
-    workflows: ["Live benchmark", "Live desktop benchmark", "Bench command"]
+    workflows: ["Live benchmark", "Live desktop benchmark", "Bench command", "Grounding eval"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -38,7 +38,8 @@ concurrency:
 
 jobs:
   import:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'cancelled'
+    # Cancelled runs are imported too: the tasks they ran still cost money, and live_bench
+    # saves its report after every task (marked incomplete until the run finishes).
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -74,7 +75,7 @@ jobs:
           # PR's head, so its head_sha is not the commit that was measured.
           GIT_SHA: ${{ github.event.workflow_run.event != 'issue_comment' && github.event.workflow_run.head_sha || '' }}
         run: |
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --dir "artifacts/$RUN_ID" || true
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$RUN_ID" || true
           if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
           python3 -m evals.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert
 
@@ -87,7 +88,7 @@ jobs:
           for run_id in $RUN_IDS; do
             read -r run_url event head_sha < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha --jq '[.url, .event, .headSha] | @tsv')
             [ "$event" = "issue_comment" ] && head_sha=""
-            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --dir "artifacts/$run_id"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$run_id"
             python3 -m evals.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
           done
 

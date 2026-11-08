@@ -1,6 +1,13 @@
 # Operon eval dashboard
 
-Shows the live benchmark results: pass rate, seconds per task and per step, false
+Shows the live benchmark results. Each tab opens with a one-sentence summary built
+from the stored runs (a fixed template, no model call, so it updates after every
+imported run): on Evals, the latest run's result and what changed since the
+configuration's previous run (tasks that started or stopped failing, speed, false
+passes), with a "likely cause" for each miss: the judge's or grader's reason, or when a
+run has none (model comparisons run without a judge), how the task ended and why the
+agent stopped. Below it: number tiles with trends, one trend chart that switches
+between pass rate, speed, steps and cost, false
 passes, per-task outcomes by configuration (Claude or Gemini backend, full or thin
 harness), why tasks fail, pass rate by category, each task's history across runs
 (flaky ones first) and the judge's agreement with hand labels. The Cost tab shows

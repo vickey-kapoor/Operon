@@ -27,39 +27,47 @@
       <button role="tab" aria-selected="false" data-tab="cost">Cost</button>
       <button role="tab" aria-selected="false" data-tab="leaderboard">Leaderboard</button>
     </nav>
-    <div class="filters">
-      <div class="seg" id="f-mode" aria-label="Environment">
+    <div class="appbar-end">
+      <button class="icon-btn" id="theme" type="button" aria-label="Theme: auto" title="Theme: auto"></button>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="filters filterbar" id="filterbar">
+      <div class="chip-group"><span class="chip-label">Environment</span><div class="seg" id="f-mode" aria-label="Environment">
         <button data-v="browser" aria-pressed="true">Browser</button>
         <button data-v="desktop" aria-pressed="false">Desktop</button>
-      </div>
-      <div class="seg" id="f-suite" aria-label="Suite">
+      </div></div>
+      <div class="chip-group"><span class="chip-label">Suite</span><div class="seg" id="f-suite" aria-label="Suite">
         <button data-v="full" aria-pressed="true">Full suite</button>
         <button data-v="smoke" aria-pressed="false">Smoke</button>
         <button data-v="safety" aria-pressed="false">Safety</button>
         <button data-v="apps" aria-pressed="false">Apps</button>
         <button data-v="hard" aria-pressed="false">Hard</button>
         <button data-v="long" aria-pressed="false">Long</button>
-      </div>
+      </div></div>
       <label class="switch" id="f-flagged-wrap"><input type="checkbox" id="f-flagged"><span class="track"></span> Flagged runs</label>
-      <button class="icon-btn" id="theme" type="button" aria-label="Theme: auto" title="Theme: auto"></button>
     </div>
-  </header>
-
-  <main class="page">
     <section id="tab-evals">
-      <div class="tiles" id="tiles"></div>
-      <div class="charts two">
-        <div class="card">
-          <div class="card-head"><div><h2>Pass rate</h2><p class="sub">Tasks the judge saw completed on the final screen</p></div><div class="legend" id="lg-pass"></div></div>
-          <div class="chart" id="ch-pass"></div>
-        </div>
-        <div class="card">
-          <div class="card-head"><div><h2>Seconds per task</h2><p class="sub">Mean wall-clock time per task, lower is better</p></div><div class="legend" id="lg-speed"></div></div>
-          <div class="chart" id="ch-speed"></div>
-        </div>
+      <div class="card hero" id="brief"></div>
+      <div class="kpis" id="tiles"></div>
+      <div class="card">
+        <div class="card-head"><div><h2>Is it getting better?</h2><p class="sub" id="trend-sub">Pass rate of every run, by configuration. Hover a point for the run.</p></div>
+          <div class="seg" id="trend-metric" aria-label="Metric">
+            <button data-v="pass" aria-pressed="true">Pass rate</button>
+            <button data-v="speed" aria-pressed="false">Speed</button>
+            <button data-v="steps" aria-pressed="false">Steps</button>
+            <button data-v="cost" aria-pressed="false">Cost</button>
+          </div></div>
+        <div class="legend trend-legend" id="lg-trend"></div>
+        <div class="chart" id="ch-trend"></div>
       </div>
       <div class="card">
-          <div class="card-head"><div><h2>Why tasks fail</h2><p class="sub">Outcome of every task in each run, as a share of the run</p></div><div class="legend" id="lg-outcomes"></div></div>
+          <div class="card-head"><div><h2>Which tasks fail, and why?</h2><p class="sub">Tasks that failed at least once in the last runs, oldest left, with the likely cause from the latest miss. Flaky tasks (mixed results) first.</p></div></div>
+          <div class="table-wrap"><table class="history" id="history"></table></div>
+        </div>
+      <div class="card">
+          <div class="card-head"><div><h2>How runs end</h2><p class="sub">Outcome of every task in each run, as a share of the run</p></div><div class="legend" id="lg-outcomes"></div></div>
           <div class="chart" id="ch-outcomes"></div>
         </div>
         <div class="card">
@@ -67,11 +75,7 @@
           <div id="category-bars"></div>
         </div>
         <div class="card">
-          <div class="card-head"><div><h2>Task history</h2><p class="sub">Each task over the last runs, oldest left. Flaky tasks (mixed results) first.</p></div></div>
-          <div class="table-wrap"><table class="history" id="history"></table></div>
-        </div>
-        <div class="card">
-          <div class="card-head"><div><h2>Judge accuracy</h2><p class="sub">How often the benchmark judge agrees with hand labels on final screens</p></div></div>
+          <div class="card-head"><div><h2>Can we trust the judge?</h2><p class="sub">How often the benchmark judge agrees with hand labels on final screens</p></div></div>
           <div id="judge"></div>
         </div>
         <div class="card">
@@ -98,8 +102,10 @@
           (<code>summary.cost_usd</code> and <code>summary.judge_cost_usd</code>). Runs from before cost tracking don't have it.</p>
       </div>
       <div id="cost-body">
-        <div class="card budget-card">
-          <div class="card-head"><div><h2 id="burn-title">This month</h2><p class="sub" id="burn-sub">Spend so far this calendar month (UTC) against the monthly budget</p></div></div>
+        <div class="card hero budget-card">
+          <div class="eyebrow" id="burn-title">This month</div>
+          <h1 class="headline" id="burn-headline"></h1>
+          <p class="sub" id="burn-sub">Spend so far this calendar month (UTC) against the monthly budget</p>
           <div id="cost-burn"></div>
         </div>
         <div class="overview" id="cost-overview"></div>
@@ -168,6 +174,7 @@
           judged by its own "done" and the same graders.</p>
       </div>
       <div id="lb-body">
+        <div class="card hero" id="lb-brief"></div>
         <div class="card">
           <div class="card-head"><div><h2>Models by suite</h2><p class="sub">Pass rate of each model's latest unflagged run per suite. Hover a cell for false passes, cost and speed.</p></div></div>
           <div class="table-wrap"><table class="matrix" id="lb-matrix"></table></div>

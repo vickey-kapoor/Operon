@@ -3,7 +3,11 @@
 from operon.api.runtime.cdp import ensure_cdp_ready
 from operon.api.runtime.common import test_safe_mode_enabled, validate_run_id
 from operon.api.runtime.events import mark_run_failed, publish_step_outcome
-from operon.api.runtime.loops import get_agent_loop, get_desktop_agent_loop
+from operon.api.runtime.loops import (
+    desktop_loop_holds_run,
+    get_agent_loop,
+    get_desktop_agent_loop,
+)
 from operon.api.runtime.tasks import (
     cancel_auto_run,
     cleanup_cancelled_run,
@@ -14,6 +18,7 @@ from operon.api.runtime.tasks import (
 __all__ = [
     "cancel_auto_run",
     "cleanup_cancelled_run",
+    "desktop_loop_holds_run",
     "ensure_cdp_ready",
     "get_agent_loop",
     "get_desktop_agent_loop",

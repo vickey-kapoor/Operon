@@ -890,3 +890,41 @@ def test_run_usage_counts_an_unlogged_steps_model_usage_once(monkeypatch, tmp_pa
     logged = observer.summarize_run_usage("run-1")
     assert logged.request_count == 1
     assert logged.estimated_cost_usd == 0.01
+
+
+def test_observer_leaves_a_live_desktop_run_running(monkeypatch) -> None:
+    """A desktop run whose intent mentions Chrome has no browser page; that is not orphaned."""
+    root_dir = _local_test_dir("test-observer-live-desktop") / "runs"
+    run_id = "run-live-desktop"
+    _write_state(
+        root_dir / run_id,
+        AgentState(run_id=run_id, intent="Open Chrome and check the weather", status=RunStatus.RUNNING, step_count=1),
+    )
+
+    class _Executor:
+        async def current_url_for_run(self, requested_run_id: str) -> str | None:
+            return None
+
+    from unittest.mock import patch
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(root_dir))
+    client = TestClient(app)
+    with (
+        patch("operon.api.routes.observer.get_agent_loop") as mock_loop,
+        patch("operon.api.routes.observer.desktop_loop_holds_run", side_effect=lambda rid: rid == run_id),
+    ):
+        mock_loop.return_value.executor = _Executor()
+        one = client.get(f"/observer/api/run/{run_id}")
+        listed = client.get("/observer/api/runs")
+
+    assert one.json()["run"]["status"] == RunStatus.RUNNING.value
+    runs = {run["run_id"]: run for run in listed.json()["runs"]}
+    assert runs[run_id]["status"] == RunStatus.RUNNING.value
+
+
+def test_desktop_loop_holds_run_never_builds_the_desktop_loop(monkeypatch) -> None:
+    from operon.api.runtime import loops
+
+    monkeypatch.setattr(loops, "_desktop_agent_loop", None)
+    assert loops.desktop_loop_holds_run("anything") is False
+    assert loops._desktop_agent_loop is None

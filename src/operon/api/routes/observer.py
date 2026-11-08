@@ -5,7 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
 
-from operon.api.dependencies import get_agent_loop, validate_run_id
+from operon.api.dependencies import (
+    desktop_loop_holds_run,
+    get_agent_loop,
+    validate_run_id,
+)
 from operon.api.observer import (
     artifact_path_for_request,
     build_run_bundle,
@@ -26,7 +30,8 @@ async def observer_runs(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     recent_runs = list_runs(limit=limit)
     if hasattr(executor, "current_url_for_run"):
         for run in recent_runs:
-            if run["status"] != RunStatus.RUNNING.value:
+            if run["status"] != RunStatus.RUNNING.value or desktop_loop_holds_run(run["run_id"]):
+                # A live desktop run has no browser page, which is not a sign it died.
                 continue
             current_url = await executor.current_url_for_run(run["run_id"])
             reconcile_orphaned_browser_run(run["run_id"], has_live_session=current_url is not None)
@@ -41,7 +46,9 @@ async def observer_run(run_id: str) -> dict:
     executor = get_agent_loop().executor
     if hasattr(executor, "current_url_for_run"):
         current_url = await executor.current_url_for_run(run_id)
-    reconcile_orphaned_browser_run(run_id, has_live_session=current_url is not None)
+    if not desktop_loop_holds_run(run_id):
+        # A live desktop run has no browser page, which is not a sign it died.
+        reconcile_orphaned_browser_run(run_id, has_live_session=current_url is not None)
     try:
         snapshot = load_run_snapshot(run_id)
     except (FileNotFoundError, OSError):

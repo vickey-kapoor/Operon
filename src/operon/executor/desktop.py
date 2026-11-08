@@ -61,6 +61,28 @@ logger = logging.getLogger(__name__)
 # user's foreground app on every taskkill / app-launch invocation. 0 on
 # non-Windows is a no-op (creationflags is ignored outside win32).
 _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
+def _image_pids(exe_name: str) -> frozenset[int] | None:
+    """PIDs of running processes named ``exe_name``, or None when they can't be listed."""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=_NO_CONSOLE,
+        )
+    except Exception:
+        logger.debug("tasklist failed for %s", exe_name, exc_info=True)
+        return None
+    if result.returncode != 0:
+        return None
+    pids: set[int] = set()
+    for line in (result.stdout or "").splitlines():
+        # "notepad.exe","1234","Console","1","12,345 K"; no match prints an INFO line.
+        fields = [field.strip('"') for field in line.strip().split('","')]
+        if len(fields) >= 2 and fields[0].lower() == exe_name.lower() and fields[1].isdigit():
+            pids.add(int(fields[1]))
+    return frozenset(pids)
 _NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
 # Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
 _CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
@@ -284,6 +306,9 @@ class DesktopExecutor(Executor):
         self._current_run_id: str | None = None
         self._launched_processes: dict[str, list[subprocess.Popen]] = {}
         self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
+        # run_id → exe name → PIDs of that image already running before the run first
+        # launched it. Cleanup kills only newer PIDs, never the user's own windows.
+        self._preexisting_pids: dict[str, dict[str, frozenset[int] | None]] = {}
         self._run_recorders: dict[str, object] = {}   # run_id → ScreenRecorder
         self._run_video_paths: dict[str, Path] = {}   # run_id → final video path
 
@@ -446,6 +471,7 @@ class DesktopExecutor(Executor):
         """
         procs = self._launched_processes.pop(run_id, [])
         app_names = self._launched_app_names.pop(run_id, [])
+        preexisting = self._preexisting_pids.pop(run_id, {})
         closed = 0
 
         # Phase 1: terminate tracked Popen processes
@@ -468,21 +494,29 @@ class DesktopExecutor(Executor):
                 logger.debug("cleanup: failed to terminate pid %d", proc.pid, exc_info=True)
 
         # Phase 2: taskkill fallback for apps where launcher exited immediately
-        # (Chrome, Edge, etc. spawn child processes and the parent exits)
-        for app_exe in app_names:
+        # (Chrome, Edge, etc. spawn child processes and the parent exits). Only
+        # processes of that image that started after the run launched it: killing by
+        # image name would also close the user's own Notepad or Chrome windows.
+        for app_exe in dict.fromkeys(app_names):
             if app_exe in _PROTECTED_PROCESSES:
                 continue
-            try:
-                result = subprocess.run(
-                    ["taskkill", "/IM", app_exe, "/F"],
-                    capture_output=True, timeout=5,
-                    creationflags=_NO_CONSOLE,
-                )
-                if result.returncode == 0:
-                    closed += 1
-                    logger.info("cleanup: taskkill terminated %s", app_exe)
-            except Exception:
-                logger.debug("cleanup: taskkill failed for %s", app_exe, exc_info=True)
+            before = preexisting.get(app_exe)
+            now = _image_pids(app_exe) if before is not None else None
+            if before is None or now is None:
+                logger.info("cleanup: can't tell %s's own processes from the user's; leaving them", app_exe)
+                continue
+            for pid in sorted(now - before):
+                try:
+                    result = subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/F"],
+                        capture_output=True, timeout=5,
+                        creationflags=_NO_CONSOLE,
+                    )
+                    if result.returncode == 0:
+                        closed += 1
+                        logger.info("cleanup: taskkill terminated %s (pid %d)", app_exe, pid)
+                except Exception:
+                    logger.debug("cleanup: taskkill failed for %s pid %d", app_exe, pid, exc_info=True)
 
         return closed
 
@@ -500,7 +534,7 @@ class DesktopExecutor(Executor):
                 await self.stop_run_recording(run_id)
             except Exception:
                 logger.debug("aclose: stop_run_recording failed for %s", run_id, exc_info=True)
-        pending_runs = set(self._launched_processes) | set(self._launched_app_names)
+        pending_runs = set(self._launched_processes) | set(self._launched_app_names) | set(self._preexisting_pids)
         for run_id in pending_runs:
             try:
                 self.cleanup_run(run_id)
@@ -852,6 +886,14 @@ class DesktopExecutor(Executor):
                 "only catalog apps can be launched.",
                 FailureCategory.EXECUTION_ERROR,
             )
+        exe_name = Path(command.split()[0]).name.lower()
+        if not exe_name.endswith(".exe"):
+            exe_name += ".exe"
+        if self._current_run_id is not None:
+            seen = self._preexisting_pids.setdefault(self._current_run_id, {})
+            if exe_name not in seen:
+                # Before the first launch: whatever runs now is the user's, not ours.
+                seen[exe_name] = await asyncio.to_thread(_image_pids, exe_name)
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
@@ -879,9 +921,6 @@ class DesktopExecutor(Executor):
             # Also track the exe name for taskkill fallback (handles Chrome, etc.
             # where the launcher process exits but the app keeps running)
             if self._current_run_id is not None:
-                exe_name = Path(command.split()[0]).name.lower()
-                if not exe_name.endswith(".exe"):
-                    exe_name += ".exe"
                 self._launched_app_names.setdefault(self._current_run_id, []).append(exe_name)
             await asyncio.sleep(self._post_launch_delay)
             after_path = await self._capture_after()

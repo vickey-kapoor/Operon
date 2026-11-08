@@ -86,6 +86,11 @@ class FileBackedRunStore(RunStore):
         self._write_state_sync(record)
         return record
 
+    def holds_run(self, run_id: str) -> bool:
+        """Whether this store has the run loaded, i.e. its loop created or stepped it
+        since the server started."""
+        return run_id in self._runs
+
     async def get_run(self, run_id: str) -> AgentState | None:
         """Return a stored run record, if present."""
         cached = self._runs.get(run_id)

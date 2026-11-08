@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -284,6 +285,9 @@ class DesktopExecutor(Executor):
         self._current_run_id: str | None = None
         self._launched_processes: dict[str, list[subprocess.Popen]] = {}
         self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
+        # Set by the loop around a batch: checked before each later child, returns
+        # why it must not run (e.g. the run was stopped), or None.
+        self.batch_child_check: Callable[[AgentAction], Awaitable[str | None]] | None = None
         self._run_recorders: dict[str, object] = {}   # run_id → ScreenRecorder
         self._run_video_paths: dict[str, Path] = {}   # run_id → final video path
 
@@ -999,6 +1003,18 @@ class DesktopExecutor(Executor):
         completed: list[str] = []
         last_artifact_path: str | None = None
         for index, child_action in enumerate(action.actions):
+            blocked = None
+            if index > 0 and self.batch_child_check is not None:
+                blocked = await self.batch_child_check(child_action)
+            if blocked is not None:
+                return ExecutedAction(
+                    action=action,
+                    success=False,
+                    detail=f"Batch stopped before {child_action.action_type.value}: {blocked}",
+                    artifact_path=last_artifact_path,
+                    failure_category=FailureCategory.EXECUTION_ERROR,
+                    batch_failed_index=index,
+                )
             result = await self.execute(child_action)
             completed.append(f"{child_action.action_type.value}:{'ok' if result.success else 'failed'}")
             if not result.success:

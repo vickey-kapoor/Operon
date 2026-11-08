@@ -118,6 +118,10 @@ class FileBackedRunStore(RunStore):
     async def set_status(self, run_id: str, status: RunStatus) -> AgentState:
         """Update run status in place.  Write only on terminal transitions."""
         record = self._runs[run_id]
+        if record.status is RunStatus.CANCELLED:
+            # A stop is final: a step that was in flight when it landed (a recovery
+            # reset, a perception failure) must not write RUNNING or FAILED over it.
+            return record
         record.status = status
         if status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.WAITING_FOR_USER, RunStatus.CANCELLED}:
             self._write_state(record)

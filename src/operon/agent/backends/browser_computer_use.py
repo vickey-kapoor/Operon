@@ -260,7 +260,8 @@ class BrowserComputerUseBackend(AgentBackend):
             if self.browser_runtime is not None and hasattr(self.browser_runtime, "get_current_url"):
                 current_url = await self.browser_runtime.get_current_url()
             error = None
-            if conversation.declined_reason is not None:
+            declined = conversation.declined_reason is not None
+            if declined:
                 error = conversation.declined_reason
                 conversation.declined_reason = None
             elif len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
@@ -278,6 +279,10 @@ class BrowserComputerUseBackend(AgentBackend):
                     if "function_response" in part:
                         part["function_response"]["response"]["safety_acknowledgement"] = "true"
                 conversation.acknowledge_safety = False
+            if declined:
+                # The user resumed with a correction instead: send it with the
+                # decline, since this turn is otherwise only the function response.
+                function_response["parts"].append({"text": prompt})
             conversation.contents.append(function_response)
             conversation.acknowledged_actions = len(state.action_history)
             conversation.pending_function_names = []

@@ -208,6 +208,75 @@ async def test_the_run_store_keeps_a_stop_that_lands_during_capture(tmp_path: Pa
     assert updated.status is RunStatus.CANCELLED
 
 
+async def test_no_status_write_overrides_a_stop(tmp_path: Path) -> None:
+    # A step in flight (a recovery reset, a perception failure) ends with its own
+    # status write after the stop landed: the stop must win.
+    from operon.store.run_store import FileBackedRunStore
+
+    store = FileBackedRunStore(tmp_path)
+    record = store.create_run("Open Calculator")
+    await store.set_status(record.run_id, RunStatus.CANCELLED)
+
+    for status in (RunStatus.RUNNING, RunStatus.FAILED, RunStatus.SUCCEEDED):
+        assert (await store.set_status(record.run_id, status)).status is RunStatus.CANCELLED
+
+
+async def test_a_stop_during_a_batch_runs_none_of_its_later_children(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.executor.desktop import DesktopExecutor
+
+    executor = DesktopExecutor.__new__(DesktopExecutor)
+    ran: list[ActionType] = []
+
+    async def fake_execute(action):
+        if action.action_type is ActionType.BATCH:
+            return await DesktopExecutor._execute_batch(executor, action)
+        ran.append(action.action_type)
+        stopped["now"] = True  # /desktop/stop lands while the first child runs
+        return ExecutedAction(action=action, success=True, detail="ok")
+
+    stopped = {"now": False}
+
+    async def check(child):
+        return "the run was stopped" if stopped["now"] else None
+
+    executor.execute = fake_execute
+    executor.batch_child_check = check
+    executor._ok = lambda action, detail, path: ExecutedAction(action=action, success=True, detail=detail)
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[
+        AgentAction(action_type=ActionType.WAIT, wait_ms=100), SAFE.model_copy(update={"x": 5, "y": 5})])
+
+    result = await executor.execute(batch)
+
+    assert ran == [ActionType.WAIT]
+    assert not result.success and "stopped" in result.detail
+
+
+async def test_the_loop_installs_a_stop_check_for_every_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, _, state = _loop(monkeypatch, [SAFE])
+    loop.executor.batch_child_check = None
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[SAFE, SAFE])
+
+    loop._install_batch_child_check("run-1", batch)
+    assert await loop.executor.batch_child_check(SAFE) is None
+    state.status = RunStatus.CANCELLED
+    assert await loop.executor.batch_child_check(SAFE) == "the run was stopped"
+
+
+async def test_a_correction_reaches_gemini_with_the_decline(tmp_path: Path) -> None:
+    client = _RecordingClient([_confirm_reply(), _click_reply()])
+    backend = _backend(client)
+
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+    await backend.choose_action(_state(), _perception(tmp_path, "a.png"))
+    backend.discard_held_actions("run-1", "Not executed: the user declined.")
+    backend.add_advisory_hints(["Use the cheaper shipping option instead."], source="override", run_id="run-1")
+
+    await backend.perceive(_frame(tmp_path, "b.png"), _state())
+    answer = client.turns[-1][-1]
+    texts = [part["text"] for part in answer["parts"] if "text" in part]
+    assert any("Use the cheaper shipping option instead." in text for text in texts)
+
+
 # G7: a start_url outside the domain allowlist is refused before the run exists.
 
 

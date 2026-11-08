@@ -988,18 +988,20 @@ class AgentLoop:
         })
 
     def _install_batch_child_check(self, run_id: str, action: AgentAction) -> None:
-        """With a domain allowlist, a batch's later children may run on a page an
-        earlier child opened, which the pre-execution check never saw. Have the
-        executor check the live page before each of them."""
-        if (
-            action.action_type is not ActionType.BATCH
-            or not hasattr(self.executor, "batch_child_check")
-            or not (self._trust_gate.enabled and self._trust_gate.allow_domains)
-            or self._trust_approved.get(run_id)
-        ):
+        """Have the executor check before each of a batch's later children: that the
+        run wasn't stopped meanwhile, and, with a domain allowlist, the live page
+        (an earlier child may have opened one the pre-execution check never saw)."""
+        if action.action_type is not ActionType.BATCH or not hasattr(self.executor, "batch_child_check"):
             return
+        check_domains = bool(
+            self._trust_gate.enabled and self._trust_gate.allow_domains and not self._trust_approved.get(run_id)
+        )
 
         async def check(child: AgentAction) -> str | None:
+            if await self._run_cancelled(run_id):
+                return "the run was stopped"
+            if not check_domains:
+                return None
             # A nested batch runs its first leaf next (its later children get their
             # own check), so judge that leaf, not the container.
             leaves = _leaf_actions(child)
@@ -1584,6 +1586,9 @@ class AgentLoop:
             failed = self._apply_reresolution_failure(executed_action, resolution.trace)
             return retry_state, self._persist_execution_trace(record.run_id, step_index, failed)
 
+        if await self._run_cancelled(record.run_id):
+            # Stopped while the retry was being re-resolved: don't run it.
+            return retry_state, self._persist_execution_trace(record.run_id, step_index, executed_action)
         retry_executed = await executor_runner.execute(retry_action)
         retry_executed = self._merge_execution_retry(
             original=executed_action,

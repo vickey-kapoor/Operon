@@ -31,7 +31,7 @@ claude-sonnet-5-5:
   adapter: claude_native
   model: claude-sonnet-5-5
   effort: low
-  pricing: {input_per_mtok: 2.0, cached_input_per_mtok: 0.10, output_per_mtok: 10.0}
+  pricing: {input_per_mtok: 2.0, output_per_mtok: 10.0}
 
 claude-haiku-5-5:
   adapter: claude_native

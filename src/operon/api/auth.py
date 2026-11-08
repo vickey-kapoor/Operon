@@ -4,8 +4,8 @@ On by default. Every request except a small allowlist (health probes) must
 present a matching ``X-API-Key`` header, or it is rejected with 401. The
 accepted keys are ``API_KEYS`` (comma-separated) when it is set; otherwise the
 server generates one random key on first start and keeps it in
-``<runtime dir>/api-key`` (``.var/api-key``), where local clients (the UI's
-Vite config, the benchmark harness) read it. With ``API_KEYS`` unset,
+``<runtime dir>/api-key`` (``.var/api-key``), where local clients (the benchmark
+harness) read it. With ``API_KEYS`` unset,
 ``OPERON_ALLOW_UNAUTHENTICATED=true`` turns authentication off, for a throwaway
 machine only.
 

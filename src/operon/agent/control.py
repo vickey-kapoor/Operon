@@ -1,6 +1,6 @@
 """Operator control state the agent reads each step.
 
-The UI sets these over ``/ws/stream`` (``api/ws_stream.py`` writes them); the
+A ``/ws/stream`` client sets these (``api/ws_stream.py`` writes them); the
 loop and rule engine only read them. Living in the agent layer keeps that
 dependency pointing api -> agent, so agent code never imports the API.
 

@@ -12,6 +12,7 @@ import concurrent.futures
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -30,9 +31,24 @@ def _write_file(path: Path, content: str) -> None:
         # sees a half-written file.
         tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, path)
+        _replace(tmp, path, content)
     except Exception:
         logger.debug("artifact write failed: %s", path, exc_info=True)
+
+
+def _replace(tmp: Path, path: Path, content: str) -> None:
+    """Swap ``tmp`` in for ``path``. On Windows the swap fails while a reader has
+    ``path`` open, so retry briefly, then write in place rather than lose the write."""
+    for delay in (0.01, 0.03, 0.1):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    try:
+        path.write_text(content, encoding="utf-8")
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 class BackgroundWriter:

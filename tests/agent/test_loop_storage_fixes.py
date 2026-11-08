@@ -148,3 +148,18 @@ async def test_aclose_closes_open_batch_sessions(tmp_path: Path) -> None:
     assert sorted(closed) == ["run-a", "run-b"]
     executor.close_persistent_browser.assert_awaited_once()
 
+
+
+def test_a_write_is_not_lost_when_the_swap_is_refused(tmp_path, monkeypatch) -> None:
+    # Windows refuses os.replace while a reader has the target open.
+    target = tmp_path / "state.json"
+    target.write_text("old", encoding="utf-8")
+
+    def refuse(src, dst):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(background_writer.os, "replace", refuse)
+    monkeypatch.setattr(background_writer.time, "sleep", lambda _s: None)
+    background_writer._write_file(target, "new")
+    assert target.read_text(encoding="utf-8") == "new"
+    assert [p.name for p in tmp_path.iterdir()] == ["state.json"]

@@ -4,5 +4,8 @@ from operon.agent.backends.model_adapter.transports.openai_compat import (
     ModelTransportError,
     OpenAICompatClient,
 )
+from operon.agent.backends.model_adapter.transports.openai_responses import (
+    OpenAIResponsesClient,
+)
 
-__all__ = ["ModelTransportError", "OpenAICompatClient"]
+__all__ = ["ModelTransportError", "OpenAICompatClient", "OpenAIResponsesClient"]

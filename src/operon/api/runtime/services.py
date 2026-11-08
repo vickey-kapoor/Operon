@@ -17,12 +17,16 @@ from operon.agent.backends.desktop_claude_computer_use import (
 )
 from operon.agent.backends.fallback import FallbackBackend
 from operon.agent.backends.model_adapter.backend import ModelAdapterBackend
+from operon.agent.backends.model_adapter.openai_native import OpenAIComputerUseBackend
 from operon.agent.backends.model_adapter.registry import (
     ModelProfile,
     ModelRegistryError,
     resolve_profile,
 )
-from operon.agent.backends.model_adapter.transports import OpenAICompatClient
+from operon.agent.backends.model_adapter.transports import (
+    OpenAICompatClient,
+    OpenAIResponsesClient,
+)
 from operon.agent.perception import PerceptionService
 from operon.agent.policy import PolicyService
 from operon.agent.policy.thin import THIN, harness_profile
@@ -100,7 +104,15 @@ def build_model_backend(environment: str, *, executor=None, profile: ModelProfil
             task_prompt_path=_PROMPTS_DIR / "model_adapter_task_prompt.txt",
             browser_runtime=executor,
         )
-    raise ModelRegistryError(f"profile {profile.name}: adapter {profile.adapter} is not available yet")
+    if profile.adapter == "openai_native":
+        return OpenAIComputerUseBackend(
+            profile=profile,
+            client=OpenAIResponsesClient(profile),
+            environment=environment,
+            task_prompt_path=_PROMPTS_DIR / "model_adapter_task_prompt.txt",
+            browser_runtime=executor,
+        )
+    raise ModelRegistryError(f"profile {profile.name}: adapter {profile.adapter} is not available")
 
 
 def build_browser_services(executor) -> RuntimeServices:

@@ -50,6 +50,8 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 
 # Live apps suite: 11 tasks on local fake shop, mail, account and forms, graded from their state (/state)
 .venv\Scripts\python -m evals.live_bench --suite apps
+# Long suite: 10 multi-app tasks from the /apps/ workspace page (email -> act -> reply), 20-50 steps each
+.venv\Scripts\python -m evals.live_bench --suite long
 .venv\Scripts\python -m evals.local_apps   # serve the local site on :8765 to look at it
 
 # Judge check: compare the benchmark judge with hand labels (judge calls only, no agent runs)
@@ -61,7 +63,7 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
 #   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 # Cross-model (experimental): model=<profile> / --model <profile> runs a profile from evals/models.yaml
 # (OPERON_*_BACKEND=model + OPERON_MODEL_PROFILE; adapters in src/operon/agent/backends/model_adapter/)

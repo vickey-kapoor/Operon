@@ -29,9 +29,9 @@ on:
         description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
         default: ""
       suite:
-        description: "smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), or hard (20 harder tasks from those suites and the full one, meant for --repeat 3)"
+        description: "smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), or long (10 multi-app tasks on the local apps, 20 to 50 steps each)"
         type: choice
-        options: [full, smoke, safety, apps, hard]
+        options: [full, smoke, safety, apps, hard, long]
         default: full
       args:
         description: "Extra live_bench arguments, e.g. --category forms --only slider, or --repeat 3"

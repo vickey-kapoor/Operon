@@ -14,7 +14,9 @@ from the requests the browser made, not by the judge. ``--suite apps`` runs the
 tasks in ``evals/app_tasks.py`` on the same site's fake shop, mailbox,
 account and forms (``evals/local_apps.py``), graded from the apps' state.
 ``--suite hard`` runs the 20 tasks named in ``evals/hard_tasks.py``, a mix of
-all three, picked to measure flakiness with ``--repeat``.
+all three, picked to measure flakiness with ``--repeat``. ``--suite long`` runs
+the 10 multi-app tasks in ``evals/app_tasks.py`` (``LONG_TASKS``), 20 to 50
+steps each, started from the apps' workspace page.
 
 ``--repeat N`` runs the whole task list N times over (all tasks once, then again),
 so time-of-day noise on live sites spreads across tasks. The report then adds
@@ -73,7 +75,7 @@ from pathlib import Path
 import httpx
 
 from evals import app_tasks
-from evals.app_tasks import APP_TASKS, AppTask
+from evals.app_tasks import APP_TASKS, LONG_TASKS, AppTask
 from evals.desktop_tasks import DESKTOP_TASKS
 from evals.fixture_site import FixtureSite
 from evals.hard_tasks import HARD_TASK_NAMES
@@ -85,7 +87,7 @@ from operon.core.paths import runs_dir
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error", "compromised")
-SUITES = ("smoke", "full", "safety", "apps", "hard")
+SUITES = ("smoke", "full", "safety", "apps", "hard", "long")
 LOCAL_TASKS = (SafetyTask, AppTask)  # run on the local site and graded from it, not by the judge
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
 MODES = ("browser", "desktop")
@@ -593,11 +595,11 @@ def select_tasks(
     if suite == "hard":
         by_name = {t.name: t for t in [*TASKS, *APP_TASKS, *SAFETY_TASKS]}
         pool = [] if mode == "desktop" else [by_name[name] for name in HARD_TASK_NAMES]
-    elif suite in ("safety", "apps"):
-        pool = [] if mode == "desktop" else (SAFETY_TASKS if suite == "safety" else APP_TASKS)
+    elif suite in ("safety", "apps", "long"):
+        pool = [] if mode == "desktop" else {"safety": SAFETY_TASKS, "apps": APP_TASKS, "long": LONG_TASKS}[suite]
     else:
         pool = DESKTOP_TASKS if mode == "desktop" else TASKS
-    tasks = [t for t in pool if suite in ("full", "safety", "apps", "hard") or suite in t.tags]
+    tasks = [t for t in pool if suite in ("full", "safety", "apps", "hard", "long") or suite in t.tags]
     if only:
         tasks = [t for t in tasks if t.name in only]
     if category:
@@ -626,7 +628,8 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
             for index, (attempt, task) in enumerate(planned, 1):
                 result = await run_task(
                     client, task, judge,
-                    timeout_s=args.timeout,
+                    # A long task gets its own, longer limit.
+                    timeout_s=max(args.timeout, getattr(task, "timeout_s", 0.0)),
                     approve_pauses=0 if args.no_approve else 2,
                     mode=args.mode,
                     site=site,
@@ -704,7 +707,7 @@ def _max_cost_default() -> float:
 
 def build_parser(default_suite: str = "full", default_mode: str = "browser") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="smoke, full, or safety / apps / hard (browser only)")
+    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="smoke, full, or safety / apps / hard / long (browser only)")
     parser.add_argument("--mode", choices=MODES, default=default_mode, help="browser or desktop tasks")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--only", action="append", help="run only the named task(s)")

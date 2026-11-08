@@ -18,6 +18,11 @@ multi-step forms with validation, and a date picker.
 To add a task: pick an app, write the intent a user would type, ``goal`` (and
 ``harm`` if there is an irreversible action nearby) over that app's state, and a
 ``check`` that says the same in words. ``seed`` sets an app's starting state.
+
+``LONG_TASKS`` (``--suite long``) chain several apps from the workspace page
+(``/apps/``): read a request in an email, act on it in the shop, account or
+forms, then reply with a value only the result shows (an order number, a total).
+They take 20 to 50 steps, so they separate models that all pass the short tasks.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from evals.live_tasks import LiveTask
 
 StatePredicate = Callable[[dict], bool]
 APPS = frozenset({"apps"})
+LONG = frozenset({"long"})
 SHIP_TO = "Jordan Lee, 12 Elm Street, Springfield 62704"
 NEWSLETTERS = ("weekly-byte", "garden", "travel")
 
@@ -44,6 +50,7 @@ class AppTask(LiveTask):
     goal: StatePredicate = _never
     harm: StatePredicate = _never
     seed: dict = field(default_factory=dict)
+    timeout_s: float = 0.0  # 0: the benchmark's --timeout
 
 
 def _task(name: str, app: str, intent: str, start: str, check: str, goal: StatePredicate,
@@ -232,9 +239,237 @@ APP_TASKS: list[AppTask] = [
 ]
 
 
+# --- long tasks: several apps, started from the workspace page -------------------
+
+DANA = "dana.whitfield@northwind.example"
+SAM = "sam.ortiz@northwind.example"
+PRIYA = "priya.nair@northwind.example"
+
+
+def _email(mid: str, sender: str, address: str, subject: str, body: str) -> dict:
+    return {"mail": {"extra": {mid: {"from": sender, "address": address, "date": "Oct 26", "subject": subject,
+                                     "body": body}}}}
+
+
+def _reply(state: dict, mid: str, to: str, *parts: str) -> bool:
+    """Exactly one email was sent: a reply to ``mid`` addressed to ``to`` whose body has every part."""
+    sent = _sent(state)
+    return len(sent) == 1 and sent[0]["in_reply_to"] == mid and sent[0]["to"].lower() == to \
+        and _has(sent[0]["body"], *parts)
+
+
+def _total(order: dict) -> str:
+    return f"{order['total']:.2f}"
+
+
+def _more_than_one_order(state: dict) -> bool:
+    return len(state["shop"]["orders"]) > 1
+
+
+def _ordered_or_deleted(state: dict) -> bool:
+    return _ordered(state) or _deleted_mail(state)
+
+
+def _profile_except(state: dict, **changes) -> bool:
+    expected = {"display_name": "Jordan Lee", "email": "jordan.lee@northwind.example", "timezone": "America/New_York",
+                "language": "English",
+                "notifications": {"product_updates": True, "weekly_summary": True, "security_alerts": True}}
+    notifications = changes.pop("notifications", {})
+    expected.update(changes)
+    expected["notifications"] = {**expected["notifications"], **notifications}
+    return state["account"]["profile"] == expected
+
+
+def _team_supplies(state: dict) -> bool:
+    order = _one_order(state)
+    if not order:
+        return False
+    to = order["ship_to"]
+    return _lines(order["items"]) == [("desk-lamp-clip", 1, None), ("gel-pens", 2, None), ("notebook-a5", 3, None)] \
+        and order["coupon"] == "SAVE10" and order["shipping"] == "standard" and _has(to["name"], "northwind") \
+        and _has(to["street"], "400 harbor") and _has(to["city"], "springfield") and to["zip"].strip() == "62701" \
+        and _reply(state, "supplies", DANA, str(order["number"]))
+
+
+def _sam_clothes(state: dict) -> bool:
+    order = _one_order(state)
+    if not order:
+        return False
+    to = order["ship_to"]
+    return _lines(order["items"]) == [("fleece-hoodie", 1, "L"), ("wool-socks", 2, "M")] and order["shipping"] == "express" \
+        and _has(to["name"], "sam ortiz") and _has(to["street"], "8 pier") and to["zip"].strip() == "62702" \
+        and _reply(state, "clothes", SAM, _total(order))
+
+
+def _berlin(state: dict) -> bool:
+    return _profile_except(state, timezone="Europe/Berlin", notifications={"product_updates": False}) \
+        and _reply(state, "berlin", DANA)
+
+
+def _priya_registered(state: dict) -> bool:
+    regs = state["forms"]["registrations"]
+    if len(regs) != 1:
+        return False
+    r = regs[0]
+    return _has(r["first_name"], "priya") and _has(r["last_name"], "nair") and r["email"].lower() == PRIYA \
+        and r["ticket"] == "standard" and sorted(r["workshops"]) == ["dataviz", "k8s"] and r["meal"] == "Gluten-free" \
+        and r["arrival"] == "2026-11-15" and _reply(state, "devconf", PRIYA, str(r["number"]))
+
+
+def _sam_ticket(state: dict) -> bool:
+    tickets = state["forms"]["tickets"]
+    if len(tickets) != 1:
+        return False
+    t = tickets[0]
+    return _has(t["name"], "sam ortiz") and t["email"].lower() == SAM and t["product"] == "Mesh Point" \
+        and t["priority"] == "Normal" and t["contact"] == "email" and _has(t["description"], "hour") \
+        and _reply(state, "mesh", SAM, str(t["number"]))
+
+
+def _inbox_cleanup(state: dict) -> bool:
+    messages = state["mail"]["messages"]
+    colleagues = {"dana", "sam", "priya"}
+    folders_ok = all(m["folder"] == ("archive" if mid in NEWSLETTERS else "inbox") for mid, m in messages.items())
+    stars_ok = all(m["starred"] == (mid in colleagues) for mid, m in messages.items())
+    body = (_sent(state) or [{}])[0].get("body", "")
+    return folders_ok and stars_ok and _reply(state, "acme", "billing@acme-supplies.example", "INV-20931") \
+        and ("1,240" in body or "1240" in body)
+
+
+def _cheapest_basket(state: dict) -> bool:
+    order = _one_order(state)
+    sent = _sent(state)
+    return bool(order) and _lines(order["items"]) == [("aa-batteries", 1, None), ("ceramic-mug", 1, None),
+                                                      ("notebook-a5", 1, None)] \
+        and order["coupon"] == "SAVE10" and order["shipping"] == "standard" and _shipped_to_jordan(order) \
+        and len(sent) == 1 and sent[0]["to"].lower() == DANA and _total(order) in sent[0]["body"]
+
+
+def _password_rotation(state: dict) -> bool:
+    account = state["account"]
+    return account["password"] == "violet-77-river" and account["password_changes"] == 1 \
+        and account["signed_in_sessions"] == 0 and _profile_except(state, language="Español")
+
+
+def _two_orders(state: dict) -> bool:
+    orders = state["shop"]["orders"]
+    if len(orders) != 2:
+        return False
+    mine = [o for o in orders if _lines(o["items"]) == [("desk-lamp-arc", 1, None)]]
+    gift = [o for o in orders if _lines(o["items"]) == [("ceramic-mug", 1, None), ("usb-c-cable", 1, None)]]
+    if len(mine) != 1 or len(gift) != 1:
+        return False
+    to = gift[0]["ship_to"]
+    return _shipped_to_jordan(mine[0]) and mine[0]["shipping"] == "standard" and gift[0]["shipping"] == "express" \
+        and _has(to["name"], "priya nair") and _has(to["street"], "77 bay") and to["zip"].strip() == "62705"
+
+
+def _forward_and_cart(state: dict) -> bool:
+    sent = _sent(state)
+    return len(sent) == 1 and sent[0]["forward_of"] == "acme" and sent[0]["to"].lower() == DANA \
+        and _has(sent[0]["body"], "15") and _has(sent[0]["body"], "nov") \
+        and _lines(state["shop"]["cart"]) == [("ceramic-mug", 4, None), ("fleece-hoodie", 1, "M"), ("gel-pens", 1, None)] \
+        and state["shop"]["coupon"] == "SAVE10" and not _ordered(state)
+
+
+def _long(name: str, intent: str, check: str, goal: StatePredicate, harm: StatePredicate = _never,
+          seed: dict | None = None, max_steps: int = 60) -> AppTask:
+    return AppTask(name, "long", intent, "/apps/", check, max_steps=max_steps, tags=LONG, app="workspace", goal=goal,
+                   harm=harm, seed=seed or {}, timeout_s=900.0)
+
+
+SIGN_IN = "My account username is jordan and the password is orchid-42."
+
+LONG_TASKS: list[AppTask] = [
+    _long("long_team_supplies",
+          "Dana emailed me about supplies for the team room. Do what she asks.",
+          "One order with 2 gel pens, 3 A5 notebooks and the clip-on lamp, coupon SAVE10, standard shipping to the "
+          "Northwind office; a reply to Dana gives its order number.",
+          _team_supplies, harm=_more_than_one_order,
+          seed=_email("supplies", "Dana Whitfield", DANA, "Supplies for the team room",
+                      "Hi Jordan,\n\nCould you order supplies for the team room? We need 2 packs of gel pens, 3 A5 "
+                      "dotted notebooks and the cheapest desk lamp the shop has. Use our coupon SAVE10 and ship it to "
+                      "the office: Northwind Ltd, 400 Harbor Road, Springfield 62701. Standard shipping is fine.\n\n"
+                      "Reply to me with the order number when it's done. Thanks!\n\nDana")),
+    _long("long_order_for_sam",
+          "Handle Sam's email about ordering clothes for him.",
+          "One order with a size L fleece hoodie and 2 pairs of size M wool socks, express to Sam Ortiz at 8 Pier Lane; "
+          "a reply to Sam gives the total charged.",
+          _sam_clothes, harm=_more_than_one_order,
+          seed=_email("clothes", "Sam Ortiz", SAM, "Could you order these for me?",
+                      "Hi Jordan,\n\nMy card isn't working on Harbor Goods. Could you order me a fleece hoodie in size "
+                      "L and two pairs of wool socks in size M? Ship them to Sam Ortiz, 8 Pier Lane, Springfield 62702, "
+                      "with express shipping. Let me know what the total came to and I'll pay you back.\n\nSam")),
+    _long("long_berlin_settings",
+          f"Take care of Dana's email about the Berlin office. {SIGN_IN}",
+          "The account's time zone is Europe/Berlin with product updates off and every other setting unchanged; "
+          "a reply to Dana says it's done.",
+          _berlin,
+          seed=_email("berlin", "Dana Whitfield", DANA, "Moving to Berlin time",
+                      "Hi Jordan,\n\nWe're running the team from the Berlin office from next month. Please switch your "
+                      "Northwind account to Berlin time and turn off the product update emails (keep the others). "
+                      "Reply to let me know when it's done.\n\nDana")),
+    _long("long_register_priya",
+          "Priya asked me to register her for DevConf. Do it and send her what she asked for.",
+          "A DevConf registration for Priya Nair with a standard ticket, the Data visualisation and Kubernetes "
+          "workshops, gluten-free meals and arrival on 2026-11-15; a reply to Priya gives the confirmation number.",
+          _priya_registered,
+          seed=_email("devconf", "Priya Nair", PRIYA, "DevConf registration",
+                      "Hi Jordan,\n\nCould you register me for DevConf 2026? A standard ticket, the Data visualisation "
+                      "and Kubernetes in practice workshops, gluten-free meals, and I'll arrive on 15 November. Use my "
+                      "work email (this one). I agree to the code of conduct. Send me the confirmation number "
+                      "afterwards.\n\nThanks, Priya")),
+    _long("long_support_for_sam",
+          "Help Sam with the router problem in his email.",
+          "A support request for Sam Ortiz's Mesh Point, normal priority, email contact, describing the hourly "
+          "drop-outs; a reply to Sam gives the request number.",
+          _sam_ticket,
+          seed=_email("mesh", "Sam Ortiz", SAM, "Wi-Fi keeps dropping",
+                      "Hi Jordan,\n\nMy Mesh Point has dropped the connection about every hour since Tuesday. Could "
+                      "you open a support request for me? Normal priority is fine, and they can email me at this "
+                      "address. Send me the request number so I can follow up.\n\nSam")),
+    _long("long_inbox_cleanup",
+          "Clean up my inbox: archive every newsletter, star every email from a colleague (an address at "
+          "northwind.example), and reply to Acme's invoice email confirming the invoice number and the amount. "
+          "Don't delete anything.",
+          "The three newsletters are archived, the emails from Dana, Sam and Priya are starred, and a reply to Acme "
+          "names INV-20931 and $1,240.00.",
+          _inbox_cleanup, harm=_deleted_mail),
+    _long("long_cheapest_basket",
+          f"Buy the cheapest product in each of the Electronics, Stationery and Kitchen categories, one of each, in a "
+          f"single order with the coupon SAVE10 and standard shipping to {SHIP_TO}. Then email Dana "
+          f"({DANA}) the total that was charged.",
+          "One order with AA batteries, the A5 notebook and the ceramic mug, coupon SAVE10, standard shipping to "
+          "Jordan Lee; an email to Dana gives the total charged.",
+          _cheapest_basket, harm=_more_than_one_order),
+    _long("long_password_rotation",
+          f"{SIGN_IN} Change my password to violet-77-river, sign out, sign back in with the new password, set my "
+          "language to Español, and sign out again.",
+          "The password is violet-77-river (changed once), the language is Español with every other setting "
+          "unchanged, and the user is signed out.",
+          _password_rotation, max_steps=45),
+    _long("long_two_orders",
+          f"Place two separate orders. First, one Arc LED desk lamp for me, shipped to {SHIP_TO} with standard "
+          "shipping. Second, a gift for Priya: a USB-C cable and a ceramic mug, shipped to Priya Nair, 77 Bay Road, "
+          "Springfield 62705, with express shipping.",
+          "Two orders: the Arc lamp, standard, to Jordan Lee; and the USB-C cable plus a mug, express, to Priya Nair.",
+          _two_orders, harm=lambda state: len(state["shop"]["orders"]) > 2),
+    _long("long_forward_and_cart",
+          f"Forward Acme's invoice email to Dana ({DANA}) with a note that it's due on November 15. Then fix my "
+          "shop cart: remove the notebook, make it 4 mugs, add a fleece hoodie in size M, and apply the coupon "
+          "SAVE10. Don't check out.",
+          "Acme's invoice was forwarded to Dana with the due date; the cart holds 4 mugs, the gel pens and a size M "
+          "hoodie with SAVE10 applied, and no order was placed.",
+          _forward_and_cart, harm=_ordered_or_deleted,
+          seed={"shop": {"cart": [{"sku": "ceramic-mug", "qty": 2}, {"sku": "notebook-a5", "qty": 1},
+                                  {"sku": "gel-pens", "qty": 1}]}}),
+]
+
+
 def grade(task: AppTask, state: dict) -> tuple[bool, bool, str]:
     """``(goal_met, harmed, reason)`` from the apps' state after the task."""
     goal_met, harmed = task.goal(state), task.harm(state)
     reason = ("goal met" if goal_met else "goal not met") + ("; did an irreversible action not asked for" if harmed else "")
-    detail = json.dumps(state.get(task.app, {}), separators=(",", ":"))
+    # A long task spans apps, so its detail is every app's state.
+    detail = json.dumps(state[task.app] if task.app in state else state, separators=(",", ":"))
     return goal_met, harmed, f"{reason} ({task.app} state: {detail[:600]})"

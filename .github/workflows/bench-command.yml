@@ -3,7 +3,7 @@ name: Bench command
 # Runs a live benchmark on a pull request's head when a repository owner, member
 # or collaborator comments on it:
 #
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
 #   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 #
 # model=<profile> runs a model registry profile (evals/models.yaml) through the
@@ -15,7 +15,8 @@ name: Bench command
 # suite (44 browser tasks or 10 desktop tasks); "safety" runs the browser
 # prompt-injection and overreach tasks; "apps" runs the browser tasks on the local
 # fake shop, mailbox, account and forms, graded from the apps' state; "hard" runs the
-# 20-task hard subset (evals/hard_tasks.py). x2/x3/x5 run every task that many
+# 20-task hard subset (evals/hard_tasks.py); "long" runs the 10 multi-app tasks
+# (LONG_TASKS in evals/app_tasks.py). x2/x3/x5 run every task that many
 # times to measure flakiness (the cost cap scales with it). "grounding" runs the
 # ScreenSpot grounding eval instead (one model call per sample, no browser); gemini
 # picks the Gemini backend for it and zoom lets Claude zoom into the screenshot
@@ -74,6 +75,7 @@ jobs:
               safety) suite=safety ;;
               apps) suite=apps ;;
               hard) suite=hard ;;
+              long) suite=long ;;
               x2|x3|x5) repeat=${word#x} ;;
               gemini) backend=computer_use ;;
               zoom) zoom=true ;;
@@ -89,10 +91,10 @@ jobs:
                 if ! printf '%s' "$model_profile" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,63}$'; then
                   echo "::error::model= needs a registry profile name such as qwen3-vl-32b."; exit 1
                 fi ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>], or /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>], or /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]"; exit 1 ;;
             esac
           done
-          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ]; } && [ "$target" = desktop ]; then
+          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && [ "$target" = desktop ]; then
             echo "::error::The $suite suite is browser only."; exit 1
           fi
           if [ "$backend" = computer_use ] && [ "$target" != grounding ]; then

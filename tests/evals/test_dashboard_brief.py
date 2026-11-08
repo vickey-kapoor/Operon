@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 APP_JS = Path(__file__).resolve().parents[2] / "dashboard" / "app.js"
-FUNCTIONS = ("harnessSuffix", "configLabel", "fmtUsd", "firstAttempts", "likelyCause", "runChanges",
+FUNCTIONS = ("harnessSuffix", "configLabel", "fmtUsd", "taskResults", "likelyCause", "runChanges",
              "previousRun", "briefHeadline", "burnHeadline")
 CONSTANTS = ("BACKEND_NAMES", "OUTCOME_LABELS", "fmtPct", "fmtSec")
 
@@ -72,10 +72,12 @@ def test_run_changes_sorts_tasks_into_fixed_broken_and_still_failing() -> None:
     assert [x["task"] for x in changes["still"]] == ["still"]
 
 
-def test_run_changes_uses_the_first_attempt_of_a_repeated_run() -> None:
+def test_run_changes_counts_a_failure_in_any_attempt_of_a_repeated_run() -> None:
+    # The first attempt passed but a later one failed: the task did not hold up.
     changes = _run("""runChanges([t('a', 'success')],
-        [t('a', 'success', { attempt: 2 }), t('a', 'failure', { attempt: 1 })])""")
-    assert [x["task"] for x in changes["broke"]] == ["a"]
+        [t('a', 'success', { attempt: 1 }), t('a', 'timeout', { attempt: 2 }), t('a', 'failure', { attempt: 3 })])""")
+    assert [(x["task"], x["outcome"]) for x in changes["broke"]] == [("a", "timeout")]
+    assert _run("runChanges([t('a', 'success')], [t('a', 'success', { attempt: 2 }), t('a', 'success')])")["broke"] == []
 
 
 def test_previous_run_skips_flagged_runs_and_other_configurations() -> None:

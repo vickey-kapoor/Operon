@@ -458,12 +458,14 @@ function previousRun(run, runs) {
   return earlier.length ? earlier.reduce((a, b) => (b.started_at > a.started_at ? b : a)) : null;
 }
 
-// One result per task: the first attempt of a repeated (--repeat) run.
-function firstAttempts(tasks) {
+// One result per task. A repeated (--repeat) run counts as a pass only when every attempt
+// passed; otherwise its earliest failing attempt stands for the task.
+function taskResults(tasks) {
   const out = new Map();
   for (const t of tasks) {
     const have = out.get(t.task);
-    if (!have || (t.attempt || 1) < (have.attempt || 1)) out.set(t.task, t);
+    const fails = t.outcome !== "success", haveFails = have && have.outcome !== "success";
+    if (!have || (fails && !haveFails) || (fails === haveFails && (t.attempt || 1) < (have.attempt || 1))) out.set(t.task, t);
   }
   return out;
 }
@@ -483,8 +485,8 @@ function likelyCause(t) {
 
 // Tasks that started passing, started failing, or still fail, between two runs' results.
 function runChanges(prevTasks, curTasks) {
-  const prev = firstAttempts(prevTasks);
-  const cur = firstAttempts(curTasks);
+  const prev = taskResults(prevTasks);
+  const cur = taskResults(curTasks);
   const fixed = [], broke = [], still = [];
   for (const [name, t] of cur) {
     const p = prev.get(name);
@@ -542,20 +544,26 @@ function renderBrief(runs) {
   const items = [];
   if (!prev) {
     items.push(change("warn", "First run of this configuration, so there is nothing to compare yet."));
+  } else if (state.tasksFailed) {
+    items.push(change("warn", "Task results could not be loaded, so the task-by-task comparison is unavailable."));
   } else if (state.tasks !== null) {
-    const byRun = (r) => runTasks(r);
-    const { fixed, broke, still } = runChanges(byRun(prev), byRun(run));
+    const prevTasks = runTasks(prev), curTasks = runTasks(run);
+    const { fixed, broke, still } = runChanges(prevTasks, curTasks);
     if (fixed.length) items.push(change("up", el("strong", {}, taskList(fixed)), fixed.length === 1 ? " passes again" : " pass again"));
     for (const t of broke.slice(0, 3)) items.push(change("down", el("strong", {}, t.task), " started failing: ", el("span", { class: "muted" }, likelyCause(t))));
     if (broke.length > 3) items.push(change("down", `${broke.length - 3} more tasks started failing`));
-    if (still.length) items.push(change("down", el("strong", {}, taskList(still)), ` still fail${still.length === 1 ? "s" : ""}`,
-      still.length === 1 ? el("span", { class: "muted" }, `: ${likelyCause(still[0])}`) : null));
+    for (const t of still.slice(0, 3)) items.push(change("down", el("strong", {}, t.task), " still fails: ", el("span", { class: "muted" }, likelyCause(t))));
+    if (still.length > 3) items.push(change("down", `${still.length - 3} more tasks still fail`));
     const dSec = (s.mean_seconds || 0) - (prev.summary.mean_seconds || 0);
     if (Math.abs(dSec) >= 0.5) {
       items.push(change(dSec < 0 ? "up" : "down", `${dSec < 0 ? "Faster" : "Slower"} by `, el("strong", {}, `${Math.abs(dSec).toFixed(1)} s per task`),
         ` (${fmtSec(prev.summary.mean_seconds)} → ${fmtSec(s.mean_seconds)})`));
     }
-    if (!fixed.length && !broke.length && !still.length && Math.abs(dSec) < 0.5) items.push(change("up", "Every task gave the same result as last run."));
+    if (!prevTasks.length || !curTasks.length) {
+      items.push(change("warn", "Task results are missing for one of the two runs, so tasks can't be compared."));
+    } else if (!fixed.length && !broke.length && !still.length && Math.abs(dSec) < 0.5) {
+      items.push(change("up", "Every task passed, as in the last run."));
+    }
   }
   for (const r of latest) {
     if (r.summary.false_success) items.push(change("warn", `${configLabel(r)} had `, el("strong", {}, `${r.summary.false_success} false pass${r.summary.false_success === 1 ? "" : "es"}`)));
@@ -1573,8 +1581,11 @@ function renderLeaderboardBrief(data) {
     }
     text += ".";
   }
+  const mixed = ran.some((m) => !m.ownDone);
   document.getElementById("lb-brief").replaceChildren(
-    el("div", { class: "eyebrow" }, "Same tasks and graders for every model, each judged by its own \"done\""),
+    el("div", { class: "eyebrow" }, mixed
+      ? "Same tasks and graders for every model. Rows marked (check) were judged by Operon's completion check, the rest by the model's own \"done\""
+      : "Same tasks and graders for every model, each judged by its own \"done\""),
     el("h1", { class: "headline" }, text),
     el("p", { class: "lede" }, "Ranked by pass rate over each model's latest unflagged run per suite. Models that haven't run show the command that runs them."));
 }
@@ -1699,7 +1710,7 @@ async function main() {
   bindControls();
   // Task results and judge checks feed extra cards; the page renders without them.
   const extras = Promise.all([
-    getJson("api/tasks").then((d) => { state.tasks = d.tasks || []; }).catch(() => { state.tasks = []; }),
+    getJson("api/tasks").then((d) => { state.tasks = d.tasks || []; }).catch(() => { state.tasks = []; state.tasksFailed = true; }),
     getJson("api/judge").then((d) => { state.judge = d.checks || []; }).catch(() => { state.judge = []; }),
     getJson("models.json").then((d) => { state.registry = d.models || []; }).catch(() => { state.registry = []; }),
   ]);

@@ -129,7 +129,10 @@ def normalize_computer_use_function_call(
         return {"action_type": "wait", "wait_ms": int(float(args.get("seconds", 1)) * 1000)}
     if name == "launch_app":
         # Operon's custom desktop tool: the desktop environment has no navigate.
-        return {"action_type": "launch_app", "text": str(args["app"])}
+        app = args.get("app")
+        if not isinstance(app, str) or not app.strip():
+            raise BackendCompatibilityError("launch_app needs an app name.")
+        return {"action_type": "launch_app", "text": app.strip()}
     if name == "take_screenshot":
         # Nothing to do on screen; the next turn carries a fresh screenshot.
         return {"action_type": "wait", "wait_ms": 250}

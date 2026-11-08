@@ -16,6 +16,7 @@ from operon.agent.backends.desktop_claude_computer_use import (
     DesktopClaudeComputerUseBackend,
 )
 from operon.agent.backends.desktop_computer_use import (
+    DESKTOP_ENVIRONMENT,
     GEMINI_LAUNCH_APP_FUNCTION,
     DesktopComputerUseBackend,
 )
@@ -103,7 +104,7 @@ def build_model_backend(
                 or GeminiComputerUseHttpClient(
                     model=profile.model,
                     thinking_level=profile.effort,
-                    environment="ENVIRONMENT_DESKTOP",
+                    environment=DESKTOP_ENVIRONMENT,
                     function_declarations=[GEMINI_LAUNCH_APP_FUNCTION],
                 ),
                 prompt_path=_PROMPTS_DIR / "desktop_computer_use_prompt.txt",

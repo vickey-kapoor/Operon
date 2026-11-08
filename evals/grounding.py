@@ -17,8 +17,8 @@ Sets (a fixed, stratified sample of each, the same on every run):
 
 Claude runs web samples through the browser backend and desktop and Pro samples
 through the desktop backend; Gemini (``--backend computer_use``) uses its browser
-Computer Use backend for all of them, since Gemini has no desktop computer-use
-backend. The datasets are pinned to a revision and their files cached under
+Computer Use backend for all of them. With ``--backend model``, a profile with a
+desktop backend (Gemini's included) sends desktop and Pro samples there, as Claude does. The datasets are pinned to a revision and their files cached under
 ``.var/grounding/cache``; ScreenSpot-v2's images come out of its 1.3 GB zip by
 HTTP range requests, so only the sampled screenshots are downloaded.
 

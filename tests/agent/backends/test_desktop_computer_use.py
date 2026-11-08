@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from operon.agent.actions.translation import normalize_computer_use_function_call
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.agent.backends.desktop_computer_use import (
     GEMINI_LAUNCH_APP_FUNCTION,
     DesktopComputerUseBackend,
 )
+from operon.agent.backends.fallback import BackendCompatibilityError
 from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
 from operon.core.paths import prompts_dir
 from operon.models.capture import CaptureFrame
@@ -132,3 +135,18 @@ async def test_launch_app_then_type_then_done(tmp_path: Path) -> None:
     state = _state(AgentAction(action_type=ActionType.LAUNCH_APP, text="notepad"), decision.action)
     decision = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "3.png"), state))
     assert decision.action.action_type is ActionType.STOP
+
+
+def test_launch_app_without_an_app_name_is_a_compatibility_error() -> None:
+    for args in ({}, {"app": ""}, {"app": None}):
+        with pytest.raises(BackendCompatibilityError, match="app name"):
+            normalize_computer_use_function_call({"name": "launch_app", "args": args}, screen_width=10, screen_height=10)
+
+
+def test_backend_refuses_a_browser_client() -> None:
+    browser_client = GeminiComputerUseHttpClient(api_key="k", model="gemini-3.5-flash")
+    with pytest.raises(ValueError, match="ENVIRONMENT_DESKTOP"):
+        DesktopComputerUseBackend(client=browser_client, prompt_path=prompts_dir() / "desktop_computer_use_prompt.txt")
+    no_launch_app = GeminiComputerUseHttpClient(api_key="k", model="gemini-3.5-flash", environment="ENVIRONMENT_DESKTOP")
+    with pytest.raises(ValueError, match="launch_app"):
+        DesktopComputerUseBackend(client=no_launch_app, prompt_path=prompts_dir() / "desktop_computer_use_prompt.txt")

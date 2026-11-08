@@ -85,6 +85,13 @@ def test_uia_checks_for_settings_task_manager_and_calculator() -> None:
                      names=["System", "Display", "Change the resolution of the display"])
     assert not _grade("settings_display", _snap(search))
     assert _grade("taskmgr_performance", _snap(_window("Taskmgr", "Task Manager", selected=["Performance"])))
+    # Seen live on Windows Server 2022: no tab names or selection, only the page's own labels.
+    perf = _window("Taskmgr", "Task Manager", names=["Tab control", "CPU", "Memory", "Resource Chart View",
+                                                     "Utilization", "Base speed:", "% Utilization"])
+    assert _grade("taskmgr_performance", _snap(perf))
+    processes = _window("Taskmgr", "Task Manager", names=["Tab control", "Name", "Status", "CPU", "Memory",
+                                                          "15%", "End task"])
+    assert not _grade("taskmgr_performance", _snap(processes))
     assert not _grade("taskmgr_performance", _snap(_window("Taskmgr", "Task Manager", selected=["Processes"])))
     calc = _window("ApplicationFrameHost", "Calculator", names=["Calculator", "Display is 444"])
     assert _grade("calculator_multiply", _snap(calc))
@@ -133,6 +140,9 @@ def test_canvas_stats_ignore_the_gray_backdrop_around_the_canvas() -> None:
     for x in range(40, 80):
         put(x, 21, b"\x60\x60\x60")  # shadow below and beside the canvas
     put(79, 39, b"\x00\x00\x00")  # resize handle
+    for y in range(30, 35):  # a white resize handle with a dark border, out on the backdrop
+        for x in range(70, 75):
+            put(x, y, b"\x00\x00\x00" if x in (70, 74) or y in (30, 34) else b"\xff\xff\xff")
     blank = desktop_state.canvas_stats(bytes(rgb), width, height)
     assert blank["dark_pixels"] == 0 and blank["canvas"][0] <= 40
     for x in range(10, 30):  # a 20x8 rectangle outline on the canvas

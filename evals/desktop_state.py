@@ -250,11 +250,17 @@ def canvas_stats(rgb: bytes, width: int, height: int, threshold: int = 200, whit
     drawing, and their bounding box is returned."""
     n = min(len(rgb) // 3, width * height)
     lows = [min(rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]) for i in range(n)]
-    whites = [i for i, low in enumerate(lows) if low >= white]
-    if whites:
-        wx = [i % width for i in whites]
-        left, right = min(wx), max(wx)
-        top, bottom = whites[0] // width, whites[-1] // width
+    # Canvas rows and columns are mostly white. Paint's resize handles are small white
+    # squares on the backdrop, so a column or row with only a few white pixels is not canvas.
+    col_white, row_white = [0] * width, [0] * height
+    for i, low in enumerate(lows):
+        if low >= white:
+            col_white[i % width] += 1
+            row_white[i // width] += 1
+    cols = [x for x, c in enumerate(col_white) if c >= 0.3 * height]
+    rows = [y for y, c in enumerate(row_white) if c >= 0.3 * width]
+    if cols and rows:
+        left, right, top, bottom = cols[0], cols[-1], rows[0], rows[-1]
     else:  # the canvas is fully painted over
         left, right, top, bottom = 0, width - 1, 0, height - 1
     count, xs, ys = 0, [], []
@@ -429,8 +435,12 @@ def taskmgr_performance(snapshot: Snapshot) -> tuple[bool, str]:
     if "performance" in [n.casefold() for n in _selected(found)]:
         return True, "Task Manager's Performance tab is selected"
     names = [n.casefold() for n in _names(found)]
-    if "performance" in names and any("utilization" in n for n in names):
-        return True, "Task Manager shows the Performance view (utilization graphs)"
+    # Task Manager's tab control doesn't expose its tabs to UI Automation, so recognise
+    # the Performance page by what only it shows: the utilization graph and its labels.
+    graph = any("utilization" in n for n in names)
+    page = "performance" in names or "resource chart view" in names or any(n.startswith("base speed") for n in names)
+    if graph and page:
+        return True, "Task Manager shows the Performance view (utilization graph)"
     return False, "Task Manager is open but not on the Performance tab"
 
 

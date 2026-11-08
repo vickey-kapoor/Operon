@@ -285,8 +285,7 @@ async def test_responses_client_needs_a_key(monkeypatch) -> None:
         await OpenAIResponsesClient(PROFILE).create(input_items=[], tools=[], previous_response_id=None)
 
 
-def test_registry_has_the_openai_profile_and_services_build_it(monkeypatch, tmp_path) -> None:
-    from operon.agent.backends.model_adapter.registry import ModelRegistryError
+def test_registry_has_the_openai_profile_and_services_build_it(monkeypatch) -> None:
     from operon.api.runtime.services import build_browser_services
     from operon.api.runtime_config import validate_modes
 
@@ -296,16 +295,22 @@ def test_registry_has_the_openai_profile_and_services_build_it(monkeypatch, tmp_
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert any("OPENAI_API_KEY" in e for e in validate_modes())
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert validate_modes() == []
+    assert isinstance(build_browser_services(executor=None).policy_delegate, OpenAIComputerUseBackend)
+
+
+def test_openai_profile_without_pricing_is_refused(monkeypatch, tmp_path) -> None:
+    from operon.agent.backends.model_adapter.registry import ModelRegistryError
+    from operon.api.runtime.services import build_browser_services
+    from operon.api.runtime_config import validate_modes
+
     # A paid profile without prices would count $0 per step, so the run cost cap could never stop it.
+    registry = tmp_path / "models.yaml"
+    registry.write_text("openai-computer-use:\n  adapter: openai_native\n  model: gpt-6.1-sol\n", encoding="utf-8")
+    monkeypatch.setenv("OPERON_MODEL_REGISTRY", str(registry))
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "model")
+    monkeypatch.setenv("OPERON_MODEL_PROFILE", "openai-computer-use")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     assert any("needs pricing" in e for e in validate_modes())
     with pytest.raises(ModelRegistryError, match="needs pricing"):
         build_browser_services(executor=None)
-    registry = tmp_path / "models.yaml"
-    registry.write_text(
-        "openai-computer-use:\n  adapter: openai_native\n  model: gpt-6.1-sol\n"
-        "  pricing: {input_per_mtok: 1.0, output_per_mtok: 4.0}\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("OPERON_MODEL_REGISTRY", str(registry))
-    assert validate_modes() == []
-    assert isinstance(build_browser_services(executor=None).policy_delegate, OpenAIComputerUseBackend)

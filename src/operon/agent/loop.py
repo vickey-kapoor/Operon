@@ -1,0 +1,1965 @@
+"""Agent loop orchestrator for the vision-driven automation workflow."""
+
+import asyncio
+import json
+import logging
+import os
+import shutil
+import time
+import weakref
+from pathlib import Path
+
+from operon.agent import control as run_control
+from operon.agent.actions.grounding import element_center, make_grounder
+from operon.agent.actions.retry_hardening import (
+    RetryHardening,
+    apply_reresolution_failure,
+    merge_execution_retry,
+    should_retry,
+)
+from operon.agent.actions.retry_hardening import (
+    RetryResolution as _RetryResolution,
+)
+from operon.agent.actions.selector import DeterministicTargetSelector
+from operon.agent.artifacts.step_artifacts import StepArtifactsManager
+from operon.agent.perception import PerceptionLowQualityError, PerceptionService
+from operon.agent.perception.capture import CaptureService
+from operon.agent.policy import PolicyService
+from operon.agent.policy.best_of_n import (
+    Critic,
+    HeuristicCritic,
+    ScoredCandidate,
+    best_of_n_confidence_ceiling,
+    best_of_n_count,
+    select_best_of_n,
+)
+from operon.agent.policy.file_guard import FILE_PATH_ACTIONS, blocked_file_path
+from operon.agent.policy.progress_tracker import (
+    ProgressTracker,
+    apply_no_progress_detection,
+    page_signature,
+)
+from operon.agent.policy.recovery import RecoveryManager, validate_benchmark_integrity
+from operon.agent.policy.trust_gate import TrustVerdict, make_trust_gate
+from operon.agent.policy.verifier import VerifierService
+from operon.clients.gemini import GeminiClient
+from operon.core.contracts.perception import Environment as UnifiedEnvironment
+from operon.executor.browser import Executor
+from operon.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
+from operon.executor.desktop_adapter import DesktopExecutor as UnifiedDesktopExecutor
+from operon.models.capture import CaptureFrame
+from operon.models.common import (
+    FailureCategory,
+    LoopStage,
+    RunResponse,
+    RunStatus,
+    RunTaskRequest,
+    StepRequest,
+    StopReason,
+)
+from operon.models.execution import (
+    ExecutedAction,
+    ExecutionReresolutionTrace,
+)
+from operon.models.logs import (
+    FailureRecord,
+    ModelDebugArtifacts,
+    PreStepFailureLog,
+    StepLog,
+)
+from operon.models.perception import ScreenPerception, UIElement, UIElementType
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.progress import ProgressTrace
+from operon.models.recovery import RecoveryDecision, RecoveryStrategy
+from operon.models.selector import TargetIntent, TargetIntentAction
+from operon.models.state import AgentState
+from operon.models.verification import (
+    VerificationFailureType,
+    VerificationResult,
+    VerificationStatus,
+)
+from operon.store.background_writer import bg_writer
+from operon.store.memory import MemoryStore
+from operon.store.run_logger import append_step_log, append_step_log_critical
+from operon.store.run_store import RunStore
+
+logger = logging.getLogger(__name__)
+
+_TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
+
+_LIVENESS_RETRY_MAX = 3
+_LIVENESS_RETRY_FIRST_SLEEP_S = 0.5   # fast recovery for brief UI transitions (e.g. search overlay animating in)
+_LIVENESS_RETRY_SLEEP_S = 1.5         # subsequent retries give slower loads more time
+
+
+def _trace(stage: str, detail: str = "") -> None:
+    if not _TRACE:
+        return
+    suffix = f"  {detail}" if detail else ""
+    msg = f"[TRACE] {stage}{suffix}"
+    try:
+        print(f"\033[36m{msg}\033[0m", flush=True)
+    except UnicodeEncodeError:
+        print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
+
+
+def _leaf_actions(action: AgentAction) -> list[AgentAction]:
+    """The actions a batch actually runs, nested batches flattened; a plain action is its own leaf."""
+    if action.action_type is not ActionType.BATCH:
+        return [action]
+    return [leaf for child in action.actions or [] for leaf in _leaf_actions(child)]
+
+class AgentLoop:
+    """Coordinates the MVP control loop and terminal benchmark boundaries."""
+
+    # Loop-progress thresholds: kept here as compatibility aliases for any
+    # external readers; ProgressTracker is the source of truth.
+    MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS = ProgressTracker.MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS
+    MAX_REPEAT_SAME_TARGET_WITHOUT_PROGRESS = ProgressTracker.MAX_REPEAT_SAME_TARGET_WITHOUT_PROGRESS
+    MAX_NO_PROGRESS_STEPS = ProgressTracker.MAX_NO_PROGRESS_STEPS
+    MAX_REPEAT_SAME_FAILURE = ProgressTracker.MAX_REPEAT_SAME_FAILURE
+    RECENT_WINDOW_SIZE = 6  # used only by tests; ProgressTracker has its own constant
+
+    SUCCESS_STOP_REASONS = {
+        StopReason.STOP_BEFORE_SEND,
+        StopReason.FORM_SUBMITTED_SUCCESS,
+        StopReason.TASK_COMPLETED,
+    }
+
+    def __init__(
+        self,
+        capture_service: CaptureService,
+        perception_service: PerceptionService,
+        run_store: RunStore,
+        policy_service: PolicyService,
+        executor: Executor,
+        verifier_service: VerifierService,
+        recovery_manager: RecoveryManager,
+        memory_store: MemoryStore | None = None,
+        gemini_client: GeminiClient | None = None,
+        environment: UnifiedEnvironment = UnifiedEnvironment.BROWSER,
+        harness_profile: str = "full",
+    ) -> None:
+        self.capture_service = capture_service
+        self.perception_service = perception_service
+        self.run_store = run_store
+        self.policy_service = policy_service
+        self.executor = executor
+        self.verifier_service = verifier_service
+        self.recovery_manager = recovery_manager
+        self.memory_store = memory_store
+        self.gemini_client = gemini_client
+        self.target_selector = DeterministicTargetSelector()
+        self._retry = RetryHardening(self.target_selector)
+        # RFC 0001 Move 2: configured grounder (OPERON_GROUNDER). Default is the
+        # deterministic baseline whose refine() is identity ⇒ no behavior change.
+        self._grounder = make_grounder(self.target_selector)
+        self.environment = environment
+        # "thin" (OPERON_HARNESS_PROFILE, see agent/policy/thin.py): the executor runs
+        # the model's action once, as chosen, and the model sees what happened. The
+        # loop's own corrections (redundant-action blocking, execution re-targeting,
+        # progress stops) are off; safety gates stay on.
+        self.thin_harness = harness_profile == "thin"
+        self._artifacts = StepArtifactsManager(run_store)
+        self._progress = ProgressTracker()
+        # RFC 0001 Move 3: pre-execution candidate selection. Default critic is
+        # heuristic/model-free; swap for a learned critic later. Off unless
+        # OPERON_BESTOFN_N > 1 (see _select_best_of_n).
+        self._best_of_n_critic: Critic = HeuristicCritic()
+        # RFC 0001 Move 5: deny/confirm policy gate before execution (OPERON_TRUST_GATE).
+        self._trust_gate = make_trust_gate()
+        # One lock per run so /step, /resume and the auto-run task never interleave
+        # steps on the same run. Weak values: a lock lives only while a step holds
+        # or awaits it, so the map does not grow with every run ever started.
+        self._run_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+        self._executor_lock = asyncio.Lock()
+        # Whether a human approved the trust gate for the action about to run.
+        self._trust_approved: dict[str, bool] = {}
+        # Human approval of a gate pause, per run. A pause records (action fingerprint,
+        # gate) as pending; a resume that approves adds that gate to the action's
+        # approved set. The same action then passes the gates it was approved for, and
+        # the approval is used up once it gets through (or the policy picks another).
+        self._pending_gate_approvals: dict[str, tuple[str, str]] = {}
+        # Runs a human paused by hand (UI Pause, POST /run/{id}/pause). A step already
+        # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
+        self._pause_requests: set[str] = set()
+        self._approved_gate_actions: dict[str, tuple[str, frozenset[str]]] = {}
+        if environment is UnifiedEnvironment.BROWSER:
+            self.executor_adapter = UnifiedBrowserExecutor(executor)
+        else:
+            self.executor_adapter = UnifiedDesktopExecutor(executor)
+
+    async def start_run(self, request: RunTaskRequest) -> RunResponse:
+        _trace("START_RUN", f"intent={request.intent!r}  url={request.start_url!r}")
+        # Minimize all windows (Win+D) only in desktop mode. Browser-mode runs
+        # use Playwright in its own window — issuing Win+D would minimize the
+        # USER's foreground app on every task start, which yanks focus during
+        # multi-task benchmark sweeps (especially headless runs where the
+        # browser is invisible and there's nothing to "clear" anyway).
+        if (
+            self.environment is not UnifiedEnvironment.BROWSER
+            and hasattr(self.executor, "reset_desktop")
+            and not self._test_safe_mode_enabled()
+        ):
+            await self.executor.reset_desktop()
+        record = self.run_store.create_run(
+            intent=request.intent,
+            start_url=request.start_url,
+            headless=request.headless,
+            benchmark=request.benchmark,
+            mode=request.mode,
+            max_steps=request.max_steps,
+        )
+        _trace("START_RUN", f"run_id={record.run_id}")
+        # Benchmark-safe session management: wipe per-run coordinator state (episodic
+        # memory replay, hint cache, rule trace) so prior task context doesn't leak.
+        # Browser auth state (cookies/session tokens) is preserved at the executor level.
+        if hasattr(self.policy_service, "reset_run_context"):
+            self.policy_service.reset_run_context(record.run_id)
+        # Selecting this run on the executor must wait for any other run's step in
+        # flight, or that step's next capture or batch child would land in this run's
+        # browser (see step_run).
+        async with self._executor_lock:
+            if hasattr(self.executor, "set_current_run_id"):
+                self.executor.set_current_run_id(record.run_id)
+            if hasattr(self.executor, "configure_run"):
+                self.executor.configure_run(record.run_id, headless=request.headless, mode=record.mode)
+            if hasattr(self.executor, "start_run_recording"):
+                try:
+                    await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
+                except Exception as exc:
+                    logger.warning("start_run_recording failed for %s: %s", record.run_id, exc)
+            if request.start_url:
+                _trace("START_RUN -> NAVIGATE", request.start_url)
+                await self.executor.execute(
+                    AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
+                )
+        return RunResponse(
+            run_id=record.run_id,
+            status=record.status,
+            intent=record.intent,
+            step_count=record.step_count,
+        )
+
+    @staticmethod
+    def _test_safe_mode_enabled() -> bool:
+        return os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true"
+
+    def _maybe_reuse_prior_perception(self, state, frame: CaptureFrame):
+        """Return a reused ScreenPerception when conditions are safe, else None.
+
+        Conservative gates:
+        - The previous action was WAIT (idempotent — agent expected no change).
+        - The frame's visual_velocity is exactly 0.0 (no pixel movement at all).
+        - The previous verification was UNCERTAIN (not SUCCESS, not FAILURE).
+        - There IS a previous perception in observation_history.
+        - We did NOT already reuse on the previous step (no back-to-back skips —
+          forces a fresh look at least every other step to catch slow renders).
+        """
+        if frame.visual_velocity != 0.0:
+            return None
+        if not state.observation_history or not state.action_history:
+            return None
+        # Avoid back-to-back reuse: track per-run via a small set on self.
+        run_id = state.run_id
+        prev_skipped = getattr(self, "_perception_skipped_runs", set())
+        if run_id in prev_skipped:
+            prev_skipped.discard(run_id)
+            self._perception_skipped_runs = prev_skipped
+            return None
+        last_action = state.action_history[-1].action
+        if last_action.action_type is not ActionType.WAIT:
+            return None
+        if state.verification_history:
+            from operon.models.verification import VerificationStatus as _VS
+            if state.verification_history[-1].status is not _VS.UNCERTAIN:
+                return None
+        prior = state.observation_history[-1]
+        # Mark this run as having just skipped — next step must re-perceive.
+        prev_skipped.add(run_id)
+        self._perception_skipped_runs = prev_skipped
+        # Update the artifact path so step records reflect the current frame.
+        return prior.model_copy(update={"capture_artifact_path": frame.artifact_path})
+
+    async def _consume_force_fresh_perception(self, record) -> None:
+        """When force_fresh_perception is set, wait for the UI to settle THEN
+        reset the flag. The order matters: an early return between the reset
+        and the wait would silently drop the settle delay.
+
+        Browser DOM hydration commonly takes longer than desktop, so use 1.0s
+        there vs 0.5s on desktop.
+        """
+        if not record.force_fresh_perception:
+            return
+        settle_delay = 1.0 if self.environment is UnifiedEnvironment.BROWSER else 0.5
+        await asyncio.sleep(settle_delay)
+        record.force_fresh_perception = False
+
+    async def pause_run(self, run_id: str) -> AgentState:
+        """Pause a running run for a human. Takes effect now if no step is running;
+        a step in flight runs its action, then ends paused instead of RUNNING."""
+        record = await self.run_store.get_run(run_id)
+        if record is None:
+            raise ValueError(f"Run {run_id!r} not found")
+        if record.status in {RunStatus.PENDING, RunStatus.RUNNING}:
+            self._pause_requests.add(run_id)
+            record = await self.run_store.set_status(run_id, RunStatus.WAITING_FOR_USER)
+        return record
+
+    async def resume_run(self, run_id: str, *, approve_gated_action: bool = True) -> RunResponse:
+        """Resume a run that was paused waiting for user input.
+
+        ``approve_gated_action``: when the pause came from the confidence or trust
+        gate or the coordinate-thrash guard, resuming is the human's approval of that
+        action, so the next step may run it once. Pass False when resuming with a
+        correction instead (override).
+        """
+        record = await self.run_store.get_run(run_id)
+        if record is None:
+            raise ValueError(f"Run {run_id!r} not found")
+        if record.status is not RunStatus.WAITING_FOR_USER:
+            raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        pending = self._pending_gate_approvals.pop(run_id, None)
+        if approve_gated_action and pending is not None:
+            fingerprint, gate = pending
+            prior = self._approved_gate_actions.get(run_id)
+            gates = prior[1] if prior is not None and prior[0] == fingerprint else frozenset()
+            self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
+        self._pause_requests.discard(run_id)
+        record.stop_reason = None
+        updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
+        return RunResponse(
+            run_id=updated.run_id,
+            status=updated.status,
+            intent=updated.intent,
+            step_count=updated.step_count,
+        )
+
+    async def step_run(self, request: StepRequest) -> RunResponse:
+        lock = self._run_locks.get(request.run_id)
+        if lock is None:
+            lock = self._run_locks[request.run_id] = asyncio.Lock()
+        async with lock:
+            # The executor has one "current run" that capture and execute read, so
+            # steps of different runs must not interleave on it: each step selects
+            # its run first and holds the executor until it ends.
+            async with self._executor_lock:
+                if hasattr(self.executor, "set_current_run_id"):
+                    self.executor.set_current_run_id(request.run_id)
+                return await self._step_run_locked(request)
+
+    async def _step_run_locked(self, request: StepRequest) -> RunResponse:
+        record = await self.run_store.get_run(request.run_id)
+        if record is None:
+            raise ValueError(f"Run {request.run_id!r} not found")
+        if record.status is RunStatus.CANCELLED or (
+            record.status is RunStatus.WAITING_FOR_USER and record.run_id in self._pause_requests
+        ):
+            return RunResponse(
+                run_id=record.run_id,
+                status=record.status,
+                intent=record.intent,
+                step_count=record.step_count,
+            )
+        if record.step_count >= record.max_steps:
+            record.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
+            updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
+            try:
+                await self._cleanup_completed_run(record.run_id)
+            except Exception as exc:
+                logger.warning("cleanup after max_steps failed: %s", exc)
+            return RunResponse(
+                run_id=updated.run_id,
+                status=updated.status,
+                intent=updated.intent,
+                step_count=updated.step_count,
+            )
+
+        step_index = record.step_count + 1
+        _trace("─" * 60)
+        _trace("STEP", f"step={step_index}  run_id={record.run_id}")
+
+        # Per-stage timing — written to step_timing.json at end-of-step for
+        # tail-latency analysis. Values are accumulated in milliseconds.
+        stage_timings: dict[str, float] = {}
+
+        def _record_stage(name: str, t0: float) -> float:
+            elapsed = time.perf_counter() - t0
+            stage_timings[name] = stage_timings.get(name, 0.0) + elapsed * 1000.0
+            return elapsed
+
+        before_artifact_path = self._before_artifact_path(record.run_id, step_index)
+        after_artifact_path = self._after_artifact_path(record.run_id, step_index)
+        self._prepare_step_artifacts(record.run_id, step_index, before_artifact_path, after_artifact_path)
+
+        if step_index == 1 and not self._test_safe_mode_enabled():
+            logger.info("Bootstrap warmup: Allowing OS and Browser window to hydrate...")
+            if (
+                self.environment is UnifiedEnvironment.BROWSER
+                and not record.start_url
+                and hasattr(self.executor, "execute")
+            ):
+                warmup = AgentAction(action_type=ActionType.NAVIGATE, url="https://www.google.com")
+                # The warmup is an agent-initiated navigation like any other, so it must
+                # honor the trust gate (e.g. OPERON_TRUST_ALLOW_DOMAINS) instead of bypassing it.
+                if self._trust_gate.evaluate(warmup).verdict is TrustVerdict.ALLOW:
+                    logger.info("Bootstrap warmup: no start URL — navigating to google.com")
+                    await self.executor.execute(warmup)
+                else:
+                    logger.info("Bootstrap warmup: trust gate blocks google.com — skipping warmup navigation")
+            await asyncio.sleep(2.5)
+
+        await self._consume_force_fresh_perception(record)
+
+        _trace("  1 CAPTURE", "taking screenshot via CaptureService")
+        _t0 = time.perf_counter()
+        frame = await self.capture_service.capture(record)
+        _trace("  1 CAPTURE OK", f"{_record_stage('capture', _t0):.2f}s  frame={type(frame).__name__}")
+
+        # Consume any correction the user sent during a HITL pause before perceive():
+        # combined backends (Claude, Gemini) choose the action inside perceive(), so a
+        # hint added after it would only reach the model a step late.
+        _override_text = None
+        _override_sent = False
+        _override_hint = run_control.consume_override_hint(record.run_id)
+        if _override_hint:
+            _override_text = (
+                f"[USER OVERRIDE HINT] The user provided this correction at step {step_index}: "
+                f"'{_override_hint}'. Incorporate it into your next action decision."
+            )
+            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+            if callable(add_hints):
+                add_hints([_override_text], source="user_override", run_id=record.run_id)
+                _override_sent = True
+            logger.info("Consumed user override hint for step %d: %r", step_index, _override_hint)
+
+        # Inject memory hints before perceive() so combined mode includes them
+        if hasattr(self.policy_service, "prepare_hints"):
+            self.policy_service.prepare_hints(record, None)
+        # Inject stagnation hint if subgoal hasn't changed for 3+ steps
+        self._inject_stagnation_hint(record)
+        _trace("  2 PERCEIVE", f"sending screenshot to Gemini  backend={type(self.perception_service).__name__}")
+        _t0 = time.perf_counter()
+        try:
+            perception = await self._perceive_with_liveness_retry(record, frame)
+        except Exception as exc:
+            _trace("  2 PERCEIVE FAIL", str(exc))
+            return await self._record_pre_step_perception_failure(
+                record=record,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                error=exc,
+            )
+        _trace("  2 PERCEIVE OK", f"{_record_stage('perceive', _t0):.2f}s  page_hint={perception.page_hint.value!r}  elements={len(perception.visible_elements)}")
+        perception = self._infer_focused_element(record, perception)
+        perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
+        state = await self.run_store.update_state(record.run_id, perception)
+        self._sync_progress_state_with_perception(state, perception)
+
+        if _override_text and not _override_sent:
+            # A backend without advisory hints: the policy reads it from the rule trace.
+            state.last_rule_trace = _override_text
+
+        _trace("  3 POLICY", "PolicyCoordinator -> rule engine first, then LLM fallback")
+        _t0 = time.perf_counter()
+        decision = await self.policy_service.choose_action(state, perception)
+        _enriched = self._attach_target_context(decision.action, perception, state.benchmark)
+        if _enriched is not decision.action:
+            decision = decision.model_copy(update={"action": _enriched})
+        # RFC 0001 Move 3: at uncertain steps, sample N candidates and keep the
+        # best-scored one before any gating/execution. No-op unless OPERON_BESTOFN_N > 1.
+        decision = await self._select_best_of_n(state, perception, decision)
+        _trace("  3 POLICY OK", f"{_record_stage('policy', _t0):.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
+        policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
+        state.current_subgoal = decision.active_subgoal
+
+        # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
+        # action never runs; the run pauses for a human instead.
+        pause_decision = await self._gate_pause_decision(record, state, decision)
+        if pause_decision is not None:
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=pause_decision,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+            )
+
+        # Set run context on the executor so launched processes are tracked per run
+        if hasattr(self.executor, "set_current_run_id"):
+            self.executor.set_current_run_id(record.run_id)
+        adaptation_trace: list[str] = []
+        deferred_pause: PolicyDecision | None = None
+        retries_used = 0
+        attempt_index = 1
+
+        while True:
+            _trace("  4 EXECUTE", f"attempt={attempt_index}  action={decision.action.action_type.value!r}  executor={type(self.executor).__name__}")
+            blocked_action = None if self.thin_harness else self._block_redundant_action(state, decision.action, step_index)
+            if blocked_action is None:
+                _t0 = time.perf_counter()
+                self._install_batch_child_check(record.run_id, decision.action)
+                try:
+                    state, executed_action = await self._execute_with_hardening(
+                        record=record,
+                        state=state,
+                        perception=perception,
+                        decision_action=decision.action,
+                        step_index=step_index,
+                        use_unified_executor=True,
+                    )
+                finally:
+                    if hasattr(self.executor, "batch_child_check"):
+                        self.executor.batch_child_check = None
+                _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{_record_stage('execute', _t0):.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
+            else:
+                _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
+                executed_action = blocked_action
+            executed_action = self._relocate_after_artifact(executed_action, after_artifact_path)
+
+            # If the executor intercepted a JS dialog (alert/confirm/prompt),
+            # inject the dialog message into the local perception summary so the
+            # verifier and success-stop rule can detect form-submission confirmations.
+            # Only updates in-memory state — avoids a second run_store.update_state call.
+            if hasattr(self.executor, "pop_last_dialog_message"):
+                _dialog_msg = self.executor.pop_last_dialog_message(record.run_id)
+                if _dialog_msg:
+                    logger.info("JS dialog captured: %r — injecting into perception summary", _dialog_msg)
+                    perception = perception.model_copy(
+                        update={"summary": (perception.summary or "") + f" {_dialog_msg}"}
+                    )
+                    if state.observation_history:
+                        _obs = list(state.observation_history)
+                        _obs[-1] = perception
+                        state = state.model_copy(update={"observation_history": _obs})
+
+            _trace("  5 VERIFY", "DeterministicVerifierService checking outcome")
+            _t0 = time.perf_counter()
+            verification = await self.verifier_service.verify(state, decision, executed_action)
+            if verification.status is VerificationStatus.PENDING:
+                verification = await self._wait_for_page_load(
+                    record=record,
+                    state=state,
+                    decision=decision,
+                    executed_action=executed_action,
+                    before_artifact_path=before_artifact_path,
+                )
+            elif verification.status is VerificationStatus.STABLE_WAIT:
+                verification = await self._wait_for_ui_stable(
+                    record=record,
+                    state=state,
+                    decision=decision,
+                    executed_action=executed_action,
+                )
+            _trace("  5 VERIFY OK", f"{_record_stage('verify', _t0):.2f}s  status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
+            verification_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "verification", self.verifier_service)
+
+            # Compute screen change ratio for progress tracking.
+            from operon.agent.perception.screen_diff import (
+                compute_screen_change_ratio as _scr,
+            )
+            _after_path = executed_action.artifact_path
+            _screen_change_ratio: float | None = (
+                _scr(before_artifact_path, _after_path)
+                if before_artifact_path and _after_path
+                else None
+            )
+
+            # Retry decision: direct FailureCategory → strategy lookup.
+            from operon.agent.policy.adaptation import strategy_for_failure
+            recent_failure = verification.failure_category or executed_action.failure_category
+            strategy = strategy_for_failure(
+                recent_failure,
+                verification_failure=verification.status is VerificationStatus.FAILURE,
+                verification_uncertain=verification.status is VerificationStatus.UNCERTAIN,
+            )
+
+            # In-step retry only when (a) verification produced a hard FAILURE —
+            # not merely UNCERTAIN, which the outer recovery stage handles — and
+            # (b) the legacy hardening path did not already retry this action.
+            legacy_retry_attempted = bool(
+                executed_action.execution_trace is not None
+                and executed_action.execution_trace.retry_attempted
+            )
+            allow_adaptation_retry = (
+                verification.status is VerificationStatus.FAILURE
+                and not legacy_retry_attempted
+            )
+            _MAX_ADAPTATION_RETRIES = 3
+            if strategy is None or not allow_adaptation_retry:
+                _trace("  RETRY_LOOP -> break", f"strategy={strategy!r}  retries_used={retries_used}  allow_retry={allow_adaptation_retry}")
+                break
+            if retries_used >= _MAX_ADAPTATION_RETRIES:
+                _trace("  RETRY_LOOP -> max_retries", f"retries_used={retries_used}")
+                break
+
+            retries_used += 1
+            adaptation_trace.append(strategy)
+            _trace("  RETRY_LOOP -> retry", f"retries_used={retries_used}  strategy={strategy!r}")
+
+            frame = await self.capture_service.capture(state)
+            if hasattr(self.policy_service, "prepare_hints"):
+                self.policy_service.prepare_hints(state, None)
+            self._inject_stagnation_hint(state)
+            perception = await self._perceive_with_liveness_retry(state, frame)
+            perception = self._infer_focused_element(state, perception)
+            state.observation_history.append(perception)
+            self._sync_progress_state_with_perception(state, perception)
+            attempted_decision = decision
+            decision = await self.policy_service.choose_action(state, perception)
+            _enriched = self._attach_target_context(decision.action, perception, state.benchmark)
+            if _enriched is not decision.action:
+                decision = decision.model_copy(update={"action": _enriched})
+            state.current_subgoal = decision.active_subgoal
+            # A retry's decision is a new action: it passes the same gates as the first.
+            # If it needs a human, it does not run. The step is recorded with the
+            # attempt that did run, then the run pauses for the human.
+            deferred_pause = await self._gate_pause_decision(record, state, decision)
+            if deferred_pause is not None:
+                decision = attempted_decision
+                _trace("  RETRY_LOOP -> gated", "retry decision needs a human; pausing after this step is recorded")
+                break
+            attempt_index += 1
+
+        _trace("  7 RECOVER", f"RuleBasedRecoveryManager  verification={verification.status.value!r}")
+        _t0 = time.perf_counter()
+        recovery: RecoveryDecision = await self.recovery_manager.recover(
+            state,
+            decision,
+            executed_action,
+            verification,
+        )
+        # Benchmark Integrity Check: reject recovery decisions that bypass verification
+        # or claim success without visual confirmation.
+        recovery = validate_benchmark_integrity(recovery, verification)
+        _trace("  7 RECOVER OK", f"{_record_stage('recover', _t0):.2f}s  strategy={recovery.strategy.value!r}  stop_reason={recovery.stop_reason!r}")
+        progress_trace = self._update_progress_state(
+            state=state,
+            decision=decision,
+            executed_action=executed_action,
+            verification=verification,
+            recovery=recovery,
+            step_index=step_index,
+            before_artifact_path=before_artifact_path,
+            screen_change_ratio=_screen_change_ratio,
+        )
+        if not self.thin_harness:
+            recovery = self._apply_progress_stop_guard(recovery, progress_trace)
+        progress_trace = progress_trace.model_copy(
+            update={
+                "final_failure_category": progress_trace.final_failure_category
+                or recovery.failure_category
+                or verification.failure_category
+                or executed_action.failure_category,
+                "final_stop_reason": progress_trace.final_stop_reason or recovery.stop_reason,
+            }
+        )
+        progress_trace_artifact_path = self._persist_progress_trace(record.run_id, step_index, progress_trace)
+
+        failure = self._build_failure_record(state, decision, executed_action, verification, recovery)
+
+        _decision_source = f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini"
+        step_log = StepLog(
+            run_id=record.run_id,
+            step_id=f"step_{step_index}",
+            step_index=step_index,
+            before_artifact_path=before_artifact_path,
+            after_artifact_path=after_artifact_path,
+            perception_debug=perception_debug,
+            policy_debug=policy_debug,
+            verification_debug=verification_debug,
+            perception=perception,
+            policy_decision=decision,
+            executed_action=executed_action,
+            verification_result=verification,
+            recovery_decision=recovery,
+            progress_state=state.progress_state,
+            progress_trace_artifact_path=progress_trace_artifact_path,
+            failure=failure,
+            decision_source=_decision_source,
+            visual_variance=executed_action.visual_variance,
+        )
+        append_step_log(self._run_log_path(record.run_id), step_log)
+
+        # Rule-Augmented Generation: record rule outcome so the next LLM prompt knows
+        # what the rule tried. Clear the trace when the LLM (not a rule) decided this step.
+        if decision.rule_name:
+            state.last_rule_trace = (
+                f"[RULE TRACE] Rule '{decision.rule_name}' fired at step {state.step_count} | "
+                f"action={decision.action.action_type.value} | "
+                f"outcome={verification.status.value}"
+            )
+        else:
+            state.last_rule_trace = None
+
+        if self.memory_store is not None:
+            self.memory_store.record_step(
+                state=state,
+                perception=perception,
+                decision=decision,
+                executed_action=executed_action,
+                verification=verification,
+                recovery=recovery,
+            )
+
+        state.action_history.append(executed_action)
+        state.verification_history.append(verification)
+        self._update_target_failure_signal(state, executed_action, verification)
+        state.artifact_paths.extend(
+            [
+                before_artifact_path,
+                after_artifact_path,
+                perception_debug.prompt_artifact_path,
+                perception_debug.raw_response_artifact_path,
+                perception_debug.parsed_artifact_path,
+                *( [perception_debug.usage_artifact_path] if perception_debug.usage_artifact_path else [] ),
+                *( [perception_debug.diagnostics_artifact_path] if perception_debug.diagnostics_artifact_path else [] ),
+                policy_debug.prompt_artifact_path,
+                policy_debug.raw_response_artifact_path,
+                policy_debug.parsed_artifact_path,
+                *( [policy_debug.usage_artifact_path] if policy_debug.usage_artifact_path else [] ),
+                verification_debug.prompt_artifact_path,
+                verification_debug.raw_response_artifact_path,
+                verification_debug.parsed_artifact_path,
+                *( [verification_debug.usage_artifact_path] if verification_debug.usage_artifact_path else [] ),
+                *( [verification_debug.diagnostics_artifact_path] if verification_debug.diagnostics_artifact_path else [] ),
+                *( [executed_action.execution_trace_artifact_path] if executed_action.execution_trace_artifact_path else [] ),
+                progress_trace_artifact_path,
+            ]
+        )
+
+        final_status = RunStatus.RUNNING
+        if (
+            verification.stop_condition_met
+            and verification.status is VerificationStatus.SUCCESS
+            and verification.stop_reason in self.SUCCESS_STOP_REASONS
+        ):
+            final_status = RunStatus.SUCCEEDED
+            state.stop_reason = verification.stop_reason
+        elif recovery.strategy is RecoveryStrategy.STOP:
+            final_status = RunStatus.FAILED
+            state.stop_reason = recovery.stop_reason
+        else:
+            state.stop_reason = None
+
+        if final_status is RunStatus.RUNNING and record.run_id in self._pause_requests:
+            # Paused by hand while this step ran: don't overwrite the pause.
+            final_status = RunStatus.WAITING_FOR_USER
+        if final_status is not RunStatus.WAITING_FOR_USER:
+            self._pause_requests.discard(record.run_id)
+        if final_status is RunStatus.RUNNING:
+            await self._apply_recovery_actions(state, recovery)
+
+        _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
+        updated = await self.run_store.set_status(record.run_id, final_status)
+        if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED}:
+            try:
+                await self._cleanup_completed_run(record.run_id)
+            except Exception as exc:
+                logger.warning("cleanup after %s failed, continuing: %s", final_status.value, exc)
+
+        # Persist per-stage durations for tail-latency analysis. Best-effort —
+        # the step has already completed by this point.
+        self._persist_step_timing(record.run_id, step_index, stage_timings)
+
+        if deferred_pause is not None and final_status is RunStatus.RUNNING:
+            # A retry asked for a human (or a gate blocked it) after this step's
+            # attempt ran; that attempt is recorded above, now pause.
+            return await self._pause_for_user(
+                record=record,
+                state=state,
+                perception=perception,
+                decision=deferred_pause,
+                perception_debug=perception_debug,
+                policy_debug=policy_debug,
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                after_artifact_path=after_artifact_path,
+                log_step=False,
+            )
+
+        _trace("STEP DONE", f"step={step_index}  status={final_status.value!r}")
+        return RunResponse(
+            run_id=updated.run_id,
+            status=updated.status,
+            intent=updated.intent,
+            step_count=updated.step_count,
+        )
+
+    async def _current_url_for_trust_gate(self, run_id: str) -> str | None:
+        """The browser's current URL, only when the trust gate has a domain allowlist
+        to judge it against; None otherwise or when the executor has no page."""
+        if not (self._trust_gate.enabled and self._trust_gate.allow_domains):
+            return None
+        if not hasattr(self.executor, "current_url_for_run"):
+            return None
+        try:
+            return await self.executor.current_url_for_run(run_id)
+        except Exception:
+            logger.debug("trust gate: current_url_for_run failed", exc_info=True)
+            return None
+
+    def _pre_execution_gate_text(
+        self, decision: PolicyDecision, *, intent: str, run_id: str, current_url: str | None = None
+    ) -> str | None:
+        """Why ``decision`` must pause for a human before executing, or None to proceed.
+
+        Gates run in order and the first block wins:
+        1. Confidence: the operator's threshold (UI slider) is above the decision's
+           confidence. Skips WAIT_FOR_USER and STOP, which already pause or end the run.
+        2. Trust gate (RFC 0001 Move 5): deny/confirm policy; a no-op unless
+           OPERON_TRUST_GATE is on. DENY = blocked, CONFIRM = high-risk.
+        3. File guard: a read_text / upload_file* path the user never named, outside
+           the run dir and OPERON_ALLOWED_FILE_ROOTS.
+
+        Gates 1-2 (and the coordinate-thrash pause in step) can be approved by
+        resuming (see ``resume_run``); the file guard cannot, since its fix is
+        naming the path in the task or allowing its folder.
+        """
+        action = decision.action
+        fingerprint = self._gate_fingerprint(action)
+        approved = self._approved_gates(run_id, action)
+        self._trust_approved[run_id] = "trust" in approved
+        threshold = run_control.get_confidence_threshold()
+        if (
+            "confidence" not in approved
+            and threshold > 0.0
+            and action.action_type is not ActionType.WAIT_FOR_USER
+            and action.action_type is not ActionType.STOP
+            and decision.confidence < threshold
+        ):
+            _trace("  3 POLICY -> CONFIDENCE_GATE", f"confidence={decision.confidence:.2f} < threshold={threshold:.2f}")
+            self._pending_gate_approvals[run_id] = (fingerprint, "confidence")
+            return (
+                f"Confidence {decision.confidence:.0%} is below your threshold {threshold:.0%}. "
+                f"Planned action: {action.action_type.value}. "
+                "Click Proceed to approve or enter a correction hint."
+            )
+
+        # A batch runs each of its actions straight through the executor, so the
+        # trust gate and file guard judge every one of them, not the container.
+        leaves = _leaf_actions(action)
+        if "trust" not in approved:
+            verdicts = [(leaf, self._trust_gate.evaluate(leaf, current_url=current_url)) for leaf in leaves]
+            blocked = [pair for pair in verdicts if pair[1].verdict is not TrustVerdict.ALLOW]
+            # A DENY anywhere in the batch outranks a CONFIRM.
+            blocked.sort(key=lambda pair: pair[1].verdict is not TrustVerdict.DENY)
+            if blocked:
+                leaf, trust = blocked[0]
+                _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
+                self._pending_gate_approvals[run_id] = (fingerprint, "trust")
+                if trust.verdict is TrustVerdict.DENY:
+                    return (
+                        f"Blocked by policy: {leaf.action_type.value} action "
+                        f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
+                        "review and resume to override, or stop the run."
+                    )
+                return (
+                    f"High-risk action needs approval: {leaf.action_type.value} "
+                    f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
+                )
+
+        for leaf in leaves:
+            if leaf.action_type not in FILE_PATH_ACTIONS:
+                continue
+            blocked_path = blocked_file_path(
+                leaf, intent=intent, run_dir=Path(self.run_store.root_dir) / run_id
+            )
+            if blocked_path is not None:
+                _trace("  3 POLICY -> FILE_GUARD", f"blocked path {blocked_path!r}")
+                return (
+                    f"Blocked {leaf.action_type.value}: the path {blocked_path!r} is not "
+                    "named in the task and is outside the run directory and OPERON_ALLOWED_FILE_ROOTS. "
+                    "Restart with the path in the task, allow its folder, or stop the run."
+                )
+        self._approved_gate_actions.pop(run_id, None)  # approval used: the action runs now
+        return None
+
+    def _approved_gates(self, run_id: str, action: AgentAction) -> frozenset[str]:
+        """Gates a human already approved for this exact action (see resume_run)."""
+        prior = self._approved_gate_actions.get(run_id)
+        if prior is None:
+            return frozenset()
+        if prior[0] != self._gate_fingerprint(action):
+            del self._approved_gate_actions[run_id]  # the policy moved on
+            return frozenset()
+        return prior[1]
+
+    def _gate_fingerprint(self, action: AgentAction) -> str:
+        """What a human approves at a gate pause: the action's type plus the text, URL
+        and target name the trust gate judges — not coordinates, which shift between
+        perceptions of the same screen."""
+        if action.action_type is ActionType.BATCH:
+            # Approving one batch must not approve a different one.
+            # JSON keeps child boundaries unambiguous whatever text the children carry.
+            return "batch" + json.dumps([self._gate_fingerprint(child) for child in action.actions or []])
+        return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
+
+    async def _gate_pause_decision(self, record, state, decision: PolicyDecision) -> PolicyDecision | None:
+        """The WAIT_FOR_USER decision to pause on before ``decision`` runs, or None
+        when it may run: the policy asked for a human, the target thrashed, or a
+        pre-execution gate (confidence, trust, file guard) blocked it."""
+        if decision.action.action_type is ActionType.WAIT_FOR_USER:
+            _trace("  3 POLICY -> WAIT_FOR_USER", "pausing run")
+            return decision
+
+        # Retry Exhaustion / Coordinate Thrash guard: if this action targets a (x, y)
+        # that has already failed 3 times, escalate to HITL instead of attempting again.
+        if (
+            "coordinate_thrash" not in self._approved_gates(record.run_id, decision.action)
+            and self._coordinate_thrash_detected(state, decision.action)
+        ):
+            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash")
+            _trace("  3 POLICY -> COORDINATE_THRASH_HITL", "3 coord failures at same point — escalating to HITL")
+            thrash_x, thrash_y = decision.action.x, decision.action.y
+            self._note_not_executed(record.run_id, "repeated failures at the same point")
+            return decision.model_copy(update={
+                "action": AgentAction(
+                    action_type=ActionType.WAIT_FOR_USER,
+                    text=(
+                        f"Coordinate thrashing detected: the target at ({thrash_x}, {thrash_y}) "
+                        "has failed 3 consecutive times. The element may have shifted, be obscured, "
+                        "or be unreachable at these coordinates. Please manually verify the target "
+                        "location and click Resume when ready."
+                    ),
+                )
+            })
+
+        current_url = await self._current_url_for_trust_gate(record.run_id)
+        gate_text = self._pre_execution_gate_text(
+            decision, intent=state.intent, run_id=record.run_id, current_url=current_url
+        )
+        if gate_text is None:
+            return None
+        self._note_not_executed(record.run_id, gate_text)
+        return decision.model_copy(update={
+            "action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)
+        })
+
+    def _install_batch_child_check(self, run_id: str, action: AgentAction) -> None:
+        """With a domain allowlist, a batch's later children may run on a page an
+        earlier child opened, which the pre-execution check never saw. Have the
+        executor check the live page before each of them."""
+        if (
+            action.action_type is not ActionType.BATCH
+            or not hasattr(self.executor, "batch_child_check")
+            or not (self._trust_gate.enabled and self._trust_gate.allow_domains)
+            or self._trust_approved.get(run_id)
+        ):
+            return
+
+        async def check(child: AgentAction) -> str | None:
+            # A nested batch runs its first leaf next (its later children get their
+            # own check), so judge that leaf, not the container.
+            leaves = _leaf_actions(child)
+            if not leaves:
+                return None
+            current_url = await self._current_url_for_trust_gate(run_id)
+            result = self._trust_gate.evaluate(leaves[0], current_url=current_url)
+            if result.verdict is TrustVerdict.DENY:
+                return f"blocked by policy ({result.reason}: '{result.matched}')"
+            return None
+
+        self.executor.batch_child_check = check
+
+    def _note_not_executed(self, run_id: str, reason: str) -> None:
+        """Tell the policy a gate stopped its decision before it ran, so a backend
+        that answers the model's tool calls does not report it as done."""
+        note = getattr(self.policy_service, "note_not_executed", None)
+        if note is None:
+            return
+        try:
+            note(run_id, reason)
+        except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
+            logger.warning("note_not_executed failed for run %s: %s", run_id[:8], exc)
+
+    async def _pause_for_user(
+        self,
+        *,
+        record,
+        state,
+        perception,
+        decision,
+        perception_debug,
+        policy_debug,
+        step_index: int,
+        before_artifact_path: str,
+        after_artifact_path: str,
+        log_step: bool = True,
+    ) -> RunResponse:
+        """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer.
+
+        ``log_step=False`` when the step was already logged with the action it ran."""
+        from operon.agent.hitl import (
+            generate_hitl_message,
+            notify_desktop,
+            post_hitl_webhook,
+            start_escalation_timer,
+        )
+
+        # Generate a human-readable LLM explanation of why we're pausing.
+        element_names = [e.primary_name for e in perception.visible_elements[:12]]
+        hitl_message = await generate_hitl_message(
+            intent=state.intent,
+            page_hint=perception.page_hint.value,
+            url=state.start_url,
+            visible_element_names=element_names,
+            gemini_client=self.gemini_client,
+        )
+        state.hitl_message = hitl_message
+
+        if log_step:
+            executed_action = ExecutedAction(
+                action=decision.action,
+                success=True,
+                detail=f"Paused for user: {decision.action.text}",
+            )
+            verification = await self.verifier_service.verify(state, decision, executed_action)
+            recovery = RecoveryDecision(
+                strategy=RecoveryStrategy.STOP,
+                message=hitl_message,
+                failure_category=FailureCategory.HUMAN_INTERVENTION_REQUIRED,
+                terminal=False,
+                recoverable=True,
+                stop_reason=StopReason.WAITING_FOR_USER,
+            )
+            append_step_log(
+                self._run_log_path(record.run_id),
+                StepLog(
+                    run_id=record.run_id,
+                    step_id=f"step_{step_index}",
+                    step_index=step_index,
+                    before_artifact_path=before_artifact_path,
+                    after_artifact_path=after_artifact_path,
+                    perception_debug=perception_debug,
+                    policy_debug=policy_debug,
+                    perception=perception,
+                    policy_decision=decision,
+                    executed_action=executed_action,
+                    verification_result=verification,
+                    recovery_decision=recovery,
+                    decision_source=f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini",
+                ),
+            )
+        state.stop_reason = StopReason.WAITING_FOR_USER
+        state.step_count = step_index
+        await self.run_store.save_state(state)
+        updated = await self.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
+
+        # Fire desktop notification (best-effort).
+        notify_desktop(
+            title="Operon needs you",
+            message=hitl_message[:120],
+        )
+
+        # Start escalating re-notification in the background.
+        run_store = self.run_store
+        run_id = record.run_id
+
+        # POST webhook (reliable channel — always attempted, always logged).
+        asyncio.create_task(
+            post_hitl_webhook(
+                run_id=run_id,
+                intent=state.intent,
+                page_hint=perception.page_hint.value,
+                message=hitl_message,
+                url=state.start_url,
+            )
+        )
+
+        async def _get_status():
+            s = await run_store.get_run(run_id)
+            return s.status.value if s else None
+
+        def _re_notify():
+            notify_desktop("Operon still waiting", f"Run {run_id[:8]}… still needs your help.")
+
+        task = asyncio.create_task(
+            start_escalation_timer(run_id, get_status_fn=_get_status, notify_fn=_re_notify)
+        )
+        task.add_done_callback(
+            lambda t: logger.warning("HITL escalation error: %s", t.exception())
+            if not t.cancelled() and t.exception() is not None else None
+        )
+
+        return RunResponse(
+            run_id=updated.run_id,
+            status=updated.status,
+            intent=updated.intent,
+            step_count=updated.step_count,
+        )
+
+    async def _perceive_with_liveness_retry(self, state, initial_frame: CaptureFrame):
+        """Perceive with flag-based liveness retries for transient zero-element frames.
+
+        When perception returns is_empty_frame=True (blank/loading screen), re-capture
+        and retry up to _LIVENESS_RETRY_MAX times before raising PerceptionLowQualityError.
+        Other quality failures (unlabeled elements, etc.) propagate immediately.
+        The liveness_retries count is stamped onto the returned ScreenPerception so it
+        appears in run.jsonl for observability.
+        """
+        # Stable-frame perception bypass: when the previous action was WAIT (idempotent),
+        # the screen hasn't moved at all (visual_velocity exactly 0), and verification
+        # was UNCERTAIN (not terminal), re-perceiving an unchanged frame returns the
+        # same answer modulo Gemini noise. Reuse the prior perception object with the
+        # current capture path.
+        cached = self._maybe_reuse_prior_perception(state, initial_frame)
+        if cached is not None:
+            logger.info(
+                "perception_skip: reusing prior perception (last_action=WAIT, velocity=0.0, status=UNCERTAIN)",
+            )
+            return cached
+
+        frame = initial_frame
+        for attempt in range(1, _LIVENESS_RETRY_MAX + 1):
+            result = await self.perception_service.perceive(frame, state)
+            if not result.is_empty_frame:
+                liveness_retries = attempt - 1
+                if liveness_retries > 0:
+                    logger.info("liveness_retry: resolved after %d retries", liveness_retries)
+                    return result.model_copy(update={"liveness_retries": liveness_retries})
+                return result
+
+            # CDP/observable mode: a brand-new tab starts at about:blank with zero
+            # elements. Retrying is pointless — nothing navigates the page until the
+            # policy acts. Return a blank perception so the policy can issue NAVIGATE.
+            if attempt == 1 and hasattr(self.executor, "current_url_for_run"):
+                try:
+                    current_url = await self.executor.current_url_for_run(state.run_id)
+                    if current_url in ("about:blank", "chrome://newtab/", "", None):
+                        logger.info(
+                            "liveness_retry: page is %r — passing blank perception to policy for navigation",
+                            current_url,
+                        )
+                        return ScreenPerception(
+                            summary="",
+                            page_hint="unknown",
+                            visible_elements=[],
+                            capture_artifact_path=frame.artifact_path,
+                            confidence=0.0,
+                            is_empty_frame=False,
+                        )
+                except Exception:
+                    logger.debug("liveness_retry: current_url_for_run failed", exc_info=True)
+
+            if attempt == _LIVENESS_RETRY_MAX:
+                logger.error(
+                    "perception_low_quality: no visible elements after %d liveness retries — raising terminal signal",
+                    _LIVENESS_RETRY_MAX,
+                )
+                raise PerceptionLowQualityError(
+                    f"no visible elements after {_LIVENESS_RETRY_MAX} liveness retries"
+                )
+            _sleep_s = _LIVENESS_RETRY_FIRST_SLEEP_S if attempt == 1 else _LIVENESS_RETRY_SLEEP_S
+            logger.warning(
+                "liveness_retry=%d/%d: zero elements — waiting %.1fs before recapture",
+                attempt,
+                _LIVENESS_RETRY_MAX,
+                _sleep_s,
+            )
+            await asyncio.sleep(_sleep_s)
+            frame = await self.capture_service.capture(state)
+        raise PerceptionLowQualityError("no visible elements after all liveness retries")  # pragma: no cover
+
+    async def _record_pre_step_perception_failure(
+        self,
+        *,
+        record,
+        step_index: int,
+        before_artifact_path: str,
+        error: Exception,
+    ) -> RunResponse:
+        perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
+        failure_category = FailureCategory.PRE_STEP_PERCEPTION_FAILED
+        stop_reason = StopReason.PRE_STEP_PERCEPTION_FAILED
+        if isinstance(error, PerceptionLowQualityError):
+            failure_category = error.failure_category
+            stop_reason = error.stop_reason
+
+        failure = FailureRecord(
+            category=failure_category,
+            stage=LoopStage.PERCEIVE,
+            retry_count=0,
+            terminal=True,
+            recoverable=False,
+            reason=str(error) or type(error).__name__,
+            stop_reason=stop_reason,
+        )
+        append_step_log_critical(
+            self._run_log_path(record.run_id),
+            PreStepFailureLog(
+                run_id=record.run_id,
+                step_id=f"step_{step_index}",
+                step_index=step_index,
+                before_artifact_path=before_artifact_path,
+                perception_debug=perception_debug,
+                failure=failure,
+                error_message=str(error) or type(error).__name__,
+            ),
+        )
+        record.artifact_paths.extend(
+            [
+                before_artifact_path,
+                perception_debug.prompt_artifact_path,
+                perception_debug.raw_response_artifact_path,
+                perception_debug.parsed_artifact_path,
+                *( [perception_debug.usage_artifact_path] if perception_debug.usage_artifact_path else [] ),
+                *( [perception_debug.diagnostics_artifact_path] if perception_debug.diagnostics_artifact_path else [] ),
+                *( [perception_debug.retry_log_artifact_path] if perception_debug.retry_log_artifact_path else [] ),
+            ]
+        )
+        record.stop_reason = stop_reason
+        updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
+        try:
+            await self._cleanup_completed_run(record.run_id)
+        except Exception as exc:
+            logger.warning("cleanup after pre-step failure: %s", exc)
+        return RunResponse(
+            run_id=updated.run_id,
+            status=updated.status,
+            intent=updated.intent,
+            step_count=updated.step_count,
+        )
+
+    def _prepare_step_artifacts(self, run_id: str, step_index: int, before_artifact_path: str, after_artifact_path: str) -> None:
+        self._artifacts.prepare(run_id, step_index, before_artifact_path, after_artifact_path)
+
+    def _before_artifact_path(self, run_id: str, step_index: int) -> str:
+        return self._artifacts.before_path(run_id, step_index)
+
+    def _after_artifact_path(self, run_id: str, step_index: int) -> str:
+        return self._artifacts.after_path(run_id, step_index)
+
+    def _run_log_path(self, run_id: str) -> str:
+        return self._artifacts.run_log_path(run_id)
+
+    def _relocate_after_artifact(self, executed_action, planned_path: str):
+        return self._artifacts.relocate_after_artifact(executed_action, planned_path)
+
+    @staticmethod
+    def _adopt_settle_frame(executed_action, frame_path: str | None, *, protected_path: str | None = None) -> bool:
+        """Replace the step's after.png with a later post-action frame.
+
+        Settle re-verifies must judge the newest frame: the verifier's critic and
+        the progress tracker both read ``executed_action.artifact_path``, which
+        would otherwise still hold the pre-settle frame. Mid-step recaptures land
+        in the next step's before.png slot (step_count is already bumped), so
+        moving the file also keeps that slot clean. ``protected_path`` (the
+        current step's before.png) is never moved. Returns True when swapped.
+        """
+        after_path = executed_action.artifact_path
+        if not after_path or not frame_path or not Path(frame_path).exists():
+            return False
+        frame = Path(frame_path).resolve()
+        if frame == Path(after_path).resolve():
+            return False
+        if protected_path and frame == Path(protected_path).resolve():
+            return False
+        try:
+            Path(after_path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(frame), after_path)
+        except OSError as exc:
+            logger.warning("settle frame swap failed (%s -> %s): %s", frame_path, after_path, exc)
+            return False
+        if frame.parent != Path(after_path).resolve().parent:
+            try:
+                frame.parent.rmdir()  # drop the next-step dir if the move emptied it
+            except OSError:
+                pass
+        return True
+
+    async def _wait_for_ui_stable(
+        self,
+        *,
+        record,
+        state,
+        decision,
+        executed_action,
+    ) -> VerificationResult:
+        """Single 200ms settle wait for STABLE_WAIT (the action visibly changed the screen).
+
+        Waits 200ms, re-captures, swaps the fresh frame in as the step's after.png,
+        and re-verifies once with ``allow_stable_wait=False`` so the critic judges
+        the settled frame instead of a possibly mid-transition one. No re-perception:
+        the critic reads the screenshot, and a perception call here would double the
+        model cost of every visible action. If the frame is still changing after the
+        wait, the critic still gets the newest frame; the motion ratio is logged.
+        """
+        from operon.agent.perception.screen_diff import (
+            CURSOR_ONLY_THRESHOLD,
+            compute_screen_change_ratio,
+        )
+
+        _trace("  5-STABLE_WAIT", "action changed the screen — waiting 200ms before re-verify")
+        logger.info("stable_wait: screen changed — waiting 200ms before re-verifying (run=%s)", record.run_id[:8])
+        await asyncio.sleep(0.2)
+
+        try:
+            frame = await self.capture_service.capture(record)
+        except Exception as exc:
+            # Fall through and verify the original after-frame rather than
+            # inventing an UNCERTAIN verdict.
+            logger.warning("stable_wait: re-capture failed, verifying original frame: %s", exc)
+            frame = None
+
+        if frame is not None:
+            motion = (
+                compute_screen_change_ratio(executed_action.artifact_path, frame.artifact_path)
+                if executed_action.artifact_path
+                else 0.0
+            )
+            still_moving = motion > CURSOR_ONLY_THRESHOLD
+            self._adopt_settle_frame(executed_action, frame.artifact_path)
+            logger.info("stable_wait: post-wait motion=%.5f still_moving=%s", motion, still_moving)
+            _trace("  5-STABLE_WAIT re-verify", f"motion={motion:.5f} still_moving={still_moving}")
+
+        verification = await self.verifier_service.verify(
+            state, decision, executed_action, allow_stable_wait=False
+        )
+        _trace("  5-STABLE_WAIT resolved", f"status={verification.status.value!r}")
+        logger.info("stable_wait: resolved to %s after re-verify", verification.status.value)
+        return verification
+
+    _PENDING_BACKOFF_DELAYS: tuple[float, ...] = (2.0, 4.0, 8.0)
+
+    async def _wait_for_page_load(
+        self,
+        *,
+        record,
+        state,
+        decision,
+        executed_action,
+        before_artifact_path: str,
+    ) -> VerificationResult:
+        """Exponential-backoff re-verify loop for PENDING (page-loading) states.
+
+        Waits 2s → 4s → 8s (14s total) between re-captures.  Downgrades to
+        UNCERTAIN if the page never settles within the budget.
+        """
+        from operon.agent.perception import PerceptionLowQualityError
+
+        retries = 0
+        for delay in self._PENDING_BACKOFF_DELAYS:
+            retries += 1
+            _trace("  5-PENDING wait", f"retry={retries} delay={delay:.0f}s")
+            logger.info("patience_retry=%d: waiting %.0fs for page load (run=%s)", retries, delay, record.run_id[:8])
+            await asyncio.sleep(delay)
+            try:
+                frame = await self.capture_service.capture(record)
+                fresh_perception = await self._perceive_with_liveness_retry(record, frame)
+            except PerceptionLowQualityError:
+                # Zero-element liveness retries exhausted — page still blank; keep waiting.
+                logger.info("patience_retry=%d: perception still blank after liveness retries", retries)
+                continue
+            except Exception as exc:
+                logger.warning("_wait_for_page_load: perception error: %s", exc)
+                continue
+
+            if fresh_perception.is_empty_frame:
+                # Guard: shouldn't reach here after liveness retries, but handle defensively.
+                logger.info("patience_retry=%d: empty frame — still loading", retries)
+                continue
+
+            if fresh_perception.liveness_retries > 0:
+                logger.info(
+                    "patience_retry=%d: page settled after %d liveness retries",
+                    retries, fresh_perception.liveness_retries,
+                )
+
+            # Update state observation so the verifier sees fresh elements, and swap
+            # the loaded frame in as after.png so the critic judges it rather than
+            # the loading screen captured right after the action.
+            fresh_perception = self._infer_focused_element(record, fresh_perception)
+            if self._adopt_settle_frame(
+                executed_action,
+                fresh_perception.capture_artifact_path,
+                protected_path=before_artifact_path,
+            ):
+                fresh_perception = fresh_perception.model_copy(
+                    update={"capture_artifact_path": executed_action.artifact_path}
+                )
+            state.observation_history.append(fresh_perception)
+            self._sync_progress_state_with_perception(state, fresh_perception)
+            _trace("  5-PENDING re-verify", f"retry={retries} elements={len(fresh_perception.visible_elements)} hint={fresh_perception.page_hint.value!r}")
+            # The page just finished loading, so a before/after change is expected;
+            # STABLE_WAIT here would escape the PENDING loop unhandled.
+            verification = await self.verifier_service.verify(
+                state, decision, executed_action, allow_stable_wait=False
+            )
+            if verification.status is not VerificationStatus.PENDING:
+                _trace("  5-PENDING resolved", f"retry={retries} status={verification.status.value!r}")
+                logger.info("patience_retry=%d: resolved to %s", retries, verification.status.value)
+                return verification.model_copy(update={"patience_retries": retries})
+
+        # Budget exhausted — page never settled; downgrade to UNCERTAIN.
+        _trace("  5-PENDING timeout", f"exhausted after {retries} retries — downgrading to UNCERTAIN")
+        logger.warning("patience_retry: budget exhausted after %d retries (run=%s)", retries, record.run_id[:8])
+        return VerificationResult(
+            status=VerificationStatus.UNCERTAIN,
+            expected_outcome_met=False,
+            stop_condition_met=False,
+            reason=f"Page did not settle within the 14s loading budget ({retries} patience retries); treating as uncertain.",
+            failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+            failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+            failure_stage=LoopStage.VERIFY,
+            patience_retries=retries,
+        )
+
+    async def _apply_recovery_actions(self, state, recovery: RecoveryDecision) -> None:
+        """Execute concrete side effects for CONTEXT_RESET and SESSION_RESET tiers.
+
+        Runs after the step is logged so the log accurately reflects the failure,
+        and before set_status so the next step's capture sees the cleaned state.
+        Failures are swallowed — a broken reset must never terminate a live run.
+        """
+        strategy = recovery.strategy
+        if strategy is RecoveryStrategy.CONTEXT_RESET:
+            _trace("  7b CONTEXT_RESET", "escape×2 + body-click + scroll-top")
+            try:
+                await self.executor.context_reset()
+            except Exception as exc:
+                logger.warning("context_reset executor call failed: %s", exc)
+        elif strategy is RecoveryStrategy.SESSION_RESET:
+            _trace("  7b SESSION_RESET", f"start_url={state.start_url!r}")
+            try:
+                await self.executor.session_reset(state.start_url)
+            except Exception as exc:
+                logger.warning("session_reset executor call failed: %s", exc)
+
+    async def _cleanup_completed_run(self, run_id: str) -> None:
+        if hasattr(self.executor, "stop_run_recording"):
+            try:
+                await self.executor.stop_run_recording(run_id)
+            except Exception as exc:
+                logger.warning("stop_run_recording failed for %s: %s", run_id, exc)
+        if not hasattr(self.executor, "aclose_run"):
+            await self._persist_cleanup_artifacts(run_id)
+            return
+        try:
+            await self.executor.aclose_run(run_id)
+        except Exception as exc:
+            logger.warning("cleanup_completed_run: aclose_run failed for %s: %s", run_id, exc)
+        await self._persist_cleanup_artifacts(run_id)
+
+    async def _persist_cleanup_artifacts(self, run_id: str) -> None:
+        if not hasattr(self.executor, "recorded_video_path_for_run"):
+            return
+        try:
+            video_path = self.executor.recorded_video_path_for_run(run_id)
+        except Exception:
+            return
+        if video_path is None:
+            return
+        state = await self.run_store.get_run(run_id)
+        if state is None:
+            return
+        video_str = str(video_path)
+        if video_str in state.artifact_paths:
+            return
+        state.artifact_paths.append(video_str)
+        await self.run_store.save_state(state)
+
+    def _resolve_model_debug_artifacts(
+        self,
+        run_id: str,
+        step_index: int,
+        stage_name: str,
+        service,
+    ) -> ModelDebugArtifacts:
+        if hasattr(service, "latest_debug_artifacts"):
+            debug_artifacts = service.latest_debug_artifacts()
+            if debug_artifacts is not None:
+                return debug_artifacts
+
+        step_dir = Path("runs") / run_id / f"step_{step_index}"
+        return ModelDebugArtifacts(
+            prompt_artifact_path=str(step_dir / f"{stage_name}_prompt.txt"),
+            raw_response_artifact_path=str(step_dir / f"{stage_name}_raw.txt"),
+            parsed_artifact_path=str(step_dir / ("policy_decision.json" if stage_name == "policy" else "verification_result.json" if stage_name == "verification" else "perception_parsed.json")),
+            diagnostics_artifact_path=str(step_dir / f"{stage_name}_diagnostics.json") if stage_name in {"perception", "verification"} else None,
+        )
+
+    async def _execute_with_hardening(
+        self,
+        *,
+        record,
+        state,
+        perception,
+        decision_action,
+        step_index: int,
+        use_unified_executor: bool = False,
+    ):
+        executor_runner = self.executor_adapter if use_unified_executor else self.executor
+        executed_action = await executor_runner.execute(decision_action)
+        executed_action = self._apply_no_progress_detection(state, executed_action)
+
+        if self.thin_harness or not self._should_retry_execution(executed_action):
+            return state, self._persist_execution_trace(record.run_id, step_index, executed_action)
+
+        retry_action = decision_action
+        retry_state = state
+        target_reresolved = False
+        try:
+            frame = await self.capture_service.capture(record)
+            # In combined mode, don't overwrite the primary cached decision
+            if hasattr(self.perception_service, "set_perception_only"):
+                self.perception_service.set_perception_only(True)
+            refreshed_perception = await self.perception_service.perceive(frame, record)
+            retry_state = await self.run_store.update_state(record.run_id, refreshed_perception)
+            resolution = self._resolve_retry_action(
+                action=decision_action,
+                perception=refreshed_perception,
+                retry_reason=executed_action.failure_category,
+            )
+            retry_action = resolution.action
+            target_reresolved = resolution.trace is not None and resolution.trace.succeeded
+        except Exception:
+            return state, self._persist_execution_trace(record.run_id, step_index, executed_action)
+        finally:
+            if hasattr(self.perception_service, "set_perception_only"):
+                self.perception_service.set_perception_only(False)
+
+        if retry_action is None:
+            failed = self._apply_reresolution_failure(executed_action, resolution.trace)
+            return retry_state, self._persist_execution_trace(record.run_id, step_index, failed)
+
+        retry_executed = await executor_runner.execute(retry_action)
+        retry_executed = self._merge_execution_retry(
+            original=executed_action,
+            retried=retry_executed,
+            retry_reason=executed_action.failure_category,
+            target_reresolved=target_reresolved,
+            reresolution_trace=resolution.trace,
+        )
+        retry_executed = self._apply_no_progress_detection(state, retry_executed)
+        return retry_state, self._persist_execution_trace(record.run_id, step_index, retry_executed)
+
+    @staticmethod
+    def _should_retry_execution(executed_action) -> bool:
+        return should_retry(executed_action)
+
+    def _resolve_retry_action(self, *, action, perception, retry_reason: FailureCategory | None) -> _RetryResolution:
+        return self._retry.resolve_retry_action(action=action, perception=perception, retry_reason=retry_reason)
+
+    @staticmethod
+    def _merge_execution_retry(*, original, retried, retry_reason, target_reresolved, reresolution_trace):
+        return merge_execution_retry(
+            original=original,
+            retried=retried,
+            retry_reason=retry_reason,
+            target_reresolved=target_reresolved,
+            reresolution_trace=reresolution_trace,
+        )
+
+    async def _select_best_of_n(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+        decision: PolicyDecision,
+    ) -> PolicyDecision:
+        """RFC 0001 Move 3: pre-execution Best-of-N candidate selection.
+
+        Returns the original decision unchanged unless ``OPERON_BESTOFN_N > 1`` and
+        the decision's confidence is below the configured ceiling. The provided
+        decision is reused as candidate #1, so only N-1 extra policy calls are made.
+        Selection happens before any gating/execution — no speculative actions, no
+        rollback; the executor, verifier, and recovery path are untouched.
+        """
+        n = best_of_n_count()
+        if n <= 1 or decision.confidence >= best_of_n_confidence_ceiling():
+            return decision
+        check = getattr(self.policy_service, "supports_resampling", None)
+        if check is not None and not check(state.run_id):
+            # e.g. Gemini Computer Use: the decision was cached by perceive() and a
+            # second choose_action has nothing to return, so sampling would crash the step.
+            _trace("  3 BEST_OF_N skipped", "policy backend cannot re-sample a decision")
+            return decision
+
+        async def _propose(s: AgentState, p: ScreenPerception) -> PolicyDecision:
+            d = await self.policy_service.choose_action(s, p)
+            enriched = self._attach_target_context(d.action, p, s.benchmark)
+            if enriched is not d.action:
+                d = d.model_copy(update={"action": enriched})
+            return d
+
+        chosen, candidates = await select_best_of_n(
+            _propose, state, perception, n=n, critic=self._best_of_n_critic, first=decision
+        )
+        if candidates:
+            best_score = max(c.score for c in candidates)
+            _trace(
+                "  3 BEST_OF_N",
+                f"n={n}  scores={[round(c.score, 3) for c in candidates]}  best={round(best_score, 3)}",
+            )
+            self._persist_best_of_n(perception, candidates, chosen)
+        return chosen
+
+    def _persist_best_of_n(
+        self,
+        perception: ScreenPerception,
+        candidates: list[ScoredCandidate],
+        chosen: PolicyDecision,
+    ) -> None:
+        """Best-effort audit artifact (`bestofn.json`): the candidates, their scores,
+        and the winner — so the spike's lift can be measured and selections audited.
+        Never raises into the loop."""
+        try:
+            capture_path = getattr(perception, "capture_artifact_path", None)
+            if not capture_path:
+                return
+            step_dir = Path(capture_path).resolve().parent
+            payload = {
+                "n": len(candidates),
+                "chosen_action": chosen.action.action_type.value,
+                "candidates": [
+                    {
+                        "action": c.decision.action.action_type.value,
+                        "target_element_id": c.decision.action.target_element_id,
+                        "x": c.decision.action.x,
+                        "y": c.decision.action.y,
+                        "confidence": c.decision.confidence,
+                        "score": c.score,
+                        "chosen": c.decision is chosen,
+                    }
+                    for c in candidates
+                ],
+            }
+            bg_writer.enqueue(step_dir / "bestofn.json", json.dumps(payload, indent=2))
+        except Exception as exc:
+            logger.debug("best_of_n artifact persist skipped: %s", exc)
+
+    def _refine_with_grounder(self, action: AgentAction, perception) -> AgentAction:
+        """Let the configured grounder adjust an already-set raw coordinate.
+        Identity for the deterministic baseline; the snap grounder corrects
+        near-miss CUA coordinates onto the nearest interactable element."""
+        if action.x is None or action.y is None:
+            return action
+        rx, ry = self._grounder.refine(action.x, action.y, perception)
+        if (rx, ry) == (action.x, action.y):
+            return action
+        return action.model_copy(update={"x": rx, "y": ry})
+
+    def _attach_target_context(self, action: AgentAction, perception, benchmark: str | None = None) -> AgentAction:
+        target = self._resolve_action_target(action, perception)
+        normalized_action = self._normalize_action_target_coordinates(action, target)
+        # Grounder refinement runs in perception-local space (same frame as
+        # visible_elements), before the monitor-origin transform below. No-op for
+        # the default deterministic grounder.
+        normalized_action = self._refine_with_grounder(normalized_action, perception)
+        # Apply monitor origin: perception coords are monitor-local; pyautogui needs
+        # virtual-desktop coords. This is the single transform point — perception
+        # and policy layers stay in monitor-local space throughout.
+        normalized_action = self._apply_monitor_origin(normalized_action, perception)
+        if normalized_action.target_context is not None:
+            return normalized_action
+        intent = self._infer_target_intent(action, target, perception, benchmark)
+        if target is None or intent is None:
+            return normalized_action
+        context = self.target_selector.build_selection_context(
+            perception,
+            intent,
+            target,
+            page_signature=self._page_signature(perception),
+        )
+        return normalized_action.model_copy(update={"target_context": context})
+
+    @staticmethod
+    def _apply_monitor_origin(action: AgentAction, perception) -> AgentAction:
+        """Translate monitor-local coords to virtual-desktop coords by adding the
+        monitor origin stored in perception. No-op when origin is (0, 0).
+
+        Covers x/y (start point) and x_end/y_end (drag/screenshot_region end point).
+        """
+        origin = getattr(perception, "monitor_origin", (0, 0))
+        ox, oy = origin
+        if ox == 0 and oy == 0:
+            return action
+        updates: dict = {}
+        if action.x is not None:
+            updates["x"] = action.x + ox
+        if action.y is not None:
+            updates["y"] = action.y + oy
+        if action.x_end is not None:
+            updates["x_end"] = action.x_end + ox
+        if action.y_end is not None:
+            updates["y_end"] = action.y_end + oy
+        if not updates:
+            return action
+        return action.model_copy(update=updates)
+
+    @staticmethod
+    def _normalize_action_target_coordinates(action: AgentAction, target: UIElement | None) -> AgentAction:
+        if target is None:
+            return action
+        # Respect planner-supplied coordinates: only fall back to the bbox center
+        # when x/y are missing. Overwriting valid coords forces every click to the
+        # geometric center and amplifies perception jitter.
+        if action.x is not None and action.y is not None:
+            return action
+        if action.action_type in {
+            ActionType.CLICK,
+            ActionType.HOVER,
+            ActionType.UPLOAD_FILE_NATIVE,
+            ActionType.TYPE,
+        }:
+            center_x, center_y = element_center(target)
+            return action.model_copy(update={"x": center_x, "y": center_y})
+        return action
+
+    @staticmethod
+    def _apply_reresolution_failure(original, reresolution_trace: ExecutionReresolutionTrace | None):
+        return apply_reresolution_failure(original, reresolution_trace)
+
+    @staticmethod
+    def _resolve_action_target(action: AgentAction, perception) -> UIElement | None:
+        if action.target_element_id is not None:
+            target = next((element for element in perception.visible_elements if element.element_id == action.target_element_id), None)
+            if target is not None:
+                return target
+        if action.x is None or action.y is None:
+            return None
+        containing = [
+            element
+            for element in perception.visible_elements
+            if element.is_interactable
+            and element.x <= action.x <= element.x + element.width
+            and element.y <= action.y <= element.y + element.height
+        ]
+        if containing:
+            return sorted(containing, key=lambda element: (element.y, element.x, element.element_id))[0]
+        return None
+
+    def _infer_target_intent(self, action: AgentAction, target: UIElement | None, perception, benchmark: str | None = None) -> TargetIntent | None:
+        if target is None:
+            return None
+        if action.action_type is ActionType.CLICK:
+            intent_action = TargetIntentAction.CLICK
+        elif action.action_type is ActionType.TYPE:
+            intent_action = TargetIntentAction.TYPE
+        elif action.action_type is ActionType.SELECT:
+            intent_action = TargetIntentAction.SELECT
+        else:
+            return None
+        return TargetIntent(
+            action=intent_action,
+            target_text=target.primary_name if not target.is_unlabeled else None,
+            target_role=target.role,
+            expected_element_types=[target.element_type],
+            value_to_type=action.text if action.action_type in {ActionType.TYPE, ActionType.SELECT} else None,
+            expected_section=None,
+        )
+
+    def _persist_execution_trace(self, run_id: str, step_index: int, executed_action):
+        return self._artifacts.persist_execution_trace(run_id, step_index, executed_action)
+
+    def _persist_progress_trace(self, run_id: str, step_index: int, progress_trace: ProgressTrace) -> str:
+        return self._artifacts.persist_progress_trace(run_id, step_index, progress_trace)
+
+    def _persist_step_timing(self, run_id: str, step_index: int, stage_timings: dict[str, float]) -> None:
+        self._artifacts.persist_step_timing(run_id, step_index, stage_timings)
+
+    def _inject_stagnation_hint(self, state) -> None:
+        """If the same subgoal persists for 3+ steps without progress, inject a hint.
+
+        Not under the thin harness: the model sees every screen itself, and the hint
+        names a stop action Claude computer use does not have."""
+        if self.thin_harness:
+            return
+        ps = state.progress_state
+        if ps.no_progress_streak >= 3 and hasattr(self.perception_service, "add_advisory_hints"):
+            hint = (
+                f"WARNING: You have been on the same subgoal for {ps.no_progress_streak} steps "
+                "without visible progress. The screen has not changed. "
+                "Try a DIFFERENT action or update your subgoal. "
+                "If the task is already complete, use the stop action."
+            )
+            # Scoped to this run: an unscoped hint can surface in another run's turn.
+            self.perception_service.add_advisory_hints([hint], source="no_progress", run_id=state.run_id)
+
+    def _sync_progress_state_with_perception(self, state, perception) -> None:
+        self._progress.sync_with_perception(state, perception)
+
+    def _infer_focused_element(self, state, perception):
+        if perception.focused_element_id is not None:
+            return perception
+        if not state.action_history or not state.observation_history:
+            return perception
+
+        last_executed = state.action_history[-1]
+        if not last_executed.success:
+            return perception
+
+        action = last_executed.action
+        if action.action_type not in {ActionType.CLICK, ActionType.TYPE, ActionType.SELECT}:
+            return perception
+
+        current_inputs = [
+            element
+            for element in perception.visible_elements
+            if element.element_type is UIElementType.INPUT and element.usable_for_targeting
+        ]
+        if not current_inputs:
+            return perception
+
+        target_id = action.target_element_id
+        if target_id is not None:
+            direct_match = next((element for element in current_inputs if element.element_id == target_id), None)
+            if direct_match is not None:
+                return perception.model_copy(update={"focused_element_id": direct_match.element_id})
+
+        previous_perception = state.observation_history[-1]
+        previous_target = None
+        if target_id is not None:
+            previous_target = next(
+                (element for element in previous_perception.visible_elements if element.element_id == target_id),
+                None,
+            )
+
+        if previous_target is None:
+            return perception
+
+        matched_inputs = [
+            element
+            for element in current_inputs
+            if element.primary_name == previous_target.primary_name
+        ]
+        if len(matched_inputs) == 1:
+            return perception.model_copy(update={"focused_element_id": matched_inputs[0].element_id})
+
+        return perception
+
+    # ------------------------------------------------------------------
+    # Progress-tracking and signatures (delegated to operon.agent.policy.progress_tracker)
+    # ------------------------------------------------------------------
+
+    def _block_redundant_action(self, state, action, step_index: int):
+        return self._progress.block_redundant_action(state, action, step_index, logger)
+
+    def _update_progress_state(
+        self,
+        *,
+        state,
+        decision,
+        executed_action,
+        verification,
+        recovery,
+        step_index: int,
+        before_artifact_path: str | None = None,
+        screen_change_ratio: float | None = None,
+    ) -> ProgressTrace:
+        return self._progress.update_progress_state(
+            state=state,
+            decision=decision,
+            executed_action=executed_action,
+            verification=verification,
+            recovery=recovery,
+            step_index=step_index,
+            before_artifact_path=before_artifact_path,
+            screen_change_ratio=screen_change_ratio,
+        )
+
+    def _apply_progress_stop_guard(self, recovery: RecoveryDecision, progress_trace: ProgressTrace) -> RecoveryDecision:
+        return self._progress.apply_progress_stop_guard(recovery, progress_trace)
+
+    def _mark_completed_progress(self, state, decision, executed_action, verification) -> None:
+        self._progress._mark_completed_progress(state, decision, executed_action, verification)
+
+    @classmethod
+    def _page_signature(cls, perception) -> str:
+        return page_signature(perception)
+
+    @staticmethod
+    def _apply_no_progress_detection(state, executed_action):
+        return apply_no_progress_detection(state, executed_action)
+
+    def _build_failure_record(self, state, decision, executed_action, verification, recovery) -> FailureRecord | None:
+        retry_count = self._retry_count(state, decision, verification)
+        if recovery.failure_category is not None:
+            return FailureRecord(
+                category=recovery.failure_category,
+                stage=recovery.failure_stage or LoopStage.RECOVER,
+                retry_count=retry_count,
+                terminal=recovery.terminal,
+                recoverable=recovery.recoverable,
+                reason=recovery.message,
+                stop_reason=recovery.stop_reason,
+            )
+        if verification.failure_category is not None:
+            return FailureRecord(
+                category=verification.failure_category,
+                stage=verification.failure_stage or LoopStage.VERIFY,
+                retry_count=retry_count,
+                terminal=False,
+                recoverable=True,
+                reason=verification.reason,
+            )
+        if executed_action.failure_category is not None:
+            return FailureRecord(
+                category=executed_action.failure_category,
+                stage=executed_action.failure_stage or LoopStage.EXECUTE,
+                retry_count=retry_count,
+                terminal=False,
+                recoverable=True,
+                reason=executed_action.detail,
+            )
+        return None
+
+    @staticmethod
+    def _retry_count(state, decision, verification) -> int:
+        suffix = (
+            verification.failure_category.value
+            if verification.failure_category is not None
+            else verification.failure_type.value
+            if verification.failure_type is not None
+            else verification.status.value
+        )
+        prefix = f"{decision.active_subgoal}:"
+        matches = [count for key, count in state.retry_counts.items() if key.startswith(prefix) and key.endswith(f":{suffix}")]
+        return max(matches, default=0)
+
+    @staticmethod
+    def _update_target_failure_signal(state, executed_action, verification) -> None:
+        action = executed_action.action
+        failure_category = verification.failure_category or executed_action.failure_category
+
+        # Track TYPE failures per element (existing logic)
+        if action.action_type is ActionType.TYPE and action.target_element_id is not None:
+            if failure_category in {
+                FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+                FailureCategory.EXECUTION_TARGET_NOT_EDITABLE,
+            }:
+                key = f"type:{action.target_element_id}:{failure_category.value}"
+                state.target_failure_counts[key] = state.target_failure_counts.get(key, 0) + 1
+
+        # Track CLICK failures per coordinate pair — feeds coordinate-thrash HITL detection.
+        # Visual servo failures (blank region) and target-not-found failures both count.
+        if action.action_type in {ActionType.CLICK, ActionType.DOUBLE_CLICK} and action.x is not None and action.y is not None:
+            if failure_category in {
+                FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+                FailureCategory.EXECUTION_ERROR,
+                FailureCategory.STALE_TARGET_BEFORE_ACTION,
+                FailureCategory.TARGET_SHIFTED_BEFORE_ACTION,
+                FailureCategory.TARGET_LOST_BEFORE_ACTION,
+            }:
+                coord_key = f"click:{action.x}:{action.y}"
+                state.target_failure_counts[coord_key] = state.target_failure_counts.get(coord_key, 0) + 1
+
+    _COORDINATE_THRASH_THRESHOLD = 3
+
+    def _coordinate_thrash_detected(self, state, action) -> bool:
+        """Return True when the same click coordinate has failed 3+ times this run.
+
+        Only applies to CLICK/DOUBLE_CLICK actions with explicit (x, y) coordinates.
+        Coordinate thrashing signals that the target is unreachable by automated
+        re-resolution — human intervention is required to verify the target location.
+        """
+        if action.action_type not in {ActionType.CLICK, ActionType.DOUBLE_CLICK}:
+            return False
+        if action.x is None or action.y is None:
+            return False
+        coord_key = f"click:{action.x}:{action.y}"
+        return state.target_failure_counts.get(coord_key, 0) >= self._COORDINATE_THRASH_THRESHOLD

@@ -1,0 +1,314 @@
+name: Live desktop benchmark
+
+# Runs the live desktop benchmark (evals/live_desktop_bench.py) on a Windows
+# runner whose interactive session has a real desktop for the agent to drive:
+# GitHub's hosted windows-latest (runner: github) or our Azure VM (runner: azure,
+# set up per docs/azure-desktop-runner.md). For azure, the run starts the VM,
+# runs on it, and deallocates it afterwards, so it costs nothing while idle.
+# Manual only: every run spends model credits.
+# Needs repo secret GEMINI_API_KEY (the judge and verifier are Gemini), and
+# ANTHROPIC_API_KEY when desktop_backend is claude_computer_use. runner: azure
+# also needs secret AZURE_CREDENTIALS; repo variables AZURE_VM_RESOURCE_GROUP and
+# AZURE_VM_NAME override the VM's default names (operon-bench, operon-desktop).
+# The run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "github (hosted windows-latest) or azure (our Windows Server 2022 VM)"
+        type: choice
+        options: [github, azure]
+        default: github
+      suite:
+        description: "smoke (3 tasks) or full (10 tasks)"
+        type: choice
+        options: [full, smoke]
+        default: full
+      desktop_backend:
+        description: "OPERON_DESKTOP_BACKEND: json (Gemini) or claude_computer_use"
+        type: choice
+        options: [json, claude_computer_use, model]
+        default: json
+      harness_profile:
+        description: "OPERON_HARNESS_PROFILE for Claude: thin (default) or full. Gemini always runs full."
+        type: choice
+        options: [thin, full]
+        default: thin
+      claude_model:
+        description: "OPERON_DESKTOP_CLAUDE_MODEL for claude_computer_use"
+        default: "claude-opus-5-5"
+      final_check_model:
+        description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
+        default: ""
+      desktop_model:
+        description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
+        default: ""
+      zoom:
+        description: "Let Claude zoom into the screenshot (OPERON_CLAUDE_ZOOM)"
+        type: boolean
+        default: false
+      args:
+        description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"
+        default: ""
+      max_cost_usd:
+        description: "Stop the run once it has spent this many USD (0: no cap)"
+        default: "5"
+      model_profile:
+        description: "Registry profile (evals/models.yaml) for desktop_backend 'model' (experimental)"
+        default: ""
+  # Called by bench-command.yml when someone comments /bench desktop on a PR.
+  workflow_call:
+    inputs:
+      runner: {type: string, default: "github"}
+      suite: {type: string, default: "smoke"}
+      desktop_backend: {type: string, default: "claude_computer_use"}
+      harness_profile: {type: string, default: "thin"}
+      claude_model: {type: string, default: "claude-opus-5-5"}
+      final_check_model: {type: string, default: ""}
+      desktop_model: {type: string, default: ""}
+      zoom: {type: boolean, default: false}
+      args: {type: string, default: ""}
+      max_cost_usd: {type: string, default: "5"}
+      model_profile: {type: string, default: ""}
+      ref:
+        description: "Git ref to benchmark (empty: the triggering ref)"
+        type: string
+        default: ""
+    # Only these secrets reach a /bench run; the caller passes them by name.
+    secrets:
+      ANTHROPIC_API_KEY: {required: false}
+      GEMINI_API_KEY: {required: false}
+      AZURE_CREDENTIALS: {required: false}
+      OPENAI_API_KEY: {required: false}
+      OPENWEIGHT_BASE_URL: {required: false}
+      OPENWEIGHT_API_KEY: {required: false}
+
+permissions:
+  contents: read
+
+# One run at a time on the Azure VM: a finished run deallocates it, which would
+# kill another run still on it. Hosted runs get their own group each.
+concurrency:
+  group: ${{ inputs.runner == 'azure' && 'azure-desktop-vm' || format('desktop-bench-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  start-vm:
+    name: Start the Azure VM
+    if: inputs.runner == 'azure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # id-token: sign in to Azure with GitHub's OIDC token when AZURE_CLIENT_ID is set.
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
+      VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
+    steps:
+      - name: Check the settings
+        run: |
+          if [ -z "$AZURE_CLIENT_ID" ] && [ -z "$AZURE_CREDENTIALS" ]; then
+            echo "::error::Set repo variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID (or the older AZURE_CREDENTIALS secret). See docs/azure-desktop-runner.md."
+            exit 1
+          fi
+      # Preferred: OIDC, no stored secret. The AZURE_CREDENTIALS secret is the fallback.
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.AZURE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.AZURE_CLIENT_ID == ''
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      # The VM signs in automatically at boot and its runner comes online a minute or
+      # two later; the bench job waits in the queue until then.
+      - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+
+  bench:
+    name: Bench (desktop)
+    needs: start-vm
+    if: ${{ !cancelled() && (needs.start-vm.result == 'success' || needs.start-vm.result == 'skipped') }}
+    runs-on: ${{ inputs.runner == 'azure' && fromJSON('["self-hosted", "windows", "operon-desktop"]') || 'windows-latest' }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      UV_PYTHON: "3.14"
+      PYTHONUTF8: "1"
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
+      OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
+      OPERON_DESKTOP_CLAUDE_MODEL: ${{ inputs.claude_model }}
+      OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
+      OPERON_CLAUDE_ZOOM: ${{ inputs.zoom && 'true' || 'false' }}
+      MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
+      # Registry models (model_profile): the adapter's keys and the self-hosted endpoint.
+      OPERON_MODEL_PROFILE: ${{ inputs.model_profile }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENWEIGHT_BASE_URL: ${{ secrets.OPENWEIGHT_BASE_URL }}
+      OPENWEIGHT_API_KEY: ${{ secrets.OPENWEIGHT_API_KEY }}
+    steps:
+      - name: Check the secrets
+        run: |
+          $missing = @()
+          if (-not $env:GEMINI_API_KEY) { $missing += "GEMINI_API_KEY" }
+          $needsClaude = $env:OPERON_DESKTOP_BACKEND -eq "claude_computer_use"
+          if ($needsClaude -and -not $env:ANTHROPIC_API_KEY) { $missing += "ANTHROPIC_API_KEY" }
+          if ($env:OPERON_DESKTOP_BACKEND -eq "model" -and -not $env:OPERON_MODEL_PROFILE) {
+            Write-Output "::error::desktop_backend 'model' needs a model_profile (evals/models.yaml)."
+            exit 1
+          }
+          if ($missing.Count -gt 0) {
+            Write-Output "::error::Missing repository secret(s): $($missing -join ', '). Add them under Settings > Secrets and variables > Actions."
+            exit 1
+          }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || '' }}
+          # The benchmarked code (possibly a PR branch) needs no git token.
+          persist-credentials: false
+
+      - name: Reset the desktop
+        # The Azure VM keeps its state between runs, unlike a hosted runner: close the
+        # apps the tasks open, remove the folder one task creates, and stop an API a
+        # cancelled run may have left on port 8080.
+        if: inputs.runner == 'azure'
+        run: |
+          # Only processes with a visible window: the runner's own console is hidden.
+          Get-Process notepad, mspaint, calc, CalculatorApp, Taskmgr, SystemSettings, cmd, powershell, pwsh, WindowsTerminal `
+            -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Id -ne $PID } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          (New-Object -ComObject Shell.Application).Windows() | ForEach-Object { $_.Quit() }
+          Remove-Item (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "OperonBench") `
+            -Recurse -Force -ErrorAction SilentlyContinue
+          Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+          # The VM is not wiped between runs and each run executes the benchmarked
+          # branch's code as the runner account, so remove the usual places that code
+          # could leave something to start later and see the next run's API keys.
+          foreach ($key in "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+                           "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce") {
+            if (Test-Path $key) {
+              (Get-Item $key).Property | ForEach-Object { Remove-ItemProperty -Path $key -Name $_ -ErrorAction SilentlyContinue }
+            }
+          }
+          Get-ChildItem ([Environment]::GetFolderPath("Startup")) -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          # Tasks this account registered itself (the runner's own task is the admin's).
+          Get-ScheduledTask -ErrorAction SilentlyContinue |
+            Where-Object { $_.Principal.UserId -match "\b$env:USERNAME$" -and $_.TaskName -ne "OperonRunner" -and $_.Author -match "\b$env:USERNAME$" } |
+            Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+          $docs = [Environment]::GetFolderPath("MyDocuments")
+          foreach ($dir in "PowerShell", "WindowsPowerShell") {
+            Remove-Item (Join-Path $docs "$dir\profile.ps1"), (Join-Path $docs "$dir\Microsoft.PowerShell_profile.ps1") `
+              -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Set the desktop model
+        if: inputs.desktop_model != ''
+        env:
+          DESKTOP_MODEL: ${{ inputs.desktop_model }}
+        run: Add-Content -Path $env:GITHUB_ENV -Value "OPERON_DESKTOP_MODEL=$env:DESKTOP_MODEL"
+
+      - name: Set the screen to 1920x1080
+        # The runner's session starts at 1024x768; the agent works better on a full-size screen.
+        continue-on-error: true
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+
+      - name: Install uv
+        # A per-user install: the Azure runner is a standard account that can't write
+        # to the machine-wide Python, so put the user's scripts folder on PATH.
+        run: |
+          python -m pip install --user --upgrade uv
+          python -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))" | Add-Content -Path $env:GITHUB_PATH
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Start the API and run the benchmark
+        # One step on purpose: Windows runners kill a step's child processes when the
+        # step ends, so an API started in an earlier step is gone before the benchmark runs.
+        # Hidden window: a visible console would sit on the desktop the agent is driving.
+        env:
+          SUITE: ${{ inputs.suite }}
+          EXTRA_ARGS: ${{ inputs.args }}
+        run: |
+          Start-Process -FilePath uv -WindowStyle Hidden `
+            -ArgumentList "run", "python", "-m", "uvicorn", "operon.api.server:app", "--host", "127.0.0.1", "--port", "8080" `
+            -RedirectStandardOutput uvicorn.log -RedirectStandardError uvicorn.err.log
+          $up = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            try {
+              Invoke-WebRequest -Uri http://127.0.0.1:8080/health -UseBasicParsing -TimeoutSec 2 | Out-Null
+              $up = $true
+              break
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $up) {
+            Get-Content uvicorn.log, uvicorn.err.log -ErrorAction SilentlyContinue
+            exit 1
+          }
+          $extra = if ($env:EXTRA_ARGS) { $env:EXTRA_ARGS -split '\s+' } else { @() }
+          uv run python -m evals.live_desktop_bench --suite $env:SUITE --keep-screens @extra | Tee-Object -FilePath bench.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { Get-Content uvicorn.err.log -Tail 40 -ErrorAction SilentlyContinue }
+          exit $code
+
+      - name: Summary
+        if: always()
+        run: |
+          $report = if (Test-Path bench.txt) { Get-Content bench.txt -Tail 40 } else { "no report" }
+          @("## desktop", '```') + $report + @('```') | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bench-desktop${{ inputs.model_profile && format('-{0}', inputs.model_profile) || '' }}
+          # .var/bench holds the JSON report and each task's graded screenshot.
+          path: |
+            bench.txt
+            uvicorn.log
+            uvicorn.err.log
+            .var/bench/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  stop-vm:
+    name: Deallocate the Azure VM
+    needs: [start-vm, bench]
+    if: ${{ always() && inputs.runner == 'azure' && needs.start-vm.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
+      VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
+    steps:
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.AZURE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.AZURE_CLIENT_ID == ''
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      # Deallocated, not just stopped: a stopped VM still bills for compute.
+      - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"

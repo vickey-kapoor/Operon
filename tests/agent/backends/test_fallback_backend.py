@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import pytest
+
+from operon.agent.backends.fallback import BackendCompatibilityError, FallbackBackend
+from operon.models.capture import CaptureFrame
+from operon.models.common import RunStatus
+from operon.models.perception import ScreenPerception
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.state import AgentState
+
+
+class _FailingBackend:
+    def __init__(self) -> None:
+        self.hints: list[str] = []
+
+    async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        raise BackendCompatibilityError("primary unavailable")
+
+    async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
+        raise AssertionError("choose_action should not be called on failing backend")
+
+    def latest_debug_artifacts(self):
+        return None
+
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        self.hints = hints
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        self.hints.extend(hints)
+
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        self.hints = []
+
+
+class _RunScopedBackend:
+    def __init__(self) -> None:
+        self.hints: list[str] = []
+        self.scoped_hints: dict[str, list[str]] = {}
+        self.calls: list[str] = []
+
+    async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        self.calls.append(state.run_id)
+        if state.run_id == "run-1":
+            raise BackendCompatibilityError("primary unavailable for this run")
+        return ScreenPerception(
+            summary=f"Primary visible for {state.run_id}",
+            page_hint="unknown",
+            visible_elements=[],
+            capture_artifact_path=screenshot.artifact_path,
+            confidence=0.9,
+        )
+
+    async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
+        return PolicyDecision(
+            action=AgentAction(action_type=ActionType.WAIT, wait_ms=1000),
+            rationale=f"primary:{state.run_id}",
+            confidence=0.8,
+            active_subgoal="retry",
+        )
+
+    def latest_debug_artifacts(self):
+        return None
+
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        self.hints = hints
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        self.hints.extend(hints)
+        self.scoped_hints.setdefault(run_id, []).extend(hints)
+
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        if run_id:
+            self.scoped_hints.pop(run_id, None)
+            self.hints = [hint for scoped in self.scoped_hints.values() for hint in scoped]
+            return
+        self.scoped_hints = {}
+        self.hints = []
+
+
+class _WorkingBackend:
+    def __init__(self) -> None:
+        self.hints: list[str] = []
+        self.scoped_hints: dict[str, list[str]] = {}
+        self.perception = ScreenPerception(
+            summary="Browser visible",
+            page_hint="unknown",
+            visible_elements=[],
+            capture_artifact_path="runs/run-1/step_1/before.png",
+            confidence=0.9,
+        )
+        self.decision = PolicyDecision(
+            action=AgentAction(action_type=ActionType.WAIT, wait_ms=1000),
+            rationale="fallback",
+            confidence=0.8,
+            active_subgoal="retry",
+        )
+
+    async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        return self.perception
+
+    async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
+        return self.decision
+
+    def latest_debug_artifacts(self):
+        return None
+
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        self.hints = hints
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        self.hints.extend(hints)
+        self.scoped_hints.setdefault(run_id, []).extend(hints)
+
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        if run_id:
+            self.scoped_hints.pop(run_id, None)
+            self.hints = [hint for scoped in self.scoped_hints.values() for hint in scoped]
+            return
+        self.scoped_hints = {}
+        self.hints = []
+
+
+@pytest.mark.asyncio
+async def test_fallback_backend_switches_on_compatibility_error() -> None:
+    backend = FallbackBackend(primary=_FailingBackend(), secondary=_WorkingBackend())
+    frame = CaptureFrame(
+        artifact_path="runs/run-1/step_1/before.png",
+        width=1280,
+        height=720,
+        mime_type="image/png",
+    )
+    state = AgentState(run_id="run-1", intent="Browse", status=RunStatus.PENDING)
+
+    perception = await backend.perceive(frame, state)
+    decision = await backend.choose_action(state, perception)
+
+    assert perception.summary == "Browser visible"
+    assert decision.action.action_type is ActionType.WAIT
+
+
+@pytest.mark.asyncio
+async def test_fallback_backend_scopes_switch_to_the_current_run_only() -> None:
+    primary = _RunScopedBackend()
+    secondary = _WorkingBackend()
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+    frame = CaptureFrame(
+        artifact_path="runs/run-1/step_1/before.png",
+        width=1280,
+        height=720,
+        mime_type="image/png",
+    )
+    run_one = AgentState(run_id="run-1", intent="Browse", status=RunStatus.PENDING)
+    run_two = AgentState(run_id="run-2", intent="Browse", status=RunStatus.PENDING)
+
+    perception_one = await backend.perceive(frame, run_one)
+    decision_one = await backend.choose_action(run_one, perception_one)
+    perception_two = await backend.perceive(frame, run_two)
+    decision_two = await backend.choose_action(run_two, perception_two)
+
+    assert perception_one.summary == "Browser visible"
+    assert decision_one.rationale == "fallback"
+    assert perception_two.summary == "Primary visible for run-2"
+    assert decision_two.rationale == "primary:run-2"
+
+
+def test_fallback_backend_forwards_hints_to_active_backend() -> None:
+    secondary = _WorkingBackend()
+    primary = _FailingBackend()
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+
+    backend._reset_advisory_hints_for_test(["avoid repeated clicks"])
+
+    assert primary.hints == ["avoid repeated clicks"]
+    assert secondary.hints == ["avoid repeated clicks"]
+
+
+def test_fallback_backend_forwards_run_id_to_both_backends() -> None:
+    primary = _RunScopedBackend()
+    secondary = _WorkingBackend()
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+
+    backend.add_advisory_hints(["run-scoped hint"], source="memory", run_id="run-2")
+
+    assert primary.scoped_hints == {"run-2": ["run-scoped hint"]}
+    assert secondary.scoped_hints == {"run-2": ["run-scoped hint"]}
+
+
+@pytest.mark.asyncio
+async def test_fallback_backend_clears_inactive_hints_after_primary_success() -> None:
+    primary = _RunScopedBackend()
+    secondary = _WorkingBackend()
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+    frame = CaptureFrame(
+        artifact_path="runs/run-2/step_1/before.png",
+        width=1280,
+        height=720,
+        mime_type="image/png",
+    )
+    state = AgentState(run_id="run-2", intent="Browse", status=RunStatus.PENDING)
+
+    backend.add_advisory_hints(["fresh hint"], source="memory", run_id="run-2")
+    await backend.perceive(frame, state)
+
+    assert primary.hints == ["fresh hint"]
+    assert secondary.hints == []
+
+
+@pytest.mark.asyncio
+async def test_fallback_backend_clears_only_inactive_hints_for_current_run() -> None:
+    primary = _RunScopedBackend()
+    secondary = _WorkingBackend()
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+    frame = CaptureFrame(
+        artifact_path="runs/run-2/step_1/before.png",
+        width=1280,
+        height=720,
+        mime_type="image/png",
+    )
+    state = AgentState(run_id="run-2", intent="Browse", status=RunStatus.PENDING)
+
+    backend.add_advisory_hints(["run-1 hint"], source="memory", run_id="run-1")
+    backend.add_advisory_hints(["run-2 hint"], source="memory", run_id="run-2")
+    await backend.perceive(frame, state)
+
+    assert secondary.scoped_hints == {"run-1": ["run-1 hint"]}

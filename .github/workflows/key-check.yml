@@ -1,0 +1,44 @@
+name: API key check
+
+# Confirms each model API key in repo secrets is accepted, by listing models.
+# Listing models is free: no tokens are generated. Prints only HTTP status codes.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/key-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Secrets are not passed to pull requests from forks.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Check keys
+        run: |
+          fail=0
+          check() {
+            name="$1"; shift
+            # A network error makes curl exit nonzero; record it as 000 instead of stopping the step.
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$@") || code="000"
+            if [ "$code" = "200" ]; then
+              echo "OK   $name (HTTP $code)"
+            else
+              echo "FAIL $name (HTTP $code)"; fail=1
+            fi
+          }
+          if [ -z "$OPENAI_API_KEY" ]; then echo "MISSING OPENAI_API_KEY"; fail=1; else
+            check OPENAI_API_KEY https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"; fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "MISSING ANTHROPIC_API_KEY"; fail=1; else
+            check ANTHROPIC_API_KEY https://api.anthropic.com/v1/models -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01"; fi
+          if [ -z "$GEMINI_API_KEY" ]; then echo "MISSING GEMINI_API_KEY"; fail=1; else
+            check GEMINI_API_KEY https://generativelanguage.googleapis.com/v1beta/models -H "x-goog-api-key: $GEMINI_API_KEY"; fi
+          exit $fail

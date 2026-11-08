@@ -1,0 +1,85 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+lib/
+lib64/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.so
+.installed.cfg
+
+# Virtual environments
+.venv/
+.venv*/
+venv/
+env/
+ENV/
+
+# Environment — never commit real secrets
+.env
+.env.local
+
+# Testing and local artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.log
+.*.log
+nosetests.xml
+test-results/
+runs/
+results/
+.var/
+.codex-logs/
+logs/
+.desktop-artifacts/
+.browser-artifacts/
+.test-artifacts/
+.tmp/
+tests/e2e_*_results.json
+
+# Legacy browser binaries (no longer used)
+.ms-playwright/
+
+# Tauri sidecar binaries (built by scripts/bundle_sidecar.py — not committed)
+src-tauri/binaries/
+# PyInstaller build artifacts
+*.spec
+
+# IDEs and local tool state
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+.agents/
+.codex/
+${APPDATA}/
+%SystemDrive%/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Misc
+*.tmp
+*.bak
+*.code-workspace
+demo-*.png
+.gcloudignore

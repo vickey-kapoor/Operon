@@ -1,0 +1,412 @@
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import mimetypes
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from operon.agent._agent_utils import collect_latest_usage
+from operon.agent.actions.translation import (
+    build_policy_decision,
+    normalize_computer_use_actions,
+)
+from operon.agent.backends.base import AgentBackend
+from operon.agent.backends.fallback import BackendCompatibilityError
+from operon.clients.gemini_computer_use import (
+    GeminiComputerUseClient,
+    GeminiComputerUseError,
+)
+from operon.models.capture import CaptureFrame
+from operon.models.logs import ModelDebugArtifacts
+from operon.models.perception import PageHint, ScreenPerception
+from operon.models.policy import ActionType, PolicyDecision
+from operon.models.state import AgentState
+from operon.store.background_writer import bg_writer
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _ConversationState:
+    contents: list[dict] = field(default_factory=list)
+    pending_function_names: list[str] = field(default_factory=list)
+    acknowledged_actions: int = 0
+    # Calls the model marked require_confirmation: the run paused on them, and the
+    # next perceive (only reached after the user resumes) runs them as approved.
+    held_calls: list[dict] = field(default_factory=list)
+    acknowledge_safety: bool = False
+
+
+def _requires_confirmation(call: dict) -> bool:
+    decision = (call.get("args") or {}).get("safety_decision")
+    return isinstance(decision, dict) and decision.get("decision") == "require_confirmation"
+
+
+def _without_safety_decision(call: dict) -> dict:
+    args = {key: value for key, value in (call.get("args") or {}).items() if key != "safety_decision"}
+    return {**call, "args": args}
+
+
+class BrowserComputerUseBackend(AgentBackend):
+    """Browser backend for Google Computer Use models.
+
+    The request/response protocol is intentionally isolated from the existing
+    JSON backend. Until the transport is fully implemented, protocol-level
+    issues are surfaced as compatibility errors so the route-configured JSON
+    fallback can take over.
+    """
+
+    _retry_suffix = (
+        "\n\nRetry guidance:\n"
+        "- A text-only response is not enough when a harmless browser tool action is available.\n"
+        "- Prefer one concrete tool call that reveals more page structure.\n"
+        "- If uncertain, choose a low-risk action like hover_at or scroll_at instead of waiting.\n"
+    )
+
+    def __init__(
+        self,
+        *,
+        client: GeminiComputerUseClient,
+        prompt_path: Path,
+        browser_runtime=None,
+    ) -> None:
+        self.client = client
+        self.prompt_path = prompt_path
+        self.browser_runtime = browser_runtime
+        self._prompt_template = prompt_path.read_text(encoding="utf-8")
+        self._cached_decision: PolicyDecision | None = None
+        self._last_frames: dict[str, CaptureFrame] = {}
+        self._last_debug_artifacts: ModelDebugArtifacts | None = None
+        self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
+        self._conversations: dict[str, _ConversationState] = {}
+
+    async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        self._last_frames[state.run_id] = screenshot
+        step_dir = Path(screenshot.artifact_path).resolve().parent
+        step_dir.mkdir(parents=True, exist_ok=True)
+        prompt_path = step_dir / "computer_use_prompt.txt"
+        raw_path = step_dir / "computer_use_raw.json"
+        parsed_path = step_dir / "computer_use_parsed.json"
+
+        prompt = self._render_prompt(state)
+        bg_writer.enqueue(prompt_path, prompt)
+
+        conversation = self._conversations.get(state.run_id)
+        if conversation is not None and conversation.held_calls:
+            # The run paused for confirmation and the user resumed it: run the held
+            # call now, and acknowledge the safety decision when answering it.
+            function_calls = [_without_safety_decision(call) for call in conversation.held_calls]
+            conversation.held_calls = []
+            conversation.acknowledge_safety = True
+            response_payload = {
+                "function_call": function_calls[0],
+                "function_calls": function_calls,
+                "rationale": "Running the action the user confirmed.",
+            }
+        else:
+            response_payload = await self._run_with_retry(prompt=prompt, screenshot=screenshot, state=state)
+            function_calls = response_payload.get("function_calls") or []
+            if any(_requires_confirmation(call) for call in function_calls):
+                self._conversations[state.run_id].held_calls = function_calls
+
+        bg_writer.enqueue(raw_path, json.dumps(response_payload, indent=2))
+
+        perception_payload = response_payload.get("perception") or {}
+        perception = self._build_perception(
+            payload=perception_payload,
+            screenshot_path=screenshot.artifact_path,
+        )
+        if "function_call" in response_payload:
+            function_calls = response_payload.get("function_calls") or [response_payload["function_call"]]
+            response_payload = {
+                **response_payload,
+                "action": normalize_computer_use_actions(
+                    function_calls,
+                    screen_width=screenshot.width,
+                    screen_height=screenshot.height,
+                ),
+                "active_subgoal": self._subgoal_for_calls(function_calls),
+            }
+        elif self._is_completion_text(response_payload, state):
+            # A text-only reply after the model has acted is how Computer Use says
+            # the task is done. Surface it as STOP so the verifier judges the claim.
+            response_payload = {
+                **response_payload,
+                "action": {"action_type": ActionType.STOP.value},
+                "active_subgoal": "complete task",
+            }
+        self._cached_decision = build_policy_decision(response_payload)
+        bg_writer.enqueue(
+            parsed_path,
+            json.dumps(
+                {
+                    "perception": perception.model_dump(mode="json"),
+                    "decision": self._cached_decision.model_dump(mode="json"),
+                }
+            ),
+        )
+        self._last_debug_artifacts = ModelDebugArtifacts(
+            prompt_artifact_path=str(prompt_path),
+            raw_response_artifact_path=str(raw_path),
+            parsed_artifact_path=str(parsed_path),
+            usage_artifact_path=str(step_dir / "computer_use_usage.json"),
+            usage=collect_latest_usage(self.client, step_dir / "computer_use_usage.json"),
+        )
+        return perception
+
+    async def choose_action(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision:
+        if self._cached_decision is None:
+            # perceive() was skipped (the loop reused a prior perception) or the
+            # coordinator is asking for a second decision this step: take a fresh
+            # turn on the current screenshot rather than failing the step.
+            frame = self._last_frames.get(state.run_id)
+            if frame is None or not perception.capture_artifact_path:
+                raise RuntimeError("No cached computer-use decision available")
+            await self.perceive(frame.model_copy(update={"artifact_path": perception.capture_artifact_path}), state)
+        decision = self._cached_decision
+        self._cached_decision = None
+        return decision
+
+    def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
+        return self._last_debug_artifacts
+
+    def supports_resampling(self, run_id: str = "") -> bool:
+        # The decision is a function call in a stateful Computer Use conversation;
+        # there is no second sample for the same turn.
+        return False
+
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state. Test use only."""
+        self._advisory_hints = {"": [(h, "") for h in hints if h]}
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        """Append hints without discarding hints set by other writers."""
+        incoming = [(h, source) for h in hints if h]
+        bucket = self._advisory_hints.setdefault(run_id, [])
+        bucket.extend(incoming)
+        logger.debug(
+            "add_advisory_hints(%s): run=%r source=%r incoming=%d total=%d",
+            self.__class__.__name__, run_id, source, len(incoming), len(bucket),
+        )
+
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        self._advisory_hints.pop(run_id, None)
+
+    async def _run_with_retry(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
+        try:
+            response_payload = await self._run_turn(prompt=prompt, screenshot=screenshot, state=state)
+        except (GeminiComputerUseError, BackendCompatibilityError) as exc:
+            raise BackendCompatibilityError(str(exc)) from exc
+
+        if not self._needs_stronger_retry(response_payload):
+            return response_payload
+
+        if state.action_history:
+            return response_payload
+
+        retry_prompt = prompt + self._retry_suffix
+        try:
+            retry_payload = await self.client.run_step(
+                prompt=retry_prompt,
+                screenshot_path=screenshot.artifact_path,
+            )
+        except (GeminiComputerUseError, BackendCompatibilityError):
+            return response_payload
+        if not self._needs_stronger_retry(retry_payload):
+            conversation = _ConversationState()
+            conversation.contents.append(
+                self._build_user_content(
+                    prompt=retry_prompt,
+                    image_path=Path(screenshot.artifact_path),
+                )
+            )
+            model_content = retry_payload.get("model_content")
+            if isinstance(model_content, dict):
+                conversation.contents.append({"role": "model", "parts": model_content.get("parts", [])})
+            if retry_payload.get("function_calls"):
+                conversation.pending_function_names = [
+                    function_call.get("name")
+                    for function_call in retry_payload["function_calls"]
+                    if function_call.get("name")
+                ]
+            self._conversations[state.run_id] = conversation
+        return retry_payload if not self._needs_stronger_retry(retry_payload) else response_payload
+
+    async def _run_turn(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
+        conversation = self._conversations.setdefault(state.run_id, _ConversationState())
+        if conversation.pending_function_names:
+            # Always answer the model's open tool call before asking again: the API
+            # rejects a request that ends with a model turn. A mid-step re-look (an
+            # execution or adaptation retry) arrives before the action is recorded,
+            # so the answer is just the current screen.
+            current_url = None
+            if self.browser_runtime is not None and hasattr(self.browser_runtime, "get_current_url"):
+                current_url = await self.browser_runtime.get_current_url()
+            error = None
+            if len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
+                error = state.action_history[-1].detail
+            function_response = self._build_function_response_content(
+                function_names=conversation.pending_function_names,
+                screenshot_path=screenshot.artifact_path,
+                current_url=current_url,
+                error=error,
+            )
+            if conversation.acknowledge_safety:
+                # The API rejects the answer to a require_confirmation call unless
+                # it acknowledges the decision the user just made.
+                for part in function_response["parts"]:
+                    if "function_response" in part:
+                        part["function_response"]["response"]["safety_acknowledgement"] = "true"
+                conversation.acknowledge_safety = False
+            conversation.contents.append(function_response)
+            conversation.acknowledged_actions = len(state.action_history)
+            conversation.pending_function_names = []
+        elif not conversation.contents or (
+            not conversation.pending_function_names and conversation.contents[-1].get("role") == "model"
+        ):
+            # First turn, or the model's last turn had no tool call to answer:
+            # show it the current screen so the conversation keeps alternating.
+            conversation.contents.append(
+                self._build_user_content(
+                    prompt=prompt,
+                    image_path=Path(screenshot.artifact_path),
+                )
+            )
+
+        response_payload = await self.client.generate_turn(contents=conversation.contents)
+        model_content = response_payload.get("model_content")
+        if isinstance(model_content, dict):
+            conversation.contents.append({"role": "model", "parts": model_content.get("parts", [])})
+        if response_payload.get("function_calls"):
+            conversation.pending_function_names = [
+                function_call.get("name")
+                for function_call in response_payload["function_calls"]
+                if function_call.get("name")
+            ]
+        return response_payload
+
+    def _render_prompt(self, state: AgentState) -> str:
+        hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None)
+        if hints:
+            _counts: dict[str, int] = {}
+            for _, _src in hints:
+                _label = _src or "unknown"
+                _counts[_label] = _counts.get(_label, 0) + 1
+            logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
+        hint_block = "\n".join(f"- {h}" for h, _ in hints) if hints else "none"
+        return self._prompt_template.format(
+            intent=state.intent,
+            current_subgoal=state.current_subgoal or "not set",
+            step_count=state.step_count,
+            previous_summary=state.observation_history[-1].summary if state.observation_history else "none",
+            retry_counts=json.dumps(state.retry_counts, sort_keys=True),
+            advisory_hints=hint_block,
+        )
+
+    @staticmethod
+    def _subgoal_for_calls(function_calls: list[dict]) -> str:
+        """Name the step by the call and its arguments, not the bare tool name.
+
+        The progress tracker blocks a subgoal already completed on the same page,
+        and this backend's page signature never changes, so a bare tool name would
+        block every second ``type_text_at`` (a form's second field) for the run.
+        """
+        described = []
+        for call in function_calls:
+            args = call.get("args") or {}
+            details = " ".join(f"{key}={args[key]}" for key in sorted(args) if key not in {"safety_decision", "intent"})
+            described.append(f"{call.get('name', 'browser step')} {details}".strip())
+        return "; ".join(described)
+
+    @staticmethod
+    def _is_completion_text(response_payload: dict, state: AgentState) -> bool:
+        if "function_call" in response_payload:
+            return False
+        if (response_payload.get("action") or {}).get("action_type") != "wait":
+            return False
+        return any(
+            executed.success and executed.action.action_type not in {ActionType.WAIT, ActionType.STOP, ActionType.WAIT_FOR_USER}
+            for executed in state.action_history
+        )
+
+    @staticmethod
+    def _needs_stronger_retry(response_payload: dict) -> bool:
+        if "function_call" in response_payload:
+            return False
+        action = response_payload.get("action", {})
+        if action.get("action_type") != "wait":
+            return False
+        confidence = float(response_payload.get("confidence", 0.0))
+        summary = str(response_payload.get("perception", {}).get("summary", "")).lower()
+        return confidence <= 0.4 or "computer use step evaluated" in summary
+
+    @staticmethod
+    def _build_perception(*, payload: dict, screenshot_path: str) -> ScreenPerception:
+        return ScreenPerception(
+            summary=payload.get("summary", "Browser screen observed"),
+            page_hint=payload.get("page_hint", PageHint.UNKNOWN),
+            visible_elements=payload.get("visible_elements", []),
+            focused_element_id=payload.get("focused_element_id"),
+            capture_artifact_path=screenshot_path,
+            confidence=float(payload.get("confidence", 0.5)),
+            elements_reported=False,
+        )
+
+    @staticmethod
+    def _build_user_content(*, prompt: str, image_path: Path) -> dict:
+        image_bytes = image_path.read_bytes()
+        mime_type, _ = mimetypes.guess_type(str(image_path))
+        if mime_type is None:
+            mime_type = "image/png"
+        return {
+            "role": "user",
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64.b64encode(image_bytes).decode("utf-8"),
+                    }
+                },
+            ],
+        }
+
+    def _build_function_response_content(
+        self,
+        *,
+        function_names: list[str],
+        screenshot_path: str,
+        current_url: str | None,
+        error: str | None = None,
+    ) -> dict:
+        first = self.client.build_function_response_content(
+            function_name=function_names[0],
+            screenshot_path=screenshot_path,
+            current_url=current_url,
+            error=error,
+        )
+        parts = [first["parts"][0]]
+        for function_name in function_names[1:]:
+            response_payload: dict[str, str] = {}
+            if current_url:
+                response_payload["url"] = current_url
+            if error:
+                response_payload["error"] = error
+            parts.append(
+                {
+                    "function_response": {
+                        "name": function_name,
+                        "response": response_payload,
+                    }
+                }
+            )
+        parts.append(first["parts"][1])
+        return {"role": "user", "parts": parts}
+
+

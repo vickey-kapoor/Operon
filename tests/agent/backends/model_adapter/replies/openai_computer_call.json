@@ -1,0 +1,27 @@
+{
+  "id": "resp_001",
+  "object": "response",
+  "model": "gpt-6.1-sol",
+  "output": [
+    {"type": "reasoning", "id": "rs_1", "summary": []},
+    {
+      "type": "computer_call",
+      "id": "cu_1",
+      "call_id": "call_abc123",
+      "actions": [
+        {"type": "click", "button": "left", "x": 320, "y": 40},
+        {"type": "type", "text": "blue mug"},
+        {"type": "keypress", "keys": ["ENTER"]}
+      ],
+      "pending_safety_checks": [],
+      "status": "completed"
+    }
+  ],
+  "usage": {
+    "input_tokens": 2100,
+    "input_tokens_details": {"cached_tokens": 0},
+    "output_tokens": 120,
+    "output_tokens_details": {"reasoning_tokens": 80},
+    "total_tokens": 2220
+  }
+}

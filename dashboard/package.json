@@ -1,0 +1,16 @@
+{
+  "name": "operon-evals",
+  "private": true,
+  "type": "module",
+  "description": "Operon eval dashboard: static page plus API routes over the benchmark database",
+  "scripts": {
+    "dev": "node dev-server.js"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.8.2",
+    "pg": "8.23.1"
+  },
+  "overrides": {
+    "zod": "4.6.7"
+  }
+}

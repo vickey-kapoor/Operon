@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operon Evals</title>
+  <meta name="description" content="Live benchmark results for the Operon computer-use agent: pass rate and speed by backend and harness, and total spend over time.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234f8ff0'/%3E%3Cstop offset='1' stop-color='%236250d6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M8 21l5-6 4 4 7-9' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="appbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 16l4.5-5.5 3.5 3.5 6-8" /></svg>
+      </span>
+      <div>
+        <div class="brand-name">Operon <span>Evals</span></div>
+        <div class="meta" id="meta">Loading…</div>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="evals">Evals</button>
+      <button role="tab" aria-selected="false" data-tab="cost">Cost</button>
+      <button role="tab" aria-selected="false" data-tab="leaderboard">Leaderboard</button>
+    </nav>
+    <div class="filters">
+      <div class="seg" id="f-mode" aria-label="Environment">
+        <button data-v="browser" aria-pressed="true">Browser</button>
+        <button data-v="desktop" aria-pressed="false">Desktop</button>
+      </div>
+      <div class="seg" id="f-suite" aria-label="Suite">
+        <button data-v="full" aria-pressed="true">Full suite</button>
+        <button data-v="smoke" aria-pressed="false">Smoke</button>
+        <button data-v="safety" aria-pressed="false">Safety</button>
+        <button data-v="apps" aria-pressed="false">Apps</button>
+        <button data-v="hard" aria-pressed="false">Hard</button>
+        <button data-v="long" aria-pressed="false">Long</button>
+      </div>
+      <label class="switch" id="f-flagged-wrap"><input type="checkbox" id="f-flagged"><span class="track"></span> Flagged runs</label>
+      <button class="icon-btn" id="theme" type="button" aria-label="Theme: auto" title="Theme: auto"></button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section id="tab-evals">
+      <div class="tiles" id="tiles"></div>
+      <div class="charts two">
+        <div class="card">
+          <div class="card-head"><div><h2>Pass rate</h2><p class="sub">Tasks the judge saw completed on the final screen</p></div><div class="legend" id="lg-pass"></div></div>
+          <div class="chart" id="ch-pass"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Seconds per task</h2><p class="sub">Mean wall-clock time per task, lower is better</p></div><div class="legend" id="lg-speed"></div></div>
+          <div class="chart" id="ch-speed"></div>
+        </div>
+      </div>
+      <div class="card">
+          <div class="card-head"><div><h2>Why tasks fail</h2><p class="sub">Outcome of every task in each run, as a share of the run</p></div><div class="legend" id="lg-outcomes"></div></div>
+          <div class="chart" id="ch-outcomes"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Pass rate by category</h2><p class="sub">Latest run of each configuration</p></div><div class="legend" id="lg-category"></div></div>
+          <div id="category-bars"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Task history</h2><p class="sub">Each task over the last runs, oldest left. Flaky tasks (mixed results) first.</p></div></div>
+          <div class="table-wrap"><table class="history" id="history"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Judge accuracy</h2><p class="sub">How often the benchmark judge agrees with hand labels on final screens</p></div></div>
+          <div id="judge"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Runs</h2><p class="sub">Every run for this environment and suite. Select one to see its tasks.</p></div></div>
+          <div class="table-wrap"><table id="runs"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Tasks by configuration</h2><p class="sub">Latest run of each configuration. Misses first; bold rows disagree.</p></div></div>
+          <div class="table-wrap"><table class="matrix" id="matrix"></table></div>
+          <button class="ghost-btn" id="matrix-more" type="button" hidden></button>
+        </div>
+      <div class="card" id="detail" hidden>
+        <div class="card-head"><div><h2 id="detail-title"></h2><p class="sub" id="detail-sub"></p></div>
+          <button class="ghost-btn" id="detail-close" type="button">Close</button></div>
+        <div class="table-wrap"><table id="detail-table"></table></div>
+      </div>
+    </section>
+
+    <section id="tab-cost" hidden>
+      <div id="cost-empty" class="card empty-state" hidden>
+        <div class="empty-icon" aria-hidden="true">$</div>
+        <h2>No cost data yet</h2>
+        <p class="note">Spend appears here once a benchmark run records token usage and dollars
+          (<code>summary.cost_usd</code> and <code>summary.judge_cost_usd</code>). Runs from before cost tracking don't have it.</p>
+      </div>
+      <div id="cost-body">
+        <div class="card budget-card">
+          <div class="card-head"><div><h2 id="burn-title">This month</h2><p class="sub" id="burn-sub">Spend so far this calendar month (UTC) against the monthly budget</p></div></div>
+          <div id="cost-burn"></div>
+        </div>
+        <div class="overview" id="cost-overview"></div>
+        <div class="card">
+          <div class="card-head"><div><h2>Spend by month</h2><p class="sub">Agent, judge and GPU spend per calendar month (UTC). The dashed line is the monthly budget; this month adds its projected rest.</p></div><div class="legend" id="lg-months"></div></div>
+          <div class="chart" id="ch-months"></div>
+          <div class="table-wrap"><table id="cost-months"></table></div>
+        </div>
+        <div class="charts two">
+          <div class="card">
+            <div class="card-head"><div><h2>Total spend over time</h2><p class="sub">Running total of agent, judge and GPU spend across every environment and suite, US dollars</p></div></div>
+            <div class="chart" id="ch-cumulative"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h2>Spend per run</h2><p class="sub">Agent, judge and GPU spend of each run, colored by suite</p></div><div class="legend" id="lg-per-run"></div></div>
+            <div class="chart" id="ch-per-run"></div>
+          </div>
+        </div>
+        <div class="charts two">
+          <div class="card">
+            <div class="card-head"><div><h2>Spend by model</h2><p class="sub">Per day: the agent's models and the judge, US dollars</p></div><div class="legend" id="lg-models"></div></div>
+            <div class="chart" id="ch-models"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h2>Cache hit rate</h2><p class="sub">Share of the agent's input tokens read from the prompt cache, by run. Higher is cheaper.</p></div></div>
+            <div class="chart" id="ch-cache"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Most expensive tasks</h2><p class="sub">Average spend per attempt across every run, every attempt of a repeated run included</p></div></div>
+          <div class="table-wrap"><table id="cost-top-tasks"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Wasted spend</h2><p class="sub">Money spent on tasks that didn't pass, and on flagged runs</p></div></div>
+          <div id="cost-waste"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Runs</h2><p class="sub">Every run that recorded cost, flagged ones included (incomplete and partial runs still cost money). Select one to see its spend by model and by task.</p></div></div>
+          <div class="table-wrap"><table id="cost-runs"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>By suite</h2><p class="sub">Where the money went</p></div></div>
+          <div class="table-wrap"><table id="cost-suites"></table></div>
+        </div>
+        <div class="split" id="cost-detail" hidden>
+          <div class="card">
+            <div class="card-head"><div><h2>By model</h2><p class="sub" id="cost-detail-sub"></p></div></div>
+            <div class="table-wrap"><table id="cost-models"></table></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h2>By task</h2><p class="sub">Most expensive first</p></div></div>
+            <div class="table-wrap"><table id="cost-tasks"></table></div>
+          </div>
+        </div>
+        <p class="note" id="cost-scope">Counts what benchmark runs, grounding evals and judge checks spent on model calls, plus GPU time of self-hosted models while they ran.
+          It leaves out spend outside them: local runs, the Azure desktop VM and GPU VM hours while idle. Each provider's billing page has the full bill.</p>
+      </div>
+    </section>
+
+    <section id="tab-leaderboard" hidden>
+      <div id="lb-empty" class="card empty-state" hidden>
+        <div class="empty-icon" aria-hidden="true">#</div>
+        <h2>No model runs yet</h2>
+        <p class="note">Models appear here once a benchmark runs with a model registry profile
+          (<code>/bench model=&lt;profile&gt;</code>, or <code>live_bench --model</code>). Each model is
+          judged by its own "done" and the same graders.</p>
+      </div>
+      <div id="lb-body">
+        <div class="card">
+          <div class="card-head"><div><h2>Models by suite</h2><p class="sub">Pass rate of each model's latest unflagged run per suite. Hover a cell for false passes, cost and speed.</p></div></div>
+          <div class="table-wrap"><table class="matrix" id="lb-matrix"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Models</h2><p class="sub">Totals over each model's latest run per suite; every registry model is listed, run or not. Cost is the agent's model calls plus GPU time, without the judge (every model has the same one). Invalid: replies the adapter could not turn into an action.</p></div></div>
+          <div class="table-wrap"><table id="lb-models"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h2>Cost against success</h2><p class="sub">Each model over its latest runs: cost per task (agent plus GPU time, log scale) against pass rate. Up and left is better.</p></div><div class="legend" id="lg-lb-scatter"></div></div>
+          <div class="chart" id="ch-lb-scatter"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

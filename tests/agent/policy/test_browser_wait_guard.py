@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+import pytest
+
+from operon.agent.policy.verifier import DeterministicVerifierService
+from operon.clients.gemini import PlaceholderGeminiClient
+from operon.models.common import FailureCategory, RunStatus
+from operon.models.execution import ExecutedAction
+from operon.models.perception import ScreenPerception
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
+from operon.models.state import AgentState
+from operon.models.verification import VerificationFailureType, VerificationStatus
+
+
+@pytest.mark.asyncio
+async def test_verifier_marks_passive_wait_as_uncertain_when_browser_state_is_still_loading() -> None:
+    verifier = DeterministicVerifierService(gemini_client=PlaceholderGeminiClient())
+    perception = ScreenPerception(
+        summary="Page visible but no structured browser elements extracted.",
+        page_hint="unknown",
+        visible_elements=[],
+        capture_artifact_path="runs/run-1/step_1/before.png",
+        confidence=0.4,
+    )
+    state = AgentState(
+        run_id="run-1",
+        intent="Open the page and inspect what is visible.",
+        status=RunStatus.RUNNING,
+        step_count=1,
+        observation_history=[perception],
+    )
+    action = AgentAction(action_type=ActionType.WAIT, wait_ms=1000)
+    decision = PolicyDecision(
+        action=action,
+        rationale="Need more context",
+        confidence=0.8,
+        active_subgoal="gather more browser context",
+    )
+    executed = ExecutedAction(
+        action=action,
+        success=True,
+        detail="Waited 1.0s",
+    )
+
+    result = await verifier.verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.UNCERTAIN
+    assert result.failure_type is VerificationFailureType.UNCERTAIN_SCREEN_STATE
+    assert result.failure_category is FailureCategory.UNCERTAIN_SCREEN_STATE
+
+

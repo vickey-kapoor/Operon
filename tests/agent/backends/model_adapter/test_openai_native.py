@@ -192,6 +192,49 @@ async def test_safety_check_pauses_then_runs_the_held_action_and_acknowledges(fr
     assert output["acknowledged_safety_checks"] == checks
 
 
+async def test_a_correction_drops_the_held_action(frame) -> None:
+    checks = [{"id": "sc_1", "code": "malicious_instructions", "message": "Looks like an instruction."}]
+    client = ScriptedResponses([
+        _response("r1", _computer("c1", {"type": "click", "x": 10, "y": 10}, checks=checks)),
+        _response("r2", _message("Done.")),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.add_advisory_hints(["[USER OVERRIDE HINT] use the other button"], source="user_override", run_id="run-1")
+    await _step(backend, frame, state((ActionType.WAIT, True)), "s2")
+    assert len(client.requests) == 2  # asked the model again instead of running the held click
+    output = client.requests[1]["input_items"][0]
+    assert "acknowledged_safety_checks" not in output or not output["acknowledged_safety_checks"]
+    assert "declined" in json.dumps(client.requests[1]["input_items"])
+
+
+async def test_an_invalid_reply_holds_nothing_for_approval(frame) -> None:
+    checks = [{"id": "sc_1", "code": "malicious_instructions", "message": "Looks like an instruction."}]
+    client = ScriptedResponses([
+        _response(
+            "r1",
+            _computer("c1", {"type": "click", "x": 10, "y": 10}, checks=checks),
+            _computer("c2", {"type": "teleport"}),
+        ),
+        _response("r2", _message("Done.")),
+    ])
+    backend = _backend(client)
+    first = await _step(backend, frame, state(), "s1")
+    assert first.action.action_type is ActionType.WAIT
+    second = await _step(backend, frame, state((ActionType.WAIT, True)), "s2")
+    assert second.action.action_type is not ActionType.CLICK and len(client.requests) == 2
+
+
+def test_prompt_log_drops_responses_screenshots() -> None:
+    from operon.agent.backends.model_adapter.backend import _without_images
+
+    items = [
+        {"role": "user", "content": [{"type": "input_image", "image_url": "data:image/png;base64,AAAA"}]},
+        {"type": "computer_call_output", "output": {"type": "computer_screenshot", "image_url": "data:image/png;base64,BBBB"}},
+    ]
+    assert "base64" not in json.dumps(_without_images(items))
+
+
 async def test_transport_error_keeps_the_conversation_for_a_retry(frame) -> None:
     client = ScriptedResponses([
         sample("openai_computer_call"),

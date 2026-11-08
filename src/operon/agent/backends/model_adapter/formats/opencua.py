@@ -40,7 +40,7 @@ One sentence describing the action.
 pyautogui.click(x=..., y=...)
 ```
 
-Allowed code: pyautogui.click, doubleClick, tripleClick, rightClick, moveTo, dragTo, write, press, hotkey, scroll, hscroll; computer.wait(); {extra}computer.terminate(status='success' or 'failure', answer='...').
+Allowed code: pyautogui.click, doubleClick, tripleClick, rightClick, moveTo, dragTo, write, press, hotkey, scroll; computer.wait(); {extra}computer.terminate(status='success' or 'failure', answer='...').
 Coordinates: {coords}. When the task is done, call computer.terminate(status='success')."""
 
 _EXTRA = {

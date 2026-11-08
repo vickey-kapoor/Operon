@@ -70,7 +70,7 @@ def neutral_tools(environment: str) -> list[dict[str, Any]]:
             "scroll",
             "Scroll at a point (the screen centre if omitted) by a number of wheel notches.",
             _point({
-                "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                "direction": {"type": "string", "enum": ["up", "down"]},
                 "amount": {"type": "integer", "minimum": 1, "maximum": 50},
             }),
             ["direction"],

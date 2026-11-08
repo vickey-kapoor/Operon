@@ -7,6 +7,7 @@ in the model's own space; ``to_payload`` maps them to the executor's action payl
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -65,6 +66,8 @@ class CoordinateMapper:
             fx, fy = float(x), float(y)
         except (TypeError, ValueError) as exc:
             raise InvalidAction(f"coordinates must be numbers, got ({x!r}, {y!r})") from exc
+        if not (math.isfinite(fx) and math.isfinite(fy)):
+            raise InvalidAction(f"coordinates must be finite numbers, got ({x!r}, {y!r})")
         if self.space == "relative_1000":
             sx, sy = fx / 1000.0 * self.screen_width, fy / 1000.0 * self.screen_height
         elif self.space == "normalized":
@@ -112,7 +115,10 @@ def to_payload(actions: list[NeutralAction], mapper: CoordinateMapper) -> dict[s
         if name in {"click", "double_click", "triple_click", "right_click", "middle_click"}:
             x, y = _xy(args, mapper, required=True)
             button = str(args.get("button") or "left").lower()
-            kind = {"middle_click": "click"}.get(name, name)
+            if name == "middle_click" or button in {"middle", "wheel"}:
+                # The executors have no middle button; a left click would do something else.
+                raise InvalidAction("middle click is not supported; use click")
+            kind = name
             if name == "click" and button == "right":
                 kind = "right_click"
             payloads.append({"action_type": kind, "x": x, "y": y})
@@ -142,12 +148,17 @@ def to_payload(actions: list[NeutralAction], mapper: CoordinateMapper) -> dict[s
             }
             point = _xy(args, mapper, required=False)
             previous = payloads[-1] if payloads else None
-            if point is not None:
-                typed.update(x=point[0], y=point[1])
-            elif previous is not None and previous["action_type"] == "click":
-                # Focus and type in one atomic TYPE, never a CLICK then a TYPE.
+            clicked_here = (
+                previous is not None
+                and previous["action_type"] == "click"
+                and (point is None or (abs(point[0] - previous["x"]) <= 2 and abs(point[1] - previous["y"]) <= 2))
+            )
+            if clicked_here:
+                # Focus and type in one atomic TYPE, never a CLICK then a TYPE on the same field.
                 payloads.pop()
                 typed.update(x=previous["x"], y=previous["y"])
+            elif point is not None:
+                typed.update(x=point[0], y=point[1])
             payloads.append(typed)
         elif name == "key":
             keys = args.get("keys")
@@ -164,15 +175,19 @@ def to_payload(actions: list[NeutralAction], mapper: CoordinateMapper) -> dict[s
         elif name == "scroll":
             point = _xy(args, mapper, required=False) or mapper.centre()
             direction = str(args.get("direction") or "down").lower()
-            if direction not in {"up", "down", "left", "right"}:
-                raise InvalidAction(f"scroll direction must be up, down, left or right, got {direction!r}")
+            if direction in {"left", "right"}:
+                # The executors scroll vertically only; running it would scroll the wrong way.
+                raise InvalidAction("horizontal scroll is not supported; scroll up or down, or use the keyboard")
+            if direction not in {"up", "down"}:
+                raise InvalidAction(f"scroll direction must be up or down, got {direction!r}")
             try:
                 notches = max(1, min(50, int(float(args.get("amount") or 3))))
             except (TypeError, ValueError) as exc:
                 raise InvalidAction("scroll amount must be a number of wheel notches") from exc
             magnitude = notches * SCROLL_STEP_PX
-            # Executors scroll up for a positive amount.
-            amount = magnitude if direction in {"up", "right"} else -magnitude
+            # Executors scroll up for a positive amount. 100 per notch suits both: Chromium
+            # scrolls ~100 px per notch, and pyautogui on Windows sends WHEEL_DELTA units (120 a notch).
+            amount = magnitude if direction == "up" else -magnitude
             payloads.append({"action_type": "scroll", "x": point[0], "y": point[1], "scroll_amount": amount})
         elif name == "navigate":
             url = args.get("url")

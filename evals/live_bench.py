@@ -484,23 +484,29 @@ def spent_usd(results: list[TaskResult]) -> float:
     return round(sum(r.cost_usd + r.judge_cost_usd for r in results), 6)
 
 
-def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float) -> dict | None:
-    """The ``budget_stop`` record once a run has spent its cap with tasks left, else None."""
-    spent = spent_usd(results)
+def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float, gpu_usd: float | None = None) -> dict | None:
+    """The ``budget_stop`` record once a run has spent its cap with tasks left, else None.
+    ``gpu_usd`` is a self-hosted model's GPU time so far, which reports no token cost."""
+    spent = round(spent_usd(results) + (gpu_usd or 0.0), 6)
     if max_cost_usd <= 0 or spent < max_cost_usd or len(results) >= planned:
         return None
     return {"limit_usd": max_cost_usd, "spent_usd": spent, "tasks_run": len(results), "tasks_planned": planned}
 
 
-def _previous_report(bench_dir: Path, suite: str, model_profile: str | None = None) -> dict | None:
+def _previous_report(
+    bench_dir: Path, suite: str, model_profile: str | None = None, harness_profile: str | None = None
+) -> dict | None:
     # A run stopped at the cost cap covers only some tasks, so it is no baseline; nor
-    # is a run of another registry model.
+    # is a run of another registry model, or one judged another way (thin vs thin-own).
+    # Reports from before harness_profile was recorded match any harness.
     for path in sorted(bench_dir.glob(f"{suite}-*.json"), reverse=True):
         try:
             report = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if not report.get("budget_stop") and report.get("model_profile") == model_profile:
+        if report.get("budget_stop") or report.get("model_profile") != model_profile:
+            continue
+        if harness_profile is None or report.get("harness_profile") in {None, harness_profile}:
             return report
     return None
 
@@ -630,7 +636,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                 if not args.json:
                     label = result.task if repeat == 1 else f"{result.task} #{attempt}"
                     print(f"[{index}/{len(planned)}] {label}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
-                stopped = budget_stop(results, len(planned), max_cost_usd)
+                stopped = budget_stop(results, len(planned), max_cost_usd, gpu_cost_usd(results, profile))
                 if stopped:
                     print(
                         f"Stopping: spent ${stopped['spent_usd']:.2f}, over the ${max_cost_usd:.2f} cap "
@@ -646,7 +652,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     bench_dir = Path(args.out_dir)
     # Desktop reports get their own prefix so they never compare against browser runs.
     suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
-    previous = _previous_report(bench_dir, suite_name, profile.name if profile else None) if not (args.only or args.category) else None
+    previous = _previous_report(bench_dir, suite_name, profile.name if profile else None, harness_label(profile)) if not (args.only or args.category) else None
     model_key = f"{args.mode}_model"
     if profile is not None:
         gpu = gpu_cost_usd(results, profile)

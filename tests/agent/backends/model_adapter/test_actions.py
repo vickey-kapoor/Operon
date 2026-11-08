@@ -78,6 +78,11 @@ def test_screenshot_alone_is_a_short_wait() -> None:
         NeutralAction("click", {"x": "left", "y": 2}),
         NeutralAction("type", {"text": ""}),
         NeutralAction("scroll", {"direction": "sideways"}),
+        NeutralAction("scroll", {"direction": "left"}),  # executors scroll vertically only
+        NeutralAction("middle_click", {"x": 1, "y": 1}),  # executors have no middle button
+        NeutralAction("click", {"x": 1, "y": 1, "button": "middle"}),
+        NeutralAction("click", {"x": "NaN", "y": 2}),
+        NeutralAction("click", {"x": "inf", "y": 2}),
         NeutralAction("teleport", {}),
         NeutralAction("drag", {"start_x": 1, "start_y": 1}),
         NeutralAction("done", {}),
@@ -101,3 +106,19 @@ def test_smart_resize_matches_qwen() -> None:
     h, w = smart_resize(1080, 1920, factor=32, min_pixels=3136, max_pixels=1310720)
     assert h % 32 == 0 and w % 32 == 0 and h * w <= 1310720
     assert target_size(1920, 1080, ImageRule(resize="smart", factor=32, max_pixels=1310720)) == (w, h)
+
+
+def test_type_at_the_clicked_point_merges_into_one_type() -> None:
+    payload = to_payload(
+        [NeutralAction("click", {"x": 100, "y": 50}), NeutralAction("type", {"text": "mug", "x": 100, "y": 50})],
+        _mapper(),
+    )
+    assert payload["action_type"] == "type" and payload["text"] == "mug"
+
+
+def test_type_elsewhere_keeps_the_click() -> None:
+    payload = to_payload(
+        [NeutralAction("click", {"x": 100, "y": 50}), NeutralAction("type", {"text": "mug", "x": 400, "y": 300})],
+        _mapper(),
+    )
+    assert [a["action_type"] for a in payload["actions"]] == ["click", "type"]

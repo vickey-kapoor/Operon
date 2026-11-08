@@ -128,3 +128,19 @@ def test_report_harness_names_the_own_done_mode(monkeypatch, harness, check, exp
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     monkeypatch.setenv("OPERON_COMPLETION_CHECK", check)
     assert live_bench.harness_label(None) == expected
+
+
+def test_gpu_time_counts_toward_the_cost_cap() -> None:
+    results = [_result("a", 3600, 0, 10)]
+    assert live_bench.budget_stop(results, 5, 2.0) is None  # no token cost
+    stopped = live_bench.budget_stop(results, 5, 2.0, gpu_usd=2.5)
+    assert stopped and stopped["spent_usd"] >= 2.5
+
+
+def test_previous_report_matches_the_completion_mode(tmp_path) -> None:
+    for stamp, harness in (("20261101T000000Z", "thin"), ("20261102T000000Z", "thin-own")):
+        (tmp_path / f"full-{stamp}.json").write_text(
+            json.dumps({"harness_profile": harness, "model_profile": None, "results": []}), encoding="utf-8"
+        )
+    assert live_bench._previous_report(tmp_path, "full", None, "thin")["harness_profile"] == "thin"
+    assert live_bench._previous_report(tmp_path, "full", None, "thin-own")["harness_profile"] == "thin-own"

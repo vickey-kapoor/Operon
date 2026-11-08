@@ -332,6 +332,9 @@ def _without_images(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(value, dict):
             if value.get("type") == "image_url":
                 return {"type": "image_url", "image_url": "<screenshot>"}
+            if value.get("type") in {"input_image", "computer_screenshot"}:
+                # Responses API shapes (OpenAI computer use): image_url is the data URL itself.
+                return {**value, "image_url": "<screenshot>"}
             return {k: strip(v) for k, v in value.items()}
         if isinstance(value, list):
             return [strip(v) for v in value]

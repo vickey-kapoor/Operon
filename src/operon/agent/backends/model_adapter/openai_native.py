@@ -182,6 +182,8 @@ class OpenAIComputerUseBackend(AgentBackend):
         self._last_frames: dict[str, CaptureFrame] = {}
         self._last_debug: ModelDebugArtifacts | None = None
         self._hints: dict[str, list[str]] = {}
+        # Runs where the human resumed with a correction rather than an approval.
+        self._corrected: set[str] = set()
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
         self._last_frames[state.run_id] = screenshot
@@ -191,6 +193,12 @@ class OpenAIComputerUseBackend(AgentBackend):
         parsed_path, usage_path = step_dir / "model_parsed.json", step_dir / "model_usage.json"
 
         conv = self._runs.setdefault(state.run_id, _Conversation())
+        if conv.held_payload is not None and state.run_id in self._corrected:
+            # The human answered the safety check with a correction, not an approval:
+            # drop the held actions and tell the model they did not run.
+            conv.held_payload, conv.held_checks = None, []
+            conv.not_executed_reason = "the user declined this action and sent a correction"
+        self._corrected.discard(state.run_id)
         if conv.held_payload is not None:
             # The run paused on a safety check and a human resumed it: run the held
             # actions now; the next step acknowledges the checks with the outcome.
@@ -278,6 +286,8 @@ class OpenAIComputerUseBackend(AgentBackend):
                     "active_subgoal": "; ".join(f"{a.name} {a.args}" for a in actions)[:500],
                 })
         except InvalidAction as exc:
+            # Nothing of this reply runs, so nothing is held for approval either.
+            conv.held_payload, conv.held_checks = None, []
             conv.invalid = str(exc)
             conv.invalid_replies += 1
             decision = build_policy_decision({
@@ -347,6 +357,8 @@ class OpenAIComputerUseBackend(AgentBackend):
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self._hints.setdefault(run_id, []).extend(h for h in hints if h)
+        if source == "user_override":
+            self._corrected.add(run_id)
 
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._hints.pop(run_id, None)

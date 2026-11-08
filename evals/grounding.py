@@ -420,6 +420,7 @@ async def run_samples(
     concurrency: int = 4,
     max_cost_usd: float = DEFAULT_MAX_COST_USD,
     on_result=None,
+    extra_cost=None,
 ) -> tuple[list[SampleResult], dict | None]:
     """Run every sample, ``concurrency`` at a time, until done or the cost cap is reached."""
     results: list[SampleResult] = []
@@ -427,7 +428,8 @@ async def run_samples(
     stopped: dict | None = None
 
     def spent() -> float:
-        return round(sum(r.cost_usd for r in results), 6)
+        # extra_cost: spend that no sample reports, such as a self-hosted model's GPU time so far.
+        return round(sum(r.cost_usd for r in results) + (extra_cost() if extra_cost else 0.0), 6)
 
     async def worker() -> None:
         nonlocal stopped
@@ -586,9 +588,15 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         if not args.json:
             print(f"[{done}/{total}] {result.id}: {result.outcome}", flush=True)
 
+    gpu_rate = profile.pricing.gpu_hour_usd if profile is not None else None
+
+    def gpu_cost() -> float:
+        return (time.monotonic() - wall_started) / 3600 * gpu_rate if gpu_rate is not None else 0.0
+
     results, stopped = await run_samples(
         samples, dataset, make_backend, work_dir,
         concurrency=args.concurrency, max_cost_usd=args.max_cost_usd, on_result=progress,
+        extra_cost=gpu_cost,
     )
     summary = summarize(results)
     if profile is not None:

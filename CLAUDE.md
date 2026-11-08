@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Operon is a vision-first computer-use agent: it drives browsers and desktop apps
 from pixels only. See `AGENTS.md` for contributor conventions and `docs/architecture.md`
-for the long-form design. `ui/CLAUDE.md` covers the React frontend.
+for the long-form design.
 
 ## Environment
 
@@ -79,10 +79,6 @@ cd dashboard; npm install; npm run dev   # page + API on :3000, reads $env:DATAB
 
 # Lint (exactly what CI runs)
 .venv\Scripts\ruff check src tests evals --select E,F,W,I --ignore E501
-
-# Frontend (from ui/)
-npm run dev      # Vite dev server on :5173
-npm run build    # tsc type-check + production build — the only automated gate
 ```
 
 `addopts = "-m 'not live_server'"` in `pyproject.toml` auto-deselects the ~350
@@ -131,7 +127,7 @@ Layer map:
 Outside the package: `evals/` holds the benchmarks and eval tools (run as
 `python -m evals.<tool>`), `tests/` the pytest suite (eval-tool tests in `tests/evals/`,
 opt-in live suites in `tests/integration/`), `docs/reports/` the benchmark write-ups,
-`scripts/` maintenance scripts, `ui/` the React frontend and `dashboard/` the Vercel eval
+`scripts/` maintenance scripts and `dashboard/` the Vercel eval
 dashboard (Vercel's root directory, so don't move it).
 
 Browser modes: **batch** launches an isolated Chromium (no CDP, no debug port); **observable**

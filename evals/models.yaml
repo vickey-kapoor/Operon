@@ -55,3 +55,26 @@ qwen3-vl-32b:
   history_screens: 3
   pricing: {gpu_hour_usd: 2.50}
   notes: Serve with vLLM tool calling on (--enable-auto-tool-choice --tool-call-parser hermes).
+
+ui-tars-1.5-7b:
+  adapter: openai_compat
+  parser: ui_tars
+  model: ByteDance-Seed/UI-TARS-1.5-7B
+  # UI-TARS 1.5 answers in pixels of the smart-resized image (UI-TARS 1.0 used relative_1000).
+  coords: pixels
+  image: {resize: smart, factor: 28, min_pixels: 78400, max_pixels: 12845056, format: png}
+  history_screens: 5
+  max_tokens: 1000
+  pricing: {gpu_hour_usd: 0.90}
+
+opencua-32b:
+  adapter: openai_compat
+  parser: opencua
+  model: xlangai/OpenCUA-32B
+  # Pixels of the smart-resized image; the first smoke run confirms this (use
+  # normalized for checkpoints that answer in 0 to 1 fractions).
+  coords: pixels
+  image: {resize: smart, factor: 28, min_pixels: 3136, max_pixels: 12845056, format: png}
+  history_screens: 3
+  max_tokens: 2048
+  pricing: {gpu_hour_usd: 2.50}

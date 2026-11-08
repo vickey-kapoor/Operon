@@ -9,9 +9,13 @@ from operon.agent.backends.model_adapter.formats.base import (
     Turn,
 )
 from operon.agent.backends.model_adapter.formats.neutral_tools import NeutralToolsFormat
+from operon.agent.backends.model_adapter.formats.opencua import OpenCUAFormat
+from operon.agent.backends.model_adapter.formats.ui_tars import UITarsFormat
 
 FORMATS: dict[str, type[ActionFormat]] = {
     "neutral_tools": NeutralToolsFormat,
+    "ui_tars": UITarsFormat,
+    "opencua": OpenCUAFormat,
 }
 
 

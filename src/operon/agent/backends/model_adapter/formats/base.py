@@ -64,6 +64,9 @@ class ActionFormat(ABC):
     """Prompt, tools and parser for one family of models."""
 
     name: str = ""
+    # Send the format's prompt as the first user message instead of a system message,
+    # as models trained that way (UI-TARS) expect.
+    system_as_user: bool = False
 
     @abstractmethod
     def system_prompt(self, ctx: PromptContext) -> str: ...

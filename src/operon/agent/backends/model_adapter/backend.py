@@ -227,10 +227,14 @@ class ModelAdapterBackend(AgentBackend):
 
     def _messages(self, run: _Run, ctx: PromptContext, image: SentImage, note: str) -> list[dict[str, Any]]:
         keep_images_from = len(run.turns) - (self.profile.history_screens - 1)
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self.format.system_prompt(ctx)},
-            {"role": "user", "content": ctx.task_prompt},
-        ]
+        if self.format.system_as_user:
+            # The format's prompt already carries the task.
+            messages: list[dict[str, Any]] = [{"role": "user", "content": self.format.system_prompt(ctx)}]
+        else:
+            messages = [
+                {"role": "system", "content": self.format.system_prompt(ctx)},
+                {"role": "user", "content": ctx.task_prompt},
+            ]
         carry = ""
         for index, turn in enumerate(run.turns):
             messages.append(

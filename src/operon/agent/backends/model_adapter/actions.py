@@ -25,6 +25,17 @@ TERMINAL_ACTIONS = frozenset({"done", "fail"})
 SCROLL_STEP_PX = 100
 
 
+# Key names other models use (pyautogui, UI-TARS, browsers) that the executor's
+# xdotool-style names spell differently.
+_KEY_ALIASES = {
+    "arrowup": "up", "arrowdown": "down", "arrowleft": "left", "arrowright": "right",
+    "pageup": "page_up", "pagedown": "page_down", "pgup": "page_up", "pgdn": "page_down",
+    "win": "super", "windows": "super", "command": "cmd", "option": "alt", "del": "delete",
+    "ctrlleft": "ctrl", "ctrlright": "ctrl", "shiftleft": "shift", "shiftright": "shift",
+    "altleft": "alt", "altright": "alt",
+}
+
+
 class InvalidAction(ValueError):
     """A reply, or one action in it, that cannot be turned into an executor action."""
 
@@ -138,6 +149,8 @@ def to_payload(actions: list[NeutralAction], mapper: CoordinateMapper) -> dict[s
             keys = args.get("keys")
             if isinstance(keys, list):
                 keys = "+".join(str(k) for k in keys)
+            if isinstance(keys, str):
+                keys = "+".join(_KEY_ALIASES.get(part.strip().lower(), part.strip()) for part in keys.split("+"))
             if not isinstance(keys, str) or not keys.strip():
                 raise InvalidAction("key needs keys, such as 'Enter' or 'ctrl+a'")
             try:

@@ -185,3 +185,22 @@ async def test_parsed_artifact_records_invalid_replies(frame) -> None:
     parsed = json.loads(Path(debug.parsed_artifact_path).read_text(encoding="utf-8"))
     assert parsed["invalid"] is True and parsed["invalid_reason"] == "the reply has no tool call"
     assert parsed["profile"] == "qwen3-vl-32b" and parsed["invalid_replies"] == 1
+
+
+async def test_ui_tars_history_is_text_with_the_outcome_carried_forward(frame) -> None:
+    profile = ModelProfile(name="ui-tars", adapter="openai_compat", parser="ui_tars", model="ui-tars", history_screens=5)
+    client = ScriptedChat([
+        chat_reply("Thought: Click search.\nAction: click(start_box='(100,50)')"),
+        chat_reply("Thought: Done.\nAction: finished(content='ok')"),
+    ])
+    backend = _backend(client, profile=profile)
+    first = await _step(backend, frame, state(), "s1")
+    assert (first.action.x, first.action.y) == (100, 50)  # pixels of the unscaled 1280x800 frame
+    second = await _step(backend, frame, state((ActionType.CLICK, False)), "s2")
+    assert second.action.action_type is ActionType.STOP
+
+    messages = client.requests[1]["messages"]
+    assert [m["role"] for m in messages] == ["user", "user", "assistant", "user"]
+    assert "## User Instruction\nTask: Open the Products page" in messages[0]["content"]
+    assert messages[2]["content"].startswith("Thought: Click search.")
+    assert messages[3]["content"][-1]["text"] == "Result of your last action: Error: element not found"

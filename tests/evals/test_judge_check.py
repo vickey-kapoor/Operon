@@ -71,7 +71,7 @@ async def test_judge_labels_repeats_and_skips_missing_screens(tmp_path) -> None:
 
     async def judge(task, screenshot):
         calls.append(task.name)
-        return Verdict(True, "ok")
+        return Verdict(True, "ok", cost_usd=0.002)
 
     graded = await judge_labels(
         [Label("click_link", str(shot), True), Label("click_link", str(tmp_path / "gone.png"), True),
@@ -80,11 +80,13 @@ async def test_judge_labels_repeats_and_skips_missing_screens(tmp_path) -> None:
     )
     assert calls == ["click_link", "click_link"]
     assert [g.verdict for g in graded] == [True, None, None]
+    # Both repeats' judge calls are charged to the label; skipped labels cost nothing.
+    assert [g.cost_usd for g in graded] == [0.004, 0.0, 0.0]
 
 
 def test_check_row_keeps_disagreements_and_drops_local_paths() -> None:
     graded = [
-        Graded(Label("click_link", "/home/me/screens/click_link.png", True), (True, True)),
+        Graded(Label("click_link", "/home/me/screens/click_link.png", True), (True, True), 0.004),
         Graded(Label("hn_new", "/home/me/screens/hn_new.png", False), (True, True)),
         Graded(Label("go_back", "/home/me/screens/go_back.png", True), (None,)),
     ]
@@ -96,6 +98,7 @@ def test_check_row_keeps_disagreements_and_drops_local_paths() -> None:
     assert row["false_passes"] == 1
     assert row["false_fails"] == 0
     assert row["precision"] == 0.5
+    assert row["cost_usd"] == 0.004
     assert row["disagreements"] == [
         {"task": "hn_new", "screenshot": "hn_new.png", "label": False, "judge": True},
         {"task": "go_back", "screenshot": "go_back.png", "label": True, "judge": None},

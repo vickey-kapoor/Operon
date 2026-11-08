@@ -33,6 +33,7 @@ const state = {
   tasks: null,
   judge: null,
   budget: null,
+  registry: [],
 };
 
 // ---------- small helpers ----------
@@ -72,8 +73,9 @@ function parseStamp(stamp) {
   return m ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6])) : new Date(stamp);
 }
 
-const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
-const timeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+// Every date on the page is UTC, the same clock as the monthly budget and the benchmark runners.
+const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+const timeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short" });
 const fmtPct = (v) => (v === null || v === undefined ? "–" : `${Math.round(v * 100)}%`);
 const fmtSec = (v) => (v === null || v === undefined ? "–" : `${Number(v).toFixed(v >= 100 ? 0 : 1)} s`);
 const fmtNum = (v) => (v === null || v === undefined ? "–" : String(v));
@@ -240,7 +242,7 @@ function lineChart(host, legendHost, series, opts) {
   }
   // One tick per day, thinned so labels never collide.
   const day = 86400e3;
-  const firstDay = new Date(x0); firstDay.setHours(0, 0, 0, 0);
+  const firstDay = new Date(x0); firstDay.setUTCHours(0, 0, 0, 0);
   const days = [];
   for (let d = +firstDay + day; d <= x1; d += day) days.push(d);
   const every = Math.max(1, Math.ceil(days.length / Math.max(1, Math.floor((width - m.l - m.r) / 70))));
@@ -340,7 +342,7 @@ function barChart(host, columns, opts) {
   const height = 260;
   const m = { l: 48, r: 12, t: 12, b: 28 };
   const totals = columns.map((c) => c.segments.reduce((sum, g) => sum + g.value, 0));
-  const yMax = opts.yMax || niceMax(Math.max(...totals) * 1.1);
+  const yMax = opts.yMax || niceMax(Math.max(...totals, (opts.refLine && opts.refLine.value) || 0) * 1.1);
   const band = (width - m.l - m.r) / columns.length;
   const barW = Math.max(2, Math.min(36, band * 0.7));
   const cx = (i) => m.l + band * (i + 0.5);
@@ -359,7 +361,7 @@ function barChart(host, columns, opts) {
   let lastX = -Infinity;
   let lastDay = "";
   columns.forEach((c, i) => {
-    const day = dateFmt.format(c.date);
+    const day = opts.label ? opts.label(c) : dateFmt.format(c.date);
     if (day === lastDay) return;
     lastDay = day;
     if (cx(i) - lastX < 56) return;
@@ -376,12 +378,23 @@ function barChart(host, columns, opts) {
     for (const seg of c.segments) {
       if (!(seg.value > 0)) continue;
       const top = sy(base + seg.value);
-      g.append(svg("rect", { x: cx(i) - barW / 2, y: top, width: barW, height: Math.max(1, sy(base) - top), fill: seg.color }));
+      g.append(svg("rect", {
+        x: cx(i) - barW / 2, y: top, width: barW, height: Math.max(1, sy(base) - top), fill: seg.color,
+        ...(seg.faint ? { "fill-opacity": 0.3, stroke: seg.color, "stroke-dasharray": "3 2" } : {}),
+      }));
       base += seg.value;
     }
     root.append(g);
     return g;
   });
+  if (opts.refLine) {
+    // A horizontal reference, such as the monthly budget.
+    const y = sy(opts.refLine.value);
+    root.append(svg("line", { class: "refline", x1: m.l, x2: width - m.r, y1: y, y2: y }));
+    const t = svg("text", { class: "reflabel", x: width - m.r, y: y - 6, "text-anchor": "end" });
+    t.textContent = opts.refLine.label;
+    root.append(t);
+  }
   const hit = svg("rect", { x: m.l, y: 0, width: width - m.l - m.r, height, fill: "transparent", tabindex: 0 });
   root.append(hit);
   host.append(root);
@@ -609,7 +622,7 @@ function renderJudge() {
       `${c.false_fails} missed pass${c.false_fails === 1 ? "" : "es"} · ${c.judge_model || "judge"} · checked ${dateFmt.format(new Date(c.checked_at))}`),
     wrong.length ? el("table", {}, el("thead", {}, el("tr", {}, ["Disagreement", "Label", "Judge"].map((h) => el("th", {}, h)))),
       el("tbody", {}, wrong.map((d) => el("tr", {}, el("td", {}, d.task), el("td", {}, d.label ? "done" : "not done"),
-        el("td", {}, d.judge === null || d.judge === undefined ? "no answer" : d.judge ? "done" : "not done"))))) : null);
+        el("td", {}, d.judge === null || d.judge === undefined ? "no answer" : d.judge ? "done" : "not done"))))) : "");
 }
 
 async function renderMatrix(runs) {
@@ -657,8 +670,8 @@ async function renderMatrix(runs) {
 function renderRuns(runs) {
   const table = document.getElementById("runs");
   table.replaceChildren(el("thead", {}, el("tr", {},
-    ["When", "Configuration", "Model", "Passed", "Rate", "False pass", "s / task", "s / step", "Steps", "Commit", "Run"]
-      .map((h, i) => el("th", { class: i >= 3 && i <= 8 ? "num" : "" }, h)))));
+    ["When", "Configuration", "Model", "Passed", "Rate", "False pass", "s / task", "s / step", "Steps", "$ / task", "Commit", "Run"]
+      .map((h, i) => el("th", { class: i >= 3 && i <= 9 ? "num" : "" }, h)))));
   const body = el("tbody");
   for (const run of [...runs].reverse()) {
     const s = run.summary;
@@ -678,6 +691,7 @@ function renderRuns(runs) {
       el("td", { class: "num" }, fmtSec(s.mean_seconds)),
       el("td", { class: "num" }, fmtSec(s.seconds_per_step)),
       el("td", { class: "num" }, fmtNum(s.mean_steps)),
+      el("td", { class: "num", title: "Agent, judge and GPU spend per task" }, hasCost(run) && s.tasks ? fmtUsd(runSpend(run) / s.tasks) : "–"),
       el("td", {}, commitLink(run)),
       el("td", { onclick: (e) => e.stopPropagation() }, runLink(run))));
   }
@@ -759,17 +773,22 @@ function taskRows(r, withScreens, columns) {
 // Spend is counted across every environment and suite, flagged runs included:
 // a broken run still cost money. The filters in the app bar don't apply here.
 
-const SUITE_NAMES = { full: "full suite", smoke: "smoke", safety: "safety", apps: "apps" };
-const MODE_NAMES = { browser: "Browser", desktop: "Desktop" };
+const SUITE_NAMES = { full: "full suite", smoke: "smoke", safety: "safety", apps: "apps", hard: "hard", long: "long" };
+const MODE_NAMES = { browser: "Browser", desktop: "Desktop", grounding: "Grounding" };
 // Fixed colors per environment and suite, so a suite keeps its color as runs come in.
-const SUITE_SLOTS = ["browser|full", "browser|smoke", "browser|safety", "browser|apps", "desktop|smoke", "desktop|full"];
+const SUITE_SLOTS = ["browser|full", "browser|smoke", "browser|safety", "browser|apps", "desktop|smoke", "desktop|full",
+  "browser|hard", "browser|long", "grounding|grounding"];
+// Runs that are not task benchmarks (ScreenSpot grounding): they cost money, so the Cost
+// tab counts them, but the Evals tab and the Leaderboard leave them out.
+const COST_ONLY_MODES = new Set(["grounding"]);
 
 function hasCost(run) {
   return run.summary && run.summary.cost_usd !== undefined && run.summary.cost_usd !== null;
 }
 
+// Everything a run spent: the agent's model calls, the judge, and a self-hosted model's GPU time.
 function runSpend(run) {
-  return (run.summary.cost_usd || 0) + (run.summary.judge_cost_usd || 0);
+  return (run.summary.cost_usd || 0) + (run.summary.judge_cost_usd || 0) + (run.summary.gpu_cost_usd || 0);
 }
 
 function suiteId(run) {
@@ -778,12 +797,13 @@ function suiteId(run) {
 
 function suiteLabel(id) {
   const [mode, suite] = id.split("|");
+  if (mode === suite) return MODE_NAMES[mode] || mode;
   return `${MODE_NAMES[mode] || mode} · ${SUITE_NAMES[suite] || suite}`;
 }
 
 function suiteColor(id) {
   const slot = SUITE_SLOTS.indexOf(id);
-  return `var(--series-${slot >= 0 ? slot + 1 : MAX_SLOTS})`;
+  return `var(--series-${slot >= 0 ? slot + 1 : SUITE_SLOTS.length + 1})`;
 }
 
 function costRuns() {
@@ -795,48 +815,193 @@ function stat(label, value, hint) {
     hint ? el("div", { class: "hint" }, hint) : null);
 }
 
-function renderCostOverview(runs) {
-  const total = runs.reduce((sum, r) => sum + runSpend(r), 0);
+// ---------- monthly spend and budget burn ----------
+// Months are calendar months in UTC, like the provider bills, whatever the viewer's zone.
+
+function monthKey(date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+const monthFmt = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+const monthLongFmt = new Intl.DateTimeFormat(undefined, { month: "long", timeZone: "UTC" });
+
+function monthStart(key) {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1));
+}
+
+// Judge checks (evals.judge_check) cost money outside any run; they count toward spend.
+function judgeCheckSpend() {
+  return (state.judge || []).filter((c) => c.cost_usd > 0).map((c) => ({ at: new Date(c.checked_at), judge: c.cost_usd }));
+}
+
+// One entry per spend event: each run with cost, and each judge check.
+function spendEntries(runs) {
+  return [
+    ...runs.map((run) => ({
+      at: parseStamp(run.started_at),
+      agent: run.summary.cost_usd || 0,
+      judge: run.summary.judge_cost_usd || 0,
+      gpu: run.summary.gpu_cost_usd || 0,
+      run,
+    })),
+    ...judgeCheckSpend().map((c) => ({ at: c.at, agent: 0, judge: c.judge, gpu: 0, run: null })),
+  ];
+}
+
+function entrySpend(e) {
+  return e.agent + e.judge + e.gpu;
+}
+
+function monthTotals(entries, now = new Date()) {
+  const months = new Map();
+  for (const e of entries) {
+    const key = monthKey(e.at);
+    const m = months.get(key) || { key, agent: 0, judge: 0, gpu: 0, runs: 0, checks: 0 };
+    m.agent += e.agent;
+    m.judge += e.judge;
+    m.gpu += e.gpu;
+    if (e.run) m.runs += 1; else m.checks += 1;
+    months.set(key, m);
+  }
+  // Every month from the first to now, so a month with no spend still shows.
+  const keys = [...months.keys()].sort();
+  const out = [];
+  if (!keys.length) return out;
+  for (let d = monthStart(keys[0]); d <= now; d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))) {
+    const key = monthKey(d);
+    const m = months.get(key) || { key, agent: 0, judge: 0, gpu: 0, runs: 0, checks: 0 };
+    m.total = m.agent + m.judge + m.gpu;
+    out.push(m);
+  }
+  return out;
+}
+
+// This month so far: spent, share of the budget, what is left per day, and where it ends at this pace.
+function monthBurn(entries, now = new Date(), budget = state.budget) {
+  const key = monthKey(now);
+  const start = monthStart(key);
+  const daysInMonth = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate();
+  const elapsedDays = Math.max((now - start) / 86400e3, 1 / 24);
+  const daysLeft = Math.max(0, daysInMonth - elapsedDays);
+  const spent = entries.filter((e) => monthKey(e.at) === key).reduce((sum, e) => sum + entrySpend(e), 0);
+  const perDay = spent / Math.max(1, elapsedDays);
+  const projected = perDay * daysInMonth;
+  return {
+    key, spent, perDay, projected, daysInMonth, daysLeft,
+    budget: budget || null,
+    used: budget ? spent / budget : null,
+    left: budget ? budget - spent : null,
+    allowedPerDay: budget ? Math.max(0, budget - spent) / Math.max(1, daysLeft) : null,
+  };
+}
+
+function renderBurn(entries, runs) {
+  const host = document.getElementById("cost-burn");
+  const b = monthBurn(entries);
+  const monthName = monthLongFmt.format(monthStart(b.key));
+  document.getElementById("burn-title").textContent = `${monthName} so far`;
+  const over = b.budget && b.projected > b.budget;
+  const status = !b.budget ? null
+    : b.spent >= b.budget ? ["over", "Budget spent"]
+    : over ? ["warn", "On pace to go over"]
+    : ["ok", "On track"];
+  const unpriced = runs.filter((r) => r.summary.unpriced_calls > 0 && monthKey(parseStamp(r.started_at)) === b.key);
+  host.replaceChildren(...[
+    el("div", { class: "burn" },
+      el("div", { class: "burn-main" },
+        el("div", { class: "burn-amount" }, el("strong", {}, fmtUsd(b.spent)),
+          b.budget ? el("span", {}, ` of ${fmtUsd(b.budget)} budget`) : el("span", {}, " spent")),
+        status ? el("span", { class: `burn-status ${status[0]}` }, status[1]) : null,
+        b.budget ? el("div", { class: `meter budget big${over ? " over" : ""}`, role: "img",
+          "aria-label": `${fmtPct(b.used)} of the ${fmtUsd(b.budget)} budget spent, projected ${fmtUsd(b.projected)}` },
+        el("span", { style: `width:${Math.min(1, b.used) * 100}%` }),
+        el("i", { style: `left:${Math.min(1, b.projected / b.budget) * 100}%`, title: `Projected ${fmtUsd(b.projected)}` })) : null,
+        b.budget ? null : el("p", { class: "note" }, "Set MONTHLY_BUDGET_USD in Vercel to see how much of a budget is used.")),
+      el("div", { class: "burn-stats" },
+        b.budget ? stat("Budget used", fmtPct(b.used), b.left >= 0 ? `${fmtUsd(b.left)} left` : `${fmtUsd(-b.left)} over`) : null,
+        stat("Days left", String(Math.ceil(b.daysLeft)), `of ${b.daysInMonth}`),
+        stat("Spent per day", fmtUsd(b.perDay), "average so far"),
+        b.budget ? stat("Can spend per day", fmtUsd(b.allowedPerDay), "to stay in budget") : null,
+        stat("Month end at this pace", fmtUsd(b.projected), b.budget ? `${fmtPct(b.projected / b.budget)} of budget` : "projected"))),
+    unpriced.length ? el("p", { class: "warn-note" },
+      `${unpriced.reduce((n, r) => n + r.summary.unpriced_calls, 0)} model calls this month had no price ` +
+      `(${[...new Set(unpriced.flatMap((r) => r.summary.unpriced_models || []))].join(", ")}), so they count as $0. ` +
+      "Add the model to the price table in src/operon/models/usage.py.") : null].filter(Boolean));
+}
+
+function renderMonths(entries) {
+  const months = monthTotals(entries);
+  const budget = state.budget;
+  const current = monthKey(new Date());
+  const burn = monthBurn(entries);
+  const parts = [
+    { name: "Agent", key: "agent", color: "var(--series-1)" },
+    { name: "Judge", key: "judge", color: "var(--series-4)" },
+    { name: "GPU", key: "gpu", color: "var(--series-3)" },
+  ];
+  const projectedColor = "var(--text-muted)";
+  legendItems(document.getElementById("lg-months"), [
+    ...parts.map((p) => ({ name: p.name, color: p.color })),
+    { name: "Projected rest of month", color: projectedColor },
+  ]);
+  barChart(document.getElementById("ch-months"), months.map((m) => ({
+    date: monthStart(m.key),
+    head: `${monthFmt.format(monthStart(m.key))}${m.key === current ? " · so far" : ""}`,
+    segments: [
+      ...parts.map((p) => ({ name: p.name, value: m[p.key], color: p.color })),
+      ...(m.key === current ? [{ name: "Projected rest of month", value: Math.max(0, burn.projected - m.total), color: projectedColor, faint: true }] : []),
+    ],
+    notes: [`${fmtUsd(m.total)} spent · ${m.runs} run${m.runs === 1 ? "" : "s"}` + (m.checks ? ` · ${m.checks} judge check${m.checks === 1 ? "" : "s"}` : ""),
+      budget ? `${fmtPct(m.total / budget)} of the ${fmtUsd(budget)} budget` : null].filter(Boolean),
+  })), {
+    fmt: fmtUsd, fmtAxis: fmtUsdAxis, title: "Spend by month",
+    label: (c) => monthFmt.format(c.date),
+    refLine: budget ? { value: budget, label: `Budget ${fmtUsd(budget)}` } : null,
+  });
+  const table = document.getElementById("cost-months");
+  table.replaceChildren(
+    el("thead", {}, el("tr", {}, ["Month", "Runs", "Agent", "Judge", "GPU", "Total", ...(budget ? ["Budget used"] : []), "vs previous month"]
+      .map((h, i) => el("th", { class: i ? "num" : "" }, h)))),
+    el("tbody", {}, [...months].reverse().map((m, i, list) => {
+      const prev = list[i + 1];
+      const change = prev && prev.total > 0 ? (m.total - prev.total) / prev.total : null;
+      return el("tr", { class: m.key === current ? "current" : "" },
+        el("td", {}, monthFmt.format(monthStart(m.key)), m.key === current ? el("span", { class: "sub" }, " · so far") : null),
+        el("td", { class: "num" }, String(m.runs)),
+        el("td", { class: "num" }, fmtUsd(m.agent)), el("td", { class: "num" }, fmtUsd(m.judge)),
+        el("td", { class: "num" }, fmtUsd(m.gpu)), el("td", { class: "num" }, el("strong", {}, fmtUsd(m.total))),
+        budget ? el("td", { class: "num" }, fmtPct(m.total / budget)) : null,
+        el("td", { class: "num" }, change === null ? "–" : `${change >= 0 ? "+" : ""}${Math.round(change * 100)}%`));
+    })));
+}
+
+function renderCostOverview(runs, entries) {
+  const total = entries.reduce((sum, e) => sum + entrySpend(e), 0);
+  const checks = entries.filter((e) => !e.run).reduce((sum, e) => sum + entrySpend(e), 0);
   const weekAgo = Date.now() - 7 * 86400e3;
   const week = runs.filter((r) => +parseStamp(r.started_at) >= weekAgo);
-  const weekSpend = week.reduce((sum, r) => sum + runSpend(r), 0);
+  const weekSpend = entries.filter((e) => +e.at >= weekAgo).reduce((sum, e) => sum + entrySpend(e), 0);
   const priciest = runs.reduce((best, r) => (runSpend(r) > runSpend(best) ? r : best), runs[0]);
   const first = parseStamp(runs[0].started_at);
-  // This calendar month so far, and where it ends at the same daily pace.
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const month = runs.filter((r) => parseStamp(r.started_at) >= monthStart).reduce((sum, r) => sum + runSpend(r), 0);
-  const elapsed = Math.max(1, (now - monthStart) / 86400e3);
-  const projected = (month / elapsed) * monthDays;
-  const monthName = new Intl.DateTimeFormat(undefined, { month: "long" }).format(now);
-  const budget = state.budget;
-  const pace = el("div", { class: "hint" }, `on pace for ${fmtUsd(projected)}` + (budget ? ` of ${fmtUsd(budget)}` : ""));
-  const monthStat = stat(`${monthName} so far`, fmtUsd(month));
-  monthStat.append(pace);
-  if (budget) {
-    const over = projected > budget;
-    monthStat.append(el("div", { class: `meter budget${over ? " over" : ""}`, role: "img", "aria-label": `${fmtPct(month / budget)} of budget` },
-      el("span", { style: `width:${Math.min(1, month / budget) * 100}%` }),
-      el("i", { style: `left:${Math.min(1, projected / budget) * 100}%`, title: `Projected ${fmtUsd(projected)}` })));
-  }
   document.getElementById("cost-overview").replaceChildren(
-    stat("Total spent", fmtUsd(total), `since ${dateFmt.format(first)}`),
-    monthStat,
+    stat("Total spent", fmtUsd(total), `since ${dateFmt.format(first)}` + (checks ? ` · ${fmtUsd(checks)} judge checks` : "")),
     stat("Last 7 days", fmtUsd(weekSpend), `${week.length} run${week.length === 1 ? "" : "s"}`),
-    stat("Runs with cost", String(runs.length), `${fmtUsd(total / runs.length)} on average`),
+    stat("Runs with cost", String(runs.length), `${fmtUsd(runs.reduce((sum, r) => sum + runSpend(r), 0) / runs.length)} on average`),
     stat("Priciest run", fmtUsd(runSpend(priciest)), `${suiteLabel(suiteId(priciest))} · ${dateFmt.format(parseStamp(priciest.started_at))}`));
 }
 
-function renderCumulative(runs) {
+// Runs and judge checks, so the line ends at the same total as the headline.
+function renderCumulative(entries) {
   let total = 0;
-  const points = runs.map((run) => {
-    total += runSpend(run);
-    return { x: parseStamp(run.started_at), y: total, run };
+  const points = [...entries].sort((a, b) => a.at - b.at).map((e) => {
+    total += entrySpend(e);
+    return { x: e.at, y: total, run: e };
   });
   lineChart(document.getElementById("ch-cumulative"), el("div"),
     [{ label: "Total spend", color: "var(--accent)", points }],
-    { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)), detail: (r) => `+${fmtUsd(runSpend(r))} · ${suiteLabel(suiteId(r))}`, title: "Total spend over time" });
+    { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)),
+      detail: (e) => `+${fmtUsd(entrySpend(e))} · ${e.run ? suiteLabel(suiteId(e.run)) : "judge check"}`, title: "Total spend over time" });
 }
 
 function renderPerRun(runs) {
@@ -847,13 +1012,14 @@ function renderPerRun(runs) {
     head: timeFmt.format(parseStamp(run.started_at)),
     segments: [{ name: suiteLabel(suiteId(run)), value: runSpend(run), color: suiteColor(suiteId(run)) }],
     notes: [`${configLabel(run)} · ${run.summary.success}/${run.summary.tasks} passed`,
-      `agent ${fmtUsd(run.summary.cost_usd)} · judge ${fmtUsd(run.summary.judge_cost_usd)}`],
+      `agent ${fmtUsd(run.summary.cost_usd)} · judge ${fmtUsd(run.summary.judge_cost_usd)}` +
+        (run.summary.gpu_cost_usd ? ` · GPU ${fmtUsd(run.summary.gpu_cost_usd)}` : "")],
     onclick: () => selectCostRun(run),
   })), { fmt: fmtUsd, fmtAxis: fmtUsdAxis, title: "Spend per run" });
 }
 
-// Agent spend by model plus the judge, summed per local day.
-function renderByModel(runs) {
+// Agent spend by model plus the judge and GPU time, summed per UTC day; judge checks count as Judge.
+function renderByModel(entries) {
   const days = new Map();
   const totals = new Map();
   const add = (day, name, value) => {
@@ -861,17 +1027,20 @@ function renderByModel(runs) {
     day.values.set(name, (day.values.get(name) || 0) + value);
     totals.set(name, (totals.get(name) || 0) + value);
   };
-  for (const run of runs) {
-    const when = parseStamp(run.started_at);
-    const id = `${when.getFullYear()}-${when.getMonth()}-${when.getDate()}`;
-    if (!days.has(id)) days.set(id, { date: new Date(when.getFullYear(), when.getMonth(), when.getDate()), values: new Map(), runs: 0 });
+  for (const entry of [...entries].sort((a, b) => a.at - b.at)) {
+    const when = entry.at;
+    const id = `${when.getUTCFullYear()}-${when.getUTCMonth()}-${when.getUTCDate()}`;
+    if (!days.has(id)) days.set(id, { date: new Date(Date.UTC(when.getUTCFullYear(), when.getUTCMonth(), when.getUTCDate())), values: new Map(), runs: 0 });
     const day = days.get(id);
+    const run = entry.run;
+    if (!run) { add(day, "Judge", entry.judge); continue; }
     day.runs += 1;
     const byModel = Object.entries(run.summary.by_model || {});
     let attributed = 0;
     for (const [name, bucket] of byModel) { add(day, name, bucket.cost_usd || 0); attributed += bucket.cost_usd || 0; }
     add(day, "Unattributed", (run.summary.cost_usd || 0) - attributed > 0.0005 ? run.summary.cost_usd - attributed : 0);
     add(day, "Judge", run.summary.judge_cost_usd || 0);
+    add(day, "GPU time", run.summary.gpu_cost_usd || 0);
   }
   const names = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
   const color = (name) => `var(--series-${Math.min(names.indexOf(name) + 1, MAX_SLOTS)})`;
@@ -898,9 +1067,26 @@ function renderCacheRate(runs) {
       detail: (r) => `${suiteLabel(suiteId(r))} · ${fmtTokens(r.summary.cache_read_tokens)} read, ${fmtTokens(r.summary.cache_write_tokens)} written` });
 }
 
+// A run's GPU time split over its tasks by their seconds (evenly when none are recorded).
+function taskGpuShare(t, siblings) {
+  const gpu = t.run.summary.gpu_cost_usd || 0;
+  if (!gpu) return 0;
+  const seconds = siblings.reduce((sum, s) => sum + (s.seconds || 0), 0);
+  return seconds ? gpu * (t.seconds || 0) / seconds : gpu / siblings.length;
+}
+
 function costTasks(runs) {
   const byKey = new Map(runs.map((r) => [r.key, r]));
-  return (state.tasks || []).filter((t) => byKey.has(t.run_key)).map((t) => ({ ...t, run: byKey.get(t.run_key) }));
+  const tasks = (state.tasks || []).filter((t) => byKey.has(t.run_key)).map((t) => ({ ...t, run: byKey.get(t.run_key) }));
+  const byRun = new Map();
+  for (const t of tasks) byRun.set(t.run_key, [...(byRun.get(t.run_key) || []), t]);
+  for (const t of tasks) t.gpu_cost_usd = taskGpuShare(t, byRun.get(t.run_key));
+  return tasks;
+}
+
+// What one task attempt spent: agent, judge and its share of GPU time.
+function taskSpend(t) {
+  return (t.cost_usd || 0) + (t.judge_cost_usd || 0) + (t.gpu_cost_usd || 0);
 }
 
 function renderTopTasks(runs) {
@@ -912,7 +1098,7 @@ function renderTopTasks(runs) {
     const g = groups.get(id) || { task: t.task, mode: t.run.mode, attempts: 0, passed: 0, spend: 0, steps: 0 };
     g.attempts += 1;
     g.passed += t.outcome === "success" ? 1 : 0;
-    g.spend += (t.cost_usd || 0) + (t.judge_cost_usd || 0);
+    g.spend += taskSpend(t);
     g.steps += t.steps || 0;
     groups.set(id, g);
   }
@@ -941,7 +1127,7 @@ function renderWaste(runs) {
     buckets.set(name, b);
   };
   for (const t of costTasks(runs)) {
-    const spend = (t.cost_usd || 0) + (t.judge_cost_usd || 0);
+    const spend = taskSpend(t);
     if (t.run.config && t.run.config.flagged) add("Flagged runs", spend, "var(--series-6)");
     else if (t.outcome !== "success") add(OUTCOME_LABELS[t.outcome] || t.outcome, spend, OUTCOME_COLORS[t.outcome] || "var(--text-muted)");
   }
@@ -985,8 +1171,8 @@ function renderCostSuites(runs) {
 function renderCostRuns(runs) {
   const table = document.getElementById("cost-runs");
   table.replaceChildren(el("thead", {}, el("tr", {},
-    ["When", "Suite", "Configuration", "Passed", "Agent", "Judge", "Run total", "Running total", "Run"]
-      .map((h, i) => el("th", { class: i >= 3 && i <= 7 ? "num" : "" }, h)))));
+    ["When", "Suite", "Configuration", "Passed", "Agent", "Judge", "GPU", "Run total", "Running total", "Run"]
+      .map((h, i) => el("th", { class: i >= 3 && i <= 8 ? "num" : "" }, h)))));
   let running = 0;
   const rows = runs.map((run) => {
     running += runSpend(run);
@@ -1004,6 +1190,7 @@ function renderCostRuns(runs) {
       el("td", { class: "num" }, `${s.success}/${s.tasks}`),
       el("td", { class: "num" }, fmtUsd(s.cost_usd)),
       el("td", { class: "num" }, fmtUsd(s.judge_cost_usd)),
+      el("td", { class: "num" }, s.gpu_cost_usd ? fmtUsd(s.gpu_cost_usd) : "–"),
       el("td", { class: "num" }, el("strong", {}, fmtUsd(runSpend(run)))),
       el("td", { class: "num" }, fmtUsd(running)),
       el("td", { onclick: (e) => e.stopPropagation() }, runLink(run)));
@@ -1016,10 +1203,13 @@ function renderCost() {
   document.getElementById("cost-empty").hidden = runs.length > 0;
   document.getElementById("cost-body").hidden = runs.length === 0;
   if (!runs.length) return;
-  renderCostOverview(runs);
-  renderCumulative(runs);
+  const entries = spendEntries(runs);
+  renderBurn(entries, runs);
+  renderCostOverview(runs, entries);
+  renderMonths(entries);
+  renderCumulative(entries);
   renderPerRun(runs);
-  renderByModel(runs);
+  renderByModel(entries);
   renderCacheRate(runs);
   renderTopTasks(runs);
   renderWaste(runs);
@@ -1034,7 +1224,8 @@ async function selectCostRun(run) {
   wrap.hidden = false;
   document.getElementById("cost-detail-sub").textContent =
     `${suiteLabel(suiteId(run))} · ${configLabel(run)} · ${timeFmt.format(parseStamp(run.started_at))} · ` +
-    `${fmtUsd(run.summary.cost_usd)} agent, ${fmtUsd(run.summary.judge_cost_usd)} judge`;
+    `${fmtUsd(run.summary.cost_usd)} agent, ${fmtUsd(run.summary.judge_cost_usd)} judge` +
+    (run.summary.gpu_cost_usd ? `, ${fmtUsd(run.summary.gpu_cost_usd)} GPU` : "");
   const models = document.getElementById("cost-models");
   const byModel = Object.entries(run.summary.by_model || {}).sort((a, b) => (b[1].cost_usd || 0) - (a[1].cost_usd || 0));
   models.replaceChildren(
@@ -1082,7 +1273,7 @@ function runTotalCost(run) {
 function leaderboardData() {
   const latest = new Map();  // model -> suite -> run
   for (const run of state.runs) {
-    if (!run.summary || (run.config && run.config.flagged)) continue;
+    if (!run.summary || (run.config && run.config.flagged) || COST_ONLY_MODES.has(run.mode)) continue;
     const model = modelLabel(run);
     const suite = suiteId(run);
     if (!latest.has(model)) latest.set(model, new Map());
@@ -1105,9 +1296,17 @@ function leaderboardData() {
       compromised: sum((r) => r.summary.compromised),
       secondsPerTask: tasks ? sum((r) => r.summary.mean_seconds * r.summary.tasks) / tasks : null,
       costPerTask: tasks && runs.some(hasCost) ? sum(runTotalCost) / tasks : null,
+      costPerSuccess: runs.some(hasCost) && sum((r) => r.summary.success) ? sum(runTotalCost) / sum((r) => r.summary.success) : null,
       invalidRate: replies ? sum((r) => r.summary.invalid_replies) / replies : null,
     };
   }).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
+  // Registry models (evals/models.yaml, via models.json) that have no run yet still get a row.
+  const seen = new Set(models.map((m) => m.model));
+  for (const r of state.registry || []) {
+    if (seen.has(r.profile)) continue;
+    models.push({ model: r.profile, bySuite: new Map(), notRun: true, registry: r, ownDone: true, tasks: 0, rate: null,
+      falsePass: null, compromised: null, secondsPerTask: null, costPerTask: null, costPerSuccess: null, invalidRate: null });
+  }
   return { suites, models };
 }
 
@@ -1124,7 +1323,7 @@ function renderLeaderboardMatrix(data) {
     body.append(el("tr", {},
       el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model,
         m.ownDone ? null : el("span", { class: "sub", title: "Judged by Operon's completion check, not the model's own done" }, " (check)"))),
-      data.suites.map((id) => {
+      m.notRun ? el("td", { class: "num not-run", colspan: Math.max(1, data.suites.length) }, "not run yet") : data.suites.map((id) => {
         const run = m.bySuite.get(id);
         if (!run) return el("td", { class: "num" }, "–");
         const s = run.summary;
@@ -1147,14 +1346,20 @@ function renderLeaderboardModels(data) {
   table.replaceChildren(el("thead", {}, el("tr", {},
     el("th", {}, "Model"), el("th", { class: "num" }, "Pass"), el("th", { class: "num" }, "False pass"),
     el("th", { class: "num" }, "Compromised"), el("th", { class: "num" }, "s/task"),
-    el("th", { class: "num" }, "$/task"), el("th", { class: "num" }, "Invalid"))));
-  table.append(el("tbody", {}, data.models.map((m, i) => el("tr", {},
+    el("th", { class: "num", title: "Agent model calls plus GPU time, per task" }, "$/task"),
+    el("th", { class: "num", title: "Agent model calls plus GPU time, per passed task" }, "$/success"),
+    el("th", { class: "num" }, "Invalid"))));
+  table.append(el("tbody", {}, data.models.map((m, i) => m.notRun ? el("tr", { class: "not-run-row" },
+    el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model,
+      el("span", { class: "sub" }, ` ${m.registry.model}${m.registry.self_hosted ? " · self-hosted" : ""}`))),
+    el("td", { class: "num not-run", colspan: 7 }, `not run yet · ${m.registry.environments.join(" and ")}`)) : el("tr", {},
     el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model)),
     el("td", { class: "num" }, pctText(m.rate)),
     el("td", { class: "num" }, String(m.falsePass)),
     el("td", { class: "num" }, String(m.compromised)),
     el("td", { class: "num" }, m.secondsPerTask === null ? "–" : m.secondsPerTask.toFixed(0)),
     el("td", { class: "num" }, fmtUsd(m.costPerTask)),
+    el("td", { class: "num" }, fmtUsd(m.costPerSuccess)),
     el("td", { class: "num" }, pctText(m.invalidRate))))));
 }
 
@@ -1312,6 +1517,7 @@ async function main() {
   const extras = Promise.all([
     getJson("api/tasks").then((d) => { state.tasks = d.tasks || []; }).catch(() => { state.tasks = []; }),
     getJson("api/judge").then((d) => { state.judge = d.checks || []; }).catch(() => { state.judge = []; }),
+    getJson("models.json").then((d) => { state.registry = d.models || []; }).catch(() => { state.registry = []; }),
   ]);
   try {
     const index = await getJson("api/runs");

@@ -102,6 +102,8 @@ class SampleResult:
     cache_read_tokens: int
     cache_write_tokens: int
     detail: str
+    # The model used tokens its price table doesn't know, so cost_usd counts it as $0.
+    unpriced_model: str | None = None
 
 
 # ---------- dataset ----------
@@ -408,7 +410,15 @@ async def run_sample(sample: Sample, image: bytes, make_backend, work_dir: Path)
         cache_read_tokens=getattr(usage, "cache_read_input_tokens", None) or 0,
         cache_write_tokens=getattr(usage, "cache_creation_input_tokens", None) or 0,
         detail=detail,
+        unpriced_model=_unpriced_model(usage),
     )
+
+
+def _unpriced_model(usage) -> str | None:
+    if usage is None or getattr(usage, "estimated_cost_usd", None) is not None:
+        return None
+    used = getattr(usage, "input_tokens", None) or getattr(usage, "output_tokens", None)
+    return (getattr(usage, "model", None) or "unknown") if used else None
 
 
 async def run_samples(
@@ -483,6 +493,9 @@ def summarize(results: list[SampleResult]) -> dict:
         "cost_per_sample_usd": round(cost / total, 6) if total else 0.0,
         **{key: sum(getattr(r, key) for r in results) for key in
            ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")},
+        # Calls with tokens but no price: counted as $0, so the dashboard flags the run.
+        "unpriced_calls": sum(1 for r in results if r.unpriced_model),
+        "unpriced_models": sorted({r.unpriced_model for r in results if r.unpriced_model}),
     }
 
 
@@ -603,6 +616,8 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         summary["invalid_replies"] = sum(1 for r in results if r.detail.startswith("wait: Invalid model reply"))
         summary["invalid_action_rate"] = round(summary["invalid_replies"] / len(results), 4) if results else 0.0
         if profile.pricing.gpu_hour_usd is not None:
+            # Priced by GPU time instead of tokens, so its calls are not "unpriced".
+            summary["unpriced_calls"], summary["unpriced_models"] = 0, []
             # A lower bound: the GPU VM also bills while it starts and idles.
             summary["gpu_cost_usd"] = round((time.monotonic() - wall_started) / 3600 * profile.pricing.gpu_hour_usd, 4)
     # "samples", not "results": the dashboard importer takes any JSON with both

@@ -194,6 +194,26 @@ def test_run_usage_sums_every_model_call_in_the_run(tmp_path, monkeypatch) -> No
     assert usage["by_model"]["claude-opus-5-5"]["requests"] == 3
 
 
+def test_run_usage_counts_calls_whose_model_has_no_price(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)
+    run = tmp_path / "run-1"
+    _write_usage(run / "step_1", kind="computer_use", model="claude-new-model", input_tokens=900, output_tokens=40, estimated_cost_usd=None)
+    _write_usage(run / "step_1", kind="verification", model="gemini-3.5-flash", input_tokens=500, output_tokens=20, estimated_cost_usd=0.001)
+    # A self-hosted model is priced by GPU time, but only when its profile has a GPU rate.
+    _write_usage(run / "step_2", kind="model", provider="openai_compat", model="Qwen/Qwen3-VL-32B-Instruct", input_tokens=800, output_tokens=30)
+    _write_usage(run / "step_3", kind="computer_use", model="claude-new-model")  # no tokens: nothing was billed
+
+    usage = live_bench.run_usage("run-1", gpu_priced=True)
+    assert usage["unpriced_calls"] == 1 and usage["unpriced_models"] == ["claude-new-model"]
+    # A hosted OpenAI-compatible endpoint with no prices at all is unpriced too.
+    hosted = live_bench.run_usage("run-1")
+    assert hosted["unpriced_calls"] == 2 and hosted["unpriced_models"] == ["Qwen/Qwen3-VL-32B-Instruct", "claude-new-model"]
+    result = live_bench.TaskResult("t", "c", "r", "succeeded", "success", "-", 1, 0, 5, 1, 0, "", "-",
+                                   unpriced_calls=1, unpriced_models=["claude-new-model"])
+    summary = summarize([result, _costly("other", 0.01)])
+    assert summary["unpriced_calls"] == 1 and summary["unpriced_models"] == ["claude-new-model"]
+
+
 def test_summary_reports_cost_per_task_and_per_success() -> None:
     def result(outcome: str, cost: float) -> live_bench.TaskResult:
         return live_bench.TaskResult(
@@ -250,6 +270,55 @@ async def test_run_bench_stops_at_the_cost_cap_and_records_it(tmp_path, monkeypa
     assert report["budget_stop"]["tasks_run"] == 2 and report["summary"]["tasks"] == 2
     # A capped run is not the baseline the next run compares against.
     assert live_bench._previous_report(tmp_path, "smoke") is None
+
+
+async def test_a_run_that_dies_midway_leaves_an_incomplete_report(tmp_path, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path / "runs")
+
+    async def fake_run_task(client, task, judge, **kwargs):
+        calls.append(task.name)
+        if len(calls) == 3:
+            # The third task spends money, then the runner dies before it returns.
+            kwargs["on_run"]("run-3")
+            _write_usage(tmp_path / "runs" / "run-3" / "step_1", kind="computer_use", model="claude-opus-5-5",
+                         input_tokens=100, output_tokens=10, estimated_cost_usd=0.05)
+            raise RuntimeError("runner lost")
+        return _costly(task.name, 0.2)
+
+    monkeypatch.setattr(live_bench, "run_task", fake_run_task)
+    real_client = httpx.AsyncClient
+    health = httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True}))
+    monkeypatch.setattr(live_bench.httpx, "AsyncClient", lambda **kw: real_client(transport=health, **kw))
+    args = live_bench.build_parser(default_suite="smoke").parse_args(["--out-dir", str(tmp_path), "--max-cost-usd", "0"])
+
+    with pytest.raises(RuntimeError):
+        await live_bench.run_bench(args, judge=None)
+
+    (saved,) = tmp_path.glob("smoke-*.json")
+    report = json.loads(saved.read_text())
+    # The two tasks that ran, the one cut short, and what they cost, are on disk for the dashboard.
+    assert report["complete"] is False and report["tasks_planned"] == len(select_tasks("smoke", None, None))
+    assert report["summary"]["tasks"] == 3 and report["summary"]["cost_usd"] == pytest.approx(0.45)
+    cut = report["results"][2]
+    assert cut["run_id"] == "run-3" and cut["outcome"] == "error" and cut["stop_reason"] == "interrupted"
+    assert live_bench._previous_report(tmp_path, "smoke") is None
+
+
+async def test_a_finished_run_marks_its_report_complete(tmp_path, monkeypatch) -> None:
+    async def fake_run_task(client, task, judge, **kwargs):
+        return _costly(task.name, 0.1)
+
+    monkeypatch.setattr(live_bench, "run_task", fake_run_task)
+    real_client = httpx.AsyncClient
+    health = httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True}))
+    monkeypatch.setattr(live_bench.httpx, "AsyncClient", lambda **kw: real_client(transport=health, **kw))
+    args = live_bench.build_parser(default_suite="smoke").parse_args(["--out-dir", str(tmp_path), "--json"])
+    assert await live_bench.run_bench(args, judge=None) == 0
+    (saved,) = tmp_path.glob("smoke-*.json")
+    report = json.loads(saved.read_text())
+    assert report["complete"] is True and report["partial"] is False
+    assert live_bench._previous_report(tmp_path, "smoke")["started_at"] == report["started_at"]
 
 
 def test_max_cost_comes_from_the_environment(monkeypatch) -> None:
@@ -319,3 +388,23 @@ async def test_run_bench_repeats_every_task_pass_by_pass(tmp_path, monkeypatch) 
     assert report["repeat"] == 3
     assert [r["attempt"] for r in report["results"]] == [1] * 5 + [2] * 5 + [3] * 5
     assert report["summary"]["repeat"]["pass_all_k"] == 1.0
+
+
+async def test_a_judge_model_with_no_price_is_counted_as_unpriced(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import operon.clients.gemini as gemini
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def generate_perception(self, prompt, screenshot):
+            return '{"goal_visible": true, "reason": "done"}'
+
+        def latest_usage(self):
+            return SimpleNamespace(model="gemini-next", input_tokens=1000, output_tokens=20, estimated_cost_usd=None)
+
+    monkeypatch.setattr(gemini, "GeminiHttpClient", FakeClient)
+    verdict = await live_bench.gemini_judge("gemini-next")(TASKS[0], "screen.png")
+    assert verdict.goal_visible is True and verdict.cost_usd is None and verdict.unpriced_model == "gemini-next"

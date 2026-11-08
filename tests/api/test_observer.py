@@ -864,3 +864,29 @@ def test_observer_usage_dashboard_deduplicates_combined_backend_calls(monkeypatc
     assert usage.status_code == 200
     assert usage.json()["summary"]["request_count"] == 1
     assert usage.json()["summary"]["estimated_cost_usd"] == 0.000777
+
+
+def test_run_usage_counts_an_unlogged_steps_model_usage_once(monkeypatch, tmp_path) -> None:
+    """A model-adapter step writes model_usage.json; before the step is logged it is read
+    from the step folder, and after it is logged only the log counts it."""
+    from operon.api import observer
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(tmp_path))
+    step_dir = tmp_path / "run-1" / "step_1"
+    step_dir.mkdir(parents=True)
+    usage = _usage("openai", "gpt-test", "model", total_tokens=1100, estimated_cost_usd=0.01)
+    (step_dir / "model_usage.json").write_text(usage.model_dump_json(), encoding="utf-8")
+
+    monkeypatch.setattr(observer, "load_run_replay", lambda run_id, root_dir: [])
+    unlogged = observer.summarize_run_usage("run-1")
+    assert unlogged.request_count == 1
+    assert unlogged.estimated_cost_usd == 0.01
+
+    class Logged:
+        step_index = 1
+
+    monkeypatch.setattr(observer, "load_run_replay", lambda run_id, root_dir: [Logged()])
+    monkeypatch.setattr(observer, "_entry_usages", lambda entry: [usage])
+    logged = observer.summarize_run_usage("run-1")
+    assert logged.request_count == 1
+    assert logged.estimated_cost_usd == 0.01

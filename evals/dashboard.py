@@ -55,7 +55,7 @@ from pathlib import Path
 DROPPED_RESULT_FIELDS = ("final_screenshot",)
 TASK_COLUMNS = (
     "task", "category", "outcome", "steps", "seconds", "cost_usd", "input_tokens",
-    "output_tokens", "cache_read_tokens", "cache_write_tokens", "judge_cost_usd",
+    "output_tokens", "cache_read_tokens", "cache_write_tokens", "judge_cost_usd", "attempt",
 )
 
 SCHEMA = """
@@ -95,6 +95,10 @@ CREATE TABLE IF NOT EXISTS bench_task_results (
     result             jsonb NOT NULL,
     PRIMARY KEY (run_key, task)
 );
+-- A --repeat run has one row per attempt of each task, not just the first.
+ALTER TABLE bench_task_results ADD COLUMN IF NOT EXISTS attempt integer NOT NULL DEFAULT 1;
+ALTER TABLE bench_task_results DROP CONSTRAINT IF EXISTS bench_task_results_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS bench_task_results_attempt ON bench_task_results (run_key, task, attempt);
 """
 
 
@@ -109,12 +113,25 @@ COST_RISE_PCT = 25.0
 Uploader = Callable[[list[tuple[Path, str]]], list[str]]
 
 
+def is_grounding_report(data: object) -> bool:
+    """A report from ``evals.grounding``: one model call per sample, no tasks."""
+    return (
+        isinstance(data, dict) and data.get("kind") == "grounding"
+        and isinstance(data.get("summary"), dict) and isinstance(data.get("samples"), list)
+    )
+
+
 def is_report(data: object) -> bool:
+    if is_grounding_report(data):
+        return True
     return isinstance(data, dict) and isinstance(data.get("summary"), dict) and isinstance(data.get("results"), list)
 
 
-def find_reports(paths: list[Path], include_partial: bool = False) -> list[Path]:
-    """Every report JSON under ``paths`` (files or folders), oldest name first."""
+def find_reports(paths: list[Path], include_partial: bool = True) -> list[Path]:
+    """Every report JSON under ``paths`` (files or folders), oldest name first.
+
+    ``partial-*.json`` (``--only``/``--category`` runs) are included: they cost money,
+    so they are imported, flagged so they stay out of pass-rate trends."""
     found: list[Path] = []
     for path in paths:
         candidates = [path] if path.is_file() else sorted(path.rglob("*.json"))
@@ -143,8 +160,53 @@ def run_key(report: dict) -> str:
     return "-".join(str(part).replace("/", "_") for part in parts)
 
 
+def grounding_as_run(report: dict) -> dict:
+    """A grounding report in the shape of a benchmark run, so its spend reaches the Cost tab.
+
+    It is stored with mode and suite ``grounding``, which the Evals tab and the
+    Leaderboard leave out; its samples are not stored as tasks (only the totals)."""
+    s = report["summary"]
+    samples = s.get("samples") or 0
+    summary = {
+        "tasks": samples,
+        "success": s.get("hit", 0),
+        "success_rate": s.get("accuracy", 0.0),
+        "mean_seconds": s.get("mean_seconds"),
+        "cost_usd": s.get("cost_usd", 0.0),
+        "judge_cost_usd": 0.0,
+        "cost_per_task_usd": s.get("cost_per_sample_usd"),
+        **{k: s.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")},
+        **({"gpu_cost_usd": s["gpu_cost_usd"]} if s.get("gpu_cost_usd") is not None else {}),
+        # model_id is the model itself (model is the registry profile): the same key as benchmark usage.
+        "by_model": {report.get("model_id") or report.get("model") or "unknown": {"requests": samples, "cost_usd": s.get("cost_usd", 0.0)}},
+        "unpriced_calls": s.get("unpriced_calls", 0),
+        "unpriced_models": s.get("unpriced_models", []),
+        "grounding": {k: v for k, v in s.items() if k in ("hit", "miss", "no_click", "error", "accuracy", "by_set")},
+    }
+    config = {
+        "backend": report.get("backend"),
+        "model": report.get("model"),
+        "harness_profile": "grounding",
+        **({"model_profile": report["model_profile"]} if report.get("model_profile") else {}),
+        **({"zoom": report["zoom"]} if "zoom" in report else {}),
+        **(report.get("config") or {}),
+    }
+    return {
+        "suite": "grounding",
+        "mode": "grounding",
+        "started_at": report["started_at"],
+        "judge_model": None,
+        "budget_stop": report.get("budget_stop"),
+        "config": config,
+        "summary": summary,
+        "results": [],
+    }
+
+
 def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
     """The report as the dashboard stores it: overrides applied, runner-only fields dropped."""
+    if is_grounding_report(report):
+        report = grounding_as_run(report)
     report = dict(report)
     report.setdefault("mode", "desktop" if report["suite"].startswith("desktop-") else "browser")
     config = dict(report.get("config") or {})
@@ -171,6 +233,18 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
         config["flagged"] = (
             f"stopped at the ${stop['limit_usd']:g} cost cap after {stop['tasks_run']} of {stop['tasks_planned']} tasks"
         )
+    if report.get("complete") is False and not config.get("flagged"):
+        planned = report.get("tasks_planned")
+        config["flagged"] = (
+            f"incomplete: the run ended after {len(report['results'])}" + (f" of {planned}" if planned else "")
+            + " tasks (crashed, timed out or cancelled)"
+        )
+    if report.get("partial") and not config.get("flagged"):
+        config["flagged"] = "partial run (--only / --category)"
+    unpriced = (report.get("summary") or {}).get("unpriced_calls")
+    if unpriced and not config.get("flagged"):
+        models = ", ".join((report.get("summary") or {}).get("unpriced_models") or []) or "unknown"
+        config["flagged"] = f"{unpriced} model calls had no price ({models}): their cost counts as $0"
     report["config"] = config
     report["results"] = [
         {k: v for k, v in result.items() if k not in DROPPED_RESULT_FIELDS} for result in report["results"]
@@ -205,10 +279,12 @@ def to_rows(report: dict) -> tuple[dict, list[dict]]:
     tasks = []
     seen = set()
     for position, result in enumerate(report["results"]):
-        if result["task"] in seen:  # a task listed twice keeps its first result
+        attempt = result.get("attempt") or 1
+        if (result["task"], attempt) in seen:  # a task listed twice in one attempt keeps its first result
             continue
-        seen.add(result["task"])
+        seen.add((result["task"], attempt))
         row = {column: result.get(column) for column in TASK_COLUMNS}
+        row["attempt"] = attempt
         row.update(run_key=run["key"], position=position, result=result)
         tasks.append(row)
     return run, tasks
@@ -296,7 +372,9 @@ def attach_traces(report: dict, screens: Path, uploader: Uploader, work_dir: Pat
     uploads: list[tuple[Path, str]] = []
     slots: list[tuple[dict, str, int | None]] = []  # (result, field, step) for each upload, in order
     for result in report["results"]:
-        task = str(result["task"])
+        # save_final_screens names a repeated task's later attempts <task>-try<n>.
+        attempt = int(result.get("attempt") or 1)
+        task = str(result["task"]) if attempt == 1 else f"{result['task']}-try{attempt}"
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", task)
         final, steps, run_dir = trace_files(screens, task)
         if final:
@@ -417,7 +495,7 @@ def import_reports(
     paths: list[Path],
     conn,
     overrides: dict[str, str | None],
-    include_partial: bool = False,
+    include_partial: bool = True,
     *,
     uploader: Uploader | None = None,
     notify: Callable[[str], None] | None = None,
@@ -427,7 +505,10 @@ def import_reports(
     keys = []
     with tempfile.TemporaryDirectory() as work_dir:
         for path in find_reports(paths, include_partial):
-            report = prepare(json.loads(path.read_text(encoding="utf-8")), overrides)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if path.name.startswith("partial-") and isinstance(data, dict):
+                data.setdefault("partial", True)  # reports from before live_bench recorded it
+            report = prepare(data, overrides)
             screens = path.with_suffix("")
             if uploader and screens.is_dir():
                 try:
@@ -444,6 +525,33 @@ def import_reports(
     return keys
 
 
+# ---------- model registry for the Leaderboard ----------
+
+MODELS_JSON = Path(__file__).resolve().parents[1] / "dashboard" / "models.json"
+
+
+def registry_models() -> list[dict]:
+    """Every registry profile (``evals/models.yaml``) as the Leaderboard lists it, so a
+    model shows up before its first run. ``dashboard/models.json`` holds this list
+    (Vercel serves only ``dashboard/``); ``python -m evals.dashboard models`` rewrites it."""
+    from operon.agent.backends.model_adapter.registry import load_registry
+
+    return [
+        {
+            "profile": profile.name,
+            "model": profile.model,
+            "adapter": profile.adapter,
+            "environments": list(profile.environments),
+            "self_hosted": profile.pricing.gpu_hour_usd is not None,
+        }
+        for profile in load_registry().values()
+    ]
+
+
+def models_json() -> str:
+    return json.dumps({"source": "evals/models.yaml", "models": registry_models()}, indent=2) + "\n"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -456,14 +564,19 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--run-url", help="config.github_run_url")
     add.add_argument("--git-sha", help="config.git_sha")
     add.add_argument("--flag", help="why this run is left out of trends")
-    add.add_argument("--include-partial", action="store_true", help="also import partial-*.json (--only/--category runs)")
+    add.add_argument("--skip-partial", action="store_true", help="leave out partial-*.json (--only/--category runs; imported and flagged by default)")
     add.add_argument("--blob", action="store_true", help="upload screenshots and traces to Vercel Blob ($BLOB_READ_WRITE_TOKEN)")
     add.add_argument("--alert", action="store_true", help="post regressions to Slack ($SLACK_WEBHOOK_URL)")
+    commands.add_parser("models", help="rewrite dashboard/models.json from evals/models.yaml")
     return parser
 
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "models":
+        MODELS_JSON.write_text(models_json(), encoding="utf-8")
+        print(f"wrote {MODELS_JSON}")
+        return 0
     if not args.database_url:
         print("Set DATABASE_URL (or pass --database-url) to the dashboard's Postgres database.", file=sys.stderr)
         return 2
@@ -489,7 +602,7 @@ def main(argv: list[str]) -> int:
         else:
             print("::warning::SLACK_WEBHOOK_URL is not set; no alerts.", file=sys.stderr)
     with connect(args.database_url) as conn:
-        keys = import_reports(args.paths, conn, overrides, args.include_partial, uploader=uploader, notify=notify)
+        keys = import_reports(args.paths, conn, overrides, not args.skip_partial, uploader=uploader, notify=notify)
     for key in keys:
         print(f"imported {key}")
     if not keys:

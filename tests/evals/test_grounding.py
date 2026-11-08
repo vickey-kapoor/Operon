@@ -159,3 +159,23 @@ async def test_run_stops_at_the_cost_cap(tmp_path) -> None:
 
     assert len(results) == 2
     assert stopped == {"limit_usd": 2.0, "spent_usd": 2.0, "tasks_planned": 5, "tasks_run": 2}
+
+
+def test_samples_whose_model_has_no_price_are_counted() -> None:
+    from types import SimpleNamespace
+
+    from evals.grounding import SampleResult, _unpriced_model, summarize
+
+    assert _unpriced_model(SimpleNamespace(model="new-model", input_tokens=900, output_tokens=5, estimated_cost_usd=None)) == "new-model"
+    assert _unpriced_model(SimpleNamespace(model="priced", input_tokens=900, output_tokens=5, estimated_cost_usd=0.01)) is None
+    assert _unpriced_model(SimpleNamespace(model="idle", input_tokens=0, output_tokens=0, estimated_cost_usd=None)) is None
+    assert _unpriced_model(None) is None
+
+    def sample(unpriced):
+        return SampleResult(id="s", set="v2-web", data_type="text", source="x", instruction="i", outcome="hit",
+                            x=1, y=1, bbox=[0, 0, 2, 2], distance_px=0.0, image_width=10, image_height=10,
+                            seconds=1.0, cost_usd=0.0, input_tokens=9, output_tokens=1, cache_read_tokens=0,
+                            cache_write_tokens=0, detail="", unpriced_model=unpriced)
+
+    summary = summarize([sample("new-model"), sample(None), sample("new-model")])
+    assert summary["unpriced_calls"] == 2 and summary["unpriced_models"] == ["new-model"]

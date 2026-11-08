@@ -10,11 +10,13 @@ import pytest
 
 from evals.dashboard import (
     BLOB_SCRIPT,
+    MODELS_JSON,
     attach_traces,
     check_alerts,
     find_reports,
     import_reports,
     main,
+    models_json,
     prepare,
     regressions,
     run_key,
@@ -77,8 +79,88 @@ def _artifacts(tmp_path):
     return tmp_path / "artifacts"
 
 
-def test_find_reports_skips_partial_runs_and_other_json(tmp_path) -> None:
-    assert [p.name for p in find_reports([_artifacts(tmp_path)])] == ["full-20261024T012945Z.json"]
+def test_find_reports_includes_partial_runs_and_skips_other_json(tmp_path) -> None:
+    artifacts = _artifacts(tmp_path)
+    assert [p.name for p in find_reports([artifacts])] == ["full-20261024T012945Z.json", "partial-20261024T020000Z.json"]
+    assert [p.name for p in find_reports([artifacts], include_partial=False)] == ["full-20261024T012945Z.json"]
+
+
+def test_partial_incomplete_and_unpriced_runs_are_flagged_but_kept() -> None:
+    assert prepare(_report(partial=True), {})["config"]["flagged"] == "partial run (--only / --category)"
+    incomplete = prepare(_report(complete=False, tasks_planned=44), {})
+    assert incomplete["config"]["flagged"] == "incomplete: the run ended after 2 of 44 tasks (crashed, timed out or cancelled)"
+    assert "flagged" not in prepare(_report(complete=True), {})["config"]
+    summary = {"tasks": 2, "success": 1, "unpriced_calls": 3, "unpriced_models": ["claude-new-model"]}
+    assert prepare(_report(summary=summary), {})["config"]["flagged"] == (
+        "3 model calls had no price (claude-new-model): their cost counts as $0"
+    )
+
+
+def _grounding_report() -> dict:
+    return {
+        "kind": "grounding", "suite": "grounding", "started_at": "20261027T050131Z",
+        "backend": "claude_computer_use", "model": "claude-opus-5-5", "effort": "low", "budget_stop": None,
+        "summary": {"samples": 300, "hit": 267, "miss": 24, "no_click": 9, "error": 0, "accuracy": 0.89,
+                    "mean_seconds": 2.91, "cost_usd": 3.2, "cost_per_sample_usd": 0.010667,
+                    "input_tokens": 1200, "output_tokens": 24731, "cache_read_tokens": 1144525, "cache_write_tokens": 494336},
+        "samples": [{"id": "v2-desktop-1", "outcome": "hit", "cost_usd": 0.01}],
+    }
+
+
+def test_grounding_reports_are_imported_as_cost_only_runs(tmp_path) -> None:
+    (tmp_path / "grounding-20261027T050131Z.json").write_text(json.dumps(_grounding_report()))
+    assert [p.name for p in find_reports([tmp_path])] == ["grounding-20261027T050131Z.json"]
+    report = prepare(_grounding_report(), {})
+    run, tasks = to_rows(report)
+    assert (run["mode"], run["suite"], run["backend"], run["model"]) == ("grounding", "grounding", "claude_computer_use", "claude-opus-5-5")
+    assert run["key"] == "grounding-grounding-claude_computer_use-grounding-20261027T050131Z"
+    assert run["summary"]["cost_usd"] == 3.2 and run["summary"]["judge_cost_usd"] == 0.0
+    assert (run["summary"]["tasks"], run["summary"]["success"]) == (300, 267)
+    assert tasks == []
+
+
+def test_grounding_spend_is_keyed_by_the_model_and_carries_unpriced_calls() -> None:
+    raw = {**_grounding_report(), "backend": "model", "model": "gemini-computer-use", "model_id": "gemini-3.5-flash"}
+    raw["summary"] = {**raw["summary"], "unpriced_calls": 4, "unpriced_models": ["gemini-3.5-flash"]}
+    report = prepare(raw, {})
+    assert list(report["summary"]["by_model"]) == ["gemini-3.5-flash"]
+    assert report["config"]["flagged"] == "4 model calls had no price (gemini-3.5-flash): their cost counts as $0"
+
+
+def test_attach_traces_uploads_a_repeated_tasks_own_screen(tmp_path) -> None:
+    screens = tmp_path / "screens"
+    screens.mkdir()
+    (screens / "click_link.png").write_bytes(b"first")
+    (screens / "click_link-try2.png").write_bytes(b"second")
+    report = prepare(_report(), {})
+    first = {**report["results"][0], "attempt": 1}
+    report["results"] = [first, {**first, "attempt": 2}]
+    uploaded = []
+
+    def uploader(files):
+        uploaded.extend(files)
+        return [f"https://blob.example/{pathname}" for _, pathname in files]
+
+    assert attach_traces(report, screens, uploader, tmp_path) == 2
+    assert [path.name for path, _ in uploaded] == ["click_link.png", "click_link-try2.png"]
+    assert report["results"][1]["screenshot_url"].endswith("click_link-try2/final.png")
+
+
+def test_every_attempt_of_a_repeated_run_gets_its_own_row() -> None:
+    report = _report()
+    report["results"] = [
+        {"task": "click_link", "outcome": "success", "attempt": 1, "cost_usd": 0.1},
+        {"task": "click_link", "outcome": "failure", "attempt": 2, "cost_usd": 0.3},
+    ]
+    _, tasks = to_rows(prepare(report, {}))
+    assert [(t["task"], t["attempt"], t["outcome"], t["cost_usd"]) for t in tasks] == [
+        ("click_link", 1, "success", 0.1), ("click_link", 2, "failure", 0.3),
+    ]
+
+
+def test_dashboard_models_json_matches_the_registry() -> None:
+    # Regenerate with: python -m evals.dashboard models
+    assert MODELS_JSON.read_text(encoding="utf-8") == models_json()
 
 
 def test_to_rows_splits_a_report_into_a_run_and_its_tasks() -> None:
@@ -91,7 +173,9 @@ def test_to_rows_splits_a_report_into_a_run_and_its_tasks() -> None:
     assert run["started_at"] == datetime(2026, 10, 24, 1, 29, 45, tzinfo=timezone.utc)
     assert (run["backend"], run["flagged"], run["git_sha"]) == ("claude_computer_use", "broken runner", "abc123")
     assert run["summary"]["success"] == 1
-    assert [(t["task"], t["outcome"], t["position"]) for t in tasks] == [("click_link", "success", 0), ("go_back", "failure", 1)]
+    assert [(t["task"], t["outcome"], t["position"], t["attempt"]) for t in tasks] == [
+        ("click_link", "success", 0, 1), ("go_back", "failure", 1, 1),
+    ]
     assert (tasks[0]["cost_usd"], tasks[0]["input_tokens"], tasks[1]["cost_usd"]) == (0.04, 900, None)
     assert "final_screenshot" not in tasks[0]["result"]
 
@@ -111,10 +195,11 @@ def test_import_writes_runs_and_replaces_them_on_reimport(tmp_path) -> None:
         conn.execute("DROP TABLE IF EXISTS bench_task_results, bench_runs")
         conn.commit()
         artifacts = _artifacts(tmp_path)
-        assert import_reports([artifacts], conn, {"flagged": "broken runner"}) == [
+        # Only the full report: partial-run import is covered by the find_reports tests.
+        assert import_reports([artifacts], conn, {"flagged": "broken runner"}, include_partial=False) == [
             "browser-full-claude_computer_use-full-20261024T012945Z"
         ]
-        assert import_reports([artifacts], conn, {}) == [
+        assert import_reports([artifacts], conn, {}, include_partial=False) == [
             "browser-full-claude_computer_use-full-20261024T012945Z"
         ]
         runs = conn.execute("SELECT key, flagged, config->>'git_sha', summary->'success' FROM bench_runs").fetchall()

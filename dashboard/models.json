@@ -1,0 +1,85 @@
+{
+  "source": "evals/models.yaml",
+  "models": [
+    {
+      "profile": "claude-opus-5-5",
+      "model": "claude-opus-5-5",
+      "adapter": "claude_native",
+      "environments": [
+        "browser",
+        "desktop"
+      ],
+      "self_hosted": false
+    },
+    {
+      "profile": "claude-sonnet-5-5",
+      "model": "claude-sonnet-5-5",
+      "adapter": "claude_native",
+      "environments": [
+        "browser",
+        "desktop"
+      ],
+      "self_hosted": false
+    },
+    {
+      "profile": "claude-haiku-5-5",
+      "model": "claude-haiku-5-5",
+      "adapter": "claude_native",
+      "environments": [
+        "browser",
+        "desktop"
+      ],
+      "self_hosted": false
+    },
+    {
+      "profile": "gemini-computer-use",
+      "model": "gemini-3.5-flash",
+      "adapter": "gemini_native",
+      "environments": [
+        "browser",
+        "desktop"
+      ],
+      "self_hosted": false
+    },
+    {
+      "profile": "qwen3-vl-32b",
+      "model": "Qwen/Qwen3-VL-32B-Instruct",
+      "adapter": "openai_compat",
+      "environments": [
+        "browser",
+        "desktop"
+      ],
+      "self_hosted": true
+    },
+    {
+      "profile": "ui-tars-1.5-7b",
+      "model": "ByteDance-Seed/UI-TARS-1.5-7B",
+      "adapter": "openai_compat",
+      "environments": [
+        "browser",
+        "desktop"
+      ],
+      "self_hosted": true
+    },
+    {
+      "profile": "opencua-32b",
+      "model": "xlangai/OpenCUA-32B",
+      "adapter": "openai_compat",
+      "environments": [
+        "browser",
+        "desktop"
+      ],
+      "self_hosted": true
+    },
+    {
+      "profile": "openai-computer-use",
+      "model": "gpt-6.1-sol",
+      "adapter": "openai_native",
+      "environments": [
+        "browser",
+        "desktop"
+      ],
+      "self_hosted": false
+    }
+  ]
+}

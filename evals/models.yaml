@@ -1,0 +1,57 @@
+# Model registry for the cross-model benchmark (KAN-20; design in Confluence, OPERON space).
+#
+# Each key is a profile name. Select one with
+#   OPERON_BROWSER_BACKEND=model  (or OPERON_DESKTOP_BACKEND=model)
+#   OPERON_MODEL_PROFILE=<name>
+# Experimental and off by default: nothing here is used unless the backend is "model".
+#
+# Fields (see src/operon/agent/backends/model_adapter/registry.py):
+#   adapter         claude_native | gemini_native | openai_native | openai_compat
+#   parser          openai_compat only: neutral_tools | ui_tars | opencua
+#   model           model id sent to the provider or server
+#   base_url_env    openai_compat: env var holding the server's base URL (default OPENWEIGHT_BASE_URL)
+#   api_key_env     openai_compat: env var holding its key (default OPENWEIGHT_API_KEY)
+#   coords          pixels (of the sent image) | relative_1000 | normalized
+#   image           {resize: long_edge, max_long_edge: 1280} or {resize: smart, factor: 28, max_pixels: ...}
+#   history_screens screenshots kept in the request (current one included)
+#   pricing         {input_per_mtok, output_per_mtok} or {gpu_hour_usd} for self-hosted
+#   environments    [browser, desktop] by default
+#
+# Model ids for the open-weight models are confirmed against their model cards when
+# they are first served; a smoke run checks parsing and coordinates before any sweep.
+
+# ── Closed models, native computer-use APIs ─────────────────────────────────────
+claude-opus-5-5:
+  adapter: claude_native
+  model: claude-opus-5-5
+  effort: low
+  pricing: {input_per_mtok: 4.0, output_per_mtok: 20.0}
+
+claude-sonnet-5-5:
+  adapter: claude_native
+  model: claude-sonnet-5-5
+  effort: low
+  pricing: {input_per_mtok: 2.0, output_per_mtok: 10.0}
+
+claude-haiku-5-5:
+  adapter: claude_native
+  model: claude-haiku-5-5
+  pricing: {input_per_mtok: 0.10, output_per_mtok: 0.50}
+
+gemini-computer-use:
+  adapter: gemini_native
+  model: gemini-3.5-flash
+  effort: low
+  environments: [browser]
+  pricing: {input_per_mtok: 1.50, output_per_mtok: 9.00}
+
+# ── Open-weight models, served by vLLM (OpenAI-compatible) ──────────────────────
+qwen3-vl-32b:
+  adapter: openai_compat
+  parser: neutral_tools
+  model: Qwen/Qwen3-VL-32B-Instruct
+  coords: relative_1000
+  image: {resize: smart, factor: 32, max_pixels: 1310720}
+  history_screens: 3
+  pricing: {gpu_hour_usd: 2.50}
+  notes: Serve with vLLM tool calling on (--enable-auto-tool-choice --tool-call-parser hermes).

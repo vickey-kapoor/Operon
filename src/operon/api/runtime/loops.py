@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import importlib
 
+from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.coordinator import PolicyCoordinator
 from operon.agent.policy.recovery import RuleBasedRecoveryManager
 from operon.agent.policy.thin import (
+    OWN_DONE,
     THIN,
     FinalCheckVerifier,
+    OwnDoneVerifier,
     ThinPolicy,
     ThinRecovery,
+    completion_check,
     final_check_model,
     harness_profile,
 )
@@ -59,13 +63,17 @@ def _loop_layers(*, config, services, memory_store) -> dict:
     profile = harness_profile(config.backend)
     if profile == THIN:
         delegate = services.policy_delegate
-        return {
-            "policy_service": ThinPolicy(delegate),
-            "verifier_service": FinalCheckVerifier(
+        if completion_check(config.backend) == OWN_DONE:
+            verifier = OwnDoneVerifier(gave_up_prefix=GAVE_UP_PREFIX)
+        else:
+            verifier = FinalCheckVerifier(
                 AnthropicHttpClient(model=final_check_model(config.claude_model), timeout_seconds=120.0),
                 on_rejected=lambda run_id, hint: delegate.add_advisory_hints([hint], source="final_check", run_id=run_id),
                 effort=config.claude_effort,
-            ),
+            )
+        return {
+            "policy_service": ThinPolicy(delegate),
+            "verifier_service": verifier,
             "recovery_manager": ThinRecovery(),
             "harness_profile": profile,
         }

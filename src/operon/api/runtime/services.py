@@ -16,6 +16,13 @@ from operon.agent.backends.desktop_claude_computer_use import (
     DesktopClaudeComputerUseBackend,
 )
 from operon.agent.backends.fallback import FallbackBackend
+from operon.agent.backends.model_adapter.backend import ModelAdapterBackend
+from operon.agent.backends.model_adapter.registry import (
+    ModelProfile,
+    ModelRegistryError,
+    resolve_profile,
+)
+from operon.agent.backends.model_adapter.transports import OpenAICompatClient
 from operon.agent.perception import PerceptionService
 from operon.agent.policy import PolicyService
 from operon.agent.policy.thin import THIN, harness_profile
@@ -59,8 +66,48 @@ def build_verifier_client(*, config):
     )
 
 
+def build_model_backend(environment: str, *, executor=None, profile: ModelProfile | None = None) -> AgentBackend:
+    """The backend for ``OPERON_{BROWSER,DESKTOP}_BACKEND=model``: the registry profile
+    named by ``OPERON_MODEL_PROFILE``. Native profiles reuse Operon's own backends with
+    the profile's model; the rest go through the model adapter."""
+    profile = profile or resolve_profile()
+    if environment not in profile.environments:
+        raise ModelRegistryError(f"profile {profile.name} does not support {environment}")
+    if profile.adapter == "claude_native":
+        backend_cls = BrowserClaudeComputerUseBackend if environment == "browser" else DesktopClaudeComputerUseBackend
+        return backend_cls(
+            client=AnthropicComputerUseHttpClient(
+                model=profile.model,
+                effort=profile.effort,
+                **({"custom_tools": (LAUNCH_APP_TOOL,)} if environment == "desktop" else {}),
+            ),
+            prompt_path=_PROMPTS_DIR / f"{environment}_claude_computer_use_prompt.txt",
+            **({"browser_runtime": executor} if environment == "browser" else {}),
+        )
+    if profile.adapter == "gemini_native":
+        if environment != "browser":
+            raise ModelRegistryError(f"profile {profile.name}: Gemini computer use is browser only")
+        return BrowserComputerUseBackend(
+            client=GeminiComputerUseHttpClient(model=profile.model, thinking_level=profile.effort),
+            prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
+            browser_runtime=executor,
+        )
+    if profile.adapter == "openai_compat":
+        return ModelAdapterBackend(
+            profile=profile,
+            client=OpenAICompatClient(profile),
+            environment=environment,
+            task_prompt_path=_PROMPTS_DIR / "model_adapter_task_prompt.txt",
+            browser_runtime=executor,
+        )
+    raise ModelRegistryError(f"profile {profile.name}: adapter {profile.adapter} is not available yet")
+
+
 def build_browser_services(executor) -> RuntimeServices:
     config = browser_mode_config()
+    if config.backend == "model":
+        backend = build_model_backend("browser", executor=executor)
+        return RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend == "json":
         backend = BrowserJsonBackend(
             gemini_client=GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0),
@@ -106,6 +153,9 @@ def build_browser_services(executor) -> RuntimeServices:
 
 def build_desktop_services() -> RuntimeServices:
     config = desktop_mode_config()
+    if config.backend == "model":
+        backend = build_model_backend("desktop")
+        return RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend == "claude_computer_use":
         backend = DesktopClaudeComputerUseBackend(
             client=AnthropicComputerUseHttpClient(
@@ -119,7 +169,7 @@ def build_desktop_services() -> RuntimeServices:
     if config.backend != "json":
         raise ValueError(
             f"Unsupported desktop backend {config.backend!r}. "
-            "Use 'json' or 'claude_computer_use'."
+            "Use 'json', 'claude_computer_use' or 'model'."
         )
     backend = build_json_backend(
         prompt_name="desktop_combined_prompt.txt",

@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-qwen3vl-1",
+  "object": "chat.completion",
+  "model": "Qwen/Qwen3-VL-32B-Instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The Products link is in the top navigation bar.",
+        "tool_calls": [
+          {
+            "id": "chatcmpl-tool-8f2c1a",
+            "type": "function",
+            "function": {"name": "click", "arguments": "{\"x\": 500, \"y\": 100}"}
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {"prompt_tokens": 1834, "completion_tokens": 37, "total_tokens": 1871}
+}

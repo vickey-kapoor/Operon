@@ -113,6 +113,9 @@ class ModelAdapterBackend(AgentBackend):
             run.invalid_replies += 1
             logger.info("run %s: invalid reply from %s: %s", state.run_id[:8], self.profile.name, parsed.invalid)
         run.turns.append(Turn(image=image, assistant=message, parsed=parsed, note=note))
+        # Only the last history_screens images are ever sent again; free the older ones.
+        for old_turn in run.turns[: max(0, len(run.turns) - self.profile.history_screens)]:
+            old_turn.image = None
         self._cached_decision = decision
 
         perception = ScreenPerception(

@@ -70,17 +70,21 @@ def build_verifier_client(*, config):
     )
 
 
-def build_model_backend(environment: str, *, executor=None, profile: ModelProfile | None = None) -> AgentBackend:
+def build_model_backend(
+    environment: str, *, executor=None, profile: ModelProfile | None = None, client=None
+) -> AgentBackend:
     """The backend for ``OPERON_{BROWSER,DESKTOP}_BACKEND=model``: the registry profile
     named by ``OPERON_MODEL_PROFILE``. Native profiles reuse Operon's own backends with
-    the profile's model; the rest go through the model adapter."""
+    the profile's model; the rest go through the model adapter. ``client`` reuses a
+    transport client built for an earlier backend of the same profile and environment."""
     profile = profile or resolve_profile()
     if environment not in profile.environments:
         raise ModelRegistryError(f"profile {profile.name} does not support {environment}")
     if profile.adapter == "claude_native":
         backend_cls = BrowserClaudeComputerUseBackend if environment == "browser" else DesktopClaudeComputerUseBackend
         return backend_cls(
-            client=AnthropicComputerUseHttpClient(
+            client=client
+            or AnthropicComputerUseHttpClient(
                 model=profile.model,
                 effort=profile.effort,
                 **({"custom_tools": (LAUNCH_APP_TOOL,)} if environment == "desktop" else {}),
@@ -92,22 +96,25 @@ def build_model_backend(environment: str, *, executor=None, profile: ModelProfil
         if environment != "browser":
             raise ModelRegistryError(f"profile {profile.name}: Gemini computer use is browser only")
         return BrowserComputerUseBackend(
-            client=GeminiComputerUseHttpClient(model=profile.model, thinking_level=profile.effort),
+            client=client or GeminiComputerUseHttpClient(model=profile.model, thinking_level=profile.effort),
             prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
             browser_runtime=executor,
         )
     if profile.adapter == "openai_compat":
         return ModelAdapterBackend(
             profile=profile,
-            client=OpenAICompatClient(profile),
+            client=client or OpenAICompatClient(profile),
             environment=environment,
             task_prompt_path=_PROMPTS_DIR / "model_adapter_task_prompt.txt",
             browser_runtime=executor,
         )
     if profile.adapter == "openai_native":
+        if profile.pricing.input_per_mtok is None or profile.pricing.output_per_mtok is None:
+            # Without prices every step costs $0 and no run cost cap can stop a paid run.
+            raise ModelRegistryError(f"profile {profile.name} needs pricing (input_per_mtok and output_per_mtok)")
         return OpenAIComputerUseBackend(
             profile=profile,
-            client=OpenAIResponsesClient(profile),
+            client=client or OpenAIResponsesClient(profile),
             environment=environment,
             task_prompt_path=_PROMPTS_DIR / "model_adapter_task_prompt.txt",
             browser_runtime=executor,

@@ -222,9 +222,8 @@ class OpenAIComputerUseBackend(AgentBackend):
         )
         input_items = await self._input(conv, state, image)
         tools = [{"type": "computer"}, *_custom_tools(self.environment)]
-        instructions = (
-            None if conv.previous_response_id else f"You operate a computer to complete a task. {_DONE_RULE}"
-        )
+        # Instructions do not carry over through previous_response_id, so send them every turn.
+        instructions = f"You operate a computer to complete a task. {_DONE_RULE}"
         bg_writer.enqueue(prompt_path, json.dumps({"input": _without_images(input_items), "tools": tools}, indent=2))
         try:
             response = await self.client.create(

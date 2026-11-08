@@ -51,7 +51,7 @@ class ParsedReply:
 class Turn:
     """One model turn as the history replays it."""
 
-    image: SentImage
+    image: SentImage | None  # dropped once the turn is older than the history window
     assistant: dict[str, Any]  # the assistant message exactly as the model sent it
     parsed: ParsedReply
     # What happened when the turn's actions ran, filled in on the next step.

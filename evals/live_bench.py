@@ -245,6 +245,18 @@ def run_replies(run_id: str) -> tuple[int, int]:
     return invalid, replies
 
 
+def harness_label(profile) -> str:
+    """The report's harness: ``thin``, ``full``, or ``thin-own`` for a Claude thin run that
+    takes the model's own "done" (OPERON_COMPLETION_CHECK=own), so it is never compared
+    with runs judged by the completion check. Registry models are always thin with own done."""
+    if profile is not None:
+        return "thin"
+    harness = os.getenv("OPERON_HARNESS_PROFILE", "full")
+    if harness == "thin" and (os.getenv("OPERON_COMPLETION_CHECK") or "").strip().lower() == "own":
+        return "thin-own"
+    return harness
+
+
 def resolve_model_profile(name: str | None, mode: str):
     """The registry profile ``--model`` names, checked against this shell's server
     settings when they are visible here; None without ``--model``."""
@@ -648,7 +660,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         "judge_model": args.judge_model,
         "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
         "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
-        "harness_profile": "thin" if profile is not None else os.getenv("OPERON_HARNESS_PROFILE", "full"),
+        "harness_profile": harness_label(profile),
         "model_profile": profile.name if profile is not None else None,
         "model_adapter": profile.adapter if profile is not None else None,
         "model_id": profile.model if profile is not None else None,

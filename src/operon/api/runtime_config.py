@@ -114,6 +114,11 @@ def _model_profile_problems(environment: str) -> list[str]:
     }.get(profile.adapter)
     if required_key and not os.getenv(required_key):
         problems.append(f"profile {profile.name} needs {required_key}")
+    if profile.adapter == "openai_native" and (
+        profile.pricing.input_per_mtok is None or profile.pricing.output_per_mtok is None
+    ):
+        # Without prices every step costs $0 and the run cost cap never stops a paid run.
+        problems.append(f"profile {profile.name} needs pricing (input_per_mtok and output_per_mtok)")
     if profile.adapter == "openai_compat":
         try:
             profile.resolved_base_url()

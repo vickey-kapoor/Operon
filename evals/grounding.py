@@ -348,7 +348,12 @@ class BackendFactory:
 
         profile = resolve_profile(self.model)
         kind = "browser" if sample.set == "v2-web" or "desktop" not in profile.environments else "desktop"
-        return build_model_backend(kind, profile=profile)
+        key = f"model:{kind}"
+        # One transport client per kind, as for the other backends; the backend itself is
+        # fresh per sample so no conversation state carries over.
+        backend = build_model_backend(kind, profile=profile, client=self._clients.get(key))
+        self._clients.setdefault(key, backend.client)
+        return backend
 
 
 def _image_size(data: bytes) -> tuple[int, int]:

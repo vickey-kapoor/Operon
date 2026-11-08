@@ -61,6 +61,12 @@ def test_click_with_right_button_is_a_right_click() -> None:
     assert to_payload([NeutralAction("click", {"x": 1, "y": 1, "button": "right"})], _mapper())["action_type"] == "right_click"
 
 
+def test_bare_newline_is_an_enter_key_press() -> None:
+    # UI-TARS type(content='\\n') and OpenCUA write('\\n') parse to empty text plus press_enter.
+    payload = to_payload([NeutralAction("type", {"text": "", "press_enter": True})], _mapper())
+    assert payload["action_type"] == "press_key" and "enter" in str(payload).lower()
+
+
 def test_screenshot_alone_is_a_short_wait() -> None:
     assert to_payload([NeutralAction("screenshot")], _mapper()) == {"action_type": "wait", "wait_ms": 250}
 

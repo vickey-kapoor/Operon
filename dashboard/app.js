@@ -93,11 +93,16 @@ function fmtTokens(v) {
   return String(v);
 }
 
+function harnessSuffix(name, harness) {
+  if (harness === "thin-own") return `${name} · thin, own done`;
+  return (harness || "full") === "thin" ? `${name} · thin` : name;
+}
+
 function configLabel(run) {
   const c = run.config || {};
   if (c.model_profile) return c.model_profile;  // a registry model: always thin, own "done"
   const name = BACKEND_NAMES[c.backend] || c.backend || "Unknown backend";
-  return (c.harness_profile || "full") === "thin" ? `${name} · thin` : name;
+  return harnessSuffix(name, c.harness_profile);
 }
 
 function seriesColor(label) {
@@ -1067,7 +1072,7 @@ function modelLabel(run) {
   const c = run.config || {};
   if (c.model_profile) return c.model_profile;
   const name = c.model || BACKEND_NAMES[c.backend] || c.backend || "unknown";
-  return (c.harness_profile || "full") === "thin" ? `${name} · thin` : name;
+  return harnessSuffix(name, c.harness_profile);
 }
 
 function runTotalCost(run) {
@@ -1092,7 +1097,8 @@ function leaderboardData() {
     const tasks = sum((r) => r.summary.tasks);
     const replies = sum((r) => r.summary.model_replies);
     return {
-      model, bySuite, profile: runs.some((r) => r.config && r.config.model_profile),
+      model, bySuite,
+      ownDone: runs.some((r) => r.config && (r.config.model_profile || r.config.harness_profile === "thin-own")),
       tasks,
       rate: tasks ? sum((r) => r.summary.success) / tasks : null,
       falsePass: sum((r) => r.summary.false_success),
@@ -1117,7 +1123,7 @@ function renderLeaderboardMatrix(data) {
   data.models.forEach((m, i) => {
     body.append(el("tr", {},
       el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model,
-        m.profile ? null : el("span", { class: "sub", title: "Judged by Operon's completion check, not the model's own done" }, " (check)"))),
+        m.ownDone ? null : el("span", { class: "sub", title: "Judged by Operon's completion check, not the model's own done" }, " (check)"))),
       data.suites.map((id) => {
         const run = m.bySuite.get(id);
         if (!run) return el("td", { class: "num" }, "–");

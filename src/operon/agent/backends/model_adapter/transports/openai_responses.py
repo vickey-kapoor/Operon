@@ -106,12 +106,17 @@ class OpenAIResponsesClient:
             output_cost = round(output_tokens * pricing.output_per_mtok / 1_000_000, 8)
         if input_cost is not None or output_cost is not None:
             total = round((input_cost or 0.0) + (output_cost or 0.0), 8)
+        # Operon counts thoughts_tokens on top of output_tokens; OpenAI counts reasoning
+        # inside output_tokens, so the visible part is reported as output.
+        visible_output = output_tokens
+        if output_tokens is not None and reasoning is not None:
+            visible_output = max(0, output_tokens - reasoning)
         return ModelUsage(
             provider="openai",
             model=self.profile.model,
             request_kind="image",
             input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            output_tokens=visible_output,
             total_tokens=count(usage.get("total_tokens")),
             cache_read_input_tokens=cached,
             thoughts_tokens=reasoning,

@@ -53,6 +53,10 @@ _FENCE = re.compile(r"```(?:python|py)?\s*\n?(.*?)```", re.DOTALL)
 
 
 def _xy(call: Call) -> dict[str, float] | None:
+    first = call.args[0] if call.args else None
+    if isinstance(first, (tuple, list)) and len(first) == 2:
+        # pyautogui also takes the point as one (x, y) tuple.
+        call = Call(call.name, [*first, *call.args[1:]], call.kwargs)
     x = call.kwargs.get("x", call.args[0] if len(call.args) > 0 and not isinstance(call.args[0], str) else None)
     y = call.kwargs.get("y", call.args[1] if len(call.args) > 1 and not isinstance(call.args[1], str) else None)
     if x is None or y is None:
@@ -96,7 +100,8 @@ class OpenCUAFormat(ActionFormat):
                     reply.terminal = action
                 elif action.name != "_noop":
                     reply.actions.append(action)
-        except CallSyntaxError as exc:
+        except (CallSyntaxError, TypeError, ValueError) as exc:
+            # Wrong literal types (e.g. scroll(clicks='down')) make the reply invalid, never crash the step.
             reply.invalid = str(exc)
             return reply
         if not calls:

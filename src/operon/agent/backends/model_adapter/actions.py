@@ -128,6 +128,10 @@ def to_payload(actions: list[NeutralAction], mapper: CoordinateMapper) -> dict[s
             payloads.append({"action_type": "drag", "x": x, "y": y, "x_end": x_end, "y_end": y_end})
         elif name == "type":
             text = args.get("text")
+            if text == "" and args.get("press_enter"):
+                # A bare "\n" (how UI-TARS and OpenCUA submit) is an Enter key press.
+                payloads.append(key_action("Enter"))
+                continue
             if not isinstance(text, str) or not text:
                 raise InvalidAction("type needs non-empty text")
             typed: dict[str, Any] = {

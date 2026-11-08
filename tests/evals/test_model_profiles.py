@@ -104,3 +104,27 @@ def test_grounding_builds_registry_backends_per_sample(monkeypatch) -> None:
     assert isinstance(qwen, ModelAdapterBackend) and qwen.environment == "desktop"
     gemini = grounding.BackendFactory("model", "gemini-computer-use", "low")(sample)
     assert isinstance(gemini, BrowserComputerUseBackend)  # browser only, so desktop samples go there too
+
+
+def test_grounding_reuses_one_client_per_kind(monkeypatch) -> None:
+    monkeypatch.setenv("OPENWEIGHT_BASE_URL", "http://gpu:8000/v1")
+    factory = grounding.BackendFactory("model", "qwen3-vl-32b", None)
+
+    def sample(n: int) -> grounding.Sample:
+        return grounding.Sample(
+            id=f"pro-{n}", set="pro", instruction="close", image="x.png", bbox=(0, 0, 1, 1), data_type="icon", source="vscode",
+        )
+
+    first, second = factory(sample(1)), factory(sample(2))
+    assert first is not second  # fresh conversation state per sample
+    assert first.client is second.client  # one connection pool
+
+
+@pytest.mark.parametrize(
+    ("harness", "check", "expected"),
+    [("thin", "", "thin"), ("thin", "own", "thin-own"), ("full", "own", "full")],
+)
+def test_report_harness_names_the_own_done_mode(monkeypatch, harness, check, expected) -> None:
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
+    monkeypatch.setenv("OPERON_COMPLETION_CHECK", check)
+    assert live_bench.harness_label(None) == expected

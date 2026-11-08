@@ -204,3 +204,14 @@ async def test_ui_tars_history_is_text_with_the_outcome_carried_forward(frame) -
     assert "## User Instruction\nTask: Open the Products page" in messages[0]["content"]
     assert messages[2]["content"].startswith("Thought: Click search.")
     assert messages[3]["content"][-1]["text"] == "Result of your last action: Error: element not found"
+
+
+async def test_screenshots_outside_the_history_window_are_freed(frame) -> None:
+    client = ScriptedChat([chat_reply(tool_calls=[tool_call("click", f"c{i}", x=10, y=10)]) for i in range(4)])
+    backend = _backend(client)
+    history = [(ActionType.CLICK, True)]
+    for i in range(4):
+        await _step(backend, frame, state(*history * i), f"s{i}")
+    turns = backend._runs["run-1"].turns
+    # history_screens=2: only the last two turns keep their image.
+    assert [turn.image is not None for turn in turns] == [False, False, True, True]

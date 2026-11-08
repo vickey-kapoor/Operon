@@ -183,3 +183,21 @@ def test_opencua_bad_replies_are_invalid(text, reason) -> None:
 def test_calls_are_parsed_never_run() -> None:
     with pytest.raises(CallSyntaxError):
         parse_calls("pyautogui.click(x=__import__('os').getpid(), y=1)")
+
+
+def test_ui_tars_action_word_inside_the_thought_is_not_the_action() -> None:
+    reply = _parse(
+        "ui_tars", "Thought: The best next action: open the menu.\nAction: click(start_box='(10,20)')"
+    )
+    assert reply.invalid is None and reply.actions[0].name == "click"
+
+
+def test_opencua_point_as_one_tuple_is_accepted() -> None:
+    reply = _parse("opencua", "## Code\n```python\npyautogui.click((640, 360))\n```")
+    assert reply.invalid is None and reply.actions[0].args == {"x": 640.0, "y": 360.0}
+
+
+@pytest.mark.parametrize("code", ["pyautogui.scroll(clicks='down')", "pyautogui.click(x=1, y=2, clicks='two')", "pyautogui.click(x=[1], y=2)"])
+def test_opencua_wrong_literal_types_are_invalid_not_crashes(code) -> None:
+    reply = _parse("opencua", f"## Code\n```python\n{code}\n```")
+    assert reply.invalid

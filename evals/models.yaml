@@ -81,7 +81,8 @@ opencua-32b:
 
 # ── OpenAI computer use (Responses API, {"type": "computer"} tool) ───────────────
 # Model id from OpenAI's computer-use guide examples (checked 2026-11-08). Fill in
-# pricing from OpenAI's pricing page before the first paid run.
+# pricing from OpenAI's pricing page before the first paid run: without it the profile
+# is refused, since every step would count as $0 and the run cost cap could not stop it.
 openai-computer-use:
   adapter: openai_native
   model: gpt-6.1-sol

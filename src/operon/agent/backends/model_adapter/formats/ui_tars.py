@@ -57,7 +57,8 @@ _EXTRA = {
 }
 
 _THOUGHT = re.compile(r"(?:Thought|Reflection)\s*:\s*(.*?)(?=\n\s*Action\s*:|\Z)", re.DOTALL | re.IGNORECASE)
-_ACTION = re.compile(r"Action\s*:\s*(.*)\Z", re.DOTALL | re.IGNORECASE)
+# The last "Action:" that starts a line, so "action:" inside the thought is not taken.
+_ACTION = re.compile(r".*^[ \t]*Action\s*:\s*(.*)\Z", re.DOTALL | re.IGNORECASE | re.MULTILINE)
 
 
 def _point(kwargs: dict[str, Any], *names: str) -> dict[str, float]:
@@ -142,7 +143,7 @@ class UITarsFormat(ActionFormat):
         for call in calls:
             try:
                 action = to_neutral(call.name, call.kwargs, call.args)
-            except CallSyntaxError as exc:
+            except (CallSyntaxError, TypeError, ValueError) as exc:
                 reply.invalid = str(exc)
                 return reply
             if action.name in {"done", "fail"}:

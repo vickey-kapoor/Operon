@@ -20,7 +20,7 @@ def test_shipped_registry_loads_every_profile() -> None:
     assert qwen.adapter == "openai_compat" and qwen.coords == "relative_1000"
     assert qwen.image.resize == "smart" and qwen.image.factor == 32
     assert qwen.pricing.gpu_hour_usd == 2.5
-    assert profiles["gemini-computer-use"].environments == ("browser",)
+    assert profiles["gemini-computer-use"].environments == ("browser", "desktop")
 
 
 def test_resolve_profile_reads_the_env(monkeypatch: pytest.MonkeyPatch) -> None:

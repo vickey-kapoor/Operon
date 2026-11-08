@@ -144,6 +144,49 @@ async def test_type_with_coords_retries_click_when_focus_not_detected() -> None:
         assert mock_click.call_count == 2
 
 
+@pytest.mark.asyncio
+async def test_type_with_coords_off_every_monitor_types_nothing() -> None:
+    """The focus click shares the clicks' bounds gate: no click, no paste off screen."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.TYPE, text="hello", x=5000, y=200)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
+        patch("operon.executor.desktop.pyperclip.copy") as mock_copy,
+        patch.object(
+            executor,
+            "_coord_in_monitor_bounds",
+            return_value=(False, [{"left": 0, "top": 0, "width": 1920, "height": 1080}]),
+        ),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is False and "outside all monitor bounds" in result.detail
+    mock_click.assert_not_called()
+    mock_copy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_type_into_a_blank_field_is_not_blocked() -> None:
+    """An empty field or document is uniform; typing there must not hit the blank-region servo."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.TYPE, text="hello", x=100, y=200)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.click"),
+        patch("operon.executor.desktop.pyautogui.hotkey"),
+        patch("operon.executor.desktop.pyperclip.copy") as mock_copy,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_coord_in_monitor_bounds", return_value=(True, [])),
+        patch.object(executor, "_region_has_content", side_effect=AssertionError("servo must not gate TYPE")),
+        patch.object(executor, "_sample_region", return_value=b"\xff" * 100),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    mock_copy.assert_called_once_with("hello")
+
+
 # ── press_key tests ──────────────────────────────────────────────
 
 

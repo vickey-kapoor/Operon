@@ -58,6 +58,13 @@ class BrowserComputerUseBackend(AgentBackend):
     fallback can take over.
     """
 
+    _retry_suffix = (
+        "\n\nRetry guidance:\n"
+        "- A text-only response is not enough when a harmless browser tool action is available.\n"
+        "- Prefer one concrete tool call that reveals more page structure.\n"
+        "- If uncertain, choose a low-risk action like hover_at or scroll_at instead of waiting.\n"
+    )
+
     def __init__(
         self,
         *,
@@ -69,12 +76,6 @@ class BrowserComputerUseBackend(AgentBackend):
         self.prompt_path = prompt_path
         self.browser_runtime = browser_runtime
         self._prompt_template = prompt_path.read_text(encoding="utf-8")
-        self._retry_suffix = (
-            "\n\nRetry guidance:\n"
-            "- A text-only response is not enough when a harmless browser tool action is available.\n"
-            "- Prefer one concrete tool call that reveals more page structure.\n"
-            "- If uncertain, choose a low-risk action like hover_at or scroll_at instead of waiting.\n"
-        )
         self._cached_decision: PolicyDecision | None = None
         self._last_frames: dict[str, CaptureFrame] = {}
         self._last_debug_artifacts: ModelDebugArtifacts | None = None

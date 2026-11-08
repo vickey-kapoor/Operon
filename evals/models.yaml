@@ -42,7 +42,6 @@ gemini-computer-use:
   adapter: gemini_native
   model: gemini-3.5-flash
   effort: low
-  environments: [browser]
   pricing: {input_per_mtok: 1.50, output_per_mtok: 9.00}
 
 # ── Open-weight models, served by vLLM (OpenAI-compatible) ──────────────────────

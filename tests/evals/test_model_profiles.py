@@ -54,8 +54,7 @@ def test_model_flag_checks_the_profile_and_the_server_settings(monkeypatch) -> N
     assert live_bench.resolve_model_profile("qwen3-vl-32b", "browser").name == "qwen3-vl-32b"
     with pytest.raises(SystemExit, match="unknown model profile"):
         live_bench.resolve_model_profile("nope", "browser")
-    with pytest.raises(SystemExit, match="does not support desktop"):
-        live_bench.resolve_model_profile("gemini-computer-use", "desktop")
+    assert live_bench.resolve_model_profile("gemini-computer-use", "desktop").name == "gemini-computer-use"
     monkeypatch.setenv("OPERON_BROWSER_BACKEND", "claude_computer_use")
     with pytest.raises(SystemExit, match="backend=model"):
         live_bench.resolve_model_profile("qwen3-vl-32b", "browser")
@@ -93,7 +92,7 @@ def test_previous_report_only_compares_the_same_model(tmp_path) -> None:
 
 
 def test_grounding_builds_registry_backends_per_sample(monkeypatch) -> None:
-    from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
+    from operon.agent.backends.desktop_computer_use import DesktopComputerUseBackend
     from operon.agent.backends.model_adapter.backend import ModelAdapterBackend
 
     monkeypatch.setenv("OPENWEIGHT_BASE_URL", "http://gpu:8000/v1")
@@ -103,7 +102,7 @@ def test_grounding_builds_registry_backends_per_sample(monkeypatch) -> None:
     qwen = grounding.BackendFactory("model", "qwen3-vl-32b", None)(sample)
     assert isinstance(qwen, ModelAdapterBackend) and qwen.environment == "desktop"
     gemini = grounding.BackendFactory("model", "gemini-computer-use", "low")(sample)
-    assert isinstance(gemini, BrowserComputerUseBackend)  # browser only, so desktop samples go there too
+    assert isinstance(gemini, DesktopComputerUseBackend) and gemini.client.environment == "ENVIRONMENT_DESKTOP"
 
 
 def test_grounding_reuses_one_client_per_kind(monkeypatch) -> None:

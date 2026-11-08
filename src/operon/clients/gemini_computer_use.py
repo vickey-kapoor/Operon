@@ -57,6 +57,7 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         environment: str = "ENVIRONMENT_BROWSER",
         excluded_predefined_functions: list[str] | None = None,
         thinking_level: str | None = None,
+        function_declarations: list[dict[str, Any]] | None = None,
     ) -> None:
         self.model = model
         # Gemini 3 thinking level ("minimal", "low", "high"); None keeps the model default.
@@ -71,6 +72,8 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self.environment = environment
         self.excluded_predefined_functions = excluded_predefined_functions or []
+        # Custom tools sent next to the computer_use tool, e.g. launch_app on the desktop.
+        self.function_declarations = list(function_declarations or [])
         self._client: httpx.AsyncClient | None = None
         self._last_usage: ModelUsage | None = None
 
@@ -105,12 +108,15 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         }
         if self.excluded_predefined_functions:
             tool["computerUse"]["excludedPredefinedFunctions"] = self.excluded_predefined_functions
+        tools: list[dict[str, Any]] = [tool]
+        if self.function_declarations:
+            tools.append({"functionDeclarations": self.function_declarations})
         generation_config: dict[str, Any] = {"temperature": 0}
         if self.thinking_level and not self.model.startswith("gemini-2"):
             generation_config["thinkingConfig"] = {"thinkingLevel": self.thinking_level}
         return {
             "contents": contents,
-            "tools": [tool],
+            "tools": tools,
             "generationConfig": generation_config,
         }
 

@@ -100,7 +100,12 @@ class OpenAIResponsesClient:
         pricing = self.profile.pricing
         input_cost = output_cost = total = None
         if pricing.input_per_mtok is not None and input_tokens is not None:
-            input_cost = round(input_tokens * pricing.input_per_mtok / 1_000_000, 8)
+            cached_rate = pricing.cached_input_per_mtok
+            hits = min(cached or 0, input_tokens) if cached_rate is not None else 0
+            # OpenAI's input_tokens includes the cached ones, which bill at their own rate.
+            input_cost = round(
+                ((input_tokens - hits) * pricing.input_per_mtok + hits * (cached_rate or 0.0)) / 1_000_000, 8
+            )
         if pricing.output_per_mtok is not None and output_tokens is not None:
             # Reasoning tokens are part of output_tokens and bill as output.
             output_cost = round(output_tokens * pricing.output_per_mtok / 1_000_000, 8)

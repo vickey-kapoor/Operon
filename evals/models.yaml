@@ -80,10 +80,12 @@ opencua-32b:
   pricing: {gpu_hour_usd: 2.50}
 
 # ── OpenAI computer use (Responses API, {"type": "computer"} tool) ───────────────
-# Model id from OpenAI's computer-use guide examples (checked 2026-11-08). Fill in
-# pricing from OpenAI's pricing page before the first paid run: without it the profile
-# is refused, since every step would count as $0 and the run cost cap could not stop it.
+# Model id from OpenAI's computer-use guide examples (checked 2026-11-08). Pricing is
+# the Standard tier from OpenAI's pricing page (checked 2026-11-08); without it the
+# profile is refused, since every step would count as $0 and the run cost cap could not
+# stop it. Cached input (prompt-cache hits) bills at its own lower rate.
 openai-computer-use:
   adapter: openai_native
   model: gpt-6.1-sol
   image: {resize: long_edge, max_long_edge: 1280, format: png}
+  pricing: {input_per_mtok: 2.0, cached_input_per_mtok: 0.10, output_per_mtok: 10.0}

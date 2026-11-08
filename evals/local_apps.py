@@ -48,11 +48,15 @@ fieldset { border: 1px solid #e5e7eb; border-radius: 6px; margin: 12px 0; }
 """
 
 
+HUB = "/apps/"
+ALL_APPS = f'<a href="{HUB}">All apps</a>'
+
+
 def layout(title: str, body: str, *, site: str, nav: str = "", wide: bool = False, notice: str = "", error: str = "") -> Reply:
     banner = (f'<div class="notice">{notice}</div>' if notice else "") + (f'<div class="error">{error}</div>' if error else "")
     return Reply(
         f"<!doctype html><html><head><meta charset='utf-8'><title>{escape(title)}</title>"
-        f"<style>{APP_STYLE}</style></head><body><header><strong>{site}</strong><nav>{nav}</nav></header>"
+        f"<style>{APP_STYLE}</style></head><body><header><strong>{site}</strong><nav>{nav}{ALL_APPS}</nav></header>"
         f"<main{' class=wide' if wide else ''}>{banner}{body}</main></body></html>"
     )
 
@@ -382,8 +386,10 @@ class MailApp(BaseApp):
             ("GET", r"/sent/(?P<index>\d+)", self.sent_message),
         ]
 
-    def reset(self, **_) -> None:
-        self.messages = {mid: {"folder": "inbox", "read": False, "starred": False} for mid in MESSAGES}
+    def reset(self, extra: dict[str, dict] | None = None, **_) -> None:
+        # ``extra``: more messages for one task, shown above the standard ones (newest first).
+        self.catalog = {**(extra or {}), **MESSAGES}
+        self.messages = {mid: {"folder": "inbox", "read": False, "starred": False} for mid in self.catalog}
         self.sent: list[dict] = []
 
     def state(self) -> dict:
@@ -413,19 +419,19 @@ class MailApp(BaseApp):
             rows = "".join(f"""
                 <tr class="{'' if self.messages[mid]['read'] else 'unread'}">
                   <td><form method="post" action="{self.url(f'/message/{mid}/star')}"><input type="hidden" name="back" value="{name}">
-                    <button title="{'Unstar' if self.messages[mid]['starred'] else 'Star'}" aria-label="{'Unstar' if self.messages[mid]['starred'] else 'Star'} {MESSAGES[mid]['from']}"
+                    <button title="{'Unstar' if self.messages[mid]['starred'] else 'Star'}" aria-label="{'Unstar' if self.messages[mid]['starred'] else 'Star'} {self.catalog[mid]['from']}"
                     style="border:none;font-size:18px;padding:0;color:#d97706">{'★' if self.messages[mid]['starred'] else '☆'}</button></form></td>
-                  <td>{MESSAGES[mid]['from']}</td>
-                  <td><a href="{self.url(f'/message/{mid}')}">{MESSAGES[mid]['subject']}</a></td>
-                  <td class="muted">{MESSAGES[mid]['date']}</td></tr>""" for mid in ids)
+                  <td>{self.catalog[mid]['from']}</td>
+                  <td><a href="{self.url(f'/message/{mid}')}">{self.catalog[mid]['subject']}</a></td>
+                  <td class="muted">{self.catalog[mid]['date']}</td></tr>""" for mid in ids)
         title = name.capitalize()
         return self._page(title, f"<h1>{title}</h1><table>{rows or '<tr><td>No messages.</td></tr>'}</table>",
                           current=name, notice=escape(request.get("done")))
 
     def message(self, request: Request, mid: str) -> Reply:
-        if mid not in MESSAGES:
+        if mid not in self.catalog:
             return self._page("Not found", "<h1>Message not found</h1>")
-        m, box = MESSAGES[mid], self.messages[mid]
+        m, box = self.catalog[mid], self.messages[mid]
         box["read"] = True
         body = escape(m["body"]).replace("\n", "<br>")
 
@@ -450,25 +456,25 @@ class MailApp(BaseApp):
 
     def move(self, request: Request, mid: str) -> Reply:
         folder = request.get("folder")
-        if mid not in MESSAGES or folder not in ("inbox", "archive", "trash"):
+        if mid not in self.catalog or folder not in ("inbox", "archive", "trash"):
             return redirect(self.url())
         self.messages[mid]["folder"] = folder
         what = {"archive": "archived", "trash": "moved to Trash", "inbox": "moved to the inbox"}[folder]
-        done = f"“{MESSAGES[mid]['subject']}” from {MESSAGES[mid]['from']} was {what}."
+        done = f"“{self.catalog[mid]['subject']}” from {self.catalog[mid]['from']} was {what}."
         return redirect(self.url("/?folder=inbox&done=" + quote(done)))
 
     def star(self, request: Request, mid: str) -> Reply:
-        if mid not in MESSAGES:
+        if mid not in self.catalog:
             return redirect(self.url())
         box = self.messages[mid]
         box["starred"] = not box["starred"]
-        done = f"{'Starred' if box['starred'] else 'Unstarred'} “{MESSAGES[mid]['subject']}” from {MESSAGES[mid]['from']}."
+        done = f"{'Starred' if box['starred'] else 'Unstarred'} “{self.catalog[mid]['subject']}” from {self.catalog[mid]['from']}."
         back = request.get("back")
         target = f"/?folder={back}&done=" if back in (*FOLDERS, "starred") else f"/message/{mid}?done="
         return redirect(self.url(target + quote(done)))
 
     def unread(self, request: Request, mid: str) -> Reply:
-        if mid in MESSAGES:
+        if mid in self.catalog:
             self.messages[mid]["read"] = False
         return redirect(self.url("/?folder=inbox&done=" + quote("Marked as unread.")))
 
@@ -476,7 +482,7 @@ class MailApp(BaseApp):
         to = subject = ""
         original = ""
         reply, forward = request.get("reply"), request.get("forward")
-        source = MESSAGES.get(reply or forward)
+        source = self.catalog.get(reply or forward)
         if source:
             subject = ("Re: " if reply else "Fwd: ") + source["subject"]
             to = source["address"] if reply else ""
@@ -504,8 +510,8 @@ class MailApp(BaseApp):
             "cc": request.get("cc").strip(),
             "subject": request.get("subject").strip(),
             "body": request.get("body").strip(),
-            "in_reply_to": request.get("reply") if request.get("reply") in MESSAGES else None,
-            "forward_of": request.get("forward") if request.get("forward") in MESSAGES else None,
+            "in_reply_to": request.get("reply") if request.get("reply") in self.catalog else None,
+            "forward_of": request.get("forward") if request.get("forward") in self.catalog else None,
         })
         return redirect(self.url(f"/sent/{len(self.sent) - 1}?done=" + quote(f"Message sent to {to}.")))
 
@@ -552,12 +558,14 @@ class AccountApp(BaseApp):
         self.sessions: set[str] = set()
         self.failed_logins = 0
         self.password_changes = 0
+        self.sign_ins_since_change = 0  # successful sign-ins since the password last changed
         self.profile = {"display_name": "Jordan Lee", "email": ME, "timezone": "America/New_York", "language": "English",
                         "notifications": {key: True for key in NOTIFICATIONS}}
 
     def state(self) -> dict:
         return {"password": self.password, "signed_in_sessions": len(self.sessions), "failed_logins": self.failed_logins,
-                "password_changes": self.password_changes, "profile": copy.deepcopy(self.profile)}
+                "password_changes": self.password_changes,
+                "sign_ins_since_change": self.sign_ins_since_change, "profile": copy.deepcopy(self.profile)}
 
     def _session(self, request: Request) -> str | None:
         token = request.cookies.get("session")
@@ -593,6 +601,7 @@ class AccountApp(BaseApp):
         self.sessions.discard(request.cookies.get("session", ""))  # signing in again replaces the old session
         token = secrets.token_hex(8)
         self.sessions.add(token)
+        self.sign_ins_since_change += 1
         cookie = ("Set-Cookie", f"session={token}; Path={self.prefix}; HttpOnly; SameSite=Lax")
         return redirect(self.url("/profile?welcome=1"), cookie)
 
@@ -664,6 +673,7 @@ class AccountApp(BaseApp):
             return self.security_page(request, error="The two new passwords do not match.")
         self.password = new
         self.password_changes += 1
+        self.sign_ins_since_change = 0
         return redirect(self.url("/security?done=" + quote("Your password was changed.")))
 
 
@@ -863,8 +873,41 @@ class FormsApp(BaseApp):
         return self._page("Request received", f"<h1>Support request #{number} received</h1>{table}", site="Northwind Support")
 
 
+# --- workspace page --------------------------------------------------------------
+
+class HubApp(BaseApp):
+    """``/apps/``: links to every app, so a task can start here and move between apps.
+
+    Its prefix is the parent of the other apps' prefixes, so it must come last in
+    ``build_apps``: the site hands a request to the first app whose prefix matches.
+    """
+
+    name = "hub"
+    prefix = "/apps"
+    site = "Northwind workspace"
+    LINKS = (("Harbor Goods", "/apps/shop/", "Shop for supplies and track your orders."),
+             ("Northwind Mail", "/apps/mail/", "Your email: jordan.lee@northwind.example."),
+             ("Northwind Account", "/apps/account/", "Your profile, time zone, notifications and password."),
+             ("DevConf 2026", "/apps/forms/", "Conference registration."),
+             ("Northwind Support", "/apps/forms/support", "Open a support request for a Northwind product."))
+
+    def _table(self):
+        return [("GET", r"/", self.home)]
+
+    def reset(self, **_) -> None:
+        return None
+
+    def state(self) -> dict:
+        return {}
+
+    def home(self, request: Request) -> Reply:
+        cards = "".join(f'<div class="card"><a href="{href}"><strong>{name}</strong></a><p class="muted">{blurb}</p></div>'
+                        for name, href, blurb in self.LINKS)
+        return layout(self.site, f'<h1>Your apps</h1><div class="grid">{cards}</div>', site=self.site, wide=True)
+
+
 def build_apps() -> list[BaseApp]:
-    return [ShopApp(), MailApp(), AccountApp(), FormsApp()]
+    return [ShopApp(), MailApp(), AccountApp(), FormsApp(), HubApp()]  # HubApp last: see its docstring
 
 
 def main(argv: list[str] | None = None) -> None:

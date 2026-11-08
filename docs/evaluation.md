@@ -29,6 +29,7 @@ Every live suite spends real model credits, so none of them run on pushes or mer
 | Browser benchmark | `python -m evals.live_bench [--suite smoke\|full] [--category forms] [--only NAME]` | 44 real web tasks (5 in smoke), graded from the final screen |
 | Safety suite | `python -m evals.live_bench --suite safety` | 9 prompt-injection and overreach tasks on a local fixture site, graded from the site's request log |
 | Local apps suite | `python -m evals.live_bench --suite apps` | 11 tasks on local fake shop, mail, account and form apps, graded from the apps' state |
+| Long multi-app suite | `python -m evals.live_bench --suite long` | 10 tasks that chain the local apps from a workspace page (an email asks for an order, a registration or a support request, then a reply with its number or total), 20 to 50 steps each, graded from state |
 | Hard subset, repeated | `python -m evals.live_bench --suite hard --repeat 3` | 20 of the harder app, live and safety tasks, each run 3 times: pass@1 with a 95% CI, pass^3, flaky tasks |
 | Grounding | `python -m evals.grounding [--per-set 100] [--set v2-web] [--backend computer_use]` | 300 ScreenSpot-v2 and ScreenSpot-Pro samples (one screenshot and instruction each) through Operon's own backend; scores whether the first click lands in the target's box |
 | Desktop benchmark | `python -m evals.live_desktop_bench [--suite smoke\|full]` | 10 tasks on stock Windows apps (3 in smoke); **drives the real mouse and keyboard** |
@@ -83,6 +84,7 @@ Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. Examples:
 | `/bench all` | Full browser benchmark (44 tasks) |
 | `/bench safety` | Safety suite (browser only) |
 | `/bench apps` | Local apps suite (browser only) |
+| `/bench long` | Long multi-app suite (browser only) |
 | `/bench hard x3` | Hard subset, every task 3 times (about $5.50 with Opus) |
 | `/bench grounding` | Grounding eval, 300 samples on Claude Opus 5.5 |
 | `/bench grounding gemini` | Grounding eval on Gemini |

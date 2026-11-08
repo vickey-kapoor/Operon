@@ -279,14 +279,30 @@ async def test_responses_client_request_and_usage(monkeypatch) -> None:
     assert usage.estimated_cost_usd == pytest.approx((2100 * 1.0 + 120 * 4.0) / 1e6)
 
 
+async def test_responses_client_bills_cache_hits_at_the_cached_rate(monkeypatch) -> None:
+    reply = sample("openai_computer_call")
+    reply["usage"]["input_tokens_details"]["cached_tokens"] = 2000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=reply)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    priced = Pricing(input_per_mtok=1.0, cached_input_per_mtok=0.1, output_per_mtok=4.0)
+    client = OpenAIResponsesClient(PROFILE.model_copy(update={"pricing": priced}), transport=httpx.MockTransport(handler))
+    await client.create(input_items=[], tools=[], previous_response_id=None)
+    usage = client.latest_usage()
+    # input_tokens includes the 2000 cached ones; only the other 100 bill at the full rate.
+    assert usage.cache_read_input_tokens == 2000
+    assert usage.estimated_cost_usd == pytest.approx((100 * 1.0 + 2000 * 0.1 + 120 * 4.0) / 1e6)
+
+
 async def test_responses_client_needs_a_key(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(ModelTransportError, match="OPENAI_API_KEY"):
         await OpenAIResponsesClient(PROFILE).create(input_items=[], tools=[], previous_response_id=None)
 
 
-def test_registry_has_the_openai_profile_and_services_build_it(monkeypatch, tmp_path) -> None:
-    from operon.agent.backends.model_adapter.registry import ModelRegistryError
+def test_registry_has_the_openai_profile_and_services_build_it(monkeypatch) -> None:
     from operon.api.runtime.services import build_browser_services
     from operon.api.runtime_config import validate_modes
 
@@ -296,16 +312,22 @@ def test_registry_has_the_openai_profile_and_services_build_it(monkeypatch, tmp_
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert any("OPENAI_API_KEY" in e for e in validate_modes())
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert validate_modes() == []
+    assert isinstance(build_browser_services(executor=None).policy_delegate, OpenAIComputerUseBackend)
+
+
+def test_openai_profile_without_pricing_is_refused(monkeypatch, tmp_path) -> None:
+    from operon.agent.backends.model_adapter.registry import ModelRegistryError
+    from operon.api.runtime.services import build_browser_services
+    from operon.api.runtime_config import validate_modes
+
     # A paid profile without prices would count $0 per step, so the run cost cap could never stop it.
+    registry = tmp_path / "models.yaml"
+    registry.write_text("openai-computer-use:\n  adapter: openai_native\n  model: gpt-6.1-sol\n", encoding="utf-8")
+    monkeypatch.setenv("OPERON_MODEL_REGISTRY", str(registry))
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "model")
+    monkeypatch.setenv("OPERON_MODEL_PROFILE", "openai-computer-use")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     assert any("needs pricing" in e for e in validate_modes())
     with pytest.raises(ModelRegistryError, match="needs pricing"):
         build_browser_services(executor=None)
-    registry = tmp_path / "models.yaml"
-    registry.write_text(
-        "openai-computer-use:\n  adapter: openai_native\n  model: gpt-6.1-sol\n"
-        "  pricing: {input_per_mtok: 1.0, output_per_mtok: 4.0}\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("OPERON_MODEL_REGISTRY", str(registry))
-    assert validate_modes() == []
-    assert isinstance(build_browser_services(executor=None).policy_delegate, OpenAIComputerUseBackend)

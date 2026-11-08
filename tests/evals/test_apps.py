@@ -58,7 +58,7 @@ def test_state_endpoint_returns_and_resets_every_app(site) -> None:
     with _browser(site) as browser:
         browser.post("/apps/shop/cart/add", data={"sku": "gel-pens", "qty": "2"})
         state = browser.get("/state").json()
-        assert set(state) == {"shop", "mail", "account", "forms"}
+        assert set(state) == {"shop", "mail", "account", "forms", "hub"}
         assert state["shop"]["cart"] == [{"sku": "gel-pens", "qty": 2, "size": None}]
         assert browser.post("/state/reset").json()["shop"]["cart"] == []
     assert all(e.path not in ("/state", "/state/reset") for e in site.snapshot())

@@ -10,19 +10,27 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import os
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# One worker: writes run in the order they were queued, so a later state.json
+# snapshot can never be overwritten by an earlier one still in flight.
 _thread_pool = concurrent.futures.ThreadPoolExecutor(
-    max_workers=2, thread_name_prefix="bg_writer"
+    max_workers=1, thread_name_prefix="bg_writer"
 )
 
 
 def _write_file(path: Path, content: str) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        # Write a sibling temp file, then swap it in: a reader (the observer) never
+        # sees a half-written file.
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
     except Exception:
         logger.debug("artifact write failed: %s", path, exc_info=True)
 

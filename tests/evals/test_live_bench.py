@@ -417,3 +417,27 @@ async def test_a_judge_model_with_no_price_is_counted_as_unpriced(monkeypatch) -
     monkeypatch.setattr(gemini, "GeminiHttpClient", FakeClient)
     verdict = await live_bench.gemini_judge("gemini-next")(TASKS[0], "screen.png")
     assert verdict.goal_visible is True and verdict.cost_usd is None and verdict.unpriced_model == "gemini-next"
+
+
+async def test_an_api_error_mid_run_stops_the_run(tmp_path, monkeypatch) -> None:
+    """A failed poll is not a finished run: the benchmark stops it so it stops spending."""
+    monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)
+    monkeypatch.setattr(live_bench.asyncio, "sleep", lambda _s: _noop())
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.url.path == "/run-task":
+            return httpx.Response(202, json={"run_id": "run-err", "status": "running"})
+        if request.url.path == "/stop":
+            return httpx.Response(200, json={})
+        return httpx.Response(500, json={"detail": "boom"})
+
+    async def judge(task, screenshot):
+        return Verdict(False, "no screen")
+
+    async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler)) as client:
+        result = await run_task(client, TASKS[0], judge, timeout_s=60, approve_pauses=0)
+
+    assert calls[-1] == "POST /stop"
+    assert result.status == "error"

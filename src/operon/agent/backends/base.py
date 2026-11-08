@@ -43,6 +43,17 @@ class AgentBackend(ABC):
         backends that answer the model's calls with their outcome."""
         return None
 
+    # Per-run caches the backends keep, keyed by run_id.
+    _PER_RUN_CACHES = ("_conversations", "_last_frames", "_advisory_hints", "_runs", "_hints")
+
+    def release_run(self, run_id: str) -> None:
+        """The run finished: drop everything kept for it (conversation, last frame,
+        queued hints). Backends with other per-run state extend this."""
+        for name in self._PER_RUN_CACHES:
+            cache = getattr(self, name, None)
+            if isinstance(cache, dict):
+                cache.pop(run_id, None)
+
     def supports_resampling(self, run_id: str = "") -> bool:
         """Whether a second ``choose_action`` for the same step yields a fresh
         decision. Best-of-N sampling needs it; backends that only replay a

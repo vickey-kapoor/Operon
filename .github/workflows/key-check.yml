@@ -27,7 +27,8 @@ jobs:
           fail=0
           check() {
             name="$1"; shift
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$@")
+            # A network error makes curl exit nonzero; record it as 000 instead of stopping the step.
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$@") || code="000"
             if [ "$code" = "200" ]; then
               echo "OK   $name (HTTP $code)"
             else

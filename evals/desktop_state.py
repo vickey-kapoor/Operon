@@ -19,7 +19,6 @@ closes between tasks anyway.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
@@ -59,23 +58,51 @@ def probe(since: datetime) -> Snapshot:
     if isinstance(snapshot.get("windows"), dict):  # ConvertTo-Json unwraps a one-item list
         snapshot["windows"] = [snapshot["windows"]]
     snapshot["since"] = since.isoformat()
-    documents = Path(snapshot.get("documents") or Path.home() / "Documents")
+    if not snapshot.get("documents"):
+        raise ProbeError("desktop probe failed: Windows gave no Documents folder")
+    documents = Path(snapshot["documents"])
     snapshot["bench_folder_exists"] = (documents / BENCH_FOLDER).is_dir()
     snapshot["paint_canvas"] = _paint_canvas([w for w in snapshot["windows"] if _proc(w) == "mspaint"])
     return snapshot
 
 
-def prepare(task_name: str) -> None:
-    """Undo what an earlier run of the task left behind, so the check can't pass on it.
+EXPLORER_TASKS = frozenset({"explorer_windows", "explorer_new_folder"})
+# Closes every File Explorer folder window, then prints the Documents folder the probe reads.
+_PREPARE_SCRIPT = (
+    "$ErrorActionPreference = 'SilentlyContinue'; "
+    "foreach ($w in @((New-Object -ComObject Shell.Application).Windows())) { $w.Quit() }; "
+    "[Environment]::GetFolderPath('MyDocuments')"
+)
 
-    Only removes the benchmark's own folder, and only while it is empty."""
-    if task_name != "explorer_new_folder" or sys.platform != "win32":
+
+def prepare(task_name: str) -> None:
+    """Undo what an earlier attempt left behind, so the check can't pass on it.
+
+    Explorer tasks: closes the File Explorer folder windows that are open (they live in
+    explorer.exe, which outlives a task, so an earlier attempt's window would otherwise
+    still count). explorer_new_folder also removes the benchmark's own folder, only
+    while it is empty, from the same Documents folder the probe checks (it may be
+    redirected, e.g. to OneDrive)."""
+    if task_name not in EXPLORER_TASKS or sys.platform != "win32":
         return
-    folder = Path(os.path.expanduser("~")) / "Documents" / BENCH_FOLDER
     try:
-        folder.rmdir()
-    except OSError:
+        done = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", _PREPARE_SCRIPT],
+            capture_output=True, text=True, timeout=60, check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProbeError(f"desktop reset failed: {exc}") from exc
+    if task_name != "explorer_new_folder":
+        return
+    documents = done.stdout.strip()
+    if not documents:
+        raise ProbeError("desktop reset failed: Windows gave no Documents folder")
+    try:
+        (Path(documents) / BENCH_FOLDER).rmdir()
+    except FileNotFoundError:
         pass
+    except OSError as exc:  # not empty: an earlier attempt or a person put files there
+        raise ProbeError(f"{BENCH_FOLDER} in Documents is not empty, so the task can't be graded: {exc}") from exc
 
 
 def _paint_canvas(windows: list[dict]) -> dict | None:
@@ -104,7 +131,7 @@ def _paint_canvas(windows: list[dict]) -> dict | None:
 
         user32.EnumChildWindows(windows[0]["hwnd"], visit, 0)
         if not found:
-            return {"found": False}
+            return {"found": False, "error": "Paint's canvas (MSPaintView) was not found"}
         rect = wintypes.RECT()
         user32.GetWindowRect(found[0], ctypes.byref(rect))
         # Leave out the canvas edge and its resize handles.
@@ -290,7 +317,8 @@ def paint_rectangle(snapshot: Snapshot) -> tuple[bool, str]:
         return False, "no Paint window opened during the task"
     canvas = snapshot.get("paint_canvas") or {}
     if not canvas.get("found"):
-        return False, f"Paint's canvas could not be read{': ' + canvas['error'] if canvas.get('error') else ''}"
+        # The grader failed to read the drawing; that says nothing about the model.
+        raise ProbeError(f"Paint's canvas could not be read: {canvas.get('error') or 'no canvas in the snapshot'}")
     width, height = canvas.get("bbox") or [0, 0]
     if canvas.get("dark_pixels", 0) >= 40 and width >= 10 and height >= 10:
         return True, f"Paint's canvas has a drawn shape ({width}x{height} px)"

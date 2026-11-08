@@ -87,7 +87,14 @@ def test_paint_check_needs_a_drawn_shape() -> None:
     assert _grade("paint_rectangle", _snap(paint, canvas={"found": True, "dark_pixels": 400, "bbox": [120, 80]}))
     assert not _grade("paint_rectangle", _snap(paint, canvas={"found": True, "dark_pixels": 0, "bbox": [0, 0]}))
     assert not _grade("paint_rectangle", _snap(paint, canvas={"found": True, "dark_pixels": 50, "bbox": [50, 1]}))
-    assert not _grade("paint_rectangle", _snap(paint, canvas={"found": False}))
+
+
+def test_an_unreadable_paint_canvas_is_a_grader_error_not_a_miss() -> None:
+    paint = _window("mspaint", "Untitled - Paint")
+    with pytest.raises(desktop_state.ProbeError, match="capture failed"):
+        desktop_state.grade("paint_rectangle", _snap(paint, canvas={"found": False, "error": "capture failed"}))
+    with pytest.raises(desktop_state.ProbeError):
+        desktop_state.grade("paint_rectangle", _snap(paint, canvas=None))
 
 
 def test_canvas_stats_counts_dark_pixels_and_their_box() -> None:
@@ -104,6 +111,42 @@ def test_probe_refuses_on_other_platforms(monkeypatch) -> None:
     monkeypatch.setattr(desktop_state.sys, "platform", "linux")
     with pytest.raises(desktop_state.ProbeError, match="Windows"):
         desktop_state.probe(T0)
+
+
+class _Done:
+    def __init__(self, stdout: str) -> None:
+        self.stdout = stdout
+
+
+def test_reset_closes_explorer_and_clears_the_folder_the_probe_reads(monkeypatch, tmp_path) -> None:
+    documents = tmp_path / "OneDrive" / "Documents"  # a redirected Documents folder
+    (documents / desktop_state.BENCH_FOLDER).mkdir(parents=True)
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd[-1])
+        return _Done(f"{documents}\r\n")
+
+    monkeypatch.setattr(desktop_state.sys, "platform", "win32")
+    monkeypatch.setattr(desktop_state.subprocess, "run", run)
+    desktop_state.prepare("explorer_new_folder")
+    assert not (documents / desktop_state.BENCH_FOLDER).exists()
+    assert "Quit()" in calls[0] and "MyDocuments" in calls[0]
+    desktop_state.prepare("explorer_windows")  # closes old windows too
+    assert len(calls) == 2
+    desktop_state.prepare("notepad_type")  # nothing to reset
+    assert len(calls) == 2
+
+
+def test_reset_refuses_a_folder_with_files_in_it(monkeypatch, tmp_path) -> None:
+    folder = tmp_path / desktop_state.BENCH_FOLDER
+    folder.mkdir()
+    (folder / "keep.txt").write_text("x")
+    monkeypatch.setattr(desktop_state.sys, "platform", "win32")
+    monkeypatch.setattr(desktop_state.subprocess, "run", lambda cmd, **kw: _Done(str(tmp_path)))
+    with pytest.raises(desktop_state.ProbeError, match="not empty"):
+        desktop_state.prepare("explorer_new_folder")
+    assert (folder / "keep.txt").exists()
 
 
 class _Response:
@@ -155,3 +198,20 @@ async def test_an_unreadable_desktop_is_an_error_not_a_pass(monkeypatch) -> None
     task = next(t for t in DESKTOP_TASKS if t.name == "cmd_echo")
     result = await live_bench.run_task(_Client(), task, judge, timeout_s=30, approve_pauses=0, mode="desktop")
     assert result.outcome == "error" and "boom" in result.judge_reason
+
+
+async def test_a_failed_reset_skips_the_run_and_is_an_error(monkeypatch) -> None:
+    def prepare(name):
+        raise desktop_state.ProbeError("desktop reset failed: boom")
+
+    class _NoRunClient:
+        async def post(self, path, json):
+            raise AssertionError("no run should start when the desktop could not be reset")
+
+    async def judge(task, screenshot):
+        raise AssertionError("no judge fallback")
+
+    monkeypatch.setattr(desktop_state, "prepare", prepare)
+    task = next(t for t in DESKTOP_TASKS if t.name == "explorer_windows")
+    result = await live_bench.run_task(_NoRunClient(), task, judge, timeout_s=30, approve_pauses=0, mode="desktop")
+    assert result.outcome == "error" and "boom" in result.judge_reason and result.run_id is None

@@ -150,16 +150,64 @@ async def test_aclose_closes_open_batch_sessions(tmp_path: Path) -> None:
 
 
 
-def test_a_write_is_not_lost_when_the_swap_is_refused(tmp_path, monkeypatch) -> None:
-    # Windows refuses os.replace while a reader has the target open.
+def test_a_refused_swap_keeps_the_old_file_whole(tmp_path, monkeypatch) -> None:
+    # Windows refuses os.replace while a reader has the target open. Writing in place
+    # would show that reader a half-written file, so the old one stays.
     target = tmp_path / "state.json"
     target.write_text("old", encoding="utf-8")
+    attempts = []
 
     def refuse(src, dst):
+        attempts.append(dst)
         raise PermissionError("in use")
 
     monkeypatch.setattr(background_writer.os, "replace", refuse)
     monkeypatch.setattr(background_writer.time, "sleep", lambda _s: None)
     background_writer._write_file(target, "new")
-    assert target.read_text(encoding="utf-8") == "new"
+    assert len(attempts) == 5
+    assert target.read_text(encoding="utf-8") == "old"
     assert [p.name for p in tmp_path.iterdir()] == ["state.json"]
+
+
+def test_a_swap_refused_once_still_lands(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "state.json"
+    target.write_text("old", encoding="utf-8")
+    real_replace = background_writer.os.replace
+    refusals = [PermissionError("in use")]
+
+    def flaky(src, dst):
+        if refusals:
+            raise refusals.pop()
+        real_replace(src, dst)
+
+    monkeypatch.setattr(background_writer.os, "replace", flaky)
+    monkeypatch.setattr(background_writer.time, "sleep", lambda _s: None)
+    background_writer._write_file(target, "new")
+    assert target.read_text(encoding="utf-8") == "new"
+
+
+def test_the_json_backend_releases_its_run_and_the_fallback_unpins_it() -> None:
+    from operon.agent.backends.combined import CombinedPerceptionPolicyService
+    from operon.agent.backends.fallback import FallbackBackend
+
+    combined = CombinedPerceptionPolicyService.__new__(CombinedPerceptionPolicyService)
+    combined._cached_decision = {"run-1": object()}
+    combined._advisory_hints = {"run-1": [("hint", "src")]}
+    combined._image_size = {"run-1": (10, 10), "run-2": (5, 5)}
+    combined.release_run("run-1")
+    assert combined._image_size == {"run-2": (5, 5)}
+    assert not combined._cached_decision and not combined._advisory_hints
+
+    class NoHook:
+        pass
+
+    class Broken:
+        def release_run(self, run_id):
+            raise RuntimeError("boom")
+
+    fallback = FallbackBackend.__new__(FallbackBackend)
+    fallback.primary, fallback.secondary = NoHook(), Broken()
+    fallback._active_backends = {"run-1": fallback.secondary}
+    with pytest.raises(RuntimeError):
+        fallback.release_run("run-1")
+    assert fallback._active_backends == {}

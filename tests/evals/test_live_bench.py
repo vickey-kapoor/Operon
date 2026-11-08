@@ -441,3 +441,21 @@ async def test_an_api_error_mid_run_stops_the_run(tmp_path, monkeypatch) -> None
 
     assert calls[-1] == "POST /stop"
     assert result.status == "error"
+
+
+async def test_a_refused_stop_is_reported(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)
+    monkeypatch.setattr(live_bench.asyncio, "sleep", lambda _s: _noop())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/run-task":
+            return httpx.Response(202, json={"run_id": "run-err", "status": "running"})
+        return httpx.Response(500, json={"detail": "boom"})
+
+    async def judge(task, screenshot):
+        return Verdict(False, "no screen")
+
+    async with httpx.AsyncClient(base_url="http://test", transport=httpx.MockTransport(handler)) as client:
+        await run_task(client, TASKS[0], judge, timeout_s=60, approve_pauses=0)
+
+    assert "could not stop run run-err" in capsys.readouterr().err

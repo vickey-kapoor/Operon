@@ -401,7 +401,7 @@ async def run_task(
             # The run may still be going on the server (a failed poll is not a
             # finished run): stop it so it doesn't keep spending model calls.
             try:
-                await client.post(f"{prefix}/stop", json={"run_id": run_id})
+                (await client.post(f"{prefix}/stop", json={"run_id": run_id})).raise_for_status()
             except httpx.HTTPError as stop_exc:
                 print(f"  {task.name}: could not stop run {run_id}: {stop_exc}", file=sys.stderr)
 

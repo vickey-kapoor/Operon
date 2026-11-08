@@ -31,24 +31,24 @@ def _write_file(path: Path, content: str) -> None:
         # sees a half-written file.
         tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(content, encoding="utf-8")
-        _replace(tmp, path, content)
+        _replace(tmp, path)
     except Exception:
         logger.debug("artifact write failed: %s", path, exc_info=True)
 
 
-def _replace(tmp: Path, path: Path, content: str) -> None:
+def _replace(tmp: Path, path: Path) -> None:
     """Swap ``tmp`` in for ``path``. On Windows the swap fails while a reader has
-    ``path`` open, so retry briefly, then write in place rather than lose the write."""
-    for delay in (0.01, 0.03, 0.1):
+    ``path`` open (for a few ms), so retry for about a second. Never write in place:
+    a reader would see a half-written file. If it is still refused, the old file
+    stays whole and the next snapshot replaces it."""
+    for delay in (0.01, 0.03, 0.1, 0.3, 0.6):
         try:
             os.replace(tmp, path)
             return
         except PermissionError:
             time.sleep(delay)
-    try:
-        path.write_text(content, encoding="utf-8")
-    finally:
-        tmp.unlink(missing_ok=True)
+    tmp.unlink(missing_ok=True)
+    logger.warning("artifact write skipped: %s stayed locked by a reader", path)
 
 
 class BackgroundWriter:

@@ -157,6 +157,11 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         )
         return replanned_decision
 
+    def release_run(self, run_id: str) -> None:
+        """The run finished: drop its cached decision, hints and image size."""
+        for cache in (self._cached_decision, self._advisory_hints, self._image_size):
+            cache.pop(run_id, None)
+
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 

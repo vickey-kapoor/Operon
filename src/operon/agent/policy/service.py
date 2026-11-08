@@ -40,6 +40,13 @@ class PolicyService(ABC):
         if note is not None:
             note(run_id, reason)
 
+    def discard_held_actions(self, run_id: str, reason: str) -> None:
+        """The user resumed a confirmation pause with a correction: wrappers pass it
+        to their delegate, and a backend holding the paused calls drops them."""
+        discard = getattr(getattr(self, "delegate", None), "discard_held_actions", None)
+        if discard is not None:
+            discard(run_id, reason)
+
 
 def parse_policy_output(raw_output: str) -> PolicyDecision:
     cleaned = _strip_json_fence(raw_output)

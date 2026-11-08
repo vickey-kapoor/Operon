@@ -37,6 +37,9 @@ class _ConversationState:
     # next perceive (only reached after the user resumes) runs them as approved.
     held_calls: list[dict] = field(default_factory=list)
     acknowledge_safety: bool = False
+    # Set when the user declined the held calls: the next answer to the model's
+    # open calls reports this instead of an outcome, since they never ran.
+    declined_reason: str | None = None
 
 
 def _requires_confirmation(call: dict) -> bool:
@@ -176,6 +179,14 @@ class BrowserComputerUseBackend(AgentBackend):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
+    def discard_held_actions(self, run_id: str, reason: str) -> None:
+        conversation = self._conversations.get(run_id)
+        if conversation is None or not conversation.held_calls:
+            return
+        conversation.held_calls = []
+        conversation.acknowledge_safety = False
+        conversation.declined_reason = reason
+
     def supports_resampling(self, run_id: str = "") -> bool:
         # The decision is a function call in a stateful Computer Use conversation;
         # there is no second sample for the same turn.
@@ -249,7 +260,10 @@ class BrowserComputerUseBackend(AgentBackend):
             if self.browser_runtime is not None and hasattr(self.browser_runtime, "get_current_url"):
                 current_url = await self.browser_runtime.get_current_url()
             error = None
-            if len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
+            if conversation.declined_reason is not None:
+                error = conversation.declined_reason
+                conversation.declined_reason = None
+            elif len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
                 error = state.action_history[-1].detail
             function_response = self._build_function_response_content(
                 function_names=conversation.pending_function_names,

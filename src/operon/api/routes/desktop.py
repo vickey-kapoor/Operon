@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
+from operon.agent.loop import StartUrlBlockedError
 from operon.api.dependencies import get_desktop_agent_loop, validate_run_id
 from operon.models.common import (
     CleanupRequest,
@@ -25,7 +26,10 @@ router = APIRouter()
 @router.post("/desktop/run-task", response_model=RunResponse, status_code=status.HTTP_202_ACCEPTED)
 async def desktop_run_task(request: RunTaskRequest) -> RunResponse:
     """Create a new desktop automation run."""
-    return await get_desktop_agent_loop().start_run(request)
+    try:
+        return await get_desktop_agent_loop().start_run(request)
+    except StartUrlBlockedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/desktop/step", response_model=RunResponse)

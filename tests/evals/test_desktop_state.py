@@ -145,6 +145,20 @@ def test_canvas_stats_ignore_the_gray_backdrop_around_the_canvas() -> None:
     assert drawn["bbox"] == [20, 8]
 
 
+def test_a_shape_touching_the_canvas_edge_is_measured_in_full() -> None:
+    width, height = 30, 20
+    rgb = bytearray(b"\xff" * width * height * 3)
+    for y in range(12):  # a 10x12 outline whose left side is the canvas's first column
+        for x in (0, 9):
+            i = (y * width + x) * 3
+            rgb[i:i + 3] = b"\x00\x00\x00"
+    for x in range(10):
+        for y in (0, 11):
+            i = (y * width + x) * 3
+            rgb[i:i + 3] = b"\x00\x00\x00"
+    assert desktop_state.canvas_stats(bytes(rgb), width, height)["bbox"] == [10, 12]
+
+
 def test_notepad_text_is_also_read_from_the_window(monkeypatch) -> None:
     raw = {"windows": [{"process": "notepad", "hwnd": 21, "title": "*Untitled - Notepad", "started": AFTER,
                         "names": ["Text Editor"], "texts": []}], "explorer": [], "documents": "C:\\Docs"}

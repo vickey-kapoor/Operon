@@ -177,9 +177,15 @@ def _edit_text(hwnd) -> str:
         user32.EnumChildWindows(int(hwnd), visit, 0)
         if not found:
             return ""
-        length = user32.SendMessageW(found[0], 0x000E, 0, 0)  # WM_GETTEXTLENGTH
-        buffer = ctypes.create_unicode_buffer(min(int(length), 200_000) + 1)
-        user32.SendMessageW(found[0], 0x000D, len(buffer), buffer)  # WM_GETTEXT
+        # Bounded waits, so a hung Notepad can't stall the benchmark.
+        flags, wait_ms = 0x0002 | 0x0001, 2000  # SMTO_ABORTIFHUNG | SMTO_BLOCK
+        length = ctypes.c_size_t(0)
+        if not user32.SendMessageTimeoutW(found[0], 0x000E, 0, 0, flags, wait_ms, ctypes.byref(length)):
+            return ""  # WM_GETTEXTLENGTH timed out
+        buffer = ctypes.create_unicode_buffer(min(int(length.value), 200_000) + 1)
+        copied = ctypes.c_size_t(0)
+        if not user32.SendMessageTimeoutW(found[0], 0x000D, len(buffer), buffer, flags, wait_ms, ctypes.byref(copied)):
+            return ""  # WM_GETTEXT timed out
         return buffer.value
     except Exception:  # the UI Automation read may still have the text
         return ""
@@ -247,8 +253,8 @@ def canvas_stats(rgb: bytes, width: int, height: int, threshold: int = 200, whit
     whites = [i for i, low in enumerate(lows) if low >= white]
     if whites:
         wx = [i % width for i in whites]
-        left, right = min(wx) + 1, max(wx) - 1
-        top, bottom = whites[0] // width + 1, whites[-1] // width - 1
+        left, right = min(wx), max(wx)
+        top, bottom = whites[0] // width, whites[-1] // width
     else:  # the canvas is fully painted over
         left, right, top, bottom = 0, width - 1, 0, height - 1
     count, xs, ys = 0, [], []

@@ -732,6 +732,21 @@ class DesktopExecutor(Executor):
     async def _exec_type(self, action: AgentAction) -> ExecutedAction:
         if action.text is None:
             return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
+        if action.x is not None and action.y is not None:
+            # The focus click gets the clicks' bounds gate, so text never goes to a
+            # point off every monitor. Not the blank-region servo: a TYPE target is an
+            # input zone by nature, and an empty field or document looks uniform.
+            in_bounds, monitors = self._coord_in_monitor_bounds(action.x, action.y)
+            if not in_bounds:
+                logger.warning(
+                    "type skipped: coord (%d, %d) is outside all monitor bounds [monitors=%s]",
+                    action.x, action.y, monitors,
+                )
+                return self._fail(
+                    action,
+                    f"type skipped: coord ({action.x}, {action.y}) is outside all monitor bounds",
+                    FailureCategory.EXECUTION_ERROR,
+                )
         try:
             if action.x is not None and action.y is not None:
                 # Atomic focus+type: click then verify focus by mean-pixel delta.

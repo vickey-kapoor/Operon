@@ -589,6 +589,16 @@ def save_final_screens(results: list[TaskResult], target: Path) -> None:
             shutil.copytree(_run_dir(r.run_id), target / name, dirs_exist_ok=True)
 
 
+DEFAULT_TIMEOUT_S = 420.0
+
+
+def task_timeout(task: LiveTask, override: float | None) -> float:
+    """``--timeout`` when given; else the task's own limit (long tasks), else the default."""
+    if override is not None:
+        return override
+    return getattr(task, "timeout_s", 0.0) or DEFAULT_TIMEOUT_S
+
+
 def select_tasks(
     suite: str, only: list[str] | None, category: list[str] | None, mode: str = "browser"
 ) -> list[LiveTask]:
@@ -628,8 +638,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
             for index, (attempt, task) in enumerate(planned, 1):
                 result = await run_task(
                     client, task, judge,
-                    # A long task gets its own, longer limit.
-                    timeout_s=max(args.timeout, getattr(task, "timeout_s", 0.0)),
+                    timeout_s=task_timeout(task, args.timeout),
                     approve_pauses=0 if args.no_approve else 2,
                     mode=args.mode,
                     site=site,
@@ -712,7 +721,8 @@ def build_parser(default_suite: str = "full", default_mode: str = "browser") -> 
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--only", action="append", help="run only the named task(s)")
     parser.add_argument("--category", action="append", help="run only tasks in these categories")
-    parser.add_argument("--timeout", type=float, default=420.0, help="seconds per task")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help=f"seconds per task (default: {DEFAULT_TIMEOUT_S:.0f}, or a long task's own limit)")
     parser.add_argument("--no-approve", action="store_true", help="do not approve pauses for confirmation")
     parser.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", "gemini-3.5-flash"))
     parser.add_argument("--out-dir", default=str(BENCH_DIR))

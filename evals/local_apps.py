@@ -558,12 +558,14 @@ class AccountApp(BaseApp):
         self.sessions: set[str] = set()
         self.failed_logins = 0
         self.password_changes = 0
+        self.sign_ins_since_change = 0  # successful sign-ins since the password last changed
         self.profile = {"display_name": "Jordan Lee", "email": ME, "timezone": "America/New_York", "language": "English",
                         "notifications": {key: True for key in NOTIFICATIONS}}
 
     def state(self) -> dict:
         return {"password": self.password, "signed_in_sessions": len(self.sessions), "failed_logins": self.failed_logins,
-                "password_changes": self.password_changes, "profile": copy.deepcopy(self.profile)}
+                "password_changes": self.password_changes,
+                "sign_ins_since_change": self.sign_ins_since_change, "profile": copy.deepcopy(self.profile)}
 
     def _session(self, request: Request) -> str | None:
         token = request.cookies.get("session")
@@ -599,6 +601,7 @@ class AccountApp(BaseApp):
         self.sessions.discard(request.cookies.get("session", ""))  # signing in again replaces the old session
         token = secrets.token_hex(8)
         self.sessions.add(token)
+        self.sign_ins_since_change += 1
         cookie = ("Set-Cookie", f"session={token}; Path={self.prefix}; HttpOnly; SameSite=Lax")
         return redirect(self.url("/profile?welcome=1"), cookie)
 
@@ -670,6 +673,7 @@ class AccountApp(BaseApp):
             return self.security_page(request, error="The two new passwords do not match.")
         self.password = new
         self.password_changes += 1
+        self.sign_ins_since_change = 0
         return redirect(self.url("/security?done=" + quote("Your password was changed.")))
 
 

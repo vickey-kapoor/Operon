@@ -279,6 +279,23 @@ async def test_responses_client_request_and_usage(monkeypatch) -> None:
     assert usage.estimated_cost_usd == pytest.approx((2100 * 1.0 + 120 * 4.0) / 1e6)
 
 
+async def test_responses_client_bills_cache_hits_at_the_cached_rate(monkeypatch) -> None:
+    reply = sample("openai_computer_call")
+    reply["usage"]["input_tokens_details"]["cached_tokens"] = 2000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=reply)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    priced = Pricing(input_per_mtok=1.0, cached_input_per_mtok=0.1, output_per_mtok=4.0)
+    client = OpenAIResponsesClient(PROFILE.model_copy(update={"pricing": priced}), transport=httpx.MockTransport(handler))
+    await client.create(input_items=[], tools=[], previous_response_id=None)
+    usage = client.latest_usage()
+    # input_tokens includes the 2000 cached ones; only the other 100 bill at the full rate.
+    assert usage.cache_read_input_tokens == 2000
+    assert usage.estimated_cost_usd == pytest.approx((100 * 1.0 + 2000 * 0.1 + 120 * 4.0) / 1e6)
+
+
 async def test_responses_client_needs_a_key(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(ModelTransportError, match="OPENAI_API_KEY"):

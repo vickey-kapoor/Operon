@@ -59,6 +59,8 @@ class Pricing(_Strict):
 
     input_per_mtok: float | None = Field(default=None, ge=0)
     output_per_mtok: float | None = Field(default=None, ge=0)
+    # Cached input tokens (prompt-cache hits); left out, they bill at input_per_mtok.
+    cached_input_per_mtok: float | None = Field(default=None, ge=0)
     gpu_hour_usd: float | None = Field(default=None, ge=0)
 
 

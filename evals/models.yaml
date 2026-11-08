@@ -31,7 +31,7 @@ claude-sonnet-5-5:
   adapter: claude_native
   model: claude-sonnet-5-5
   effort: low
-  pricing: {input_per_mtok: 2.0, output_per_mtok: 10.0}
+  pricing: {input_per_mtok: 2.0, cached_input_per_mtok: 0.10, output_per_mtok: 10.0}
 
 claude-haiku-5-5:
   adapter: claude_native
@@ -83,9 +83,9 @@ opencua-32b:
 # Model id from OpenAI's computer-use guide examples (checked 2026-11-08). Pricing is
 # the Standard tier from OpenAI's pricing page (checked 2026-11-08); without it the
 # profile is refused, since every step would count as $0 and the run cost cap could not
-# stop it. Cached input ($0.10/MTok) is billed as full input here, so cost reads high.
+# stop it. Cached input (prompt-cache hits) bills at its own lower rate.
 openai-computer-use:
   adapter: openai_native
   model: gpt-6.1-sol
   image: {resize: long_edge, max_long_edge: 1280, format: png}
-  pricing: {input_per_mtok: 2.0, output_per_mtok: 10.0}
+  pricing: {input_per_mtok: 2.0, cached_input_per_mtok: 0.10, output_per_mtok: 10.0}

@@ -102,7 +102,7 @@ jobs:
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       BROWSER_HEADLESS: "true"
       # Registry models (model_profile): the adapter's keys and the self-hosted endpoint.
-      OPERON_MODEL_PROFILE: ${{ inputs.model_profile }}
+      OPERON_MODEL_PROFILE: ${{ matrix.backend == 'model' && inputs.model_profile || '' }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENWEIGHT_BASE_URL: ${{ secrets.OPENWEIGHT_BASE_URL }}
       OPENWEIGHT_API_KEY: ${{ secrets.OPENWEIGHT_API_KEY }}

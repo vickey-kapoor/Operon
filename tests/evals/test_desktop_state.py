@@ -344,3 +344,33 @@ async def test_a_run_that_never_started_is_not_probed(monkeypatch) -> None:
     task = next(t for t in DESKTOP_TASKS if t.name == "notepad_type")
     result = await live_bench.run_task(_DownClient(), task, judge, timeout_s=30, approve_pauses=0, mode="desktop")
     assert result.outcome == "error"
+
+
+def test_a_small_blank_canvas_is_not_mistaken_for_a_drawing() -> None:
+    # A 30x20 canvas in a 200x150 view (well under 30% of it), with shadow and handles.
+    width, height = 200, 150
+    rgb = bytearray(bytes([200, 210, 225]) * width * height)
+
+    def put(x, y, color):
+        i = (y * width + x) * 3
+        rgb[i:i + 3] = color
+
+    for y in range(20):
+        for x in range(30):
+            put(x, y, b"\xff\xff\xff")
+    for x in range(0, 40):
+        put(x, 21, b"\x40\x40\x40")  # shadow
+    for y in range(18, 24):  # handle
+        for x in range(32, 38):
+            put(x, y, b"\x00\x00\x00" if x in (32, 37) or y in (18, 23) else b"\xff\xff\xff")
+    stats = desktop_state.canvas_stats(bytes(rgb), width, height)
+    assert stats["dark_pixels"] == 0 and stats["canvas"] == [30, 20]
+
+
+def test_no_visible_canvas_is_a_grader_error() -> None:
+    gray = bytes([200, 210, 225]) * 50 * 40
+    stats = desktop_state.canvas_stats(gray, 50, 40)
+    assert stats["canvas"] == [0, 0]
+    paint = _window("mspaint", "Untitled - Paint")
+    with pytest.raises(desktop_state.ProbeError, match="could not be found"):
+        desktop_state.grade("paint_rectangle", _snap(paint, canvas={"found": True, **stats}))

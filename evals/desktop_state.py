@@ -257,12 +257,13 @@ def canvas_stats(rgb: bytes, width: int, height: int, threshold: int = 200, whit
         if low >= white:
             col_white[i % width] += 1
             row_white[i // width] += 1
-    cols = [x for x, c in enumerate(col_white) if c >= 0.3 * height]
-    rows = [y for y, c in enumerate(row_white) if c >= 0.3 * width]
-    if cols and rows:
-        left, right, top, bottom = cols[0], cols[-1], rows[0], rows[-1]
-    else:  # the canvas is fully painted over
-        left, right, top, bottom = 0, width - 1, 0, height - 1
+    # Compared with the whitest column and row, so a canvas of any size or zoom is found.
+    if max(col_white, default=0) < 10 or max(row_white, default=0) < 10:
+        # No canvas found (painted over, or not in view): report it, never count the backdrop.
+        return {"dark_pixels": 0, "bbox": [0, 0], "canvas": [0, 0]}
+    cols = [x for x, c in enumerate(col_white) if c >= 0.25 * max(col_white)]
+    rows = [y for y, c in enumerate(row_white) if c >= 0.25 * max(row_white)]
+    left, right, top, bottom = cols[0], cols[-1], rows[0], rows[-1]
     count, xs, ys = 0, [], []
     for y in range(max(top, 0), min(bottom, height - 1) + 1):
         row = y * width
@@ -461,6 +462,8 @@ def paint_rectangle(snapshot: Snapshot) -> tuple[bool, str]:
     if not canvas.get("found"):
         # The grader failed to read the drawing; that says nothing about the model.
         raise ProbeError(f"Paint's canvas could not be read: {canvas.get('error') or 'no canvas in the snapshot'}")
+    if canvas.get("canvas") == [0, 0]:
+        raise ProbeError("Paint's canvas could not be found in its window (no white canvas visible)")
     width, height = canvas.get("bbox") or [0, 0]
     if canvas.get("dark_pixels", 0) >= 40 and width >= 10 and height >= 10:
         return True, f"Paint's canvas has a drawn shape ({width}x{height} px)"

@@ -73,8 +73,9 @@ function parseStamp(stamp) {
   return m ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6])) : new Date(stamp);
 }
 
-const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
-const timeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+// Every date on the page is UTC, the same clock as the monthly budget and the benchmark runners.
+const dateFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+const timeFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short" });
 const fmtPct = (v) => (v === null || v === undefined ? "–" : `${Math.round(v * 100)}%`);
 const fmtSec = (v) => (v === null || v === undefined ? "–" : `${Number(v).toFixed(v >= 100 ? 0 : 1)} s`);
 const fmtNum = (v) => (v === null || v === undefined ? "–" : String(v));
@@ -241,7 +242,7 @@ function lineChart(host, legendHost, series, opts) {
   }
   // One tick per day, thinned so labels never collide.
   const day = 86400e3;
-  const firstDay = new Date(x0); firstDay.setHours(0, 0, 0, 0);
+  const firstDay = new Date(x0); firstDay.setUTCHours(0, 0, 0, 0);
   const days = [];
   for (let d = +firstDay + day; d <= x1; d += day) days.push(d);
   const every = Math.max(1, Math.ceil(days.length / Math.max(1, Math.floor((width - m.l - m.r) / 70))));
@@ -1027,8 +1028,8 @@ function renderByModel(runs) {
   };
   for (const run of runs) {
     const when = parseStamp(run.started_at);
-    const id = `${when.getFullYear()}-${when.getMonth()}-${when.getDate()}`;
-    if (!days.has(id)) days.set(id, { date: new Date(when.getFullYear(), when.getMonth(), when.getDate()), values: new Map(), runs: 0 });
+    const id = `${when.getUTCFullYear()}-${when.getUTCMonth()}-${when.getUTCDate()}`;
+    if (!days.has(id)) days.set(id, { date: new Date(Date.UTC(when.getUTCFullYear(), when.getUTCMonth(), when.getUTCDate())), values: new Map(), runs: 0 });
     const day = days.get(id);
     day.runs += 1;
     const byModel = Object.entries(run.summary.by_model || {});

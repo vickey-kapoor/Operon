@@ -36,7 +36,8 @@
       "model": "gemini-3.5-flash",
       "adapter": "gemini_native",
       "environments": [
-        "browser"
+        "browser",
+        "desktop"
       ],
       "self_hosted": false
     },

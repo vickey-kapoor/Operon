@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS bench_runs (
     imported_at     timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS bench_runs_started_at ON bench_runs (started_at);
+-- Cross-model benchmark: the model registry profile (evals/models.yaml) a run used.
+ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS model_profile text;
 CREATE TABLE IF NOT EXISTS bench_task_results (
     run_key            text NOT NULL REFERENCES bench_runs (key) ON DELETE CASCADE,
     position           integer NOT NULL,
@@ -135,6 +137,7 @@ def run_key(report: dict) -> str:
         report["suite"].removeprefix("desktop-"),
         config.get("backend") or "unknown",
         config.get("harness_profile") or "full",
+        *([config["model_profile"]] if config.get("model_profile") else []),
         report["started_at"],
     ]
     return "-".join(str(part).replace("/", "_") for part in parts)
@@ -149,7 +152,14 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
     known = {k: v for k in ("backend", "harness_profile") if (v := report.get(k)) and v != "server default"}
     for field, value in known.items():
         config.setdefault(field, value)
-    model = report.get("claude_model") if config.get("backend") == "claude_computer_use" else report.get(f"{report['mode']}_model")
+    if report.get("model_profile"):
+        # A registry model: the profile names it, and its id is the model.
+        config.setdefault("model_profile", report["model_profile"])
+        model = report.get("model_id")
+    elif config.get("backend") == "claude_computer_use":
+        model = report.get("claude_model")
+    else:
+        model = report.get(f"{report['mode']}_model")
     if model and model != "server default":
         config.setdefault("model", model)
     for field, value in overrides.items():
@@ -183,6 +193,7 @@ def to_rows(report: dict) -> tuple[dict, list[dict]]:
         "backend": config.get("backend"),
         "harness_profile": config.get("harness_profile"),
         "model": config.get("model"),
+        "model_profile": config.get("model_profile"),
         "started_at": parse_started_at(report["started_at"]),
         "judge_model": report.get("judge_model"),
         "git_sha": config.get("git_sha"),

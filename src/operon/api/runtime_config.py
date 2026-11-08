@@ -4,8 +4,10 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 
-_VALID_DESKTOP_BACKENDS = frozenset({"json", "claude_computer_use"})
-_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "claude_computer_use"})
+# "model" is the cross-model adapter (experimental): the registry profile named by
+# OPERON_MODEL_PROFILE picks the model (evals/models.yaml).
+_VALID_DESKTOP_BACKENDS = frozenset({"json", "claude_computer_use", "model"})
+_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "claude_computer_use", "model"})
 _VALID_PROVIDERS = frozenset({"gemini", "anthropic"})
 
 
@@ -87,7 +89,42 @@ def validate_modes() -> list[str]:
             )
         if cfg.backend == "claude_computer_use" and not os.getenv("ANTHROPIC_API_KEY"):
             errors.append(f"{label} backend=claude_computer_use but ANTHROPIC_API_KEY is unset")
+        if cfg.backend == "model":
+            errors.extend(f"{label} backend=model: {problem}" for problem in _model_profile_problems(label))
     return errors
+
+
+def _model_profile_problems(environment: str) -> list[str]:
+    from operon.agent.backends.model_adapter.registry import (
+        ModelRegistryError,
+        resolve_profile,
+    )
+
+    try:
+        profile = resolve_profile()
+    except ModelRegistryError as exc:
+        return [str(exc)]
+    problems = []
+    if environment not in profile.environments:
+        problems.append(f"profile {profile.name} does not support {environment}")
+    required_key = {
+        "claude_native": "ANTHROPIC_API_KEY",
+        "gemini_native": "GEMINI_API_KEY",
+        "openai_native": "OPENAI_API_KEY",
+    }.get(profile.adapter)
+    if required_key and not os.getenv(required_key):
+        problems.append(f"profile {profile.name} needs {required_key}")
+    if profile.adapter == "openai_native" and (
+        profile.pricing.input_per_mtok is None or profile.pricing.output_per_mtok is None
+    ):
+        # Without prices every step costs $0 and the run cost cap never stops a paid run.
+        problems.append(f"profile {profile.name} needs pricing (input_per_mtok and output_per_mtok)")
+    if profile.adapter == "openai_compat":
+        try:
+            profile.resolved_base_url()
+        except ModelRegistryError as exc:
+            problems.append(str(exc))
+    return problems
 
 
 def main() -> int:

@@ -4,7 +4,7 @@
 "use strict";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const BACKEND_NAMES = { claude_computer_use: "Claude", computer_use: "Gemini", json: "Gemini" };
+const BACKEND_NAMES = { claude_computer_use: "Claude", computer_use: "Gemini", json: "Gemini", model: "Model" };
 // Colors follow the configuration, never its rank: known ones get fixed slots,
 // anything new takes the next free slot in order of first appearance.
 const FIXED_SLOTS = { "Claude": 1, "Gemini": 2, "Claude · thin": 3 };
@@ -93,10 +93,16 @@ function fmtTokens(v) {
   return String(v);
 }
 
+function harnessSuffix(name, harness) {
+  if (harness === "thin-own") return `${name} · thin, own done`;
+  return (harness || "full") === "thin" ? `${name} · thin` : name;
+}
+
 function configLabel(run) {
   const c = run.config || {};
+  if (c.model_profile) return c.model_profile;  // a registry model: always thin, own "done"
   const name = BACKEND_NAMES[c.backend] || c.backend || "Unknown backend";
-  return (c.harness_profile || "full") === "thin" ? `${name} · thin` : name;
+  return harnessSuffix(name, c.harness_profile);
 }
 
 function seriesColor(label) {
@@ -1058,6 +1064,152 @@ async function selectCostRun(run) {
 
 // ---------- shell ----------
 
+// ---------- leaderboard tab ----------
+// One row per model: a registry profile (cross-model runs, judged by the model's own
+// "done") or, for runs from before the registry, the backend's model and harness.
+
+function modelLabel(run) {
+  const c = run.config || {};
+  if (c.model_profile) return c.model_profile;
+  const name = c.model || BACKEND_NAMES[c.backend] || c.backend || "unknown";
+  return harnessSuffix(name, c.harness_profile);
+}
+
+function runTotalCost(run) {
+  return (run.summary.cost_usd || 0) + (run.summary.gpu_cost_usd || 0);
+}
+
+function leaderboardData() {
+  const latest = new Map();  // model -> suite -> run
+  for (const run of state.runs) {
+    if (!run.summary || (run.config && run.config.flagged)) continue;
+    const model = modelLabel(run);
+    const suite = suiteId(run);
+    if (!latest.has(model)) latest.set(model, new Map());
+    const have = latest.get(model).get(suite);
+    if (!have || run.started_at > have.started_at) latest.get(model).set(suite, run);
+  }
+  const suites = [...new Set([...latest.values()].flatMap((m) => [...m.keys()]))]
+    .sort((a, b) => ((SUITE_SLOTS.indexOf(a) + 1) || 99) - ((SUITE_SLOTS.indexOf(b) + 1) || 99) || a.localeCompare(b));
+  const models = [...latest.entries()].map(([model, bySuite]) => {
+    const runs = [...bySuite.values()];
+    const sum = (f) => runs.reduce((acc, r) => acc + (Number(f(r)) || 0), 0);
+    const tasks = sum((r) => r.summary.tasks);
+    const replies = sum((r) => r.summary.model_replies);
+    return {
+      model, bySuite,
+      ownDone: runs.some((r) => r.config && (r.config.model_profile || r.config.harness_profile === "thin-own")),
+      tasks,
+      rate: tasks ? sum((r) => r.summary.success) / tasks : null,
+      falsePass: sum((r) => r.summary.false_success),
+      compromised: sum((r) => r.summary.compromised),
+      secondsPerTask: tasks ? sum((r) => r.summary.mean_seconds * r.summary.tasks) / tasks : null,
+      costPerTask: tasks && runs.some(hasCost) ? sum(runTotalCost) / tasks : null,
+      invalidRate: replies ? sum((r) => r.summary.invalid_replies) / replies : null,
+    };
+  }).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
+  return { suites, models };
+}
+
+function lbColor(index) {
+  return `var(--series-${(index % MAX_SLOTS) + 1})`;
+}
+
+function renderLeaderboardMatrix(data) {
+  const table = document.getElementById("lb-matrix");
+  table.replaceChildren(el("thead", {}, el("tr", {}, el("th", {}, "Model"),
+    data.suites.map((id) => el("th", { class: "num" }, suiteLabel(id))))));
+  const body = el("tbody");
+  data.models.forEach((m, i) => {
+    body.append(el("tr", {},
+      el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model,
+        m.ownDone ? null : el("span", { class: "sub", title: "Judged by Operon's completion check, not the model's own done" }, " (check)"))),
+      data.suites.map((id) => {
+        const run = m.bySuite.get(id);
+        if (!run) return el("td", { class: "num" }, "–");
+        const s = run.summary;
+        const title = [
+          `${s.success}/${s.tasks} pass`, `${s.false_success || 0} false pass`,
+          s.compromised ? `${s.compromised} compromised` : null,
+          `${s.mean_seconds} s/task`, hasCost(run) ? `${fmtUsd(runTotalCost(run) / (s.tasks || 1))}/task` : null,
+          s.invalid_action_rate !== undefined ? `${(s.invalid_action_rate * 100).toFixed(1)}% invalid replies` : null,
+        ].filter(Boolean).join(" · ");
+        return el("td", { class: "num", title }, `${Math.round((s.success_rate || 0) * 100)}%`,
+          el("span", { class: "sub" }, ` ${s.success}/${s.tasks}`));
+      })));
+  });
+  table.append(body);
+}
+
+function renderLeaderboardModels(data) {
+  const table = document.getElementById("lb-models");
+  const pctText = (v) => (v === null ? "–" : `${(v * 100).toFixed(v < 0.1 && v > 0 ? 1 : 0)}%`);
+  table.replaceChildren(el("thead", {}, el("tr", {},
+    el("th", {}, "Model"), el("th", { class: "num" }, "Pass"), el("th", { class: "num" }, "False pass"),
+    el("th", { class: "num" }, "Compromised"), el("th", { class: "num" }, "s/task"),
+    el("th", { class: "num" }, "$/task"), el("th", { class: "num" }, "Invalid"))));
+  table.append(el("tbody", {}, data.models.map((m, i) => el("tr", {},
+    el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model)),
+    el("td", { class: "num" }, pctText(m.rate)),
+    el("td", { class: "num" }, String(m.falsePass)),
+    el("td", { class: "num" }, String(m.compromised)),
+    el("td", { class: "num" }, m.secondsPerTask === null ? "–" : m.secondsPerTask.toFixed(0)),
+    el("td", { class: "num" }, fmtUsd(m.costPerTask)),
+    el("td", { class: "num" }, pctText(m.invalidRate))))));
+}
+
+function renderLeaderboardScatter(data) {
+  const host = document.getElementById("ch-lb-scatter");
+  const legend = document.getElementById("lg-lb-scatter");
+  host.replaceChildren();
+  legend.replaceChildren();
+  const points = data.models.map((m, i) => ({ ...m, color: lbColor(i) })).filter((m) => m.rate !== null && m.costPerTask > 0);
+  if (!points.length) { host.append(el("div", { class: "empty" }, "No runs with cost yet.")); return; }
+  for (const p of points) legend.append(el("span", {}, key(p.model, "key", p.color), p.model));
+  const width = Math.max(host.clientWidth, 280);
+  const height = 260;
+  const m = { l: 48, r: 20, t: 12, b: 32 };
+  const logs = points.map((p) => Math.log10(p.costPerTask));
+  let x0 = Math.floor(Math.min(...logs)), x1 = Math.ceil(Math.max(...logs));
+  if (x1 === x0) x1 = x0 + 1;
+  const sx = (v) => m.l + ((Math.log10(v) - x0) / (x1 - x0)) * (width - m.l - m.r);
+  const sy = (r) => m.t + (1 - r) * (height - m.t - m.b);
+  const root = svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Cost per task against pass rate" });
+  const axis = svg("g", { class: "axis" });
+  for (let i = 0; i <= 4; i++) {
+    const r = i / 4;
+    axis.append(svg("line", { class: i === 0 ? "baseline" : "gridline", x1: m.l, x2: width - m.r, y1: sy(r), y2: sy(r) }));
+    const t = svg("text", { x: m.l - 8, y: sy(r) + 4, "text-anchor": "end" });
+    t.textContent = `${Math.round(r * 100)}%`;
+    axis.append(t);
+  }
+  for (let e = x0; e <= x1; e++) {
+    const v = 10 ** e;
+    const t = svg("text", { x: sx(v), y: height - 10, "text-anchor": "middle" });
+    t.textContent = fmtUsdAxis(v);
+    axis.append(t);
+  }
+  root.append(axis);
+  for (const p of points) {
+    const dot = svg("circle", { cx: sx(p.costPerTask), cy: sy(p.rate), r: 6, fill: p.color, stroke: "var(--surface-1)", "stroke-width": 2 });
+    const title = svg("title", {});
+    title.textContent = `${p.model}: ${(p.rate * 100).toFixed(0)}% pass at ${fmtUsd(p.costPerTask)} per task`;
+    dot.append(title);
+    root.append(dot);
+  }
+  host.append(root);
+}
+
+function renderLeaderboard() {
+  const data = leaderboardData();
+  document.getElementById("lb-empty").hidden = data.models.length > 0;
+  document.getElementById("lb-body").hidden = data.models.length === 0;
+  if (!data.models.length) return;
+  renderLeaderboardMatrix(data);
+  renderLeaderboardModels(data);
+  renderLeaderboardScatter(data);
+}
+
 function render() {
   for (const [id, value] of [["f-mode", state.mode], ["f-suite", state.suite]]) {
     for (const b of document.getElementById(id).querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.v === value));
@@ -1066,8 +1218,11 @@ function render() {
   for (const b of document.querySelectorAll("nav.tabs button")) b.setAttribute("aria-selected", String(b.dataset.tab === state.tab));
   document.getElementById("tab-evals").hidden = state.tab !== "evals";
   document.getElementById("tab-cost").hidden = state.tab !== "cost";
-  for (const id of ["f-mode", "f-suite", "f-flagged-wrap"]) document.getElementById(id).hidden = state.tab === "cost";
-  if (state.tab === "evals") {
+  document.getElementById("tab-leaderboard").hidden = state.tab !== "leaderboard";
+  for (const id of ["f-mode", "f-suite", "f-flagged-wrap"]) document.getElementById(id).hidden = state.tab !== "evals";
+  if (state.tab === "leaderboard") {
+    renderLeaderboard();
+  } else if (state.tab === "evals") {
     const runs = filteredRuns();
     renderTiles(runs);
     renderCharts(runs);

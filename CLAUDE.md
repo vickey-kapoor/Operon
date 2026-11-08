@@ -61,9 +61,11 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom]
-#   /bench grounding [opus|sonnet|haiku|gemini] [zoom]
-# Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
+#   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
+# Cross-model (experimental): model=<profile> / --model <profile> runs a profile from evals/models.yaml
+# (OPERON_*_BACKEND=model + OPERON_MODEL_PROFILE; adapters in src/operon/agent/backends/model_adapter/)
+# Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, OPENWEIGHT_BASE_URL, OPENWEIGHT_API_KEY (optional), DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard. Benchmarks cost real credits: run only when asked.
 
@@ -116,7 +118,7 @@ Layer map:
 | Package | Role |
 |---|---|
 | `agent/perception/` | Screen capture, geometry, screen-diff, perception service |
-| `agent/backends/` | Model backends: `browser_claude_computer_use` / `desktop_claude_computer_use` (Claude, default with `ANTHROPIC_API_KEY`), `browser_computer_use` (Gemini CU), `browser_json`, plus `fallback`/`combined` wrappers |
+| `agent/backends/` | Model backends: `browser_claude_computer_use` / `desktop_claude_computer_use` (Claude, default with `ANTHROPIC_API_KEY`), `browser_computer_use` (Gemini CU), `browser_json`, plus `fallback`/`combined` wrappers; `model_adapter/` (experimental, `backend=model`) plugs in any registry model |
 | `agent/policy/` | `rules.py` (deterministic engine), `coordinator.py` (post-LLM guards), `verifier.py`, `recovery.py`, `trust_gate.py`, `best_of_n.py` |
 | `agent/actions/` | Grounding, target selection, action translation, retry hardening |
 | `executor/` | `browser_native.py`, `desktop.py`, `os_picker_macro.py` + adapters to the unified contract |

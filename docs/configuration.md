@@ -26,6 +26,11 @@ it to `.env` to start.
   deterministic rules before the model, post-model guards, a per-step verifier and a
   recovery ladder.
 
+- **model backend** (`OPERON_*_BACKEND=model`, experimental): always thin, and the model's own
+  "done" ends the run with no completion check, so every model in the cross-model benchmark
+  is judged the same way by the graders. `OPERON_COMPLETION_CHECK=own` does the same for
+  `claude_computer_use`. See [evaluation.md](evaluation.md#comparing-models-experimental).
+
 On the live browser benchmark the thin harness matched or beat the full one for Claude
 (42/44 at 28.6 s per task against 42/44 at 31 s). [architecture.md](architecture.md) has
 the details.
@@ -36,6 +41,11 @@ the details.
 |---|---|---|
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | unset | Gemini API key (Gemini Computer Use reads `GEMINI_API_KEY` only) |
 | `ANTHROPIC_API_KEY` | unset | Anthropic key; when set, browser runs default to Claude computer use |
+| `OPERON_MODEL_PROFILE` | unset | With `OPERON_BROWSER_BACKEND=model` or `OPERON_DESKTOP_BACKEND=model` (experimental): the model registry profile to run |
+| `OPERON_MODEL_REGISTRY` | `evals/models.yaml` | Model registry file |
+| `OPENWEIGHT_BASE_URL` / `OPENWEIGHT_API_KEY` | unset | Endpoint and key of the OpenAI-compatible model server for `openai_compat` profiles (a profile can name other variables) |
+| `OPENAI_API_KEY` / `OPENAI_API_BASE_URL` | unset / `https://api.openai.com/v1/responses` | OpenAI computer use for `openai_native` profiles |
+| `OPERON_COMPLETION_CHECK` | `claude` | `own` makes `claude_computer_use` end on Claude's own "done" with no completion check (benchmark mode); `model` backends always do |
 | `GEMINI_API_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/models` | Base URL for Gemini calls, e.g. a proxy. The Gemini Computer Use client always uses it; the JSON Gemini client ignores it when `OPERON_USE_VERTEX=true` and calls Vertex AI instead. |
 | `API_KEYS` | unset | Comma-separated API keys. Every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires it as an `x-api-key` subprotocol (`["x-api-key", "<key>"]`). Unset = the server generates one key on first start in `.var/api-key` (mode 0600), which the UI and the benchmark harness read. |
 | `OPERON_ALLOW_UNAUTHENTICATED` | `false` | With `API_KEYS` unset, `true` turns authentication off. Only safe on a throwaway machine, since the API can drive a real browser/desktop. |

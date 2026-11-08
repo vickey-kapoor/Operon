@@ -71,8 +71,8 @@ Repository owners, members and collaborators can comment on a PR to benchmark it
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom]
-/bench grounding [opus|sonnet|haiku|gemini] [zoom]
+/bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
+/bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 ```
 
 Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. Examples:
@@ -91,9 +91,46 @@ Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. Examples:
 | `/bench desktop` | Desktop smoke on GitHub's hosted Windows runner |
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
 | `/bench sonnet check-haiku` | Sonnet acting, Haiku for the completion check |
+| `/bench apps model=qwen3-vl-32b` | Apps suite on a model registry profile (see below) |
 
 The **Live benchmark**, **Live desktop benchmark** and **Grounding eval** workflows can also be started by hand,
 with inputs for backends, models, harness profile, suite and cost cap (`max_cost_usd`).
+
+## Comparing models (experimental)
+
+The cross-model benchmark runs any model on the same tasks, executor and graders. Models are
+profiles in [`evals/models.yaml`](../evals/models.yaml); the server runs one with
+`OPERON_BROWSER_BACKEND=model` (or `OPERON_DESKTOP_BACKEND=model`) and
+`OPERON_MODEL_PROFILE=<profile>`. Every such run uses the thin harness and ends on the
+model's own "done": no second model checks the claim, and the graders decide success, so
+false passes count the same way for every model.
+
+| Adapter | Models | How Operon talks to them |
+|---|---|---|
+| `claude_native` | Claude Opus, Sonnet, Haiku | Claude's computer-use toolset (the existing backend) |
+| `gemini_native` | Gemini computer use (browser only) | Gemini Computer Use (the existing backend) |
+| `openai_native` | OpenAI computer use | Responses API with the `computer` tool, chained by `previous_response_id` |
+| `openai_compat` | Open-weight models on vLLM, SGLang or a hosted endpoint | `/v1/chat/completions`, with a parser per model family: `neutral_tools` (tool calling, e.g. Qwen3-VL), `ui_tars` (UI-TARS text actions), `opencua` (OpenCUA pyautogui code) |
+
+Each profile sets its coordinate space (pixels of the sent image, 0 to 1000, or 0 to 1), how
+the screenshot is resized (a long-edge cap, or Qwen-style `smart` resizing to multiples of
+28 or 32) and how many screenshots stay in the history. A reply the parser cannot turn into
+an action is recorded and answered with a short wait, and the model is told why; the report
+counts these as the invalid-action rate.
+
+```powershell
+# Server: a self-hosted model behind vLLM's OpenAI-compatible server
+$env:OPERON_BROWSER_BACKEND = "model"; $env:OPERON_MODEL_PROFILE = "qwen3-vl-32b"
+$env:OPENWEIGHT_BASE_URL = "https://<gpu-vm>:8000/v1"; $env:OPENWEIGHT_API_KEY = "<vllm --api-key>"
+# Benchmark: --model checks the profile and records it, the invalid-action rate and GPU cost
+.venv\Scripts\python -m evals.live_bench --suite apps --model qwen3-vl-32b
+.venv\Scripts\python -m evals.grounding --backend model --model qwen3-vl-32b
+```
+
+GPU cost is the tasks' wall time at the profile's `gpu_hour_usd` (a lower bound: the VM also
+bills while it starts and idles). The dashboard's **Leaderboard** tab shows each model's
+latest run per suite, a cost-against-success chart and per-model totals. Every paid run,
+including a smoke run of a new model, waits for an approved cost estimate.
 
 ## Eval dashboard
 
@@ -118,6 +155,8 @@ that the workflow starts before the run and deallocates after. Setup is in
 |---|---|---|
 | `ANTHROPIC_API_KEY` | secret | Claude backends in the live benchmarks |
 | `GEMINI_API_KEY` | secret | Gemini backends and the benchmark judge |
+| `OPENAI_API_KEY` | secret | OpenAI computer use (`openai_native` profiles); optional |
+| `OPENWEIGHT_BASE_URL`, `OPENWEIGHT_API_KEY` | secrets | The self-hosted model server (`openai_compat` profiles); optional |
 | `DATABASE_URL` | secret | Dashboard data import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
 | `SLACK_WEBHOOK_URL` | secret | Regression alerts; optional |

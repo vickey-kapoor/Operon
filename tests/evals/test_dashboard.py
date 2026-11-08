@@ -249,3 +249,17 @@ def test_import_uploads_traces_and_alerts_against_the_previous_run(tmp_path) -> 
 
 def test_blob_script_path_points_at_dashboard_scripts() -> None:
     assert BLOB_SCRIPT.is_file(), BLOB_SCRIPT
+
+
+def test_a_registry_model_run_keeps_its_profile_and_model_id() -> None:
+    report = _report(
+        backend="model", harness_profile="thin", model_profile="qwen3-vl-32b",
+        model_id="Qwen/Qwen3-VL-32B-Instruct", browser_model="gemini-3.5-flash",
+    )
+    run, _ = to_rows(prepare(report, {}))
+    assert run["model_profile"] == "qwen3-vl-32b"
+    assert run["model"] == "Qwen/Qwen3-VL-32B-Instruct"
+    assert run["config"]["model_profile"] == "qwen3-vl-32b"
+    # Two models run at the same moment never share a key.
+    assert run["key"] == "browser-full-model-thin-qwen3-vl-32b-20261024T012945Z"
+    assert "ADD COLUMN IF NOT EXISTS model_profile" in __import__("evals.dashboard").dashboard.SCHEMA

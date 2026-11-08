@@ -190,7 +190,8 @@ code, .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo
 .page { padding: 24px var(--gutter) 48px; display: flex; flex-direction: column; gap: 20px; }
 .page > section { display: flex; flex-direction: column; gap: 20px; }
 .page > section[hidden] { display: none; }
-#cost-body { display: flex; flex-direction: column; gap: 20px; }
+#cost-body, #lb-body { display: flex; flex-direction: column; gap: 20px; }
+#cost-body[hidden], #lb-body[hidden] { display: none; }
 
 .card {
   background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius);

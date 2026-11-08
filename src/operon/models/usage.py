@@ -8,7 +8,7 @@ from pydantic import Field
 
 from operon.models.common import StrictModel
 
-ModelProvider = Literal["gemini", "anthropic"]
+ModelProvider = Literal["gemini", "anthropic", "openai", "openai_compat"]
 
 
 class ModelUsage(StrictModel):

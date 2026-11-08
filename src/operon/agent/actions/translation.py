@@ -215,6 +215,12 @@ def _claude_key(text: str) -> dict[str, Any]:
     }
 
 
+def key_action(text: str) -> dict[str, Any]:
+    """Action payload for a key or chord such as ``Return``, ``ctrl+s`` or ``Page_Down``
+    (xdotool-style names map to the executor's)."""
+    return _claude_key(text)
+
+
 # Every call name ``normalize_claude_computer_calls`` translates.
 CLAUDE_COMPUTER_CALLS = frozenset({
     "screenshot", "left_click", "middle_click", "double_click", "triple_click", "right_click", "mouse_move",

@@ -43,6 +43,12 @@ that off) and counted. Every run's results are saved under
 ``.var/bench/`` and the report compares them with the previous saved run.
 The judge model is ``OPERON_BENCH_JUDGE_MODEL`` (default ``gemini-3.5-flash``).
 
+``--model PROFILE`` names the model registry profile (``evals/models.yaml``) the
+server runs (``OPERON_*_BACKEND=model``, ``OPERON_MODEL_PROFILE``). The report then
+records the profile, each task's invalid-reply count (replies the adapter could not
+turn into an action) and, for self-hosted models, the GPU cost of the run's wall time
+at the profile's ``gpu_hour_usd``.
+
 Spend is capped per benchmark run: after each task, the agent's and the judge's
 cost so far is checked against ``--max-cost-usd`` (``MAX_RUN_COST_USD``, default
 $5; 0 turns the cap off). With ``--repeat N`` the cap is N times that, since each
@@ -118,6 +124,9 @@ class TaskResult:
     cache_write_tokens: int = 0
     cost_usd: float = 0.0
     judge_cost_usd: float = 0.0
+    # Model-adapter runs: replies the parser could not use, out of all replies.
+    invalid_replies: int = 0
+    model_replies: int = 0
     by_model: dict = field(default_factory=dict)
     # Which pass of a --repeat run this result is from (1 when not repeated).
     attempt: int = 1
@@ -188,7 +197,7 @@ def _run_dir(run_id: str) -> Path:
 
 def _backends_used(run_id: str) -> tuple[int, int]:
     steps = sorted(_run_dir(run_id).glob("step_*"))
-    cu = sum((step / "computer_use_raw.json").exists() for step in steps)
+    cu = sum((step / "computer_use_raw.json").exists() or (step / "model_raw.json").exists() for step in steps)
     return cu, len(steps) - cu
 
 
@@ -221,6 +230,65 @@ def run_usage(run_id: str) -> dict:
     for bucket in (total, *by_model.values()):
         bucket["cost_usd"] = round(bucket["cost_usd"], 6)
     return {**total, "by_model": by_model}
+
+
+def run_replies(run_id: str) -> tuple[int, int]:
+    """(invalid replies, replies) of a model-adapter run, from ``step_*/model_parsed.json``."""
+    invalid = replies = 0
+    for path in _run_dir(run_id).glob("step_*/model_parsed.json"):
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        replies += 1
+        invalid += bool(isinstance(parsed, dict) and parsed.get("invalid"))
+    return invalid, replies
+
+
+def harness_label(profile) -> str:
+    """The report's harness: ``thin``, ``full``, or ``thin-own`` for a Claude thin run that
+    takes the model's own "done" (OPERON_COMPLETION_CHECK=own), so it is never compared
+    with runs judged by the completion check. Registry models are always thin with own done."""
+    if profile is not None:
+        return "thin"
+    harness = os.getenv("OPERON_HARNESS_PROFILE", "full")
+    if harness == "thin" and (os.getenv("OPERON_COMPLETION_CHECK") or "").strip().lower() == "own":
+        return "thin-own"
+    return harness
+
+
+def resolve_model_profile(name: str | None, mode: str):
+    """The registry profile ``--model`` names, checked against this shell's server
+    settings when they are visible here; None without ``--model``."""
+    if not name:
+        return None
+    from operon.agent.backends.model_adapter.registry import (
+        ModelRegistryError,
+        resolve_profile,
+    )
+
+    try:
+        profile = resolve_profile(name)
+    except ModelRegistryError as exc:
+        sys.exit(f"--model: {exc}")
+    if mode not in profile.environments:
+        sys.exit(f"--model: profile {name} does not support {mode}")
+    configured = (os.getenv("OPERON_MODEL_PROFILE") or "").strip()
+    backend = (os.getenv(f"OPERON_{mode.upper()}_BACKEND") or "").strip()
+    if configured and configured != name:
+        sys.exit(f"--model {name}, but OPERON_MODEL_PROFILE={configured}: the server runs another model")
+    if backend and backend != "model":
+        sys.exit(f"--model {name}, but OPERON_{mode.upper()}_BACKEND={backend}: start the server with backend=model")
+    return profile
+
+
+def gpu_cost_usd(results: list["TaskResult"], profile) -> float | None:
+    """GPU time of a self-hosted model over the tasks' wall time (a lower bound: the
+    VM also bills while it starts and idles)."""
+    rate = getattr(getattr(profile, "pricing", None), "gpu_hour_usd", None)
+    if rate is None:
+        return None
+    return round(sum(r.seconds for r in results) / 3600 * rate, 4)
 
 
 def _final_screenshot(run_id: str) -> str | None:
@@ -304,6 +372,7 @@ async def run_task(
         except httpx.HTTPError as exc:
             print(f"  {task.name}: cleanup failed: {exc}", file=sys.stderr)
     usage = run_usage(run_id) if run_id else {"by_model": {}}
+    invalid_replies, model_replies = run_replies(run_id) if run_id else (0, 0)
     return TaskResult(
         task=task.name,
         category=task.category,
@@ -321,6 +390,8 @@ async def run_task(
         **{key: usage.get(key, 0) for key in USAGE_FIELDS},
         judge_cost_usd=round(verdict.cost_usd or 0.0, 6),
         by_model=usage["by_model"],
+        invalid_replies=invalid_replies,
+        model_replies=model_replies,
     )
 
 
@@ -338,7 +409,17 @@ def summarize(results: list[TaskResult]) -> dict:
         "fallback_steps": sum(r.other_steps for r in results),
         **cost_summary(results, counts["success"]),
         **({"repeat": repeat_summary(results)} if any(r.attempt > 1 for r in results) else {}),
+        **invalid_summary(results),
     }
+
+
+def invalid_summary(results: list[TaskResult]) -> dict:
+    """Invalid-action rate of a model-adapter run: replies the parser could not use."""
+    replies = sum(r.model_replies for r in results)
+    if not replies:
+        return {}
+    invalid = sum(r.invalid_replies for r in results)
+    return {"model_replies": replies, "invalid_replies": invalid, "invalid_action_rate": round(invalid / replies, 4)}
 
 
 def repeat_summary(results: list[TaskResult]) -> dict:
@@ -403,22 +484,29 @@ def spent_usd(results: list[TaskResult]) -> float:
     return round(sum(r.cost_usd + r.judge_cost_usd for r in results), 6)
 
 
-def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float) -> dict | None:
-    """The ``budget_stop`` record once a run has spent its cap with tasks left, else None."""
-    spent = spent_usd(results)
+def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float, gpu_usd: float | None = None) -> dict | None:
+    """The ``budget_stop`` record once a run has spent its cap with tasks left, else None.
+    ``gpu_usd`` is a self-hosted model's GPU time so far, which reports no token cost."""
+    spent = round(spent_usd(results) + (gpu_usd or 0.0), 6)
     if max_cost_usd <= 0 or spent < max_cost_usd or len(results) >= planned:
         return None
     return {"limit_usd": max_cost_usd, "spent_usd": spent, "tasks_run": len(results), "tasks_planned": planned}
 
 
-def _previous_report(bench_dir: Path, suite: str) -> dict | None:
-    # A run stopped at the cost cap covers only some tasks, so it is no baseline.
+def _previous_report(
+    bench_dir: Path, suite: str, model_profile: str | None = None, harness_profile: str | None = None
+) -> dict | None:
+    # A run stopped at the cost cap covers only some tasks, so it is no baseline; nor
+    # is a run of another registry model, or one judged another way (thin vs thin-own).
+    # Reports from before harness_profile was recorded match any harness.
     for path in sorted(bench_dir.glob(f"{suite}-*.json"), reverse=True):
         try:
             report = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if not report.get("budget_stop"):
+        if report.get("budget_stop") or report.get("model_profile") != model_profile:
+            continue
+        if harness_profile is None or report.get("harness_profile") in {None, harness_profile}:
             return report
     return None
 
@@ -457,6 +545,15 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         )
         for model, bucket in sorted(summary["by_model"].items()):
             lines.append(f"  {model}: {bucket['requests']} calls, ${bucket['cost_usd']:.4f}")
+    if summary.get("model_replies"):
+        lines.append(
+            f"invalid replies {summary['invalid_replies']}/{summary['model_replies']} "
+            f"({summary['invalid_action_rate']:.1%} invalid-action rate)"
+        )
+    if summary.get("gpu_cost_usd") is not None:
+        lines.append(
+            f"GPU ${summary['gpu_cost_usd']:.4f} over the tasks' wall time · total ${summary['total_cost_usd']:.4f}"
+        )
     if summary.get("repeat"):
         rep = summary["repeat"]
         low, high = rep["pass_at_1_ci95"]
@@ -510,6 +607,7 @@ def select_tasks(
 
 async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     tasks = select_tasks(args.suite, args.only, args.category, args.mode)
+    profile = resolve_model_profile(getattr(args, "model", None), args.mode)
     if not tasks:
         print("No tasks match.", file=sys.stderr)
         return 2
@@ -538,7 +636,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                 if not args.json:
                     label = result.task if repeat == 1 else f"{result.task} #{attempt}"
                     print(f"[{index}/{len(planned)}] {label}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
-                stopped = budget_stop(results, len(planned), max_cost_usd)
+                stopped = budget_stop(results, len(planned), max_cost_usd, gpu_cost_usd(results, profile))
                 if stopped:
                     print(
                         f"Stopping: spent ${stopped['spent_usd']:.2f}, over the ${max_cost_usd:.2f} cap "
@@ -554,8 +652,12 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     bench_dir = Path(args.out_dir)
     # Desktop reports get their own prefix so they never compare against browser runs.
     suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
-    previous = _previous_report(bench_dir, suite_name) if not (args.only or args.category) else None
+    previous = _previous_report(bench_dir, suite_name, profile.name if profile else None, harness_label(profile)) if not (args.only or args.category) else None
     model_key = f"{args.mode}_model"
+    if profile is not None:
+        gpu = gpu_cost_usd(results, profile)
+        summary["gpu_cost_usd"] = gpu
+        summary["total_cost_usd"] = round(summary["cost_usd"] + (gpu or 0.0), 6)
     report = {
         "suite": suite_name,
         "mode": args.mode,
@@ -564,7 +666,10 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         "judge_model": args.judge_model,
         "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
         "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
-        "harness_profile": os.getenv("OPERON_HARNESS_PROFILE", "full"),
+        "harness_profile": harness_label(profile),
+        "model_profile": profile.name if profile is not None else None,
+        "model_adapter": profile.adapter if profile is not None else None,
+        "model_id": profile.model if profile is not None else None,
         "zoom": os.getenv("OPERON_CLAUDE_ZOOM", "").strip().lower() in {"1", "true", "yes", "on"},
         "repeat": repeat,
         "budget_stop": stopped,
@@ -613,6 +718,10 @@ def build_parser(default_suite: str = "full", default_mode: str = "browser") -> 
     parser.add_argument(
         "--max-cost-usd", type=float, default=_max_cost_default(),
         help="stop once the run has spent this much on model calls (default $MAX_RUN_COST_USD or 5; 0: no cap)",
+    )
+    parser.add_argument(
+        "--model", default=os.getenv("OPERON_MODEL_PROFILE") or None,
+        help="model registry profile the server runs (evals/models.yaml; default $OPERON_MODEL_PROFILE)",
     )
     parser.add_argument("--list", action="store_true", help="list the tasks and exit")
     parser.add_argument("--json", action="store_true")

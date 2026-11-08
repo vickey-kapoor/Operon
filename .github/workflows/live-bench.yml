@@ -5,6 +5,8 @@ name: Live benchmark
 # Needs repo secrets GEMINI_API_KEY (always: the judge and critic are Gemini)
 # and ANTHROPIC_API_KEY (for the claude_computer_use backend).
 # Each backend's run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
+# Backend "model" runs the registry profile model_profile (evals/models.yaml) and
+# also reads OPENAI_API_KEY, OPENWEIGHT_BASE_URL and OPENWEIGHT_API_KEY when set.
 
 on:
   workflow_dispatch:
@@ -37,6 +39,9 @@ on:
       max_cost_usd:
         description: "Stop a backend's run once it has spent this many USD (0: no cap)"
         default: "5"
+      model_profile:
+        description: "Registry profile (evals/models.yaml) for backend 'model', e.g. qwen3-vl-32b (experimental)"
+        default: ""
   # Called by bench-command.yml when someone comments /bench on a PR.
   workflow_call:
     inputs:
@@ -48,6 +53,7 @@ on:
       suite: {type: string, default: "smoke"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "5"}
+      model_profile: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
@@ -56,6 +62,9 @@ on:
     secrets:
       ANTHROPIC_API_KEY: {required: false}
       GEMINI_API_KEY: {required: false}
+      OPENAI_API_KEY: {required: false}
+      OPENWEIGHT_BASE_URL: {required: false}
+      OPENWEIGHT_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -92,6 +101,11 @@ jobs:
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       BROWSER_HEADLESS: "true"
+      # Registry models (model_profile): the adapter's keys and the self-hosted endpoint.
+      OPERON_MODEL_PROFILE: ${{ matrix.backend == 'model' && inputs.model_profile || '' }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENWEIGHT_BASE_URL: ${{ secrets.OPENWEIGHT_BASE_URL }}
+      OPENWEIGHT_API_KEY: ${{ secrets.OPENWEIGHT_API_KEY }}
     steps:
       - name: Check the secrets
         run: |
@@ -99,6 +113,9 @@ jobs:
           [ -n "$GEMINI_API_KEY" ] || missing="$missing GEMINI_API_KEY"
           if [ "$OPERON_BROWSER_BACKEND" = "claude_computer_use" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
             missing="$missing ANTHROPIC_API_KEY"
+          fi
+          if [ "$OPERON_BROWSER_BACKEND" = "model" ] && [ -z "$OPERON_MODEL_PROFILE" ]; then
+            echo "::error::backend 'model' needs a model_profile (evals/models.yaml)."; exit 1
           fi
           if [ -n "$missing" ]; then
             echo "::error::Missing repository secret(s):$missing. Add them under Settings > Secrets and variables > Actions."
@@ -156,7 +173,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: bench-${{ matrix.backend }}
+          name: bench-${{ matrix.backend }}${{ matrix.backend == 'model' && format('-{0}', inputs.model_profile) || '' }}
           path: |
             bench.txt
             uvicorn.log

@@ -82,16 +82,41 @@ def final_check_model(claude_model: str | None) -> str:
     return (os.getenv("OPERON_FINAL_CHECK_MODEL") or "").strip() or claude_model or "claude-opus-5-5"
 
 
+# The model-adapter backend (OPERON_*_BACKEND=model) is the cross-model benchmark
+# path: always thin, and always judged by its own ``done`` (graders decide success).
+MODEL_BACKEND = "model"
+OWN_DONE = "own"
+FINAL_CHECK = "claude"
+
+
 def harness_profile(backend: str) -> str:
     """The harness profile for a backend. Claude computer use runs thin unless
-    ``OPERON_HARNESS_PROFILE=full`` asks for the old scaffolding; every other
-    backend runs full, since its decisions still need the rules and the critic."""
+    ``OPERON_HARNESS_PROFILE=full`` asks for the old scaffolding; the model-adapter
+    backend always runs thin; every other backend runs full, since its decisions
+    still need the rules and the critic."""
     requested = (os.getenv("OPERON_HARNESS_PROFILE") or "").strip().lower()
+    if backend == MODEL_BACKEND:
+        if requested == FULL:
+            logger.warning("OPERON_HARNESS_PROFILE=full is ignored for backend=model; it always runs thin")
+        return THIN
     if backend != "claude_computer_use":
         if requested == THIN:
             logger.warning("OPERON_HARNESS_PROFILE=thin needs backend=claude_computer_use (got %r); using full", backend)
         return FULL
     return FULL if requested == FULL else THIN
+
+
+def completion_check(backend: str) -> str:
+    """How a thin run's "done" is judged: ``claude`` runs ``FinalCheckVerifier``;
+    ``own`` takes the model's word and leaves success to the benchmark's graders.
+
+    The model-adapter backend always uses ``own``, so every model in a benchmark is
+    judged the same way. Claude computer use opts in with ``OPERON_COMPLETION_CHECK=own``
+    (benchmark mode; off by default, since production runs want the check)."""
+    if backend == MODEL_BACKEND:
+        return OWN_DONE
+    requested = (os.getenv("OPERON_COMPLETION_CHECK") or "").strip().lower()
+    return OWN_DONE if requested == OWN_DONE else FINAL_CHECK
 
 
 class ThinPolicy(PolicyService):
@@ -259,6 +284,62 @@ class FinalCheckVerifier(VerifierService):
             parsed_artifact_path=str(raw_path),
             usage_artifact_path=str(usage_path),
             usage=collect_latest_usage(self.client, usage_path),
+        )
+
+
+class OwnDoneVerifier(VerifierService):
+    """Benchmark mode: the model's own "done" ends the run, unchecked.
+
+    No second model judges the claim, so no model is favoured by whichever model
+    the check would run on. The benchmark's graders (app state, request logs, the
+    judge) decide success afterwards, which makes a false success a clean metric.
+    A ``fail`` (rationale starting with ``gave_up_prefix``) ends the run as not done.
+    Every other step passes through, as in ``FinalCheckVerifier``."""
+
+    def __init__(self, *, gave_up_prefix: str = "Model gave up: ") -> None:
+        self.gave_up_prefix = gave_up_prefix
+
+    def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
+        return None
+
+    async def verify(
+        self,
+        state: AgentState,
+        decision: PolicyDecision,
+        executed_action: ExecutedAction,
+        *,
+        allow_stable_wait: bool = True,
+    ) -> VerificationResult:
+        if decision.action.action_type is ActionType.STOP:
+            if decision.rationale.startswith(self.gave_up_prefix):
+                return VerificationResult(
+                    status=VerificationStatus.FAILURE,
+                    expected_outcome_met=False,
+                    stop_condition_met=True,
+                    reason=decision.rationale,
+                    stop_reason=StopReason.COMPLETION_UNVERIFIED,
+                )
+            return VerificationResult(
+                status=VerificationStatus.SUCCESS,
+                expected_outcome_met=True,
+                stop_condition_met=True,
+                reason=f"Model says done (not checked; graders decide): {decision.rationale}",
+                stop_reason=StopReason.TASK_COMPLETED,
+            )
+        if not executed_action.success:
+            return VerificationResult(
+                status=VerificationStatus.UNCERTAIN,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason=f"Action failed; reported to the model: {executed_action.detail or 'no detail'}",
+                failure_category=executed_action.failure_category,
+                failure_stage=executed_action.failure_stage,
+            )
+        return VerificationResult(
+            status=VerificationStatus.SUCCESS,
+            expected_outcome_met=True,
+            stop_condition_met=False,
+            reason="Action executed; the model judges its effect from the next screenshot.",
         )
 
 

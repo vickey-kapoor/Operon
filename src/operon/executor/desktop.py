@@ -62,7 +62,44 @@ logger = logging.getLogger(__name__)
 # user's foreground app on every taskkill / app-launch invocation. 0 on
 # non-Windows is a no-op (creationflags is ignored outside win32).
 _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
+# Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
+_CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
 _MOUSEEVENTF_HWHEEL = 0x01000
+
+
+def _image_pids(exe_name: str) -> frozenset[int] | None:
+    """PIDs of running processes named ``exe_name``, or None when they can't be listed."""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=_NO_CONSOLE,
+        )
+    except Exception:
+        logger.debug("tasklist failed for %s", exe_name, exc_info=True)
+        return None
+    if result.returncode != 0:
+        return None
+    pids: set[int] = set()
+    for line in (result.stdout or "").splitlines():
+        # "notepad.exe","1234","Console","1","12,345 K"; no match prints an INFO line.
+        fields = [field.strip('"') for field in line.strip().split('","')]
+        if len(fields) >= 2 and fields[0].lower() == exe_name.lower() and fields[1].isdigit():
+            pids.add(int(fields[1]))
+    return frozenset(pids)
+
+
+def _sample_box(virtual: dict, x: int, y: int, radius: int) -> dict[str, int]:
+    """The (2*radius)-square around (x, y), kept inside the virtual screen.
+
+    Desktop coordinates are virtual-screen coordinates: a monitor left of or above
+    the primary one has negative x or y, so clamping to 0 would sample the wrong display.
+    """
+    size = radius * 2
+    left = min(max(virtual["left"], x - radius), virtual["left"] + virtual["width"] - size)
+    top = min(max(virtual["top"], y - radius), virtual["top"] + virtual["height"] - size)
+    return {"left": left, "top": top, "width": size, "height": size}
 
 
 def _hscroll(amount: int, x: int, y: int) -> None:
@@ -73,9 +110,7 @@ def _hscroll(amount: int, x: int, y: int) -> None:
         ctypes.windll.user32.mouse_event(_MOUSEEVENTF_HWHEEL, 0, 0, int(amount), 0)  # type: ignore[attr-defined]
     else:
         pyautogui.hscroll(amount, x=x, y=y)
-_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
-# Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
-_CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
+
 
 # Environment variables an app the agent launches must not inherit: a shell the
 # model (or a prompt injection on screen) drives could otherwise print or send
@@ -296,6 +331,10 @@ class DesktopExecutor(Executor):
         self._current_run_id: str | None = None
         self._launched_processes: dict[str, list[subprocess.Popen]] = {}
         self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
+        # run_id → exe name → PIDs of that image already running before the run first
+        # launched it. Cleanup kills only newer PIDs, never the user's own windows.
+        # run_id -> exe name -> PIDs of that image that appeared during one of the run's launches
+        self._owned_pids: dict[str, dict[str, set[int]]] = {}
         # Set by the loop around a batch: checked before each later child, returns
         # why it must not run (e.g. the run was stopped), or None.
         self.batch_child_check: Callable[[AgentAction], Awaitable[str | None]] | None = None
@@ -461,6 +500,7 @@ class DesktopExecutor(Executor):
         """
         procs = self._launched_processes.pop(run_id, [])
         app_names = self._launched_app_names.pop(run_id, [])
+        owned = self._owned_pids.pop(run_id, {})
         closed = 0
 
         # Phase 1: terminate tracked Popen processes
@@ -483,21 +523,33 @@ class DesktopExecutor(Executor):
                 logger.debug("cleanup: failed to terminate pid %d", proc.pid, exc_info=True)
 
         # Phase 2: taskkill fallback for apps where launcher exited immediately
-        # (Chrome, Edge, etc. spawn child processes and the parent exits)
-        for app_exe in app_names:
+        # (Chrome, Edge, etc. spawn child processes and the parent exits). Only the
+        # PIDs that appeared while the run was launching that app: killing by image
+        # name, or every PID newer than the first launch, would also close a Notepad
+        # or Chrome window the user opened during the run.
+        for app_exe in dict.fromkeys(app_names):
             if app_exe in _PROTECTED_PROCESSES:
                 continue
-            try:
-                result = subprocess.run(
-                    ["taskkill", "/IM", app_exe, "/F"],
-                    capture_output=True, timeout=5,
-                    creationflags=_NO_CONSOLE,
-                )
-                if result.returncode == 0:
-                    closed += 1
-                    logger.info("cleanup: taskkill terminated %s", app_exe)
-            except Exception:
-                logger.debug("cleanup: taskkill failed for %s", app_exe, exc_info=True)
+            mine = owned.get(app_exe)
+            if not mine:
+                logger.info("cleanup: can't tell %s's own processes from the user's; leaving them", app_exe)
+                continue
+            now = _image_pids(app_exe)
+            if now is None:
+                logger.info("cleanup: can't list %s processes; leaving them", app_exe)
+                continue
+            for pid in sorted(mine & now):
+                try:
+                    result = subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/F"],
+                        capture_output=True, timeout=5,
+                        creationflags=_NO_CONSOLE,
+                    )
+                    if result.returncode == 0:
+                        closed += 1
+                        logger.info("cleanup: taskkill terminated %s (pid %d)", app_exe, pid)
+                except Exception:
+                    logger.debug("cleanup: taskkill failed for %s pid %d", app_exe, pid, exc_info=True)
 
         return closed
 
@@ -515,7 +567,7 @@ class DesktopExecutor(Executor):
                 await self.stop_run_recording(run_id)
             except Exception:
                 logger.debug("aclose: stop_run_recording failed for %s", run_id, exc_info=True)
-        pending_runs = set(self._launched_processes) | set(self._launched_app_names)
+        pending_runs = set(self._launched_processes) | set(self._launched_app_names) | set(self._owned_pids)
         for run_id in pending_runs:
             try:
                 self.cleanup_run(run_id)
@@ -802,13 +854,7 @@ class DesktopExecutor(Executor):
     def _sample_region(self, x: int, y: int, radius: int = 30) -> bytes:
         """Capture a small pixel region around (x, y) for focus-change detection."""
         with _mss() as sct:
-            region = {
-                "left": max(0, x - radius),
-                "top": max(0, y - radius),
-                "width": radius * 2,
-                "height": radius * 2,
-            }
-            return bytes(sct.grab(region).rgb)
+            return bytes(sct.grab(_sample_box(sct.monitors[0], x, y, radius)).rgb)
 
     async def _exec_press_key(self, action: AgentAction) -> ExecutedAction:
         if action.key is None:
@@ -867,6 +913,11 @@ class DesktopExecutor(Executor):
                 "only catalog apps can be launched.",
                 FailureCategory.EXECUTION_ERROR,
             )
+        exe_name = Path(command.split()[0]).name.lower()
+        if not exe_name.endswith(".exe"):
+            exe_name += ".exe"
+        # Whatever runs right before this launch is not ours.
+        before = await asyncio.to_thread(_image_pids, exe_name) if self._current_run_id is not None else None
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
@@ -894,11 +945,14 @@ class DesktopExecutor(Executor):
             # Also track the exe name for taskkill fallback (handles Chrome, etc.
             # where the launcher process exits but the app keeps running)
             if self._current_run_id is not None:
-                exe_name = Path(command.split()[0]).name.lower()
-                if not exe_name.endswith(".exe"):
-                    exe_name += ".exe"
                 self._launched_app_names.setdefault(self._current_run_id, []).append(exe_name)
             await asyncio.sleep(self._post_launch_delay)
+            if self._current_run_id is not None and before is not None:
+                after = await asyncio.to_thread(_image_pids, exe_name)
+                if after is not None:
+                    # Only the PIDs that appeared during this launch belong to the run.
+                    owned = self._owned_pids.setdefault(self._current_run_id, {})
+                    owned.setdefault(exe_name, set()).update(after - before)
             after_path = await self._capture_after()
             return self._ok(action, f"Launched '{command}'", after_path)
         except Exception as exc:

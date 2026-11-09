@@ -113,6 +113,13 @@ def get_agent_loop() -> AgentLoop:
     return _agent_loop
 
 
+def desktop_loop_holds_run(run_id: str) -> bool:
+    """Whether the desktop loop (if it was ever built) owns ``run_id``. Never builds it."""
+    loop = _desktop_agent_loop
+    holds = getattr(getattr(loop, "run_store", None), "holds_run", None)
+    return bool(holds is not None and holds(run_id))
+
+
 def get_desktop_agent_loop() -> AgentLoop:
     """Build the desktop runtime lazily so env loading can happen first."""
     global _desktop_agent_loop, DesktopExecutor

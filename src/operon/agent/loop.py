@@ -486,6 +486,7 @@ class AgentLoop:
             )
         _trace("  2 PERCEIVE OK", f"{_record_stage('perceive', _t0):.2f}s  page_hint={perception.page_hint.value!r}  elements={len(perception.visible_elements)}")
         perception = self._infer_focused_element(record, perception)
+        perception = self._with_capture_origin(perception, frame)
         perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
         state = await self.run_store.update_state(record.run_id, perception)
         self._sync_progress_state_with_perception(state, perception)
@@ -656,6 +657,7 @@ class AgentLoop:
             self._inject_stagnation_hint(state)
             perception = await self._perceive_with_liveness_retry(state, frame)
             perception = self._infer_focused_element(state, perception)
+            perception = self._with_capture_origin(perception, frame)
             state.observation_history.append(perception)
             self._sync_progress_state_with_perception(state, perception)
             attempted_decision = decision
@@ -1751,17 +1753,33 @@ class AgentLoop:
         return normalized_action.model_copy(update={"target_context": context})
 
     @staticmethod
+    def _with_capture_origin(perception, frame):
+        """Stamp the captured monitor's virtual-desktop origin on the perception.
+
+        The desktop executor captures the foreground monitor, so the model's
+        coordinates are relative to that monitor's image; without its origin a click
+        on a secondary monitor lands on the primary one."""
+        origin = (int(getattr(frame, "monitor_left", 0) or 0), int(getattr(frame, "monitor_top", 0) or 0))
+        current = tuple(getattr(perception, "monitor_origin", (0, 0)) or (0, 0))
+        if origin == (0, 0) or current != (0, 0) or not hasattr(perception, "model_copy"):
+            return perception
+        return perception.model_copy(update={"monitor_origin": origin})
+
+    @staticmethod
     def _apply_monitor_origin(action: AgentAction, perception) -> AgentAction:
         """Translate monitor-local coords to virtual-desktop coords by adding the
         monitor origin stored in perception. No-op when origin is (0, 0).
 
-        Covers x/y (start point) and x_end/y_end (drag/screenshot_region end point).
+        Covers x/y (start point), x_end/y_end (drag/screenshot_region end point) and
+        each child of a BATCH.
         """
         origin = getattr(perception, "monitor_origin", (0, 0))
         ox, oy = origin
         if ox == 0 and oy == 0:
             return action
         updates: dict = {}
+        if action.action_type is ActionType.BATCH and action.actions:
+            updates["actions"] = [AgentLoop._apply_monitor_origin(child, perception) for child in action.actions]
         if action.x is not None:
             updates["x"] = action.x + ox
         if action.y is not None:

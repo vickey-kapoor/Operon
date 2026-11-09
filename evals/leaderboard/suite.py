@@ -21,11 +21,16 @@ class SuiteMismatchError(RuntimeError):
 
 
 def hash_bytes(parts: Iterable[tuple[str, bytes]]) -> str:
-    """Hash (name, content) pairs in name order, ignoring CRLF/LF differences."""
+    """Hash (name, content) pairs in name order, ignoring CRLF/LF differences.
+
+    Each field is length-prefixed, so no file's bytes can imitate a field boundary
+    (a file containing NUL bytes can't hash like a different set of files).
+    """
     digest = hashlib.sha256()
     for name, content in sorted(parts, key=lambda part: part[0]):
-        digest.update(name.encode("utf-8") + b"\0")
-        digest.update(content.replace(b"\r\n", b"\n") + b"\0")
+        for field in (name.encode("utf-8"), content.replace(b"\r\n", b"\n")):
+            digest.update(len(field).to_bytes(8, "big"))
+            digest.update(field)
     return digest.hexdigest()
 
 

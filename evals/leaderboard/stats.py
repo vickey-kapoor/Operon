@@ -36,7 +36,12 @@ def _percentile_interval(sorted_values: Sequence[float], alpha: float) -> tuple[
 
 
 def group_by_category(task_values: Mapping[str, float], task_categories: Mapping[str, str]) -> dict[str, list[float]]:
-    """Group per-task values by category; tasks without a category are skipped."""
+    """Group per-task values by category; tasks without a category are skipped.
+
+    ``"overall"`` is reserved for the combined score, so a category with that name is refused.
+    """
+    if OVERALL in task_categories.values():
+        raise ValueError(f"{OVERALL!r} is reserved for the combined score; rename that category")
     grouped: dict[str, list[float]] = {}
     for task_id, value in sorted(task_values.items()):
         if task_id in task_categories:

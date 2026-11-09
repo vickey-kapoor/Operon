@@ -90,3 +90,13 @@ def test_drift_check_flags_a_large_shift():
     before = {"sonnet": {t: 1.0 for t in CATEGORIES}}
     after = {"sonnet": {t: 0.0 for t in CATEGORIES}}
     assert drift_check(before, after, iterations=500)["sonnet"]["label"] == POSSIBLE_DRIFT
+
+
+def test_overall_is_a_reserved_category_name():
+    import pytest
+
+    categories = {"a": OVERALL, "b": "long"}
+    with pytest.raises(ValueError, match="reserved"):
+        summarize({"a": 0.0, "b": 1.0}, categories)
+    with pytest.raises(ValueError, match="reserved"):
+        compare({"a": 0.0, "b": 1.0}, {"a": 0.0, "b": 0.0}, categories)

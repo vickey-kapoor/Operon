@@ -66,3 +66,13 @@ def test_changed_hash_allowed_on_purpose_warns(caplog):
         changed = check_hashes_match({"working": "x", "held_out": "y"}, {"working": "a", "held_out": "b"}, allow_change=True)
     assert changed == ["held_out", "working"]
     assert "held_out and working" in caplog.text
+
+
+def test_nul_bytes_in_a_file_cannot_imitate_another_file(tmp_path):
+    one, two = tmp_path / "one", tmp_path / "two"
+    one.mkdir()
+    two.mkdir()
+    (one / "a").write_bytes(b"x\0b\0")
+    (two / "a").write_bytes(b"x")
+    (two / "b").write_bytes(b"")
+    assert hash_directory(one) != hash_directory(two)

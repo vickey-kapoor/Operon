@@ -29,7 +29,7 @@ on:
         description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
         default: ""
       suite:
-        description: "smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), or long (10 multi-app tasks on the local apps, 20 to 50 steps each)"
+        description: "smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), or long (21 multi-app tasks on the local apps, 20 to 50 steps each)"
         type: choice
         options: [full, smoke, safety, apps, hard, long]
         default: full
@@ -136,6 +136,16 @@ jobs:
 
       - name: Install Chromium
         run: uv run playwright install --with-deps chromium
+
+      - name: Load the held-out season tasks
+        # Only --season runs use them; the file never lands in the repo or the artifacts.
+        env:
+          SEASON_PRIVATE_PY: ${{ secrets.OPERON_SEASON_PRIVATE_PY }}
+        run: |
+          if [ -n "$SEASON_PRIVATE_PY" ]; then
+            printf '%s' "$SEASON_PRIVATE_PY" | base64 -d > "$RUNNER_TEMP/season-private.py"
+            echo "OPERON_SEASON_PRIVATE=$RUNNER_TEMP/season-private.py" >> "$GITHUB_ENV"
+          fi
 
       - name: Start the API
         run: |

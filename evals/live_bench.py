@@ -15,7 +15,7 @@ tasks in ``evals/app_tasks.py`` on the same site's fake shop, mailbox,
 account and forms (``evals/local_apps.py``), graded from the apps' state.
 ``--suite hard`` runs the 20 tasks named in ``evals/hard_tasks.py``, a mix of
 all three, picked to measure flakiness with ``--repeat``. ``--suite long`` runs
-the 10 multi-app tasks in ``evals/app_tasks.py`` (``LONG_TASKS``), 20 to 50
+the 21 multi-app tasks in ``evals/app_tasks.py`` (``LONG_TASKS``), 20 to 50
 steps each, started from the apps' workspace page.
 
 ``--repeat N`` runs the whole task list N times over (all tasks once, then again),

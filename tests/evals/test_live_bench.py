@@ -36,7 +36,7 @@ def test_desktop_tasks_are_well_formed_and_separate_from_the_browser_tasks() -> 
     names = [t.name for t in DESKTOP_TASKS]
     assert len(names) == len(set(names))
     assert not set(names) & {t.name for t in TASKS}
-    assert 8 <= len(DESKTOP_TASKS) <= 12
+    assert len(DESKTOP_TASKS) == 14
     for task in DESKTOP_TASKS:
         assert task.start_url is None, task.name
         assert task.check and task.intent, task.name

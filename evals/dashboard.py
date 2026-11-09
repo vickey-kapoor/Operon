@@ -228,6 +228,19 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
         if value is not None:
             config[field] = value
     config.setdefault("harness_profile", "full")
+    season = report.get("season")
+    if season:
+        # A season run (--season): which season and suite, so the Leaderboard's model x harness
+        # grid counts only runs of the frozen season. Held-out results stay counts only.
+        config.setdefault("season", season.get("season"))
+        config.setdefault("season_suite", season.get("suite"))
+        config.setdefault("season_hash", season.get("season_hash"))
+        config.setdefault("operon_commit", season.get("operon_commit"))
+        if season.get("held_out_skipped"):
+            config.setdefault("season_working_only", True)
+        held = season.get("held_out") or {}
+        if held:
+            config.setdefault("season_held_out", {"run": held.get("run", 0), "passed": held.get("passed", 0)})
     stop = report.get("budget_stop")
     if stop and not config.get("flagged"):
         config["flagged"] = (

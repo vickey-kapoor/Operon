@@ -104,6 +104,12 @@ function harnessSuffix(name, harness) {
   return (harness || "full") === "thin" ? `${name} · thin` : name;
 }
 
+// A registry model's label: its profile, plus "· full" for a full-harness run (KAN-68),
+// so thin and full runs of one model are two rows.
+function registryLabel(c) {
+  return c.harness_profile === "full" ? `${c.model_profile} · full` : c.model_profile;
+}
+
 function baseLabel(run) {
   const c = run.config || {};
   const name = BACKEND_NAMES[c.backend] || c.backend || "Unknown backend";
@@ -112,7 +118,7 @@ function baseLabel(run) {
 
 function configLabel(run) {
   const c = run.config || {};
-  if (c.model_profile) return c.model_profile;  // a registry model: always thin, own "done"
+  if (c.model_profile) return registryLabel(c);  // a registry model: own "done"
   const base = baseLabel(run);
   // Only where one backend ran several models, so history from before the model
   // was recorded (and single-model configs) keeps its label and colour.
@@ -1477,7 +1483,7 @@ async function selectCostRun(run) {
 
 function modelLabel(run) {
   const c = run.config || {};
-  if (c.model_profile) return c.model_profile;
+  if (c.model_profile) return registryLabel(c);
   const name = c.model || BACKEND_NAMES[c.backend] || c.backend || "unknown";
   return harnessSuffix(name, c.harness_profile);
 }
@@ -1647,7 +1653,157 @@ function renderLeaderboardBrief(data) {
     el("p", { class: "lede" }, "Ranked by pass rate over each model's latest unflagged run per suite. Models that haven't run show the command that runs them."));
 }
 
+// ---------- run plan: each model in the thin harness, then the full one ----------
+// Vickey's order (Nov 9; Jira KAN-66, KAN-70, KAN-71): Gemini first, then Claude, then GPT.
+// Claude and GPT wait for Vickey's approval after Gemini's pair has run. `needs` names the
+// story that builds a harness the model can't run yet: drop the entry when that story merges.
+const RUN_PLAN = [
+  { family: "Gemini", story: "KAN-66", needs: { thin: "KAN-67: Gemini thin harness" } },
+  { family: "Claude", story: "KAN-70", afterGemini: true, needs: {} },
+  { family: "GPT", story: "KAN-71", afterGemini: true, needs: { full: "KAN-68: GPT full harness" } },
+];
+// The season the plan runs on, and its scored suites and pass/fail gates as suiteId gives
+// them (evals/seasons/README.md). Grounding is one model call per sample, with no harness.
+const PLAN_SEASON = 1;
+const PLAN_SUITES = { scored: ["browser|long", "desktop|full"], gates: ["browser|apps", "browser|safety"] };
+const ADAPTER_FAMILIES = { claude_native: "Claude", gemini_native: "Gemini", openai_native: "GPT" };
+const BACKEND_FAMILIES = { claude_computer_use: "Claude", computer_use: "Gemini", json: "Gemini" };
+
+// The plan row a run belongs to (Gemini, Claude or GPT), or null (an open-weight model).
+function modelFamily(run, registry) {
+  const c = run.config || {};
+  if (c.model_profile) {
+    const entry = (registry || []).find((r) => r.profile === c.model_profile);
+    return (entry && ADAPTER_FAMILIES[entry.adapter]) || null;
+  }
+  return BACKEND_FAMILIES[c.backend] || null;
+}
+
+function harnessMode(run) {
+  const h = (run.config || {}).harness_profile || "full";
+  return h === "full" ? "full" : h.startsWith("thin") ? "thin" : null;
+}
+
+function planCell(byKey, family, harness) {
+  const pick = (ids) => ids.map((id) => byKey.get(`${family}|${harness}|${id}`)).filter(Boolean);
+  const scored = pick(PLAN_SUITES.scored);
+  const gates = pick(PLAN_SUITES.gates);
+  if (!scored.length && !gates.length) return null;
+  const sum = (runs, f) => runs.reduce((acc, r) => acc + (Number(f(r)) || 0), 0);
+  const tasks = sum(scored, (r) => r.summary.tasks);
+  const success = sum(scored, (r) => r.summary.success);
+  const held = scored.map((r) => r.config.season_held_out).filter(Boolean);
+  const critics = [...new Set(scored.map((r) => r.config.critic_model).filter(Boolean))];
+  return {
+    tasks, success, rate: tasks ? success / tasks : null,
+    falsePass: sum(scored, (r) => r.summary.false_success),
+    costPerTask: tasks && scored.some(hasCost) ? sum(scored, listedSpend) / tasks : null,
+    suites: scored.map((r) => ({ id: suiteId(r), success: r.summary.success, tasks: r.summary.tasks })),
+    missing: PLAN_SUITES.scored.filter((id) => !byKey.has(`${family}|${harness}|${id}`)),
+    gates: gates.map((r) => {
+      // The summary leaves out held-out tasks, so a gate passes only if those passed too.
+      const h = r.config.season_held_out || null;
+      return {
+        id: suiteId(r), success: r.summary.success, tasks: r.summary.tasks, compromised: r.summary.compromised || 0,
+        heldOut: h, passed: r.summary.success === r.summary.tasks && !r.summary.compromised
+          && (!h || Number(h.run) === Number(h.passed)),
+      };
+    }),
+    heldOut: held.length ? { run: sum(held, (h) => h.run), passed: sum(held, (h) => h.passed) } : null,
+    workingOnly: scored.some((r) => r.config.season_working_only),
+    critics,
+  };
+}
+
+// One row per planned model: its latest unflagged Season 1 run per harness and suite,
+// or, for a cell with nothing yet, why.
+function planGrid(runs, registry) {
+  const allowed = new Set([...PLAN_SUITES.scored, ...PLAN_SUITES.gates]);
+  const byKey = new Map();
+  for (const run of runs) {
+    const c = run.config || {};
+    if (!run.summary || c.flagged || c.season !== PLAN_SEASON) continue;
+    const family = modelFamily(run, registry);
+    const harness = harnessMode(run);
+    const suite = suiteId(run);
+    if (!family || !harness || !allowed.has(suite)) continue;
+    const key = `${family}|${harness}|${suite}`;
+    const have = byKey.get(key);
+    if (!have || run.started_at > have.started_at) byKey.set(key, run);
+  }
+  const rows = RUN_PLAN.map((plan, i) => ({
+    ...plan, step: i + 1, thin: planCell(byKey, plan.family, "thin"), full: planCell(byKey, plan.family, "full"),
+  }));
+  const gemini = rows.find((r) => r.family === "Gemini");
+  const geminiDone = Boolean(gemini && gemini.thin && gemini.full);
+  for (const row of rows) {
+    for (const harness of ["thin", "full"]) {
+      if (row[harness]) continue;
+      row[`${harness}Why`] = row.needs[harness] ? `needs ${row.needs[harness]}`
+        : row.afterGemini && !geminiDone ? "waits for your approval after Gemini's thin and full runs"
+          : "not run yet";
+    }
+    row.delta = harnessDelta(row.thin, row.full);
+  }
+  return rows;
+}
+
+// Full minus thin over the scored suites both harnesses ran, so a suite only one of
+// them has run never shows up as a harness difference.
+function harnessDelta(thin, full) {
+  if (!thin || !full) return null;
+  const ids = new Set(full.suites.map((x) => x.id));
+  const common = thin.suites.filter((x) => ids.has(x.id)).map((x) => x.id);
+  if (!common.length) return null;
+  const rate = (cell) => {
+    const picked = cell.suites.filter((x) => common.includes(x.id));
+    const tasks = picked.reduce((acc, x) => acc + (Number(x.tasks) || 0), 0);
+    return tasks ? picked.reduce((acc, x) => acc + (Number(x.success) || 0), 0) / tasks : null;
+  };
+  const a = rate(thin), b = rate(full);
+  return a === null || b === null ? null : b - a;
+}
+
+function planCellView(cell, why) {
+  if (!cell) return el("td", { class: "not-run" }, why);
+  const suites = cell.suites.map((x) => `${suiteLabel(x.id)} ${x.success}/${x.tasks}`);
+  const gates = cell.gates.map((g) => `${suiteLabel(g.id)} gate ${g.passed ? "passed" : "failed"} (${g.success}/${g.tasks}`
+    + (g.compromised ? `, ${g.compromised} compromised` : "")
+    + (g.heldOut ? `, held-out ${g.heldOut.passed}/${g.heldOut.run}` : "") + ")");
+  const title = [...suites, ...cell.missing.map((id) => `${suiteLabel(id)} not run`), ...gates,
+    cell.heldOut ? `held-out ${cell.heldOut.passed}/${cell.heldOut.run}` : null,
+    cell.workingOnly ? "working tasks only" : null,
+    cell.critics.length ? `critic: ${cell.critics.join(", ")}` : null].filter(Boolean).join(" · ");
+  const rate = cell.rate;
+  return el("td", { title },
+    rate === null ? el("span", { class: "pill none" }, "gates only")
+      : el("span", { class: `pill ${rate >= 0.9 ? "success" : rate >= 0.6 ? "missed" : "failure"}` }, fmtPct(rate)),
+    el("span", { class: "sub" }, cell.tasks ? ` ${cell.success}/${cell.tasks}` : ""),
+    el("div", { class: "sub" }, [
+      `${cell.falsePass} false pass`, cell.costPerTask !== null ? `${fmtUsd(cell.costPerTask)}/task` : null,
+      cell.missing.length ? `${cell.missing.map(suiteLabel).join(", ")} not run` : null,
+      cell.gates.some((g) => !g.passed) ? "gate failed" : null,
+    ].filter(Boolean).join(" · ")));
+}
+
+function renderRunPlan() {
+  const rows = planGrid(state.runs, state.registry);
+  const table = document.getElementById("lb-plan");
+  table.replaceChildren(el("thead", {}, el("tr", {},
+    el("th", {}, "Step"), el("th", {}, "Model"), el("th", {}, "Thin harness"),
+    el("th", {}, "Full harness"), el("th", { class: "num", title: "Full harness pass rate minus thin, in points" }, "Full − thin"))));
+  table.append(el("tbody", {}, rows.map((row) => el("tr", {},
+    el("td", {}, el("span", { class: "rank" }, String(row.step))),
+    el("td", {}, row.family, el("div", { class: "sub" }, row.story)),
+    planCellView(row.thin, row.thinWhy),
+    planCellView(row.full, row.fullWhy),
+    el("td", { class: "num" }, row.delta === null ? "–"
+      : el("span", { class: `delta ${row.delta > 0 ? "up" : row.delta < 0 ? "down" : ""}` },
+        `${row.delta > 0 ? "+" : ""}${Math.round(row.delta * 100)} pts`))))));
+}
+
 function renderLeaderboard() {
+  renderRunPlan();
   const data = leaderboardData();
   document.getElementById("lb-empty").hidden = data.models.length > 0;
   document.getElementById("lb-body").hidden = data.models.length === 0;

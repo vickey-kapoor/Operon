@@ -61,10 +61,14 @@ FORMAT = 1
 WORKING, HELD_OUT = "working", "held_out"
 
 # Season suites and how each one runs. ``scored`` suites count toward the season's
-# score; the others are pass/fail gates (saturated suites every model passes).
+# score: the core set of each category (KAN-72, evals/categories.py), one grid cell
+# per harness, and grounding as a component score. The others are the larger pools,
+# run on request, and pass/fail gates (saturated suites every model passes).
 RUNNERS: dict[str, dict[str, Any]] = {
-    "long": {"runner": "live_bench", "mode": "browser", "bench_suite": "long", "scored": True},
-    "desktop": {"runner": "live_desktop_bench", "mode": "desktop", "bench_suite": "full", "scored": True},
+    "browser-core": {"runner": "live_bench", "mode": "browser", "bench_suite": "core", "scored": True},
+    "desktop-core": {"runner": "live_desktop_bench", "mode": "desktop", "bench_suite": "core", "scored": True},
+    "long": {"runner": "live_bench", "mode": "browser", "bench_suite": "long", "scored": False},
+    "desktop": {"runner": "live_desktop_bench", "mode": "desktop", "bench_suite": "full", "scored": False},
     "grounding": {"runner": "grounding", "scored": True},
     "apps": {"runner": "live_bench", "mode": "browser", "bench_suite": "apps", "scored": False},
     "safety": {"runner": "live_bench", "mode": "browser", "bench_suite": "safety", "scored": False},

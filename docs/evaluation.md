@@ -18,6 +18,34 @@ As of October 2026.
 
 The eval dashboard at https://operon-evals.vercel.app has every run.
 
+## Categories and the grid
+
+Every live benchmark belongs to one of three **categories**, and each category runs under
+both **harnesses** (thin: the model alone; full: Operon's rules, checks and recovery), so each
+model has a 3 x 2 grid. The full-minus-thin gap per category is Operon's north-star number.
+Runs are named by their cell, e.g. "Gemini · Browser · Thin · once, about $0.50"; reports
+record it as `"cell"`.
+
+| Category | Pools | Core set (`--suite core`, the default) |
+|---|---|---|
+| Browser | the 44 live web tasks, local apps, long multi-app tasks, browser safety | 10 tasks: 5 short app tasks, 2 long multi-app tasks, 3 safety tasks |
+| Desktop | 14 stock Windows app tasks (plus held-out in the season) | 10 tasks: 6 short, 4 long (save a file, then the machine state is read back) |
+| Hybrid | desktop and browser in one task (KAN-73) | none yet; `/bench hybrid` says so |
+
+The core sets are in [`evals/categories.py`](../evals/categories.py). Every core task is graded
+from the apps' or the machine's state, never by the screenshot judge, so models are compared
+on what they did. Inside each cell the report breaks the score down by tag
+(`summary.by_tag`):
+
+- **length**: `short`, or `long` for the multi-app tasks and any task given 40 or more steps;
+- **safety**: the injection and overreach tasks, which pass only with `compromised` at 0.
+
+To keep cost low: one pass per cell (no `x3`; re-run only the tasks that flip), only the
+cells whose code changed are re-run (a desktop-only PR runs only the Desktop cells), and the
+per-run cap is **$3**. A whole grid is about 60 task runs, roughly $5 per model with Gemini
+Flash. The larger pools (`full`, `apps`, `long`, `safety`, `hard`) run only when asked for.
+Grounding (ScreenSpot) stays outside the grid as a component score.
+
 ## Suites
 
 Every live suite spends real model credits, so none of them run on pushes or merges.
@@ -26,13 +54,14 @@ Every live suite spends real model credits, so none of them run on pushes or mer
 |---|---|---|
 | Offline eval | `python -m evals` | Scripted scenarios through the real loop, no network |
 | Live smoke | `python -m evals.live_smoke` | A few real browser tasks against a running API |
-| Browser benchmark | `python -m evals.live_bench [--suite smoke\|full] [--category forms] [--only NAME]` | 44 real web tasks (5 in smoke), graded from the final screen |
+| Browser core | `python -m evals.live_bench` | The Browser category's 10 core tasks (see above), graded from state |
+| Browser benchmark | `python -m evals.live_bench --suite smoke\|full [--category forms] [--only NAME]` | 44 real web tasks (5 in smoke), graded from the final screen |
 | Safety suite | `python -m evals.live_bench --suite safety` | 9 prompt-injection and overreach tasks on a local fixture site, graded from the site's request log |
 | Local apps suite | `python -m evals.live_bench --suite apps` | 11 tasks on local fake shop, mail, account and form apps, graded from the apps' state |
 | Long multi-app suite | `python -m evals.live_bench --suite long` | 21 tasks that chain the local apps from a workspace page (an email asks for an order, a registration or a support request, then a reply with its number or total), 20 to 50 steps each, graded from state |
 | Hard subset, repeated | `python -m evals.live_bench --suite hard --repeat 3` | 20 of the harder app, live and safety tasks, each run 3 times: pass@1 with a 95% CI, pass^3, flaky tasks |
 | Grounding | `python -m evals.grounding [--per-set 100] [--set v2-web] [--backend computer_use]` | 300 ScreenSpot-v2 and ScreenSpot-Pro samples (one screenshot and instruction each) through Operon's own backend; scores whether the first click lands in the target's box |
-| Desktop benchmark | `python -m evals.live_desktop_bench [--suite smoke\|full]` | 14 tasks on stock Windows apps (3 in smoke), graded from the machine's state (windows, their text, files saved under `Documents\OperonFiles`; `evals/desktop_state.py`), not by a judge; **drives the real mouse and keyboard** |
+| Desktop benchmark | `python -m evals.live_desktop_bench [--suite core\|smoke\|full]` | 14 tasks on stock Windows apps (10 in core, the default; 3 in smoke), graded from the machine's state (windows, their text, files saved under `Documents\OperonFiles`; `evals/desktop_state.py`), not by a judge; **drives the real mouse and keyboard** |
 | Judge check | `python -m evals.judge_check template <report.json> > labels.jsonl`, then `judge_check run labels.jsonl [--repeat 3] [--save]` | Compares the benchmark judge with hand labels; `--save` records it for the dashboard (needs `DATABASE_URL`) |
 
 The browser benchmark grades each task with a Gemini judge that reads the final screenshot
@@ -63,7 +92,7 @@ the model sees them.
 
 Each model call records its token usage next to its step, and the benchmarks report cost per
 task, cost per success and a per-model breakdown. A run stops once it has spent
-`--max-cost-usd` (`MAX_RUN_COST_USD`, default **$5** per backend; `0` = no cap) and exits
+`--max-cost-usd` (`MAX_RUN_COST_USD`, default **$3** per backend; `0` = no cap; grounding keeps its own $5) and exits
 with code 3. Prices, where the money goes and the levers to cut it are in [cost.md](cost.md).
 
 ## Running benchmarks from a pull request
@@ -72,17 +101,22 @@ Repository owners, members and collaborators can comment on a PR to benchmark it
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [model=<profile>]
+/bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>]
 /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 ```
 
-Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. `gemini` runs Gemini computer use
+The first word is the category and the second the harness: one cell of the grid. Defaults:
+browser, thin harness, the category's core set, Claude Opus 5.5. `season=<n>` runs the frozen
+season's tasks (`--season`), which is what the Leaderboard tab's grid counts. `gemini` runs Gemini computer use
 instead, in the full harness unless `thin` is given; a thin Gemini run ends on Gemini's own
 "done", with no completion check. Examples:
 
 | Comment | Runs |
 |---|---|
-| `/bench` | Browser smoke (5 tasks) |
+| `/bench` | Browser · Thin: the Browser core set (10 tasks) |
+| `/bench browser thin gemini season=1` | Gemini · Browser · Thin on Season 1, one cell of the grid |
+| `/bench desktop full gemini azure season=1` | Gemini · Desktop · Full on Season 1, on the Azure VM |
+| `/bench smoke` | Browser smoke (5 live web tasks) |
 | `/bench all` | Full browser benchmark (44 tasks) |
 | `/bench safety` | Safety suite (browser only) |
 | `/bench apps` | Local apps suite (browser only) |
@@ -94,7 +128,8 @@ instead, in the full harness unless `thin` is given; a thin Gemini run ends on G
 | `/bench grounding gemini` | Grounding eval on Gemini |
 | `/bench grounding zoom` | Grounding eval on Claude with zoom on (`OPERON_CLAUDE_ZOOM`) |
 | `/bench desktop azure all zoom` | Full desktop benchmark on the Azure VM with Claude's zoom on (desktop and grounding only) |
-| `/bench desktop` | Desktop smoke on GitHub's hosted Windows runner |
+| `/bench desktop` | Desktop core set on GitHub's hosted Windows runner |
+| `/bench desktop smoke` | Desktop smoke (3 tasks) |
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
 | `/bench sonnet check-haiku` | Sonnet acting, Haiku for the completion check |
 | `/bench apps model=qwen3-vl-32b` | Apps suite on a model registry profile (see below) |
@@ -184,11 +219,13 @@ the `OPERON_SEASON_PRIVATE_PY` repo secret (the file, base64-encoded): the bench
 workflows write it to the runner's temp folder and set `$OPERON_SEASON_PRIVATE` to it.
 
 ```powershell
-.venv\Scripts\python -m evals.leaderboard.season freeze 1 --suite long --suite desktop --suite grounding --suite apps --suite safety
+.venv\Scripts\python -m evals.leaderboard.season freeze 1 --suite browser-core --suite desktop-core --suite long --suite desktop --suite grounding --suite apps --suite safety
 .venv\Scripts\python -m evals.leaderboard.season check 1 [--working-only]
 .venv\Scripts\python -m evals.leaderboard.season retire 1 long <task> "<reason>"
 .venv\Scripts\python -m evals.live_bench --suite long --season 1 [--working-only]
-.venv\Scripts\python -m evals.live_desktop_bench --season 1
+.venv\Scripts\python -m evals.live_bench --season 1                # Browser core
+.venv\Scripts\python -m evals.live_desktop_bench --season 1        # Desktop core
+.venv\Scripts\python -m evals.live_desktop_bench --suite full --season 1
 .venv\Scripts\python -m evals.grounding --season 1
 ```
 
@@ -196,8 +233,9 @@ workflows write it to the runner's temp folder and set `$OPERON_SEASON_PRIVATE` 
 suite (no `--only`/`--category`) and adds a `season` block to the report: the season, its hash,
 the Operon commit, Operon's `OPERON_*` settings (secrets left out) and the held-out counts.
 Held-out results are left out of the report's `results` and summary, and `--keep-screens`
-skips their screenshots and run folders. Long, desktop and grounding are scored; apps and
-safety are pass/fail gates, since every model passes them. A broken task is never edited in place: `retire`
+skips their screenshots and run folders. The core set of each category
+(`browser-core`, `desktop-core`) and grounding are scored; the larger long and desktop pools run
+on request, and apps and safety are pass/fail gates, since every model passes them. A broken task is never edited in place: `retire`
 logs it in the manifest with the date and reason, for every model, and later runs skip it.
 
 Season 1 gets frozen once its harder tasks exist (KAN-65). Running held-out tasks in CI is not

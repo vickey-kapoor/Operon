@@ -35,9 +35,13 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 # Live smoke: a few real browser tasks against a running API (real GEMINI_API_KEY)
 .venv\Scripts\python -m evals.live_smoke
 
-# Live benchmark: 44 real web tasks graded from the final screen; saves to .var/bench/
-# Stops once a run has spent --max-cost-usd / $MAX_RUN_COST_USD (default 5; 0 = no cap)
-.venv\Scripts\python -m evals.live_bench [--category forms] [--only NAME]
+# Benchmarks are grouped by category (Browser, Desktop, Hybrid) x harness (thin, full): a 3x2 grid per
+# model (KAN-72, evals/categories.py). Default suite is the category's core set (~10 state-graded tasks:
+# short, long, safety); the report names its cell and breaks the score down in summary.by_tag.
+# Name runs by cell when asking Vickey: "Gemini · Browser · Thin · once, about $X". Saves to .var/bench/
+# Stops once a run has spent --max-cost-usd / $MAX_RUN_COST_USD (default 3; 0 = no cap)
+.venv\Scripts\python -m evals.live_bench                       # Browser core
+.venv\Scripts\python -m evals.live_bench --suite full [--category forms] [--only NAME]   # 44 live web tasks, judge-graded
 
 # Hard subset repeated 3 times: pass@1 with a CI, pass^3 and flaky tasks (--repeat works on any suite)
 .venv\Scripts\python -m evals.live_bench --suite hard --repeat 3
@@ -56,18 +60,20 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 
 # Seasons (frozen task sets for tracking Operon; evals/seasons/, KAN-58): freeze, check, retire; --season on the benches
 .venv\Scripts\python -m evals.leaderboard.season check 1
-.venv\Scripts\python -m evals.live_bench --suite long --season 1   # refuses if any task changed; held-out from $OPERON_SEASON_PRIVATE
+.venv\Scripts\python -m evals.live_bench --season 1               # Browser core; refuses if any task changed
+.venv\Scripts\python -m evals.live_bench --suite long --season 1   # held-out from $OPERON_SEASON_PRIVATE
 
 # Judge check: compare the benchmark judge with hand labels (judge calls only, no agent runs)
 .venv\Scripts\python -m evals.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
 .venv\Scripts\python -m evals.judge_check run labels.jsonl [--repeat 3]
 
-# Live desktop benchmark: 14 tasks on stock Windows apps; drives the real mouse and keyboard
+# Live desktop benchmark: Desktop core (10 tasks) by default, --suite full for all 14; drives the real mouse and keyboard
 # (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
-.venv\Scripts\python -m evals.live_desktop_bench [--suite smoke] [--keep-screens]
+.venv\Scripts\python -m evals.live_desktop_bench [--suite smoke|full] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [model=<profile>]
+#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>]
+#   (category, then harness: one grid cell; core is the default; hybrid has no tasks until KAN-73)
 #   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 # Cross-model (experimental): model=<profile> / --model <profile> runs a profile from evals/models.yaml
 # (OPERON_*_BACKEND=model + OPERON_MODEL_PROFILE; adapters in src/operon/agent/backends/model_adapter/)

@@ -32,16 +32,16 @@ on:
         description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
         default: ""
       suite:
-        description: "smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), or long (21 multi-app tasks on the local apps, 20 to 50 steps each)"
+        description: "core (the Browser category's 10 state-graded tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), or long (21 multi-app tasks on the local apps, 20 to 50 steps each)"
         type: choice
-        options: [full, smoke, safety, apps, hard, long]
-        default: full
+        options: [core, full, smoke, safety, apps, hard, long]
+        default: core
       args:
         description: "Extra live_bench arguments, e.g. --category forms --only slider, or --repeat 3"
         default: ""
       max_cost_usd:
         description: "Stop a backend's run once it has spent this many USD (0: no cap)"
-        default: "5"
+        default: "3"
       model_profile:
         description: "Registry profile (evals/models.yaml) for backend 'model', e.g. qwen3-vl-32b (experimental)"
         default: ""
@@ -54,9 +54,9 @@ on:
       harness_profile: {type: string, default: "thin"}
       critic: {type: string, default: ""}
       final_check_model: {type: string, default: ""}
-      suite: {type: string, default: "smoke"}
+      suite: {type: string, default: "core"}
       args: {type: string, default: ""}
-      max_cost_usd: {type: string, default: "5"}
+      max_cost_usd: {type: string, default: "3"}
       model_profile: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"

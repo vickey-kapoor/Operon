@@ -1,12 +1,50 @@
 {
   "format": 1,
   "season": 1,
-  "frozen_at": "2026-11-09T05:36:03Z",
-  "operon_commit": "2db0747187aadee0ce3419be14dc73dbb3b03002",
+  "frozen_at": "2026-11-09T17:47:29Z",
+  "operon_commit": "0ed909a8e0eb5e039618d8b1deae6f9e8a1c73b9",
   "suites": {
-    "long": {
+    "browser-core": {
       "runner": "live_bench",
       "scored": true,
+      "mode": "browser",
+      "bench_suite": "core",
+      "working": {
+        "shop_cheapest_coupon": "e23630a10213c2f31de698181f81708b72fcd2c4e22064cd8ca400fa2a75e2dc",
+        "shop_edit_cart": "1f5d2f94b42b50d91c44bc2dd410bc76a902c7d21ba25fadacd76b72e85bf8fa",
+        "mail_triage": "12912dd3c4fe7840d83e6144cdf982171fbd0a87eda44a0879e389ff68bd7143",
+        "account_settings": "47f8e923e7fd5be952730cde85b878bc6049b93f7359fafc141a2544b95f7478",
+        "form_conference": "de0acf82e5460d84472d70ac0a0ea1d8ae42ddf60795e87cd746c7cdfad6f7fa",
+        "long_team_supplies": "d7ba78a5c696deb42d232e4e7478fb5ae318df3ab3b2698363356a332aecfed2",
+        "long_register_priya": "797875cf4f28d097e792922e4880f12a7611bb8c9f824bf3a89f9c6d5c8e9813",
+        "inj_email_forward": "8f8f79cbd7907fab9b102c29969f48c9774c595c6832504c056cd4735f85b542",
+        "inj_fake_dialog": "51b7bca494df4437c67a990cde8af7ee31cf4bcc60e3a6a8d0c7259485e65e7d",
+        "stop_before_order": "ec7a0e7e4a0d422479633b5476035718ba82ce4ae0124d4439cea56da0f4a86f"
+      },
+      "held_out": {}
+    },
+    "desktop-core": {
+      "runner": "live_desktop_bench",
+      "scored": true,
+      "mode": "desktop",
+      "bench_suite": "core",
+      "working": {
+        "notepad_type": "257337c6f6d28feb24eba4232c49c0511a12ecd2329c62beaf193e35a421bb26",
+        "explorer_new_folder": "c0ab5a00c44e6326c1d01004541287030c627da3bdb7e14a665359d7a9f8b2b5",
+        "cmd_echo": "9540716d1ae70d9159170dab6cace012d6f1297939676d4a40e709741361add9",
+        "settings_display": "44a8c50185237e0a9771f8ac987f508ef2115a61735855513eb9dca48fc6f8ec",
+        "taskmgr_performance": "dda8968a8e9ae5b189a32f306db8a7b990898c6f1a8964e797984bec599a6caa",
+        "paint_rectangle": "ab9ed79ebf4d566ff8702f6779106d8c2afb5e39122f900d7c3aeee7119f1dab",
+        "notepad_save_file": "37fc0fab4d172d87573d517fc94da876fc7505039d08aba068231915af4a7a45",
+        "cmd_list_to_file": "e2617a1c5eb441693440dd8be0220f8ff21914ed8613010beafd9e3ce0e80286",
+        "powershell_computer_name": "3cf46395c6225b598e95692c0d31c9cb0125756e0874847b1e98ceb5aac5f2e9",
+        "calculator_to_notepad": "3af090bea80039440f5c1bef1c3c1746d33603d46fea0bdf8a4368f562401d46"
+      },
+      "held_out": {}
+    },
+    "long": {
+      "runner": "live_bench",
+      "scored": false,
       "mode": "browser",
       "bench_suite": "long",
       "working": {
@@ -46,7 +84,7 @@
     },
     "desktop": {
       "runner": "live_desktop_bench",
-      "scored": true,
+      "scored": false,
       "mode": "desktop",
       "bench_suite": "full",
       "working": {
@@ -134,5 +172,5 @@
     }
   },
   "retired": [],
-  "season_hash": "465c5dc137a56fb99bcac4f2956fea3bbfab79bf58622bbe785b2cdcf6737879"
+  "season_hash": "6a2e2ef4d9b6b4b1f74287a663248622a29b0a01b852e347130ac060f7a3a680"
 }

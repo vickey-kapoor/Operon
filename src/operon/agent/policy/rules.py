@@ -52,6 +52,24 @@ _LAUNCH_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_LEADING_WORDS_RE = re.compile(r"^(?:the|a|an|my|up)\s+")
+_TRAILING_WORDS_RE = re.compile(r"\s+(?:app|application|program|window)$")
+
+
+def _catalog_app_name(raw_name: str) -> str | None:
+    """The catalog app the intent names, or None.
+
+    The whole name must be a catalog app, give or take an article and a trailing
+    "app": "open the settings page" or "open the account settings" names a page,
+    not the Settings app, so a catalog name inside a longer phrase never counts."""
+    name = raw_name.strip().lower()
+    previous = None
+    while name != previous:
+        previous = name
+        name = _TRAILING_WORDS_RE.sub("", _LEADING_WORDS_RE.sub("", name)).strip()
+    return name if name in APP_LAUNCH_TARGETS else None
+
+
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -65,8 +83,12 @@ class PolicyRuleEngine:
     def __init__(
         self,
         selector: DeterministicTargetSelector | None = None,
+        *,
+        launch_apps: bool = True,
     ) -> None:
         self.selector = selector or DeterministicTargetSelector()
+        # Desktop only: in the browser "open X" means a page or a site, not an app.
+        self.launch_apps = launch_apps
         self._latest_selector_traces: list[SelectorTrace] = []
         self._cached_intermediates: tuple[list[UIElement], list[list[UIElement]]] | None = None
         # Tracks consecutive steps where a HITL keyword matched, per run_id.
@@ -142,6 +164,8 @@ class PolicyRuleEngine:
         - The app name maps to a known launch_app command
         - A successful LAUNCH_APP for this app has not already been recorded
         """
+        if not self.launch_apps:
+            return None
         # Don't fire if we've already launched an app this run
         if any(
             h.action.action_type is ActionType.LAUNCH_APP and h.success
@@ -155,13 +179,7 @@ class PolicyRuleEngine:
             return None
 
         raw_name = m.group(1).strip().lower()
-        alias = raw_name if raw_name in APP_LAUNCH_TARGETS else None
-        if alias is None:
-            # Partial-match fallback: "open vs code" → matches "vs code" key
-            for known in APP_LAUNCH_TARGETS:
-                if known in raw_name or raw_name.startswith(known):
-                    alias = known
-                    break
+        alias = _catalog_app_name(raw_name)
         if alias is None:
             return None
 

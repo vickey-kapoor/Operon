@@ -281,7 +281,14 @@ class NativeBrowserExecutor(Executor):
             elif at is ActionType.SCROLL:
                 page = await self._current_page()
                 amount = action.scroll_amount or 800
-                await page.mouse.wheel(0, -amount)
+                if action.x is not None and action.y is not None:
+                    # The wheel scrolls whatever is under the pointer: a dialog or side
+                    # panel the model pointed at, not always the page.
+                    await page.mouse.move(action.x, action.y)
+                if action.horizontal:
+                    await page.mouse.wheel(amount, 0)  # positive = right
+                else:
+                    await page.mouse.wheel(0, -amount)  # positive = up
             elif at is ActionType.DRAG:
                 page = await self._current_page()
                 if None in (action.x, action.y, action.x_end, action.y_end):

@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -61,6 +62,10 @@ logger = logging.getLogger(__name__)
 # user's foreground app on every taskkill / app-launch invocation. 0 on
 # non-Windows is a no-op (creationflags is ignored outside win32).
 _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
+# Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
+_CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
+_MOUSEEVENTF_HWHEEL = 0x01000
 
 
 def _image_pids(exe_name: str) -> frozenset[int] | None:
@@ -83,9 +88,17 @@ def _image_pids(exe_name: str) -> frozenset[int] | None:
         if len(fields) >= 2 and fields[0].lower() == exe_name.lower() and fields[1].isdigit():
             pids.add(int(fields[1]))
     return frozenset(pids)
-_NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
-# Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
-_CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
+
+
+def _hscroll(amount: int, x: int, y: int) -> None:
+    """Scroll sideways at (x, y); positive = right. pyautogui's hscroll scrolls
+    vertically on Windows, so send a horizontal wheel event there."""
+    pyautogui.moveTo(x, y)
+    if sys.platform == "win32":
+        ctypes.windll.user32.mouse_event(_MOUSEEVENTF_HWHEEL, 0, 0, int(amount), 0)  # type: ignore[attr-defined]
+    else:
+        pyautogui.hscroll(amount, x=x, y=y)
+
 
 # Environment variables an app the agent launches must not inherit: a shell the
 # model (or a prompt injection on screen) drives could otherwise print or send
@@ -309,6 +322,9 @@ class DesktopExecutor(Executor):
         # run_id → exe name → PIDs of that image already running before the run first
         # launched it. Cleanup kills only newer PIDs, never the user's own windows.
         self._preexisting_pids: dict[str, dict[str, frozenset[int] | None]] = {}
+        # Set by the loop around a batch: checked before each later child, returns
+        # why it must not run (e.g. the run was stopped), or None.
+        self.batch_child_check: Callable[[AgentAction], Awaitable[str | None]] | None = None
         self._run_recorders: dict[str, object] = {}   # run_id → ScreenRecorder
         self._run_video_paths: dict[str, Path] = {}   # run_id → final video path
 
@@ -962,10 +978,14 @@ class DesktopExecutor(Executor):
         if action.x is None or action.y is None:
             return self._fail(action, "scroll requires x, y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
         try:
-            await asyncio.to_thread(pyautogui.scroll, action.scroll_amount, x=action.x, y=action.y)
+            if action.horizontal:
+                await asyncio.to_thread(_hscroll, action.scroll_amount, action.x, action.y)
+                direction = "right" if action.scroll_amount > 0 else "left"
+            else:
+                await asyncio.to_thread(pyautogui.scroll, action.scroll_amount, x=action.x, y=action.y)
+                direction = "up" if action.scroll_amount > 0 else "down"
             await asyncio.sleep(self._post_action_delay)
             after_path = await self._capture_after()
-            direction = "up" if action.scroll_amount > 0 else "down"
             return self._ok(
                 action,
                 f"Scrolled {direction} by {abs(action.scroll_amount)} at ({action.x}, {action.y})",
@@ -1038,6 +1058,18 @@ class DesktopExecutor(Executor):
         completed: list[str] = []
         last_artifact_path: str | None = None
         for index, child_action in enumerate(action.actions):
+            blocked = None
+            if index > 0 and self.batch_child_check is not None:
+                blocked = await self.batch_child_check(child_action)
+            if blocked is not None:
+                return ExecutedAction(
+                    action=action,
+                    success=False,
+                    detail=f"Batch stopped before {child_action.action_type.value}: {blocked}",
+                    artifact_path=last_artifact_path,
+                    failure_category=FailureCategory.EXECUTION_ERROR,
+                    batch_failed_index=index,
+                )
             result = await self.execute(child_action)
             completed.append(f"{child_action.action_type.value}:{'ok' if result.success else 'failed'}")
             if not result.success:

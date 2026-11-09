@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
+from operon.agent.loop import StartUrlBlockedError
 from operon.api import ws_stream as _ws_stream
 from operon.api.dependencies import (
     cancel_auto_run,
@@ -41,7 +42,10 @@ async def run_task(request: RunTaskRequest) -> RunResponse:
     if not test_safe_mode_enabled():
         await ensure_cdp_ready(mode=request.mode)
     loop = get_agent_loop()
-    response = await loop.start_run(request)
+    try:
+        response = await loop.start_run(request)
+    except StartUrlBlockedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     _ws_stream.set_active_run(response.run_id)
     _ws_stream.publish_event({
         "type": "run_started",

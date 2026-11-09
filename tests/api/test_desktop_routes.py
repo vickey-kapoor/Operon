@@ -538,3 +538,15 @@ def test_cleanup_rejects_invalid_run_id(path: str) -> None:
 
     resp = TestClient(app).post(path, json={"run_id": "../../etc"})
     assert resp.status_code == 404
+
+
+def test_desktop_run_task_refuses_a_blocked_start_url(client: TestClient) -> None:
+    """A start_url outside OPERON_TRUST_ALLOW_DOMAINS is a 400, not a run."""
+    from operon.agent.loop import StartUrlBlockedError
+
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
+        mock_loop.return_value.start_run = AsyncMock(side_effect=StartUrlBlockedError("start_url blocked"))
+        resp = client.post("/desktop/run-task", json={"intent": "Look around", "start_url": "https://evil.test/"})
+
+    assert resp.status_code == 400
+    assert "blocked" in resp.json()["detail"]

@@ -77,6 +77,9 @@ class AgentAction(StrictModel):
     x_end: int | None = Field(default=None, ge=0)
     y_end: int | None = Field(default=None, ge=0)
     scroll_amount: int | None = Field(default=None)
+    # SCROLL only: True scrolls sideways (positive = right), else vertically
+    # (positive = up).
+    horizontal: bool | None = None
     actions: list["AgentAction"] | None = None
     target_context: TargetSelectionContext | None = None
     # Internal servo flag: skip variance check for known blank-but-valid input regions
@@ -88,6 +91,8 @@ class AgentAction(StrictModel):
         """Ensure action payloads contain only the fields valid for the action type."""
         _new_fields = (self.x_end, self.y_end, self.scroll_amount)
         _typing_flags = (self.clear_before_typing, self.press_enter)
+        if self.horizontal is not None and self.action_type is not ActionType.SCROLL:
+            raise ValueError("horizontal is only valid on scroll")
 
         if self.action_type is ActionType.BATCH:
             if not self.actions:

@@ -107,7 +107,9 @@ class FileBackedRunStore(RunStore):
     async def update_state(self, run_id: str, perception: ScreenPerception) -> AgentState:
         """Persist a new perception snapshot and return the updated state."""
         record = self._runs[run_id]
-        record.status = RunStatus.RUNNING
+        if record.status is not RunStatus.CANCELLED:
+            # A stop that landed while the step captured stays a stop.
+            record.status = RunStatus.RUNNING
         record.observation_history.append(perception)
         record.step_count += 1
         self._write_state(record)
@@ -120,6 +122,10 @@ class FileBackedRunStore(RunStore):
         step, so skipping RUNNING left state.json a step behind for the observer. The
         write goes through the background writer and never blocks the step."""
         record = self._runs[run_id]
+        if record.status is RunStatus.CANCELLED:
+            # A stop is final: a step that was in flight when it landed (a recovery
+            # reset, a perception failure) must not write RUNNING or FAILED over it.
+            return record
         record.status = status
         self._write_state(record)
         return record

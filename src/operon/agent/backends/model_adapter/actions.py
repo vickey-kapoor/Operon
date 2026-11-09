@@ -175,20 +175,22 @@ def to_payload(actions: list[NeutralAction], mapper: CoordinateMapper) -> dict[s
         elif name == "scroll":
             point = _xy(args, mapper, required=False) or mapper.centre()
             direction = str(args.get("direction") or "down").lower()
-            if direction in {"left", "right"}:
-                # The executors scroll vertically only; running it would scroll the wrong way.
-                raise InvalidAction("horizontal scroll is not supported; scroll up or down, or use the keyboard")
-            if direction not in {"up", "down"}:
-                raise InvalidAction(f"scroll direction must be up or down, got {direction!r}")
+            if direction not in {"up", "down", "left", "right"}:
+                raise InvalidAction(f"scroll direction must be up, down, left or right, got {direction!r}")
             try:
                 notches = max(1, min(50, int(float(args.get("amount") or 3))))
             except (TypeError, ValueError) as exc:
                 raise InvalidAction("scroll amount must be a number of wheel notches") from exc
             magnitude = notches * SCROLL_STEP_PX
-            # Executors scroll up for a positive amount. 100 per notch suits both: Chromium
-            # scrolls ~100 px per notch, and pyautogui on Windows sends WHEEL_DELTA units (120 a notch).
-            amount = magnitude if direction == "up" else -magnitude
-            payloads.append({"action_type": "scroll", "x": point[0], "y": point[1], "scroll_amount": amount})
+            # Executors scroll up (or right) for a positive amount. 100 per notch suits both:
+            # Chromium scrolls ~100 px per notch, and Windows wheel events take 120 a notch.
+            payload = {"action_type": "scroll", "x": point[0], "y": point[1]}
+            if direction in {"left", "right"}:
+                payload["horizontal"] = True
+                payload["scroll_amount"] = magnitude if direction == "right" else -magnitude
+            else:
+                payload["scroll_amount"] = magnitude if direction == "up" else -magnitude
+            payloads.append(payload)
         elif name == "navigate":
             url = args.get("url")
             if not isinstance(url, str) or not url.strip():

@@ -78,7 +78,6 @@ def test_screenshot_alone_is_a_short_wait() -> None:
         NeutralAction("click", {"x": "left", "y": 2}),
         NeutralAction("type", {"text": ""}),
         NeutralAction("scroll", {"direction": "sideways"}),
-        NeutralAction("scroll", {"direction": "left"}),  # executors scroll vertically only
         NeutralAction("middle_click", {"x": 1, "y": 1}),  # executors have no middle button
         NeutralAction("click", {"x": 1, "y": 1, "button": "middle"}),
         NeutralAction("click", {"x": "NaN", "y": 2}),
@@ -122,3 +121,9 @@ def test_type_elsewhere_keeps_the_click() -> None:
         _mapper(),
     )
     assert [a["action_type"] for a in payload["actions"]] == ["click", "type"]
+
+
+def test_a_sideways_scroll_is_horizontal() -> None:
+    payload = to_payload([NeutralAction("scroll", {"direction": "left", "amount": 2})], _mapper())
+
+    assert payload == {"action_type": "scroll", "x": 640, "y": 400, "scroll_amount": -200, "horizontal": True}

@@ -18,6 +18,18 @@ def _scale_grid_magnitude(value: int | float, size: int) -> int:
     return max(1, scaled)
 
 
+def _scroll_payload(direction: str, magnitude: int, x: int, y: int) -> dict[str, Any]:
+    """A SCROLL payload. Executors scroll up (vertical) or right (horizontal) for a
+    positive amount; left and right scroll sideways, never vertically."""
+    payload: dict[str, Any] = {"action_type": "scroll", "x": x, "y": y}
+    if direction in {"left", "right"}:
+        payload["horizontal"] = True
+        payload["scroll_amount"] = magnitude if direction == "right" else -magnitude
+    else:
+        payload["scroll_amount"] = magnitude if direction == "up" else -magnitude
+    return payload
+
+
 def normalize_computer_use_function_call(
     function_call: dict[str, Any],
     *,
@@ -76,25 +88,14 @@ def normalize_computer_use_function_call(
         return {"action_type": "press_key", "key": keys}
     if name == "scroll_document":
         direction = str(args["direction"]).lower()
-        # Executors scroll up for a positive amount (as scroll_at below assumes).
-        amount = 800 if direction in {"up", "right"} else -800
-        return {
-            "action_type": "scroll",
-            "x": max(screen_width // 2, 0),
-            "y": max(screen_height // 2, 0),
-            "scroll_amount": amount,
-        }
+        return _scroll_payload(direction, 800, max(screen_width // 2, 0), max(screen_height // 2, 0))
     if name == "scroll_at":
         direction = str(args["direction"]).lower()
         axis_size = screen_height if direction in {"up", "down"} else screen_width
         magnitude = _scale_grid_magnitude(int(args.get("magnitude", 800)), axis_size)
-        amount = magnitude if direction in {"up", "right"} else -magnitude
-        return {
-            "action_type": "scroll",
-            "x": _scale_grid_coord(args["x"], screen_width),
-            "y": _scale_grid_coord(args["y"], screen_height),
-            "scroll_amount": amount,
-        }
+        return _scroll_payload(
+            direction, magnitude, _scale_grid_coord(args["x"], screen_width), _scale_grid_coord(args["y"], screen_height)
+        )
     if name == "drag_and_drop":
         # Gemini 2.5 names the ends x/y and destination_x/y; Gemini 3.x start_* and end_*.
         return {
@@ -139,12 +140,9 @@ def normalize_computer_use_function_call(
     if name == "scroll":
         direction = str(args["direction"]).lower()
         magnitude = int(args.get("magnitude_in_pixels", 300))
-        return {
-            "action_type": "scroll",
-            "x": _scale_grid_coord(args["x"], screen_width),
-            "y": _scale_grid_coord(args["y"], screen_height),
-            "scroll_amount": magnitude if direction in {"up", "right"} else -magnitude,
-        }
+        return _scroll_payload(
+            direction, magnitude, _scale_grid_coord(args["x"], screen_width), _scale_grid_coord(args["y"], screen_height)
+        )
     raise BackendCompatibilityError(f"Unsupported Computer Use function call: {name}")
 
 
@@ -156,6 +154,16 @@ def normalize_computer_use_actions(
 ) -> dict[str, Any]:
     if not function_calls:
         raise BackendCompatibilityError("No Computer Use function calls were provided.")
+    for function_call in function_calls:
+        safety_decision = (function_call.get("args") or {}).get("safety_decision")
+        if isinstance(safety_decision, dict) and safety_decision.get("decision") == "require_confirmation":
+            # One call in the turn needs a human: pause before any of them runs. A
+            # batch would run the calls before it, and keep going after the pause.
+            return normalize_computer_use_function_call(
+                function_call,
+                screen_width=screen_width,
+                screen_height=screen_height,
+            )
     normalized: list[dict[str, Any]] = []
     for function_call in function_calls:
         action = normalize_computer_use_function_call(
@@ -336,9 +344,7 @@ def translate_claude_computer_calls(
             x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
             direction = str(args.get("scroll_direction", "down")).lower()
             magnitude = max(1, int(args.get("scroll_amount", 3) or 3)) * _CLAUDE_SCROLL_STEP_PX
-            # Executors scroll up for a positive amount.
-            amount = magnitude if direction in {"up", "right"} else -magnitude
-            actions.append({"action_type": "scroll", "x": x, "y": y, "scroll_amount": amount})
+            actions.append(_scroll_payload(direction, magnitude, x, y))
         elif name == "wait":
             seconds = min(float(args.get("duration", 1) or 1), 30.0)
             actions.append({"action_type": "wait", "wait_ms": int(seconds * 1000)})

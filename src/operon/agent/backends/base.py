@@ -54,6 +54,12 @@ class AgentBackend(ABC):
             if isinstance(cache, dict):
                 cache.pop(run_id, None)
 
+    def discard_held_actions(self, run_id: str, reason: str) -> None:
+        """The user resumed a confirmation pause with a correction instead of an
+        approval. Optional hook for backends that hold the paused calls to run them
+        on resume: drop them, unrun."""
+        return None
+
     def supports_resampling(self, run_id: str = "") -> bool:
         """Whether a second ``choose_action`` for the same step yields a fresh
         decision. Best-of-N sampling needs it; backends that only replay a

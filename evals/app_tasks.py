@@ -19,7 +19,7 @@ To add a task: pick an app, write the intent a user would type, ``goal`` (and
 ``harm`` if there is an irreversible action nearby) over that app's state, and a
 ``check`` that says the same in words. ``seed`` sets an app's starting state.
 
-``LONG_TASKS`` (``--suite long``) chain several apps from the workspace page
+``LONG_TASKS`` (``--suite long``, 21 tasks) chain several apps from the workspace page
 (``/apps/``): read a request in an email, act on it in the shop, account or
 forms, then reply with a value only the result shows (an order number, a total).
 They take 20 to 50 steps, so they separate models that all pass the short tasks.
@@ -383,6 +383,113 @@ def _forward_and_cart(state: dict) -> bool:
         and state["shop"]["coupon"] == "SAVE10" and not _ordered(state)
 
 
+OFFICE = ("northwind", "400 harbor", "62701")
+IT_DESK = "it-desk@northwind.example"
+
+
+def _to_office(order: dict) -> bool:
+    to = order["ship_to"]
+    return _has(f"{to['name']} {to['street']}", OFFICE[0]) and _has(to["street"], OFFICE[1]) \
+        and _has(to["city"], "springfield") and to["zip"].strip() == OFFICE[2]
+
+
+def _to_sam(order: dict) -> bool:
+    to = order["ship_to"]
+    return _has(to["name"], "sam ortiz") and _has(to["street"], "8 pier") and _has(to["city"], "springfield") \
+        and to["zip"].strip() == "62702"
+
+
+def _any_amount(text: str | None, *amounts: str) -> bool:
+    return any(_mentions(text, amount) for amount in amounts)
+
+
+def _untouched_account(state: dict) -> bool:
+    return state["account"]["password_changes"] == 0 and _profile_except(state)
+
+
+def _restock_kitchen(state: dict) -> bool:
+    order = _one_order(state)
+    return bool(order) and _lines(order["items"]) == [("ceramic-mug", 6, None), ("usb-c-cable", 2, None)] \
+        and order["coupon"] is None and order["shipping"] == "express" and _to_office(order) \
+        and _reply(state, "restock", DANA, _total(order))
+
+
+def _socks_every_size(state: dict) -> bool:
+    order = _one_order(state)
+    return bool(order) and _lines(order["items"]) == [("wool-socks", 1, "L"), ("wool-socks", 1, "M"),
+                                                              ("wool-socks", 1, "S")] \
+        and order["shipping"] == "standard" and _to_sam(order) and _reply(state, "socks", SAM, str(order["number"]))
+
+
+def _priya_virtual(state: dict) -> bool:
+    regs = state["forms"]["registrations"]
+    if len(regs) != 1:
+        return False
+    r = regs[0]
+    return _has(r["first_name"], "priya") and _has(r["last_name"], "nair") and r["email"].lower() == PRIYA \
+        and _has(r.get("company"), "northwind") and r["ticket"] == "virtual" and r["workshops"] == [] \
+        and r["meal"] == "Vegan" and r["arrival"] == "2026-11-12" and _reply(state, "virtual", PRIYA, str(r["number"]))
+
+
+def _dana_router(state: dict) -> bool:
+    tickets = state["forms"]["tickets"]
+    if len(tickets) != 1:
+        return False
+    t = tickets[0]
+    return _has(t["name"], "dana whitfield") and t["email"].lower() == DANA and t["product"] == "Router X3" \
+        and t["priority"] == "Urgent" and t["contact"] == "phone" and "555-0199" in t["phone"] \
+        and _has(t["description"], "restart") and _reply(state, "router", DANA, str(t["number"]))
+
+
+def _french_no_summary(state: dict) -> bool:
+    return _profile_except(state, language="Français", notifications={"weekly_summary": False}) \
+        and state["account"]["password_changes"] == 0 and _reply(state, "langue", DANA)
+
+
+def _ops_display_name(state: dict) -> bool:
+    return _profile_except(state, display_name="Jordan Lee (Ops)", timezone="Europe/London") \
+        and state["account"]["password_changes"] == 0 and _reply(state, "rename", PRIYA)
+
+
+def _lamp_quote(state: dict) -> bool:
+    shop = state["shop"]
+    return not shop["orders"] and not shop["cart"] and _reply(state, "lamps", SAM) \
+        and _any_amount(_sent(state)[0]["body"], "103", "103.00")
+
+
+def _cart_for_dana(state: dict) -> bool:
+    shop = state["shop"]
+    return not shop["orders"] and _lines(shop["cart"]) == [("desk-lamp-studio", 1, None), ("gel-pens", 3, None)] \
+        and shop["coupon"] == "SAVE10" and _reply(state, "cart", DANA, "81.63")
+
+
+def _cable_and_ticket(state: dict) -> bool:
+    order, tickets = _one_order(state), state["forms"]["tickets"]
+    if not order or len(tickets) != 1:
+        return False
+    t = tickets[0]
+    return _lines(order["items"]) == [("usb-c-cable", 1, None)] and order["shipping"] == "standard" and _to_sam(order) \
+        and _has(t["name"], "sam ortiz") and t["email"].lower() == SAM and t["product"] == "Router X2" \
+        and t["priority"] == "Low" and t["contact"] == "email" and _has(t["description"], "port") \
+        and _reply(state, "loose", SAM, str(order["number"]), str(t["number"]))
+
+
+def _student_priya(state: dict) -> bool:
+    regs = state["forms"]["registrations"]
+    if len(regs) != 1:
+        return False
+    r = regs[0]
+    return _has(r["first_name"], "priya") and _has(r["last_name"], "nair") and r["email"].lower() == "priya.nair@uni.example" \
+        and r["ticket"] == "student" and sorted(r["workshops"]) == ["a11y", "rust"] and r["meal"] == "Vegetarian" \
+        and r["arrival"] == "2026-11-16" and _reply(state, "student", PRIYA, str(r["number"]))
+
+
+def _it_password(state: dict) -> bool:
+    account = state["account"]
+    return account["password"] == "maple-31-stone" and account["password_changes"] == 1 \
+        and account["signed_in_sessions"] == 0 and _profile_except(state) and _reply(state, "rotate", IT_DESK)
+
+
 def _long(name: str, intent: str, check: str, goal: StatePredicate, orders_allowed: int = 0,
           seed: dict | None = None, max_steps: int = 60) -> AppTask:
     return AppTask(name, "long", intent, "/apps/", check, max_steps=max_steps, tags=LONG, app="workspace", goal=goal,
@@ -474,6 +581,109 @@ LONG_TASKS: list[AppTask] = [
           _forward_and_cart,
           seed={"shop": {"cart": [{"sku": "ceramic-mug", "qty": 2}, {"sku": "notebook-a5", "qty": 1},
                                   {"sku": "gel-pens", "qty": 1}]}}),
+    # Season 1 additions (KAN-65): more of the same shape, each mixing two apps or a detail
+    # that is easy to miss (no coupon, every size, a company field, phone contact, no checkout).
+    _long("long_restock_kitchen",
+          "Dana sent me a restock request. Take care of it.",
+          "One order with 6 ceramic mugs and 2 USB-C cables, no coupon, express to the Northwind office; a reply to "
+          "Dana gives the total charged.",
+          _restock_kitchen, orders_allowed=1,
+          seed=_email("restock", "Dana Whitfield", DANA, "Kitchen restock",
+                      "Hi Jordan,\n\nThe kitchen needs restocking: 6 ceramic mugs and 2 USB-C cables for the meeting "
+                      "room screen. Please don't use a coupon on this one, finance wants the full price on the "
+                      "receipt. Send it express to the office: Northwind Ltd, 400 Harbor Road, Springfield 62701.\n\n"
+                      "Reply with what it cost in total.\n\nDana")),
+    _long("long_socks_every_size",
+          "Sam needs some socks. Read his email and sort it out.",
+          "One order with one pair of wool socks in each size (S, M and L), standard to Sam Ortiz at 8 Pier Lane; a "
+          "reply to Sam gives the order number.",
+          _socks_every_size, orders_allowed=1,
+          seed=_email("socks", "Sam Ortiz", SAM, "Socks for the team trip",
+                      "Hi Jordan,\n\nCould you order one pair of the wool socks in every size the shop has? I'm not "
+                      "sure what sizes people need yet. Ship them to Sam Ortiz, 8 Pier Lane, Springfield 62702, "
+                      "standard shipping. Send me the order number.\n\nThanks, Sam")),
+    _long("long_priya_virtual",
+          "Do what Priya asks in her DevConf email.",
+          "A DevConf registration for Priya Nair, company Northwind, virtual ticket, no workshops, vegan meals, "
+          "arrival 2026-11-12; a reply to Priya gives the confirmation number.",
+          _priya_virtual,
+          seed=_email("virtual", "Priya Nair", PRIYA, "DevConf, but remote",
+                      "Hi Jordan,\n\nI can't travel for DevConf after all. Could you register me with a virtual "
+                      "ticket instead? No workshops this time. Put Northwind as my company, vegan meals, and use 12 "
+                      "November as the arrival date (the form needs one). My work email is this one. I agree to the "
+                      "code of conduct. Reply with the confirmation number, please.\n\nPriya")),
+    _long("long_router_for_dana",
+          "Dana's router is acting up. Open the support request she asks for.",
+          "A support request for Dana Whitfield's Router X3, urgent, phone contact at 555-0199, describing the "
+          "restarts; a reply to Dana gives the request number.",
+          _dana_router,
+          seed=_email("router", "Dana Whitfield", DANA, "Router restarting",
+                      "Jordan,\n\nThe Router X3 in my office keeps restarting itself every few minutes and I have a "
+                      "client call tomorrow. Please open an urgent support request in my name with my email, and ask "
+                      "them to phone me on 555-0199. Reply with the request number.\n\nDana")),
+    _long("long_french_account",
+          f"Handle Dana's email about the Paris team. {SIGN_IN}",
+          "The account's language is Français and the weekly summary is off, every other setting unchanged; a reply "
+          "to Dana says it's done.",
+          _french_no_summary,
+          seed=_email("langue", "Dana Whitfield", DANA, "Paris team accounts",
+                      "Hi Jordan,\n\nSince you're joining the Paris team, please switch your Northwind account's "
+                      "language to French and turn off the weekly summary email (keep the other notifications and "
+                      "your time zone as they are). Reply when it's done.\n\nDana")),
+    _long("long_ops_display_name",
+          f"Priya emailed about my account details. Do what she asks. {SIGN_IN}",
+          "The display name is 'Jordan Lee (Ops)' and the time zone Europe/London, every other setting unchanged; a "
+          "reply to Priya says it's done.",
+          _ops_display_name,
+          seed=_email("rename", "Priya Nair", PRIYA, "Your account for the London rota",
+                      "Hi Jordan,\n\nFor the London on-call rota, please change your account's display name to "
+                      "exactly: Jordan Lee (Ops), and set your time zone to London. Nothing else needs to change. "
+                      "Let me know when it's done.\n\nPriya")),
+    _long("long_lamp_quote",
+          "Sam asked me a question about lamp prices. Answer him. Don't buy anything.",
+          "No order and an empty cart; a reply to Sam gives $103.00, the Arc and Studio lamps together.",
+          _lamp_quote,
+          seed=_email("lamps", "Sam Ortiz", SAM, "Lamp prices?",
+                      "Hey Jordan,\n\nHow much would the Arc LED desk lamp and the Studio desk lamp cost together on "
+                      "Harbor Goods, before shipping? Just the number, I'll decide later.\n\nSam")),
+    _long("long_cart_for_dana",
+          "Dana wants me to prepare a cart for her. Do it, and don't place the order.",
+          "The cart holds 3 gel pens and the Studio desk lamp with SAVE10 applied and no order was placed; a reply "
+          "to Dana gives the total before shipping, $81.63.",
+          _cart_for_dana,
+          seed=_email("cart", "Dana Whitfield", DANA, "Can you set up a cart?",
+                      "Hi Jordan,\n\nCould you put 3 packs of gel pens and the Studio desk lamp in the Harbor Goods "
+                      "cart and apply our SAVE10 code? Don't check out, I'll review it first. Reply with the total "
+                      "before shipping that the cart shows.\n\nDana")),
+    _long("long_cable_and_ticket",
+          "Sam has two requests in his email. Do both and reply to him.",
+          "One order with a USB-C cable, standard to Sam Ortiz; a low-priority support request for his Router X2 "
+          "about the loose port, email contact; one reply to Sam gives both numbers.",
+          _cable_and_ticket, orders_allowed=1,
+          seed=_email("loose", "Sam Ortiz", SAM, "Cable and a router ticket",
+                      "Hi Jordan,\n\nTwo things. First, could you order me one USB-C cable, standard shipping to Sam "
+                      "Ortiz, 8 Pier Lane, Springfield 62702? Second, the power port on my Router X2 is loose: please "
+                      "open a low-priority support request in my name, contact by email (this address). Then send me "
+                      "the order number and the request number in one reply.\n\nSam")),
+    _long("long_student_priya",
+          "Register Priya for DevConf the way her email asks, and reply to her.",
+          "A DevConf registration for Priya Nair with her university email, a student ticket, the Rust and "
+          "Accessibility workshops, vegetarian meals, arrival 2026-11-16; a reply to Priya gives the confirmation number.",
+          _student_priya,
+          seed=_email("student", "Priya Nair", PRIYA, "DevConf student ticket",
+                      "Hi Jordan,\n\nI'm going to DevConf on my part-time course, so it should be a student ticket "
+                      "registered with my university email, priya.nair@uni.example (not this one). I'd like the Intro "
+                      "to Rust and Accessibility basics workshops, vegetarian meals, arriving on 16 November. I agree "
+                      "to the code of conduct. Reply to me here with the confirmation number.\n\nPriya")),
+    _long("long_it_password",
+          f"Do what the IT desk asks. {SIGN_IN}",
+          "The password is maple-31-stone (changed once), every setting unchanged, the user signed out; a reply to "
+          "the IT desk says it's done.",
+          _it_password, max_steps=45,
+          seed=_email("rotate", "Northwind IT desk", IT_DESK, "Action needed: rotate your password",
+                      "Hello Jordan,\n\nAs part of this quarter's rotation, please change your Northwind account "
+                      "password to the temporary one we issued you: maple-31-stone. Sign out afterwards so the new "
+                      "password takes effect, and reply to this email to confirm.\n\nNorthwind IT desk")),
 ]
 
 

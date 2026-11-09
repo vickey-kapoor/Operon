@@ -378,3 +378,32 @@ def test_desktop_fingerprints_cover_the_shared_grade_but_not_other_tasks_checks(
     exec("def grade(task_name, snapshot):\n    ok, why = CHECKS[task_name](snapshot)\n    return ok, why.strip()\n", namespace)
     monkeypatch.setattr(desktop_state, "grade", namespace["grade"])
     assert s.task_fingerprint(first) != base
+
+
+def test_a_desktop_tasks_fingerprint_covers_the_files_it_is_graded_on(monkeypatch):
+    from evals import desktop_state
+
+    task = next(t for t in s.suite_tasks("desktop") if t.name == "notepad_save_file")
+    base = s.task_fingerprint(task)
+    monkeypatch.setattr(desktop_state, "OUTPUTS", {**desktop_state.OUTPUTS, task.name: ("other.txt",)})
+    assert s.task_fingerprint(task) != base
+
+
+def test_a_private_file_can_add_desktop_probe_settings(tmp_path, monkeypatch):
+    from evals import desktop_state
+
+    for name in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST"):
+        monkeypatch.setattr(desktop_state, name, dict(getattr(desktop_state, name)))
+    path = tmp_path / "desk.py"
+    path.write_text(textwrap.dedent('''
+        from evals.desktop_state import saved_file
+        from evals.live_tasks import LiveTask
+
+        HELD_OUT = {"desktop": [LiveTask("secret_file", "files", "Save it", None, "Saved.")]}
+        CHECKS = {"secret_file": saved_file("x.txt", lambda text, _: "x" in text, "an x")}
+        OUTPUTS = {"secret_file": ("x.txt",)}
+        CLOSE_FIRST = {"secret_file": ("notepad",)}
+    '''), encoding="utf-8")
+    s.load_private(path)
+    assert desktop_state.OUTPUTS["secret_file"] == ("x.txt",) and desktop_state.CLOSE_FIRST["secret_file"] == ("notepad",)
+    assert desktop_state.grade("secret_file", {"files": {"x.txt": "x"}})[0]

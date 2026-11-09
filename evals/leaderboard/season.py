@@ -210,7 +210,17 @@ def task_fingerprint(task: Any) -> str:
         ("grader", code_closure(roots).encode()),
         ("fixtures", json.dumps(file_hashes(fixtures), sort_keys=True).encode()),
     ]
+    if getattr(task, "start_url", "") is None:
+        parts.append(("probe", json.dumps(desktop_probe_settings(task.name), sort_keys=True).encode()))
     return hash_bytes(parts)
+
+
+def desktop_probe_settings(name: str) -> dict:
+    """What the probe does for one desktop task: the files it reads (and the reset
+    removes), the windows it reads and the apps it stops first."""
+    from evals import desktop_state
+
+    return {key: list(getattr(desktop_state, key).get(name, ())) for key in ("OUTPUTS", "INSPECT", "CLOSE_FIRST")}
 
 
 def held_out_id(season: int, name: str) -> str:
@@ -259,7 +269,9 @@ def load_private(path: str | os.PathLike | None = None) -> dict[str, list[Any]]:
 
     The file is Python that defines ``HELD_OUT = {"long": [AppTask(...), ...], ...}``
     with the same task classes as the repo, and for held-out desktop tasks
-    ``CHECKS = {name: check}`` like ``desktop_state.CHECKS``. {} when no file is configured."""
+    ``CHECKS = {name: check}`` like ``desktop_state.CHECKS`` plus, where a task needs
+    them, ``OUTPUTS``, ``INSPECT`` and ``CLOSE_FIRST`` like the ones there (the files
+    it saves, the windows to read, the apps to stop first). {} when no file is configured."""
     path = path or os.getenv(PRIVATE_ENV, "").strip()
     if not path:
         return {}
@@ -276,11 +288,13 @@ def load_private(path: str | os.PathLike | None = None) -> dict[str, list[Any]]:
     held = getattr(module, "HELD_OUT", None)
     if not isinstance(held, dict):
         raise SeasonError(f"{file} must define HELD_OUT = {{suite: [task, ...]}}")
-    checks = getattr(module, "CHECKS", None)
-    if checks:  # held-out desktop tasks' state checks, by task name
-        from evals import desktop_state
+    from evals import desktop_state
 
-        desktop_state.CHECKS.update(checks)
+    # Held-out desktop tasks' state checks and probe settings, by task name.
+    for name in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST"):
+        extra = getattr(module, name, None)
+        if extra:
+            getattr(desktop_state, name).update(extra)
     return {suite: list(tasks) for suite, tasks in held.items()}
 
 

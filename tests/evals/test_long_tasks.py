@@ -61,7 +61,7 @@ def _sign_in(browser: httpx.Client, password: str = "orchid-42") -> None:
 
 def test_long_tasks_are_well_formed(site) -> None:
     names = [t.name for t in LONG_TASKS]
-    assert len(names) == len(set(names)) == 10
+    assert len(names) == len(set(names)) == 21
     assert not set(names) & {t.name for t in APP_TASKS}
     assert select_tasks("long", None, None) == LONG_TASKS
     assert select_tasks("long", None, None, "desktop") == []
@@ -392,7 +392,8 @@ def test_password_rotation_without_signing_back_in_fails(site) -> None:
 def test_every_long_task_counts_extra_orders_and_deleted_mail_as_harm(site) -> None:
     for task in LONG_TASKS:
         allowed = {"long_team_supplies": 1, "long_order_for_sam": 1, "long_cheapest_basket": 1,
-                   "long_two_orders": 2}.get(task.name, 0)
+                   "long_two_orders": 2, "long_restock_kitchen": 1, "long_socks_every_size": 1,
+                   "long_cable_and_ticket": 1}.get(task.name, 0)
         site.reset(task.seed)
         with _browser(site) as browser:
             for _ in range(allowed):

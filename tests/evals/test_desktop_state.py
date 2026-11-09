@@ -374,3 +374,61 @@ def test_no_visible_canvas_is_a_grader_error() -> None:
     paint = _window("mspaint", "Untitled - Paint")
     with pytest.raises(desktop_state.ProbeError, match="could not be found"):
         desktop_state.grade("paint_rectangle", _snap(paint, canvas={"found": True, **stats}))
+
+
+# --- Season 1 tasks graded from the files they save (KAN-65) -----------------------
+
+def _files(**files) -> dict:
+    snapshot = _snap()
+    snapshot["files"], snapshot["computer_name"] = files, "BENCH-VM01"
+    return snapshot
+
+
+def test_saved_file_checks_read_the_file_the_task_wrote() -> None:
+    assert _grade("notepad_save_file", _files(**{"season.txt": "Operon season one\r\n"}))
+    assert not _grade("notepad_save_file", _files(**{"season.txt": "Operon season 1"}))
+    assert not _grade("notepad_save_file", _files(**{"season.txt": None}))
+    listing = " Directory of C:\\Windows\\System32\\drivers\\etc\r\n hosts\r\n lmhosts.sam\r\n networks\r\n protocol\r\n services"
+    assert _grade("cmd_list_to_file", _files(**{"etc-list.txt": listing}))
+    assert not _grade("cmd_list_to_file", _files(**{"etc-list.txt": "hosts"}))
+    assert _grade("powershell_computer_name", _files(**{"computer.txt": "bench-vm01\r\n"}))
+    assert not _grade("powershell_computer_name", _files(**{"computer.txt": "localhost"}))
+    assert _grade("calculator_to_notepad", _files(**{"result.txt": "69,104"}))
+    assert not _grade("calculator_to_notepad", _files(**{"result.txt": "169104"}))
+
+
+def test_powershell_and_console_encodings_are_read() -> None:
+    assert desktop_state.read_text("BENCH-VM01\r\n".encode("utf-16")) == "BENCH-VM01\r\n"
+    assert desktop_state.read_text("\ufeffOperon".encode("utf-8")) == "Operon"
+    assert desktop_state.read_text(b"caf\xe9") == "café"  # a console code page, not UTF-8
+
+
+def test_reset_removes_only_the_tasks_own_files(monkeypatch, tmp_path) -> None:
+    out = tmp_path / desktop_state.OUTPUT_FOLDER
+    out.mkdir()
+    (out / "season.txt").write_text("old attempt")
+    (out / "keep.txt").write_text("someone's file")
+    monkeypatch.setattr(desktop_state.sys, "platform", "win32")
+    monkeypatch.setattr(desktop_state.subprocess, "run",
+                        lambda cmd, **kw: _Done(json.dumps({"windows": [], "documents": str(tmp_path)})))
+    desktop_state.prepare("notepad_save_file")
+    assert not (out / "season.txt").exists() and (out / "keep.txt").exists()
+    (out / "keep.txt").unlink()
+    (out / "season.txt").write_text("old attempt")
+    desktop_state.prepare("notepad_save_file")
+    assert not out.exists()  # left empty, so removed too
+
+
+def test_probe_reads_only_the_tasks_files(monkeypatch, tmp_path) -> None:
+    out = tmp_path / desktop_state.OUTPUT_FOLDER
+    out.mkdir()
+    (out / "result.txt").write_bytes("69104".encode("utf-16"))
+    (out / "private.txt").write_text("not for the grader")
+    monkeypatch.setattr(desktop_state.sys, "platform", "win32")
+    monkeypatch.setenv("COMPUTERNAME", "BENCH-VM01")
+    monkeypatch.setattr(desktop_state.subprocess, "run",
+                        lambda cmd, **kw: _Done(json.dumps({"windows": [], "documents": str(tmp_path)})))
+    snapshot = desktop_state.probe(T0, "calculator_to_notepad", [])
+    assert snapshot["files"] == {"result.txt": "69104"} and snapshot["computer_name"] == "BENCH-VM01"
+    assert desktop_state.grade("calculator_to_notepad", snapshot)[0]
+    assert desktop_state.probe(T0, "cmd_echo", [])["files"] == {}

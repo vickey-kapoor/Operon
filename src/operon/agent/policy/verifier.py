@@ -534,7 +534,9 @@ class DeterministicVerifierService(VerifierService):
     @staticmethod
     def _intent_terminal_signal(intent: str, perception) -> str | None:
         """Return the matched terminal signal token if the intent's goal is visually confirmed."""
-        intent_lower = intent.lower()
+        # Only the task's last step decides it is done: in "log in, then send the
+        # report" a visible dashboard proves the login, not the task.
+        final_goal = _final_clause(intent)
         summary_lower = perception.summary.lower()
         element_names = " ".join(
             e.primary_name.lower() for e in perception.visible_elements
@@ -542,10 +544,10 @@ class DeterministicVerifierService(VerifierService):
 
         # Goal-specific terminal indicators, keyed by intent keyword.
         for intent_keyword, visual_signals in terminal_patterns():
-            if intent_keyword not in intent_lower:
+            if not _has_phrase(intent_keyword, final_goal):
                 continue
             for signal in visual_signals:
-                if signal in summary_lower or signal in element_names:
+                if _has_phrase(signal, summary_lower) or _has_phrase(signal, element_names):
                     return signal
 
         return None
@@ -553,6 +555,11 @@ class DeterministicVerifierService(VerifierService):
     @staticmethod
     def _task_success_visible(perception, benchmark: str | None) -> bool:
         return perception.page_hint is PageHint.FORM_SUCCESS
+
+def _has_phrase(phrase: str, text: str) -> bool:
+    """``phrase`` appears in ``text`` as whole words ("sent" is not in "present")."""
+    return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text) is not None
+
 
 def _parse_verification_output(raw_output: str) -> VerificationResult | None:
     cleaned = raw_output.strip()

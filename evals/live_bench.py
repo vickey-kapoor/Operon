@@ -410,6 +410,13 @@ async def run_task(
     except httpx.HTTPError as exc:
         status = "error"
         print(f"  {task.name}: API error: {exc}", file=sys.stderr)
+        if run_id:
+            # The run may still be going on the server (a failed poll is not a
+            # finished run): stop it so it doesn't keep spending model calls.
+            try:
+                (await client.post(f"{prefix}/stop", json={"run_id": run_id})).raise_for_status()
+            except httpx.HTTPError as stop_exc:
+                print(f"  {task.name}: could not stop run {run_id}: {stop_exc}", file=sys.stderr)
 
     screenshot = _final_screenshot(run_id) if run_id else None
     # A run paused for the user did not claim success; grade it as ended.

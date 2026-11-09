@@ -86,6 +86,11 @@ class FileBackedRunStore(RunStore):
         self._write_state_sync(record)
         return record
 
+    def holds_run(self, run_id: str) -> bool:
+        """Whether this store has the run loaded, i.e. its loop created or stepped it
+        since the server started."""
+        return run_id in self._runs
+
     async def get_run(self, run_id: str) -> AgentState | None:
         """Return a stored run record, if present."""
         cached = self._runs.get(run_id)
@@ -107,18 +112,27 @@ class FileBackedRunStore(RunStore):
     async def update_state(self, run_id: str, perception: ScreenPerception) -> AgentState:
         """Persist a new perception snapshot and return the updated state."""
         record = self._runs[run_id]
-        record.status = RunStatus.RUNNING
+        if record.status is not RunStatus.CANCELLED:
+            # A stop that landed while the step captured stays a stop.
+            record.status = RunStatus.RUNNING
         record.observation_history.append(perception)
         record.step_count += 1
         self._write_state(record)
         return record
 
     async def set_status(self, run_id: str, status: RunStatus) -> AgentState:
-        """Update run status in place.  Write only on terminal transitions."""
+        """Update run status in place and write the snapshot.
+
+        Writes on every status change, not just terminal ones: set_status ends each
+        step, so skipping RUNNING left state.json a step behind for the observer. The
+        write goes through the background writer and never blocks the step."""
         record = self._runs[run_id]
+        if record.status is RunStatus.CANCELLED:
+            # A stop is final: a step that was in flight when it landed (a recovery
+            # reset, a perception failure) must not write RUNNING or FAILED over it.
+            return record
         record.status = status
-        if status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.WAITING_FOR_USER, RunStatus.CANCELLED}:
-            self._write_state(record)
+        self._write_state(record)
         return record
 
     async def save_state(self, state: AgentState) -> None:

@@ -134,6 +134,25 @@ bills while it starts and idles). The dashboard's **Leaderboard** tab shows each
 latest run per suite, a cost-against-success chart and per-model totals. Every paid run,
 including a smoke run of a new model, waits for an approved cost estimate.
 
+## Leaderboard machinery
+
+The benchmark is part of Operon, not a separate harness: every score is Operon driving a
+model, and the scores are Operon's north star for improving Operon (plan: Confluence page
+"Plan: Operon Leaderboard", Jira epic KAN-55). [`evals/leaderboard/`](../evals/leaderboard/)
+holds the generic pieces brought in from the former `model-release-benchmark` repo
+(at `ef23db8`):
+
+- `suite.py` hashes a frozen task set (`hash_directory`, `hash_text`) and
+  `check_hashes_match` refuses tasks whose hashes differ from a run's record, unless the
+  change is allowed on purpose (for example after retiring a broken task).
+- `stats.py` gives paired bootstrap 95% intervals over tasks (`summarize`, `compare`), with
+  Improved / Regressed / No clear change labels that need the Bonferroni-corrected interval to
+  exclude zero, and `drift_check` for two runs of the same tasks with nothing in Operon changed.
+
+That repo's text tasks and direct model-API providers did not come over. Nothing calls this
+module yet; frozen seasons with a held-out split (KAN-58) and intervals in the reports
+(KAN-60) build on it.
+
 ## Eval dashboard
 
 Results are published at **https://operon-evals.vercel.app**: pass rate, seconds per task and

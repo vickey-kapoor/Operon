@@ -62,8 +62,22 @@ class FallbackBackend(AgentBackend):
         self.primary.add_advisory_hints(hints, source=source, run_id=run_id)
         self.secondary.add_advisory_hints(hints, source=source, run_id=run_id)
 
+    def release_run(self, run_id: str) -> None:
+        # Either side may be a service without the hook (the JSON backend), and one
+        # side failing must not keep the run pinned here.
+        try:
+            for backend in (self.primary, self.secondary):
+                release = getattr(backend, "release_run", None)
+                if release is not None:
+                    release(run_id)
+        finally:
+            self._active_backends.pop(run_id, None)
+
     def note_not_executed(self, run_id: str, reason: str) -> None:
         self._backend_for_run(run_id).note_not_executed(run_id, reason)
+
+    def discard_held_actions(self, run_id: str, reason: str) -> None:
+        self._backend_for_run(run_id).discard_held_actions(run_id, reason)
 
     def supports_resampling(self, run_id: str = "") -> bool:
         return self._backend_for_run(run_id).supports_resampling(run_id)

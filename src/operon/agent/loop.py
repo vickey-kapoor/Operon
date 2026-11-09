@@ -109,6 +109,10 @@ def _leaf_actions(action: AgentAction) -> list[AgentAction]:
         return [action]
     return [leaf for child in action.actions or [] for leaf in _leaf_actions(child)]
 
+class StartUrlBlockedError(ValueError):
+    """``start_url`` is outside ``OPERON_TRUST_ALLOW_DOMAINS``; the run is not created."""
+
+
 class AgentLoop:
     """Coordinates the MVP control loop and terminal benchmark boundaries."""
 
@@ -191,6 +195,16 @@ class AgentLoop:
 
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
         _trace("START_RUN", f"intent={request.intent!r}  url={request.start_url!r}")
+        if request.start_url:
+            # The start URL is opened before any step, so the trust gate's per-action
+            # check never sees it: judge it here, before the run exists.
+            verdict = self._trust_gate.evaluate(
+                AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
+            )
+            if verdict.verdict is TrustVerdict.DENY:
+                raise StartUrlBlockedError(
+                    f"start_url blocked by policy ({verdict.reason}: '{verdict.matched}')"
+                )
         # Minimize all windows (Win+D) only in desktop mode. Browser-mode runs
         # use Playwright in its own window — issuing Win+D would minimize the
         # USER's foreground app on every task start, which yanks focus during
@@ -244,6 +258,20 @@ class AgentLoop:
     @staticmethod
     def _test_safe_mode_enabled() -> bool:
         return os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true"
+
+    async def _run_cancelled(self, run_id: str) -> bool:
+        """Whether the run was stopped (e.g. ``/desktop/stop``) since its step began."""
+        current = await self.run_store.get_run(run_id)
+        return current is not None and current.status is RunStatus.CANCELLED
+
+    @staticmethod
+    def _cancelled_response(record) -> RunResponse:
+        return RunResponse(
+            run_id=record.run_id,
+            status=RunStatus.CANCELLED,
+            intent=record.intent,
+            step_count=record.step_count,
+        )
 
     def _maybe_reuse_prior_perception(self, state, frame: CaptureFrame):
         """Return a reused ScreenPerception when conditions are safe, else None.
@@ -319,6 +347,12 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} not found")
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        if not approve_gated_action:
+            # A correction is not an approval: a backend holding the calls it paused
+            # on (Gemini's require_confirmation) must not run them on the next step.
+            self._discard_held_actions(
+                run_id, "Not executed: the user declined this action and sent a correction."
+            )
         pending = self._pending_gate_approvals.pop(run_id, None)
         if approve_gated_action and pending is not None:
             fingerprint, gate = pending
@@ -352,9 +386,9 @@ class AgentLoop:
         record = await self.run_store.get_run(request.run_id)
         if record is None:
             raise ValueError(f"Run {request.run_id!r} not found")
-        if record.status is RunStatus.CANCELLED or (
-            record.status is RunStatus.WAITING_FOR_USER and record.run_id in self._pause_requests
-        ):
+        if record.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
+            # Paused (by hand or by a gate), cancelled or finished: a step must not run.
+            # A gate pause is approved only through resume_run, never by stepping.
             return RunResponse(
                 run_id=record.run_id,
                 status=record.status,
@@ -452,6 +486,7 @@ class AgentLoop:
             )
         _trace("  2 PERCEIVE OK", f"{_record_stage('perceive', _t0):.2f}s  page_hint={perception.page_hint.value!r}  elements={len(perception.visible_elements)}")
         perception = self._infer_focused_element(record, perception)
+        perception = self._with_capture_origin(perception, frame)
         perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
         state = await self.run_store.update_state(record.run_id, perception)
         self._sync_progress_state_with_perception(state, perception)
@@ -472,6 +507,11 @@ class AgentLoop:
         _trace("  3 POLICY OK", f"{_record_stage('policy', _t0):.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
         policy_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "policy", self.policy_service)
         state.current_subgoal = decision.active_subgoal
+
+        if await self._run_cancelled(record.run_id):
+            # Stopped while this step captured and asked the model: run nothing.
+            _trace("  3 POLICY -> CANCELLED", "run was stopped during this step; not executing")
+            return self._cancelled_response(record)
 
         # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
         # action never runs; the run pauses for a human instead.
@@ -498,6 +538,10 @@ class AgentLoop:
         attempt_index = 1
 
         while True:
+            if attempt_index > 1 and await self._run_cancelled(record.run_id):
+                # Stopped during a retry: record the attempt that ran, run no more.
+                _trace("  RETRY_LOOP -> cancelled", "run was stopped; not retrying")
+                break
             _trace("  4 EXECUTE", f"attempt={attempt_index}  action={decision.action.action_type.value!r}  executor={type(self.executor).__name__}")
             blocked_action = None if self.thin_harness else self._block_redundant_action(state, decision.action, step_index)
             if blocked_action is None:
@@ -588,6 +632,12 @@ class AgentLoop:
             allow_adaptation_retry = (
                 verification.status is VerificationStatus.FAILURE
                 and not legacy_retry_attempted
+                # A terminal verdict (e.g. the thin harness's last completion-check
+                # rejection, or the model giving up) ends the run; asking the model
+                # for more actions after it only spends calls.
+                and not verification.stop_condition_met
+                # The thin harness never retries the model's action (see thin.py).
+                and not self.thin_harness
             )
             _MAX_ADAPTATION_RETRIES = 3
             if strategy is None or not allow_adaptation_retry:
@@ -607,6 +657,7 @@ class AgentLoop:
             self._inject_stagnation_hint(state)
             perception = await self._perceive_with_liveness_retry(state, frame)
             perception = self._infer_focused_element(state, perception)
+            perception = self._with_capture_origin(perception, frame)
             state.observation_history.append(perception)
             self._sync_progress_state_with_perception(state, perception)
             attempted_decision = decision
@@ -746,6 +797,10 @@ class AgentLoop:
         else:
             state.stop_reason = None
 
+        if await self._run_cancelled(record.run_id):
+            # Stopped while this step ran: the stop wins over whatever the step found.
+            final_status = RunStatus.CANCELLED
+            state.stop_reason = None
         if final_status is RunStatus.RUNNING and record.run_id in self._pause_requests:
             # Paused by hand while this step ran: don't overwrite the pause.
             final_status = RunStatus.WAITING_FOR_USER
@@ -941,18 +996,20 @@ class AgentLoop:
         })
 
     def _install_batch_child_check(self, run_id: str, action: AgentAction) -> None:
-        """With a domain allowlist, a batch's later children may run on a page an
-        earlier child opened, which the pre-execution check never saw. Have the
-        executor check the live page before each of them."""
-        if (
-            action.action_type is not ActionType.BATCH
-            or not hasattr(self.executor, "batch_child_check")
-            or not (self._trust_gate.enabled and self._trust_gate.allow_domains)
-            or self._trust_approved.get(run_id)
-        ):
+        """Have the executor check before each of a batch's later children: that the
+        run wasn't stopped meanwhile, and, with a domain allowlist, the live page
+        (an earlier child may have opened one the pre-execution check never saw)."""
+        if action.action_type is not ActionType.BATCH or not hasattr(self.executor, "batch_child_check"):
             return
+        check_domains = bool(
+            self._trust_gate.enabled and self._trust_gate.allow_domains and not self._trust_approved.get(run_id)
+        )
 
         async def check(child: AgentAction) -> str | None:
+            if await self._run_cancelled(run_id):
+                return "the run was stopped"
+            if not check_domains:
+                return None
             # A nested batch runs its first leaf next (its later children get their
             # own check), so judge that leaf, not the container.
             leaves = _leaf_actions(child)
@@ -976,6 +1033,16 @@ class AgentLoop:
             note(run_id, reason)
         except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
             logger.warning("note_not_executed failed for run %s: %s", run_id[:8], exc)
+
+    def _discard_held_actions(self, run_id: str, reason: str) -> None:
+        for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():
+            discard = getattr(service, "discard_held_actions", None)
+            if discard is None:
+                continue
+            try:
+                discard(run_id, reason)
+            except Exception as exc:  # noqa: BLE001 - never block a resume on it
+                logger.warning("discard_held_actions failed for run %s: %s", run_id[:8], exc)
 
     async def _pause_for_user(
         self,
@@ -1431,6 +1498,7 @@ class AgentLoop:
                 logger.warning("session_reset executor call failed: %s", exc)
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
+        self._release_backend_run_state(run_id)
         if hasattr(self.executor, "stop_run_recording"):
             try:
                 await self.executor.stop_run_recording(run_id)
@@ -1444,6 +1512,20 @@ class AgentLoop:
         except Exception as exc:
             logger.warning("cleanup_completed_run: aclose_run failed for %s: %s", run_id, exc)
         await self._persist_cleanup_artifacts(run_id)
+
+    def _release_backend_run_state(self, run_id: str) -> None:
+        """Drop the finished run's conversation and last screenshot from the backends,
+        which otherwise keep them for the life of the server."""
+        services = {id(s): s for s in (self.perception_service, self.policy_service)}.values()
+        for service in services:
+            for target in (service, getattr(service, "delegate", None)):
+                release = getattr(target, "release_run", None)
+                if release is None:
+                    continue
+                try:
+                    release(run_id)
+                except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
+                    logger.warning("release_run failed for run %s: %s", run_id[:8], exc)
 
     async def _persist_cleanup_artifacts(self, run_id: str) -> None:
         if not hasattr(self.executor, "recorded_video_path_for_run"):
@@ -1527,6 +1609,9 @@ class AgentLoop:
             failed = self._apply_reresolution_failure(executed_action, resolution.trace)
             return retry_state, self._persist_execution_trace(record.run_id, step_index, failed)
 
+        if await self._run_cancelled(record.run_id):
+            # Stopped while the retry was being re-resolved: don't run it.
+            return retry_state, self._persist_execution_trace(record.run_id, step_index, executed_action)
         retry_executed = await executor_runner.execute(retry_action)
         retry_executed = self._merge_execution_retry(
             original=executed_action,
@@ -1668,17 +1753,33 @@ class AgentLoop:
         return normalized_action.model_copy(update={"target_context": context})
 
     @staticmethod
+    def _with_capture_origin(perception, frame):
+        """Stamp the captured monitor's virtual-desktop origin on the perception.
+
+        The desktop executor captures the foreground monitor, so the model's
+        coordinates are relative to that monitor's image; without its origin a click
+        on a secondary monitor lands on the primary one."""
+        origin = (int(getattr(frame, "monitor_left", 0) or 0), int(getattr(frame, "monitor_top", 0) or 0))
+        current = tuple(getattr(perception, "monitor_origin", (0, 0)) or (0, 0))
+        if origin == (0, 0) or current != (0, 0) or not hasattr(perception, "model_copy"):
+            return perception
+        return perception.model_copy(update={"monitor_origin": origin})
+
+    @staticmethod
     def _apply_monitor_origin(action: AgentAction, perception) -> AgentAction:
         """Translate monitor-local coords to virtual-desktop coords by adding the
         monitor origin stored in perception. No-op when origin is (0, 0).
 
-        Covers x/y (start point) and x_end/y_end (drag/screenshot_region end point).
+        Covers x/y (start point), x_end/y_end (drag/screenshot_region end point) and
+        each child of a BATCH.
         """
         origin = getattr(perception, "monitor_origin", (0, 0))
         ox, oy = origin
         if ox == 0 and oy == 0:
             return action
         updates: dict = {}
+        if action.action_type is ActionType.BATCH and action.actions:
+            updates["actions"] = [AgentLoop._apply_monitor_origin(child, perception) for child in action.actions]
         if action.x is not None:
             updates["x"] = action.x + ox
         if action.y is not None:

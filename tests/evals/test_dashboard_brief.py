@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 APP_JS = Path(__file__).resolve().parents[2] / "dashboard" / "app.js"
-FUNCTIONS = ("harnessSuffix", "configLabel", "fmtUsd", "taskResults", "likelyCause", "runChanges",
+FUNCTIONS = ("harnessSuffix", "baseLabel", "configLabel", "fmtUsd", "taskResults", "likelyCause", "runChanges",
              "previousRun", "briefHeadline", "burnHeadline")
 CONSTANTS = ("BACKEND_NAMES", "OUTCOME_LABELS", "fmtPct", "fmtSec")
 
@@ -38,10 +38,13 @@ def _constant_source(source: str, name: str) -> str:
     return source[start.start():source.index(";\n", start.start()) + 1]
 
 
-def _run(expression: str):
+def _run(expression: str, multi_model: tuple[str, ...] = ()):
     source = APP_JS.read_text(encoding="utf-8")
-    script = "\n".join(_constant_source(source, name) for name in CONSTANTS)
+    script = f"const MULTI_MODEL = {json.dumps(list(multi_model))};\n"
+    script += "\n".join(_constant_source(source, name) for name in CONSTANTS)
     script += "\n" + "\n".join(_function_source(source, name) for name in FUNCTIONS)
+    # configLabel reads which base labels ran several models (set by noteModels on load).
+    script += "\nconst state = { multiModel: new Set(MULTI_MODEL) };"
     script += "\nconst t = (task, outcome, extra = {}) => ({ task, outcome, attempt: 1, ...extra });\n"
     script += ("const run = (at, success, tasks, extra = {}) => ({ started_at: at, config: { backend: 'claude_computer_use', "
                "harness_profile: 'thin', ...(extra.config || {}) }, summary: { success, tasks, success_rate: success / tasks, "
@@ -107,3 +110,14 @@ def test_burn_headline_with_and_without_a_budget() -> None:
         "$61.00 spent: the $60.00 budget for November is used up."
     assert _run("burnHeadline({ spent: 4, budget: null, projected: 15 }, 'November')") == \
         "$4.00 spent in November so far. At this pace the month ends near $15.00."
+
+
+def test_previous_run_compares_like_models_when_one_backend_ran_several() -> None:
+    # Opus and Sonnet both ran as "Claude · thin": each run's previous run is its own model's.
+    prev = _run("""previousRun(run('20261107T000000Z', 9, 10, { config: { model: 'opus' } }), [
+        run('20261105T000000Z', 7, 10, { config: { model: 'opus' } }),
+        run('20261106T000000Z', 3, 10, { config: { model: 'sonnet' } })])""", multi_model=("Claude · thin",))
+    assert prev["started_at"] == "20261105T000000Z"
+    assert _run("configLabel(run('a', 1, 1, { config: { model: 'opus' } }))", multi_model=("Claude · thin",)) == \
+        "Claude · thin · opus"
+    assert _run("configLabel(run('a', 1, 1, { config: { model: 'opus' } }))") == "Claude · thin"

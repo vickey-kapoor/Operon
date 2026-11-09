@@ -281,7 +281,14 @@ class NativeBrowserExecutor(Executor):
             elif at is ActionType.SCROLL:
                 page = await self._current_page()
                 amount = action.scroll_amount or 800
-                await page.mouse.wheel(0, -amount)
+                if action.x is not None and action.y is not None:
+                    # The wheel scrolls whatever is under the pointer: a dialog or side
+                    # panel the model pointed at, not always the page.
+                    await page.mouse.move(action.x, action.y)
+                if action.horizontal:
+                    await page.mouse.wheel(amount, 0)  # positive = right
+                else:
+                    await page.mouse.wheel(0, -amount)  # positive = up
             elif at is ActionType.DRAG:
                 page = await self._current_page()
                 if None in (action.x, action.y, action.x_end, action.y_end):
@@ -1051,7 +1058,14 @@ class NativeBrowserExecutor(Executor):
             self._obs_playwright = None
 
     async def aclose(self) -> None:
-        """Uniform server-shutdown teardown. Releases the persistent browser."""
+        """Uniform server-shutdown teardown: every run's session still open (a batch
+        session owns its own Chromium and Playwright), then the persistent browser.
+        Best-effort: one session's failure must not block the rest."""
+        for run_id in list(self._sessions):
+            try:
+                await self.aclose_run(run_id)
+            except Exception:
+                logger.debug("aclose: closing the session of run %s failed", run_id, exc_info=True)
         await self.close_persistent_browser()
 
     def _video_dir_for_run(self, run_id: str) -> Path:

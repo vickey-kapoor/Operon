@@ -56,6 +56,8 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._perception_only: bool = False
         self._image_size: dict[str, tuple[int, int]] = {}
+        # Re-plan calls made per step directory, so each one saves its own usage file.
+        self._replans: dict[str, int] = {}
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
         """Run combined perception+policy and cache both results.
@@ -152,10 +154,34 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
             raise PolicyError("No cached decision and no screenshot path to re-plan from")
         prompt = self._render_prompt(state, semantic_retry=False)
         raw_output = await self.gemini_client.generate_perception(prompt, screenshot_path)
+        # A re-plan is a paid call like any other: save its prompt, reply and usage
+        # under their own names, so cost tracking (step_*/*_usage.json and the
+        # step's policy usage) counts it instead of missing it.
+        step_dir = Path(screenshot_path).resolve().parent
+        if str(step_dir) not in self._replans:
+            self._replans.clear()  # a new step: earlier steps' counts are done with
+        count = self._replans[str(step_dir)] = self._replans.get(str(step_dir), 0) + 1
+        stem = "combined_replan" if count == 1 else f"combined_replan_{count}"
+        bg_writer.enqueue(step_dir / f"{stem}_prompt.txt", prompt)
+        bg_writer.enqueue(step_dir / f"{stem}_raw.txt", raw_output)
         _, replanned_decision = self._parse_combined_output(
             raw_output, screenshot_path, scale_ratio=self.gemini_client.latest_perception_scale_ratio(),
         )
+        bg_writer.enqueue(step_dir / f"{stem}_parsed.json", json.dumps({"decision": replanned_decision.model_dump(mode="json")}))
+        usage_path = step_dir / f"{stem}_usage.json"
+        self._last_debug_artifacts = ModelDebugArtifacts(
+            prompt_artifact_path=str(step_dir / f"{stem}_prompt.txt"),
+            raw_response_artifact_path=str(step_dir / f"{stem}_raw.txt"),
+            parsed_artifact_path=str(step_dir / f"{stem}_parsed.json"),
+            usage_artifact_path=str(usage_path),
+            usage=collect_latest_usage(self.gemini_client, usage_path),
+        )
         return replanned_decision
+
+    def release_run(self, run_id: str) -> None:
+        """The run finished: drop its cached decision, hints and image size."""
+        for cache in (self._cached_decision, self._advisory_hints, self._image_size):
+            cache.pop(run_id, None)
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts

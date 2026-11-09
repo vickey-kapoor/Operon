@@ -503,3 +503,128 @@ async def test_last_rule_trace_injected_as_advisory_hint_to_llm() -> None:
     # The rule trace must have been rendered into the prompt sent to the LLM.
     assert client.last_prompt is not None
     assert rule_trace in client.last_prompt
+
+
+class _RecordingDelegate(PromptPolicyStub):
+    """A delegate that, like the model-adapter backends, wants to hear when the
+    full harness ran something else in place of its decision (KAN-68)."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.replaced: list[tuple[str, str]] = []
+
+    def note_replaced(self, run_id: str, action: str) -> None:
+        self.replaced.append((run_id, action))
+
+
+def _recording_coordinator(root: Path, response: str) -> tuple[PolicyCoordinator, _RecordingDelegate]:
+    delegate = _RecordingDelegate(gemini_client=StubGeminiClient(response=response), prompt_path=_prompt_path(root))
+    return PolicyCoordinator(delegate=delegate, memory_store=FileBackedMemoryStore(root_dir=root / "runs")), delegate
+
+
+@pytest.mark.asyncio
+async def test_a_rule_action_is_reported_to_the_delegate_as_replacing_its_own() -> None:
+    root = _local_test_dir("test-policy-coordinator-note-replaced-rule")
+    coordinator, delegate = _recording_coordinator(
+        root, '{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
+    )
+    state = AgentState(run_id="run-1", intent="Open Chrome, navigate to github.com, and search for Operon",
+                       status=RunStatus.RUNNING, current_subgoal="search")
+    decision = await coordinator.choose_action(state, _search_perception(root))
+    assert decision.rule_name and delegate.replaced
+    run_id, action = delegate.replaced[0]
+    assert run_id == "run-1" and action.startswith("click") and f"rule {decision.rule_name}" in action
+
+
+@pytest.mark.asyncio
+async def test_the_delegates_own_action_and_a_confirmed_stop_are_not_reported_as_replaced() -> None:
+    root = _local_test_dir("test-policy-coordinator-note-replaced-own")
+    coordinator, delegate = _recording_coordinator(
+        root, '{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Fill name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
+    )
+    state = AgentState(run_id="run-1", intent="Complete the auth-free form and submit it successfully.",
+                       status=RunStatus.RUNNING, current_subgoal="fill_name")
+    await coordinator.choose_action(state, _form_perception(root, focused_element_id="name-input"))
+    assert delegate.replaced == []
+
+    root = _local_test_dir("test-policy-coordinator-note-replaced-stop")
+    coordinator, delegate = _recording_coordinator(
+        root, '{"action":{"action_type":"stop"},"rationale":"Task complete.","confidence":1.0,"active_subgoal":"verify_success","expected_change":"none"}'
+    )
+    state = state.model_copy(update={"current_subgoal": "verify_success"})
+    decision = await coordinator.choose_action(state, _form_perception(root, page_hint="form_success"))
+    assert decision.action.action_type is ActionType.STOP and delegate.replaced == []
+
+
+class _ScriptedDelegate:
+    """A model-adapter-like delegate: hands out queued decisions and records what the
+    full harness tells it about them (KAN-68)."""
+
+    def __init__(self, *decisions) -> None:
+        self.decisions = list(decisions)
+        self.replaced: list[str] = []
+        self.rejected: list[str] = []
+
+    async def choose_action(self, state, perception):
+        return self.decisions.pop(0)
+
+    def note_replaced(self, run_id: str, action: str) -> None:
+        self.replaced.append(action)
+
+    def note_rejected(self, run_id: str, reason: str) -> None:
+        self.rejected.append(reason)
+
+
+def _decision(action: dict, rationale: str = "Because."):
+    from operon.agent.actions.translation import build_policy_decision
+
+    return build_policy_decision({"action": action, "rationale": rationale, "confidence": 0.8, "active_subgoal": "x"})
+
+
+@pytest.mark.asyncio
+async def test_a_guard_never_replaces_the_models_request_for_a_human(monkeypatch) -> None:
+    root = _local_test_dir("test-policy-coordinator-keeps-wait-for-user")
+    wait = _decision({"action_type": "wait_for_user", "text": "OpenAI safety check: confirm"})
+    delegate = _ScriptedDelegate(wait)
+    coordinator = PolicyCoordinator(delegate=delegate, memory_store=FileBackedMemoryStore(root_dir=root / "runs"))
+
+    async def guard_replaces(state, perception):
+        await coordinator._ask_delegate(state, perception)
+        return _decision({"action_type": "launch_app", "text": "notepad"})
+
+    monkeypatch.setattr(coordinator, "_choose_action", guard_replaces)
+    state = AgentState(run_id="run-1", intent="Open Notepad", status=RunStatus.RUNNING)
+    decision = await coordinator.choose_action(state, _form_perception(root))
+    assert decision is wait and delegate.replaced == []
+
+
+@pytest.mark.asyncio
+async def test_asking_the_model_again_tells_it_the_last_proposal_did_not_run(monkeypatch) -> None:
+    root = _local_test_dir("test-policy-coordinator-note-rejected")
+    first, second = _decision({"action_type": "stop"}), _decision({"action_type": "wait", "wait_ms": 500})
+    delegate = _ScriptedDelegate(first, second)
+    coordinator = PolicyCoordinator(delegate=delegate, memory_store=FileBackedMemoryStore(root_dir=root / "runs"))
+
+    async def guard_asks_again(state, perception):
+        await coordinator._ask_delegate(state, perception)
+        return await coordinator._ask_delegate(state, perception)
+
+    monkeypatch.setattr(coordinator, "_choose_action", guard_asks_again)
+    state = AgentState(run_id="run-1", intent="Open Notepad", status=RunStatus.RUNNING)
+    decision = await coordinator.choose_action(state, _form_perception(root))
+    assert decision is second
+    assert len(delegate.rejected) == 1 and "asked you again" in delegate.rejected[0]
+    assert delegate.replaced == []
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_gives_up_is_not_turned_into_a_confirmed_rule_success() -> None:
+    from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
+
+    root = _local_test_dir("test-policy-coordinator-confirm-gave-up")
+    gave_up = _decision({"action_type": "stop"}, f"{GAVE_UP_PREFIX}the rest of the task failed")
+    coordinator = PolicyCoordinator(delegate=_ScriptedDelegate(gave_up), memory_store=FileBackedMemoryStore(root_dir=root / "runs"))
+    rule_stop = _decision({"action_type": "stop"}, "Success detected by rule.")
+    state = AgentState(run_id="run-1", intent="Send the message", status=RunStatus.RUNNING)
+    confirmed = await coordinator._confirm_success(state, _form_perception(root, page_hint="form_success"), rule_stop)
+    assert confirmed is gave_up

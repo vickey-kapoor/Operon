@@ -215,3 +215,34 @@ async def test_screenshots_outside_the_history_window_are_freed(frame) -> None:
     turns = backend._runs["run-1"].turns
     # history_screens=2: only the last two turns keep their image.
     assert [turn.image is not None for turn in turns] == [False, False, True, True]
+
+
+async def test_an_action_the_full_harness_replaced_is_reported_as_not_run(frame) -> None:
+    client = ScriptedChat([
+        chat_reply(tool_calls=[tool_call("click", "c1", x=1, y=1)]),
+        chat_reply(tool_calls=[tool_call("click", "c2", x=1, y=1)]),
+        chat_reply(tool_calls=[tool_call("click", "c3", x=1, y=1)]),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.note_replaced("run-1", "wait, chosen by rule dismiss_overlay")
+    await _step(backend, frame, state((ActionType.WAIT, True)), "s2")
+    tool_message = client.requests[1]["messages"][4]
+    assert tool_message["content"].startswith("Not executed: Operon's harness ran a different action instead")
+    assert "rule dismiss_overlay" in tool_message["content"] and "It succeeded." in tool_message["content"]
+    # The next turn's own action ran: it is reported as usual.
+    await _step(backend, frame, state((ActionType.WAIT, True), (ActionType.CLICK, True)), "s3")
+    assert "Not executed" not in str(client.requests[2]["messages"][-2])
+
+
+async def test_a_proposal_the_full_harness_rejected_is_reported_as_not_run(frame) -> None:
+    client = ScriptedChat([
+        chat_reply(tool_calls=[tool_call("click", "c1", x=1, y=1)]),
+        chat_reply(tool_calls=[tool_call("click", "c2", x=1, y=1)]),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.note_rejected("run-1", "Operon's harness rejected it and asked you again")
+    await _step(backend, frame, state(), "s1b")  # asked again in the same step: nothing ran
+    tool_message = client.requests[1]["messages"][4]
+    assert tool_message["content"].startswith("Not executed: Operon's harness rejected it and asked you again")

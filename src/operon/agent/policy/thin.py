@@ -83,7 +83,8 @@ def final_check_model(claude_model: str | None) -> str:
 
 
 # The model-adapter backend (OPERON_*_BACKEND=model) is the cross-model benchmark
-# path: always thin, and always judged by its own ``done`` (graders decide success).
+# path: thin by default, full on request (KAN-68); a thin run is always judged by its
+# own ``done`` (graders decide success).
 MODEL_BACKEND = "model"
 OWN_DONE = "own"
 FINAL_CHECK = "claude"
@@ -98,13 +99,12 @@ def harness_profile(backend: str) -> str:
     """The harness profile for a backend. Claude computer use runs thin unless
     ``OPERON_HARNESS_PROFILE=full`` asks for the old scaffolding; Gemini computer use
     runs full unless ``OPERON_HARNESS_PROFILE=thin`` asks for the thin harness; the
-    model-adapter backend always runs thin; every other backend (json) runs full,
-    since its decisions still need the rules and the critic."""
+    model-adapter backend runs thin unless ``OPERON_HARNESS_PROFILE=full`` asks for the
+    rules, guards, critic and recovery around it; every other backend (json) runs
+    full, since its decisions still need the rules and the critic."""
     requested = (os.getenv("OPERON_HARNESS_PROFILE") or "").strip().lower()
     if backend == MODEL_BACKEND:
-        if requested == FULL:
-            logger.warning("OPERON_HARNESS_PROFILE=full is ignored for backend=model; it always runs thin")
-        return THIN
+        return FULL if requested == FULL else THIN
     if backend == GEMINI_COMPUTER_USE:
         return THIN if requested == THIN else FULL
     if backend != "claude_computer_use":

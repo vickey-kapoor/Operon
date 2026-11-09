@@ -11,6 +11,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from operon.agent._agent_utils import collect_latest_usage
+from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.policy.keywords import terminal_patterns
 from operon.clients.anthropic import AnthropicClientError
 from operon.clients.gemini import GeminiClient, GeminiClientError
@@ -89,6 +90,20 @@ class DeterministicVerifierService(VerifierService):
         self._last_debug_artifacts = None
         action = decision.action
         latest_perception = state.observation_history[-1] if state.observation_history else None
+
+        # A model that gave up (a registry model's ``fail``) never counts as done. Checked
+        # before the terminal state: its own words ("the email was not sent") become the
+        # perception summary and could otherwise match a success signal.
+        if action.action_type is ActionType.STOP and (decision.rationale or "").startswith(GAVE_UP_PREFIX):
+            return VerificationResult(
+                status=VerificationStatus.FAILURE,
+                expected_outcome_met=False,
+                stop_condition_met=False,
+                reason=f"Stop rejected: the model gave up, so the task is not done ({decision.rationale[:200]})",
+                failure_type=VerificationFailureType.EXPECTED_OUTCOME_NOT_MET,
+                failure_category=FailureCategory.EXPECTED_OUTCOME_NOT_MET,
+                failure_stage=LoopStage.VERIFY,
+            )
 
         # Terminal-state check: look for visual evidence of the goal before checking
         # action success. This means the loop ends as soon as the goal is visible —
@@ -242,7 +257,8 @@ class DeterministicVerifierService(VerifierService):
         A STOP is the policy's claim that the task is done, so it is checked like
         any other outcome. The critic judges the current screen when it can; when
         it is unavailable or unsure, the stop is accepted only if the run did some
-        work and its latest step did not fail.
+        work and its latest step did not fail. (A model that gave up is rejected
+        earlier, in ``verify``.)
         """
         critic = await self._model_verify(state, decision, executed_action)
         if critic is not None:

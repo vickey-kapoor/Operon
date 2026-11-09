@@ -331,3 +331,86 @@ def test_openai_profile_without_pricing_is_refused(monkeypatch, tmp_path) -> Non
     assert any("needs pricing" in e for e in validate_modes())
     with pytest.raises(ModelRegistryError, match="needs pricing"):
         build_browser_services(executor=None)
+
+
+async def test_a_call_the_full_harness_replaced_is_reported_as_not_run(frame) -> None:
+    client = ScriptedResponses([sample("openai_computer_call"), _response("resp_002", _message("Done."))])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.note_replaced("run-1", "wait, chosen by a harness guard")
+    await _step(backend, frame, state((ActionType.WAIT, False)), "s2")
+    note = client.requests[1]["input_items"][1]["content"][0]["text"]
+    assert note.startswith("Not executed: Operon's harness ran a different action instead (wait, chosen by a harness guard)")
+    assert "It failed: element not found." in note
+
+
+async def test_the_same_model_critic_asks_openai_with_the_screenshot(frame) -> None:
+    from operon.agent.backends.model_adapter.critic import ProfileCriticClient
+
+    client = ScriptedResponses([_response("resp_c", _message('{"status": "success", "reason": "done"}'))])
+    critic = ProfileCriticClient(PROFILE, client=client)
+    shot = frame("s1")
+    text = await critic.generate_verification("Did it work?", shot.artifact_path)
+    assert json.loads(text)["status"] == "success"
+    request = client.requests[0]
+    content = request["input_items"][0]["content"]
+    assert content[0] == {"type": "input_text", "text": "Did it work?"}
+    assert content[1]["image_url"].startswith("data:image/")
+    assert request["tools"] == [] and request["previous_response_id"] is None
+
+
+async def test_an_empty_critic_reply_is_an_error(frame) -> None:
+    from operon.agent.backends.model_adapter.critic import ProfileCriticClient
+
+    critic = ProfileCriticClient(PROFILE, client=ScriptedResponses([_response("resp_c")]))
+    with pytest.raises(ModelTransportError, match="no text"):
+        await critic.generate_verification("Did it work?", frame("s1").artifact_path)
+
+
+async def test_the_critic_sends_the_screenshot_within_the_profiles_image_caps(frame) -> None:
+    import base64
+    import io
+
+    from PIL import Image
+
+    from operon.agent.backends.model_adapter.critic import ProfileCriticClient
+    from operon.agent.backends.model_adapter.registry import ImageRule
+
+    profile = PROFILE.model_copy(update={"image": ImageRule(resize="long_edge", max_long_edge=640, format="png")})
+    client = ScriptedResponses([_response("resp_c", _message('{"status": "success", "reason": "done"}'))])
+    await ProfileCriticClient(profile, client=client).generate_verification("Did it work?", frame("s1", (1920, 1080)).artifact_path)
+    url = client.requests[0]["input_items"][0]["content"][1]["image_url"]
+    assert url.startswith("data:image/png;base64,")
+    with Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))) as sent:
+        assert max(sent.size) == 640
+
+
+async def test_a_held_action_replaced_by_the_harness_never_runs_unapproved(frame) -> None:
+    # KAN-68: if a rule ran something else instead of the safety pause, the held call
+    # was never approved by a human, so the next step asks the model again.
+    checks = [{"id": "sc_1", "code": "malicious_instructions", "message": "Looks like an instruction."}]
+    client = ScriptedResponses([
+        _response("r1", _computer("c1", {"type": "click", "x": 10, "y": 10}, checks=checks)),
+        _response("r2", _message("Done.")),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.note_replaced("run-1", "launch_app notepad, chosen by rule prefer_launch_app")
+    await _step(backend, frame, state((ActionType.WAIT, True)), "s2")
+    assert len(client.requests) == 2  # the held click did not run without a new request
+    output = client.requests[1]["input_items"][0]
+    assert not output.get("acknowledged_safety_checks")
+    assert "ran a different action instead" in json.dumps(client.requests[1]["input_items"])
+
+
+async def test_a_rejected_proposal_is_reported_as_not_run(frame) -> None:
+    client = ScriptedResponses([
+        _response("r1", _computer("c1", {"type": "click", "x": 10, "y": 10})),
+        _response("r2", _message("Done.")),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.note_rejected("run-1", "Operon's harness rejected it and asked you again")
+    await _step(backend, frame, state(), "s1b")
+    note = json.dumps(client.requests[1]["input_items"])
+    assert "Not executed: Operon's harness rejected it and asked you again" in note

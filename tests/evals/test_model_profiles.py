@@ -179,3 +179,37 @@ def test_the_harness_label_reads_the_dotenv_the_server_loads(monkeypatch, tmp_pa
     assert live_bench.harness_label(None) == "thin"
     (tmp_path / ".env").write_text("OPERON_BROWSER_BACKEND=computer_use\n", encoding="utf-8")
     assert live_bench.harness_label(None) == "thin-own"
+
+
+def test_a_registry_model_can_run_full_and_the_report_names_its_critic(monkeypatch, tmp_path) -> None:
+    from operon.agent.backends.model_adapter.registry import resolve_profile
+
+    monkeypatch.chdir(tmp_path)  # no .env
+    for name in ("OPERON_CRITIC", "OPERON_BROWSER_VERIFIER_PROVIDER", "OPERON_BROWSER_VERIFIER_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    profile = resolve_profile("openai-computer-use")
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "thin")
+    assert live_bench.harness_label(profile) == "thin" and live_bench.critic_label(profile) is None
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
+    assert live_bench.harness_label(profile) == "full"
+    assert live_bench.critic_label(profile) == "gemini:gemini-3.5-flash"
+    monkeypatch.setenv("OPERON_CRITIC", "same")
+    assert live_bench.critic_label(profile) == "same:gpt-6.1-sol"
+
+
+def test_a_same_critic_report_names_the_model_the_server_defaults_to(monkeypatch, tmp_path) -> None:
+    # With ANTHROPIC_API_KEY and no backend set, the server runs Claude: the critic is
+    # Claude, even when OPERON_BROWSER_MODEL names a Gemini model.
+    monkeypatch.chdir(tmp_path)  # no .env
+    for name in ("OPERON_BROWSER_BACKEND", "OPERON_BROWSER_CLAUDE_MODEL", "OPERON_DESKTOP_BACKEND", "OPERON_DESKTOP_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake")
+    monkeypatch.setenv("OPERON_BROWSER_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
+    monkeypatch.setenv("OPERON_CRITIC", "same")
+    assert live_bench.critic_label(None) == "same:claude-opus-5-5"
+    monkeypatch.setenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-sonnet-5-5")
+    assert live_bench.critic_label(None) == "same:claude-sonnet-5-5"
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    assert live_bench.critic_label(None) == "same:gemini-3.5-flash"
+    assert live_bench.critic_label(None, "desktop") == "same:gemini-2.5-flash"  # json backend default

@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.policy import PolicyService
 from operon.agent.policy.rules import (
     _ANCHOR_DISTANCE_THRESHOLD,
@@ -100,6 +101,36 @@ class PolicyCoordinator(PolicyService):
         state: AgentState,
         perception: ScreenPerception,
     ) -> PolicyDecision:
+        self._delegate_decision: PolicyDecision | None = None
+        decision = await self._choose_action(state, perception)
+        own = self._delegate_decision
+        if own is not None and own.action.action_type is ActionType.WAIT_FOR_USER and decision is not own:
+            # The model asked for a human (e.g. a provider safety check): no rule or
+            # guard may run something else in its place, or the pause is skipped.
+            logger.info("Keeping the model's request for a human over %s.", _describe(decision))
+            decision = own
+        same_stop = own is not None and own.action.action_type is ActionType.STOP \
+            and decision.action.action_type is ActionType.STOP
+        if decision is not own and not same_stop:
+            # A rule or guard ran something else: a backend holding the model's tool
+            # call tells the model, so it does not hear its own action reported as run.
+            self.note_replaced(state.run_id, _describe(decision))
+        return decision
+
+    async def _ask_delegate(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
+        if getattr(self, "_delegate_decision", None) is not None:
+            # Asked again in the same step (a guard rejected the last proposal): that
+            # proposal never ran, so the model must not hear it reported as done.
+            self.note_rejected(state.run_id, "Operon's harness rejected it and asked you again")
+        decision = await self.delegate.choose_action(state, perception)
+        self._delegate_decision = decision
+        return decision
+
+    async def _choose_action(
+        self,
+        state: AgentState,
+        perception: ScreenPerception,
+    ) -> PolicyDecision:
         memory_hints = self._get_hints(state, perception)
 
         decision = self.rule_engine.choose_action(state, perception, memory_hints)
@@ -127,7 +158,7 @@ class PolicyCoordinator(PolicyService):
         if state.last_rule_trace and hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
 
-        decision = await self.delegate.choose_action(state, perception)
+        decision = await self._ask_delegate(state, perception)
 
         # Semantic anchor check (highest-priority post-LLM guard): if the LLM targeted
         # empty space (coordinate > 15px from every visible element), intercept and
@@ -237,7 +268,7 @@ class PolicyCoordinator(PolicyService):
             self.delegate.add_advisory_hints([hint], source="success_confirm", run_id=state.run_id)
 
         try:
-            llm_decision = await self.delegate.choose_action(state, perception)
+            llm_decision = await self._ask_delegate(state, perception)
         except Exception as exc:
             logger.warning(
                 "Success confirmation LLM call failed (%s: %s) — accepting rule stop.",
@@ -246,6 +277,10 @@ class PolicyCoordinator(PolicyService):
             return rule_stop
 
         if llm_decision.action.action_type is ActionType.STOP:
+            if (llm_decision.rationale or "").startswith(GAVE_UP_PREFIX):
+                # The model gave up: keep its failure rather than confirming the rule's success.
+                logger.warning("Rule success stop answered by a model that gave up; keeping the give-up.")
+                return llm_decision
             logger.info(
                 "Success confirmed by LLM policy (page_hint=%r).",
                 perception.page_hint.value,
@@ -307,7 +342,7 @@ class PolicyCoordinator(PolicyService):
         if hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([correction], source="validation", run_id=state.run_id)
 
-        replanned = await self.delegate.choose_action(state, perception)
+        replanned = await self._ask_delegate(state, perception)
         return replanned
 
     async def _reject_hallucinated_target(
@@ -337,7 +372,7 @@ class PolicyCoordinator(PolicyService):
         if hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([correction], source="validation", run_id=state.run_id)
 
-        replanned = await self.delegate.choose_action(state, perception)
+        replanned = await self._ask_delegate(state, perception)
         if (
             replanned.action.target_element_id is not None
             and replanned.action.target_element_id not in known_ids
@@ -440,3 +475,13 @@ def _is_rule_success_stop(decision: PolicyDecision) -> bool:
         decision.action.action_type is ActionType.STOP
         and decision.active_subgoal == "verify_success"
     )
+
+
+def _describe(decision: PolicyDecision) -> str:
+    """A short name for an action the harness ran in the model's place."""
+    action = decision.action
+    what = action.action_type.value
+    if action.x is not None and action.y is not None:
+        what += f" at ({action.x}, {action.y})"
+    by = f"rule {decision.rule_name}" if decision.rule_name else "a harness guard"
+    return f"{what}, chosen by {by}"

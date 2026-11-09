@@ -365,3 +365,13 @@ def test_a_registry_model_run_keeps_its_profile_and_model_id() -> None:
     # Two models run at the same moment never share a key.
     assert run["key"] == "browser-full-model-thin-qwen3-vl-32b-20261024T012945Z"
     assert "ADD COLUMN IF NOT EXISTS model_profile" in __import__("evals.dashboard").dashboard.SCHEMA
+
+
+def test_prepare_keeps_a_full_runs_critic_for_the_page() -> None:
+    report = prepare(
+        _report(backend="model", model_profile="openai-computer-use", model_id="computer-use-preview",
+                harness_profile="full", critic="same:computer-use-preview"),
+        {},
+    )
+    assert report["config"]["critic_model"] == "same:computer-use-preview"
+    assert "critic_model" not in prepare(_report(harness_profile="thin", critic=None), {})["config"]

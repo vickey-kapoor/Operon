@@ -25,8 +25,8 @@ from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.api import ws_stream as _ws_stream
 from operon.api.runtime.services import (
     build_browser_services,
+    build_critic_client,
     build_desktop_services,
-    build_verifier_client,
 )
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.clients.anthropic import AnthropicHttpClient
@@ -84,7 +84,7 @@ def _loop_layers(*, config, services, memory_store, desktop: bool = False) -> di
             memory_store=memory_store,
             rule_engine=PolicyRuleEngine(launch_apps=desktop),
         ),
-        "verifier_service": DeterministicVerifierService(gemini_client=build_verifier_client(config=config)),
+        "verifier_service": DeterministicVerifierService(gemini_client=build_critic_client(config=config)),
         "recovery_manager": RuleBasedRecoveryManager(),
         "harness_profile": profile,
     }

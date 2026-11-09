@@ -31,10 +31,13 @@ on:
         options: [json, computer_use, claude_computer_use, model]
         default: json
       harness_profile:
-        description: "OPERON_HARNESS_PROFILE: thin or full, for Claude and Gemini computer use (Gemini thin ends on its own done)."
+        description: "OPERON_HARNESS_PROFILE: thin or full, for Claude, Gemini computer use and registry models (thin ends on the model's own done, except Claude's)."
         type: choice
         options: [thin, full]
         default: thin
+      critic:
+        description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
+        default: ""
       claude_model:
         description: "OPERON_DESKTOP_CLAUDE_MODEL for claude_computer_use"
         default: "claude-opus-5-5"
@@ -64,6 +67,7 @@ on:
       suite: {type: string, default: "smoke"}
       desktop_backend: {type: string, default: "claude_computer_use"}
       harness_profile: {type: string, default: "thin"}
+      critic: {type: string, default: ""}
       claude_model: {type: string, default: "claude-opus-5-5"}
       final_check_model: {type: string, default: ""}
       desktop_model: {type: string, default: ""}
@@ -146,6 +150,7 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
+      OPERON_CRITIC: ${{ inputs.critic }}
       OPERON_DESKTOP_CLAUDE_MODEL: ${{ inputs.claude_model }}
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
       OPERON_CLAUDE_ZOOM: ${{ inputs.zoom && 'true' || 'false' }}

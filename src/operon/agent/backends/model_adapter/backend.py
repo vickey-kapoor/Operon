@@ -48,6 +48,9 @@ class _Run:
     turns: list[Turn] = field(default_factory=list)
     acknowledged_actions: int = 0
     not_executed_reason: str | None = None
+    # The full harness ran another action in place of the last turn's (KAN-68).
+    replaced_by: str | None = None
+    rejected_reason: str | None = None
     invalid_replies: int = 0
     replies: int = 0
 
@@ -185,6 +188,16 @@ class ModelAdapterBackend(AgentBackend):
         if run is not None and run.turns:
             run.not_executed_reason = reason.strip()[:300] or "blocked by a gate"
 
+    def note_replaced(self, run_id: str, action: str) -> None:
+        run = self._runs.get(run_id)
+        if run is not None and run.turns:
+            run.replaced_by = action.strip()[:300] or "another action"
+
+    def note_rejected(self, run_id: str, reason: str) -> None:
+        run = self._runs.get(run_id)
+        if run is not None and run.turns:
+            run.rejected_reason = reason.strip()[:300] or "rejected by the harness"
+
     def invalid_reply_counts(self, run_id: str) -> tuple[int, int]:
         """(invalid replies, all replies) so far in a run."""
         run = self._runs.get(run_id)
@@ -220,6 +233,10 @@ class ModelAdapterBackend(AgentBackend):
                 "Check the screen and propose the next action again."
             )
             run.not_executed_reason = None
+        elif run.rejected_reason:
+            last.outcome = _rejected_outcome(run.rejected_reason)
+        elif run.replaced_by:
+            last.outcome = _replaced_outcome(run.replaced_by, state, run.acknowledged_actions)
         elif len(state.action_history) > run.acknowledged_actions:
             executed = state.action_history[-1]
             last.outcome = "OK" if executed.success else f"Error: {executed.detail or 'the action failed'}"
@@ -227,6 +244,7 @@ class ModelAdapterBackend(AgentBackend):
             # A re-look before the action was recorded (a mid-step retry).
             last.outcome = "OK"
         run.acknowledged_actions = len(state.action_history)
+        run.replaced_by = run.rejected_reason = None
 
     def _messages(self, run: _Run, ctx: PromptContext, image: SentImage, note: str) -> list[dict[str, Any]]:
         keep_images_from = len(run.turns) - (self.profile.history_screens - 1)
@@ -341,3 +359,20 @@ def _without_images(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return value
 
     return strip(messages)
+
+
+def _rejected_outcome(reason: str) -> str:
+    """What the model hears when the full harness dropped its proposal and asked again."""
+    return f"Not executed: {reason}. Check the screen and propose the next action."
+
+
+def _replaced_outcome(action: str, state: AgentState, acknowledged: int) -> str:
+    """What the model hears when the full harness ran something else in its place."""
+    result = ""
+    if len(state.action_history) > acknowledged:
+        executed = state.action_history[-1]
+        result = " It succeeded." if executed.success else f" It failed: {executed.detail or 'the action failed'}."
+    return (
+        f"Not executed: Operon's harness ran a different action instead ({action}).{result} "
+        "Check the screen and propose the next action."
+    )

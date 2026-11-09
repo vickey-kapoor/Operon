@@ -66,7 +66,7 @@ the details.
 | `OPERON_BROWSER_CLAUDE_EFFORT` | `low` | Claude effort level for `claude_computer_use` |
 | `OPERON_CLAUDE_ZOOM` | `false` | Experimental: turn on the toolset's `zoom` member (browser and desktop); each zoom is answered with a full-resolution crop of the current screenshot, up to 3 per step |
 | `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` (`gemini-3.5-flash` for `computer_use`) | Desktop primary model (Gemini JSON or computer use backend) |
-| `OPERON_DESKTOP_THINKING` | `low` | Thinking level for the desktop `computer_use` backend (Gemini 3) |
+| `OPERON_DESKTOP_THINKING` | `low` | Thinking level for the desktop `computer_use` backend (Gemini 3 levels; ignored on Gemini 2.x) |
 | `OPERON_DESKTOP_CLAUDE_MODEL` | `claude-opus-5-5` | Model for the desktop `claude_computer_use` backend |
 | `OPERON_DESKTOP_CLAUDE_EFFORT` | `low` | Claude effort level on the desktop |
 | `OPERON_HARNESS_PROFILE` | `thin` for Claude, `full` for Gemini | `full` switches a `claude_computer_use` backend back to the full harness; `thin` switches a Gemini `computer_use` backend to the thin harness (judged by its own "done"). `json` backends always run `full`. |

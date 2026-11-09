@@ -125,6 +125,7 @@ def test_grounding_reuses_one_client_per_kind(monkeypatch) -> None:
 )
 def test_report_harness_names_the_own_done_mode(monkeypatch, harness, check, expected) -> None:
     monkeypatch.delenv("OPERON_BROWSER_BACKEND", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")  # the server's default backend is then Claude
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     monkeypatch.setenv("OPERON_COMPLETION_CHECK", check)
     assert live_bench.harness_label(None) == expected
@@ -156,3 +157,13 @@ def test_a_gemini_computer_use_report_names_its_harness(monkeypatch, mode, harne
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     monkeypatch.delenv("OPERON_COMPLETION_CHECK", raising=False)
     assert live_bench.harness_label(None, mode) == expected
+
+
+@pytest.mark.parametrize(("harness", "expected"), [("thin", "thin-own"), ("", "full")])
+def test_the_default_gemini_browser_backend_is_labelled_as_gemini(monkeypatch, harness, expected) -> None:
+    # No OPERON_BROWSER_BACKEND and no ANTHROPIC_API_KEY: the server runs Gemini computer use.
+    monkeypatch.delenv("OPERON_BROWSER_BACKEND", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
+    monkeypatch.delenv("OPERON_COMPLETION_CHECK", raising=False)
+    assert live_bench.harness_label(None) == expected

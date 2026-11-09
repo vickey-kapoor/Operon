@@ -274,6 +274,11 @@ def run_replies(run_id: str) -> tuple[int, int]:
     return invalid, replies
 
 
+def _default_browser_backend() -> str:
+    from operon.api.runtime_config import _default_browser_backend as default
+    return default()
+
+
 def harness_label(profile, mode: str = "browser") -> str:
     """The report's harness: ``thin``, ``full``, or ``thin-own`` for a thin run that takes
     the model's own "done", so it is never compared with runs judged by the completion
@@ -282,6 +287,9 @@ def harness_label(profile, mode: str = "browser") -> str:
     if profile is not None:
         return "thin"
     backend = (os.getenv(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower()
+    if not backend:
+        # The server's own default: Gemini computer use in the browser without ANTHROPIC_API_KEY.
+        backend = _default_browser_backend() if mode == "browser" else "json"
     requested = (os.getenv("OPERON_HARNESS_PROFILE") or "").strip().lower()
     if backend == "computer_use":
         # Gemini computer use runs full unless thin is asked for (operon.agent.policy.thin).

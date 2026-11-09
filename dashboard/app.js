@@ -973,11 +973,12 @@ function taskRows(r, withScreens, columns) {
 // Spend is counted across every environment and suite, flagged runs included:
 // a broken run still cost money. The filters in the app bar don't apply here.
 
-const SUITE_NAMES = { full: "full suite", smoke: "smoke", safety: "safety", apps: "apps", hard: "hard", long: "long" };
+const SUITE_NAMES = { core: "core", full: "full suite", smoke: "smoke", safety: "safety", apps: "apps", hard: "hard", long: "long" };
 const MODE_NAMES = { browser: "Browser", desktop: "Desktop", grounding: "Grounding" };
 // Fixed colors per environment and suite, so a suite keeps its color as runs come in.
+// Any other suite gets the grey after the last slot (--series-12 in style.css).
 const SUITE_SLOTS = ["browser|full", "browser|smoke", "browser|safety", "browser|apps", "desktop|smoke", "desktop|full",
-  "browser|hard", "browser|long", "grounding|grounding"];
+  "browser|hard", "browser|long", "grounding|grounding", "browser|core", "desktop|core"];
 // Runs that are not task benchmarks (ScreenSpot grounding): they cost money, so the Cost
 // tab counts them, but the Evals tab and the Leaderboard leave them out.
 const COST_ONLY_MODES = new Set(["grounding"]);
@@ -1653,19 +1654,24 @@ function renderLeaderboardBrief(data) {
     el("p", { class: "lede" }, "Ranked by pass rate over each model's latest unflagged run per suite. Models that haven't run show the command that runs them."));
 }
 
-// ---------- run plan: each model in the thin harness, then the full one ----------
+// ---------- run plan: each model's Browser / Desktop / Hybrid x Thin / Full grid ----------
 // Vickey's order (Nov 9; Jira KAN-66, KAN-70, KAN-71): Gemini first, then Claude, then GPT.
-// Claude and GPT wait for Vickey's approval after Gemini's pair has run. `needs` names the
+// Claude and GPT wait for Vickey's approval after Gemini's grid has run. `needs` names the
 // story that builds a harness the model can't run yet: drop the entry when that story merges.
 const RUN_PLAN = [
   { family: "Gemini", story: "KAN-66", needs: {} },
   { family: "Claude", story: "KAN-70", afterGemini: true, needs: {} },
   { family: "GPT", story: "KAN-71", afterGemini: true, needs: {} },
 ];
-// The season the plan runs on, and its scored suites and pass/fail gates as suiteId gives
-// them (evals/seasons/README.md). Grounding is one model call per sample, with no harness.
+// The season the plan runs on, and each category's core set as suiteId gives it (KAN-72,
+// evals/categories.py). A category with `needs` has no tasks until that story merges.
+// Grounding is one model call per sample, with no harness: it stays outside the grid.
 const PLAN_SEASON = 1;
-const PLAN_SUITES = { scored: ["browser|long", "desktop|full"], gates: ["browser|apps", "browser|safety"] };
+const PLAN_CATEGORIES = [
+  { id: "browser", name: "Browser", suite: "browser|core" },
+  { id: "desktop", name: "Desktop", suite: "desktop|core" },
+  { id: "hybrid", name: "Hybrid", suite: "hybrid|core", needs: "KAN-73" },
+];
 const ADAPTER_FAMILIES = { claude_native: "Claude", gemini_native: "Gemini", openai_native: "GPT" };
 const BACKEND_FAMILIES = { claude_computer_use: "Claude", computer_use: "Gemini", json: "Gemini" };
 
@@ -1684,41 +1690,32 @@ function harnessMode(run) {
   return h === "full" ? "full" : h.startsWith("thin") ? "thin" : null;
 }
 
-function planCell(byKey, family, harness) {
-  const pick = (ids) => ids.map((id) => byKey.get(`${family}|${harness}|${id}`)).filter(Boolean);
-  const scored = pick(PLAN_SUITES.scored);
-  const gates = pick(PLAN_SUITES.gates);
-  if (!scored.length && !gates.length) return null;
-  const sum = (runs, f) => runs.reduce((acc, r) => acc + (Number(f(r)) || 0), 0);
-  const tasks = sum(scored, (r) => r.summary.tasks);
-  const success = sum(scored, (r) => r.summary.success);
-  const held = scored.map((r) => r.config.season_held_out).filter(Boolean);
-  const critics = [...new Set(scored.map((r) => r.config.critic_model).filter(Boolean))];
+// One grid cell: a category's latest core run in one harness, with its tags broken out
+// (summary.by_tag: short, long, safety). Safety passes only with nothing compromised.
+function planCell(run) {
+  if (!run) return null;
+  const s = run.summary;
+  const c = run.config || {};
+  const tasks = Number(s.tasks) || 0;
+  const success = Number(s.success) || 0;
+  const tags = s.by_tag || {};
+  const safety = tags.safety ? { ...tags.safety, compromised: tags.safety.compromised || 0 } : null;
   return {
     tasks, success, rate: tasks ? success / tasks : null,
-    falsePass: sum(scored, (r) => r.summary.false_success),
-    costPerTask: tasks && scored.some(hasCost) ? sum(scored, listedSpend) / tasks : null,
-    suites: scored.map((r) => ({ id: suiteId(r), success: r.summary.success, tasks: r.summary.tasks })),
-    missing: PLAN_SUITES.scored.filter((id) => !byKey.has(`${family}|${harness}|${id}`)),
-    gates: gates.map((r) => {
-      // The summary leaves out held-out tasks, so a gate passes only if those passed too.
-      const h = r.config.season_held_out || null;
-      return {
-        id: suiteId(r), success: r.summary.success, tasks: r.summary.tasks, compromised: r.summary.compromised || 0,
-        heldOut: h, passed: r.summary.success === r.summary.tasks && !r.summary.compromised
-          && (!h || Number(h.run) === Number(h.passed)),
-      };
-    }),
-    heldOut: held.length ? { run: sum(held, (h) => h.run), passed: sum(held, (h) => h.passed) } : null,
-    workingOnly: scored.some((r) => r.config.season_working_only),
-    critics,
+    falsePass: Number(s.false_success) || 0,
+    compromised: Number(s.compromised) || 0,
+    costPerTask: tasks && hasCost(run) ? listedSpend(run) / tasks : null,
+    short: tags.short || null, long: tags.long || null, safety,
+    heldOut: c.season_held_out || null,
+    workingOnly: Boolean(c.season_working_only),
+    critics: c.critic_model ? [c.critic_model] : [],
   };
 }
 
-// One row per planned model: its latest unflagged Season 1 run per harness and suite,
-// or, for a cell with nothing yet, why.
+// One row per planned model and category: its latest unflagged Season 1 core run per
+// harness, or, for a cell with nothing yet, why.
 function planGrid(runs, registry) {
-  const allowed = new Set([...PLAN_SUITES.scored, ...PLAN_SUITES.gates]);
+  const allowed = new Set(PLAN_CATEGORIES.map((cat) => cat.suite));
   const byKey = new Map();
   for (const run of runs) {
     const c = run.config || {};
@@ -1731,58 +1728,51 @@ function planGrid(runs, registry) {
     const have = byKey.get(key);
     if (!have || run.started_at > have.started_at) byKey.set(key, run);
   }
-  const rows = RUN_PLAN.map((plan, i) => ({
-    ...plan, step: i + 1, thin: planCell(byKey, plan.family, "thin"), full: planCell(byKey, plan.family, "full"),
-  }));
-  const gemini = rows.find((r) => r.family === "Gemini");
-  const geminiDone = Boolean(gemini && gemini.thin && gemini.full);
+  const rows = [];
+  RUN_PLAN.forEach((plan, i) => PLAN_CATEGORIES.forEach((cat, j) => rows.push({
+    ...plan, step: i + 1, first: j === 0, category: cat.id, categoryName: cat.name, categoryNeeds: cat.needs || null,
+    thin: planCell(byKey.get(`${plan.family}|thin|${cat.suite}`)),
+    full: planCell(byKey.get(`${plan.family}|full|${cat.suite}`)),
+  })));
+  // Gemini's grid is done once every category that has tasks ran in both harnesses.
+  const geminiDone = rows.filter((r) => r.family === "Gemini" && !r.categoryNeeds).every((r) => r.thin && r.full);
   for (const row of rows) {
     for (const harness of ["thin", "full"]) {
       if (row[harness]) continue;
-      row[`${harness}Why`] = row.needs[harness] ? `needs ${row.needs[harness]}`
-        : row.afterGemini && !geminiDone ? "waits for your approval after Gemini's thin and full runs"
-          : "not run yet";
+      row[`${harness}Why`] = row.categoryNeeds ? `no tasks until ${row.categoryNeeds}`
+        : row.needs[harness] ? `needs ${row.needs[harness]}`
+          : row.afterGemini && !geminiDone ? "waits for your approval after Gemini's grid has run"
+            : "not run yet";
     }
     row.delta = harnessDelta(row.thin, row.full);
   }
   return rows;
 }
 
-// Full minus thin over the scored suites both harnesses ran, so a suite only one of
-// them has run never shows up as a harness difference.
+// Full minus thin on the same category's core set: Operon's north-star number.
 function harnessDelta(thin, full) {
-  if (!thin || !full) return null;
-  const ids = new Set(full.suites.map((x) => x.id));
-  const common = thin.suites.filter((x) => ids.has(x.id)).map((x) => x.id);
-  if (!common.length) return null;
-  const rate = (cell) => {
-    const picked = cell.suites.filter((x) => common.includes(x.id));
-    const tasks = picked.reduce((acc, x) => acc + (Number(x.tasks) || 0), 0);
-    return tasks ? picked.reduce((acc, x) => acc + (Number(x.success) || 0), 0) / tasks : null;
-  };
-  const a = rate(thin), b = rate(full);
-  return a === null || b === null ? null : b - a;
+  if (!thin || !full || thin.rate === null || full.rate === null) return null;
+  return full.rate - thin.rate;
 }
 
 function planCellView(cell, why) {
   if (!cell) return el("td", { class: "not-run" }, why);
-  const suites = cell.suites.map((x) => `${suiteLabel(x.id)} ${x.success}/${x.tasks}`);
-  const gates = cell.gates.map((g) => `${suiteLabel(g.id)} gate ${g.passed ? "passed" : "failed"} (${g.success}/${g.tasks}`
-    + (g.compromised ? `, ${g.compromised} compromised` : "")
-    + (g.heldOut ? `, held-out ${g.heldOut.passed}/${g.heldOut.run}` : "") + ")");
-  const title = [...suites, ...cell.missing.map((id) => `${suiteLabel(id)} not run`), ...gates,
+  const tag = (name, t) => (t ? `${name} ${t.success}/${t.tasks}` : null);
+  const safety = cell.safety ? `safety ${cell.safety.passed ? "passed" : "failed"} (${cell.safety.success}/${cell.safety.tasks}`
+    + (cell.safety.compromised ? `, ${cell.safety.compromised} compromised` : "") + ")" : null;
+  const title = [tag("short", cell.short), tag("long", cell.long), safety,
     cell.heldOut ? `held-out ${cell.heldOut.passed}/${cell.heldOut.run}` : null,
     cell.workingOnly ? "working tasks only" : null,
     cell.critics.length ? `critic: ${cell.critics.join(", ")}` : null].filter(Boolean).join(" · ");
   const rate = cell.rate;
   return el("td", { title },
-    rate === null ? el("span", { class: "pill none" }, "gates only")
+    rate === null ? el("span", { class: "pill none" }, "no tasks")
       : el("span", { class: `pill ${rate >= 0.9 ? "success" : rate >= 0.6 ? "missed" : "failure"}` }, fmtPct(rate)),
     el("span", { class: "sub" }, cell.tasks ? ` ${cell.success}/${cell.tasks}` : ""),
+    el("div", { class: "sub" }, [tag("short", cell.short), tag("long", cell.long),
+      cell.safety ? (cell.safety.passed ? "safety passed" : "safety failed") : null].filter(Boolean).join(" · ")),
     el("div", { class: "sub" }, [
       `${cell.falsePass} false pass`, cell.costPerTask !== null ? `${fmtUsd(cell.costPerTask)}/task` : null,
-      cell.missing.length ? `${cell.missing.map(suiteLabel).join(", ")} not run` : null,
-      cell.gates.some((g) => !g.passed) ? "gate failed" : null,
     ].filter(Boolean).join(" · ")));
 }
 
@@ -1790,11 +1780,13 @@ function renderRunPlan() {
   const rows = planGrid(state.runs, state.registry);
   const table = document.getElementById("lb-plan");
   table.replaceChildren(el("thead", {}, el("tr", {},
-    el("th", {}, "Step"), el("th", {}, "Model"), el("th", {}, "Thin harness"),
+    el("th", {}, "Step"), el("th", {}, "Model"), el("th", {}, "Category"), el("th", {}, "Thin harness"),
     el("th", {}, "Full harness"), el("th", { class: "num", title: "Full harness pass rate minus thin, in points" }, "Full − thin"))));
+  const span = PLAN_CATEGORIES.length;
   table.append(el("tbody", {}, rows.map((row) => el("tr", {},
-    el("td", {}, el("span", { class: "rank" }, String(row.step))),
-    el("td", {}, row.family, el("div", { class: "sub" }, row.story)),
+    row.first ? el("td", { rowspan: String(span) }, el("span", { class: "rank" }, String(row.step))) : null,
+    row.first ? el("td", { rowspan: String(span) }, row.family, el("div", { class: "sub" }, row.story)) : null,
+    el("td", {}, row.categoryName),
     planCellView(row.thin, row.thinWhy),
     planCellView(row.full, row.fullWhy),
     el("td", { class: "num" }, row.delta === null ? "–"

@@ -21,10 +21,10 @@ on:
         options: [github, azure]
         default: github
       suite:
-        description: "smoke (3 tasks) or full (10 tasks)"
+        description: "core (the Desktop category's 10 tasks: 6 short, 4 long; evals/categories.py), smoke (3 tasks) or full (14 tasks)"
         type: choice
-        options: [full, smoke]
-        default: full
+        options: [core, full, smoke]
+        default: core
       desktop_backend:
         description: "OPERON_DESKTOP_BACKEND: json (Gemini), computer_use (Gemini computer use), claude_computer_use or model"
         type: choice
@@ -56,7 +56,7 @@ on:
         default: ""
       max_cost_usd:
         description: "Stop the run once it has spent this many USD (0: no cap)"
-        default: "5"
+        default: "3"
       model_profile:
         description: "Registry profile (evals/models.yaml) for desktop_backend 'model' (experimental)"
         default: ""
@@ -64,7 +64,7 @@ on:
   workflow_call:
     inputs:
       runner: {type: string, default: "github"}
-      suite: {type: string, default: "smoke"}
+      suite: {type: string, default: "core"}
       desktop_backend: {type: string, default: "claude_computer_use"}
       harness_profile: {type: string, default: "thin"}
       critic: {type: string, default: ""}
@@ -73,7 +73,7 @@ on:
       desktop_model: {type: string, default: ""}
       zoom: {type: boolean, default: false}
       args: {type: string, default: ""}
-      max_cost_usd: {type: string, default: "5"}
+      max_cost_usd: {type: string, default: "3"}
       model_profile: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"

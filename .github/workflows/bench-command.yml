@@ -3,7 +3,7 @@ name: Bench command
 # Runs a live benchmark on a pull request's head when a repository owner, member
 # or collaborator comments on it:
 #
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [model=<profile>]
+#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>]
 #   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 #
 # model=<profile> runs a model registry profile (evals/models.yaml) through the
@@ -12,13 +12,19 @@ name: Bench command
 # acting model (OPERON_CRITIC=same) instead of Gemini. It also passes OPENAI_API_KEY, OPENWEIGHT_BASE_URL and
 # OPENWEIGHT_API_KEY. Experimental; every run still waits for someone to ask.
 #
-# Defaults: browser, thin harness, smoke suite, Opus 5.5. "all" runs the full
-# suite (44 browser tasks or 10 desktop tasks); "safety" runs the browser
+# The first word is the category (KAN-72): browser, desktop or hybrid, each run in
+# the thin or full harness, one cell of the 3 x 2 grid. Defaults: browser, thin
+# harness, the category's core set (evals/categories.py: about 10 state-graded tasks,
+# short, long and safety), Opus 5.5. hybrid has no tasks until KAN-73. "smoke" runs a
+# few quick tasks; "all" runs the full
+# suite (44 browser tasks or 14 desktop tasks); "safety" runs the browser
 # prompt-injection and overreach tasks; "apps" runs the browser tasks on the local
 # fake shop, mailbox, account and forms, graded from the apps' state; "hard" runs the
 # 20-task hard subset (evals/hard_tasks.py); "long" runs the 21 multi-app tasks
 # (LONG_TASKS in evals/app_tasks.py). x2/x3/x5 run every task that many
-# times to measure flakiness (the cost cap scales with it). "grounding" runs the
+# times to measure flakiness (the cost cap scales with it). season=<n> runs a frozen
+# season's tasks for that suite (--season; evals/seasons/), which is how a grid
+# run counts on the dashboard's Leaderboard tab: /bench browser thin gemini season=1. "grounding" runs the
 # ScreenSpot grounding eval instead (one model call per sample, no browser); zoom
 # lets Claude zoom into the screenshot (OPERON_CLAUDE_ZOOM). gemini picks Gemini
 # computer use (OPERON_*_BACKEND=computer_use) for the browser, desktop or grounding:
@@ -60,6 +66,7 @@ jobs:
       zoom: ${{ steps.args.outputs.zoom }}
       model_profile: ${{ steps.args.outputs.model_profile }}
       critic: ${{ steps.args.outputs.critic }}
+      extra: ${{ steps.args.outputs.extra }}
       sha: ${{ steps.pr.outputs.sha }}
     steps:
       - id: args
@@ -67,13 +74,14 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           set -f  # no glob expansion of the comment's words
-          target=browser profile= suite=smoke model=claude-opus-5-5 check_model= runner=github repeat=1 backend=claude_computer_use zoom=false model_profile= critic=
+          target=browser profile= suite=core model=claude-opus-5-5 check_model= runner=github repeat=1 backend=claude_computer_use zoom=false model_profile= critic= season=
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
               /bench) ;;
-              browser|desktop|grounding) target=$word ;;
+              browser|desktop|hybrid|grounding) target=$word ;;
               thin|full) profile=$word ;;
+              core) suite=core ;;
               smoke) suite=smoke ;;
               all) suite=full ;;
               safety) suite=safety ;;
@@ -90,15 +98,23 @@ jobs:
               check-haiku) check_model=claude-haiku-5-5 ;;
               same-critic) critic=same ;;
               azure) runner=azure ;;
+              season=*)
+                season=${word#season=}
+                if ! printf '%s' "$season" | grep -Eq '^[1-9][0-9]{0,2}$'; then
+                  echo "::error::season= needs a season number such as 1."; exit 1
+                fi ;;
               model=*)
                 model_profile=${word#model=}
                 # Profile names are registry keys; nothing else reaches the shell or a path.
                 if ! printf '%s' "$model_profile" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,63}$'; then
                   echo "::error::model= needs a registry profile name such as qwen3-vl-32b."; exit 1
                 fi ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [model=<profile>], or /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>], or /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]"; exit 1 ;;
             esac
           done
+          if [ "$target" = hybrid ]; then
+            echo "::error::The Hybrid category has no tasks yet (KAN-73). Use /bench browser or /bench desktop."; exit 1
+          fi
           if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && [ "$target" = desktop ]; then
             echo "::error::The $suite suite is browser only."; exit 1
           fi
@@ -110,6 +126,12 @@ jobs:
           if [ "$backend" = computer_use ] && [ -n "$check_model" ]; then
             echo "::error::check-sonnet/check-haiku pick Claude's completion check; a Gemini run has none."; exit 1
           fi
+          if [ -n "$season" ] && [ "$target" = grounding ]; then
+            echo "::error::season= is for /bench browser and /bench desktop."; exit 1
+          fi
+          extra=
+          [ "$repeat" != 1 ] && extra="--repeat $repeat"
+          [ -n "$season" ] && extra="${extra:+$extra }--season $season"
           if [ "$critic" = same ] && [ "$target" = grounding ]; then
             echo "::error::same-critic picks the full harness's step critic; /bench grounding has none."; exit 1
           fi
@@ -127,12 +149,12 @@ jobs:
             profile=${explicit_profile:-thin} backend=model
             [ "$target" = grounding ] && model=$model_profile
           fi
-          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend zoom=$zoom model_profile=$model_profile critic=$critic"
+          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend zoom=$zoom model_profile=$model_profile critic=$critic extra=$extra"
           {
             echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
             echo "model=$model"; echo "check_model=$check_model"; echo "runner=$runner"
             echo "repeat=$repeat"; echo "backend=$backend"; echo "zoom=$zoom"
-            echo "model_profile=$model_profile"; echo "critic=$critic"
+            echo "model_profile=$model_profile"; echo "critic=$critic"; echo "extra=$extra"
           } >> "$GITHUB_OUTPUT"
 
       - id: pr
@@ -167,7 +189,7 @@ jobs:
       harness_profile: ${{ needs.parse.outputs.profile }}
       critic: ${{ needs.parse.outputs.critic }}
       suite: ${{ needs.parse.outputs.suite }}
-      args: ${{ needs.parse.outputs.repeat != '1' && format('--repeat {0}', needs.parse.outputs.repeat) || '' }}
+      args: ${{ needs.parse.outputs.extra }}
       ref: ${{ needs.parse.outputs.sha }}
     # Named, not inherited: the benchmarked branch never sees the dashboard,
     # Blob, Slack or Azure secrets.
@@ -197,7 +219,7 @@ jobs:
       critic: ${{ needs.parse.outputs.critic }}
       suite: ${{ needs.parse.outputs.suite }}
       zoom: ${{ needs.parse.outputs.zoom == 'true' }}
-      args: ${{ needs.parse.outputs.repeat != '1' && format('--repeat {0}', needs.parse.outputs.repeat) || '' }}
+      args: ${{ needs.parse.outputs.extra }}
       ref: ${{ needs.parse.outputs.sha }}
     # AZURE_CREDENTIALS is used only by the VM start and stop jobs, which run this
     # repository's default-branch workflow code, never the benchmarked branch.

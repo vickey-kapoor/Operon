@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.policy import PolicyService
 from operon.agent.policy.rules import (
     _ANCHOR_DISTANCE_THRESHOLD,
@@ -103,6 +104,11 @@ class PolicyCoordinator(PolicyService):
         self._delegate_decision: PolicyDecision | None = None
         decision = await self._choose_action(state, perception)
         own = self._delegate_decision
+        if own is not None and own.action.action_type is ActionType.WAIT_FOR_USER and decision is not own:
+            # The model asked for a human (e.g. a provider safety check): no rule or
+            # guard may run something else in its place, or the pause is skipped.
+            logger.info("Keeping the model's request for a human over %s.", _describe(decision))
+            decision = own
         same_stop = own is not None and own.action.action_type is ActionType.STOP \
             and decision.action.action_type is ActionType.STOP
         if decision is not own and not same_stop:
@@ -112,6 +118,10 @@ class PolicyCoordinator(PolicyService):
         return decision
 
     async def _ask_delegate(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
+        if getattr(self, "_delegate_decision", None) is not None:
+            # Asked again in the same step (a guard rejected the last proposal): that
+            # proposal never ran, so the model must not hear it reported as done.
+            self.note_rejected(state.run_id, "Operon's harness rejected it and asked you again")
         decision = await self.delegate.choose_action(state, perception)
         self._delegate_decision = decision
         return decision
@@ -267,6 +277,10 @@ class PolicyCoordinator(PolicyService):
             return rule_stop
 
         if llm_decision.action.action_type is ActionType.STOP:
+            if (llm_decision.rationale or "").startswith(GAVE_UP_PREFIX):
+                # The model gave up: keep its failure rather than confirming the rule's success.
+                logger.warning("Rule success stop answered by a model that gave up; keeping the give-up.")
+                return llm_decision
             logger.info(
                 "Success confirmed by LLM policy (page_hint=%r).",
                 perception.page_hint.value,

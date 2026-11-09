@@ -233,3 +233,16 @@ async def test_an_action_the_full_harness_replaced_is_reported_as_not_run(frame)
     # The next turn's own action ran: it is reported as usual.
     await _step(backend, frame, state((ActionType.WAIT, True), (ActionType.CLICK, True)), "s3")
     assert "Not executed" not in str(client.requests[2]["messages"][-2])
+
+
+async def test_a_proposal_the_full_harness_rejected_is_reported_as_not_run(frame) -> None:
+    client = ScriptedChat([
+        chat_reply(tool_calls=[tool_call("click", "c1", x=1, y=1)]),
+        chat_reply(tool_calls=[tool_call("click", "c2", x=1, y=1)]),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.note_rejected("run-1", "Operon's harness rejected it and asked you again")
+    await _step(backend, frame, state(), "s1b")  # asked again in the same step: nothing ran
+    tool_message = client.requests[1]["messages"][4]
+    assert tool_message["content"].startswith("Not executed: Operon's harness rejected it and asked you again")

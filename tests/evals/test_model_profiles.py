@@ -195,3 +195,21 @@ def test_a_registry_model_can_run_full_and_the_report_names_its_critic(monkeypat
     assert live_bench.critic_label(profile) == "gemini:gemini-3.5-flash"
     monkeypatch.setenv("OPERON_CRITIC", "same")
     assert live_bench.critic_label(profile) == "same:gpt-6.1-sol"
+
+
+def test_a_same_critic_report_names_the_model_the_server_defaults_to(monkeypatch, tmp_path) -> None:
+    # With ANTHROPIC_API_KEY and no backend set, the server runs Claude: the critic is
+    # Claude, even when OPERON_BROWSER_MODEL names a Gemini model.
+    monkeypatch.chdir(tmp_path)  # no .env
+    for name in ("OPERON_BROWSER_BACKEND", "OPERON_BROWSER_CLAUDE_MODEL", "OPERON_DESKTOP_BACKEND", "OPERON_DESKTOP_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake")
+    monkeypatch.setenv("OPERON_BROWSER_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
+    monkeypatch.setenv("OPERON_CRITIC", "same")
+    assert live_bench.critic_label(None) == "same:claude-opus-5-5"
+    monkeypatch.setenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-sonnet-5-5")
+    assert live_bench.critic_label(None) == "same:claude-sonnet-5-5"
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    assert live_bench.critic_label(None) == "same:gemini-3.5-flash"
+    assert live_bench.critic_label(None, "desktop") == "same:gemini-2.5-flash"  # json backend default

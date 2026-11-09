@@ -294,13 +294,28 @@ def critic_label(profile, mode: str = "browser") -> str | None:
     if (env.get("OPERON_CRITIC") or "").strip().lower() == "same":
         if profile is not None:
             return f"same:{profile.model}"
-        backend = (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower()
-        key = "CLAUDE_MODEL" if backend == "claude_computer_use" else "MODEL"
-        return "same:" + (env.get(f"OPERON_{mode.upper()}_{key}") or "server default")
+        # The acting model, with the server's defaults (operon.api.runtime_config).
+        backend, prefix = _server_backend(env, mode), f"OPERON_{mode.upper()}_"
+        if backend == "claude_computer_use":
+            return "same:" + ((env.get(prefix + "CLAUDE_MODEL") or "").strip() or "claude-opus-5-5")
+        default = "gemini-3.5-flash" if mode == "browser" or backend == "computer_use" else "gemini-2.5-flash"
+        return "same:" + ((env.get(prefix + "MODEL") or "").strip() or default)
     defaults = {"browser": "gemini-3.5-flash", "desktop": "gemini-2.5-flash"}
     provider = (env.get(f"OPERON_{mode.upper()}_VERIFIER_PROVIDER") or "gemini").strip().lower()
     model = (env.get(f"OPERON_{mode.upper()}_VERIFIER_MODEL") or "").strip() or defaults.get(mode, "server default")
     return f"{provider}:{model}"
+
+
+def _server_backend(env: dict[str, str], mode: str) -> str:
+    """The backend the server runs (operon.api.runtime_config): OPERON_<MODE>_BACKEND,
+    else Claude in the browser with ANTHROPIC_API_KEY, Gemini computer use without it,
+    and json on the desktop."""
+    backend = (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower()
+    if backend:
+        return backend
+    if mode == "browser":
+        return "claude_computer_use" if env.get("ANTHROPIC_API_KEY") else "computer_use"
+    return "json"
 
 
 def harness_label(profile, mode: str = "browser") -> str:
@@ -318,12 +333,7 @@ def harness_label(profile, mode: str = "browser") -> str:
     if profile is not None:
         return "full" if get("OPERON_HARNESS_PROFILE") == "full" else "thin"
 
-    backend = get(f"OPERON_{mode.upper()}_BACKEND")
-    if not backend:
-        # The server's default (operon.api.runtime_config): Claude in the browser with
-        # ANTHROPIC_API_KEY, Gemini computer use without it; json on the desktop.
-        backend = ("claude_computer_use" if env.get("ANTHROPIC_API_KEY") else "computer_use") \
-            if mode == "browser" else "json"
+    backend = _server_backend(env, mode)
     requested = get("OPERON_HARNESS_PROFILE")
     if backend == "computer_use":
         # Gemini computer use runs full unless thin is asked for (operon.agent.policy.thin).

@@ -110,6 +110,9 @@ jobs:
           if [ "$backend" = computer_use ] && [ -n "$check_model" ]; then
             echo "::error::check-sonnet/check-haiku pick Claude's completion check; a Gemini run has none."; exit 1
           fi
+          if [ "$critic" = same ] && [ "$target" = grounding ]; then
+            echo "::error::same-critic picks the full harness's step critic; /bench grounding has none."; exit 1
+          fi
           if [ "$critic" = same ] && [ "$profile" != full ]; then
             echo "::error::same-critic picks the full harness's step critic; add full."; exit 1
           fi

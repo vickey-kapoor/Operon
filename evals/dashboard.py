@@ -224,6 +224,9 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
         model = report.get(f"{report['mode']}_model")
     if model and model != "server default":
         config.setdefault("model", model)
+    if report.get("critic"):
+        # A full run's step critic (live_bench critic_label): "same:<model>" or "<provider>:<model>".
+        config.setdefault("critic_model", report["critic"])
     for field, value in overrides.items():
         if value is not None:
             config[field] = value

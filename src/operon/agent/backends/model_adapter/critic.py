@@ -8,11 +8,10 @@ so "GPT full" is judged by GPT rather than by a Gemini critic.
 
 from __future__ import annotations
 
-import base64
-import mimetypes
 from pathlib import Path
 from typing import Any
 
+from operon.agent.backends.model_adapter.images import prepare_image
 from operon.agent.backends.model_adapter.registry import ModelProfile
 from operon.agent.backends.model_adapter.transports import (
     ModelTransportError,
@@ -20,12 +19,6 @@ from operon.agent.backends.model_adapter.transports import (
     OpenAIResponsesClient,
 )
 from operon.models.usage import ModelUsage
-
-
-def _data_url(screenshot_path: str) -> str:
-    path = Path(screenshot_path)
-    mime_type = mimetypes.guess_type(str(path))[0] or "image/png"
-    return f"data:{mime_type};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
 
 
 class ProfileCriticClient:
@@ -43,7 +36,8 @@ class ProfileCriticClient:
         return self.client.latest_usage()
 
     async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
-        image = _data_url(screenshot_path)
+        # The profile's own size and format caps, as the acting backend sends them.
+        image = prepare_image(Path(screenshot_path), self.profile.image).data_url
         if self.profile.adapter == "openai_native":
             body = await self.client.create(
                 input_items=[{"role": "user", "content": [

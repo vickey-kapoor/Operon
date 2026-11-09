@@ -98,7 +98,7 @@ instead, in the full harness unless `thin` is given; a thin Gemini run ends on G
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
 | `/bench sonnet check-haiku` | Sonnet acting, Haiku for the completion check |
 | `/bench apps model=qwen3-vl-32b` | Apps suite on a model registry profile (see below) |
-| `/bench long full model=openai-computer-use` | Long suite on GPT in the full harness, with GPT as its own step critic |
+| `/bench long full same-critic model=openai-computer-use` | Long suite on GPT in the full harness, with GPT as its own step critic |
 
 The **Live benchmark**, **Live desktop benchmark** and **Grounding eval** workflows can also be started by hand,
 with inputs for backends, models, harness profile, suite and cost cap (`max_cost_usd`).

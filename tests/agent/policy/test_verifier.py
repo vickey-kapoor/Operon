@@ -518,3 +518,26 @@ async def test_a_model_that_gave_up_is_never_done_even_if_the_critic_says_so(tmp
     assert result.status is VerificationStatus.FAILURE
     assert result.stop_condition_met is False
     assert "gave up" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_gave_up_is_not_done_even_when_the_screen_reads_as_success(tmp_path: Path) -> None:
+    # KAN-68: the give-up's own words ("the email was not sent") become the perception
+    # summary, so the terminal-state check must not get to call it a success first.
+    from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
+
+    perception = ScreenPerception(
+        summary="The email was not sent.",
+        page_hint="form_success",
+        capture_artifact_path=str(tmp_path / "before.png"),
+        visible_elements=[],
+    )
+    state = AgentState(run_id="run-s6", intent="Make sure the email is sent", status="running",
+                       action_history=[_typed_draft()], observation_history=[perception])
+    decision, executed = _stop(tmp_path)
+    decision = decision.model_copy(update={"rationale": GAVE_UP_PREFIX + "the email was not sent"})
+
+    result = await _critic(tmp_path, "success").verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.FAILURE and result.stop_condition_met is False
+    assert "gave up" in result.reason

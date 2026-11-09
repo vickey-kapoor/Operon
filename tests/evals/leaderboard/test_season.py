@@ -434,3 +434,15 @@ def test_a_path_is_hashed_the_same_on_every_checkout():
 
     assert s._plain(desktop_state.PROBE_SCRIPT) == "evals/desktop_probe.ps1"
     assert s._plain(PureWindowsPath(r"C:\elsewhere\evals\desktop_probe.ps1")) == "desktop_probe.ps1"
+
+
+def test_held_out_probe_settings_leave_working_desktop_tasks_alone(monkeypatch):
+    # A held-out task adds its own probe settings; a working task's fingerprint must not
+    # depend on whether the private file was loaded.
+    from evals import desktop_state
+
+    task = next(t for t in s.suite_tasks("desktop") if t.name == "notepad_save_file")
+    base = s.task_fingerprint(task)
+    for key in ("OUTPUTS", "INSPECT", "CLOSE_FIRST"):
+        monkeypatch.setattr(desktop_state, key, {**getattr(desktop_state, key), "ho_extra": ("x",)})
+    assert s.task_fingerprint(task) == base

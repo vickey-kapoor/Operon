@@ -132,7 +132,9 @@ def _function_source(fn: FunctionType) -> str:
 # Per-task registries: a grader that looks its check up by name (``desktop_state.grade``)
 # is hashed, but the registry itself is not followed, because each task hashes its own
 # entry as a root. Otherwise every desktop task would change when any one check did.
-_REGISTRIES = {("evals.desktop_state", "CHECKS")}
+# The probe's per-task settings are in each task's fingerprint (desktop_probe_settings),
+# and held-out tasks add entries to all four, so none of them is hashed whole.
+_REGISTRIES = {("evals.desktop_state", key) for key in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST")}
 
 
 def code_closure(roots: Iterable[Callable]) -> str:

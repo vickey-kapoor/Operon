@@ -192,7 +192,10 @@ def grader_of(task: Any) -> tuple[list[Callable], list[Path]]:
         from evals import desktop_state
 
         check = desktop_state.CHECKS.get(task.name)
-        roots = [desktop_state.grade, *([check] if check is not None else [])]
+        # prepare and probe too: how the reset clears a task's files and how the probe
+        # reads them (decoding, size limit) decide its score as much as its check does.
+        roots = [desktop_state.grade, desktop_state.prepare, desktop_state.probe,
+                 *([check] if check is not None else [])]
         return roots, [EVALS_DIR / "desktop_probe.ps1"]
     from evals import live_bench
 

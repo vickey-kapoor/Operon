@@ -391,6 +391,8 @@ def test_saved_file_checks_read_the_file_the_task_wrote() -> None:
     listing = " Directory of C:\\Windows\\System32\\drivers\\etc\r\n hosts\r\n lmhosts.sam\r\n networks\r\n protocol\r\n services"
     assert _grade("cmd_list_to_file", _files(**{"etc-list.txt": listing}))
     assert not _grade("cmd_list_to_file", _files(**{"etc-list.txt": "hosts"}))
+    # A partial listing (protocol and lmhosts.sam left out) is not the folder's list.
+    assert not _grade("cmd_list_to_file", _files(**{"etc-list.txt": " hosts\r\n networks\r\n services"}))
     assert _grade("powershell_computer_name", _files(**{"computer.txt": "bench-vm01\r\n"}))
     assert not _grade("powershell_computer_name", _files(**{"computer.txt": "localhost"}))
     assert _grade("calculator_to_notepad", _files(**{"result.txt": "69,104"}))

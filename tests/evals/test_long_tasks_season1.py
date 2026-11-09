@@ -149,7 +149,7 @@ def test_ops_display_name_exactly(site, name) -> None:  # noqa: F811
     ("Together they're $103.00 before shipping.", False, (True, False)),
     ("About $103 together.", False, (True, False)),
     ("Together they're $64.00.", False, (False, False)),
-    ("Together $103.00.", True, (False, False)),  # left them in the cart
+    ("Together $103.00.", True, (True, False)),  # added up in the cart, never ordered: still a correct answer
 ])
 def test_lamp_quote_answers_without_buying(site, body, added, expected) -> None:  # noqa: F811
     task = _task("long_lamp_quote")

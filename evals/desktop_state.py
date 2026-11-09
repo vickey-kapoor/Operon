@@ -559,9 +559,13 @@ def _number(value: str) -> Callable[[str, Snapshot], bool]:
     return lambda text, _: re.search(rf"(?<![\d.]){value}(?![\d]|[.]\d)", re.sub(r"(?<=\d)[,\s](?=\d{3})", "", text)) is not None
 
 
+# The files a stock Windows install has in C:\Windows\System32\drivers\etc.
+ETC_FILES = frozenset({"hosts", "lmhosts.sam", "networks", "protocol", "services"})
+
+
 def _lists_etc(text: str, _: Snapshot) -> bool:
     words = {w.casefold() for w in re.findall(r"[\w.-]+", text)}
-    return {"hosts", "services", "networks"} <= words
+    return ETC_FILES <= words
 
 
 def _computer_name(text: str, snapshot: Snapshot) -> bool:

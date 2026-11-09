@@ -389,6 +389,23 @@ def test_a_desktop_tasks_fingerprint_covers_the_files_it_is_graded_on(monkeypatc
     assert s.task_fingerprint(task) != base
 
 
+def test_a_desktop_tasks_fingerprint_covers_how_the_probe_reads_its_files(monkeypatch):
+    # The probe's decoding and size limit decide a file task's score as much as its check.
+    from evals import desktop_state
+
+    task = next(t for t in s.suite_tasks("desktop") if t.name == "notepad_save_file")
+    base = s.task_fingerprint(task)
+    monkeypatch.setattr(desktop_state, "OUTPUT_LIMIT", desktop_state.OUTPUT_LIMIT // 2)
+    assert s.task_fingerprint(task) != base
+    monkeypatch.undo()
+
+    def read_text(data: bytes) -> str:
+        return data.decode("ascii", "replace")
+
+    monkeypatch.setattr(desktop_state, "read_text", read_text)
+    assert s.task_fingerprint(task) != base
+
+
 def test_a_private_file_can_add_desktop_probe_settings(tmp_path, monkeypatch):
     from evals import desktop_state
 

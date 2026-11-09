@@ -237,6 +237,17 @@ jobs:
       - name: Install dependencies (exact versions from uv.lock)
         run: uv sync --locked --extra dev
 
+      - name: Load the held-out season tasks
+        # Only --season runs use them; the file never lands in the repo or the artifacts.
+        env:
+          SEASON_PRIVATE_PY: ${{ secrets.OPERON_SEASON_PRIVATE_PY }}
+        run: |
+          if ($env:SEASON_PRIVATE_PY) {
+            $path = Join-Path $env:RUNNER_TEMP "season-private.py"
+            [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:SEASON_PRIVATE_PY))
+            Add-Content -Path $env:GITHUB_ENV -Value "OPERON_SEASON_PRIVATE=$path"
+          }
+
       - name: Start the API and run the benchmark
         # One step on purpose: Windows runners kill a step's child processes when the
         # step ends, so an API started in an earlier step is gone before the benchmark runs.

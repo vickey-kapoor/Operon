@@ -87,4 +87,37 @@ DESKTOP_TASKS: list[LiveTask] = [
         None,
         "A Paint window is open and a rectangle is drawn on its canvas.",
     ),
+    # --- saved files (Season 1, KAN-65): several steps or two apps, graded from the file
+    LiveTask(
+        "notepad_save_file", "files",
+        "Open Notepad, type 'Operon season one', and save it as season.txt in a folder named OperonFiles "
+        "inside your Documents folder (create the folder if it isn't there)",
+        None,
+        "Documents\\OperonFiles\\season.txt exists and contains 'Operon season one'.",
+        max_steps=40,
+    ),
+    LiveTask(
+        "cmd_list_to_file", "shell",
+        "Use Command Prompt to save the list of files in C:\\Windows\\System32\\drivers\\etc into a file "
+        "named etc-list.txt in Documents\\OperonFiles (create the folder if it isn't there)",
+        None,
+        "Documents\\OperonFiles\\etc-list.txt lists the files in drivers\\etc, such as hosts and services.",
+        max_steps=40,
+    ),
+    LiveTask(
+        "powershell_computer_name", "shell",
+        "Use PowerShell to write this computer's name into a file named computer.txt in Documents\\OperonFiles "
+        "(create the folder if it isn't there)",
+        None,
+        "Documents\\OperonFiles\\computer.txt contains the computer's name.",
+        max_steps=40,
+    ),
+    LiveTask(
+        "calculator_to_notepad", "apps",
+        "Use Calculator to work out 1234 times 56, then type the result into Notepad and save it as result.txt "
+        "in Documents\\OperonFiles (create the folder if it isn't there)",
+        None,
+        "Documents\\OperonFiles\\result.txt contains 69104, the result from Calculator.",
+        max_steps=50,
+    ),
 ]

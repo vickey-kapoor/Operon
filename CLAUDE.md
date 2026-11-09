@@ -50,7 +50,7 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 
 # Live apps suite: 11 tasks on local fake shop, mail, account and forms, graded from their state (/state)
 .venv\Scripts\python -m evals.live_bench --suite apps
-# Long suite: 10 multi-app tasks from the /apps/ workspace page (email -> act -> reply), 20-50 steps each
+# Long suite: 21 multi-app tasks from the /apps/ workspace page (email -> act -> reply), 20-50 steps each
 .venv\Scripts\python -m evals.live_bench --suite long
 .venv\Scripts\python -m evals.local_apps   # serve the local site on :8765 to look at it
 
@@ -62,7 +62,7 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
 .venv\Scripts\python -m evals.judge_check run labels.jsonl [--repeat 3]
 
-# Live desktop benchmark: 10 tasks on stock Windows apps; drives the real mouse and keyboard
+# Live desktop benchmark: 14 tasks on stock Windows apps; drives the real mouse and keyboard
 # (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
 .venv\Scripts\python -m evals.live_desktop_bench [--suite smoke] [--keep-screens]
 

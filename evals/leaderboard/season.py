@@ -47,7 +47,7 @@ import textwrap
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import FunctionType, ModuleType
 from typing import Any
 
@@ -99,6 +99,14 @@ def _plain(value: Any, found: list[Callable] | None = None) -> Any:
         return [_plain(v, found) for v in value]
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
+    if isinstance(value, PurePath):
+        # A path the same on every checkout and OS: relative to the repo, else its name.
+        if isinstance(value, Path) and value.is_absolute():
+            try:
+                return value.resolve().relative_to(EVALS_DIR.parent).as_posix()
+            except (ValueError, OSError):
+                pass
+        return value.name
     return repr(value)
 
 
@@ -124,7 +132,9 @@ def _function_source(fn: FunctionType) -> str:
 # Per-task registries: a grader that looks its check up by name (``desktop_state.grade``)
 # is hashed, but the registry itself is not followed, because each task hashes its own
 # entry as a root. Otherwise every desktop task would change when any one check did.
-_REGISTRIES = {("evals.desktop_state", "CHECKS")}
+# The probe's per-task settings are in each task's fingerprint (desktop_probe_settings),
+# and held-out tasks add entries to all four, so none of them is hashed whole.
+_REGISTRIES = {("evals.desktop_state", key) for key in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST")}
 
 
 def code_closure(roots: Iterable[Callable]) -> str:
@@ -192,7 +202,10 @@ def grader_of(task: Any) -> tuple[list[Callable], list[Path]]:
         from evals import desktop_state
 
         check = desktop_state.CHECKS.get(task.name)
-        roots = [desktop_state.grade, *([check] if check is not None else [])]
+        # prepare and probe too: how the reset clears a task's files and how the probe
+        # reads them (decoding, size limit) decide its score as much as its check does.
+        roots = [desktop_state.grade, desktop_state.prepare, desktop_state.probe,
+                 *([check] if check is not None else [])]
         return roots, [EVALS_DIR / "desktop_probe.ps1"]
     from evals import live_bench
 
@@ -210,7 +223,17 @@ def task_fingerprint(task: Any) -> str:
         ("grader", code_closure(roots).encode()),
         ("fixtures", json.dumps(file_hashes(fixtures), sort_keys=True).encode()),
     ]
+    if getattr(task, "start_url", "") is None:
+        parts.append(("probe", json.dumps(desktop_probe_settings(task.name), sort_keys=True).encode()))
     return hash_bytes(parts)
+
+
+def desktop_probe_settings(name: str) -> dict:
+    """What the probe does for one desktop task: the files it reads (and the reset
+    removes), the windows it reads and the apps it stops first."""
+    from evals import desktop_state
+
+    return {key: list(getattr(desktop_state, key).get(name, ())) for key in ("OUTPUTS", "INSPECT", "CLOSE_FIRST")}
 
 
 def held_out_id(season: int, name: str) -> str:
@@ -259,7 +282,9 @@ def load_private(path: str | os.PathLike | None = None) -> dict[str, list[Any]]:
 
     The file is Python that defines ``HELD_OUT = {"long": [AppTask(...), ...], ...}``
     with the same task classes as the repo, and for held-out desktop tasks
-    ``CHECKS = {name: check}`` like ``desktop_state.CHECKS``. {} when no file is configured."""
+    ``CHECKS = {name: check}`` like ``desktop_state.CHECKS`` plus, where a task needs
+    them, ``OUTPUTS``, ``INSPECT`` and ``CLOSE_FIRST`` like the ones there (the files
+    it saves, the windows to read, the apps to stop first). {} when no file is configured."""
     path = path or os.getenv(PRIVATE_ENV, "").strip()
     if not path:
         return {}
@@ -276,11 +301,13 @@ def load_private(path: str | os.PathLike | None = None) -> dict[str, list[Any]]:
     held = getattr(module, "HELD_OUT", None)
     if not isinstance(held, dict):
         raise SeasonError(f"{file} must define HELD_OUT = {{suite: [task, ...]}}")
-    checks = getattr(module, "CHECKS", None)
-    if checks:  # held-out desktop tasks' state checks, by task name
-        from evals import desktop_state
+    from evals import desktop_state
 
-        desktop_state.CHECKS.update(checks)
+    # Held-out desktop tasks' state checks and probe settings, by task name.
+    for name in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST"):
+        extra = getattr(module, name, None)
+        if extra:
+            getattr(desktop_state, name).update(extra)
     return {suite: list(tasks) for suite, tasks in held.items()}
 
 

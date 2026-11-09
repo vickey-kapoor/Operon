@@ -29,10 +29,10 @@ Every live suite spends real model credits, so none of them run on pushes or mer
 | Browser benchmark | `python -m evals.live_bench [--suite smoke\|full] [--category forms] [--only NAME]` | 44 real web tasks (5 in smoke), graded from the final screen |
 | Safety suite | `python -m evals.live_bench --suite safety` | 9 prompt-injection and overreach tasks on a local fixture site, graded from the site's request log |
 | Local apps suite | `python -m evals.live_bench --suite apps` | 11 tasks on local fake shop, mail, account and form apps, graded from the apps' state |
-| Long multi-app suite | `python -m evals.live_bench --suite long` | 10 tasks that chain the local apps from a workspace page (an email asks for an order, a registration or a support request, then a reply with its number or total), 20 to 50 steps each, graded from state |
+| Long multi-app suite | `python -m evals.live_bench --suite long` | 21 tasks that chain the local apps from a workspace page (an email asks for an order, a registration or a support request, then a reply with its number or total), 20 to 50 steps each, graded from state |
 | Hard subset, repeated | `python -m evals.live_bench --suite hard --repeat 3` | 20 of the harder app, live and safety tasks, each run 3 times: pass@1 with a 95% CI, pass^3, flaky tasks |
 | Grounding | `python -m evals.grounding [--per-set 100] [--set v2-web] [--backend computer_use]` | 300 ScreenSpot-v2 and ScreenSpot-Pro samples (one screenshot and instruction each) through Operon's own backend; scores whether the first click lands in the target's box |
-| Desktop benchmark | `python -m evals.live_desktop_bench [--suite smoke\|full]` | 10 tasks on stock Windows apps (3 in smoke), graded from the machine's state (windows, their text, files; `evals/desktop_state.py`), not by a judge; **drives the real mouse and keyboard** |
+| Desktop benchmark | `python -m evals.live_desktop_bench [--suite smoke\|full]` | 14 tasks on stock Windows apps (3 in smoke), graded from the machine's state (windows, their text, files saved under `Documents\OperonFiles`; `evals/desktop_state.py`), not by a judge; **drives the real mouse and keyboard** |
 | Judge check | `python -m evals.judge_check template <report.json> > labels.jsonl`, then `judge_check run labels.jsonl [--repeat 3] [--save]` | Compares the benchmark judge with hand labels; `--save` records it for the dashboard (needs `DATABASE_URL`) |
 
 The browser benchmark grades each task with a Gemini judge that reads the final screenshot
@@ -175,8 +175,12 @@ the sampling seed and the scoring code.
 Each suite is split into **working** tasks, which are in the repo and whose failures get
 triaged and fixed, and **held-out** tasks (about 30%). Held-out tasks are kept out of the repo
 in a Python file whose path is `$OPERON_SEASON_PRIVATE`; it defines
-`HELD_OUT = {"long": [AppTask(...), ...]}`. The manifest records only an opaque id (`h-...`)
-and a hash for each, and reports give their results as counts only.
+`HELD_OUT = {"long": [AppTask(...), ...], "desktop": [LiveTask(...), ...]}`, and for held-out
+desktop tasks `CHECKS`, `OUTPUTS`, `INSPECT` and `CLOSE_FIRST` like the ones in
+`evals/desktop_state.py`. The manifest records only an opaque id (`h-...`)
+and a hash for each, and reports give their results as counts only. In CI the file comes from
+the `OPERON_SEASON_PRIVATE_PY` repo secret (the file, base64-encoded): the benchmark
+workflows write it to the runner's temp folder and set `$OPERON_SEASON_PRIVATE` to it.
 
 ```powershell
 .venv\Scripts\python -m evals.leaderboard.season freeze 1 --suite long --suite desktop --suite grounding --suite apps --suite safety

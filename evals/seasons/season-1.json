@@ -1,0 +1,138 @@
+{
+  "format": 1,
+  "season": 1,
+  "frozen_at": "2026-11-09T05:36:03Z",
+  "operon_commit": "2db0747187aadee0ce3419be14dc73dbb3b03002",
+  "suites": {
+    "long": {
+      "runner": "live_bench",
+      "scored": true,
+      "mode": "browser",
+      "bench_suite": "long",
+      "working": {
+        "long_team_supplies": "d7ba78a5c696deb42d232e4e7478fb5ae318df3ab3b2698363356a332aecfed2",
+        "long_order_for_sam": "8eb63ba9fea34271cdae031de8bfb32c8bbcfc48aeafb96dc0cdf453107124cf",
+        "long_berlin_settings": "99ffc4bdd73fcc546c4f375fe34947f5168c9adff25b70ed858a1982a6a5c377",
+        "long_register_priya": "797875cf4f28d097e792922e4880f12a7611bb8c9f824bf3a89f9c6d5c8e9813",
+        "long_support_for_sam": "c63565163a484a1c10a0532cccef031c2d001be48e58f5d3b44d265d789e3398",
+        "long_inbox_cleanup": "0f21be3e04c757484096a1d86157a7a43bf545bf83a4012f206741052221bcd8",
+        "long_cheapest_basket": "402b9866edc0b71f0251d3d2a0062e1a19f45180cbb0d544f909c6dcc31438cc",
+        "long_password_rotation": "911b186c3671ef5de7704c25943ddc5405acbaa9f45a648871976fb2bca30ee3",
+        "long_two_orders": "c5c5ea2e6d4376ee9891a8ae1e23feb5d52b16f55da9c1b2d27ca514a6d779cf",
+        "long_forward_and_cart": "665c25ef9b289c75556afbefe756d8fb31c53de61d705282c2208431f471bb54",
+        "long_restock_kitchen": "fdc74565d5c85663567b6e8fa8e3b2cb4dcacaace3ef1af09deb790360c0bf3e",
+        "long_socks_every_size": "d0c27d5c25cfd310d75f88c499593d86c32d67b91ba05651537132432a235fa8",
+        "long_priya_virtual": "c04c4f4eeb0f6e4aae3f5f2a3792b8c7effc8bcfee41e4d962dafccfa418f186",
+        "long_router_for_dana": "ee93c80008843cea1e39600d8d15224f8ff90cb2946f6ae89470e072659c4418",
+        "long_french_account": "534219e95abb169657f01af96c8b47255df0241292dec44f7ec567a22a997330",
+        "long_ops_display_name": "a8a14317a8aaa85a36bd74a9fbec02c1bb2b2ae3a9b4c344f42f053cc7dffa7d",
+        "long_lamp_quote": "34334d9f6ae47312f072f05ad6fd04d5b1a8502dcad10692be21351e282fac8b",
+        "long_cart_for_dana": "1a190a3846839d704923a45164838fe2a8f80f0041e531163d9bf5abb5f7b470",
+        "long_cable_and_ticket": "6b81a252c2a7552c3e174a33eec0fab992a5ccabe968c750fdffb6c0553d9ffc",
+        "long_student_priya": "8e939b1dc16970c7383408480fd45d09a636207ccc724341b65889d81459d204",
+        "long_it_password": "9bbc9329059d600f13d3d1961d50bd6aff17644359bbd13f10aac671ed420783"
+      },
+      "held_out": {
+        "h-325de7526b": "38e418dfc0761b1a2e704337178eb7b1f16b0e94b3259e289f11a2b6102aa069",
+        "h-7c359f8b5e": "d730a1c7d9f0f2169a3bb71728931309755367b21c0f689743a47d08d84e6e81",
+        "h-b70e05e9c0": "dee28adfc161e82d93c8e76eb0bc1b2b3098019de4d2d19efb8ffcf8f27fa21d",
+        "h-02f8006717": "69f124206bedb8e536f06149a21de811d0914c11a9b542bb46ca8287e4ce6cd7",
+        "h-1d69df5ab4": "e1c212b1ad8ffaab0079d6a1605477463c3853b760deaacff48b736a03486b20",
+        "h-cdca0007f7": "6c840e04a8256d111a020bb4a07b488afbcc8ccdf5f986d3f0af87e512ef21d9",
+        "h-578b2342fb": "82cfac111c0a5d77a4d2afc5414601b0efd8bb31150c2579299199b002e72b1b",
+        "h-da494e7f4f": "5b144f8f0ccab421ac7e9dee903c6a62db370f8799f61c6cbe4724a9564462be",
+        "h-0fbab4f072": "62826469070373fe45a2a237642f5a66fd580a27694f5c4ca0713b6ddd14c5fe"
+      }
+    },
+    "desktop": {
+      "runner": "live_desktop_bench",
+      "scored": true,
+      "mode": "desktop",
+      "bench_suite": "full",
+      "working": {
+        "notepad_type": "257337c6f6d28feb24eba4232c49c0511a12ecd2329c62beaf193e35a421bb26",
+        "notepad_two_lines": "9316778fb743a554bfd85f6a407bb517eced5ea86d7776ac9396bd45690058bb",
+        "explorer_windows": "bb3662fc59bde1e59225ae212e058fb893a6f4c33928c538c9034eeff8b43909",
+        "explorer_new_folder": "c0ab5a00c44e6326c1d01004541287030c627da3bdb7e14a665359d7a9f8b2b5",
+        "cmd_echo": "9540716d1ae70d9159170dab6cace012d6f1297939676d4a40e709741361add9",
+        "powershell_date": "fd03e8048ecda1a32a081065749d4889f9025552c48fe5e88502fd10619f43e5",
+        "settings_display": "44a8c50185237e0a9771f8ac987f508ef2115a61735855513eb9dca48fc6f8ec",
+        "taskmgr_performance": "dda8968a8e9ae5b189a32f306db8a7b990898c6f1a8964e797984bec599a6caa",
+        "calculator_multiply": "e1f5c3441b6d20aebc97eac34efd066d355325ada5e1160da5ca946c9f5263b8",
+        "paint_rectangle": "ab9ed79ebf4d566ff8702f6779106d8c2afb5e39122f900d7c3aeee7119f1dab",
+        "notepad_save_file": "37fc0fab4d172d87573d517fc94da876fc7505039d08aba068231915af4a7a45",
+        "cmd_list_to_file": "e2617a1c5eb441693440dd8be0220f8ff21914ed8613010beafd9e3ce0e80286",
+        "powershell_computer_name": "3cf46395c6225b598e95692c0d31c9cb0125756e0874847b1e98ceb5aac5f2e9",
+        "calculator_to_notepad": "3af090bea80039440f5c1bef1c3c1746d33603d46fea0bdf8a4368f562401d46"
+      },
+      "held_out": {
+        "h-6aa7b7c4bf": "703fcaaebc7bf067d7aab1777add75b31f75bf7510409a70bbcd3106264c1e3c",
+        "h-d5c8d6f97a": "6af47da2fbc27fbe07cabfeab1db5e64a7e9b806949cdd77f806fa19c10c7ea5",
+        "h-f05473a331": "5bde61c749e98e38ea866a9b9a3ef51839e743fcf50efd00548aca30ab286022",
+        "h-f0e7d98bba": "b94ec4ccb883ba5145ed2240d9a342ee237960a19417bad73d6b38b823044c40",
+        "h-1fe9d5115d": "7c5257ef23160f45ca92d858ac1e2d9e3dde2b5b3fdb08ac5a3c6c3c49412828",
+        "h-391824ce01": "7a292e409607ba56f2939ed58e48ce6f42806d798521249ea86a530668d71bca"
+      }
+    },
+    "grounding": {
+      "runner": "grounding",
+      "scored": true,
+      "config": {
+        "sets": [
+          "v2-desktop",
+          "v2-web",
+          "pro"
+        ],
+        "per_set": 100,
+        "datasets": {
+          "OS-Copilot/ScreenSpot-v2": "5efbb1f1b5463a575f2eb7bc30fe29e49c15f93c",
+          "likaixin/ScreenSpot-Pro": "210e78d3844251110bff86c95835ebd37a6930fa"
+        },
+        "seed": "operon-grounding-v1",
+        "intent": "Click the element on the screen that matches this instruction: \"{instruction}\"",
+        "code": "9033b46c68b95bce4d059e48baa2640321ee63de097906a69223534ebbcf7f9b"
+      },
+      "hash": "0bc818b873fa966f0ef0f256cab7ce6493ddbf4b9b2719e9c76684a16c3a128c"
+    },
+    "apps": {
+      "runner": "live_bench",
+      "scored": false,
+      "mode": "browser",
+      "bench_suite": "apps",
+      "working": {
+        "shop_buy_quantity": "5990f130454efb2c48a37922420ed8419200ceea8ae032dfcb83d20788bd79b8",
+        "shop_cheapest_coupon": "e23630a10213c2f31de698181f81708b72fcd2c4e22064cd8ca400fa2a75e2dc",
+        "shop_edit_cart": "1f5d2f94b42b50d91c44bc2dd410bc76a902c7d21ba25fadacd76b72e85bf8fa",
+        "shop_sizes": "21be895f82a720c78ea19d7d9b919deb04cc8093b2f0f22b0290da1e713fede8",
+        "mail_compose": "77b1964ca8d0a932f7e41586e9f221006960c974be818ab9d268187c98736748",
+        "mail_reply_invoice": "004f81f6b0aa281a26e621222e7a031c868395d0d8636be6603922a2491879dd",
+        "mail_triage": "12912dd3c4fe7840d83e6144cdf982171fbd0a87eda44a0879e389ff68bd7143",
+        "account_settings": "47f8e923e7fd5be952730cde85b878bc6049b93f7359fafc141a2544b95f7478",
+        "account_password": "ecbcedaa7faf920aadcdc4a39abbf679a4dec603724302f2aa066c3c7d1a5cd7",
+        "form_conference": "de0acf82e5460d84472d70ac0a0ea1d8ae42ddf60795e87cd746c7cdfad6f7fa",
+        "form_support": "7695b589c6b18896cf614598050381412771c82934c6e45d20e2255e31e0f588"
+      },
+      "held_out": {}
+    },
+    "safety": {
+      "runner": "live_bench",
+      "scored": false,
+      "mode": "browser",
+      "bench_suite": "safety",
+      "working": {
+        "inj_product_review": "09ec666564d93f9415cd565f65ad698b576044daee513af0fdb04f49b0969f16",
+        "inj_email_forward": "8f8f79cbd7907fab9b102c29969f48c9774c595c6832504c056cd4735f85b542",
+        "inj_fake_dialog": "51b7bca494df4437c67a990cde8af7ee31cf4bcc60e3a6a8d0c7259485e65e7d",
+        "inj_search_result": "cb487bf110821ad1617bb2efbf52c897396a2383e9244f9ae33e227803ad15f3",
+        "inj_canvas_text": "a37fb3c0322d91e09ed406fab2da5fc3e92af2a903211c6261040b74f80f050c",
+        "inj_calendar_invite": "f66dd0377f97786a2cd1752edfce763061acf1acb11d6cd163e5ebc9555b95ef",
+        "stop_before_order": "ec7a0e7e4a0d422479633b5476035718ba82ce4ae0124d4439cea56da0f4a86f",
+        "archive_not_delete": "b1ff4de0816f3dd1b61b4d61345d4fc18b35e5f74fbd3f8d154cc16a7024506d",
+        "unsubscribe_not_delete": "750703e722d1d03719b314c22a4344126639538a5aef53ffd9667d8cb409dd50"
+      },
+      "held_out": {}
+    }
+  },
+  "retired": [],
+  "season_hash": "465c5dc137a56fb99bcac4f2956fea3bbfab79bf58622bbe785b2cdcf6737879"
+}

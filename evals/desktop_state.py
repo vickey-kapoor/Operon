@@ -21,6 +21,7 @@ belongs to a long-lived host such as File Explorer or ApplicationFrameHost.)
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -30,6 +31,11 @@ from pathlib import Path
 
 PROBE_SCRIPT = Path(__file__).with_name("desktop_probe.ps1")
 BENCH_FOLDER = "OperonBench"
+# Where the file-producing tasks save (Documents\\OperonFiles). Kept apart from
+# BENCH_FOLDER, which explorer_new_folder needs empty.
+OUTPUT_FOLDER = "OperonFiles"
+# Longest file text a check reads.
+OUTPUT_LIMIT = 20_000
 # Processes that host windows for many apps and outlive any one task.
 LONG_LIVED_HOSTS = frozenset({"applicationframehost", "explorer", "windowsterminal"})
 # A process that started this long before the task is still counted (clock skew).
@@ -71,6 +77,21 @@ CLOSE_FIRST: dict[str, tuple[str, ...]] = {
     "paint_rectangle": ("mspaint",),
 }
 EXPLORER_TASKS = frozenset({"explorer_windows", "explorer_new_folder"})
+# Tasks graded from the files they save under Documents\\OperonFiles: the files each
+# one writes, relative to that folder. Only these are read by the probe and removed by
+# the reset, so nothing else a person keeps there is touched. (The season's held-out
+# tasks add theirs from the private file; evals/leaderboard/season.py.)
+OUTPUTS: dict[str, tuple[str, ...]] = {
+    "notepad_save_file": ("season.txt",),
+    "cmd_list_to_file": ("etc-list.txt",),
+    "powershell_computer_name": ("computer.txt",),
+    "calculator_to_notepad": ("result.txt",),
+}
+INSPECT.update({name: () for name in OUTPUTS})
+CLOSE_FIRST.update({
+    "notepad_save_file": ("notepad",),
+    "calculator_to_notepad": ("notepad", "calculatorapp", "calc", "win32calc"),
+})
 
 
 def _run_probe(*args: str, timeout: float = 120) -> Snapshot:
@@ -120,6 +141,8 @@ def prepare(task_name: str) -> list[int]:
         snapshot = _run_probe(*args, timeout=60)
     except ProbeError as exc:
         raise ProbeError(f"desktop reset failed: {exc}") from exc
+    if task_name in OUTPUTS:
+        _remove_outputs(snapshot.get("documents"), OUTPUTS[task_name])
     if task_name == "explorer_new_folder":
         documents = snapshot.get("documents")
         if not documents:
@@ -134,6 +157,50 @@ def prepare(task_name: str) -> list[int]:
                   | {int(e["hwnd"]) for e in snapshot["explorer"] if e.get("hwnd")})
 
 
+def _remove_outputs(documents: str | None, files: tuple[str, ...]) -> None:
+    """Delete the files a task writes, from an earlier attempt, and then their folders
+    while they are empty. Nothing else in the folder is touched."""
+    if not documents:
+        raise ProbeError("desktop reset failed: Windows gave no Documents folder")
+    root = Path(documents) / OUTPUT_FOLDER
+    for relative in files:
+        path = root / relative
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise ProbeError(f"could not remove {path} left by an earlier attempt: {exc}") from exc
+        for folder in [*path.parents][: len(Path(relative).parts)]:
+            try:
+                folder.rmdir()
+            except OSError:  # missing, or something else is still in it
+                break
+
+
+def read_text(data: bytes) -> str:
+    """A saved text file as text: Notepad writes UTF-8, cmd's redirection the console's
+    code page and Windows PowerShell's ``>`` UTF-16 with a byte order mark."""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
+
+
+def _outputs(documents: str, files: tuple[str, ...]) -> dict[str, str | None]:
+    found: dict[str, str | None] = {}
+    for relative in files:
+        path = Path(documents) / OUTPUT_FOLDER / relative
+        try:
+            with path.open("rb") as handle:
+                found[relative] = read_text(handle.read(4 * OUTPUT_LIMIT))[:OUTPUT_LIMIT]
+        except OSError:
+            found[relative] = None
+    return found
+
+
 def probe(since: datetime, task_name: str, baseline: list[int] | None = None) -> Snapshot:
     """Snapshot the desktop after a task. ``since`` is when it started (UTC) and
     ``baseline`` the windows open before it (from ``prepare``)."""
@@ -143,6 +210,8 @@ def probe(since: datetime, task_name: str, baseline: list[int] | None = None) ->
     if not snapshot.get("documents"):
         raise ProbeError("desktop probe failed: Windows gave no Documents folder")
     snapshot["bench_folder_exists"] = (Path(snapshot["documents"]) / BENCH_FOLDER).is_dir()
+    snapshot["files"] = _outputs(snapshot["documents"], OUTPUTS[task_name]) if task_name in OUTPUTS else {}
+    snapshot["computer_name"] = os.environ.get("COMPUTERNAME", "")
     snapshot["paint_canvas"] = (_paint_canvas(windows(snapshot, "mspaint"))
                                 if task_name == "paint_rectangle" else None)
     if "notepad" in INSPECT.get(task_name, ()):
@@ -470,6 +539,40 @@ def paint_rectangle(snapshot: Snapshot) -> tuple[bool, str]:
     return False, "Paint's canvas is blank (no shape at least 10x10 px)"
 
 
+def saved_file(name: str, want: Callable[[str, Snapshot], bool], what: str) -> Check:
+    """A check on a file the task saves under Documents\\OperonFiles."""
+    def check(snapshot: Snapshot) -> tuple[bool, str]:
+        text = (snapshot.get("files") or {}).get(name)
+        if text is None:
+            return False, f"no {name} in Documents\\{OUTPUT_FOLDER}"
+        if want(text, snapshot):
+            return True, f"{name} holds {what}"
+        return False, f"{name} was saved but doesn't hold {what} (it starts: {text.strip()[:80]!r})"
+    return check
+
+
+def _only(expected: str) -> Callable[[str, Snapshot], bool]:
+    return lambda text, _: " ".join(text.split()).casefold() == expected.casefold()
+
+
+def _number(value: str) -> Callable[[str, Snapshot], bool]:
+    return lambda text, _: re.search(rf"(?<![\d.]){value}(?![\d]|[.]\d)", re.sub(r"(?<=\d)[,\s](?=\d{3})", "", text)) is not None
+
+
+# The files a stock Windows install has in C:\Windows\System32\drivers\etc.
+ETC_FILES = frozenset({"hosts", "lmhosts.sam", "networks", "protocol", "services"})
+
+
+def _lists_etc(text: str, _: Snapshot) -> bool:
+    words = {w.casefold() for w in re.findall(r"[\w.-]+", text)}
+    return ETC_FILES <= words
+
+
+def _computer_name(text: str, snapshot: Snapshot) -> bool:
+    name = str(snapshot.get("computer_name") or "").strip()
+    return bool(name) and name.casefold() in text.casefold()
+
+
 CHECKS: dict[str, Check] = {
     "notepad_type": _notepad_text(lambda t: "hello from operon" in t.casefold(), "'Hello from Operon'"),
     "notepad_two_lines": _notepad_text(_two_lines, "'first line' then 'second line'"),
@@ -481,6 +584,10 @@ CHECKS: dict[str, Check] = {
     "taskmgr_performance": taskmgr_performance,
     "calculator_multiply": calculator_multiply,
     "paint_rectangle": paint_rectangle,
+    "notepad_save_file": saved_file("season.txt", _only("Operon season one"), "'Operon season one'"),
+    "cmd_list_to_file": saved_file("etc-list.txt", _lists_etc, "the listing of drivers\\etc (hosts, services, networks)"),
+    "powershell_computer_name": saved_file("computer.txt", _computer_name, "this computer's name"),
+    "calculator_to_notepad": saved_file("result.txt", _number("69104"), "69104 (1234 x 56)"),
 }
 
 

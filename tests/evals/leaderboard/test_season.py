@@ -378,3 +378,71 @@ def test_desktop_fingerprints_cover_the_shared_grade_but_not_other_tasks_checks(
     exec("def grade(task_name, snapshot):\n    ok, why = CHECKS[task_name](snapshot)\n    return ok, why.strip()\n", namespace)
     monkeypatch.setattr(desktop_state, "grade", namespace["grade"])
     assert s.task_fingerprint(first) != base
+
+
+def test_a_desktop_tasks_fingerprint_covers_the_files_it_is_graded_on(monkeypatch):
+    from evals import desktop_state
+
+    task = next(t for t in s.suite_tasks("desktop") if t.name == "notepad_save_file")
+    base = s.task_fingerprint(task)
+    monkeypatch.setattr(desktop_state, "OUTPUTS", {**desktop_state.OUTPUTS, task.name: ("other.txt",)})
+    assert s.task_fingerprint(task) != base
+
+
+def test_a_desktop_tasks_fingerprint_covers_how_the_probe_reads_its_files(monkeypatch):
+    # The probe's decoding and size limit decide a file task's score as much as its check.
+    from evals import desktop_state
+
+    task = next(t for t in s.suite_tasks("desktop") if t.name == "notepad_save_file")
+    base = s.task_fingerprint(task)
+    monkeypatch.setattr(desktop_state, "OUTPUT_LIMIT", desktop_state.OUTPUT_LIMIT // 2)
+    assert s.task_fingerprint(task) != base
+    monkeypatch.undo()
+
+    def read_text(data: bytes) -> str:
+        return data.decode("ascii", "replace")
+
+    monkeypatch.setattr(desktop_state, "read_text", read_text)
+    assert s.task_fingerprint(task) != base
+
+
+def test_a_private_file_can_add_desktop_probe_settings(tmp_path, monkeypatch):
+    from evals import desktop_state
+
+    for name in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST"):
+        monkeypatch.setattr(desktop_state, name, dict(getattr(desktop_state, name)))
+    path = tmp_path / "desk.py"
+    path.write_text(textwrap.dedent('''
+        from evals.desktop_state import saved_file
+        from evals.live_tasks import LiveTask
+
+        HELD_OUT = {"desktop": [LiveTask("secret_file", "files", "Save it", None, "Saved.")]}
+        CHECKS = {"secret_file": saved_file("x.txt", lambda text, _: "x" in text, "an x")}
+        OUTPUTS = {"secret_file": ("x.txt",)}
+        CLOSE_FIRST = {"secret_file": ("notepad",)}
+    '''), encoding="utf-8")
+    s.load_private(path)
+    assert desktop_state.OUTPUTS["secret_file"] == ("x.txt",) and desktop_state.CLOSE_FIRST["secret_file"] == ("notepad",)
+    assert desktop_state.grade("secret_file", {"files": {"x.txt": "x"}})[0]
+
+
+def test_a_path_is_hashed_the_same_on_every_checkout():
+    # A grader's path constant (the desktop probe script) must not carry the checkout's location.
+    from pathlib import PureWindowsPath
+
+    from evals import desktop_state
+
+    assert s._plain(desktop_state.PROBE_SCRIPT) == "evals/desktop_probe.ps1"
+    assert s._plain(PureWindowsPath(r"C:\elsewhere\evals\desktop_probe.ps1")) == "desktop_probe.ps1"
+
+
+def test_held_out_probe_settings_leave_working_desktop_tasks_alone(monkeypatch):
+    # A held-out task adds its own probe settings; a working task's fingerprint must not
+    # depend on whether the private file was loaded.
+    from evals import desktop_state
+
+    task = next(t for t in s.suite_tasks("desktop") if t.name == "notepad_save_file")
+    base = s.task_fingerprint(task)
+    for key in ("OUTPUTS", "INSPECT", "CLOSE_FIRST"):
+        monkeypatch.setattr(desktop_state, key, {**getattr(desktop_state, key), "ho_extra": ("x",)})
+    assert s.task_fingerprint(task) == base

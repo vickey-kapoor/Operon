@@ -54,6 +54,10 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.live_bench --suite long
 .venv\Scripts\python -m evals.local_apps   # serve the local site on :8765 to look at it
 
+# Seasons (frozen task sets for tracking Operon; evals/seasons/, KAN-58): freeze, check, retire; --season on the benches
+.venv\Scripts\python -m evals.leaderboard.season check 1
+.venv\Scripts\python -m evals.live_bench --suite long --season 1   # refuses if any task changed; held-out from $OPERON_SEASON_PRIVATE
+
 # Judge check: compare the benchmark judge with hand labels (judge calls only, no agent runs)
 .venv\Scripts\python -m evals.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
 .venv\Scripts\python -m evals.judge_check run labels.jsonl [--repeat 3]

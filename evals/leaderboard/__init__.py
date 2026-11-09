@@ -10,7 +10,10 @@ did not, because every score here comes from Operon itself driving a model.
   mismatch unless a change is allowed on purpose.
 - ``stats``: paired bootstrap 95% intervals over tasks, with Improved / Regressed /
   No clear change labels (Bonferroni-corrected), plus a drift check.
+- ``season``: frozen seasons (KAN-58): every task's definition hashed into
+  ``evals/seasons/season-<n>.json``, a working / held-out split with the held-out
+  tasks kept outside the repo, retiring broken tasks, and the ``--season`` check the
+  benchmarks run before they start.
 
-Nothing in Operon calls this yet: the frozen seasons (KAN-58) and the reports'
-confidence intervals (KAN-60) build on it.
+The reports' confidence intervals (KAN-60) build on ``stats``.
 """

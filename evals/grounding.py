@@ -563,12 +563,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", default=str(CACHE_DIR))
     parser.add_argument("--out-dir", default=str(BENCH_DIR))
     parser.add_argument("--keep", action="store_true", help="keep each sample's prompt and model reply under .var/grounding/")
+    parser.add_argument(
+        "--season", type=int, default=None,
+        help="use a frozen season's grounding sets and sample count (evals/seasons/season-<n>.json); refuses on a change",
+    )
     parser.add_argument("--list", action="store_true", help="list the selected samples and exit (no model calls)")
     parser.add_argument("--json", action="store_true")
     return parser
 
 
+def season_for(args: argparse.Namespace):
+    """The checked season run for ``--season``, or None; sets ``args.set`` and
+    ``args.per_set`` from the season. Exits on a mismatch."""
+    if getattr(args, "season", None) is None:
+        return None
+    from evals.leaderboard.season import SeasonError, check, load
+    from evals.leaderboard.suite import SuiteMismatchError
+
+    try:
+        manifest = load(args.season)
+        suite = next((name for name, e in manifest["suites"].items() if e["runner"] == "grounding"), None)
+        if suite is None:
+            sys.exit(f"season {args.season} has no grounding suite")
+        run = check(manifest, suite)
+    except (SeasonError, SuiteMismatchError) as exc:
+        sys.exit(str(exc))
+    config = manifest["suites"][suite]["config"]
+    if args.set and sorted(args.set) != sorted(config["sets"]) or args.per_set not in (DEFAULT_PER_SET, config["per_set"]):
+        sys.exit("--season fixes the sets and samples per set: drop --set / --per-set")
+    args.set, args.per_set = list(config["sets"]), config["per_set"]
+    return run
+
+
 async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | None = None) -> int:
+    season_run = season_for(args)
     dataset = dataset or Dataset(Path(args.cache_dir))
     sets = args.set or list(SETS)
     samples = select_samples(dataset, sets, args.per_set)
@@ -638,6 +666,10 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         "summary": summary,
         "samples": [asdict(r) for r in results],
     }
+    if season_run is not None:
+        from evals.leaderboard.season import report_block
+
+        report["season"] = report_block(season_run)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"grounding-{started_at}.json"
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")

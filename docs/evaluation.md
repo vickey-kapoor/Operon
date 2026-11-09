@@ -149,9 +149,51 @@ holds the generic pieces brought in from the former `model-release-benchmark` re
   Improved / Regressed / No clear change labels that need the Bonferroni-corrected interval to
   exclude zero, and `drift_check` for two runs of the same tasks with nothing in Operon changed.
 
-That repo's text tasks and direct model-API providers did not come over. Nothing calls this
-module yet; frozen seasons with a held-out split (KAN-58) and intervals in the reports
-(KAN-60) build on it.
+That repo's text tasks and direct model-API providers did not come over. Intervals in the
+reports (KAN-60) will build on `stats.py`.
+
+### Seasons
+
+A season is a frozen set of tasks the yardstick runs are scored on. Operon is tracked with
+one model held fixed (Gemini computer use for now), so a change in score comes from Operon,
+not from the model. `evals/leaderboard/season.py` (KAN-58) writes
+`evals/seasons/season-<n>.json` with a SHA-256 of every task's definition:
+
+- its data (intent, start page, check, step limit, seeded app state);
+- its grader: the source of the grading function (`goal`/`harm`, the desktop state check, or
+  the judge) and of every `evals` helper it calls. A helper edit changes only the hashes of the
+  tasks that use it, and moving code around in a file changes nothing;
+- the fixture files it runs on (the local apps site, the desktop probe script).
+
+Grounding is frozen as its configuration: sets, samples per set, the pinned dataset revisions,
+the sampling seed and the scoring code.
+
+Each suite is split into **working** tasks, which are in the repo and whose failures get
+triaged and fixed, and **held-out** tasks (about 30%). Held-out tasks are kept out of the repo
+in a Python file whose path is `$OPERON_SEASON_PRIVATE`; it defines
+`HELD_OUT = {"long": [AppTask(...), ...]}`. The manifest records only an opaque id (`h-...`)
+and a hash for each, and reports give their results as counts only.
+
+```powershell
+.venv\Scripts\python -m evals.leaderboard.season freeze 1 --suite long --suite desktop --suite grounding --suite apps --suite safety
+.venv\Scripts\python -m evals.leaderboard.season check 1 [--working-only]
+.venv\Scripts\python -m evals.leaderboard.season retire 1 long <task> "<reason>"
+.venv\Scripts\python -m evals.live_bench --suite long --season 1 [--working-only]
+.venv\Scripts\python -m evals.live_desktop_bench --season 1
+.venv\Scripts\python -m evals.grounding --season 1
+```
+
+`--season` refuses to start when any task changed, appeared or went missing. It runs the whole
+suite (no `--only`/`--category`) and adds a `season` block to the report: the season, its hash,
+the Operon commit, Operon's `OPERON_*` settings (secrets left out) and the held-out counts.
+Held-out results are left out of the report's `results` and summary, and `--keep-screens`
+skips their screenshots and run folders. Long, desktop and grounding are scored; apps and
+safety are pass/fail gates, since every model passes them. A broken task is never edited in place: `retire`
+logs it in the manifest with the date and reason, for every model, and later runs skip it.
+
+Season 1 gets frozen once its harder tasks exist (KAN-65). Running held-out tasks in CI is not
+wired up yet. Before it is, the benchmark workflows have to fetch the private file and stop
+uploading `uvicorn.log` and run folders, both of which name the tasks.
 
 ## Eval dashboard
 

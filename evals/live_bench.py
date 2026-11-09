@@ -758,10 +758,18 @@ def build_report(
     planned: int,
     stopped: dict | None,
     complete: bool,
+    season_run=None,
 ) -> dict:
     """The saved report. ``complete`` is False while the run is still going: a run that
     dies midway (a crash, a timeout, a cancelled workflow) leaves that version behind,
-    so the tasks it did run, and what they cost, still reach the dashboard."""
+    so the tasks it did run, and what they cost, still reach the dashboard.
+
+    A season run (``--season``) also records the season, its hash, the Operon commit and
+    settings, and gives its held-out tasks as counts only: they are left out of
+    ``results`` and the summary, so their names and transcripts never reach a report."""
+    held_names = {t.name for t in season_run.tasks() if season_run.is_held_out(t)} if season_run else set()
+    held = [r for r in results if r.task in held_names]
+    results = [r for r in results if r.task not in held_names]
     summary = summarize(results)
     if profile is not None:
         gpu = gpu_cost_usd(results, profile)
@@ -790,7 +798,38 @@ def build_report(
         "budget_stop": stopped,
         "summary": summary,
         "results": [asdict(r) for r in results],
-    }
+    } | ({"season": _season_block(season_run, held)} if season_run else {})
+
+
+def _season_block(season_run, held: list[TaskResult]) -> dict:
+    from evals.leaderboard.season import report_block
+
+    block = report_block(season_run, [asdict(r) for r in held], is_held_out=lambda _r: True)
+    block["held_out"]["cost_usd"] = round(sum(r.cost_usd + r.judge_cost_usd for r in held), 6)
+    return block
+
+
+def season_for(args: argparse.Namespace):
+    """The checked season run for ``--season``, or None. Exits on a mismatch."""
+    if getattr(args, "season", None) is None:
+        return None
+    from evals.leaderboard.season import RUNNERS, SeasonError, check, load
+    from evals.leaderboard.suite import SuiteMismatchError
+
+    if args.only or args.category:
+        sys.exit("--season runs the whole season suite: drop --only / --category")
+    try:
+        manifest = load(args.season)
+        matches = [
+            name for name in manifest["suites"]
+            if RUNNERS.get(name, {}).get("bench_suite") == args.suite and RUNNERS[name].get("mode") == args.mode
+        ]
+        if not matches:
+            sys.exit(f"season {args.season} has no {args.mode} suite run as --suite {args.suite} "
+                     f"(it has: {', '.join(manifest['suites'])})")
+        return check(manifest, matches[0], working_only=args.working_only)
+    except (SeasonError, SuiteMismatchError) as exc:
+        sys.exit(str(exc))
 
 
 def report_name(args: argparse.Namespace, started_at: str) -> str:
@@ -801,7 +840,8 @@ def report_name(args: argparse.Namespace, started_at: str) -> str:
 
 
 async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
-    tasks = select_tasks(args.suite, args.only, args.category, args.mode)
+    season_run = season_for(args)
+    tasks = season_run.tasks() if season_run else select_tasks(args.suite, args.only, args.category, args.mode)
     profile = resolve_model_profile(getattr(args, "model", None), args.mode)
     if not tasks:
         print("No tasks match.", file=sys.stderr)
@@ -824,6 +864,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     def save(complete: bool) -> dict:
         report = build_report(
             args, started_at, results, profile=profile, repeat=repeat, planned=len(planned), stopped=stopped, complete=complete,
+            season_run=season_run,
         )
         # Write then rename, so a run killed mid-write keeps its last good checkpoint.
         tmp = bench_dir / f".{name}.tmp"
@@ -857,7 +898,10 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                 result.attempt = attempt
                 results.append(result)
                 if not args.json:
-                    label = result.task if repeat == 1 else f"{result.task} #{attempt}"
+                    label = result.task
+                    if season_run and season_run.is_held_out(task):
+                        label = season_run.held_out_id(task)  # never print a held-out task's name
+                    label = label if repeat == 1 else f"{label} #{attempt}"
                     print(f"[{index}/{len(planned)}] {label}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
                 stopped = budget_stop(results, len(planned), max_cost_usd, gpu_cost_usd(results, profile))
                 if stopped:
@@ -874,14 +918,20 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
 
     report = save(complete=True)
     summary = report["summary"]
+    shown = [r for r in results if not (season_run and r.task in {t.name for _, t in season_run.held_out})]
     if args.keep_screens:
-        save_final_screens(results, bench_dir / Path(name).stem)
+        # Held-out tasks' screens and run folders stay out of the artifact.
+        save_final_screens(shown, bench_dir / Path(name).stem)
 
     if args.json:
         print(json.dumps(report, indent=2))
     else:
         print()
-        print(format_report(results, summary, previous))
+        print(format_report(shown, summary, previous))
+        if season_run:
+            held = report["season"].get("held_out", {})
+            print(f"season {season_run.season} ({season_run.season_hash[:12]}): held-out "
+                  f"{held.get('passed', 0)}/{held.get('run', 0)} passed")
         print(f"\nsaved {bench_dir / name}")
     return BUDGET_EXIT_CODE if stopped else 0
 
@@ -918,6 +968,12 @@ def build_parser(default_suite: str = "full", default_mode: str = "browser") -> 
         "--model", default=os.getenv("OPERON_MODEL_PROFILE") or None,
         help="model registry profile the server runs (evals/models.yaml; default $OPERON_MODEL_PROFILE)",
     )
+    parser.add_argument(
+        "--season", type=int, default=None,
+        help="run a frozen season's tasks for --suite (evals/seasons/season-<n>.json); refuses on any changed task",
+    )
+    parser.add_argument("--working-only", action="store_true",
+                        help="with --season: run without the held-out tasks ($OPERON_SEASON_PRIVATE unset)")
     parser.add_argument("--list", action="store_true", help="list the tasks and exit")
     parser.add_argument("--json", action="store_true")
     return parser
@@ -926,6 +982,12 @@ def build_parser(default_suite: str = "full", default_mode: str = "browser") -> 
 def main(argv: list[str], default_suite: str = "full", default_mode: str = "browser") -> int:
     args = build_parser(default_suite, default_mode).parse_args(argv)
     if args.list:
+        season_run = season_for(args)
+        if season_run:
+            for task in season_run.working:
+                print(f"{task.name:22} {task.category:11} {task.intent}")
+            print(f"+ {len(season_run.held_out)} held-out tasks (not listed)")
+            return 0
         for task in select_tasks(args.suite, args.only, args.category, args.mode):
             print(f"{task.name:22} {task.category:11} {task.intent}")
         return 0

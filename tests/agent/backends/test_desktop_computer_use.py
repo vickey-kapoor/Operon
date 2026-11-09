@@ -60,6 +60,8 @@ class ScriptedClient:
 
     def build_function_response_content(self, *, function_name, screenshot_path, current_url, error=None) -> dict:
         response = {"name": function_name, "response": {"url": current_url} if current_url else {}}
+        if error:
+            response["response"]["error"] = error
         self.function_responses.append(response)
         return {"role": "user", "parts": [{"function_response": response}, {"inline_data": {"data": ""}}]}
 
@@ -167,3 +169,59 @@ def test_click_then_type_in_one_turn_is_one_atomic_type() -> None:
         [calls[0], {"name": "type_text_at", "args": {"x": 10, "y": 10, "text": "a"}}], screen_width=1000, screen_height=1000
     )
     assert [a["action_type"] for a in batch["actions"]] == ["click", "type"]
+
+
+async def test_key_held_across_turns_reaches_the_next_key_press(tmp_path: Path) -> None:
+    """key_down in one turn and press_key in the next make one shortcut (no fallback switch)."""
+    client = ScriptedClient([
+        _call_reply("key_down", {"key": "Control"}),
+        _call_reply("press_key", {"key": "a"}),
+        _call_reply("key_up", {"key": "Control"}),
+    ])
+    backend = _backend(client)
+
+    state = _state()
+    first = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "1.png"), state))
+    state = _state(first.action)
+    second = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "2.png"), state))
+
+    assert first.action.action_type is ActionType.WAIT
+    assert second.action.action_type is ActionType.HOTKEY and second.action.key == "Control+a"
+
+
+async def test_a_key_down_that_never_ran_is_not_held(tmp_path: Path) -> None:
+    """The batch failed before its key_down: the next letter must not become a shortcut."""
+    client = ScriptedClient([
+        _call_reply("key_down", {"key": "Control"}),
+        _call_reply("type", {"text": "x"}),
+    ])
+    backend = _backend(client)
+
+    state = _state()
+    first = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "1.png"), state))
+    state = AgentState(
+        run_id="run-1", intent="Open Notepad and type hello", status=RunStatus.RUNNING,
+        action_history=[ExecutedAction(action=first.action, success=False, detail="batch failed")],
+    )
+    second = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "2.png"), state))
+
+    assert second.action.action_type is ActionType.TYPE and second.action.text == "x"
+
+
+async def test_a_click_with_a_key_held_is_reported_to_the_model(tmp_path: Path) -> None:
+    client = ScriptedClient([
+        {**_call_reply("key_down", {"key": "Control"}), "function_calls": [
+            {"name": "key_down", "args": {"key": "Control"}},
+            {"name": "click", "args": {"x": 500, "y": 500}},
+        ]},
+        _call_reply("key_up", {"key": "Control"}),
+    ])
+    backend = _backend(client)
+
+    state = _state()
+    first = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "1.png"), state))
+    state = _state(first.action)
+    await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "2.png"), state))
+
+    assert first.action.action_type is ActionType.BATCH
+    assert "click with Control held" in client.function_responses[0]["response"]["error"]

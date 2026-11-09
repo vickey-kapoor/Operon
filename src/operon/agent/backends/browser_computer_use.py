@@ -9,6 +9,7 @@ from pathlib import Path
 
 from operon.agent._agent_utils import collect_latest_usage
 from operon.agent.actions.translation import (
+    KeyHold,
     build_policy_decision,
     normalize_computer_use_actions,
 )
@@ -40,6 +41,13 @@ class _ConversationState:
     # Set when the user declined the held calls: the next answer to the model's
     # open calls reports this instead of an outcome, since they never ran.
     declined_reason: str | None = None
+    # Keys the model is holding down (key_down without its key_up yet); they join
+    # its next key press, which may come several turns later.
+    key_hold: KeyHold = field(default_factory=KeyHold)
+    # The hold as the open calls would leave it. It replaces ``key_hold`` only once
+    # those calls ran: a batch that failed part-way, or calls dropped by a re-look,
+    # must not leave a key held that the model never got to press.
+    pending_hold: KeyHold | None = None
 
 
 def _requires_confirmation(call: dict) -> bool:
@@ -123,15 +131,20 @@ class BrowserComputerUseBackend(AgentBackend):
         )
         if "function_call" in response_payload:
             function_calls = response_payload.get("function_calls") or [response_payload["function_call"]]
+            conversation = self._conversations.get(state.run_id)
+            hold = conversation.key_hold.copy() if conversation is not None else KeyHold()
             response_payload = {
                 **response_payload,
                 "action": normalize_computer_use_actions(
                     function_calls,
                     screen_width=screenshot.width,
                     screen_height=screenshot.height,
+                    key_hold=hold,
                 ),
                 "active_subgoal": self._subgoal_for_calls(function_calls),
             }
+            if conversation is not None:
+                conversation.pending_hold = hold
         elif self._is_completion_text(response_payload, state):
             # A text-only reply after the model has acted is how Computer Use says
             # the task is done. Surface it as STOP so the verifier judges the claim.
@@ -266,6 +279,19 @@ class BrowserComputerUseBackend(AgentBackend):
                 conversation.declined_reason = None
             elif len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
                 error = state.action_history[-1].detail
+            ran = (
+                not declined
+                and len(state.action_history) > conversation.acknowledged_actions
+                and state.action_history[-1].success
+            )
+            hold, conversation.pending_hold = conversation.pending_hold, None
+            if ran and hold is not None:
+                conversation.key_hold = KeyHold(keys=hold.keys)
+                if hold.skipped:
+                    error = (
+                        f"Not run: {'; '.join(hold.skipped)}. Clicking or scrolling with a key held "
+                        "is not supported here; release the key (key_up) and use a hotkey or a plain click."
+                    )
             function_response = self._build_function_response_content(
                 function_names=conversation.pending_function_names,
                 screenshot_path=screenshot.artifact_path,

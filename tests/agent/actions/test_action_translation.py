@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from operon.agent.actions.translation import (
+    KeyHold,
     build_policy_decision,
     normalize_computer_use_actions,
     normalize_computer_use_function_call,
@@ -196,3 +197,109 @@ def test_gemini_3_computer_use_actions_translate(function_call, expected) -> Non
 
     assert {key: payload[key] for key in expected} == expected
     translate_computer_use_action(payload)
+
+
+
+def test_key_down_and_up_are_not_unsupported() -> None:
+    """Gemini 3.x's key_down / key_up used to switch the whole run to the fallback model."""
+    hold = KeyHold()
+
+    down = normalize_computer_use_function_call(
+        {"name": "key_down", "args": {"key": "Control"}}, screen_width=1000, screen_height=1000, key_hold=hold
+    )
+    assert hold.keys == ["Control"]
+    up = normalize_computer_use_function_call(
+        {"name": "key_up", "args": {"key": "Control"}}, screen_width=1000, screen_height=1000, key_hold=hold
+    )
+
+    assert down["action_type"] == "wait"
+    assert up["action_type"] == "wait"
+    assert hold.keys == []
+    translate_computer_use_action(down)
+
+
+def test_held_key_joins_the_next_key_press_across_turns() -> None:
+    hold = KeyHold()
+    calls = [
+        {"name": "key_down", "args": {"key": "Control"}},
+        {"name": "press_key", "args": {"key": "a"}},
+        {"name": "key_up", "args": {"key": "Control"}},
+        {"name": "press_key", "args": {"key": "Delete"}},
+    ]
+
+    # One call per turn, as the run that hit this bug did.
+    payloads = [
+        normalize_computer_use_actions([call], screen_width=1000, screen_height=1000, key_hold=hold) for call in calls
+    ]
+
+    assert payloads[1] == {"action_type": "hotkey", "key": "Control+a"}
+    assert payloads[3] == {"action_type": "press_key", "key": "Delete"}
+    assert translate_computer_use_action(payloads[1]).action_type is ActionType.HOTKEY
+
+
+@pytest.mark.parametrize("hold", [KeyHold(), None])
+def test_held_key_in_one_batch_makes_a_hotkey(hold) -> None:
+    """Also without a run-level hold: the batch shares one."""
+    payload = normalize_computer_use_actions(
+        [
+            {"name": "key_down", "args": {"key": "Shift"}},
+            {"name": "type", "args": {"text": "x"}},
+            {"name": "key_up", "args": {"key": "Shift"}},
+            {"name": "hotkey", "args": {"keys": ["Control", "s"]}},
+        ],
+        screen_width=1000,
+        screen_height=1000,
+        key_hold=hold,
+    )
+
+    assert payload["action_type"] == "batch"
+    assert payload["actions"][1] == {"action_type": "hotkey", "key": "Shift+x"}
+    assert payload["actions"][3] == {"action_type": "hotkey", "key": "Control+s"}
+
+
+def test_held_modifier_is_added_to_a_hotkey_once() -> None:
+    payload = normalize_computer_use_function_call(
+        {"name": "hotkey", "args": {"keys": ["Control", "c"]}},
+        screen_width=1000,
+        screen_height=1000,
+        key_hold=KeyHold(keys=["Control", "Shift"]),
+    )
+
+    assert payload == {"action_type": "hotkey", "key": "Shift+Control+c"}
+
+
+def test_click_with_a_key_held_is_skipped_not_run_plain() -> None:
+    """Control-click has no executor action; it must not silently become a plain click."""
+    hold = KeyHold()
+
+    payload = normalize_computer_use_actions(
+        [
+            {"name": "key_down", "args": {"key": "Control"}},
+            {"name": "click", "args": {"x": 500, "y": 500}},
+            {"name": "key_up", "args": {"key": "Control"}},
+            {"name": "click", "args": {"x": 500, "y": 500}},
+        ],
+        screen_width=1000,
+        screen_height=1000,
+        key_hold=hold,
+    )
+
+    # The batch ends at the skipped click: nothing after it runs on the unchanged screen.
+    assert [a["action_type"] for a in payload["actions"]] == ["wait", "wait"]
+    assert hold.skipped[0].startswith("click with Control held")
+    assert hold.keys == []
+
+
+def test_calls_after_a_skipped_click_do_not_run() -> None:
+    payload = normalize_computer_use_actions(
+        [
+            {"name": "key_down", "args": {"key": "Control"}},
+            {"name": "click", "args": {"x": 500, "y": 500}},
+            {"name": "key_up", "args": {"key": "Control"}},
+            {"name": "press_key", "args": {"key": "Delete"}},
+        ],
+        screen_width=1000,
+        screen_height=1000,
+    )
+
+    assert all(a["action_type"] == "wait" for a in payload["actions"])

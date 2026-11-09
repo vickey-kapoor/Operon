@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from operon.agent.backends.fallback import BackendCompatibilityError
@@ -30,14 +31,46 @@ def _scroll_payload(direction: str, magnitude: int, x: int, y: int) -> dict[str,
     return payload
 
 
+# Mouse calls whose meaning changes with a key held (Control-click, Shift-click,
+# Control-scroll). The executors have no held-modifier mouse action, so with a key
+# held these are skipped and reported back to the model, never run as plain clicks.
+_MODIFIED_MOUSE_CALLS = frozenset({
+    "click_at", "scroll_at", "drag_and_drop", "click", "middle_click", "double_click",
+    "triple_click", "right_click", "scroll",
+})
+
+
+@dataclass
+class KeyHold:
+    """Keys the model is holding down with Gemini 3.x's ``key_down`` / ``key_up``.
+
+    ``keys`` join the next key press, so ``key_down Control``, ``press_key a``,
+    ``key_up Control`` is Control+a. ``skipped`` names mouse calls that were not run
+    because a key was held (see ``_MODIFIED_MOUSE_CALLS``)."""
+
+    keys: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+
+    def copy(self) -> KeyHold:
+        return KeyHold(keys=list(self.keys))
+
+
 def normalize_computer_use_function_call(
     function_call: dict[str, Any],
     *,
     screen_width: int,
     screen_height: int,
+    key_hold: KeyHold | None = None,
 ) -> dict[str, Any]:
+    """One Computer Use call as an Operon action payload.
+
+    ``key_hold`` carries the keys the model holds down (``key_down`` / ``key_up``,
+    often across turns) and is updated in place. Without it, a held key lasts only
+    for this call."""
     name = function_call.get("name")
     args = function_call.get("args", {})
+    hold = key_hold if key_hold is not None else KeyHold()
+    held = hold.keys
     safety_decision = args.get("safety_decision")
     if isinstance(safety_decision, dict) and safety_decision.get("decision") == "require_confirmation":
         return {
@@ -48,6 +81,9 @@ def normalize_computer_use_function_call(
             ),
         }
 
+    if held and name in _MODIFIED_MOUSE_CALLS:
+        hold.skipped.append(f"{name} with {'+'.join(held)} held")
+        return {"action_type": "wait", "wait_ms": 100}
     if name == "open_web_browser":
         return {"action_type": "launch_app", "text": "browser"}
     if name == "wait_5_seconds":
@@ -115,17 +151,33 @@ def normalize_computer_use_function_call(
             "y": _scale_grid_coord(args["y"], screen_height),
         }
     if name == "type":
+        text = args["text"]
+        if held and isinstance(text, str) and len(text) == 1:
+            # A single character typed with a modifier held is a shortcut (Control + a).
+            return {"action_type": "hotkey", "key": "+".join([*held, text])}
         return {
             "action_type": "type",
             "text": args["text"],
             "clear_before_typing": False,
             "press_enter": bool(args.get("press_enter", False)),
         }
+    if name in {"key_down", "key_up"}:
+        key = str(args["key"])
+        if name == "key_down" and key not in held:
+            held.append(key)
+        elif name == "key_up" and key in held:
+            held.remove(key)
+        # Nothing to run yet: the held key joins the next key press.
+        return {"action_type": "wait", "wait_ms": 100}
     if name == "press_key":
-        return {"action_type": "press_key", "key": str(args["key"])}
+        key = str(args["key"])
+        if held:
+            return {"action_type": "hotkey", "key": "+".join([*held, key])}
+        return {"action_type": "press_key", "key": key}
     if name == "hotkey":
         keys = args["keys"]
-        return {"action_type": "hotkey", "key": "+".join(keys) if isinstance(keys, list) else str(keys)}
+        keys = [str(k) for k in keys] if isinstance(keys, list) else str(keys).split("+")
+        return {"action_type": "hotkey", "key": "+".join([*[k for k in held if k not in keys], *keys])}
     if name == "wait":
         return {"action_type": "wait", "wait_ms": int(float(args.get("seconds", 1)) * 1000)}
     if name == "launch_app":
@@ -151,6 +203,7 @@ def normalize_computer_use_actions(
     *,
     screen_width: int,
     screen_height: int,
+    key_hold: KeyHold | None = None,
 ) -> dict[str, Any]:
     if not function_calls:
         raise BackendCompatibilityError("No Computer Use function calls were provided.")
@@ -164,13 +217,25 @@ def normalize_computer_use_actions(
                 screen_width=screen_width,
                 screen_height=screen_height,
             )
+    # One hold for the whole batch, so a key held early in it reaches later calls.
+    hold = key_hold if key_hold is not None else KeyHold()
     normalized: list[dict[str, Any]] = []
+    skipped_before = len(hold.skipped)
     for function_call in function_calls:
         action = normalize_computer_use_function_call(
             function_call,
             screen_width=screen_width,
             screen_height=screen_height,
+            key_hold=hold,
         )
+        if hold.skipped and action["action_type"] == "wait" and len(hold.skipped) > skipped_before:
+            # A skipped click leaves the screen as it was, so the calls after it (a
+            # Delete for the selection it should have made) must not run either.
+            # Nothing physically holds a key, so the hold ends here too.
+            hold.skipped[-1] += "; the calls after it were not run and no key is held now"
+            hold.keys.clear()
+            normalized.append(action)
+            break
         previous = normalized[-1] if normalized else None
         if (
             action["action_type"] == "type"

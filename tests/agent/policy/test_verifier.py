@@ -502,3 +502,19 @@ def test_page_loading_needs_a_backend_that_reports_elements(elements_reported, l
     click = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
 
     assert DeterministicVerifierService._is_page_loading(click, perception) is loading
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_gave_up_is_never_done_even_if_the_critic_says_so(tmp_path: Path) -> None:
+    # KAN-68: a registry model's "fail" under the full harness must not count as a success.
+    from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
+
+    state = AgentState(run_id="run-s5", intent="Create draft", status="running", action_history=[_typed_draft()])
+    decision, executed = _stop(tmp_path)
+    decision = decision.model_copy(update={"rationale": GAVE_UP_PREFIX + "the form will not submit"})
+
+    result = await _critic(tmp_path, "success").verify(state, decision, executed)
+
+    assert result.status is VerificationStatus.FAILURE
+    assert result.stop_condition_met is False
+    assert "gave up" in result.reason

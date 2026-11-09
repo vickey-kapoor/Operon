@@ -55,7 +55,8 @@ def _executed(action: AgentAction, *, success: bool = True, detail: str = "ok") 
         ("thin", "claude_computer_use", THIN),
         ("FULL", "claude_computer_use", FULL),
         (None, "computer_use", FULL),
-        ("thin", "computer_use", FULL),
+        ("thin", "computer_use", THIN),  # Gemini computer use runs thin on request (KAN-67)
+        ("full", "computer_use", FULL),
         ("thin", "json", FULL),
     ],
 )

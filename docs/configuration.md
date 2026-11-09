@@ -7,7 +7,8 @@ it to `.env` to start.
 ## Model keys
 
 - `ANTHROPIC_API_KEY` makes Claude computer use the browser backend, running the thin
-  harness. Set `OPERON_DESKTOP_BACKEND=claude_computer_use` to use Claude on the desktop too.
+  harness. Set `OPERON_DESKTOP_BACKEND=claude_computer_use` to use Claude on the desktop too
+  (`computer_use` for Gemini computer use on the desktop).
 - `GEMINI_API_KEY` runs the Gemini backends: the browser backend when there is no Anthropic
   key, the browser fallback (full harness only), and the default desktop backend. The benchmark judge also uses
   it. The Gemini JSON backends also accept `GOOGLE_API_KEY`; Gemini Computer Use reads
@@ -22,9 +23,13 @@ it to `.env` to start.
   of its tool call, and Claude checks the outcome once against the task when it says it is
   done. The trust gate, allowed file roots, coordinate-thrash pause and step budget still
   apply.
-- **full** (always used for Gemini backends; `OPERON_HARNESS_PROFILE=full` opts Claude in):
-  deterministic rules before the model, post-model guards, a per-step verifier and a
-  recovery ladder.
+- **full** (the default for Gemini `computer_use` and the only profile for `json` backends;
+  `OPERON_HARNESS_PROFILE=full` opts Claude in): deterministic rules before the model,
+  post-model guards, a per-step verifier and a recovery ladder.
+- **thin for Gemini** (`OPERON_HARNESS_PROFILE=thin` with a `computer_use` backend, browser or
+  desktop): the thin harness above, except that Gemini's own "done" ends the run with no
+  completion check (the check runs on Claude), so the benchmark graders decide success. This
+  lets the benchmark run the same Gemini model in both harnesses.
 
 - **model backend** (`OPERON_*_BACKEND=model`, experimental): always thin, and the model's own
   "done" ends the run with no completion check, so every model in the cross-model benchmark
@@ -45,7 +50,7 @@ the details.
 | `OPERON_MODEL_REGISTRY` | `evals/models.yaml` | Model registry file |
 | `OPENWEIGHT_BASE_URL` / `OPENWEIGHT_API_KEY` | unset | Endpoint and key of the OpenAI-compatible model server for `openai_compat` profiles (a profile can name other variables) |
 | `OPENAI_API_KEY` / `OPENAI_API_BASE_URL` | unset / `https://api.openai.com/v1/responses` | OpenAI computer use for `openai_native` profiles |
-| `OPERON_COMPLETION_CHECK` | `claude` | `own` makes `claude_computer_use` end on Claude's own "done" with no completion check (benchmark mode); `model` backends always do |
+| `OPERON_COMPLETION_CHECK` | `claude` | `own` makes `claude_computer_use` end on Claude's own "done" with no completion check (benchmark mode); `model` and thin Gemini `computer_use` backends always do |
 | `GEMINI_API_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/models` | Base URL for Gemini calls, e.g. a proxy. The Gemini Computer Use client always uses it; the JSON Gemini client ignores it when `OPERON_USE_VERTEX=true` and calls Vertex AI instead. |
 | `API_KEYS` | unset | Comma-separated API keys. Every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires it as an `x-api-key` subprotocol (`["x-api-key", "<key>"]`). Unset = the server generates one key on first start in `.var/api-key` (mode 0600), which the benchmark harness reads. |
 | `OPERON_ALLOW_UNAUTHENTICATED` | `false` | With `API_KEYS` unset, `true` turns authentication off. Only safe on a throwaway machine, since the API can drive a real browser/desktop. |
@@ -53,17 +58,18 @@ the details.
 | `CORS_ORIGINS` | empty | Comma-separated exact origins (`scheme://host:port`) allowed to call the API from a browser, e.g. `http://localhost:3000`. `http://127.0.0.1:3000` is a different origin and needs its own entry. Also gates `/ws/stream`, which otherwise accepts only clients that send no `Origin` and loopback pages served from the API's own host and port. `*` allows any origin over HTTP but not on `/ws/stream`. Empty = no cross-origin access. |
 | `OPERON_BROWSER_BACKEND` | `claude_computer_use` with `ANTHROPIC_API_KEY`, else `computer_use` | `claude_computer_use` (Claude), `computer_use` (Gemini) or `json` |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend. Ignored under the thin harness, so a Claude error ends the run |
-| `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend |
+| `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend: `json`, `computer_use` (Gemini computer use), `claude_computer_use` or `model` |
 | `OPERON_BROWSER_MODEL` | `gemini-3.5-flash` | Browser primary model |
 | `OPERON_BROWSER_THINKING` | `low` | Computer Use thinking level (Gemini 3) |
 | `OPERON_BROWSER_VERIFIER_THINKING` | `low` | Browser critic thinking level |
 | `OPERON_BROWSER_CLAUDE_MODEL` | `claude-opus-5-5` | Model for `claude_computer_use` |
 | `OPERON_BROWSER_CLAUDE_EFFORT` | `low` | Claude effort level for `claude_computer_use` |
 | `OPERON_CLAUDE_ZOOM` | `false` | Experimental: turn on the toolset's `zoom` member (browser and desktop); each zoom is answered with a full-resolution crop of the current screenshot, up to 3 per step |
-| `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` | Desktop primary model (Gemini JSON backend) |
+| `OPERON_DESKTOP_MODEL` | `gemini-2.5-flash` (`gemini-3.5-flash` for `computer_use`) | Desktop primary model (Gemini JSON or computer use backend) |
+| `OPERON_DESKTOP_THINKING` | `low` | Thinking level for the desktop `computer_use` backend (Gemini 3) |
 | `OPERON_DESKTOP_CLAUDE_MODEL` | `claude-opus-5-5` | Model for the desktop `claude_computer_use` backend |
 | `OPERON_DESKTOP_CLAUDE_EFFORT` | `low` | Claude effort level on the desktop |
-| `OPERON_HARNESS_PROFILE` | `thin` for Claude | `full` switches a `claude_computer_use` backend back to the full harness. Other backends always run `full`. |
+| `OPERON_HARNESS_PROFILE` | `thin` for Claude, `full` for Gemini | `full` switches a `claude_computer_use` backend back to the full harness; `thin` switches a Gemini `computer_use` backend to the thin harness (judged by its own "done"). `json` backends always run `full`. |
 | `OPERON_FINAL_CHECK_MODEL` | the acting Claude model | Model for the thin harness's completion check; a cheaper model (e.g. `claude-sonnet-5-5`) cuts its cost |
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |

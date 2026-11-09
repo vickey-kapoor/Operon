@@ -21,7 +21,7 @@ on:
         description: "Effort for claude_computer_use (low, medium, high)"
         default: "low"
       harness_profile:
-        description: "OPERON_HARNESS_PROFILE for Claude: thin (default) or full. Gemini always runs full."
+        description: "OPERON_HARNESS_PROFILE: thin or full, for Claude and Gemini computer use (Gemini thin ends on its own done)."
         type: choice
         options: [thin, full]
         default: thin

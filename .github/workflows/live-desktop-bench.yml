@@ -26,12 +26,12 @@ on:
         options: [full, smoke]
         default: full
       desktop_backend:
-        description: "OPERON_DESKTOP_BACKEND: json (Gemini) or claude_computer_use"
+        description: "OPERON_DESKTOP_BACKEND: json (Gemini), computer_use (Gemini computer use), claude_computer_use or model"
         type: choice
-        options: [json, claude_computer_use, model]
+        options: [json, computer_use, claude_computer_use, model]
         default: json
       harness_profile:
-        description: "OPERON_HARNESS_PROFILE for Claude: thin (default) or full. Gemini always runs full."
+        description: "OPERON_HARNESS_PROFILE: thin or full, for Claude and Gemini computer use (Gemini thin ends on its own done)."
         type: choice
         options: [thin, full]
         default: thin

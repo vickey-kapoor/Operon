@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 
 # "model" is the cross-model adapter (experimental): the registry profile named by
 # OPERON_MODEL_PROFILE picks the model (evals/models.yaml).
-_VALID_DESKTOP_BACKENDS = frozenset({"json", "claude_computer_use", "model"})
+_VALID_DESKTOP_BACKENDS = frozenset({"json", "computer_use", "claude_computer_use", "model"})
 _VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "claude_computer_use", "model"})
 _VALID_PROVIDERS = frozenset({"gemini", "anthropic"})
 
@@ -28,9 +28,13 @@ class RuntimeModeConfig:
 
 
 def desktop_mode_config() -> RuntimeModeConfig:
+    backend = os.getenv("OPERON_DESKTOP_BACKEND", "json")
+    # Gemini computer use needs a computer-use model; the json backend's default is not one.
+    default_model = "gemini-3.5-flash" if backend == "computer_use" else "gemini-2.5-flash"
     return RuntimeModeConfig(
-        backend=os.getenv("OPERON_DESKTOP_BACKEND", "json"),
-        primary_model=os.getenv("OPERON_DESKTOP_MODEL", "gemini-2.5-flash"),
+        backend=backend,
+        primary_model=os.getenv("OPERON_DESKTOP_MODEL") or default_model,
+        thinking=os.getenv("OPERON_DESKTOP_THINKING", "low") or None,
         verifier_provider=os.getenv("OPERON_DESKTOP_VERIFIER_PROVIDER", "gemini"),
         fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-2.5-flash"),
         verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-2.5-flash"),

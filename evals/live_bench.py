@@ -274,13 +274,19 @@ def run_replies(run_id: str) -> tuple[int, int]:
     return invalid, replies
 
 
-def harness_label(profile) -> str:
-    """The report's harness: ``thin``, ``full``, or ``thin-own`` for a Claude thin run that
-    takes the model's own "done" (OPERON_COMPLETION_CHECK=own), so it is never compared
-    with runs judged by the completion check. Registry models are always thin with own done."""
+def harness_label(profile, mode: str = "browser") -> str:
+    """The report's harness: ``thin``, ``full``, or ``thin-own`` for a thin run that takes
+    the model's own "done", so it is never compared with runs judged by the completion
+    check: Claude with OPERON_COMPLETION_CHECK=own, and Gemini computer use, which has no
+    completion check. Registry models are always thin with own done."""
     if profile is not None:
         return "thin"
-    harness = os.getenv("OPERON_HARNESS_PROFILE", "full")
+    backend = (os.getenv(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower()
+    requested = (os.getenv("OPERON_HARNESS_PROFILE") or "").strip().lower()
+    if backend == "computer_use":
+        # Gemini computer use runs full unless thin is asked for (operon.agent.policy.thin).
+        return "thin-own" if requested == "thin" else "full"
+    harness = requested or "full"
     if harness == "thin" and (os.getenv("OPERON_COMPLETION_CHECK") or "").strip().lower() == "own":
         return "thin-own"
     return harness
@@ -794,7 +800,7 @@ def build_report(
         "judge_model": args.judge_model,
         "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
         "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
-        "harness_profile": harness_label(profile),
+        "harness_profile": harness_label(profile, args.mode),
         "model_profile": profile.name if profile is not None else None,
         "model_adapter": profile.adapter if profile is not None else None,
         "model_id": profile.model if profile is not None else None,
@@ -866,7 +872,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
     # Found before this run's own report is first written below.
     gpu_priced = gpu_cost_usd([], profile) is not None
-    previous = _previous_report(bench_dir, suite_name, profile.name if profile else None, harness_label(profile)) if not (args.only or args.category) else None
+    previous = _previous_report(bench_dir, suite_name, profile.name if profile else None, harness_label(profile, args.mode)) if not (args.only or args.category) else None
     name = report_name(args, started_at)
     bench_dir.mkdir(parents=True, exist_ok=True)
 

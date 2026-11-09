@@ -124,6 +124,7 @@ def test_grounding_reuses_one_client_per_kind(monkeypatch) -> None:
     [("thin", "", "thin"), ("thin", "own", "thin-own"), ("full", "own", "full")],
 )
 def test_report_harness_names_the_own_done_mode(monkeypatch, harness, check, expected) -> None:
+    monkeypatch.delenv("OPERON_BROWSER_BACKEND", raising=False)
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     monkeypatch.setenv("OPERON_COMPLETION_CHECK", check)
     assert live_bench.harness_label(None) == expected
@@ -143,3 +144,15 @@ def test_previous_report_matches_the_completion_mode(tmp_path) -> None:
         )
     assert live_bench._previous_report(tmp_path, "full", None, "thin")["harness_profile"] == "thin"
     assert live_bench._previous_report(tmp_path, "full", None, "thin-own")["harness_profile"] == "thin-own"
+
+
+@pytest.mark.parametrize(
+    ("mode", "harness", "expected"),
+    [("browser", "thin", "thin-own"), ("desktop", "thin", "thin-own"), ("browser", "full", "full"), ("desktop", "", "full")],
+)
+def test_a_gemini_computer_use_report_names_its_harness(monkeypatch, mode, harness, expected) -> None:
+    # Gemini has no completion check, so its thin runs are "thin-own"; unset means its default, full.
+    monkeypatch.setenv(f"OPERON_{mode.upper()}_BACKEND", "computer_use")
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
+    monkeypatch.delenv("OPERON_COMPLETION_CHECK", raising=False)
+    assert live_bench.harness_label(None, mode) == expected

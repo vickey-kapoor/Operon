@@ -72,11 +72,13 @@ Repository owners, members and collaborators can comment on a PR to benchmark it
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard] [x2|x3|x5] [opus|sonnet|haiku] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
+/bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
 /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 ```
 
-Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. Examples:
+Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. `gemini` runs Gemini computer use
+instead, in the full harness unless `thin` is given; a thin Gemini run ends on Gemini's own
+"done", with no completion check. Examples:
 
 | Comment | Runs |
 |---|---|
@@ -87,6 +89,8 @@ Defaults: browser, thin harness, smoke suite, Claude Opus 5.5. Examples:
 | `/bench long` | Long multi-app suite (browser only) |
 | `/bench hard x3` | Hard subset, every task 3 times (about $5.50 with Opus) |
 | `/bench grounding` | Grounding eval, 300 samples on Claude Opus 5.5 |
+| `/bench long gemini` / `/bench long gemini thin` | Long suite on Gemini computer use, full or thin harness |
+| `/bench desktop all azure gemini thin` | Full desktop benchmark on Gemini computer use, thin harness |
 | `/bench grounding gemini` | Grounding eval on Gemini |
 | `/bench grounding zoom` | Grounding eval on Claude with zoom on (`OPERON_CLAUDE_ZOOM`) |
 | `/bench desktop azure all zoom` | Full desktop benchmark on the Azure VM with Claude's zoom on (desktop and grounding only) |

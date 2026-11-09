@@ -420,6 +420,16 @@ async def test_a_judge_model_with_no_price_is_counted_as_unpriced(monkeypatch) -
     assert verdict.goal_visible is True and verdict.cost_usd is None and verdict.unpriced_model == "gemini-next"
 
 
+def test_long_tasks_get_more_pauses_approved() -> None:
+    from evals.app_tasks import LONG_TASKS
+    from evals.live_bench import DEFAULT_PAUSES, LONG_PAUSES, TASKS, pause_budget
+
+    assert pause_budget(LONG_TASKS[0], None, False) == LONG_PAUSES
+    assert pause_budget(TASKS[0], None, False) == DEFAULT_PAUSES
+    assert pause_budget(LONG_TASKS[0], 3, False) == 3
+    assert pause_budget(LONG_TASKS[0], 3, True) == 0
+
+
 async def test_an_api_error_mid_run_stops_the_run(tmp_path, monkeypatch) -> None:
     """A failed poll is not a finished run: the benchmark stops it so it stops spending."""
     monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)

@@ -42,8 +42,11 @@ Outcomes, per task:
   user never asked for, such as following instructions planted on the page or
   placing an order it was told not to.
 
-Pauses for confirmation are approved automatically (``--no-approve`` turns
-that off) and counted. Every run's results are saved under
+Pauses for confirmation are approved automatically and counted: up to 2 per
+task, or 10 for the long suite, whose tasks each place orders, send mail and
+submit forms that a model may ask to confirm one by one (``--approve-pauses N``
+sets the number, ``--no-approve`` turns approval off). A run that pauses again
+after that ends as ``failure``. Every run's results are saved under
 ``.var/bench/`` and the report compares them with the previous saved run.
 The judge model is ``OPERON_BENCH_JUDGE_MODEL`` (default ``gemini-3.5-flash``).
 
@@ -516,6 +519,8 @@ def summarize(results: list[TaskResult]) -> dict:
         "mean_seconds": round(sum(r.seconds for r in results) / total, 1) if total else 0.0,
         "seconds_per_step": round(sum(r.seconds for r in results) / steps, 1) if steps else 0.0,
         "fallback_steps": sum(r.other_steps for r in results),
+        "pauses": sum(r.pauses for r in results),
+        "paused_tasks": sum(1 for r in results if r.pauses),
         **cost_summary(results, counts["success"]),
         **({"repeat": repeat_summary(results)} if any(r.attempt > 1 for r in results) else {}),
         **invalid_summary(results),
@@ -645,6 +650,7 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
     lines.append(
         f"mean {summary['mean_steps']} steps, {summary['mean_seconds']} s per task, "
         f"{summary['seconds_per_step']} s per step · {summary['fallback_steps']} fallback steps"
+        f" · {summary.get('pauses', 0)} pauses approved in {summary.get('paused_tasks', 0)} tasks"
     )
     if "cost_usd" in summary:
         per_success = summary["cost_per_success_usd"]
@@ -704,6 +710,17 @@ def save_final_screens(results: list[TaskResult], target: Path) -> None:
 
 
 DEFAULT_TIMEOUT_S = 420.0
+DEFAULT_PAUSES = 2
+LONG_PAUSES = 10
+
+
+def pause_budget(task: LiveTask, override: int | None, no_approve: bool) -> int:
+    """How many pauses for confirmation the benchmark approves in ``task``."""
+    if no_approve:
+        return 0
+    if override is not None:
+        return override
+    return LONG_PAUSES if task.category == "long" else DEFAULT_PAUSES
 
 
 def task_timeout(task: LiveTask, override: float | None) -> float:
@@ -826,7 +843,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                     result = await run_task(
                         client, task, judge,
                         timeout_s=task_timeout(task, args.timeout),
-                        approve_pauses=0 if args.no_approve else 2,
+                        approve_pauses=pause_budget(task, args.approve_pauses, args.no_approve),
                         mode=args.mode,
                         site=site,
                         gpu_priced=gpu_priced,
@@ -887,6 +904,8 @@ def build_parser(default_suite: str = "full", default_mode: str = "browser") -> 
     parser.add_argument("--timeout", type=float, default=None,
                         help=f"seconds per task (default: {DEFAULT_TIMEOUT_S:.0f}, or a long task's own limit)")
     parser.add_argument("--no-approve", action="store_true", help="do not approve pauses for confirmation")
+    parser.add_argument("--approve-pauses", type=int, default=None,
+                        help=f"pauses to approve per task (default {DEFAULT_PAUSES}; {LONG_PAUSES} for the long suite)")
     parser.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", "gemini-3.5-flash"))
     parser.add_argument("--out-dir", default=str(BENCH_DIR))
     parser.add_argument("--keep-screens", action="store_true", help="copy each graded screenshot next to the report")

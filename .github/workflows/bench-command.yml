@@ -131,7 +131,7 @@ jobs:
           fi
           extra=
           [ "$repeat" != 1 ] && extra="--repeat $repeat"
-          [ -n "$season" ] && extra="$extra --season $season"
+          [ -n "$season" ] && extra="${extra:+$extra }--season $season"
           if [ "$critic" = same ] && [ "$target" = grounding ]; then
             echo "::error::same-critic picks the full harness's step critic; /bench grounding has none."; exit 1
           fi

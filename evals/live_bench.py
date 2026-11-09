@@ -63,7 +63,7 @@ at the profile's ``gpu_hour_usd``.
 
 Spend is capped per benchmark run: after each task, the agent's and the judge's
 cost so far is checked against ``--max-cost-usd`` (``MAX_RUN_COST_USD``, default
-$5; 0 turns the cap off). With ``--repeat N`` the cap is N times that, since each
+$3; 0 turns the cap off). With ``--repeat N`` the cap is N times that, since each
 pass costs about as much as one run. Past it, the remaining tasks are skipped, the
 report records ``budget_stop`` and the command exits with status 3.
 """
@@ -1074,7 +1074,7 @@ def build_parser(default_suite: str = "core", default_mode: str = "browser") -> 
     parser.add_argument("--repeat", type=int, default=1, help="run every task this many times (measures flakiness)")
     parser.add_argument(
         "--max-cost-usd", type=float, default=_max_cost_default(),
-        help="stop once the run has spent this much on model calls (default $MAX_RUN_COST_USD or 5; 0: no cap)",
+        help=f"stop once the run has spent this much on model calls (default $MAX_RUN_COST_USD or {DEFAULT_MAX_COST_USD:g}; 0: no cap)",
     )
     parser.add_argument(
         "--model", default=os.getenv("OPERON_MODEL_PROFILE") or None,

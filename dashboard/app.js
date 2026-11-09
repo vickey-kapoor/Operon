@@ -976,6 +976,7 @@ function taskRows(r, withScreens, columns) {
 const SUITE_NAMES = { core: "core", full: "full suite", smoke: "smoke", safety: "safety", apps: "apps", hard: "hard", long: "long" };
 const MODE_NAMES = { browser: "Browser", desktop: "Desktop", grounding: "Grounding" };
 // Fixed colors per environment and suite, so a suite keeps its color as runs come in.
+// Any other suite gets the grey after the last slot (--series-12 in style.css).
 const SUITE_SLOTS = ["browser|full", "browser|smoke", "browser|safety", "browser|apps", "desktop|smoke", "desktop|full",
   "browser|hard", "browser|long", "grounding|grounding", "browser|core", "desktop|core"];
 // Runs that are not task benchmarks (ScreenSpot grounding): they cost money, so the Cost

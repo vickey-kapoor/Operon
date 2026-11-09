@@ -90,6 +90,18 @@ def _image_pids(exe_name: str) -> frozenset[int] | None:
     return frozenset(pids)
 
 
+def _sample_box(virtual: dict, x: int, y: int, radius: int) -> dict[str, int]:
+    """The (2*radius)-square around (x, y), kept inside the virtual screen.
+
+    Desktop coordinates are virtual-screen coordinates: a monitor left of or above
+    the primary one has negative x or y, so clamping to 0 would sample the wrong display.
+    """
+    size = radius * 2
+    left = min(max(virtual["left"], x - radius), virtual["left"] + virtual["width"] - size)
+    top = min(max(virtual["top"], y - radius), virtual["top"] + virtual["height"] - size)
+    return {"left": left, "top": top, "width": size, "height": size}
+
+
 def _hscroll(amount: int, x: int, y: int) -> None:
     """Scroll sideways at (x, y); positive = right. pyautogui's hscroll scrolls
     vertically on Windows, so send a horizontal wheel event there."""
@@ -321,7 +333,8 @@ class DesktopExecutor(Executor):
         self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
         # run_id → exe name → PIDs of that image already running before the run first
         # launched it. Cleanup kills only newer PIDs, never the user's own windows.
-        self._preexisting_pids: dict[str, dict[str, frozenset[int] | None]] = {}
+        # run_id -> exe name -> PIDs of that image that appeared during one of the run's launches
+        self._owned_pids: dict[str, dict[str, set[int]]] = {}
         # Set by the loop around a batch: checked before each later child, returns
         # why it must not run (e.g. the run was stopped), or None.
         self.batch_child_check: Callable[[AgentAction], Awaitable[str | None]] | None = None
@@ -487,7 +500,7 @@ class DesktopExecutor(Executor):
         """
         procs = self._launched_processes.pop(run_id, [])
         app_names = self._launched_app_names.pop(run_id, [])
-        preexisting = self._preexisting_pids.pop(run_id, {})
+        owned = self._owned_pids.pop(run_id, {})
         closed = 0
 
         # Phase 1: terminate tracked Popen processes
@@ -510,18 +523,22 @@ class DesktopExecutor(Executor):
                 logger.debug("cleanup: failed to terminate pid %d", proc.pid, exc_info=True)
 
         # Phase 2: taskkill fallback for apps where launcher exited immediately
-        # (Chrome, Edge, etc. spawn child processes and the parent exits). Only
-        # processes of that image that started after the run launched it: killing by
-        # image name would also close the user's own Notepad or Chrome windows.
+        # (Chrome, Edge, etc. spawn child processes and the parent exits). Only the
+        # PIDs that appeared while the run was launching that app: killing by image
+        # name, or every PID newer than the first launch, would also close a Notepad
+        # or Chrome window the user opened during the run.
         for app_exe in dict.fromkeys(app_names):
             if app_exe in _PROTECTED_PROCESSES:
                 continue
-            before = preexisting.get(app_exe)
-            now = _image_pids(app_exe) if before is not None else None
-            if before is None or now is None:
+            mine = owned.get(app_exe)
+            if not mine:
                 logger.info("cleanup: can't tell %s's own processes from the user's; leaving them", app_exe)
                 continue
-            for pid in sorted(now - before):
+            now = _image_pids(app_exe)
+            if now is None:
+                logger.info("cleanup: can't list %s processes; leaving them", app_exe)
+                continue
+            for pid in sorted(mine & now):
                 try:
                     result = subprocess.run(
                         ["taskkill", "/PID", str(pid), "/F"],
@@ -550,7 +567,7 @@ class DesktopExecutor(Executor):
                 await self.stop_run_recording(run_id)
             except Exception:
                 logger.debug("aclose: stop_run_recording failed for %s", run_id, exc_info=True)
-        pending_runs = set(self._launched_processes) | set(self._launched_app_names) | set(self._preexisting_pids)
+        pending_runs = set(self._launched_processes) | set(self._launched_app_names) | set(self._owned_pids)
         for run_id in pending_runs:
             try:
                 self.cleanup_run(run_id)
@@ -837,13 +854,7 @@ class DesktopExecutor(Executor):
     def _sample_region(self, x: int, y: int, radius: int = 30) -> bytes:
         """Capture a small pixel region around (x, y) for focus-change detection."""
         with _mss() as sct:
-            region = {
-                "left": max(0, x - radius),
-                "top": max(0, y - radius),
-                "width": radius * 2,
-                "height": radius * 2,
-            }
-            return bytes(sct.grab(region).rgb)
+            return bytes(sct.grab(_sample_box(sct.monitors[0], x, y, radius)).rgb)
 
     async def _exec_press_key(self, action: AgentAction) -> ExecutedAction:
         if action.key is None:
@@ -905,11 +916,8 @@ class DesktopExecutor(Executor):
         exe_name = Path(command.split()[0]).name.lower()
         if not exe_name.endswith(".exe"):
             exe_name += ".exe"
-        if self._current_run_id is not None:
-            seen = self._preexisting_pids.setdefault(self._current_run_id, {})
-            if exe_name not in seen:
-                # Before the first launch: whatever runs now is the user's, not ours.
-                seen[exe_name] = await asyncio.to_thread(_image_pids, exe_name)
+        # Whatever runs right before this launch is not ours.
+        before = await asyncio.to_thread(_image_pids, exe_name) if self._current_run_id is not None else None
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
@@ -939,6 +947,12 @@ class DesktopExecutor(Executor):
             if self._current_run_id is not None:
                 self._launched_app_names.setdefault(self._current_run_id, []).append(exe_name)
             await asyncio.sleep(self._post_launch_delay)
+            if self._current_run_id is not None and before is not None:
+                after = await asyncio.to_thread(_image_pids, exe_name)
+                if after is not None:
+                    # Only the PIDs that appeared during this launch belong to the run.
+                    owned = self._owned_pids.setdefault(self._current_run_id, {})
+                    owned.setdefault(exe_name, set()).update(after - before)
             after_path = await self._capture_after()
             return self._ok(action, f"Launched '{command}'", after_path)
         except Exception as exc:

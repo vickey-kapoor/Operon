@@ -156,6 +156,16 @@ def normalize_computer_use_actions(
 ) -> dict[str, Any]:
     if not function_calls:
         raise BackendCompatibilityError("No Computer Use function calls were provided.")
+    for function_call in function_calls:
+        safety_decision = (function_call.get("args") or {}).get("safety_decision")
+        if isinstance(safety_decision, dict) and safety_decision.get("decision") == "require_confirmation":
+            # One call in the turn needs a human: pause before any of them runs. A
+            # batch would run the calls before it, and keep going after the pause.
+            return normalize_computer_use_function_call(
+                function_call,
+                screen_width=screen_width,
+                screen_height=screen_height,
+            )
     normalized: list[dict[str, Any]] = []
     for function_call in function_calls:
         action = normalize_computer_use_function_call(

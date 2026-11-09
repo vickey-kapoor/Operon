@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 from operon.agent.backends.fallback import BackendCompatibilityError
@@ -30,22 +31,46 @@ def _scroll_payload(direction: str, magnitude: int, x: int, y: int) -> dict[str,
     return payload
 
 
+# Mouse calls whose meaning changes with a key held (Control-click, Shift-click,
+# Control-scroll). The executors have no held-modifier mouse action, so with a key
+# held these are skipped and reported back to the model, never run as plain clicks.
+_MODIFIED_MOUSE_CALLS = frozenset({
+    "click_at", "scroll_at", "drag_and_drop", "click", "middle_click", "double_click",
+    "triple_click", "right_click", "scroll",
+})
+
+
+@dataclass
+class KeyHold:
+    """Keys the model is holding down with Gemini 3.x's ``key_down`` / ``key_up``.
+
+    ``keys`` join the next key press, so ``key_down Control``, ``press_key a``,
+    ``key_up Control`` is Control+a. ``skipped`` names mouse calls that were not run
+    because a key was held (see ``_MODIFIED_MOUSE_CALLS``)."""
+
+    keys: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+
+    def copy(self) -> KeyHold:
+        return KeyHold(keys=list(self.keys))
+
+
 def normalize_computer_use_function_call(
     function_call: dict[str, Any],
     *,
     screen_width: int,
     screen_height: int,
-    held_keys: list[str] | None = None,
+    key_hold: KeyHold | None = None,
 ) -> dict[str, Any]:
     """One Computer Use call as an Operon action payload.
 
-    ``held_keys`` is the run's list of keys the model is holding down (Gemini 3.x's
-    ``key_down`` / ``key_up``, often across turns): they are added to the next key
-    press, so ``key_down Control``, ``press_key a``, ``key_up Control`` selects all.
-    Without it, ``key_down`` / ``key_up`` are kept per call only."""
+    ``key_hold`` carries the keys the model holds down (``key_down`` / ``key_up``,
+    often across turns) and is updated in place. Without it, a held key lasts only
+    for this call."""
     name = function_call.get("name")
     args = function_call.get("args", {})
-    held = held_keys if held_keys is not None else []
+    hold = key_hold if key_hold is not None else KeyHold()
+    held = hold.keys
     safety_decision = args.get("safety_decision")
     if isinstance(safety_decision, dict) and safety_decision.get("decision") == "require_confirmation":
         return {
@@ -56,6 +81,9 @@ def normalize_computer_use_function_call(
             ),
         }
 
+    if held and name in _MODIFIED_MOUSE_CALLS:
+        hold.skipped.append(f"{name} with {'+'.join(held)} held")
+        return {"action_type": "wait", "wait_ms": 100}
     if name == "open_web_browser":
         return {"action_type": "launch_app", "text": "browser"}
     if name == "wait_5_seconds":
@@ -175,7 +203,7 @@ def normalize_computer_use_actions(
     *,
     screen_width: int,
     screen_height: int,
-    held_keys: list[str] | None = None,
+    key_hold: KeyHold | None = None,
 ) -> dict[str, Any]:
     if not function_calls:
         raise BackendCompatibilityError("No Computer Use function calls were provided.")
@@ -189,13 +217,15 @@ def normalize_computer_use_actions(
                 screen_width=screen_width,
                 screen_height=screen_height,
             )
+    # One hold for the whole batch, so a key held early in it reaches later calls.
+    hold = key_hold if key_hold is not None else KeyHold()
     normalized: list[dict[str, Any]] = []
     for function_call in function_calls:
         action = normalize_computer_use_function_call(
             function_call,
             screen_width=screen_width,
             screen_height=screen_height,
-            held_keys=held_keys,
+            key_hold=hold,
         )
         previous = normalized[-1] if normalized else None
         if (

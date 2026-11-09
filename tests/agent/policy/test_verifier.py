@@ -618,3 +618,18 @@ async def test_critic_null_strings_are_read_as_null(tmp_path: Path) -> None:
 
     assert result.critic_model_used is True
     assert result.reason == "Compose is open."
+
+
+@pytest.mark.asyncio
+async def test_stop_verdict_records_whether_the_critic_checked_it(tmp_path: Path) -> None:
+    state = AgentState(run_id="run-c4", intent="Create draft", status="running")
+    decision, executed = _stop(tmp_path)
+
+    checked = await _critic(tmp_path, "success").verify(state, decision, executed)
+    unchecked = await _service().verify(
+        AgentState(run_id="run-c5", intent="Create draft", status="running", action_history=[_typed_draft()]),
+        *_stop(),
+    )
+
+    assert checked.critic_model_used is True and checked.critic_fallback_reason is None
+    assert unchecked.critic_model_used is False and unchecked.critic_fallback_reason

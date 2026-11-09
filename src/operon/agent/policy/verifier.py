@@ -135,7 +135,12 @@ class DeterministicVerifierService(VerifierService):
                     failure_stage=LoopStage.CHOOSE_ACTION,
                     stop_reason=StopReason.BENCHMARK_PRECONDITION_FAILED,
                 )
-            rejection = await self._unverified_stop_reason(state, decision, executed_action)
+            rejection, critic = await self._unverified_stop_reason(state, decision, executed_action)
+            # Saved verdicts show whether the critic checked the stop.
+            critic_fields = {
+                "critic_model_used": critic is not None,
+                "critic_fallback_reason": None if critic is not None else "critic_unavailable_or_unusable",
+            }
             if rejection is not None:
                 return VerificationResult(
                     status=VerificationStatus.FAILURE,
@@ -145,6 +150,7 @@ class DeterministicVerifierService(VerifierService):
                     failure_type=VerificationFailureType.EXPECTED_OUTCOME_NOT_MET,
                     failure_category=FailureCategory.EXPECTED_OUTCOME_NOT_MET,
                     failure_stage=LoopStage.VERIFY,
+                    **critic_fields,
                 )
             return VerificationResult(
                 status=VerificationStatus.SUCCESS,
@@ -153,6 +159,7 @@ class DeterministicVerifierService(VerifierService):
                 reason="Intentional task stop boundary met.",
                 failure_type=VerificationFailureType.STOP_BOUNDARY_REACHED,
                 stop_reason=self._stop_reason_for_intentional_stop(state, decision),
+                **critic_fields,
             )
 
         # Self-terminating actions: when the chosen action IS the goal
@@ -266,8 +273,9 @@ class DeterministicVerifierService(VerifierService):
         state: AgentState,
         decision: PolicyDecision,
         executed_action: ExecutedAction,
-    ) -> str | None:
-        """Why a STOP must not count as task success, or None to accept it.
+    ) -> tuple[str | None, VerificationResult | None]:
+        """Why a STOP must not count as task success (None to accept it), and the
+        critic's verdict when the critic ran.
 
         A STOP is the policy's claim that the task is done, so it is checked like
         any other outcome. The critic judges the current screen when it can; when
@@ -278,17 +286,17 @@ class DeterministicVerifierService(VerifierService):
         critic = await self._model_verify(state, decision, executed_action)
         if critic is not None:
             if critic.status is VerificationStatus.SUCCESS:
-                return None
+                return None, critic
             if critic.status is VerificationStatus.FAILURE:
-                return f"Stop rejected: the critic does not see the task complete ({critic.reason})"
+                return f"Stop rejected: the critic does not see the task complete ({critic.reason})", critic
         if not any(
             executed.success and executed.action.action_type not in self._NON_WORK_ACTION_TYPES
             for executed in state.action_history
         ):
-            return "Stop rejected: no action toward the task has succeeded yet."
+            return "Stop rejected: no action toward the task has succeeded yet.", critic
         if state.verification_history and state.verification_history[-1].status is VerificationStatus.FAILURE:
-            return "Stop rejected: the previous step failed verification and was not recovered."
-        return None
+            return "Stop rejected: the previous step failed verification and was not recovered.", critic
+        return None, critic
 
     def _action_changed_screen(self, executed_action: ExecutedAction) -> bool:
         """Return True when the before→after screenshot delta shows a visible change.

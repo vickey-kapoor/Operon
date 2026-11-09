@@ -167,3 +167,45 @@ def test_registry_path_can_be_overridden(monkeypatch, tmp_path: Path) -> None:
     path.write_text("tiny:\n  adapter: openai_compat\n  model: tiny-vl\n", encoding="utf-8")
     monkeypatch.setenv("OPERON_MODEL_REGISTRY", str(path))
     assert resolve_profile("tiny").model == "tiny-vl"
+
+
+def test_gemini_computer_use_is_judged_by_its_own_done(monkeypatch) -> None:
+    # The completion check runs on Claude; a Gemini run is graded by the benchmark instead.
+    assert completion_check("computer_use") == OWN_DONE
+    monkeypatch.setenv("OPERON_COMPLETION_CHECK", "claude")
+    assert completion_check("computer_use") == OWN_DONE
+
+
+@pytest.mark.parametrize("environment", ["browser", "desktop"])
+@pytest.mark.parametrize(("requested", "expected"), [(None, "full"), ("full", "full"), ("thin", THIN)])
+def test_gemini_computer_use_runs_either_harness(monkeypatch, environment, requested, expected) -> None:
+    from operon.agent.policy.coordinator import PolicyCoordinator
+    from operon.agent.policy.thin import ThinPolicy
+    from operon.api.runtime.loops import _loop_layers
+    from operon.api.runtime_config import browser_mode_config, desktop_mode_config
+
+    monkeypatch.setenv(f"OPERON_{environment.upper()}_BACKEND", "computer_use")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    if requested:
+        monkeypatch.setenv("OPERON_HARNESS_PROFILE", requested)
+    if environment == "browser":
+        services = build_browser_services(executor=None)
+        config = browser_mode_config()
+    else:
+        monkeypatch.delenv("OPERON_DESKTOP_MODEL", raising=False)
+        services = build_desktop_services()
+        config = desktop_mode_config()
+        assert isinstance(services.policy_delegate, DesktopComputerUseBackend)
+        assert services.policy_delegate.client.model == "gemini-3.5-flash"
+        assert [tool["name"] for tool in services.policy_delegate.client.function_declarations] == ["launch_app"]
+    backend = getattr(services.policy_delegate, "primary", services.policy_delegate)  # full browser keeps its fallback
+    assert isinstance(backend, BrowserComputerUseBackend)
+    assert not any("_BACKEND=" in error for error in validate_modes())
+    layers = _loop_layers(config=config, services=services, memory_store=None, desktop=environment == "desktop")
+    assert layers["harness_profile"] == expected
+    if expected == THIN:
+        assert isinstance(layers["policy_service"], ThinPolicy)
+        # No Claude in a Gemini run: its own "done" ends it, unchecked.
+        assert isinstance(layers["verifier_service"], OwnDoneVerifier)
+    else:
+        assert isinstance(layers["policy_service"], PolicyCoordinator)

@@ -47,7 +47,7 @@ def _rows(runs: str) -> dict:
 def test_an_empty_grid_says_why_each_cell_is_empty() -> None:
     rows = _rows("")
     assert [r["family"] for r in _run("planGrid([], REGISTRY)")] == ["Gemini", "Claude", "GPT"]
-    assert rows["Gemini"]["thinWhy"].startswith("needs KAN-67")
+    assert rows["Gemini"]["thinWhy"] == "not run yet"  # KAN-67 built Gemini's thin harness
     assert rows["Gemini"]["fullWhy"] == "not run yet"
     assert rows["Claude"]["thinWhy"] == rows["Claude"]["fullWhy"] == "waits for your approval after Gemini's thin and full runs"
     assert rows["GPT"]["fullWhy"].startswith("needs KAN-68")  # a missing harness is named before the approval gate

@@ -89,19 +89,30 @@ OWN_DONE = "own"
 FINAL_CHECK = "claude"
 
 
+# Gemini computer use (browser and desktop): full by default, thin on request, so
+# the benchmark can run the same model in both harnesses (KAN-67).
+GEMINI_COMPUTER_USE = "computer_use"
+
+
 def harness_profile(backend: str) -> str:
     """The harness profile for a backend. Claude computer use runs thin unless
-    ``OPERON_HARNESS_PROFILE=full`` asks for the old scaffolding; the model-adapter
-    backend always runs thin; every other backend runs full, since its decisions
-    still need the rules and the critic."""
+    ``OPERON_HARNESS_PROFILE=full`` asks for the old scaffolding; Gemini computer use
+    runs full unless ``OPERON_HARNESS_PROFILE=thin`` asks for the thin harness; the
+    model-adapter backend always runs thin; every other backend (json) runs full,
+    since its decisions still need the rules and the critic."""
     requested = (os.getenv("OPERON_HARNESS_PROFILE") or "").strip().lower()
     if backend == MODEL_BACKEND:
         if requested == FULL:
             logger.warning("OPERON_HARNESS_PROFILE=full is ignored for backend=model; it always runs thin")
         return THIN
+    if backend == GEMINI_COMPUTER_USE:
+        return THIN if requested == THIN else FULL
     if backend != "claude_computer_use":
         if requested == THIN:
-            logger.warning("OPERON_HARNESS_PROFILE=thin needs backend=claude_computer_use (got %r); using full", backend)
+            logger.warning(
+                "OPERON_HARNESS_PROFILE=thin needs backend=claude_computer_use or computer_use (got %r); using full",
+                backend,
+            )
         return FULL
     return FULL if requested == FULL else THIN
 
@@ -111,9 +122,11 @@ def completion_check(backend: str) -> str:
     ``own`` takes the model's word and leaves success to the benchmark's graders.
 
     The model-adapter backend always uses ``own``, so every model in a benchmark is
-    judged the same way. Claude computer use opts in with ``OPERON_COMPLETION_CHECK=own``
-    (benchmark mode; off by default, since production runs want the check)."""
-    if backend == MODEL_BACKEND:
+    judged the same way. So does Gemini computer use: the check runs on Claude, and a
+    Gemini run should not need an Anthropic key or be judged by another model. Claude
+    computer use opts in with ``OPERON_COMPLETION_CHECK=own`` (benchmark mode; off by
+    default, since production runs want the check)."""
+    if backend in {MODEL_BACKEND, GEMINI_COMPUTER_USE}:
         return OWN_DONE
     requested = (os.getenv("OPERON_COMPLETION_CHECK") or "").strip().lower()
     return OWN_DONE if requested == OWN_DONE else FINAL_CHECK

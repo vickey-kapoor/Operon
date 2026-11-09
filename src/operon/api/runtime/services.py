@@ -168,8 +168,8 @@ def build_browser_services(executor) -> RuntimeServices:
             )
         if harness_profile(config.backend) == THIN:
             # The loop's policy, verifier and recovery are fixed for the profile when it
-            # is built. A JSON fallback would run Gemini's decisions with no rules, guards
-            # or critic, so under the thin harness a Claude failure ends the run instead.
+            # is built. A JSON fallback would run its decisions with no rules, guards or
+            # critic, so under the thin harness a model failure ends the run instead.
             if config.fallback_backend:
                 logger.debug("OPERON_BROWSER_FALLBACK_BACKEND is ignored under the thin harness")
             return RuntimeServices(perception_service=primary, policy_delegate=primary)
@@ -199,10 +199,21 @@ def build_desktop_services() -> RuntimeServices:
             prompt_path=_PROMPTS_DIR / "desktop_claude_computer_use_prompt.txt",
         )
         return RuntimeServices(perception_service=backend, policy_delegate=backend)
+    if config.backend == "computer_use":
+        backend = DesktopComputerUseBackend(
+            client=GeminiComputerUseHttpClient(
+                model=config.primary_model,
+                thinking_level=config.thinking,
+                environment=DESKTOP_ENVIRONMENT,
+                function_declarations=[GEMINI_LAUNCH_APP_FUNCTION],
+            ),
+            prompt_path=_PROMPTS_DIR / "desktop_computer_use_prompt.txt",
+        )
+        return RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend != "json":
         raise ValueError(
             f"Unsupported desktop backend {config.backend!r}. "
-            "Use 'json', 'claude_computer_use' or 'model'."
+            "Use 'json', 'computer_use', 'claude_computer_use' or 'model'."
         )
     backend = build_json_backend(
         prompt_name="desktop_combined_prompt.txt",

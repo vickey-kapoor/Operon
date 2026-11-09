@@ -1658,7 +1658,7 @@ function renderLeaderboardBrief(data) {
 // Claude and GPT wait for Vickey's approval after Gemini's pair has run. `needs` names the
 // story that builds a harness the model can't run yet: drop the entry when that story merges.
 const RUN_PLAN = [
-  { family: "Gemini", story: "KAN-66", needs: { thin: "KAN-67: Gemini thin harness" } },
+  { family: "Gemini", story: "KAN-66", needs: {} },
   { family: "Claude", story: "KAN-70", afterGemini: true, needs: {} },
   { family: "GPT", story: "KAN-71", afterGemini: true, needs: { full: "KAN-68: GPT full harness" } },
 ];

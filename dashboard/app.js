@@ -29,6 +29,9 @@ const state = {
   selected: null,
   costSelected: null,
   slots: {},
+  // Backend + harness labels whose runs used more than one model: their labels
+  // carry the model, so an Opus and a Sonnet run are two configurations.
+  multiModel: new Set(),
   reports: {},
   tasks: null,
   judge: null,
@@ -101,11 +104,31 @@ function harnessSuffix(name, harness) {
   return (harness || "full") === "thin" ? `${name} · thin` : name;
 }
 
+function baseLabel(run) {
+  const c = run.config || {};
+  const name = BACKEND_NAMES[c.backend] || c.backend || "Unknown backend";
+  return harnessSuffix(name, c.harness_profile);
+}
+
 function configLabel(run) {
   const c = run.config || {};
   if (c.model_profile) return c.model_profile;  // a registry model: always thin, own "done"
-  const name = BACKEND_NAMES[c.backend] || c.backend || "Unknown backend";
-  return harnessSuffix(name, c.harness_profile);
+  const base = baseLabel(run);
+  // Only where one backend ran several models, so history from before the model
+  // was recorded (and single-model configs) keeps its label and colour.
+  return c.model && state.multiModel.has(base) ? `${base} · ${c.model}` : base;
+}
+
+function noteModels(runs) {
+  const models = new Map();
+  for (const run of runs) {
+    const c = run.config || {};
+    if (c.model_profile || !c.model) continue;
+    const base = baseLabel(run);
+    if (!models.has(base)) models.set(base, new Set());
+    models.get(base).add(c.model);
+  }
+  state.multiModel = new Set([...models].filter(([, set]) => set.size > 1).map(([base]) => base));
 }
 
 function seriesColor(label) {
@@ -118,7 +141,10 @@ function assignSlots(runs) {
   for (const run of runs) {
     const label = configLabel(run);
     if (state.slots[label]) continue;
-    if (FIXED_SLOTS[label]) { state.slots[label] = FIXED_SLOTS[label]; continue; }
+    // A fixed colour goes to the first label of its backend + harness; a second
+    // model of the same configuration gets its own.
+    const fixed = FIXED_SLOTS[label] || FIXED_SLOTS[baseLabel(run)];
+    if (fixed && !Object.values(state.slots).includes(fixed)) { state.slots[label] = fixed; continue; }
     while (used.has(next) && next < MAX_SLOTS) next++;
     state.slots[label] = next;
     used.add(next);
@@ -774,6 +800,16 @@ function renderJudge() {
         el("td", {}, d.judge === null || d.judge === undefined ? "no answer" : d.judge ? "done" : "not done"))))) : "");
 }
 
+// One pill per attempt; a repeated task also shows how many attempts passed (2/3).
+function attemptCell(attempts) {
+  const pills = attempts.map((r) => pill(r.outcome));
+  if (attempts.length < 2) return pills;
+  const passed = attempts.filter((r) => r.outcome === "success").length;
+  const flaky = passed > 0 && passed < attempts.length;
+  return [...pills, el("span", { class: "sub", title: flaky ? "flaky: passed some attempts" : "" },
+    ` ${passed}/${attempts.length}${flaky ? " flaky" : ""}`)];
+}
+
 async function renderMatrix(runs) {
   const table = document.getElementById("matrix");
   const columns = latestByConfig(runs);
@@ -787,7 +823,9 @@ async function renderMatrix(runs) {
     const map = new Map();
     for (const r of (report && report.results) || []) {
       if (!tasks.some((t) => t.task === r.task)) tasks.push({ task: r.task, category: r.category });
-      map.set(r.task, r);
+      // A --repeat run reports each task several times: keep every attempt.
+      if (!map.has(r.task)) map.set(r.task, []);
+      map.get(r.task).push(r);
     }
     return map;
   });
@@ -795,8 +833,8 @@ async function renderMatrix(runs) {
     columns.map((run) => el("th", { class: "col" }, configCell(run))))));
   const body = el("tbody");
   const rows = tasks.map((t) => {
-    const results = byColumn.map((m) => m.get(t.task));
-    const outcomes = new Set(results.filter(Boolean).map((r) => r.outcome));
+    const results = byColumn.map((m) => m.get(t.task) || null);
+    const outcomes = new Set(results.filter(Boolean).flat().map((r) => r.outcome));
     return { t, results, differs: outcomes.size > 1, allPass: outcomes.size === 1 && outcomes.has("success") };
   });
   // Tasks someone got wrong first; the ones every configuration passed collapse.
@@ -810,8 +848,12 @@ async function renderMatrix(runs) {
     if (allPass && !state.matrixAll && passed !== rows.length) continue;
     body.append(el("tr", { class: differs ? "differs" : "" },
       el("td", {}, t.task), el("td", {}, t.category || ""),
-      results.map((r) => el("td", { class: "cell", title: r ? `${r.steps} steps, ${r.seconds} s — ${r.judge_reason || ""}` : "not run" },
-        r ? pill(r.outcome) : "–"))));
+      results.map((attempts) => el("td", {
+        class: "cell",
+        title: attempts
+          ? attempts.map((r, i) => `${attempts.length > 1 ? `#${i + 1}: ` : ""}${r.outcome}, ${r.steps} steps, ${r.seconds} s — ${r.judge_reason || ""}`).join("\n")
+          : "not run",
+      }, attempts ? attemptCell(attempts) : "–"))));
   }
   table.append(body);
 }
@@ -849,6 +891,7 @@ function renderRuns(runs) {
 
 async function selectRun(run) {
   state.selected = run.key;
+  const token = (state.detailToken = (state.detailToken || 0) + 1);
   renderRuns(filteredRuns());
   const card = document.getElementById("detail");
   card.hidden = false;
@@ -862,6 +905,7 @@ async function selectRun(run) {
   table.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "empty" }, "Loading…"))));
   try {
     const report = await loadReport(run);
+    if (token !== state.detailToken) return;  // another run was picked meanwhile
     const order = { compromised: -1, false_success: 0, failure: 1, missed: 2, timeout: 3, error: 4, success: 5 };
     const rows = [...report.results].sort((a, b) => (order[a.outcome] ?? 9) - (order[b.outcome] ?? 9));
     const withScreens = rows.some((r) => safeUrl(r.screenshot_url));
@@ -870,6 +914,7 @@ async function selectRun(run) {
       el("thead", {}, el("tr", {}, headers.map((h, i) => el("th", { class: i === 3 || i === 4 ? "num" : "" }, h)))),
       el("tbody", {}, rows.flatMap((r) => taskRows(r, withScreens, headers.length))));
   } catch (err) {
+    if (token !== state.detailToken) return;
     table.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "empty" }, `Could not load the report: ${err.message}`))));
   }
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1378,6 +1423,7 @@ function renderCost() {
 
 async function selectCostRun(run) {
   state.costSelected = run.key;
+  const token = (state.costToken = (state.costToken || 0) + 1);
   renderCost();
   const wrap = document.getElementById("cost-detail");
   wrap.hidden = false;
@@ -1400,6 +1446,7 @@ async function selectCostRun(run) {
   tasks.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "empty" }, "Loading…"))));
   try {
     const report = await loadReport(run);
+    if (token !== state.costToken) return;  // another run was picked meanwhile
     const rows = [...report.results].sort((a, b) => (b.cost_usd || 0) - (a.cost_usd || 0));
     tasks.replaceChildren(
       el("thead", {}, el("tr", {}, ["Task", "Outcome", "Steps", "Cost", "Input", "Output"]
@@ -1408,6 +1455,7 @@ async function selectCostRun(run) {
         el("td", { class: "num" }, fmtNum(r.steps)), el("td", { class: "num" }, fmtUsd(r.cost_usd)),
         el("td", { class: "num" }, fmtTokens(r.input_tokens)), el("td", { class: "num" }, fmtTokens(r.output_tokens))))));
   } catch (err) {
+    if (token !== state.costToken) return;
     tasks.replaceChildren(el("tbody", {}, el("tr", {}, el("td", { class: "empty" }, `Could not load the report: ${err.message}`))));
   }
 }
@@ -1718,6 +1766,7 @@ async function main() {
     const index = await getJson("api/runs");
     state.runs = index.runs || [];
     state.budget = index.budget_usd || null;
+    noteModels(state.runs);
     assignSlots(state.runs);
     const generated = index.generated_at ? new Date(index.generated_at) : null;
     document.getElementById("meta").textContent =

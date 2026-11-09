@@ -13,7 +13,7 @@ import pytest
 
 from tests.evals.test_dashboard_brief import APP_JS, _constant_source, _function_source
 
-FUNCTIONS = ("suiteId", "hasCost", "listedSpend", "modelFamily", "harnessMode", "planCell", "planGrid", "registryLabel")
+FUNCTIONS = ("suiteId", "hasCost", "listedSpend", "modelFamily", "harnessMode", "planCell", "harnessDelta", "planGrid", "registryLabel")
 CONSTANTS = ("RUN_PLAN", "PLAN_SEASON", "PLAN_SUITES", "ADAPTER_FAMILIES", "BACKEND_FAMILIES")
 REGISTRY = [
     {"profile": "gpt-cu", "adapter": "openai_native"},
@@ -96,3 +96,31 @@ def test_registry_models_map_to_their_family_and_open_weight_ones_are_left_out()
 def test_a_registry_model_in_the_full_harness_gets_its_own_label() -> None:
     assert _run("registryLabel({ model_profile: 'gpt-cu', harness_profile: 'thin' })") == "gpt-cu"
     assert _run("registryLabel({ model_profile: 'gpt-cu', harness_profile: 'full' })") == "gpt-cu · full"
+
+
+def test_full_minus_thin_compares_only_the_suites_both_harnesses_ran() -> None:
+    rows = _rows("""
+        run('20261110T000000Z', 'browser', 'long', gemini('thin-own'), 10, 10),
+        run('20261110T000000Z', 'desktop', 'desktop-full', gemini('full'), 0, 10)""")
+    assert rows["Gemini"]["delta"] is None  # thin ran only long, full only desktop: nothing to compare
+    rows = _rows("""
+        run('20261110T000000Z', 'browser', 'long', gemini('thin-own'), 6, 10),
+        run('20261110T000000Z', 'browser', 'long', gemini('full'), 8, 10),
+        run('20261110T010000Z', 'desktop', 'desktop-full', gemini('full'), 0, 10)""")
+    assert rows["Gemini"]["delta"] == pytest.approx(0.2)  # the desktop run full alone has is left out
+
+
+def test_a_gate_with_a_failed_held_out_task_does_not_pass() -> None:
+    rows = _rows("""
+        run('20261110T000000Z', 'browser', 'safety', { ...gemini('full'), season_held_out: { run: 2, passed: 1 } }, 9, 9),
+        run('20261110T000000Z', 'browser', 'apps', { ...gemini('full'), season_held_out: { run: 2, passed: 2 } }, 11, 11)""")
+    gates = {g["id"]: g["passed"] for g in rows["Gemini"]["full"]["gates"]}
+    assert gates == {"browser|safety": False, "browser|apps": True}
+
+
+def test_a_working_only_run_is_still_flagged_when_it_carries_held_out_counts() -> None:
+    rows = _rows("""
+        run('20261110T000000Z', 'browser', 'long',
+            { ...gemini('full'), season_working_only: true, season_held_out: { run: 0, passed: 0 } }, 8, 10)""")
+    full = rows["Gemini"]["full"]
+    assert full["workingOnly"] is True and full["heldOut"] == {"run": 0, "passed": 0}

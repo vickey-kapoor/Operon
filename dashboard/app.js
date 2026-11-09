@@ -1700,10 +1700,15 @@ function planCell(byKey, family, harness) {
     costPerTask: tasks && scored.some(hasCost) ? sum(scored, listedSpend) / tasks : null,
     suites: scored.map((r) => ({ id: suiteId(r), success: r.summary.success, tasks: r.summary.tasks })),
     missing: PLAN_SUITES.scored.filter((id) => !byKey.has(`${family}|${harness}|${id}`)),
-    gates: gates.map((r) => ({
-      id: suiteId(r), success: r.summary.success, tasks: r.summary.tasks, compromised: r.summary.compromised || 0,
-      passed: r.summary.success === r.summary.tasks && !r.summary.compromised,
-    })),
+    gates: gates.map((r) => {
+      // The summary leaves out held-out tasks, so a gate passes only if those passed too.
+      const h = r.config.season_held_out || null;
+      return {
+        id: suiteId(r), success: r.summary.success, tasks: r.summary.tasks, compromised: r.summary.compromised || 0,
+        heldOut: h, passed: r.summary.success === r.summary.tasks && !r.summary.compromised
+          && (!h || Number(h.run) === Number(h.passed)),
+      };
+    }),
     heldOut: held.length ? { run: sum(held, (h) => h.run), passed: sum(held, (h) => h.passed) } : null,
     workingOnly: scored.some((r) => r.config.season_working_only),
     critics,
@@ -1738,18 +1743,36 @@ function planGrid(runs, registry) {
         : row.afterGemini && !geminiDone ? "waits for your approval after Gemini's thin and full runs"
           : "not run yet";
     }
-    row.delta = row.thin && row.full && row.thin.rate !== null && row.full.rate !== null ? row.full.rate - row.thin.rate : null;
+    row.delta = harnessDelta(row.thin, row.full);
   }
   return rows;
+}
+
+// Full minus thin over the scored suites both harnesses ran, so a suite only one of
+// them has run never shows up as a harness difference.
+function harnessDelta(thin, full) {
+  if (!thin || !full) return null;
+  const ids = new Set(full.suites.map((x) => x.id));
+  const common = thin.suites.filter((x) => ids.has(x.id)).map((x) => x.id);
+  if (!common.length) return null;
+  const rate = (cell) => {
+    const picked = cell.suites.filter((x) => common.includes(x.id));
+    const tasks = picked.reduce((acc, x) => acc + (Number(x.tasks) || 0), 0);
+    return tasks ? picked.reduce((acc, x) => acc + (Number(x.success) || 0), 0) / tasks : null;
+  };
+  const a = rate(thin), b = rate(full);
+  return a === null || b === null ? null : b - a;
 }
 
 function planCellView(cell, why) {
   if (!cell) return el("td", { class: "not-run" }, why);
   const suites = cell.suites.map((x) => `${suiteLabel(x.id)} ${x.success}/${x.tasks}`);
   const gates = cell.gates.map((g) => `${suiteLabel(g.id)} gate ${g.passed ? "passed" : "failed"} (${g.success}/${g.tasks}`
-    + (g.compromised ? `, ${g.compromised} compromised` : "") + ")");
+    + (g.compromised ? `, ${g.compromised} compromised` : "")
+    + (g.heldOut ? `, held-out ${g.heldOut.passed}/${g.heldOut.run}` : "") + ")");
   const title = [...suites, ...cell.missing.map((id) => `${suiteLabel(id)} not run`), ...gates,
-    cell.heldOut ? `held-out ${cell.heldOut.passed}/${cell.heldOut.run}` : cell.workingOnly ? "working tasks only" : null,
+    cell.heldOut ? `held-out ${cell.heldOut.passed}/${cell.heldOut.run}` : null,
+    cell.workingOnly ? "working tasks only" : null,
     cell.critics.length ? `critic: ${cell.critics.join(", ")}` : null].filter(Boolean).join(" · ");
   const rate = cell.rate;
   return el("td", { title },

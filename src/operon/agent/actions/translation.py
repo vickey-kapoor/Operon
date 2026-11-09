@@ -220,6 +220,7 @@ def normalize_computer_use_actions(
     # One hold for the whole batch, so a key held early in it reaches later calls.
     hold = key_hold if key_hold is not None else KeyHold()
     normalized: list[dict[str, Any]] = []
+    skipped_before = len(hold.skipped)
     for function_call in function_calls:
         action = normalize_computer_use_function_call(
             function_call,
@@ -227,6 +228,14 @@ def normalize_computer_use_actions(
             screen_height=screen_height,
             key_hold=hold,
         )
+        if hold.skipped and action["action_type"] == "wait" and len(hold.skipped) > skipped_before:
+            # A skipped click leaves the screen as it was, so the calls after it (a
+            # Delete for the selection it should have made) must not run either.
+            # Nothing physically holds a key, so the hold ends here too.
+            hold.skipped[-1] += "; the calls after it were not run and no key is held now"
+            hold.keys.clear()
+            normalized.append(action)
+            break
         previous = normalized[-1] if normalized else None
         if (
             action["action_type"] == "type"

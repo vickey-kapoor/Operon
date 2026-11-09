@@ -284,5 +284,22 @@ def test_click_with_a_key_held_is_skipped_not_run_plain() -> None:
         key_hold=hold,
     )
 
-    assert [a["action_type"] for a in payload["actions"]] == ["wait", "wait", "wait", "click"]
-    assert hold.skipped == ["click with Control held"]
+    # The batch ends at the skipped click: nothing after it runs on the unchanged screen.
+    assert [a["action_type"] for a in payload["actions"]] == ["wait", "wait"]
+    assert hold.skipped[0].startswith("click with Control held")
+    assert hold.keys == []
+
+
+def test_calls_after_a_skipped_click_do_not_run() -> None:
+    payload = normalize_computer_use_actions(
+        [
+            {"name": "key_down", "args": {"key": "Control"}},
+            {"name": "click", "args": {"x": 500, "y": 500}},
+            {"name": "key_up", "args": {"key": "Control"}},
+            {"name": "press_key", "args": {"key": "Delete"}},
+        ],
+        screen_width=1000,
+        screen_height=1000,
+    )
+
+    assert all(a["action_type"] == "wait" for a in payload["actions"])

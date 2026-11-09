@@ -10,21 +10,45 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import os
+import threading
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# One worker: writes run in the order they were queued, so a later state.json
+# snapshot can never be overwritten by an earlier one still in flight.
 _thread_pool = concurrent.futures.ThreadPoolExecutor(
-    max_workers=2, thread_name_prefix="bg_writer"
+    max_workers=1, thread_name_prefix="bg_writer"
 )
 
 
 def _write_file(path: Path, content: str) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        # Write a sibling temp file, then swap it in: a reader (the observer) never
+        # sees a half-written file.
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        _replace(tmp, path)
     except Exception:
         logger.debug("artifact write failed: %s", path, exc_info=True)
+
+
+def _replace(tmp: Path, path: Path) -> None:
+    """Swap ``tmp`` in for ``path``. On Windows the swap fails while a reader has
+    ``path`` open (for a few ms), so retry for about a second. Never write in place:
+    a reader would see a half-written file. If it is still refused, the old file
+    stays whole and the next snapshot replaces it."""
+    for delay in (0.01, 0.03, 0.1, 0.3, 0.6):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    tmp.unlink(missing_ok=True)
+    logger.warning("artifact write skipped: %s stayed locked by a reader", path)
 
 
 class BackgroundWriter:

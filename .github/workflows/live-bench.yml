@@ -21,10 +21,13 @@ on:
         description: "Effort for claude_computer_use (low, medium, high)"
         default: "low"
       harness_profile:
-        description: "OPERON_HARNESS_PROFILE: thin or full, for Claude and Gemini computer use (Gemini thin ends on its own done)."
+        description: "OPERON_HARNESS_PROFILE: thin or full, for Claude, Gemini computer use and registry models (thin ends on the model's own done, except Claude's)."
         type: choice
         options: [thin, full]
         default: thin
+      critic:
+        description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
+        default: ""
       final_check_model:
         description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
         default: ""
@@ -49,6 +52,7 @@ on:
       claude_model: {type: string, default: "claude-opus-5-5"}
       claude_effort: {type: string, default: "low"}
       harness_profile: {type: string, default: "thin"}
+      critic: {type: string, default: ""}
       final_check_model: {type: string, default: ""}
       suite: {type: string, default: "smoke"}
       args: {type: string, default: ""}
@@ -98,6 +102,7 @@ jobs:
       OPERON_BROWSER_CLAUDE_MODEL: ${{ inputs.claude_model }}
       OPERON_BROWSER_CLAUDE_EFFORT: ${{ inputs.claude_effort }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
+      OPERON_CRITIC: ${{ inputs.critic }}
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       BROWSER_HEADLESS: "true"

@@ -67,7 +67,7 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.live_desktop_bench [--suite smoke] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [model=<profile>]
 #   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 # Cross-model (experimental): model=<profile> / --model <profile> runs a profile from evals/models.yaml
 # (OPERON_*_BACKEND=model + OPERON_MODEL_PROFILE; adapters in src/operon/agent/backends/model_adapter/)

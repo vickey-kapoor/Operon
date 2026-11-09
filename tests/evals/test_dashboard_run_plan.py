@@ -50,7 +50,8 @@ def test_an_empty_grid_says_why_each_cell_is_empty() -> None:
     assert rows["Gemini"]["thinWhy"] == "not run yet"  # KAN-67 built Gemini's thin harness
     assert rows["Gemini"]["fullWhy"] == "not run yet"
     assert rows["Claude"]["thinWhy"] == rows["Claude"]["fullWhy"] == "waits for your approval after Gemini's thin and full runs"
-    assert rows["GPT"]["fullWhy"].startswith("needs KAN-68")  # a missing harness is named before the approval gate
+    # KAN-68 built GPT's full harness: GPT waits only on the approval gate now.
+    assert rows["GPT"]["thinWhy"] == rows["GPT"]["fullWhy"] == "waits for your approval after Gemini's thin and full runs"
 
 
 def test_a_cell_sums_the_scored_suites_and_keeps_gates_apart() -> None:

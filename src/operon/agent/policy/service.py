@@ -40,6 +40,14 @@ class PolicyService(ABC):
         if note is not None:
             note(run_id, reason)
 
+    def note_replaced(self, run_id: str, action: str) -> None:
+        """The full harness ran ``action`` instead of the delegate's last decision (a
+        rule fired, or a guard replaced it). Wrappers pass it on; a backend that holds
+        the model's own tool call tells the model on its next turn."""
+        note = getattr(getattr(self, "delegate", None), "note_replaced", None)
+        if note is not None:
+            note(run_id, action)
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         """The user resumed a confirmation pause with a correction: wrappers pass it
         to their delegate, and a backend holding the paused calls drops them."""

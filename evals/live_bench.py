@@ -284,18 +284,39 @@ def _server_env() -> dict[str, str]:
     return {**os.environ, **dotenv}
 
 
+def critic_label(profile, mode: str = "browser") -> str | None:
+    """Which step critic a full run used, for the report: ``same:<model>`` with
+    OPERON_CRITIC=same (KAN-68), else ``<provider>:<model>`` from the verifier settings;
+    None for a thin run, which has no step critic."""
+    if harness_label(profile, mode) != "full":
+        return None
+    env = _server_env()
+    if (env.get("OPERON_CRITIC") or "").strip().lower() == "same":
+        if profile is not None:
+            return f"same:{profile.model}"
+        backend = (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower()
+        key = "CLAUDE_MODEL" if backend == "claude_computer_use" else "MODEL"
+        return "same:" + (env.get(f"OPERON_{mode.upper()}_{key}") or "server default")
+    defaults = {"browser": "gemini-3.5-flash", "desktop": "gemini-2.5-flash"}
+    provider = (env.get(f"OPERON_{mode.upper()}_VERIFIER_PROVIDER") or "gemini").strip().lower()
+    model = (env.get(f"OPERON_{mode.upper()}_VERIFIER_MODEL") or "").strip() or defaults.get(mode, "server default")
+    return f"{provider}:{model}"
+
+
 def harness_label(profile, mode: str = "browser") -> str:
     """The report's harness: ``thin``, ``full``, or ``thin-own`` for a thin run that takes
     the model's own "done", so it is never compared with runs judged by the completion
     check: Claude with OPERON_COMPLETION_CHECK=own, and Gemini computer use, which has no
-    completion check. Registry models are always thin with own done. Read from the
-    settings the server sees (shell plus ``.env``)."""
-    if profile is not None:
-        return "thin"
+    completion check. Registry models run thin with own done (``thin``) unless
+    OPERON_HARNESS_PROFILE=full (KAN-68). Read from the settings the server sees
+    (shell plus ``.env``)."""
     env = _server_env()
 
     def get(name: str) -> str:
         return (env.get(name) or "").strip().lower()
+
+    if profile is not None:
+        return "full" if get("OPERON_HARNESS_PROFILE") == "full" else "thin"
 
     backend = get(f"OPERON_{mode.upper()}_BACKEND")
     if not backend:
@@ -822,6 +843,7 @@ def build_report(
         "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
         "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
         "harness_profile": harness_label(profile, args.mode),
+        "critic": critic_label(profile, args.mode),
         "model_profile": profile.name if profile is not None else None,
         "model_adapter": profile.adapter if profile is not None else None,
         "model_id": profile.model if profile is not None else None,

@@ -31,9 +31,15 @@ it to `.env` to start.
   completion check (the check runs on Claude), so the benchmark graders decide success. This
   lets the benchmark run the same Gemini model in both harnesses.
 
-- **model backend** (`OPERON_*_BACKEND=model`, experimental): always thin, and the model's own
-  "done" ends the run with no completion check, so every model in the cross-model benchmark
-  is judged the same way by the graders. `OPERON_COMPLETION_CHECK=own` does the same for
+- **model backend** (`OPERON_*_BACKEND=model`, experimental): thin by default, and the model's
+  own "done" ends the run with no completion check, so every model in the cross-model benchmark
+  is judged the same way by the graders. `OPERON_HARNESS_PROFILE=full` runs it in the full
+  harness instead; when a rule or guard runs another action in place of the model's, the model
+  is told on its next turn that its own action did not run.
+- **same-model critic** (`OPERON_CRITIC=same`, full harness only): the per-step verifier calls
+  the acting model (Claude, Gemini, or an OpenAI profile) instead of the `OPERON_*_VERIFIER_*`
+  model, so "Claude full" or "GPT full" is not judged by a Gemini critic. Reports record the
+  critic as `critic` (`same:<model>` or `<provider>:<model>`). `OPERON_COMPLETION_CHECK=own` does the same for
   `claude_computer_use`. See [evaluation.md](evaluation.md#comparing-models-experimental).
 
 On the live browser benchmark the thin harness matched or beat the full one for Claude
@@ -69,7 +75,8 @@ the details.
 | `OPERON_DESKTOP_THINKING` | `low` | Thinking level for the desktop `computer_use` backend (Gemini 3 levels; ignored on Gemini 2.x) |
 | `OPERON_DESKTOP_CLAUDE_MODEL` | `claude-opus-5-5` | Model for the desktop `claude_computer_use` backend |
 | `OPERON_DESKTOP_CLAUDE_EFFORT` | `low` | Claude effort level on the desktop |
-| `OPERON_HARNESS_PROFILE` | `thin` for Claude, `full` for Gemini | `full` switches a `claude_computer_use` backend back to the full harness; `thin` switches a Gemini `computer_use` backend to the thin harness (judged by its own "done"). `json` backends always run `full`. |
+| `OPERON_HARNESS_PROFILE` | `thin` for Claude, `full` for Gemini | `full` switches a `claude_computer_use` backend back to the full harness; `thin` switches a Gemini `computer_use` backend to the thin harness (judged by its own "done"); `full` switches a `model` backend to the full harness. `json` backends always run `full`. |
+| `OPERON_CRITIC` | (unset) | `same`: the full harness's step critic runs on the acting model instead of the `OPERON_*_VERIFIER_*` model |
 | `OPERON_FINAL_CHECK_MODEL` | the acting Claude model | Model for the thin harness's completion check; a cheaper model (e.g. `claude-sonnet-5-5`) cuts its cost |
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |

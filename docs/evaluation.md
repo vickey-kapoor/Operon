@@ -72,7 +72,7 @@ Repository owners, members and collaborators can comment on a PR to benchmark it
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
+/bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [model=<profile>]
 /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 ```
 
@@ -98,6 +98,7 @@ instead, in the full harness unless `thin` is given; a thin Gemini run ends on G
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
 | `/bench sonnet check-haiku` | Sonnet acting, Haiku for the completion check |
 | `/bench apps model=qwen3-vl-32b` | Apps suite on a model registry profile (see below) |
+| `/bench long full model=openai-computer-use` | Long suite on GPT in the full harness, with GPT as its own step critic |
 
 The **Live benchmark**, **Live desktop benchmark** and **Grounding eval** workflows can also be started by hand,
 with inputs for backends, models, harness profile, suite and cost cap (`max_cost_usd`).

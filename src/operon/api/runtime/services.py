@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 
 from operon.agent.backends.base import AgentBackend
@@ -22,6 +23,7 @@ from operon.agent.backends.desktop_computer_use import (
 )
 from operon.agent.backends.fallback import FallbackBackend
 from operon.agent.backends.model_adapter.backend import ModelAdapterBackend
+from operon.agent.backends.model_adapter.critic import ProfileCriticClient
 from operon.agent.backends.model_adapter.openai_native import OpenAIComputerUseBackend
 from operon.agent.backends.model_adapter.registry import (
     ModelProfile,
@@ -73,6 +75,34 @@ def build_verifier_client(*, config):
         timeout_seconds=120.0,
         thinking=config.verifier_thinking,
     )
+
+
+SAME_CRITIC = "same"
+
+
+def critic_setting() -> str:
+    """``OPERON_CRITIC``: ``same`` runs the full harness's step critic on the acting
+    model; anything else (the default) keeps the ``OPERON_*_VERIFIER_*`` critic."""
+    return (os.getenv("OPERON_CRITIC") or "").strip().lower()
+
+
+def build_critic_client(*, config):
+    """The full harness's step critic. With ``OPERON_CRITIC=same`` it is the run's own
+    model (KAN-68), so "Claude full" or "GPT full" is not judged by a Gemini critic;
+    otherwise the configured verifier (``build_verifier_client``)."""
+    if critic_setting() != SAME_CRITIC:
+        return build_verifier_client(config=config)
+    if config.backend == "claude_computer_use":
+        return AnthropicHttpClient(model=config.claude_model or "claude-opus-5-5", timeout_seconds=120.0)
+    if config.backend == "model":
+        profile = resolve_profile()
+        if profile.adapter == "claude_native":
+            return AnthropicHttpClient(model=profile.model, timeout_seconds=120.0)
+        if profile.adapter == "gemini_native":
+            return GeminiHttpClient(model=profile.model, timeout_seconds=120.0, thinking=profile.effort)
+        return ProfileCriticClient(profile)
+    # json and Gemini computer use act with a Gemini model: judge with that model.
+    return GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0, thinking=config.thinking)
 
 
 def build_model_backend(

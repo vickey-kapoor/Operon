@@ -22,6 +22,7 @@ from operon.agent.backends.model_adapter.backend import (
 from operon.agent.backends.model_adapter.registry import ModelRegistryError
 from operon.agent.policy.thin import (
     FINAL_CHECK,
+    FULL,
     OWN_DONE,
     THIN,
     FinalCheckVerifier,
@@ -44,10 +45,11 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_backend_model_always_runs_thin_with_its_own_done(monkeypatch) -> None:
-    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
+def test_backend_model_runs_thin_with_its_own_done_unless_full_is_asked(monkeypatch) -> None:
     assert harness_profile("model") == THIN
     assert completion_check("model") == OWN_DONE
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")  # KAN-68: GPT and others run full too
+    assert harness_profile("model") == FULL
 
 
 def test_claude_keeps_the_final_check_unless_benchmark_mode_asks(monkeypatch) -> None:
@@ -209,3 +211,53 @@ def test_gemini_computer_use_runs_either_harness(monkeypatch, environment, reque
         assert isinstance(layers["verifier_service"], OwnDoneVerifier)
     else:
         assert isinstance(layers["policy_service"], PolicyCoordinator)
+
+
+@pytest.mark.parametrize(
+    ("profile", "client_type", "model"),
+    [
+        ("openai-computer-use", "ProfileCriticClient", "gpt-6.1-sol"),
+        ("claude-sonnet-5-5", "AnthropicHttpClient", "claude-sonnet-5-5"),
+        ("gemini-computer-use", "GeminiHttpClient", "gemini-3.5-flash"),
+    ],
+)
+def test_a_full_model_run_can_be_judged_by_its_own_model(monkeypatch, profile, client_type, model) -> None:
+    from operon.agent.policy.coordinator import PolicyCoordinator
+    from operon.agent.policy.verifier import DeterministicVerifierService
+    from operon.api.runtime.loops import _loop_layers
+    from operon.api.runtime_config import browser_mode_config
+    from operon.store.memory import FileBackedMemoryStore
+
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "model")
+    monkeypatch.setenv("OPERON_MODEL_PROFILE", profile)
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
+    monkeypatch.setenv("OPERON_CRITIC", "same")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    services = build_browser_services(executor=None)
+    layers = _loop_layers(config=browser_mode_config(), services=services, memory_store=FileBackedMemoryStore())
+    assert layers["harness_profile"] == FULL
+    assert isinstance(layers["policy_service"], PolicyCoordinator)
+    verifier = layers["verifier_service"]
+    assert isinstance(verifier, DeterministicVerifierService)
+    critic = verifier.gemini_client
+    assert type(critic).__name__ == client_type
+    assert getattr(critic, "model", None) == model or critic.profile.model == model
+
+
+def test_without_the_setting_the_full_harness_keeps_the_configured_critic(monkeypatch) -> None:
+    from operon.api.runtime.loops import _loop_layers
+    from operon.api.runtime_config import browser_mode_config
+    from operon.clients.gemini import GeminiHttpClient
+    from operon.store.memory import FileBackedMemoryStore
+
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "model")
+    monkeypatch.setenv("OPERON_MODEL_PROFILE", "openai-computer-use")
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
+    monkeypatch.delenv("OPERON_CRITIC", raising=False)
+    monkeypatch.delenv("OPERON_BROWSER_VERIFIER_MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    services = build_browser_services(executor=None)
+    critic = _loop_layers(config=browser_mode_config(), services=services, memory_store=FileBackedMemoryStore())[
+        "verifier_service"].gemini_client
+    assert isinstance(critic, GeminiHttpClient) and critic.model == "gemini-3.5-flash"

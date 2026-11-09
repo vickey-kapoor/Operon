@@ -1660,7 +1660,7 @@ function renderLeaderboardBrief(data) {
 const RUN_PLAN = [
   { family: "Gemini", story: "KAN-66", needs: {} },
   { family: "Claude", story: "KAN-70", afterGemini: true, needs: {} },
-  { family: "GPT", story: "KAN-71", afterGemini: true, needs: { full: "KAN-68: GPT full harness" } },
+  { family: "GPT", story: "KAN-71", afterGemini: true, needs: {} },
 ];
 // The season the plan runs on, and its scored suites and pass/fail gates as suiteId gives
 // them (evals/seasons/README.md). Grounding is one model call per sample, with no harness.

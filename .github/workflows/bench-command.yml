@@ -3,12 +3,13 @@ name: Bench command
 # Runs a live benchmark on a pull request's head when a repository owner, member
 # or collaborator comments on it:
 #
-#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>]
+#   /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [model=<profile>]
 #   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 #
 # model=<profile> runs a model registry profile (evals/models.yaml) through the
-# cross-model adapter instead of Claude: always the thin harness with the model's
-# own "done". It also passes OPENAI_API_KEY, OPENWEIGHT_BASE_URL and
+# cross-model adapter instead of Claude: the thin harness with the model's own
+# "done" unless "full" is given. "same-critic" makes a full run's step critic the
+# acting model (OPERON_CRITIC=same) instead of Gemini. It also passes OPENAI_API_KEY, OPENWEIGHT_BASE_URL and
 # OPENWEIGHT_API_KEY. Experimental; every run still waits for someone to ask.
 #
 # Defaults: browser, thin harness, smoke suite, Opus 5.5. "all" runs the full
@@ -58,6 +59,7 @@ jobs:
       backend: ${{ steps.args.outputs.backend }}
       zoom: ${{ steps.args.outputs.zoom }}
       model_profile: ${{ steps.args.outputs.model_profile }}
+      critic: ${{ steps.args.outputs.critic }}
       sha: ${{ steps.pr.outputs.sha }}
     steps:
       - id: args
@@ -65,7 +67,7 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           set -f  # no glob expansion of the comment's words
-          target=browser profile= suite=smoke model=claude-opus-5-5 check_model= runner=github repeat=1 backend=claude_computer_use zoom=false model_profile=
+          target=browser profile= suite=smoke model=claude-opus-5-5 check_model= runner=github repeat=1 backend=claude_computer_use zoom=false model_profile= critic=
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
@@ -86,6 +88,7 @@ jobs:
               haiku) model=claude-haiku-5-5 ;;
               check-sonnet) check_model=claude-sonnet-5-5 ;;
               check-haiku) check_model=claude-haiku-5-5 ;;
+              same-critic) critic=same ;;
               azure) runner=azure ;;
               model=*)
                 model_profile=${word#model=}
@@ -93,18 +96,22 @@ jobs:
                 if ! printf '%s' "$model_profile" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,63}$'; then
                   echo "::error::model= needs a registry profile name such as qwen3-vl-32b."; exit 1
                 fi ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [azure] [zoom] [model=<profile>], or /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop] [thin|full] [smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [model=<profile>], or /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]"; exit 1 ;;
             esac
           done
           if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && [ "$target" = desktop ]; then
             echo "::error::The $suite suite is browser only."; exit 1
           fi
+          explicit_profile=$profile
           # Each backend's own default harness: thin for Claude, full for Gemini.
           if [ -z "$profile" ]; then
             if [ "$backend" = computer_use ]; then profile=full; else profile=thin; fi
           fi
           if [ "$backend" = computer_use ] && [ -n "$check_model" ]; then
             echo "::error::check-sonnet/check-haiku pick Claude's completion check; a Gemini run has none."; exit 1
+          fi
+          if [ "$critic" = same ] && [ "$profile" != full ]; then
+            echo "::error::same-critic picks the full harness's step critic; add full."; exit 1
           fi
           if [ "$zoom" = true ] && { [ "$target" = browser ] || [ "$backend" = computer_use ]; }; then
             echo "::error::zoom is only an option for /bench desktop and /bench grounding with Claude."; exit 1
@@ -114,15 +121,15 @@ jobs:
             if [ "$zoom" = true ] || [ "$backend" = computer_use ]; then
               echo "::error::model= picks the model itself; drop zoom and gemini."; exit 1
             fi
-            profile=thin backend=model
+            profile=${explicit_profile:-thin} backend=model
             [ "$target" = grounding ] && model=$model_profile
           fi
-          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend zoom=$zoom model_profile=$model_profile"
+          echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend zoom=$zoom model_profile=$model_profile critic=$critic"
           {
             echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
             echo "model=$model"; echo "check_model=$check_model"; echo "runner=$runner"
             echo "repeat=$repeat"; echo "backend=$backend"; echo "zoom=$zoom"
-            echo "model_profile=$model_profile"
+            echo "model_profile=$model_profile"; echo "critic=$critic"
           } >> "$GITHUB_OUTPUT"
 
       - id: pr
@@ -155,6 +162,7 @@ jobs:
       claude_model: ${{ needs.parse.outputs.model }}
       final_check_model: ${{ needs.parse.outputs.check_model }}
       harness_profile: ${{ needs.parse.outputs.profile }}
+      critic: ${{ needs.parse.outputs.critic }}
       suite: ${{ needs.parse.outputs.suite }}
       args: ${{ needs.parse.outputs.repeat != '1' && format('--repeat {0}', needs.parse.outputs.repeat) || '' }}
       ref: ${{ needs.parse.outputs.sha }}
@@ -183,6 +191,7 @@ jobs:
       claude_model: ${{ needs.parse.outputs.model }}
       final_check_model: ${{ needs.parse.outputs.check_model }}
       harness_profile: ${{ needs.parse.outputs.profile }}
+      critic: ${{ needs.parse.outputs.critic }}
       suite: ${{ needs.parse.outputs.suite }}
       zoom: ${{ needs.parse.outputs.zoom == 'true' }}
       args: ${{ needs.parse.outputs.repeat != '1' && format('--repeat {0}', needs.parse.outputs.repeat) || '' }}

@@ -331,3 +331,37 @@ def test_openai_profile_without_pricing_is_refused(monkeypatch, tmp_path) -> Non
     assert any("needs pricing" in e for e in validate_modes())
     with pytest.raises(ModelRegistryError, match="needs pricing"):
         build_browser_services(executor=None)
+
+
+async def test_a_call_the_full_harness_replaced_is_reported_as_not_run(frame) -> None:
+    client = ScriptedResponses([sample("openai_computer_call"), _response("resp_002", _message("Done."))])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.note_replaced("run-1", "wait, chosen by a harness guard")
+    await _step(backend, frame, state((ActionType.WAIT, False)), "s2")
+    note = client.requests[1]["input_items"][1]["content"][0]["text"]
+    assert note.startswith("Not executed: Operon's harness ran a different action instead (wait, chosen by a harness guard)")
+    assert "It failed: element not found." in note
+
+
+async def test_the_same_model_critic_asks_openai_with_the_screenshot(frame) -> None:
+    from operon.agent.backends.model_adapter.critic import ProfileCriticClient
+
+    client = ScriptedResponses([_response("resp_c", _message('{"status": "success", "reason": "done"}'))])
+    critic = ProfileCriticClient(PROFILE, client=client)
+    shot = frame("s1")
+    text = await critic.generate_verification("Did it work?", shot.artifact_path)
+    assert json.loads(text)["status"] == "success"
+    request = client.requests[0]
+    content = request["input_items"][0]["content"]
+    assert content[0] == {"type": "input_text", "text": "Did it work?"}
+    assert content[1]["image_url"].startswith("data:image/")
+    assert request["tools"] == [] and request["previous_response_id"] is None
+
+
+async def test_an_empty_critic_reply_is_an_error(frame) -> None:
+    from operon.agent.backends.model_adapter.critic import ProfileCriticClient
+
+    critic = ProfileCriticClient(PROFILE, client=ScriptedResponses([_response("resp_c")]))
+    with pytest.raises(ModelTransportError, match="no text"):
+        await critic.generate_verification("Did it work?", frame("s1").artifact_path)

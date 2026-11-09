@@ -980,7 +980,9 @@ function hasCost(run) {
   return run.summary && run.summary.cost_usd !== undefined && run.summary.cost_usd !== null;
 }
 
-// Everything a run spent: the agent's model calls, the judge, and a self-hosted model's GPU time.
+// Everything a run spent on its listed tasks: the agent's model calls, the judge, and a
+// self-hosted model's GPU time. A season run's held-out spend (summary.held_out_cost_usd, one
+// total with no task rows) is left out of per-task figures but counted in spendEntries.
 function runSpend(run) {
   return (run.summary.cost_usd || 0) + (run.summary.judge_cost_usd || 0) + (run.summary.gpu_cost_usd || 0);
 }
@@ -1034,7 +1036,7 @@ function spendEntries(runs) {
   return [
     ...runs.map((run) => ({
       at: parseStamp(run.started_at),
-      agent: run.summary.cost_usd || 0,
+      agent: (run.summary.cost_usd || 0) + (run.summary.held_out_cost_usd || 0),
       judge: run.summary.judge_cost_usd || 0,
       gpu: run.summary.gpu_cost_usd || 0,
       run,
@@ -1245,6 +1247,7 @@ function renderByModel(entries) {
     add(day, "Unattributed", (run.summary.cost_usd || 0) - attributed > 0.0005 ? run.summary.cost_usd - attributed : 0);
     add(day, "Judge", run.summary.judge_cost_usd || 0);
     add(day, "GPU time", run.summary.gpu_cost_usd || 0);
+    add(day, "Held-out tasks", run.summary.held_out_cost_usd || 0);
   }
   const names = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
   const color = (name) => `var(--series-${Math.min(names.indexOf(name) + 1, MAX_SLOTS)})`;

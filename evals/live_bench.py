@@ -779,6 +779,11 @@ def build_report(
         gpu = gpu_cost_usd(results, profile)
         summary["gpu_cost_usd"] = gpu
         summary["total_cost_usd"] = round(summary["cost_usd"] + (gpu or 0.0), 6)
+    if held:
+        # Held-out spend stays in the summary as one total (no names), so the dashboard's
+        # Cost tab and monthly budget still count it.
+        held_gpu = gpu_cost_usd(held, profile) if profile is not None else None
+        summary["held_out_cost_usd"] = round(sum(r.cost_usd + r.judge_cost_usd for r in held) + (held_gpu or 0.0), 6)
     suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
     model_key = f"{args.mode}_model"
     return {

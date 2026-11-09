@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from evals import live_bench
+from evals import dashboard, live_bench
 from evals.app_tasks import LONG_TASKS
 from evals.leaderboard import season as s
 from evals.leaderboard.suite import SuiteMismatchError
@@ -211,6 +211,10 @@ def test_a_season_report_gives_held_out_results_as_counts_only(long_only, tmp_pa
     assert season["season"] == 1 and season["season_hash"] == run.season_hash
     assert season["held_out"] == {"run": 2, "passed": 1, "outcomes": {"missed": 1, "success": 1}, "cost_usd": 0.75}
     assert season["operon_commit"] and "operon_settings" in season
+    # Held-out spend stays in the summary as one total, so the dashboard's Cost tab counts it.
+    assert report["summary"]["cost_usd"] == 0.1 and report["summary"]["held_out_cost_usd"] == 0.75
+    run_row, task_rows = dashboard.to_rows(dashboard.prepare(report, {}))
+    assert run_row["summary"]["held_out_cost_usd"] == 0.75 and len(task_rows) == 1
 
 
 def test_season_runs_refuse_a_subset_of_tasks():

@@ -115,6 +115,7 @@ class NativeBrowserExecutor(Executor):
         self._session_lock = asyncio.Lock()
         self._run_headless: dict[str, bool | None] = {}
         self._run_mode: dict[str, str] = {}
+        self._live_view_tasks: set[asyncio.Task] = set()  # live-view switches for late popups
         self._fresh_session_run_id: str | None = None
         # Stores the last JavaScript dialog message per run_id so the loop can
         # surface form-submit success alerts that headless mode auto-dismisses.
@@ -472,8 +473,11 @@ class NativeBrowserExecutor(Executor):
             await new_page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass
+        if new_page is session.page:
+            return
         session.page = new_page
         logger.info("New tab detected after click — switched session to %s", new_page.url)
+        await self._follow_in_live_view(self._current_run_id, new_page)
 
     @staticmethod
     def _action_point(action: AgentAction) -> tuple[int, int] | None:
@@ -786,6 +790,11 @@ class NativeBrowserExecutor(Executor):
         except Exception as exc:
             logger.warning("Observable mode: live view unavailable — %s", exc)
 
+    async def _follow_in_live_view(self, run_id: str, page: object) -> None:
+        """Keep the live view on the page the run works in after it switches tabs."""
+        if self._run_mode.get(run_id) == "observable":
+            await self._attach_live_view(page, 9222)
+
     def _attach_page_listeners(self, page: object, run_id: str) -> None:
         """Wire console/network/dialog listeners onto a newly created page."""
         def _on_popup(popup) -> None:
@@ -796,6 +805,10 @@ class NativeBrowserExecutor(Executor):
             session = self._sessions.get(run_id)
             if session is not None and session.page is page:
                 session.page = popup
+                if self._run_mode.get(run_id) == "observable":
+                    task = asyncio.get_running_loop().create_task(self._follow_in_live_view(run_id, popup))
+                    self._live_view_tasks.add(task)
+                    task.add_done_callback(self._live_view_tasks.discard)
 
         page.on("popup", _on_popup)
         page.on("console", lambda msg: logger.debug("BROWSER_LOG [%s]: %s", msg.type, msg.text))

@@ -229,3 +229,62 @@ async def test_the_live_view_follows_the_page_with_the_runs_target():
         assert manager._page is ours and manager._viewport_w == 1280
         assert await manager.follow_target("T-missing") is False
         assert manager._page is ours
+
+
+def _session(page):
+    from operon.executor.browser_native import _BrowserSession
+
+    session = _BrowserSession.__new__(_BrowserSession)
+    session.page = page
+    session.context = MagicMock(pages=[page])
+    return session
+
+
+@pytest.mark.asyncio
+async def test_the_live_view_follows_a_tab_the_click_opened(executor):
+    first, new_tab = AsyncMock(name="first"), AsyncMock(name="new_tab")
+    executor._run_mode["obs1"] = "observable"
+    executor._sessions["obs1"] = _session(first)
+    executor._sessions["obs1"].context.pages = [first, new_tab]
+    executor.set_current_run_id("obs1")
+
+    with patch.object(executor, "_attach_live_view", new=AsyncMock()) as attach:
+        await executor._adopt_new_tab_if_opened()
+        await executor._adopt_new_tab_if_opened()  # same tab again: no second switch
+
+    assert executor._sessions["obs1"].page is new_tab
+    attach.assert_awaited_once_with(new_tab, 9222)
+
+
+@pytest.mark.asyncio
+async def test_the_live_view_follows_a_late_popup(executor):
+    import asyncio
+
+    page, popup = MagicMock(name="page"), MagicMock(name="popup")
+    handlers = {}
+    page.on = lambda event, fn: handlers.setdefault(event, fn)
+    popup.on = MagicMock()
+    executor._run_mode["obs1"] = "observable"
+    executor._sessions["obs1"] = _session(page)
+    executor._attach_page_listeners(page, "obs1")
+
+    with patch.object(executor, "_attach_live_view", new=AsyncMock()) as attach:
+        handlers["popup"](popup)
+        await asyncio.gather(*executor._live_view_tasks)
+
+    assert executor._sessions["obs1"].page is popup
+    attach.assert_awaited_once_with(popup, 9222)
+
+
+@pytest.mark.asyncio
+async def test_a_batch_run_never_touches_the_live_view(executor):
+    first, new_tab = AsyncMock(name="first"), AsyncMock(name="new_tab")
+    executor._run_mode["b1"] = "batch"
+    executor._sessions["b1"] = _session(first)
+    executor._sessions["b1"].context.pages = [first, new_tab]
+    executor.set_current_run_id("b1")
+
+    with patch.object(executor, "_attach_live_view", new=AsyncMock()) as attach:
+        await executor._adopt_new_tab_if_opened()
+
+    attach.assert_not_called()

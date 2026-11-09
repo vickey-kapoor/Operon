@@ -167,3 +167,15 @@ def test_the_default_gemini_browser_backend_is_labelled_as_gemini(monkeypatch, h
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     monkeypatch.delenv("OPERON_COMPLETION_CHECK", raising=False)
     assert live_bench.harness_label(None) == expected
+
+
+def test_the_harness_label_reads_the_dotenv_the_server_loads(monkeypatch, tmp_path) -> None:
+    # ANTHROPIC_API_KEY only in .env: the server defaults to Claude, so a thin run is "thin".
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=fake-test-key\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    for name in ("OPERON_BROWSER_BACKEND", "ANTHROPIC_API_KEY", "OPERON_COMPLETION_CHECK"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "thin")
+    assert live_bench.harness_label(None) == "thin"
+    (tmp_path / ".env").write_text("OPERON_BROWSER_BACKEND=computer_use\n", encoding="utf-8")
+    assert live_bench.harness_label(None) == "thin-own"

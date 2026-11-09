@@ -121,6 +121,12 @@ def _function_source(fn: FunctionType) -> str:
         return fn.__code__.co_code.hex()
 
 
+# Per-task registries: a grader that looks its check up by name (``desktop_state.grade``)
+# is hashed, but the registry itself is not followed, because each task hashes its own
+# entry as a root. Otherwise every desktop task would change when any one check did.
+_REGISTRIES = {("evals.desktop_state", "CHECKS")}
+
+
 def code_closure(roots: Iterable[Callable]) -> str:
     """The source of ``roots`` and of every ``evals`` function they reach (helpers they
     name, functions captured in their closures or defaults, functions nested in their
@@ -149,7 +155,7 @@ def code_closure(roots: Iterable[Callable]) -> str:
         while codes:
             code = codes.pop()
             for name in sorted(set(code.co_names)):
-                if name not in fn.__globals__:
+                if name not in fn.__globals__ or (fn.__module__, name) in _REGISTRIES:
                     continue
                 target = fn.__globals__[name]
                 if _is_evals_function(target):
@@ -186,7 +192,7 @@ def grader_of(task: Any) -> tuple[list[Callable], list[Path]]:
         from evals import desktop_state
 
         check = desktop_state.CHECKS.get(task.name)
-        roots = [check] if check is not None else []
+        roots = [desktop_state.grade, *([check] if check is not None else [])]
         return roots, [EVALS_DIR / "desktop_probe.ps1"]
     from evals import live_bench
 

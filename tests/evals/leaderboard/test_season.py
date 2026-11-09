@@ -358,3 +358,23 @@ def test_a_private_file_can_add_desktop_checks(tmp_path, monkeypatch):
     '''), encoding="utf-8")
     s.load_private(path)
     assert "secret_desk" in desktop_state.CHECKS
+
+
+def test_desktop_fingerprints_cover_the_shared_grade_but_not_other_tasks_checks(monkeypatch):
+    from evals import desktop_state
+
+    first, second = s.suite_tasks("desktop")[:2]
+    base = s.task_fingerprint(first)
+
+    # Other tasks' checks change or a new one is added (say, a private held-out check):
+    # this task's fingerprint does not.
+    monkeypatch.setattr(desktop_state, "CHECKS", {
+        **desktop_state.CHECKS, second.name: desktop_state.CHECKS[first.name], "new_task": desktop_state.CHECKS[first.name],
+    })
+    assert s.task_fingerprint(first) == base
+
+    # The shared grade function changes: every desktop task's fingerprint does.
+    namespace = dict(vars(desktop_state))
+    exec("def grade(task_name, snapshot):\n    ok, why = CHECKS[task_name](snapshot)\n    return ok, why.strip()\n", namespace)
+    monkeypatch.setattr(desktop_state, "grade", namespace["grade"])
+    assert s.task_fingerprint(first) != base

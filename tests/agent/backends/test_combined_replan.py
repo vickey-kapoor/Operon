@@ -11,6 +11,7 @@ screenshot so the LLM can incorporate the just-appended advisory hint.
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -34,6 +35,7 @@ def _make_service(prompt_template: str = "intent={intent} subgoal={current_subgo
     svc._advisory_hints = {}
     svc._perception_only = False
     svc._image_size = {}
+    svc._replans = {}
     return svc, gemini
 
 
@@ -49,7 +51,11 @@ def _make_state(run_id: str = "abc123") -> MagicMock:
     return state
 
 
-def _make_perception(screenshot_path: str = "runs/abc/step_1/before.png") -> MagicMock:
+# Re-plans save their artifacts next to the screenshot: keep them out of the repo.
+_STEP_DIR = Path(tempfile.mkdtemp(prefix="combined-replan-")) / "step_1"
+
+
+def _make_perception(screenshot_path: str = str(_STEP_DIR / "before.png")) -> MagicMock:
     p = MagicMock()
     p.capture_artifact_path = screenshot_path
     return p
@@ -88,7 +94,7 @@ async def test_choose_action_replans_via_fresh_combined_call_when_cache_empty() 
     """
     svc, gemini = _make_service()
     state = _make_state()
-    perception = _make_perception(screenshot_path="runs/abc/step_1/before.png")
+    perception = _make_perception(screenshot_path=str(_STEP_DIR / "before.png"))
 
     # Simulate the coordinator adding a correction hint between the original
     # choose_action and the re-plan call.
@@ -99,7 +105,7 @@ async def test_choose_action_replans_via_fresh_combined_call_when_cache_empty() 
         "perception": {
             "page_hint": "form_page",
             "visible_elements": [],
-            "capture_artifact_path": "runs/abc/step_1/before.png",
+            "capture_artifact_path": str(_STEP_DIR / "before.png"),
         },
         "action": {
             "action_type": "click",
@@ -118,7 +124,7 @@ async def test_choose_action_replans_via_fresh_combined_call_when_cache_empty() 
     # A fresh combined call was made
     assert gemini.generate_perception.await_count == 1
     sent_prompt, sent_screenshot = gemini.generate_perception.call_args.args
-    assert sent_screenshot == "runs/abc/step_1/before.png"
+    assert sent_screenshot == str(_STEP_DIR / "before.png")
     # Advisory hint was rendered into the prompt
     assert "CORRECTION: don't STOP yet" in sent_prompt
     # The re-planned decision came back parsed
@@ -137,3 +143,31 @@ async def test_choose_action_raises_when_cache_empty_and_no_screenshot_path() ->
 
     with pytest.raises(PolicyError, match="no screenshot path"):
         await svc.choose_action(state, perception)
+
+
+@pytest.mark.asyncio
+async def test_a_replan_records_its_own_usage(tmp_path: Path) -> None:
+    from operon.models.usage import ModelUsage
+    from operon.store.background_writer import bg_writer
+
+    svc, gemini = _make_service()
+    usage = ModelUsage(provider="gemini", model="gemini-test", request_kind="perception", input_tokens=10, output_tokens=5, total_tokens=15)
+    gemini.latest_usage.return_value = usage
+    gemini.generate_perception.side_effect = [
+        json.dumps({
+            "perception": {"summary": "s", "page_hint": "unknown", "visible_elements": [], "confidence": 0.5},
+            "action": {"action_type": "wait", "wait_ms": 500},
+            "rationale": "r", "confidence": 0.5, "active_subgoal": "s",
+        })
+    ] * 2
+    step_dir = tmp_path / "step_3"
+    step_dir.mkdir()
+
+    await svc.choose_action(_make_state(), _make_perception(str(step_dir / "before.png")))
+    await svc.choose_action(_make_state(), _make_perception(str(step_dir / "before.png")))
+    await bg_writer.flush()
+
+    debug = svc.latest_debug_artifacts()
+    assert debug.usage == usage
+    assert debug.usage_artifact_path == str(step_dir / "combined_replan_2_usage.json")
+    assert sorted(p.name for p in step_dir.glob("*_usage.json")) == ["combined_replan_2_usage.json", "combined_replan_usage.json"]

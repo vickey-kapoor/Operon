@@ -9,6 +9,7 @@ from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.coordinator import PolicyCoordinator
 from operon.agent.policy.recovery import RuleBasedRecoveryManager
+from operon.agent.policy.rules import PolicyRuleEngine
 from operon.agent.policy.thin import (
     OWN_DONE,
     THIN,
@@ -58,7 +59,7 @@ def _build_browser_executor():
     return NativeBrowserExecutor()
 
 
-def _loop_layers(*, config, services, memory_store) -> dict:
+def _loop_layers(*, config, services, memory_store, desktop: bool = False) -> dict:
     """Policy, verifier and recovery for the configured harness profile."""
     profile = harness_profile(config.backend)
     if profile == THIN:
@@ -81,6 +82,7 @@ def _loop_layers(*, config, services, memory_store) -> dict:
         "policy_service": PolicyCoordinator(
             delegate=services.policy_delegate,
             memory_store=memory_store,
+            rule_engine=PolicyRuleEngine(launch_apps=desktop),
         ),
         "verifier_service": DeterministicVerifierService(gemini_client=build_verifier_client(config=config)),
         "recovery_manager": RuleBasedRecoveryManager(),
@@ -104,7 +106,7 @@ def get_agent_loop() -> AgentLoop:
             executor=executor,
             memory_store=memory_store,
             environment=UnifiedEnvironment.BROWSER,
-            **_loop_layers(config=browser_config, services=services, memory_store=memory_store),
+            **_loop_layers(config=browser_config, services=services, memory_store=memory_store, desktop=False),
         )
         _ws_stream.set_executor(executor)
         _ws_stream.set_agent_loop(_agent_loop)
@@ -132,7 +134,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             executor=executor,
             memory_store=memory_store,
             environment=UnifiedEnvironment.DESKTOP,
-            **_loop_layers(config=desktop_config, services=services, memory_store=memory_store),
+            **_loop_layers(config=desktop_config, services=services, memory_store=memory_store, desktop=True),
         )
     return _desktop_agent_loop
 

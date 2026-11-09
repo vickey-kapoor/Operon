@@ -631,6 +631,12 @@ class AgentLoop:
             allow_adaptation_retry = (
                 verification.status is VerificationStatus.FAILURE
                 and not legacy_retry_attempted
+                # A terminal verdict (e.g. the thin harness's last completion-check
+                # rejection, or the model giving up) ends the run; asking the model
+                # for more actions after it only spends calls.
+                and not verification.stop_condition_met
+                # The thin harness never retries the model's action (see thin.py).
+                and not self.thin_harness
             )
             _MAX_ADAPTATION_RETRIES = 3
             if strategy is None or not allow_adaptation_retry:
@@ -1490,6 +1496,7 @@ class AgentLoop:
                 logger.warning("session_reset executor call failed: %s", exc)
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
+        self._release_backend_run_state(run_id)
         if hasattr(self.executor, "stop_run_recording"):
             try:
                 await self.executor.stop_run_recording(run_id)
@@ -1503,6 +1510,20 @@ class AgentLoop:
         except Exception as exc:
             logger.warning("cleanup_completed_run: aclose_run failed for %s: %s", run_id, exc)
         await self._persist_cleanup_artifacts(run_id)
+
+    def _release_backend_run_state(self, run_id: str) -> None:
+        """Drop the finished run's conversation and last screenshot from the backends,
+        which otherwise keep them for the life of the server."""
+        services = {id(s): s for s in (self.perception_service, self.policy_service)}.values()
+        for service in services:
+            for target in (service, getattr(service, "delegate", None)):
+                release = getattr(target, "release_run", None)
+                if release is None:
+                    continue
+                try:
+                    release(run_id)
+                except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
+                    logger.warning("release_run failed for run %s: %s", run_id[:8], exc)
 
     async def _persist_cleanup_artifacts(self, run_id: str) -> None:
         if not hasattr(self.executor, "recorded_video_path_for_run"):

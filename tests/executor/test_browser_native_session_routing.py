@@ -92,7 +92,7 @@ async def test_observable_launch_args_include_headless_new(executor):
     with patch("playwright.async_api.async_playwright", return_value=pw), \
          patch.object(executor, "_attach_page_listeners"), \
          patch.object(executor, "_close_other_sessions", new=AsyncMock()), \
-         patch.object(executor, "_connect_browser_manager_to_port", new=AsyncMock()):
+         patch.object(executor, "_attach_live_view", new=AsyncMock()):
         await executor._ensure_session_observable("obs", foreground=False)
 
     pw.chromium.launch.assert_awaited_once()
@@ -120,7 +120,7 @@ async def test_observable_reuses_browser_on_second_run(executor):
     with patch("playwright.async_api.async_playwright", return_value=pw), \
          patch.object(executor, "_attach_page_listeners"), \
          patch.object(executor, "_close_other_sessions", new=AsyncMock()), \
-         patch.object(executor, "_connect_browser_manager_to_port", new=AsyncMock()):
+         patch.object(executor, "_attach_live_view", new=AsyncMock()):
         await executor._ensure_session_observable("obs1", foreground=False)
         await executor._ensure_session_observable("obs2", foreground=False)
 
@@ -175,13 +175,57 @@ async def testensure_cdp_ready_noop_for_batch():
 
 
 @pytest.mark.asyncio
-async def testensure_cdp_ready_proceeds_for_observable():
-    """ensure_cdp_ready(mode='observable') must not early-return."""
+async def test_ensure_cdp_ready_launches_no_browser_in_observable_mode():
+    """Observable mode has one browser, the executor's: ensure_cdp_ready must not
+    launch Chrome or attach the live view to anything (G5)."""
     from operon.api.runtime import ensure_cdp_ready
 
-    # Fastest path through observable: already-connected manager → no Chrome launch
-    mock_bm = MagicMock()
-    mock_bm.is_connected = True
-
-    with patch("operon.browser.manager.get_active_manager", return_value=mock_bm):
+    with patch("subprocess.Popen") as popen, \
+         patch("operon.browser.manager.BrowserManager") as mock_cls:
         await ensure_cdp_ready(mode="observable")
+
+    popen.assert_not_called()
+    mock_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_each_observable_run_points_the_live_view_at_its_own_page(executor):
+    executor._run_mode["obs1"] = "observable"
+    executor._run_mode["obs2"] = "observable"
+    pw = _fake_pw()
+    attached = []
+
+    async def attach(page, port):
+        attached.append((page, port))
+
+    with patch("playwright.async_api.async_playwright", return_value=pw), \
+         patch.object(executor, "_attach_page_listeners"), \
+         patch.object(executor, "_close_other_sessions", new=AsyncMock()), \
+         patch.object(executor, "_attach_live_view", new=attach):
+        first = await executor._ensure_session_observable("obs1", foreground=False)
+        second = await executor._ensure_session_observable("obs2", foreground=False)
+
+    assert attached == [(first.page, 9222), (second.page, 9222)]
+
+
+@pytest.mark.asyncio
+async def test_the_live_view_follows_the_page_with_the_runs_target():
+    from operon.browser import manager as manager_mod
+
+    manager = manager_mod.BrowserManager()
+    other, ours = MagicMock(name="other"), MagicMock(name="ours")
+    ours.viewport_size = {"width": 1280, "height": 800}
+    manager._browser = MagicMock()
+    manager._browser.contexts = [MagicMock(pages=[other]), MagicMock(pages=[ours])]
+    targets = {id(other): "T-other", id(ours): "T-ours"}
+
+    async def target_id(page):
+        return targets[id(page)]
+
+    with patch.object(manager_mod, "_target_id", new=target_id), \
+         patch.object(manager, "start_screencast", new=AsyncMock()), \
+         patch.object(manager, "stop_screencast", new=AsyncMock()):
+        assert await manager.follow_target("T-ours") is True
+        assert manager._page is ours and manager._viewport_w == 1280
+        assert await manager.follow_target("T-missing") is False
+        assert manager._page is ours

@@ -35,6 +35,19 @@ def _ws_stream():
 _active_manager: "BrowserManager | None" = None
 
 
+async def _target_id(page: Any) -> str | None:
+    """The CDP target id of a Playwright page, or None if it can't be read."""
+    try:
+        cdp = await page.context.new_cdp_session(page)
+        try:
+            info = await cdp.send("Target.getTargetInfo")
+        finally:
+            await cdp.detach()
+        return info["targetInfo"]["targetId"]
+    except Exception:
+        return None
+
+
 def get_active_manager() -> "BrowserManager | None":
     """Return the currently connected BrowserManager, or None."""
     return _active_manager
@@ -112,6 +125,32 @@ class BrowserManager:
         await self._focus_and_maximize(page)
 
         return ctx, page
+
+    async def follow_target(self, target_id: str) -> bool:
+        """Stream and steer the page whose CDP target is ``target_id``.
+
+        The executor drives its pages through its own Playwright connection, so its
+        page objects aren't ours: match by target id. Returns False if no page of
+        the connected browser has that target (e.g. another Chrome holds the port)."""
+        if self._browser is None:
+            return False
+        for ctx in self._browser.contexts:
+            for page in ctx.pages:
+                if await _target_id(page) != target_id:
+                    continue
+                if page is self._page:
+                    return True
+                was_running = self._screencast_running
+                if was_running:
+                    await self.stop_screencast()
+                self._page = page
+                size = page.viewport_size
+                if size:
+                    self._viewport_w, self._viewport_h = size["width"], size["height"]
+                if was_running:
+                    await self.start_screencast()
+                return True
+        return False
 
     async def _focus_and_maximize(self, page: Any) -> None:
         """Bring the task tab to front and maximize the Chrome OS window via CDP."""

@@ -644,7 +644,6 @@ class NativeBrowserExecutor(Executor):
             self._obs_playwright = obs_playwright
             self._obs_browser = obs_browser
             logger.info("Observable mode: persistent Chromium launched (port 9222, --headless=new)")
-            await self._connect_browser_manager_to_port(9222)
         else:
             obs_playwright = self._obs_playwright
             obs_browser = self._obs_browser
@@ -659,6 +658,9 @@ class NativeBrowserExecutor(Executor):
 
         if foreground and hasattr(page, "bring_to_front"):
             await page.bring_to_front()
+        # Once the page exists: connecting right after launch found no page of ours
+        # and streamed a blank one the manager made for itself.
+        await self._attach_live_view(page, 9222)
 
         session = _BrowserSession(
             playwright=obs_playwright,
@@ -751,33 +753,38 @@ class NativeBrowserExecutor(Executor):
             await asyncio.sleep(1.5)
         return session
 
-    async def _connect_browser_manager_to_port(self, port: int) -> None:
-        """Wire BrowserManager to the Playwright Chromium on port for CDP screencast.
+    async def _attach_live_view(self, page: object, port: int) -> None:
+        """Point the live view (screencast and the user's input) at ``page``.
 
-        Called once after the persistent observable browser is first launched.
-        No-op if a BrowserManager is already connected.
-        """
+        Connects the BrowserManager to this executor's Chromium on ``port`` if it
+        isn't connected yet, then has it follow the run's page. Best-effort: a
+        failure only means no live view, never a failed run."""
         from operon.api import ws_stream as _ws
         from operon.browser.manager import (
             BrowserManager,
+            _target_id,
             get_active_manager,
             set_active_manager,
         )
 
-        bm = get_active_manager()
-        if bm is not None and bm.is_connected:
-            return
         try:
-            manager = BrowserManager()
-            await manager.connect(port)
+            target_id = await _target_id(page)
+            manager = get_active_manager()
+            if manager is None or not manager.is_connected:
+                manager = BrowserManager()
+                await manager.connect(port)
+                set_active_manager(manager)
+                _ws.set_browser_manager(manager)
+                logger.info("Observable mode: live view connected to the executor's Chromium on port %d", port)
+            if target_id is None or not await manager.follow_target(target_id):
+                logger.warning(
+                    "Observable mode: the browser on port %d has no page of this run; "
+                    "is another Chrome using the port? The live view may show the wrong page.",
+                    port,
+                )
             await manager.start_screencast(fps=15)
-            set_active_manager(manager)
-            _ws.set_browser_manager(manager)
-            logger.info("Observable mode: BrowserManager connected to Playwright Chromium on port %d", port)
         except Exception as exc:
-            logger.warning(
-                "Observable mode: BrowserManager connect failed (screencast unavailable) — %s", exc
-            )
+            logger.warning("Observable mode: live view unavailable — %s", exc)
 
     def _attach_page_listeners(self, page: object, run_id: str) -> None:
         """Wire console/network/dialog listeners onto a newly created page."""

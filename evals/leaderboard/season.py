@@ -101,10 +101,12 @@ def _plain(value: Any, found: list[Callable] | None = None) -> Any:
         return value
     if isinstance(value, PurePath):
         # A path the same on every checkout and OS: relative to the repo, else its name.
-        try:
-            return Path(value).resolve().relative_to(EVALS_DIR.parent).as_posix()
-        except (ValueError, OSError):
-            return value.name
+        if isinstance(value, Path) and value.is_absolute():
+            try:
+                return value.resolve().relative_to(EVALS_DIR.parent).as_posix()
+            except (ValueError, OSError):
+                pass
+        return value.name
     return repr(value)
 
 

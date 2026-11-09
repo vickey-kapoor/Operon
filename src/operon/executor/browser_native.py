@@ -116,6 +116,7 @@ class NativeBrowserExecutor(Executor):
         self._run_headless: dict[str, bool | None] = {}
         self._run_mode: dict[str, str] = {}
         self._live_view_tasks: set[asyncio.Task] = set()  # live-view switches for late popups
+        self._live_view_lock = asyncio.Lock()
         self._fresh_session_run_id: str | None = None
         # Stores the last JavaScript dialog message per run_id so the loop can
         # surface form-submit success alerts that headless mode auto-dismisses.
@@ -791,8 +792,16 @@ class NativeBrowserExecutor(Executor):
             logger.warning("Observable mode: live view unavailable — %s", exc)
 
     async def _follow_in_live_view(self, run_id: str, page: object) -> None:
-        """Keep the live view on the page the run works in after it switches tabs."""
-        if self._run_mode.get(run_id) == "observable":
+        """Keep the live view on the page the run works in after it switches tabs.
+
+        Switches run one at a time, and one whose page the run has already left
+        is dropped: two quick popups must not leave the view on the older tab."""
+        if self._run_mode.get(run_id) != "observable":
+            return
+        async with self._live_view_lock:
+            session = self._sessions.get(run_id)
+            if session is None or session.page is not page:
+                return
             await self._attach_live_view(page, 9222)
 
     def _attach_page_listeners(self, page: object, run_id: str) -> None:

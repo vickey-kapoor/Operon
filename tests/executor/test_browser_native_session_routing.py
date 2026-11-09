@@ -288,3 +288,31 @@ async def test_a_batch_run_never_touches_the_live_view(executor):
         await executor._adopt_new_tab_if_opened()
 
     attach.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_two_quick_popups_leave_the_live_view_on_the_newest_tab(executor):
+    import asyncio
+
+    page, older, newer = MagicMock(name="page"), MagicMock(name="older"), MagicMock(name="newer")
+    handlers = {}
+    page.on = lambda event, fn: handlers.setdefault(event, fn)
+    older.on = lambda event, fn: handlers.setdefault(("older", event), fn)
+    newer.on = MagicMock()
+    executor._run_mode["obs1"] = "observable"
+    executor._sessions["obs1"] = _session(page)
+    executor._attach_page_listeners(page, "obs1")
+    followed = []
+
+    async def slow_attach(target, port):
+        await asyncio.sleep(0.01)  # e.g. waiting in stop_screencast
+        followed.append(target)
+
+    with patch.object(executor, "_attach_live_view", new=slow_attach):
+        handlers["popup"](older)
+        handlers[("older", "popup")](newer)
+        await asyncio.gather(*list(executor._live_view_tasks))
+
+    assert executor._sessions["obs1"].page is newer
+    assert followed[-1] is newer
+    assert older not in followed

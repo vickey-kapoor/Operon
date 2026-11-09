@@ -627,7 +627,7 @@ function renderTiles(runs) {
   const [run, ...others] = latest;
   const prev = previousRun(run, runs);
   const history = runs.filter((r) => configLabel(r) === configLabel(run) && !(r.config && r.config.flagged)).slice(-12);
-  const perTask = (r) => (hasCost(r) && r.summary.tasks ? runSpend(r) / r.summary.tasks : null);
+  const perTask = (r) => (hasCost(r) && r.summary.tasks ? listedSpend(r) / r.summary.tasks : null);
   const metrics = [
     { label: "Pass rate", get: (r) => r.summary.success_rate, fmt: fmtPct, of: (r) => `${r.summary.success}/${r.summary.tasks}`, better: 1,
       diff: (a, b) => { const p = Math.round((a - b) * 100); return p ? `${Math.abs(p)} pts` : null; } },
@@ -667,7 +667,7 @@ const TREND_METRICS = {
   pass: { get: (r) => r.summary.success_rate, opts: { yMax: 1, fmt: (v) => fmtPct(v) }, sub: "Pass rate of every run, by configuration. Higher is better." },
   speed: { get: (r) => r.summary.mean_seconds, opts: { fmt: (v, axis) => (axis ? `${Math.round(v)} s` : fmtSec(v)) }, sub: "Mean seconds per task of every run. Lower is better." },
   steps: { get: (r) => r.summary.mean_steps, opts: { fmt: (v, axis) => (axis ? `${Math.round(v * 10) / 10}` : `${Number(v).toFixed(1)} steps`) }, sub: "Mean steps per task of every run. Fewer is usually better." },
-  cost: { get: (r) => (hasCost(r) && r.summary.tasks ? runSpend(r) / r.summary.tasks : null), opts: { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)) }, sub: "Agent, judge and GPU spend per task of every run. Lower is better." },
+  cost: { get: (r) => (hasCost(r) && r.summary.tasks ? listedSpend(r) / r.summary.tasks : null), opts: { fmt: (v, axis) => (axis ? fmtUsdAxis(v) : fmtUsd(v)) }, sub: "Agent, judge and GPU spend per task of every run. Lower is better." },
 };
 
 function renderCharts(runs) {
@@ -882,7 +882,7 @@ function renderRuns(runs) {
       el("td", { class: "num" }, fmtSec(s.mean_seconds)),
       el("td", { class: "num" }, fmtSec(s.seconds_per_step)),
       el("td", { class: "num" }, fmtNum(s.mean_steps)),
-      el("td", { class: "num", title: "Agent, judge and GPU spend per task" }, hasCost(run) && s.tasks ? fmtUsd(runSpend(run) / s.tasks) : "–"),
+      el("td", { class: "num", title: "Agent, judge and GPU spend per task" }, hasCost(run) && s.tasks ? fmtUsd(listedSpend(run) / s.tasks) : "–"),
       el("td", {}, commitLink(run)),
       el("td", { onclick: (e) => e.stopPropagation() }, runLink(run))));
   }
@@ -980,9 +980,16 @@ function hasCost(run) {
   return run.summary && run.summary.cost_usd !== undefined && run.summary.cost_usd !== null;
 }
 
-// Everything a run spent: the agent's model calls, the judge, and a self-hosted model's GPU time.
-function runSpend(run) {
+// What a run spent on its listed tasks: the agent's model calls, the judge, and a
+// self-hosted model's GPU time. Per-task figures divide this by summary.tasks.
+function listedSpend(run) {
   return (run.summary.cost_usd || 0) + (run.summary.judge_cost_usd || 0) + (run.summary.gpu_cost_usd || 0);
+}
+
+// Everything a run spent: its listed tasks plus a season run's held-out tasks
+// (summary.held_out_cost_usd, one total with no task rows). Run and suite totals use this.
+function runSpend(run) {
+  return listedSpend(run) + (run.summary.held_out_cost_usd || 0);
 }
 
 function suiteId(run) {
@@ -1034,7 +1041,7 @@ function spendEntries(runs) {
   return [
     ...runs.map((run) => ({
       at: parseStamp(run.started_at),
-      agent: run.summary.cost_usd || 0,
+      agent: (run.summary.cost_usd || 0) + (run.summary.held_out_cost_usd || 0),
       judge: run.summary.judge_cost_usd || 0,
       gpu: run.summary.gpu_cost_usd || 0,
       run,
@@ -1245,6 +1252,7 @@ function renderByModel(entries) {
     add(day, "Unattributed", (run.summary.cost_usd || 0) - attributed > 0.0005 ? run.summary.cost_usd - attributed : 0);
     add(day, "Judge", run.summary.judge_cost_usd || 0);
     add(day, "GPU time", run.summary.gpu_cost_usd || 0);
+    add(day, "Held-out tasks", run.summary.held_out_cost_usd || 0);
   }
   const names = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
   const color = (name) => `var(--series-${Math.min(names.indexOf(name) + 1, MAX_SLOTS)})`;
@@ -1395,7 +1403,8 @@ function renderCostRuns(runs) {
       el("td", { class: "num" }, fmtUsd(s.cost_usd)),
       el("td", { class: "num" }, fmtUsd(s.judge_cost_usd)),
       el("td", { class: "num" }, s.gpu_cost_usd ? fmtUsd(s.gpu_cost_usd) : "–"),
-      el("td", { class: "num" }, el("strong", {}, fmtUsd(runSpend(run)))),
+      el("td", { class: "num", title: s.held_out_cost_usd ? `includes ${fmtUsd(s.held_out_cost_usd)} on held-out tasks` : null },
+        el("strong", {}, fmtUsd(runSpend(run)))),
       el("td", { class: "num" }, fmtUsd(running)),
       el("td", { onclick: (e) => e.stopPropagation() }, runLink(run)));
   });

@@ -541,3 +541,80 @@ async def test_a_model_that_gave_up_is_not_done_even_when_the_screen_reads_as_su
 
     assert result.status is VerificationStatus.FAILURE and result.stop_condition_met is False
     assert "gave up" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_critic_stop_signal_on_a_non_stop_action_does_not_end_the_run(tmp_path: Path) -> None:
+    """The critic saw an order confirmation and called the task done; the reply email was still owed."""
+    state = AgentState(run_id="run-c1", intent="Order what Dana asks for, then reply to her", status="running")
+    action = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
+    decision = PolicyDecision(action=action, rationale="Place the order.", confidence=0.9, active_subgoal="place order")
+    screenshot = tmp_path / "after.png"
+    screenshot.write_bytes(b"fake")
+    executed = ExecutedAction(action=action, success=True, detail="clicked", artifact_path=str(screenshot))
+    client = StubVerificationClient(
+        response=json.dumps({
+            "status": "success", "expected_outcome_met": True, "stop_condition_met": True,
+            "reason": "Order confirmation shown.", "failure_type": "stop_boundary_reached", "stop_reason": None,
+        })
+    )
+    service = DeterministicVerifierService(gemini_client=client, prompt_path=_prompt_path(tmp_path))
+
+    result = await service.verify(state, decision, executed, allow_stable_wait=False)
+
+    assert result.status is VerificationStatus.SUCCESS
+    assert result.expected_outcome_met is True
+    assert result.stop_condition_met is False
+    assert result.stop_reason is None
+    assert result.failure_type is None
+
+
+@pytest.mark.asyncio
+async def test_critic_judges_a_stop_on_the_screen_the_policy_saw(tmp_path: Path) -> None:
+    """A STOP leaves no after-screenshot; the critic must still check the claim, on the current screen."""
+    current = tmp_path / "step_3" / "before.png"
+    current.parent.mkdir()
+    current.write_bytes(b"fake")
+    perception = ScreenPerception(summary="cmd window", page_hint="unknown", capture_artifact_path=str(current))
+    state = AgentState(
+        run_id="run-c2", intent="Save the folder listing to a file", status="running", step_count=3,
+        action_history=[_typed_draft()], observation_history=[perception],
+    )
+    decision, executed = _stop()
+    seen: list[str] = []
+
+    class Recording(StubVerificationClient):
+        async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
+            seen.append(screenshot_path)
+            return await super().generate_verification(prompt, screenshot_path)
+
+    client = Recording(response=json.dumps({"status": "failure", "expected_outcome_met": False, "stop_condition_met": False, "reason": "no file"}))
+    service = DeterministicVerifierService(gemini_client=client, prompt_path=_prompt_path(tmp_path))
+
+    result = await service.verify(state, decision, executed)
+
+    assert seen == [str(current)], result.reason
+    assert result.status is VerificationStatus.FAILURE
+    assert result.stop_condition_met is False
+
+
+@pytest.mark.asyncio
+async def test_critic_null_strings_are_read_as_null(tmp_path: Path) -> None:
+    state = AgentState(run_id="run-c3", intent="Create draft", status="running")
+    action = AgentAction(action_type=ActionType.CLICK, x=10, y=10)
+    decision = PolicyDecision(action=action, rationale="Open compose.", confidence=0.9, active_subgoal="open compose")
+    screenshot = tmp_path / "after.png"
+    screenshot.write_bytes(b"fake")
+    executed = ExecutedAction(action=action, success=True, detail="clicked", artifact_path=str(screenshot))
+    client = StubVerificationClient(
+        response=json.dumps({
+            "status": "success", "expected_outcome_met": True, "stop_condition_met": False,
+            "reason": "Compose is open.", "failure_type": "null", "stop_reason": "None",
+        })
+    )
+    service = DeterministicVerifierService(gemini_client=client, prompt_path=_prompt_path(tmp_path))
+
+    result = await service.verify(state, decision, executed, allow_stable_wait=False)
+
+    assert result.critic_model_used is True
+    assert result.reason == "Compose is open."

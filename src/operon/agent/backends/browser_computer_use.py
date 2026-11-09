@@ -40,6 +40,9 @@ class _ConversationState:
     # Set when the user declined the held calls: the next answer to the model's
     # open calls reports this instead of an outcome, since they never ran.
     declined_reason: str | None = None
+    # Keys the model is holding down (key_down without its key_up yet); they join
+    # its next key press, which may come several turns later.
+    held_keys: list[str] = field(default_factory=list)
 
 
 def _requires_confirmation(call: dict) -> bool:
@@ -129,6 +132,8 @@ class BrowserComputerUseBackend(AgentBackend):
                     function_calls,
                     screen_width=screenshot.width,
                     screen_height=screenshot.height,
+                    held_keys=self._conversations[state.run_id].held_keys
+                    if state.run_id in self._conversations else None,
                 ),
                 "active_subgoal": self._subgoal_for_calls(function_calls),
             }

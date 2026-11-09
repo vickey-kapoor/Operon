@@ -196,3 +196,68 @@ def test_gemini_3_computer_use_actions_translate(function_call, expected) -> Non
 
     assert {key: payload[key] for key in expected} == expected
     translate_computer_use_action(payload)
+
+
+def test_key_down_and_up_are_not_unsupported() -> None:
+    """Gemini 3.x's key_down / key_up used to switch the whole run to the fallback model."""
+    held: list[str] = []
+
+    down = normalize_computer_use_function_call(
+        {"name": "key_down", "args": {"key": "Control"}}, screen_width=1000, screen_height=1000, held_keys=held
+    )
+    up = normalize_computer_use_function_call(
+        {"name": "key_up", "args": {"key": "Control"}}, screen_width=1000, screen_height=1000, held_keys=held
+    )
+
+    assert down["action_type"] == "wait"
+    assert up["action_type"] == "wait"
+    assert held == []
+    translate_computer_use_action(down)
+
+
+def test_held_key_joins_the_next_key_press_across_turns() -> None:
+    held: list[str] = []
+    calls = [
+        {"name": "key_down", "args": {"key": "Control"}},
+        {"name": "press_key", "args": {"key": "a"}},
+        {"name": "key_up", "args": {"key": "Control"}},
+        {"name": "press_key", "args": {"key": "Delete"}},
+    ]
+
+    # One call per turn, as the run that hit this bug did.
+    payloads = [
+        normalize_computer_use_actions([call], screen_width=1000, screen_height=1000, held_keys=held) for call in calls
+    ]
+
+    assert payloads[1] == {"action_type": "hotkey", "key": "Control+a"}
+    assert payloads[3] == {"action_type": "press_key", "key": "Delete"}
+    assert translate_computer_use_action(payloads[1]).action_type is ActionType.HOTKEY
+
+
+def test_held_key_in_one_batch_makes_a_hotkey() -> None:
+    payload = normalize_computer_use_actions(
+        [
+            {"name": "key_down", "args": {"key": "Shift"}},
+            {"name": "type", "args": {"text": "x"}},
+            {"name": "key_up", "args": {"key": "Shift"}},
+            {"name": "hotkey", "args": {"keys": ["Control", "s"]}},
+        ],
+        screen_width=1000,
+        screen_height=1000,
+        held_keys=[],
+    )
+
+    assert payload["action_type"] == "batch"
+    assert payload["actions"][1] == {"action_type": "hotkey", "key": "Shift+x"}
+    assert payload["actions"][3] == {"action_type": "hotkey", "key": "Control+s"}
+
+
+def test_held_modifier_is_added_to_a_hotkey_once() -> None:
+    payload = normalize_computer_use_function_call(
+        {"name": "hotkey", "args": {"keys": ["Control", "c"]}},
+        screen_width=1000,
+        screen_height=1000,
+        held_keys=["Control", "Shift"],
+    )
+
+    assert payload == {"action_type": "hotkey", "key": "Shift+Control+c"}

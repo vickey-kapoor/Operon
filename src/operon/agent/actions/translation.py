@@ -35,9 +35,17 @@ def normalize_computer_use_function_call(
     *,
     screen_width: int,
     screen_height: int,
+    held_keys: list[str] | None = None,
 ) -> dict[str, Any]:
+    """One Computer Use call as an Operon action payload.
+
+    ``held_keys`` is the run's list of keys the model is holding down (Gemini 3.x's
+    ``key_down`` / ``key_up``, often across turns): they are added to the next key
+    press, so ``key_down Control``, ``press_key a``, ``key_up Control`` selects all.
+    Without it, ``key_down`` / ``key_up`` are kept per call only."""
     name = function_call.get("name")
     args = function_call.get("args", {})
+    held = held_keys if held_keys is not None else []
     safety_decision = args.get("safety_decision")
     if isinstance(safety_decision, dict) and safety_decision.get("decision") == "require_confirmation":
         return {
@@ -115,17 +123,33 @@ def normalize_computer_use_function_call(
             "y": _scale_grid_coord(args["y"], screen_height),
         }
     if name == "type":
+        text = args["text"]
+        if held and isinstance(text, str) and len(text) == 1:
+            # A single character typed with a modifier held is a shortcut (Control + a).
+            return {"action_type": "hotkey", "key": "+".join([*held, text])}
         return {
             "action_type": "type",
             "text": args["text"],
             "clear_before_typing": False,
             "press_enter": bool(args.get("press_enter", False)),
         }
+    if name in {"key_down", "key_up"}:
+        key = str(args["key"])
+        if name == "key_down" and key not in held:
+            held.append(key)
+        elif name == "key_up" and key in held:
+            held.remove(key)
+        # Nothing to run yet: the held key joins the next key press.
+        return {"action_type": "wait", "wait_ms": 100}
     if name == "press_key":
-        return {"action_type": "press_key", "key": str(args["key"])}
+        key = str(args["key"])
+        if held:
+            return {"action_type": "hotkey", "key": "+".join([*held, key])}
+        return {"action_type": "press_key", "key": key}
     if name == "hotkey":
         keys = args["keys"]
-        return {"action_type": "hotkey", "key": "+".join(keys) if isinstance(keys, list) else str(keys)}
+        keys = [str(k) for k in keys] if isinstance(keys, list) else str(keys).split("+")
+        return {"action_type": "hotkey", "key": "+".join([*[k for k in held if k not in keys], *keys])}
     if name == "wait":
         return {"action_type": "wait", "wait_ms": int(float(args.get("seconds", 1)) * 1000)}
     if name == "launch_app":
@@ -151,6 +175,7 @@ def normalize_computer_use_actions(
     *,
     screen_width: int,
     screen_height: int,
+    held_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     if not function_calls:
         raise BackendCompatibilityError("No Computer Use function calls were provided.")
@@ -170,6 +195,7 @@ def normalize_computer_use_actions(
             function_call,
             screen_width=screen_width,
             screen_height=screen_height,
+            held_keys=held_keys,
         )
         previous = normalized[-1] if normalized else None
         if (

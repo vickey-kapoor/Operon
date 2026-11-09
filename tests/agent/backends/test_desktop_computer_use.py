@@ -167,3 +167,21 @@ def test_click_then_type_in_one_turn_is_one_atomic_type() -> None:
         [calls[0], {"name": "type_text_at", "args": {"x": 10, "y": 10, "text": "a"}}], screen_width=1000, screen_height=1000
     )
     assert [a["action_type"] for a in batch["actions"]] == ["click", "type"]
+
+
+async def test_key_held_across_turns_reaches_the_next_key_press(tmp_path: Path) -> None:
+    """key_down in one turn and press_key in the next make one shortcut (no fallback switch)."""
+    client = ScriptedClient([
+        _call_reply("key_down", {"key": "Control"}),
+        _call_reply("press_key", {"key": "a"}),
+        _call_reply("key_up", {"key": "Control"}),
+    ])
+    backend = _backend(client)
+
+    state = _state()
+    first = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "1.png"), state))
+    state = _state(first.action)
+    second = await backend.choose_action(state, await backend.perceive(_frame(tmp_path, "2.png"), state))
+
+    assert first.action.action_type is ActionType.WAIT
+    assert second.action.action_type is ActionType.HOTKEY and second.action.key == "Control+a"

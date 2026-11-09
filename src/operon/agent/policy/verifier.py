@@ -220,6 +220,21 @@ class DeterministicVerifierService(VerifierService):
 
         model_result = await self._model_verify(state, decision, executed_action)
         if model_result is not None:
+            if model_result.stop_condition_met:
+                # Only the policy's own STOP ends a run. The critic sees one step and
+                # can mistake a milestone (an order confirmation) for the whole task
+                # (place the order, then reply to the email), so its stop signal on any
+                # other action is kept as a note, not acted on.
+                model_result = model_result.model_copy(
+                    update={
+                        "stop_condition_met": False,
+                        "stop_reason": None,
+                        "failure_type": None
+                        if model_result.failure_type is VerificationFailureType.STOP_BOUNDARY_REACHED
+                        else model_result.failure_type,
+                        "reason": f"{model_result.reason} (critic stop signal ignored: only a stop action ends the run)",
+                    }
+                )
             return model_result
 
         if decision.confidence < 0.5:
@@ -311,6 +326,14 @@ class DeterministicVerifierService(VerifierService):
         executed_action: ExecutedAction,
     ) -> VerificationResult | None:
         screenshot_path = executed_action.artifact_path
+        if (
+            (not screenshot_path or not Path(screenshot_path).is_file())
+            and decision.action.action_type is ActionType.STOP
+            and state.observation_history
+        ):
+            # A STOP changes nothing and leaves no after-screenshot: the screen the
+            # policy saw when it stopped is the current one, so the critic judges that.
+            screenshot_path = state.observation_history[-1].capture_artifact_path
         # The executor can report an after-screenshot it never wrote (a failed capture);
         # without the image the critic has nothing to judge.
         if not screenshot_path or not Path(screenshot_path).is_file():
@@ -577,6 +600,9 @@ def _has_phrase(phrase: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text) is not None
 
 
+_NULL_STRINGS = frozenset({"null", "none"})
+
+
 def _parse_verification_output(raw_output: str) -> VerificationResult | None:
     cleaned = raw_output.strip()
     if cleaned.startswith("```"):
@@ -590,6 +616,13 @@ def _parse_verification_output(raw_output: str) -> VerificationResult | None:
         payload = json.loads(cleaned)
     except json.JSONDecodeError:
         return None
+    if isinstance(payload, dict):
+        # Critics often write JSON null as a string ("failure_type": "null"), which
+        # would fail validation and throw the whole verdict away.
+        payload = {
+            key: None if key != "reason" and isinstance(value, str) and value.strip().lower() in _NULL_STRINGS else value
+            for key, value in payload.items()
+        }
     try:
         return VerificationResult.model_validate(payload)
     except ValidationError:

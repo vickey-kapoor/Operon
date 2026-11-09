@@ -62,6 +62,23 @@ def test_prepare_ignores_server_default_and_takes_overrides_for_old_reports() ->
     assert report["config"] == {"backend": "computer_use", "model": "gemini-3.5-flash", "harness_profile": "full"}
 
 
+def test_prepare_records_the_season_a_run_belongs_to_without_held_out_names() -> None:
+    season = {
+        "season": 1, "suite": "long", "season_hash": "abc", "operon_commit": "6ac35e2",
+        "operon_settings": {"OPERON_HARNESS_PROFILE": "thin"}, "held_out_skipped": False,
+        "held_out": {"run": 3, "passed": 2, "outcomes": {"success": 2, "missed": 1}, "cost_usd": 0.4},
+    }
+    config = prepare(_report(backend="computer_use", season=season), {})["config"]
+    assert {k: config[k] for k in ("season", "season_suite", "season_hash", "operon_commit", "season_held_out")} == {
+        "season": 1, "season_suite": "long", "season_hash": "abc", "operon_commit": "6ac35e2",
+        "season_held_out": {"run": 3, "passed": 2},
+    }
+    assert "season_working_only" not in config and "operon_settings" not in config
+    skipped = prepare(_report(backend="computer_use", season={**season, "held_out_skipped": True, "held_out": None}), {})
+    assert skipped["config"]["season_working_only"] is True and "season_held_out" not in skipped["config"]
+    assert "season" not in prepare(_report(backend="computer_use"), {})["config"]
+
+
 def test_desktop_reports_without_a_mode_are_keyed_as_desktop() -> None:
     old = _report(suite="desktop-smoke", desktop_model="gemini-2.5-flash")
     del old["mode"]  # reports from before desktop mode existed

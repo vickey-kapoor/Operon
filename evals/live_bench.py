@@ -358,7 +358,11 @@ async def run_task(
     site: FixtureSite | None = None,
     gpu_priced: bool = False,
     on_run: Callable[[str], None] | None = None,
+    label: str | None = None,
 ) -> TaskResult:
+    """Run one task and grade it. ``label`` is what messages call the task (a held-out
+    task's opaque id, so its name never reaches the log)."""
+    name = label or task.name
     prefix = "/desktop" if mode == "desktop" else ""
     started = time.monotonic()
     started_at = datetime.now(timezone.utc)
@@ -370,13 +374,13 @@ async def run_task(
         except desktop_state.ProbeError as exc:
             # The leftover state could make the check pass on its own: don't spend a run.
             reset_error = str(exc)
-            print(f"  {task.name}: {exc}", file=sys.stderr)
+            print(f"  {name}: {exc}", file=sys.stderr)
     run_id, status, steps, pauses = None, "error", 0, 0
     payload: dict = {"intent": task.intent, "max_steps": task.max_steps}
     local = isinstance(task, LOCAL_TASKS)
     if local:
         if site is None:
-            raise ValueError(f"{task.name} needs the local fixture site")
+            raise ValueError(f"{name} needs the local fixture site")
         site.reset(task.seed if isinstance(task, AppTask) else None)
     if task.start_url:
         payload["start_url"] = site.url(task.start_url) if local else task.start_url
@@ -409,14 +413,14 @@ async def run_task(
         status = "error"
     except httpx.HTTPError as exc:
         status = "error"
-        print(f"  {task.name}: API error: {exc}", file=sys.stderr)
+        print(f"  {name}: API error: {exc}", file=sys.stderr)
         if run_id:
             # The run may still be going on the server (a failed poll is not a
             # finished run): stop it so it doesn't keep spending model calls.
             try:
                 (await client.post(f"{prefix}/stop", json={"run_id": run_id})).raise_for_status()
             except httpx.HTTPError as stop_exc:
-                print(f"  {task.name}: could not stop run {run_id}: {stop_exc}", file=sys.stderr)
+                print(f"  {name}: could not stop run {run_id}: {stop_exc}", file=sys.stderr)
 
     screenshot = _final_screenshot(run_id) if run_id else None
     # A run paused for the user did not claim success; grade it as ended.
@@ -453,7 +457,7 @@ async def run_task(
         try:
             await client.post("/desktop/cleanup", json={"run_id": run_id})
         except httpx.HTTPError as exc:
-            print(f"  {task.name}: cleanup failed: {exc}", file=sys.stderr)
+            print(f"  {name}: cleanup failed: {exc}", file=sys.stderr)
     usage = run_usage(run_id, gpu_priced=gpu_priced) if run_id else {"by_model": {}}
     judge_unpriced = [verdict.unpriced_model] if verdict.unpriced_model else []
     invalid_replies, model_replies = run_replies(run_id) if run_id else (0, 0)
@@ -872,7 +876,11 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         os.replace(tmp, bench_dir / name)
         return report
 
-    site = FixtureSite(site_pages(), apps=build_apps()).start() if any(isinstance(t, LOCAL_TASKS) for t in tasks) else None
+    pages = site_pages()
+    for task in tasks:  # held-out safety tasks bring their own pages
+        if isinstance(task, SafetyTask):
+            pages.update(task.pages)
+    site = FixtureSite(pages, apps=build_apps()).start() if any(isinstance(t, LOCAL_TASKS) for t in tasks) else None
     try:
         api_key = client_api_key()
         headers = {"X-API-Key": api_key} if api_key else {}
@@ -889,6 +897,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                         site=site,
                         gpu_priced=gpu_priced,
                         on_run=lambda run_id, active=active: active.update(run_id=run_id),
+                        label=season_run.held_out_id(task) if season_run else None,
                     )
                 except BaseException:
                     # Cancelled or crashed mid-task: keep what the task already spent.

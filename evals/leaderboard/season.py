@@ -37,9 +37,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import inspect
 import json
+import linecache
 import os
 import subprocess
 import sys
@@ -48,7 +48,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from types import FunctionType
+from types import FunctionType, ModuleType
 from typing import Any
 
 from evals.leaderboard.suite import SuiteMismatchError, hash_bytes
@@ -81,21 +81,33 @@ class SeasonError(RuntimeError):
 # ---------- fingerprints ----------
 
 
-def _plain(value: Any) -> Any:
-    """``value`` as JSON-able data, in a stable order; functions become None (hashed apart)."""
+def _plain(value: Any, found: list[Callable] | None = None) -> Any:
+    """``value`` as JSON-able data, in a stable order. Functions become a placeholder
+    and are appended to ``found``, so their code gets hashed (a safety task's pages,
+    a grader)."""
     if isinstance(value, FunctionType) or callable(value) and not isinstance(value, type):
-        return None
+        if found is not None:
+            found.append(value)
+        return "<function>"
     if is_dataclass(value) and not isinstance(value, type):
-        return {f.name: _plain(getattr(value, f.name)) for f in fields(value)}
+        return {f.name: _plain(getattr(value, f.name), found) for f in fields(value)}
     if isinstance(value, dict):
-        return {str(k): _plain(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
+        return {str(k): _plain(v, found) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
     if isinstance(value, (set, frozenset)):
-        return sorted(_plain(v) for v in value)
+        return sorted((_plain(v, found) for v in value), key=repr)
     if isinstance(value, (list, tuple)):
-        return [_plain(v) for v in value]
+        return [_plain(v, found) for v in value]
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return repr(value)
+
+
+def _value_text(value: Any) -> str:
+    """A non-function value a grader depends on, as stable text."""
+    try:
+        return json.dumps(_plain(value), sort_keys=True)
+    except (TypeError, ValueError):
+        return repr(value)
 
 
 def _is_evals_function(obj: Any) -> bool:
@@ -110,37 +122,47 @@ def _function_source(fn: FunctionType) -> str:
 
 
 def code_closure(roots: Iterable[Callable]) -> str:
-    """The source of ``roots`` and of every ``evals`` function they reach: helpers they
-    name, functions captured in their closures, and functions nested in their code.
+    """The source of ``roots`` and of every ``evals`` function they reach (helpers they
+    name, functions captured in their closures or defaults, functions nested in their
+    code), with the values each one depends on: captured variables, default arguments
+    and the module-level constants it names.
 
     So editing a grader's helper (say ``_one_order``) changes the hash of every task
-    whose grader calls it, and nothing else's."""
+    whose grader calls it, and so does ``_overreach(3)`` in place of ``_overreach(2)``."""
     seen: dict[str, str] = {}
     stack = [fn for fn in roots if _is_evals_function(fn)]
     while stack:
         fn = stack.pop()
-        source = _function_source(fn)
-        # No line number in the key: an edit elsewhere in the file must not change it.
-        key = f"{fn.__module__}:{fn.__qualname__}:{hashlib.sha256(source.encode()).hexdigest()[:12]}"
-        if key in seen:
-            continue
-        seen[key] = source
+        values: list[str] = []
+        captured = []
         for cell in fn.__closure__ or ():
             try:
-                contents = cell.cell_contents
+                captured.append(cell.cell_contents)
             except ValueError:
-                continue
-            for value in contents if isinstance(contents, (list, tuple)) else (contents,):
-                if _is_evals_function(value):
-                    stack.append(value)
+                captured.append("<empty>")
+        defaults = [*(fn.__defaults__ or ()), *sorted((fn.__kwdefaults__ or {}).items())]
+        for value in [*captured, *defaults]:
+            found: list[Callable] = []
+            values.append(_value_text(_plain(value, found)))
+            stack.extend(f for f in found if _is_evals_function(f))
         codes = [fn.__code__]
         while codes:
             code = codes.pop()
-            for name in code.co_names:
-                target = fn.__globals__.get(name)
+            for name in sorted(set(code.co_names)):
+                if name not in fn.__globals__:
+                    continue
+                target = fn.__globals__[name]
                 if _is_evals_function(target):
                     stack.append(target)
+                elif not (inspect.ismodule(target) or inspect.isclass(target) or callable(target)):
+                    values.append(f"{name} = {_value_text(target)}")
             codes.extend(c for c in code.co_consts if inspect.iscode(c))
+        text = _function_source(fn) + "".join(f"\n# uses {v}" for v in values)
+        # No line number in the key: an edit elsewhere in the file must not change it.
+        key = f"{fn.__module__}:{fn.__qualname__}:{hashlib.sha256(text.encode()).hexdigest()[:12]}"
+        if key in seen:
+            continue
+        seen[key] = text
     return "\n".join(f"# {key}\n{seen[key]}" for key in sorted(seen))
 
 
@@ -165,7 +187,7 @@ def grader_of(task: Any) -> tuple[list[Callable], list[Path]]:
 
         check = desktop_state.CHECKS.get(task.name)
         roots = [check] if check is not None else []
-        return [*roots, desktop_state.grade], [EVALS_DIR / "desktop_probe.ps1"]
+        return roots, [EVALS_DIR / "desktop_probe.ps1"]
     from evals import live_bench
 
     return [live_bench.gemini_judge, live_bench.parse_verdict, live_bench.classify], []
@@ -174,8 +196,11 @@ def grader_of(task: Any) -> tuple[list[Callable], list[Path]]:
 def task_fingerprint(task: Any) -> str:
     """SHA-256 of everything that decides what ``task`` asks and how it is graded."""
     roots, fixtures = grader_of(task)
+    in_data: list[Callable] = []
+    data = json.dumps(_plain(task, in_data), sort_keys=True)
+    roots = [*roots, *in_data]  # e.g. a safety task's pages built by a function
     parts = [
-        ("data", json.dumps(_plain(task), sort_keys=True).encode()),
+        ("data", data.encode()),
         ("grader", code_closure(roots).encode()),
         ("fixtures", json.dumps(file_hashes(fixtures), sort_keys=True).encode()),
     ]
@@ -197,10 +222,12 @@ def grounding_config(sets: list[str] | None = None, per_set: int | None = None) 
         "datasets": {grounding.V2_REPO: grounding.V2_REVISION, grounding.PRO_REPO: grounding.PRO_REVISION},
         "seed": grounding.SEED,
         "intent": grounding.INTENT,
-        "code": hashlib.sha256(code_closure([
+        # Dataset picks the annotation files and builds each set's pool; its methods are
+        # reached through an instance, which code_closure can't follow, so hash the class.
+        "code": hashlib.sha256((code_closure([
             grounding.select_samples, grounding.stratified, grounding.v2_samples, grounding.pro_samples,
             grounding.first_point, grounding.score,
-        ]).encode()).hexdigest(),
+        ]) + textwrap.dedent(inspect.getsource(grounding.Dataset))).encode()).hexdigest(),
     }
 
 
@@ -225,22 +252,29 @@ def load_private(path: str | os.PathLike | None = None) -> dict[str, list[Any]]:
     """The held-out tasks, by suite, from the private file ``$OPERON_SEASON_PRIVATE``.
 
     The file is Python that defines ``HELD_OUT = {"long": [AppTask(...), ...], ...}``
-    with the same task classes as the repo. {} when no file is configured."""
+    with the same task classes as the repo, and for held-out desktop tasks
+    ``CHECKS = {name: check}`` like ``desktop_state.CHECKS``. {} when no file is configured."""
     path = path or os.getenv(PRIVATE_ENV, "").strip()
     if not path:
         return {}
     file = Path(path)
     if not file.is_file():
         raise SeasonError(f"${PRIVATE_ENV} points at {file}, which is not a file")
-    spec = importlib.util.spec_from_file_location("_operon_season_private", file)
-    if spec is None or spec.loader is None:
-        raise SeasonError(f"can't load held-out tasks from {file}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    # Compiled from the source each time: a cached .pyc can be stale (same size and
+    # mtime second) and must not be left next to the private file either.
+    module = ModuleType("_operon_season_private")
+    module.__file__ = str(file)
+    sys.modules[module.__name__] = module
+    linecache.checkcache(str(file))
+    exec(compile(file.read_text(encoding="utf-8"), str(file), "exec"), module.__dict__)
     held = getattr(module, "HELD_OUT", None)
     if not isinstance(held, dict):
         raise SeasonError(f"{file} must define HELD_OUT = {{suite: [task, ...]}}")
+    checks = getattr(module, "CHECKS", None)
+    if checks:  # held-out desktop tasks' state checks, by task name
+        from evals import desktop_state
+
+        desktop_state.CHECKS.update(checks)
     return {suite: list(tasks) for suite, tasks in held.items()}
 
 

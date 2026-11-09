@@ -47,7 +47,7 @@ import textwrap
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import FunctionType, ModuleType
 from typing import Any
 
@@ -99,6 +99,12 @@ def _plain(value: Any, found: list[Callable] | None = None) -> Any:
         return [_plain(v, found) for v in value]
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
+    if isinstance(value, PurePath):
+        # A path the same on every checkout and OS: relative to the repo, else its name.
+        try:
+            return Path(value).resolve().relative_to(EVALS_DIR.parent).as_posix()
+        except (ValueError, OSError):
+            return value.name
     return repr(value)
 
 

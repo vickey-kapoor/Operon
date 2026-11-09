@@ -424,3 +424,13 @@ def test_a_private_file_can_add_desktop_probe_settings(tmp_path, monkeypatch):
     s.load_private(path)
     assert desktop_state.OUTPUTS["secret_file"] == ("x.txt",) and desktop_state.CLOSE_FIRST["secret_file"] == ("notepad",)
     assert desktop_state.grade("secret_file", {"files": {"x.txt": "x"}})[0]
+
+
+def test_a_path_is_hashed_the_same_on_every_checkout():
+    # A grader's path constant (the desktop probe script) must not carry the checkout's location.
+    from pathlib import PureWindowsPath
+
+    from evals import desktop_state
+
+    assert s._plain(desktop_state.PROBE_SCRIPT) == "evals/desktop_probe.ps1"
+    assert s._plain(PureWindowsPath(r"C:\elsewhere\evals\desktop_probe.ps1")) == "desktop_probe.ps1"

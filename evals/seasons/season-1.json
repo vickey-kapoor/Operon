@@ -1,8 +1,8 @@
 {
   "format": 1,
   "season": 1,
-  "frozen_at": "2026-11-09T05:27:11Z",
-  "operon_commit": "aaa50da7445f70e3c227170b10841d31f5968bba",
+  "frozen_at": "2026-11-09T05:31:52Z",
+  "operon_commit": "fdca15a34f7059ca0107d35e0e9feaf6c9f859ae",
   "suites": {
     "long": {
       "runner": "live_bench",
@@ -50,28 +50,28 @@
       "mode": "desktop",
       "bench_suite": "full",
       "working": {
-        "notepad_type": "4e1b662b9514e6efcdec5835ad4ee6eece3185044fcc6935b3ff4848cde1edeb",
-        "notepad_two_lines": "c0d5f40b251a5865e9e6316fe01b26ba43c15e88fdf3cc98de3efed54a5d9779",
-        "explorer_windows": "c8e1f7694b4e4d5cee5fdfd6402c0975abc3c25eb5a705b4238dafd7d6741cd6",
-        "explorer_new_folder": "ad39fe358a03de3e45d5340ebc77391cceb7735861038b676c3a5094a34cd6bd",
-        "cmd_echo": "26b3e25e8f733c9435ce750d43349ef5ef8dee0c26e6205f94e556503a99f10c",
-        "powershell_date": "3d5270f3b0afd2d10b19816bcd5fb29f6ed0263c0020eeb70dc4146cd2c75660",
-        "settings_display": "e0c38cec0ed1b2166acf3ccc5364a33884854e061495c0d849f751e1fe45721a",
-        "taskmgr_performance": "544a74ab861f058fca66eda2a17d7562d9ab0f0d3ac4b2b9cc1b53a9de1b06e9",
-        "calculator_multiply": "1cc5e341a69cbbd4a7fa5d2067762a49f84f2e34699bd713fd2fd5f55557abe3",
-        "paint_rectangle": "37e55a04e5334c24c7bc0291524db9893c20b65091eec98d628f4f1dd4f74c6a",
-        "notepad_save_file": "d73d33098ac3b5846d7a9320b6a5af9a62e70491bb087093e2a311294481c980",
-        "cmd_list_to_file": "a9727b17c7373ef57a4cb18ca6aeabf1232e1faf0b11bcab6fca178c39ca0e5a",
-        "powershell_computer_name": "9af39bea12ffeb89a3e562c79e95a3a67f85ebccec45bf0a2d8356ae806b82c8",
-        "calculator_to_notepad": "aa617ae9aa9c6b881758ad149f688a17cca955e21c91fd0d7b0dc47499c54f6e"
+        "notepad_type": "8029a8a1fd1ea1e07fa485b5037e2914fe44b97eb8ac5c7f7fc158abe7789519",
+        "notepad_two_lines": "73e0dda5c8a296b30e22141d5fcb18f0b10233c0e2ac03bc572a5f7b595c0535",
+        "explorer_windows": "971ef76e634a6d040577f55a4fe077999bb8903ead3ab7fdd987b12a31ee6480",
+        "explorer_new_folder": "41fbee3ce105e6e7384c1984dab1e91fd69a3a4a902052091befb305ed20bf1e",
+        "cmd_echo": "4f052cd745cd67eb4fc20ced9959a8eebb9c404e96ca8bf73136a8dc8fdc6dd8",
+        "powershell_date": "59e0faabdabd4bbc3e67c73b1ae2c6dd5b2421217396d01cf574638184f9890f",
+        "settings_display": "d3c9a6b74ee94ccaa5e729e7125eac81f2e2ca292fd4d06e2778fff8b1923de2",
+        "taskmgr_performance": "aec7078bd6c8dffd2dcdf9df4b01c43043501060a2e55b7d19ea3655de8f7f07",
+        "calculator_multiply": "1837de7ecc4fb3e9a7b38521372b17b629748f23863d946971b378722f0e1b88",
+        "paint_rectangle": "47025e39946361a98d657978ce71670d1bc62a8bda00b6a675afee9bc9b676bd",
+        "notepad_save_file": "18774b606792b65977fc9a277845f32c68ea30229a457215828dd2623dea07bd",
+        "cmd_list_to_file": "85d6547e3c8e1f7a1548c5b3b85e613349a16ff2fa60ff7823c747f864074146",
+        "powershell_computer_name": "5ee0f4df50fde7ea97d20489e95f49060fb193ad7f2e364a1b7a537debdd328c",
+        "calculator_to_notepad": "4be6b40d1a2949436a9fad1c0e1102bac8fb502c19496f163f68136f6aa7aecc"
       },
       "held_out": {
-        "h-6aa7b7c4bf": "e0b80c125dac97bf14219dc1f7d0b7ef5c7cfa8fc72c1602955977f8ce25a597",
-        "h-d5c8d6f97a": "9f9ae44a4ccf709547e86501e7294d5c1582283c0c845a51ad08974c0ad230ff",
-        "h-f05473a331": "c7b2186c6625a12b9b59418c81bb3be2d05f73a7f102e257ef687ea091ecfc2c",
-        "h-f0e7d98bba": "b26186d0c280e2d5b78034f04caa60a323cc8b1afd527e123405a786aeda8203",
-        "h-1fe9d5115d": "b8da4cbd6323f24748f0013105387e6cbd54c42f46f76186d704f00349e028be",
-        "h-391824ce01": "9f30322442f1bb6d1b81babaf122d7a3bc4c7e96dbcd2bdac16606c742509d92"
+        "h-6aa7b7c4bf": "567760e8b9229c6fa005dd5186d3f8b1f683f94e7bf1305d6768d455959395dd",
+        "h-d5c8d6f97a": "99534db888520a10940a2b4db16cce055831ee32e9942baa9fa0d4dd7843063d",
+        "h-f05473a331": "91e92f4f4e7563467aa8a9d2f1e002b293b8fef3d7a322799b4dc0397982443f",
+        "h-f0e7d98bba": "76b98708c46123d1001d3ed1f7bf67b7b16de06e4b53392797c7c139de916287",
+        "h-1fe9d5115d": "227905e596c27d64640e31b164808a8393cc4cfe29347181dea13f18ea8da120",
+        "h-391824ce01": "0cbc818d6fb75a7deb132c1e0773f970a159030b4e5ffa581df00639212e8617"
       }
     },
     "grounding": {
@@ -134,5 +134,5 @@
     }
   },
   "retired": [],
-  "season_hash": "ba7ca1a461a13fb8f77e6648ecb6903f4023cb21f4b8f2ffac6f73b0c276e4e7"
+  "season_hash": "a6fc471b8f391d792f5095810c1df63c76b81b71426d67d7b1b417af27d768a3"
 }

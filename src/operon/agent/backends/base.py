@@ -43,6 +43,17 @@ class AgentBackend(ABC):
         backends that answer the model's calls with their outcome."""
         return None
 
+    # Per-run caches the backends keep, keyed by run_id.
+    _PER_RUN_CACHES = ("_conversations", "_last_frames", "_advisory_hints", "_runs", "_hints")
+
+    def release_run(self, run_id: str) -> None:
+        """The run finished: drop everything kept for it (conversation, last frame,
+        queued hints). Backends with other per-run state extend this."""
+        for name in self._PER_RUN_CACHES:
+            cache = getattr(self, name, None)
+            if isinstance(cache, dict):
+                cache.pop(run_id, None)
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         """The user resumed a confirmation pause with a correction instead of an
         approval. Optional hook for backends that hold the paused calls to run them

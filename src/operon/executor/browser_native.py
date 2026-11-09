@@ -1078,7 +1078,14 @@ class NativeBrowserExecutor(Executor):
             self._obs_playwright = None
 
     async def aclose(self) -> None:
-        """Uniform server-shutdown teardown. Releases the persistent browser."""
+        """Uniform server-shutdown teardown: every run's session still open (a batch
+        session owns its own Chromium and Playwright), then the persistent browser.
+        Best-effort: one session's failure must not block the rest."""
+        for run_id in list(self._sessions):
+            try:
+                await self.aclose_run(run_id)
+            except Exception:
+                logger.debug("aclose: closing the session of run %s failed", run_id, exc_info=True)
         await self.close_persistent_browser()
 
     def _video_dir_for_run(self, run_id: str) -> Path:

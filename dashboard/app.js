@@ -38,6 +38,7 @@ const state = {
   budget: null,
   registry: [],
   trendMetric: "pass",
+  lbCell: null, // the Leaderboard grid cell whose flipped tasks are listed (KAN-60)
 };
 
 // ---------- small helpers ----------
@@ -1709,7 +1710,28 @@ function planCell(run) {
     heldOut: c.season_held_out || null,
     workingOnly: Boolean(c.season_working_only),
     critics: c.critic_model ? [c.critic_model] : [],
+    key: run.key, startedAt: run.started_at,
+    range: s.score_range || null, change: s.change || null,
   };
+}
+
+// The KAN-60 badge: Improved / Regressed / No clear change against the cell's previous run,
+// computed at import (evals/leaderboard/changes.py) from the paired difference's 95% range.
+const CHANGE_CLASSES = { Improved: "up", Regressed: "down" };
+
+function changeBadge(change) {
+  if (!change) return null;
+  const pts = change.difference === undefined ? null : Math.round(change.difference * 100);
+  const text = pts === null ? change.label : `${change.label} (${pts > 0 ? "+" : ""}${pts} pts)`;
+  const flips = (change.fixed || []).length + (change.broke || []).length;
+  const title = change.previous ? `vs ${timeFmt.format(parseStamp(change.previous.started_at))}: ${change.previous.success}/${change.previous.tasks}`
+    + (change.low !== undefined ? `; difference 95% range ${Math.round(change.low * 100)} to ${Math.round(change.high * 100)} pts` : "")
+    + `; ${flips} task${flips === 1 ? "" : "s"} flipped` : "no earlier run of this cell";
+  return el("span", { class: `delta change ${CHANGE_CLASSES[change.label] || ""}`, title }, text);
+}
+
+function rangeText(range) {
+  return range ? `range ${fmtPct(range.low)} to ${fmtPct(range.high)}` : null;
 }
 
 // One row per planned model and category: its latest unflagged Season 1 core run per
@@ -1755,7 +1777,7 @@ function harnessDelta(thin, full) {
   return full.rate - thin.rate;
 }
 
-function planCellView(cell, why) {
+function planCellView(cell, why, id) {
   if (!cell) return el("td", { class: "not-run" }, why);
   const tag = (name, t) => (t ? `${name} ${t.success}/${t.tasks}` : null);
   const safety = cell.safety ? `safety ${cell.safety.passed ? "passed" : "failed"} (${cell.safety.success}/${cell.safety.tasks}`
@@ -1765,10 +1787,15 @@ function planCellView(cell, why) {
     cell.workingOnly ? "working tasks only" : null,
     cell.critics.length ? `critic: ${cell.critics.join(", ")}` : null].filter(Boolean).join(" · ");
   const rate = cell.rate;
-  return el("td", { title },
+  const open = state.lbCell === id;
+  const toggle = () => { state.lbCell = open ? null : id; renderRunPlan(); };
+  return el("td", { title, class: `plan-cell${open ? " open" : ""}`, tabindex: "0", role: "button", "aria-expanded": String(open),
+    onclick: toggle, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } },
     rate === null ? el("span", { class: "pill none" }, "no tasks")
       : el("span", { class: `pill ${rate >= 0.9 ? "success" : rate >= 0.6 ? "missed" : "failure"}` }, fmtPct(rate)),
     el("span", { class: "sub" }, cell.tasks ? ` ${cell.success}/${cell.tasks}` : ""),
+    rangeText(cell.range) ? el("span", { class: "sub" }, ` · ${rangeText(cell.range)}`) : null,
+    cell.change ? el("div", {}, changeBadge(cell.change)) : null,
     el("div", { class: "sub" }, [tag("short", cell.short), tag("long", cell.long),
       cell.safety ? (cell.safety.passed ? "safety passed" : "safety failed") : null].filter(Boolean).join(" · ")),
     el("div", { class: "sub" }, [
@@ -1787,11 +1814,44 @@ function renderRunPlan() {
     row.first ? el("td", { rowspan: String(span) }, el("span", { class: "rank" }, String(row.step))) : null,
     row.first ? el("td", { rowspan: String(span) }, row.family, el("div", { class: "sub" }, row.story)) : null,
     el("td", {}, row.categoryName),
-    planCellView(row.thin, row.thinWhy),
-    planCellView(row.full, row.fullWhy),
+    planCellView(row.thin, row.thinWhy, `${row.family}|${row.category}|thin`),
+    planCellView(row.full, row.fullWhy, `${row.family}|${row.category}|full`),
     el("td", { class: "num" }, row.delta === null ? "–"
       : el("span", { class: `delta ${row.delta > 0 ? "up" : row.delta < 0 ? "down" : ""}` },
         `${row.delta > 0 ? "+" : ""}${Math.round(row.delta * 100)} pts`))))));
+  renderFlips(rows);
+}
+
+// The flipped tasks of the clicked cell, against the previous run of that cell.
+function flipsView(row, harness) {
+  const cell = row[harness];
+  const name = `${row.family} · ${row.categoryName} · ${harness === "thin" ? "Thin" : "Full"}`;
+  const change = cell.change;
+  if (!change || !change.previous) {
+    return [el("h3", {}, name), el("p", { class: "note" }, change ? "This is the cell's first run: nothing to compare with yet."
+      : "This run has no comparison yet; it is added when the next benchmark is imported.")];
+  }
+  const p = change.previous;
+  const list = (title, names, cls) => el("div", { class: "flips" }, el("span", { class: `delta ${cls}` }, title),
+    names.length ? el("ul", {}, names.map((n) => el("li", {}, n))) : el("span", { class: "sub" }, " none"));
+  return [
+    el("h3", {}, name, " ", changeBadge(change)),
+    el("p", { class: "note" }, `${cell.success}/${cell.tasks}`, cell.range ? ` (${rangeText(cell.range)})` : "",
+      ` against the previous run (${timeFmt.format(parseStamp(p.started_at))}): ${p.success}/${p.tasks}`,
+      p.github_run_url ? [" · ", el("a", { href: p.github_run_url, target: "_blank", rel: "noopener" }, "its workflow run")] : null,
+      change.low !== undefined ? ` · difference ${Math.round(change.low * 100)} to ${Math.round(change.high * 100)} pts (95% range)` : ""),
+    list("Now pass", change.fixed || [], "up"),
+    list("Now fail", change.broke || [], "down"),
+  ];
+}
+
+function renderFlips(rows) {
+  const host = document.getElementById("lb-flips");
+  if (!host) return;
+  const [family, category, harness] = (state.lbCell || "").split("|");
+  const row = rows.find((r) => r.family === family && r.category === category);
+  host.hidden = !(row && row[harness]);
+  host.replaceChildren(...(host.hidden ? [] : flipsView(row, harness)));
 }
 
 function renderLeaderboard() {

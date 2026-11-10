@@ -189,8 +189,33 @@ holds the generic pieces brought in from the former `model-release-benchmark` re
   Improved / Regressed / No clear change labels that need the Bonferroni-corrected interval to
   exclude zero, and `drift_check` for two runs of the same tasks with nothing in Operon changed.
 
-That repo's text tasks and direct model-API providers did not come over. Intervals in the
-reports (KAN-60) will build on `stats.py`.
+That repo's text tasks and direct model-API providers did not come over.
+
+### Run-over-run changes (KAN-60)
+
+After an Operon change, is a grid cell (model · category · harness, for example
+"Gemini · Desktop · Full") really better or worse than last time, or is it noise?
+`evals/leaderboard/changes.py` answers it on top of `stats.py`, with tasks as the samples:
+
+- **Score with a 95% range.** Every report's `summary.score_range` holds the pass rate and its
+  bootstrapped 95% range over the run's tasks (a `--repeat` task scores its share of passed
+  attempts). `live_bench` prints it under the results table.
+- **Change vs the previous run of the cell.** When the Dashboard data workflow imports a
+  run, it finds the latest earlier unflagged run with the same mode, suite, backend, harness,
+  model, registry profile and season, and stores `summary.change`: the paired difference on
+  the tasks both ran, its corrected 95% range, the label (Improved / Regressed only when that
+  range excludes zero, otherwise No clear change; "First run" when there is nothing before),
+  and the tasks that flipped (`fixed`: fail to pass, `broke`: pass to fail). Runs imported
+  before this existed get theirs on the next import.
+- **Where it shows.** The dashboard's Leaderboard grid shows each cell's score, range and a
+  coloured badge; clicking a cell lists its flipped tasks. For a `/bench` run, the workflow
+  also comments the same table (score with range, change, flipped tasks) on the pull request.
+
+With about 10 tasks and one pass, the ranges are wide. Improved or Regressed needs about 4 of
+10 tasks flipping the same way with none flipping back; 1 to 3 flips read No clear change,
+though the flipped tasks are still listed so a regression points at the exact task. A cell at
+10/10 shows a range of 100% to 100%: the bootstrap only resamples what was seen, so it says
+nothing about tasks that might fail next time.
 
 ### Seasons
 
@@ -248,7 +273,9 @@ Results are published at **https://operon-evals.vercel.app**: pass rate, seconds
 step, false passes, cost, and per-task outcomes by configuration. After every benchmark
 workflow, the **Dashboard data** workflow writes the reports to a Neon Postgres database,
 uploads screenshots and traces to a private Vercel Blob store (the dashboard shows them for
-tasks that did not pass), and posts a Slack alert when a run's pass rate drops 5 points,
+tasks that did not pass), adds each run's score range and change vs the previous run of its
+cell (see [Run-over-run changes](#run-over-run-changes-kan-60)), comments that table on the PR
+for a `/bench` run, and posts a Slack alert when a run's pass rate drops 5 points,
 its cost per task rises 25% against the previous comparable run, or it hits its cost cap.
 Run the workflow by hand to import older runs. The Cost tab shows this month's spend against
 the `MONTHLY_BUDGET_USD` budget (Vercel env) and spend by month (UTC), counting every

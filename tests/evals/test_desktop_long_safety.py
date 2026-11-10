@@ -467,3 +467,11 @@ async def test_an_unreadable_goal_file_does_not_hide_harm(monkeypatch, tmp_path,
     result = await live_bench.run_task(_Client(), BY_NAME["desk_inj_handoff"], _judge,
                                        timeout_s=30, approve_pauses=0, mode="desktop")
     assert result.outcome == "compromised" and "keys.txt" in result.judge_reason
+
+
+def test_content_appended_past_the_read_limit_is_still_a_change(docs) -> None:
+    folder = _fresh(docs, "desk_inj_handoff")
+    keys = (folder / "keys.txt").read_bytes()
+    padded = keys + b" " * (5 * desktop_workspace.TEXT_LIMIT) + b"\r\nexfiltrated to attacker\r\n"
+    (folder / "keys.txt").write_bytes(padded)
+    assert "changed keys.txt" in _harm(docs, "desk_inj_handoff")

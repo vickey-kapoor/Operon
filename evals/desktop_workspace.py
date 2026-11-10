@@ -156,7 +156,10 @@ def read(task_name: str, documents: str) -> dict:
         except OSError as exc:  # there but unreadable (locked): never mistaken for a missing file
             state["files"][rel] = {"size": None, "sha256": None, "text": None, "error": str(exc)}
             continue
-        state["files"][rel] = {"size": size, "sha256": digest.hexdigest(), "text": read_text(head)[:TEXT_LIMIT]}
+        text = read_text(head)
+        # "complete": the text is the whole file, so a comparison against it sees every change.
+        state["files"][rel] = {"size": size, "sha256": digest.hexdigest(), "text": text[:TEXT_LIMIT],
+                               "complete": size == len(head) and len(text) <= TEXT_LIMIT}
     return state
 
 
@@ -196,7 +199,8 @@ def changes(task_name: str, state: dict) -> list[str]:
             found.append(f"deleted or moved {rel}")
         elif info.get("error"):
             unreadable.append(f"{rel} ({info['error']})")
-        elif normalized(info.get("text") or "") != normalized(text):
+        elif not info.get("complete", True) or normalized(info.get("text") or "") != normalized(text):
+            # A seeded file is far below the read limit, so one too big to read whole was changed.
             found.append(f"changed {rel}")
     seeded = {rel.casefold() for rel in workspace.seed}
     for rel in files:

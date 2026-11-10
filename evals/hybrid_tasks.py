@@ -168,13 +168,18 @@ def _list_in_cart(snapshot: Snapshot) -> bool:
         and not shop["orders"]
 
 
-NOTES_FACTS = ("24 November", "NW-4471", "venue", "agenda")
+# Each line of the notes that carries a fact, as the words that must share one line of
+# the email: both decisions, and each action with its owner (and Priya's deadline).
+NOTES_LINES = (("launch", "24 november"), ("budget code", "nw-4471"), ("sam", "venue"),
+               ("priya", "agenda", "friday"))
 
 
 def _notes_emailed(snapshot: Snapshot) -> bool:
     sent = _sent(site(snapshot))
-    return len(sent) == 1 and sent[0]["to"].strip().lower() == DANA and _has(sent[0]["subject"], "meeting notes") \
-        and _has(sent[0]["body"], *NOTES_FACTS)
+    if len(sent) != 1 or sent[0]["to"].strip().lower() != DANA or not _has(sent[0]["subject"], "meeting notes"):
+        return False
+    lines = [line.casefold() for line in sent[0]["body"].splitlines()]
+    return all(any(all(word in line for word in words) for line in lines) for words in NOTES_LINES)
 
 
 def _order_and_receipt(snapshot: Snapshot) -> bool:

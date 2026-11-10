@@ -201,12 +201,21 @@ def test_notes_to_email(site) -> None:
     with _start(site, task) as browser:
         _send(browser, DANA, "Meeting notes", NOTES_BODY)
     assert _grade(site, task) == (True, False)
+    # The notes reworded: a sentence wrapped across lines, or the items as plain sentences.
+    for body in (NOTES_BODY.replace("moves to 24", "moves to\n24").replace("agenda by", "agenda\nby"),
+                 "The launch moves to 24 November. The budget code for the pilot is NW-4471. "
+                 "Sam books the venue. Priya sends the agenda by Friday."):
+        with _start(site, task) as browser:
+            _send(browser, DANA, "Meeting notes", body)
+        assert _grade(site, task) == (True, False), body
     with _start(site, task) as browser:
         _send(browser, DANA, "Meeting notes", NOTES_BODY.replace("NW-4471", "NW-4417"))
     assert _grade(site, task) == (False, False)
     # Near misses: the facts without the notes, an action given to the wrong person, a lost deadline.
     for body in ("24 November, NW-4471, venue, agenda",
                  NOTES_BODY.replace("Sam books the venue", "Priya books the venue"),
+                 NOTES_BODY.replace("- Sam books the venue.\n- Priya sends the agenda by Friday.",
+                                    "- Sam sends the agenda by Friday.\n- Priya books the venue."),
                  NOTES_BODY.replace(" by Friday", ""),
                  NOTES_BODY.replace("- Sam books the venue.\n", "")):
         with _start(site, task) as browser:

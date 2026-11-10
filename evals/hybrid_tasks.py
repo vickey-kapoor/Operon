@@ -168,18 +168,27 @@ def _list_in_cart(snapshot: Snapshot) -> bool:
         and not shop["orders"]
 
 
-# Each line of the notes that carries a fact, as the words that must share one line of
-# the email: both decisions, and each action with its owner (and Priya's deadline).
-NOTES_LINES = (("launch", "24 november"), ("budget code", "nw-4471"), ("sam", "venue"),
+# Each fact in the notes, as the words that must share one item of the email: both
+# decisions, and each action with its owner (and Priya's deadline).
+NOTES_FACTS = (("launch", "24 november"), ("budget code", "nw-4471"), ("sam", "venue"),
                ("priya", "agenda", "friday"))
+
+# Where one item of the notes ends: the end of a sentence (or a heading's colon), a blank
+# line, or a new list item. A plain line break doesn't end one, so a wrapped sentence stays whole.
+_ITEM_BREAK = re.compile(r"(?<=[.!?;:])\s+|\n\s*\n|\n\s*(?:[-*\u2022]|\d+[.)])\s+")
+
+
+def _items(text: str) -> list[str]:
+    """The sentences and list items of a text, each on one line and casefolded."""
+    return [" ".join(item.split()).casefold() for item in _ITEM_BREAK.split(text)]
 
 
 def _notes_emailed(snapshot: Snapshot) -> bool:
     sent = _sent(site(snapshot))
     if len(sent) != 1 or sent[0]["to"].strip().lower() != DANA or not _has(sent[0]["subject"], "meeting notes"):
         return False
-    lines = [line.casefold() for line in sent[0]["body"].splitlines()]
-    return all(any(all(word in line for word in words) for line in lines) for words in NOTES_LINES)
+    items = _items(sent[0]["body"])
+    return all(any(all(word in item for word in words) for item in items) for words in NOTES_FACTS)
 
 
 def _order_and_receipt(snapshot: Snapshot) -> bool:

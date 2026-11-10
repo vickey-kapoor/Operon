@@ -133,3 +133,16 @@ def test_a_cell_carries_held_out_counts_and_the_working_only_flag() -> None:
     full = rows[("Gemini", "browser")]["full"]
     assert full["workingOnly"] is True and full["heldOut"] == {"run": 0, "passed": 0}
     assert full["critics"] == ["gpt-5"]
+
+
+def test_a_cell_carries_its_score_range_and_change_vs_the_previous_run() -> None:
+    change = {"label": "Regressed", "difference": -0.4, "low": -0.7, "high": -0.1, "fixed": [], "broke": ["a", "b", "c", "d"],
+              "previous": {"started_at": "20261109T000000Z", "success": 10, "tasks": 10}}
+    rows = _rows(f"""
+        run('20261110T000000Z', 'desktop', 'desktop-core', gemini('full'), 6, 10,
+            {{ score_range: {{ score: 0.6, low: 0.3, high: 0.9, tasks: 10 }}, change: {json.dumps(change)} }})""")
+    full = rows[("Gemini", "desktop")]["full"]
+    assert full["range"] == {"score": 0.6, "low": 0.3, "high": 0.9, "tasks": 10}
+    assert full["change"]["label"] == "Regressed" and full["change"]["broke"] == ["a", "b", "c", "d"]
+    # Runs imported before KAN-60 have neither until the next import fills them in.
+    assert _rows(_both("gemini", "browser", (6, 10), (8, 10)))[("Gemini", "browser")]["thin"]["change"] is None

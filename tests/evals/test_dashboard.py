@@ -11,8 +11,10 @@ import pytest
 from evals.dashboard import (
     BLOB_SCRIPT,
     MODELS_JSON,
+    add_change,
     attach_traces,
     check_alerts,
+    comment_row,
     find_reports,
     import_reports,
     main,
@@ -385,3 +387,121 @@ def test_prepare_keeps_a_full_runs_critic_for_the_page() -> None:
     )
     assert report["config"]["critic_model"] == "same:computer-use-preview"
     assert "critic_model" not in prepare(_report(harness_profile="thin", critic=None), {})["config"]
+
+
+class _CellConn:
+    """Answers the previous-cell query with ``previous`` and each run's task rows from ``tasks``."""
+
+    def __init__(self, previous, tasks):
+        self.previous, self.tasks, self.queries = previous, tasks, []
+        self._rows = []
+
+    def execute(self, sql, params=None):
+        self.queries.append((sql, params))
+        self._rows = self.tasks.get(params[0], []) if "bench_task_results" in sql else []
+        self._one = self.previous if "bench_runs" in sql else None
+        return self
+
+    def fetchone(self):
+        return self._one
+
+    def fetchall(self):
+        return self._rows
+
+
+def _season_report(outcomes: dict[str, str], **top) -> dict:
+    report = _report(
+        backend="computer_use", harness_profile="full", desktop_model="gemini-x", mode="desktop", suite="desktop-core",
+        season={"season": 1, "suite": "desktop-core"}, **top,
+    )
+    report["results"] = [{"task": t, "outcome": o} for t, o in outcomes.items()]
+    report["summary"] = {"tasks": len(outcomes), "success": sum(o == "success" for o in outcomes.values())}
+    return prepare(report, {"github_run_url": "https://gh/run/2"})
+
+
+def test_add_change_compares_with_the_previous_run_of_the_same_cell() -> None:
+    started = datetime(2026, 11, 9, tzinfo=timezone.utc)
+    previous = ("old-key", {"success": 2, "tasks": 2}, "https://gh/run/1", started)
+    conn = _CellConn(previous, {"old-key": [("open_app", "success"), ("save_file", "success")]})
+    report = _season_report({"open_app": "success", "save_file": "failure"})
+
+    add_change(conn, report)
+
+    change = report["summary"]["change"]
+    assert change["label"] == "No clear change" and change["broke"] == ["save_file"] and change["fixed"] == []
+    assert change["previous"] == {"key": "old-key", "started_at": "20261109T000000Z", "success": 2, "tasks": 2,
+                                  "github_run_url": "https://gh/run/1"}
+    assert report["summary"]["score_range"]["score"] == 0.5
+    # The cell: same mode, suite, backend, harness, model, registry profile and season.
+    assert conn.queries[0][1][:7] == ("desktop", "desktop-core", "computer_use", "full", "gemini-x", None, "1")
+    row = comment_row(report)
+    assert row["cell"] == "gemini-x · Desktop · Full (desktop-core)" and row["run_url"] == "https://gh/run/2"
+
+
+def test_add_change_marks_a_cells_first_run_and_skips_flagged_runs() -> None:
+    first = _season_report({"open_app": "success"})
+    add_change(_CellConn(None, {}), first)
+    assert first["summary"]["change"] == {"label": "First run", "previous": None}
+
+    stop = {"limit_usd": 3.0, "spent_usd": 3.1, "tasks_run": 1, "tasks_planned": 10}
+    flagged = _season_report({"open_app": "success"}, budget_stop=stop)
+    conn = _CellConn(None, {})
+    add_change(conn, flagged)
+    assert "change" not in flagged["summary"] and flagged["summary"]["score_range"]["score"] == 1.0
+    assert conn.queries == []
+
+
+@pytest.mark.skipif(not os.getenv("OPERON_TEST_DATABASE_URL"), reason="no test database")
+def test_import_compares_each_run_with_the_cells_previous_run_and_fills_older_runs(tmp_path) -> None:
+    psycopg = pytest.importorskip("psycopg")
+
+    def report(stamp: str, outcomes: dict[str, str]) -> dict:
+        data = _report(backend="computer_use", harness_profile="full", desktop_model="gemini-x", mode="desktop",
+                       suite="desktop-core", season={"season": 1, "suite": "desktop-core"}, started_at=stamp)
+        data["results"] = [{"task": t, "outcome": o} for t, o in outcomes.items()]
+        data["summary"] = {"tasks": len(outcomes), "success": sum(o == "success" for o in outcomes.values())}
+        return data
+
+    passing = {f"t{i}": "success" for i in range(10)}
+    first = tmp_path / "desktop-core-20261108T000000Z.json"
+    first.write_text(json.dumps(report("20261108T000000Z", passing)))
+    second = tmp_path / "desktop-core-20261109T000000Z.json"
+    second.write_text(json.dumps(report("20261109T000000Z", {**passing, "t3": "failure"})))
+    with psycopg.connect(os.environ["OPERON_TEST_DATABASE_URL"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS bench_task_results, bench_runs")
+        conn.commit()
+        rows: list[dict] = []
+        import_reports([first, second], conn, {}, comment_rows=rows)
+        changes = dict(conn.execute("SELECT key, summary->'change' FROM bench_runs").fetchall())
+        # A run stored before KAN-60 (no change in its summary) gets one on the next import.
+        conn.execute("UPDATE bench_runs SET summary = summary - 'change' - 'score_range' WHERE started_at > '2026-11-08T12:00:00Z'")
+        conn.commit()
+        import_reports([first], conn, {})
+        filled = conn.execute(
+            "SELECT summary->'change', summary->'score_range' FROM bench_runs WHERE started_at > '2026-11-08T12:00:00Z'"
+        ).fetchone()
+    first_key, second_key = sorted(changes)
+    assert changes[first_key]["label"] == "First run"
+    assert changes[second_key]["broke"] == ["t3"] and changes[second_key]["previous"]["key"] == first_key
+    assert [r["summary"]["success"] for r in rows] == [10, 9]
+    assert filled[0]["broke"] == ["t3"] and filled[1]["score"] == 0.9
+
+
+@pytest.mark.skipif(not os.getenv("OPERON_TEST_DATABASE_URL"), reason="no test database")
+def test_a_failing_backfill_keeps_the_imported_reports(tmp_path, monkeypatch) -> None:
+    psycopg = pytest.importorskip("psycopg")
+    import evals.dashboard as dashboard
+
+    def broken(conn):
+        conn.execute("SELECT no_such_column FROM bench_runs")
+
+    monkeypatch.setattr(dashboard, "fill_changes", broken)
+    path = tmp_path / "full-20261024T012945Z.json"
+    path.write_text(json.dumps(_report()))
+    with psycopg.connect(os.environ["OPERON_TEST_DATABASE_URL"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS bench_task_results, bench_runs")
+        conn.commit()
+        keys = import_reports([path], conn, {})
+    with psycopg.connect(os.environ["OPERON_TEST_DATABASE_URL"]) as conn:
+        stored = [row[0] for row in conn.execute("SELECT key FROM bench_runs").fetchall()]
+    assert stored == keys and len(keys) == 1

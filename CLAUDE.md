@@ -70,10 +70,13 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 # Live desktop benchmark: Desktop core (10 tasks) by default, --suite full for all 14; drives the real mouse and keyboard
 # (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
 .venv\Scripts\python -m evals.live_desktop_bench [--suite smoke|full] [--keep-screens]
+# Live Hybrid benchmark (KAN-73): 10 tasks that each use a desktop app and Edge on the local site, which it serves
+# on 127.0.0.1 on the same machine; graded from the site's /state and files in Documents\OperonFiles (evals/hybrid_tasks.py)
+.venv\Scripts\python -m evals.live_hybrid_bench [--suite core|smoke|full] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
 #   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>]
-#   (category, then harness: one grid cell; core is the default; hybrid has no tasks until KAN-73)
+#   (category, then harness: one grid cell; core is the default; hybrid runs on the desktop workflow)
 #   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
 # Cross-model (experimental): model=<profile> / --model <profile> runs a profile from evals/models.yaml
 # (OPERON_*_BACKEND=model + OPERON_MODEL_PROFILE; adapters in src/operon/agent/backends/model_adapter/)

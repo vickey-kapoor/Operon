@@ -35,6 +35,11 @@ instead; that needs a real Windows desktop session. Those tasks are graded from
 the machine's state (open windows, their text, files; ``evals/desktop_state.py``),
 not by the judge, so the benchmark must run on the machine the API drives.
 
+``--mode hybrid`` (or ``python -m evals.live_hybrid_bench``) runs the Hybrid tasks in
+``evals/hybrid_tasks.py`` the same way, through the ``/desktop`` routes: each needs a
+desktop app and the browser, on the local site this script serves on the same machine.
+They are graded from the site's state and the files they save (``evals/hybrid_state.py``).
+
 Outcomes, per task:
 
 - ``success``: the run claimed success and the screen shows the goal.
@@ -84,12 +89,13 @@ from pathlib import Path
 
 import httpx
 
-from evals import app_tasks, desktop_state
+from evals import app_tasks, desktop_state, hybrid_tasks
 from evals.app_tasks import APP_TASKS, LONG_TASKS, AppTask
 from evals.categories import CATEGORY_NAMES, category_of, core_tasks, tags_of
 from evals.desktop_tasks import DESKTOP_TASKS
 from evals.fixture_site import FixtureSite
 from evals.hard_tasks import HARD_TASK_NAMES
+from evals.hybrid_tasks import HYBRID_TASKS, HybridTask
 from evals.live_tasks import TASKS, LiveTask
 from evals.local_apps import build_apps
 from evals.safety_tasks import SAFETY_TASKS, SafetyTask, grade, site_pages
@@ -101,7 +107,8 @@ OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error",
 SUITES = ("core", "smoke", "full", "safety", "apps", "hard", "long")
 LOCAL_TASKS = (SafetyTask, AppTask)  # run on the local site and graded from it, not by the judge
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
-MODES = ("browser", "desktop")
+MODES = ("browser", "desktop", "hybrid")
+DESKTOP_MODES = ("desktop", "hybrid")  # driven through the /desktop routes
 DEFAULT_MAX_COST_USD = 3.0
 BUDGET_EXIT_CODE = 3
 
@@ -292,10 +299,16 @@ def _server_env() -> dict[str, str]:
     return {**os.environ, **dotenv}
 
 
+def server_mode(mode: str) -> str:
+    """The server settings a mode runs on: a hybrid run is a desktop run (OPERON_DESKTOP_*)."""
+    return "desktop" if mode == "hybrid" else mode
+
+
 def critic_label(profile, mode: str = "browser") -> str | None:
     """Which step critic a full run used, for the report: ``same:<model>`` with
     OPERON_CRITIC=same (KAN-68), else ``<provider>:<model>`` from the verifier settings;
     None for a thin run, which has no step critic."""
+    mode = server_mode(mode)
     if harness_label(profile, mode) != "full":
         return None
     env = _server_env()
@@ -318,6 +331,7 @@ def _server_backend(env: dict[str, str], mode: str) -> str:
     """The backend the server runs (operon.api.runtime_config): OPERON_<MODE>_BACKEND,
     else Claude in the browser with ANTHROPIC_API_KEY, Gemini computer use without it,
     and json on the desktop."""
+    mode = server_mode(mode)
     backend = (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower()
     if backend:
         return backend
@@ -333,6 +347,7 @@ def harness_label(profile, mode: str = "browser") -> str:
     completion check. Registry models run thin with own done (``thin``) unless
     OPERON_HARNESS_PROFILE=full (KAN-68). Read from the settings the server sees
     (shell plus ``.env``)."""
+    mode = server_mode(mode)
     env = _server_env()
 
     def get(name: str) -> str:
@@ -357,6 +372,7 @@ def resolve_model_profile(name: str | None, mode: str):
     settings when they are visible here; None without ``--model``."""
     if not name:
         return None
+    mode = server_mode(mode)
     from operon.agent.backends.model_adapter.registry import (
         ModelRegistryError,
         resolve_profile,
@@ -429,7 +445,7 @@ async def run_task(
     """Run one task and grade it. ``label`` is what messages call the task (a held-out
     task's opaque id, so its name never reaches the log)."""
     name = label or task.name
-    prefix = "/desktop" if mode == "desktop" else ""
+    prefix = "/desktop" if mode in DESKTOP_MODES else ""
     started = time.monotonic()
     started_at = datetime.now(timezone.utc)
     state_graded = mode == "desktop" and task.name in desktop_state.CHECKS
@@ -444,7 +460,20 @@ async def run_task(
     run_id, status, steps, pauses = None, "error", 0, 0
     payload: dict = {"intent": task.intent, "max_steps": task.max_steps}
     local = isinstance(task, LOCAL_TASKS)
-    if local:
+    hybrid = isinstance(task, HybridTask)
+    if hybrid:
+        if site is None:
+            raise ValueError(f"{name} needs the local fixture site")
+        site.reset(hybrid_tasks.with_site(task.seed, site.base_url))
+        payload["intent"] = hybrid_tasks.with_site(task.intent, site.base_url)
+        if not reset_error:
+            try:
+                hybrid_state().prepare(task)
+            except desktop_state.ProbeError as exc:
+                # Files left from an earlier attempt could pass the task on their own.
+                reset_error = str(exc)
+                print(f"  {name}: {exc}", file=sys.stderr)
+    elif local:
         if site is None:
             raise ValueError(f"{name} needs the local fixture site")
         site.reset(task.seed if isinstance(task, AppTask) else None)
@@ -459,7 +488,7 @@ async def run_task(
         if on_run:
             on_run(run_id)
         while time.monotonic() - started < timeout_s:
-            if mode == "desktop":
+            if mode in DESKTOP_MODES:
                 # The desktop API has no background loop: each POST advances the run one step.
                 response = await client.post(f"{prefix}/step", json={"run_id": run_id})
             else:
@@ -491,7 +520,24 @@ async def run_task(
     screenshot = _final_screenshot(run_id) if run_id else None
     # A run paused for the user did not claim success; grade it as ended.
     graded_status = "failed" if status == "waiting_for_user" else status
-    if local:
+    if hybrid:
+        # Graded from the site's state and the task's files, before the cleanup below.
+        try:
+            if reset_error:
+                raise desktop_state.ProbeError(reset_error)
+            if not run_id or status == "error":
+                raise desktop_state.ProbeError("the run did not finish, so it was not graded")
+            snapshot = hybrid_state().probe(task)
+            snapshot["site"] = site.state()
+            snapshot["events"] = [asdict(e) for e in site.snapshot()]
+            _save_state(run_id, snapshot)
+            goal_met, harmed, reason = hybrid_tasks.grade(task, snapshot)
+            verdict = Verdict(goal_met, reason)
+            outcome = classify_safety(graded_status, goal_met, harmed)
+        except desktop_state.ProbeError as exc:
+            verdict = Verdict(None, str(exc))
+            outcome = classify(graded_status, None)
+    elif local:
         if isinstance(task, AppTask):
             goal_met, harmed, reason = app_tasks.grade(task, site.state())
         else:
@@ -518,7 +564,7 @@ async def run_task(
         outcome = classify(graded_status, verdict.goal_visible)
     # Only the browser loop has a primary backend with a fallback to count.
     cu, other = _backends_used(run_id) if run_id and mode == "browser" else (0, 0)
-    if run_id and mode == "desktop":
+    if run_id and mode in DESKTOP_MODES:
         # Close the apps this run opened so the next task starts from a clean desktop.
         try:
             await client.post("/desktop/cleanup", json={"run_id": run_id})
@@ -550,6 +596,13 @@ async def run_task(
         model_replies=model_replies,
         tags=tags_of(task),
     )
+
+
+def hybrid_state():
+    """``evals.hybrid_state``, imported when a Hybrid task runs (tests replace it)."""
+    from evals import hybrid_state as module
+
+    return module
 
 
 def interrupted_result(active: dict, *, gpu_priced: bool = False) -> TaskResult:
@@ -826,6 +879,8 @@ def select_tasks(
 ) -> list[LiveTask]:
     if suite == "core":
         pool = core_tasks(mode)
+    elif mode == "hybrid":
+        pool = HYBRID_TASKS if suite in ("full", "smoke") else []
     elif suite == "hard":
         by_name = {t.name: t for t in [*TASKS, *APP_TASKS, *SAFETY_TASKS]}
         pool = [] if mode == "desktop" else [by_name[name] for name in HARD_TASK_NAMES]
@@ -873,8 +928,9 @@ def build_report(
         # Cost tab and monthly budget still count it.
         held_gpu = gpu_cost_usd(held, profile) if profile is not None else None
         summary["held_out_cost_usd"] = round(sum(r.cost_usd + r.judge_cost_usd for r in held) + (held_gpu or 0.0), 6)
-    suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
+    suite_name = mode_suite(args.mode, args.suite)
     model_key = f"{args.mode}_model"
+    env_mode = server_mode(args.mode).upper()
     return {
         "suite": suite_name,
         "mode": args.mode,
@@ -882,10 +938,10 @@ def build_report(
         "category": category_of(None, args.mode),
         "cell": cell_name(args.mode, harness_label(profile, args.mode)),
         "started_at": started_at,
-        model_key: os.getenv(f"OPERON_{args.mode.upper()}_MODEL", "server default"),
+        model_key: os.getenv(f"OPERON_{env_mode}_MODEL", "server default"),
         "judge_model": args.judge_model,
-        "backend": os.getenv(f"OPERON_{args.mode.upper()}_BACKEND", "server default"),
-        "claude_model": os.getenv(f"OPERON_{args.mode.upper()}_CLAUDE_MODEL", "server default"),
+        "backend": os.getenv(f"OPERON_{env_mode}_BACKEND", "server default"),
+        "claude_model": os.getenv(f"OPERON_{env_mode}_CLAUDE_MODEL", "server default"),
         "harness_profile": harness_label(profile, args.mode),
         "critic": critic_label(profile, args.mode),
         "model_profile": profile.name if profile is not None else None,
@@ -939,11 +995,15 @@ def season_for(args: argparse.Namespace):
         sys.exit(str(exc))
 
 
+def mode_suite(mode: str, suite: str) -> str:
+    """A report's suite: prefixed by the mode for desktop and hybrid runs ("hybrid-core")."""
+    return suite if mode == "browser" else f"{mode}-{suite}"
+
+
 def report_name(args: argparse.Namespace, started_at: str) -> str:
     if args.only or args.category:
         return f"partial-{started_at}.json"
-    suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
-    return f"{suite_name}-{started_at}.json"
+    return f"{mode_suite(args.mode, args.suite)}-{started_at}.json"
 
 
 async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
@@ -960,8 +1020,8 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     planned = [(attempt, task) for attempt in range(1, repeat + 1) for task in tasks]
     max_cost_usd = args.max_cost_usd * repeat
     bench_dir = Path(args.out_dir)
-    # Desktop reports get their own prefix so they never compare against browser runs.
-    suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
+    # Desktop and hybrid reports get their own prefix so they never compare against browser runs.
+    suite_name = mode_suite(args.mode, args.suite)
     # Found before this run's own report is first written below.
     gpu_priced = gpu_cost_usd([], profile) is not None
     previous = _previous_report(bench_dir, suite_name, profile.name if profile else None, harness_label(profile, args.mode)) if not (args.only or args.category) else None
@@ -983,7 +1043,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     for task in tasks:  # held-out safety tasks bring their own pages
         if isinstance(task, SafetyTask):
             pages.update(task.pages)
-    site = FixtureSite(pages, apps=build_apps()).start() if any(isinstance(t, LOCAL_TASKS) for t in tasks) else None
+    site = FixtureSite(pages, apps=build_apps()).start() if any(isinstance(t, (*LOCAL_TASKS, HybridTask)) for t in tasks) else None
     try:
         api_key = client_api_key()
         headers = {"X-API-Key": api_key} if api_key else {}
@@ -1059,7 +1119,7 @@ def _max_cost_default() -> float:
 def build_parser(default_suite: str = "core", default_mode: str = "browser") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--suite", choices=SUITES, default=default_suite, help="core (the default: the category's ~10 state-graded tasks, evals/categories.py), smoke, full, or safety / apps / hard / long (browser only)")
-    parser.add_argument("--mode", choices=MODES, default=default_mode, help="browser or desktop tasks")
+    parser.add_argument("--mode", choices=MODES, default=default_mode, help="browser, desktop or hybrid (desktop and browser) tasks")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--only", action="append", help="run only the named task(s)")
     parser.add_argument("--category", action="append", help="run only tasks in these categories")

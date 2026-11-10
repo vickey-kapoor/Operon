@@ -14,10 +14,10 @@ and the fixture files it runs on). See `evals/leaderboard/season.py`.
   never edit a task in place once a season includes it. Retire it instead:
   `python -m evals.leaderboard.season retire <n> <suite> <task> "<reason>"`.
 
-Season 1 (KAN-65, core sets added in KAN-72): browser-core and desktop-core (the
-category core sets in `evals/categories.py`, 10 working tasks each; these are scored),
-long (21 working + held-out), desktop (14 working + held-out), grounding, apps and
-safety. Frozen with
-`python -m evals.leaderboard.season freeze 1 --suite browser-core --suite desktop-core --suite long --suite desktop --suite grounding --suite apps --suite safety`
+Season 1 (KAN-65, core sets added in KAN-72, Hybrid in KAN-73): browser-core,
+desktop-core and hybrid-core (the category core sets in `evals/categories.py`, 10 working
+tasks each; these are scored), long (21 working + held-out), desktop (14 working +
+held-out), hybrid (10 working + 4 held-out), grounding, apps and safety. Frozen with
+`python -m evals.leaderboard.season freeze 1 --suite browser-core --suite desktop-core --suite hybrid-core --suite long --suite desktop --suite hybrid --suite grounding --suite apps --suite safety`
 and `$OPERON_SEASON_PRIVATE` set. In CI the held-out file comes from the
 `OPERON_SEASON_PRIVATE_PY` secret (base64).

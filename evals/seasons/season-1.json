@@ -1,8 +1,8 @@
 {
   "format": 1,
   "season": 1,
-  "frozen_at": "2026-11-09T17:47:29Z",
-  "operon_commit": "0ed909a8e0eb5e039618d8b1deae6f9e8a1c73b9",
+  "frozen_at": "2026-11-10T12:11:56Z",
+  "operon_commit": "32fc958c855f60f56c5a7cfacab72c60d47000c2",
   "suites": {
     "browser-core": {
       "runner": "live_bench",
@@ -39,6 +39,25 @@
         "cmd_list_to_file": "e2617a1c5eb441693440dd8be0220f8ff21914ed8613010beafd9e3ce0e80286",
         "powershell_computer_name": "3cf46395c6225b598e95692c0d31c9cb0125756e0874847b1e98ceb5aac5f2e9",
         "calculator_to_notepad": "3af090bea80039440f5c1bef1c3c1746d33603d46fea0bdf8a4368f562401d46"
+      },
+      "held_out": {}
+    },
+    "hybrid-core": {
+      "runner": "live_hybrid_bench",
+      "scored": true,
+      "mode": "hybrid",
+      "bench_suite": "core",
+      "working": {
+        "hybrid_invoice_to_file": "dc566449ca45b62d733770718a810cfbbeadf3708cddc65fd220980b1144199f",
+        "hybrid_price_to_file": "d4ba017a0424690d6935b6945aaa00eae23ad8f13c61c65e2bfc2228f249741e",
+        "hybrid_hostname_ticket": "0b968360542cc24303049f3296a8d07f9b5a21e43ddd1256fb1fdbb41eaeb6b4",
+        "hybrid_list_to_cart": "6ff40b97b74f99f19e5b8dbef79f695b4f6431ecaafebe57a25ee1b000b662d8",
+        "hybrid_notes_to_email": "03241a14239c5f840128874d89879ea6de39da94972f37a6502513b88c71d12d",
+        "hybrid_order_from_file": "2f581e2ec64d9655b827faac190af84f9aae4f4ff1548da8c364869bf539938b",
+        "hybrid_it_inventory": "26c769b29616a33df0f63e8aba755b60ba3b8521aafc3645a44ac5e877ef5336",
+        "hybrid_inj_file": "577a9f4f9b55483b624d3c1b55d395155fa75f877817980c0665cb962416d776",
+        "hybrid_inj_email_link": "a789986165d34a0234eb55c3fabc742b7e78a7fdbdc3128d759491a4e20a205a",
+        "hybrid_draft_not_send": "97d433df758ad63cc877c371172c5adaf8a8babc7167e13f7ab7679402335db2"
       },
       "held_out": {}
     },
@@ -112,6 +131,30 @@
         "h-391824ce01": "7a292e409607ba56f2939ed58e48ce6f42806d798521249ea86a530668d71bca"
       }
     },
+    "hybrid": {
+      "runner": "live_hybrid_bench",
+      "scored": false,
+      "mode": "hybrid",
+      "bench_suite": "full",
+      "working": {
+        "hybrid_invoice_to_file": "dc566449ca45b62d733770718a810cfbbeadf3708cddc65fd220980b1144199f",
+        "hybrid_price_to_file": "d4ba017a0424690d6935b6945aaa00eae23ad8f13c61c65e2bfc2228f249741e",
+        "hybrid_hostname_ticket": "0b968360542cc24303049f3296a8d07f9b5a21e43ddd1256fb1fdbb41eaeb6b4",
+        "hybrid_list_to_cart": "6ff40b97b74f99f19e5b8dbef79f695b4f6431ecaafebe57a25ee1b000b662d8",
+        "hybrid_notes_to_email": "03241a14239c5f840128874d89879ea6de39da94972f37a6502513b88c71d12d",
+        "hybrid_order_from_file": "2f581e2ec64d9655b827faac190af84f9aae4f4ff1548da8c364869bf539938b",
+        "hybrid_it_inventory": "26c769b29616a33df0f63e8aba755b60ba3b8521aafc3645a44ac5e877ef5336",
+        "hybrid_inj_file": "577a9f4f9b55483b624d3c1b55d395155fa75f877817980c0665cb962416d776",
+        "hybrid_inj_email_link": "a789986165d34a0234eb55c3fabc742b7e78a7fdbdc3128d759491a4e20a205a",
+        "hybrid_draft_not_send": "97d433df758ad63cc877c371172c5adaf8a8babc7167e13f7ab7679402335db2"
+      },
+      "held_out": {
+        "h-696b2466b9": "7ab2e42d6ff74a2e100c2e7d08df9447f55c9064826e9e96fa5fb8a09b28f82f",
+        "h-92d7ea5682": "8a2e64d9e3cdd64c420dbbf602fd2a5a06426263ff8e8fd4358f65c46fb3721c",
+        "h-70d760dac4": "34f3b5f1dd2c82bb7c70b3bc34cae61cf7fb52ae614594bcb0298c447a856327",
+        "h-d96f8f017b": "f4bb5f70fc10bd684710c80ca4ac910f0b8f7c62c8df3fb6db679737158ef64d"
+      }
+    },
     "grounding": {
       "runner": "grounding",
       "scored": true,
@@ -172,5 +215,5 @@
     }
   },
   "retired": [],
-  "season_hash": "6a2e2ef4d9b6b4b1f74287a663248622a29b0a01b852e347130ac060f7a3a680"
+  "season_hash": "15d8788278fbfb8c5f258697b73390556bcc49c077820dbe93d025c52a8706c0"
 }

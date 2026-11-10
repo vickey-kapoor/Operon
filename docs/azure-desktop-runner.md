@@ -67,6 +67,23 @@ the runner should show as **Idle** under Settings > Actions > Runners.
 RDP in as `.\operon` when you need the VM. That is a separate session, so the
 runner's desktop keeps running. Don't sign in as `benchrunner`.
 
+### Edge for the Hybrid tasks
+
+The Hybrid benchmark (`/bench hybrid azure`, KAN-73) has the agent use Microsoft Edge
+on the VM. Run `scripts/edge-policies.ps1` once, in an elevated PowerShell as
+`.\operon` (paste it into Notepad as `C:\edge-policies.ps1` like the setup script):
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+C:\edge-policies.ps1
+```
+
+It sets machine-wide Edge policies: no first-run wizard, no "restore pages" prompt,
+no password or address autofill, no shopping assistant or sidebar. The runner account
+can't set them itself, since it is not an administrator, and GitHub's hosted runner gets
+them from the workflow before each Hybrid run. Do it before the first Hybrid run, then
+retake the clean snapshot (step 4).
+
 ### Why a standard account
 
 A `/bench desktop azure` run executes the benchmarked branch's code on this VM, and

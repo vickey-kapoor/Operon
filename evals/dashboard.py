@@ -151,7 +151,7 @@ def run_key(report: dict) -> str:
     config = report.get("config") or {}
     parts = [
         report.get("mode", "browser"),
-        report["suite"].removeprefix("desktop-"),
+        report["suite"].removeprefix("desktop-").removeprefix("hybrid-"),
         config.get("backend") or "unknown",
         config.get("harness_profile") or "full",
         *([config["model_profile"]] if config.get("model_profile") else []),
@@ -208,7 +208,7 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
     if is_grounding_report(report):
         report = grounding_as_run(report)
     report = dict(report)
-    report.setdefault("mode", "desktop" if report["suite"].startswith("desktop-") else "browser")
+    report.setdefault("mode", next((m for m in ("desktop", "hybrid") if report["suite"].startswith(f"{m}-")), "browser"))
     config = dict(report.get("config") or {})
     # live_bench records these at the top level; "server default" means the env var was unset.
     known = {k: v for k in ("backend", "harness_profile") if (v := report.get(k)) and v != "server default"}

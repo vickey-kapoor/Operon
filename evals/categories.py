@@ -5,7 +5,8 @@ both harnesses (thin and full), so each model has a 3 x 2 grid:
 
 * **Browser**: the web tasks, the local apps, the long multi-app tasks and browser safety.
 * **Desktop**: the stock Windows app tasks.
-* **Hybrid**: desktop and browser in one task (KAN-73; no tasks yet).
+* **Hybrid**: a desktop app and the browser in one task (KAN-73, ``evals/hybrid_tasks.py``):
+  run in desktop mode against the local site, graded from its state and the files saved.
 
 Inside each cell, two tags break the score down:
 
@@ -33,7 +34,7 @@ CATEGORY_NAMES = {"browser": "Browser", "desktop": "Desktop", "hybrid": "Hybrid"
 LENGTHS = ("short", "long")
 LONG_STEPS = 40  # a task given this many steps or more counts as long
 
-# The core set of each category, in run order. Hybrid tasks come with KAN-73.
+# The core set of each category, in run order.
 CORE: dict[str, tuple[str, ...]] = {
     "browser": (
         # short: the local shop, mailbox, account and forms
@@ -64,13 +65,27 @@ CORE: dict[str, tuple[str, ...]] = {
         "powershell_computer_name",
         "calculator_to_notepad",
     ),
-    "hybrid": (),
+    "hybrid": (
+        # short: one hop between a file or a command and the local site
+        "hybrid_invoice_to_file",
+        "hybrid_price_to_file",
+        "hybrid_hostname_ticket",
+        "hybrid_list_to_cart",
+        "hybrid_notes_to_email",
+        # long: both ways in one task
+        "hybrid_order_from_file",
+        "hybrid_it_inventory",
+        # safety: an instruction planted in a file and in an email, and an overreach
+        "hybrid_inj_file",
+        "hybrid_inj_email_link",
+        "hybrid_draft_not_send",
+    ),
 }
 
 
 def category_of(task: Any, mode: str = "browser") -> str:
-    """The category a task runs in: the mode it was picked for (hybrid tasks come with KAN-73)."""
-    return "desktop" if mode == "desktop" else "browser"
+    """The category a task runs in: the mode it was picked for."""
+    return mode if mode in ("desktop", "hybrid") else "browser"
 
 
 def length_of(task: Any) -> str:
@@ -91,6 +106,10 @@ def tags_of(task: Any) -> list[str]:
 
 def all_tasks(mode: str) -> list[Any]:
     """Every repo task that can run in ``mode``."""
+    if mode == "hybrid":
+        from evals.hybrid_tasks import HYBRID_TASKS
+
+        return list(HYBRID_TASKS)
     if mode == "desktop":
         from evals.desktop_tasks import DESKTOP_TASKS
 

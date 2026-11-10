@@ -89,6 +89,16 @@ def test_desktop_reports_without_a_mode_are_keyed_as_desktop() -> None:
     assert run_key(report).startswith("desktop-smoke-json-full-")
 
 
+def test_hybrid_reports_keep_their_mode_and_drop_the_suite_prefix() -> None:
+    report = prepare(_report(suite="hybrid-core", mode="hybrid", hybrid_model="gemini-3.5-flash",
+                             backend="computer_use", harness_profile="full"), {})
+    assert report["mode"] == "hybrid" and report["config"]["model"] == "gemini-3.5-flash"
+    assert run_key(report).startswith("hybrid-core-computer_use-full-")
+    no_mode = _report(suite="hybrid-smoke")
+    del no_mode["mode"]
+    assert prepare(no_mode, {"backend": "json"})["mode"] == "hybrid"
+
+
 def _artifacts(tmp_path):
     artifacts = tmp_path / "artifacts" / "bench-claude_computer_use" / ".var" / "bench"
     artifacts.mkdir(parents=True)

@@ -197,7 +197,7 @@ function pill(outcome) {
 function filteredRuns() {
   return state.runs.filter((run) =>
     run.mode === state.mode &&
-    (run.suite || "").replace(/^desktop-/, "") === state.suite &&
+    (run.suite || "").replace(/^(desktop|hybrid)-/, "") === state.suite &&
     (state.showFlagged || !(run.config && run.config.flagged)));
 }
 
@@ -975,7 +975,7 @@ function taskRows(r, withScreens, columns) {
 // a broken run still cost money. The filters in the app bar don't apply here.
 
 const SUITE_NAMES = { core: "core", full: "full suite", smoke: "smoke", safety: "safety", apps: "apps", hard: "hard", long: "long" };
-const MODE_NAMES = { browser: "Browser", desktop: "Desktop", grounding: "Grounding" };
+const MODE_NAMES = { browser: "Browser", desktop: "Desktop", hybrid: "Hybrid", grounding: "Grounding" };
 // Fixed colors per environment and suite, so a suite keeps its color as runs come in.
 // Any other suite gets the grey after the last slot (--series-12 in style.css).
 const SUITE_SLOTS = ["browser|full", "browser|smoke", "browser|safety", "browser|apps", "desktop|smoke", "desktop|full",
@@ -1001,7 +1001,7 @@ function runSpend(run) {
 }
 
 function suiteId(run) {
-  return `${run.mode}|${(run.suite || "").replace(/^desktop-/, "")}`;
+  return `${run.mode}|${(run.suite || "").replace(/^(desktop|hybrid)-/, "")}`;
 }
 
 function suiteLabel(id) {
@@ -1671,7 +1671,7 @@ const PLAN_SEASON = 1;
 const PLAN_CATEGORIES = [
   { id: "browser", name: "Browser", suite: "browser|core" },
   { id: "desktop", name: "Desktop", suite: "desktop|core" },
-  { id: "hybrid", name: "Hybrid", suite: "hybrid|core", needs: "KAN-73" },
+  { id: "hybrid", name: "Hybrid", suite: "hybrid|core" },
 ];
 const ADAPTER_FAMILIES = { claude_native: "Claude", gemini_native: "Gemini", openai_native: "GPT" };
 const BACKEND_FAMILIES = { claude_computer_use: "Claude", computer_use: "Gemini", json: "Gemini" };

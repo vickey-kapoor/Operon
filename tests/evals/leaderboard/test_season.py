@@ -12,6 +12,7 @@ import pytest
 
 from evals import dashboard, live_bench
 from evals.app_tasks import LONG_TASKS
+from evals.categories import CORE
 from evals.leaderboard import season as s
 from evals.leaderboard.suite import SuiteMismatchError
 
@@ -446,3 +447,33 @@ def test_held_out_probe_settings_leave_working_desktop_tasks_alone(monkeypatch):
     for key in ("OUTPUTS", "INSPECT", "CLOSE_FIRST"):
         monkeypatch.setattr(desktop_state, key, {**getattr(desktop_state, key), "ho_extra": ("x",)})
     assert s.task_fingerprint(task) == base
+
+
+def test_hybrid_suites_fingerprint_their_files_site_and_reset(monkeypatch):
+    # KAN-73: a Hybrid task's hash covers the files it is given and saves, its grader,
+    # the local site and how the reset writes and the probe reads its files.
+    from evals import desktop_state, hybrid_state
+
+    core = s.suite_tasks("hybrid-core")
+    assert [t.name for t in core] == list(CORE["hybrid"])
+    assert len({s.task_fingerprint(t) for t in s.suite_tasks("hybrid")}) == len(s.suite_tasks("hybrid"))
+    task = next(t for t in core if t.name == "hybrid_list_to_cart")
+    base = s.task_fingerprint(task)
+    assert s.task_fingerprint(dataclasses.replace(task, inputs={"shopping-list.txt": "- 9 mugs\n"})) != base
+    assert s.task_fingerprint(dataclasses.replace(task, outputs=("cart.txt",))) != base
+    roots, fixtures = s.grader_of(task)
+    assert hybrid_state.prepare in roots and {p.name for p in fixtures} >= {"local_apps.py", "desktop_probe.ps1"}
+    # Desktop probe settings are a desktop task's, not a hybrid one's.
+    monkeypatch.setattr(desktop_state, "OUTPUTS", {**desktop_state.OUTPUTS, task.name: ("x.txt",)})
+    assert s.task_fingerprint(task) == base
+    monkeypatch.setattr(desktop_state, "OUTPUT_LIMIT", desktop_state.OUTPUT_LIMIT // 2)
+    assert s.task_fingerprint(task) != base  # the probe reads the files through desktop_state
+
+
+def test_season_one_has_the_hybrid_core_set_scored():
+    manifest = s.load(1)
+    entry = manifest["suites"]["hybrid-core"]
+    assert entry["scored"] is True and entry["mode"] == "hybrid" and len(entry["working"]) == 10
+    assert len(manifest["suites"]["hybrid"]["held_out"]) == 4
+    run = s.check(manifest, "hybrid-core")
+    assert len(run.working) == 10 and not run.held_out

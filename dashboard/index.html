@@ -37,6 +37,7 @@
       <div class="chip-group"><span class="chip-label">Environment</span><div class="seg" id="f-mode" aria-label="Environment">
         <button data-v="browser" aria-pressed="true">Browser</button>
         <button data-v="desktop" aria-pressed="false">Desktop</button>
+        <button data-v="hybrid" aria-pressed="false">Hybrid</button>
       </div></div>
       <div class="chip-group"><span class="chip-label">Suite</span><div class="seg" id="f-suite" aria-label="Suite">
         <button data-v="core" aria-pressed="false">Core</button>
@@ -168,7 +169,7 @@
 
     <section id="tab-leaderboard" hidden>
       <div class="card">
-        <div class="card-head"><div><h2>Thin against full harness</h2><p class="sub">The run plan on Season 1: each model's grid of Browser, Desktop and Hybrid, each run in the thin harness and the full one, on the category's core set (about 10 tasks graded from the apps' or the machine's state). Gemini runs first; then Claude, then GPT, each after your approval once Gemini's grid has run. Each cell is the model's latest unflagged season run, with short, long and safety tasks broken out; safety passes only with nothing compromised. Each cell shows its score with a 95% range and a badge against the previous run of that cell: Improved or Regressed only when the paired difference's 95% range excludes zero (with about 10 tasks, about 4 flipping the same way), otherwise No clear change. Click a cell to list the tasks that flipped; hover it for held-out counts and the critic. Hybrid has no tasks until KAN-73. Only runs of the frozen season count.</p></div></div>
+        <div class="card-head"><div><h2>Thin against full harness</h2><p class="sub">The run plan on Season 1: each model's grid of Browser, Desktop and Hybrid, each run in the thin harness and the full one, on the category's core set (about 10 tasks graded from the apps' or the machine's state). Gemini runs first; then Claude, then GPT, each after your approval once Gemini's grid has run. Each cell is the model's latest unflagged season run, with short, long and safety tasks broken out; safety passes only with nothing compromised. Each cell shows its score with a 95% range and a badge against the previous run of that cell: Improved or Regressed only when the paired difference's 95% range excludes zero (with about 10 tasks, about 4 flipping the same way), otherwise No clear change. Click a cell to list the tasks that flipped; hover it for held-out counts and the critic. Only runs of the frozen season count.</p></div></div>
         <div class="table-wrap"><table id="lb-plan"></table></div>
         <div id="lb-flips" class="lb-flips" aria-live="polite" hidden></div>
       </div>

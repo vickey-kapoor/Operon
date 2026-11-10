@@ -15,13 +15,14 @@ name: Bench command
 # The first word is the category (KAN-72): browser, desktop or hybrid, each run in
 # the thin or full harness, one cell of the 3 x 2 grid. Defaults: browser, thin
 # harness, the category's core set (evals/categories.py: about 10 state-graded tasks,
-# short, long and safety), Opus 5.5. hybrid has no tasks until KAN-73. "smoke" runs a
-# few quick tasks; "all" runs the full
-# suite (44 browser tasks or 14 desktop tasks); "safety" runs the browser
-# prompt-injection and overreach tasks; "apps" runs the browser tasks on the local
+# short, long and safety), Opus 5.5. hybrid (KAN-73) runs the desktop workflow with a
+# desktop app and the browser in each task, on the local site the benchmark serves on
+# the runner itself. "smoke" runs a few quick tasks; "all" runs the full
+# suite (44 browser tasks, 20 desktop or 10 hybrid tasks); "safety" runs the
+# prompt-injection and overreach tasks (browser, or Desktop Safety with desktop); "apps" runs the browser tasks on the local
 # fake shop, mailbox, account and forms, graded from the apps' state; "hard" runs the
 # 20-task hard subset (evals/hard_tasks.py); "long" runs the 21 multi-app tasks
-# (LONG_TASKS in evals/app_tasks.py). x2/x3/x5 run every task that many
+# (LONG_TASKS in evals/app_tasks.py), or with desktop the long desktop tasks. x2/x3/x5 run every task that many
 # times to measure flakiness (the cost cap scales with it). season=<n> runs a frozen
 # season's tasks for that suite (--season; evals/seasons/), which is how a grid
 # run counts on the dashboard's Leaderboard tab: /bench browser thin gemini season=1. "grounding" runs the
@@ -112,11 +113,13 @@ jobs:
               *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>], or /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]"; exit 1 ;;
             esac
           done
-          if [ "$target" = hybrid ]; then
-            echo "::error::The Hybrid category has no tasks yet (KAN-73). Use /bench browser or /bench desktop."; exit 1
-          fi
-          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && [ "$target" = desktop ]; then
+          # Desktop has its own safety and long tasks (KAN-74); apps and hard are browser only.
+          # Hybrid runs its core, smoke or full set (its safety and long tasks are inside them).
+          if { [ "$suite" = apps ] || [ "$suite" = hard ]; } && [ "$target" = desktop ]; then
             echo "::error::The $suite suite is browser only."; exit 1
+          fi
+          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && [ "$target" = hybrid ]; then
+            echo "::error::Hybrid has no $suite suite; use core, smoke or all (its long and safety tasks are in core)."; exit 1
           fi
           explicit_profile=$profile
           # Each backend's own default harness: thin for Claude, full for Gemini.
@@ -127,7 +130,7 @@ jobs:
             echo "::error::check-sonnet/check-haiku pick Claude's completion check; a Gemini run has none."; exit 1
           fi
           if [ -n "$season" ] && [ "$target" = grounding ]; then
-            echo "::error::season= is for /bench browser and /bench desktop."; exit 1
+            echo "::error::season= is for /bench browser, desktop and hybrid."; exit 1
           fi
           extra=
           [ "$repeat" != 1 ] && extra="--repeat $repeat"
@@ -139,7 +142,7 @@ jobs:
             echo "::error::same-critic picks the full harness's step critic; add full."; exit 1
           fi
           if [ "$zoom" = true ] && { [ "$target" = browser ] || [ "$backend" = computer_use ]; }; then
-            echo "::error::zoom is only an option for /bench desktop and /bench grounding with Claude."; exit 1
+            echo "::error::zoom is only an option for /bench desktop, hybrid and grounding with Claude."; exit 1
           fi
           if [ "$backend" = computer_use ]; then model=; fi  # Gemini's own default model
           if [ -n "$model_profile" ]; then
@@ -213,9 +216,10 @@ jobs:
       OPENWEIGHT_BASE_URL: ${{ secrets.OPENWEIGHT_BASE_URL }}
       OPENWEIGHT_API_KEY: ${{ secrets.OPENWEIGHT_API_KEY }}
 
+  # Desktop and Hybrid both run on the Windows desktop; category picks the tasks.
   desktop:
     needs: parse
-    if: needs.parse.outputs.target == 'desktop'
+    if: needs.parse.outputs.target == 'desktop' || needs.parse.outputs.target == 'hybrid'
     # id-token reaches only the VM start/stop jobs, which ask for it; the bench job
     # (the benchmarked branch's code) stays at contents: read.
     permissions:
@@ -224,6 +228,7 @@ jobs:
     uses: ./.github/workflows/live-desktop-bench.yml
     with:
       runner: ${{ needs.parse.outputs.runner }}
+      category: ${{ needs.parse.outputs.target }}
       desktop_backend: ${{ needs.parse.outputs.backend }}
       model_profile: ${{ needs.parse.outputs.model_profile }}
       claude_model: ${{ needs.parse.outputs.model }}

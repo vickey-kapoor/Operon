@@ -480,3 +480,13 @@ td.not-run code { font-style: normal; }
   .kpi-value strong { font-size: 23px; }
   .appbar .meta { display: none; }
 }
+
+/* Leaderboard grid: run-over-run change (KAN-60) */
+.plan-cell { cursor: pointer; }
+.plan-cell:hover, .plan-cell.open { background: var(--neutral-bg); }
+.plan-cell:focus-visible { outline: 2px solid var(--good); outline-offset: -2px; }
+.delta.change { display: inline-block; margin-top: 4px; }
+.lb-flips { padding: 12px 16px 16px; border-top: 1px solid var(--border); }
+.lb-flips h3 { font-size: 14px; margin: 0 0 4px; }
+.lb-flips .flips { margin-top: 8px; }
+.lb-flips ul { margin: 4px 0 0 18px; padding: 0; font-size: 13px; }

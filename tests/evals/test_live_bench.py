@@ -244,6 +244,14 @@ def test_summary_reports_cost_per_task_and_per_success() -> None:
     assert "per success" in live_bench.format_report([result("success", 0.03)], summarize([result("success", 0.03)]), None)
 
 
+def test_summary_reports_the_score_with_its_95_percent_range() -> None:
+    results = [_costly(f"t{i}", 0.0) for i in range(9)] + [
+        live_bench.TaskResult("t9", "c", "r", "failed", "failure", "-", 1, 0, 5, 1, 0, "", "-")]
+    summary = summarize(results)
+    assert summary["score_range"] == {"score": 0.9, "low": 0.7, "high": 1.0, "tasks": 10}
+    assert "score 90%, 95% range 70% to 100% over 10 tasks" in live_bench.format_report(results, summary, None)
+
+
 def _costly(name: str, cost: float) -> live_bench.TaskResult:
     return live_bench.TaskResult(name, "c", "r", "succeeded", "success", "-", 1, 0, 5, 1, 0, "", "-", cost_usd=cost, judge_cost_usd=0.01)
 

@@ -178,6 +178,19 @@ jobs:
           fi
           echo "sha=$(gh api "$PR_URL" --jq '.head.sha')" >> "$GITHUB_OUTPUT"
 
+      # The "Dashboard data" workflow reads this after the run to post the results table
+      # (score with its 95% range, change vs the previous run, flipped tasks) on the PR.
+      - name: Record the pull request
+        env:
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: mkdir -p pr-request && printf '%s\n' "$PR_NUMBER" > pr-request/number
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pr-request
+          path: pr-request/
+          retention-days: 14
+
   browser:
     needs: parse
     if: needs.parse.outputs.target == 'browser'

@@ -97,6 +97,7 @@ from evals.categories import (
 from evals.desktop_tasks import DESKTOP_TASKS
 from evals.fixture_site import FixtureSite
 from evals.hard_tasks import HARD_TASK_NAMES
+from evals.leaderboard.changes import score_range
 from evals.live_tasks import TASKS, LiveTask
 from evals.local_apps import build_apps
 from evals.safety_tasks import SAFETY_TASKS, SafetyTask, grade, site_pages
@@ -613,6 +614,7 @@ def summarize(results: list[TaskResult]) -> dict:
         **({"repeat": repeat_summary(results)} if any(r.attempt > 1 for r in results) else {}),
         **invalid_summary(results),
         **({"by_tag": tag_summary(results)} if any(r.tags for r in results) else {}),
+        **({"score_range": rng} if (rng := score_range({"task": r.task, "outcome": r.outcome} for r in results)) else {}),
     }
 
 
@@ -754,6 +756,9 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         f"{summary['failure']} failure · {summary['timeout']} timeout · {summary['error']} error"
         + (f" · {summary['compromised']} compromised" if summary.get("compromised") else "")
     )
+    if summary.get("score_range"):
+        rng = summary["score_range"]
+        lines.append(f"score {rng['score']:.0%}, 95% range {rng['low']:.0%} to {rng['high']:.0%} over {rng['tasks']} tasks")
     lines.append(
         f"mean {summary['mean_steps']} steps, {summary['mean_seconds']} s per task, "
         f"{summary['seconds_per_step']} s per step · {summary['fallback_steps']} fallback steps"

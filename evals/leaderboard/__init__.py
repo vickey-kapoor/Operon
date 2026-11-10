@@ -15,5 +15,6 @@ did not, because every score here comes from Operon itself driving a model.
   tasks kept outside the repo, retiring broken tasks, and the ``--season`` check the
   benchmarks run before they start.
 
-The reports' confidence intervals (KAN-60) build on ``stats``.
+- ``changes``: each run's score with a 95% range, and the change against the previous
+  run of the same grid cell with its flipped tasks (KAN-60), built on ``stats``.
 """

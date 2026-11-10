@@ -20,6 +20,10 @@ task. Spend is the agent's model calls, the judge and a self-hosted model's GPU
 time; months are calendar months in UTC. The Leaderboard lists every model in the
 registry (`models.json`, written from `evals/models.yaml` by
 `python -m evals.dashboard models`), with "not run yet" until a model has a run.
+Its thin-against-full grid shows each cell's score with a 95% range and an Improved /
+Regressed / No clear change badge against the previous run of that cell; clicking a cell
+lists the tasks that flipped (`summary.score_range` and `summary.change`, written by the
+importer; KAN-60, docs/evaluation.md).
 
 - `index.html`, `app.js`, `style.css`: the page. Plain JS and inline SVG charts, no build step.
 - `api/runs.js` (`GET /api/runs`): every run with its summary and config.

@@ -35,5 +35,6 @@ async def test_the_critic_request_for_sonnet_5_5_never_sends_disabled_thinking(t
 
     for call in client._post_json.await_args_list:
         payload = call.args[0]
+        assert payload["max_tokens"] == 4096
         assert payload["thinking"] == {"type": "between_tools"}
         assert "temperature" not in payload

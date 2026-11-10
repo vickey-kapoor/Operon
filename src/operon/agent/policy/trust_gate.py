@@ -4,8 +4,10 @@ A deterministic allow / confirm / deny check that runs after policy selection an
 *before* execution. It is the single chokepoint for least-privilege and
 high-risk-action policy on an agent that drives a real machine.
 
-Opt-in: ``OPERON_TRUST_GATE`` defaults to ``off`` ⇒ every action is allowed and
-behavior is unchanged. When ``on``:
+On by default (KAN-15): ``OPERON_TRUST_GATE`` defaults to ``on`` with the
+built-in confirm list below, an empty deny list and no domain allowlist. Set it
+to ``off`` to allow every action (the benchmarks do, so their scores stay
+comparable). When ``on``:
 
 - **deny** rules block the action — it is never executed autonomously; the run
   pauses for a human (override or stop).
@@ -16,7 +18,7 @@ the action's ``text``, target ``url``, and resolved target-element name. Deny
 takes precedence over confirm.
 
 Config:
-    OPERON_TRUST_GATE           off | on        master switch (default off)
+    OPERON_TRUST_GATE           on | off        master switch (default on)
     OPERON_TRUST_DENY           comma-separated  phrases that block (default none)
     OPERON_TRUST_CONFIRM        comma-separated  phrases needing approval
                                                  (default: a conservative built-in set)
@@ -147,8 +149,9 @@ class TrustGate:
 
 
 def make_trust_gate() -> TrustGate:
-    """Build the gate from the environment. Disabled (pass-through) by default."""
-    enabled = os.getenv("OPERON_TRUST_GATE", "off").strip().lower() in {"on", "true", "1"}
+    """Build the gate from the environment. On by default; only an explicit
+    ``off`` / ``false`` / ``0`` / ``no`` turns it into a pass-through."""
+    enabled = os.getenv("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"}
     deny = _split_env("OPERON_TRUST_DENY")
     confirm = _split_env("OPERON_TRUST_CONFIRM") or _DEFAULT_CONFIRM
     allow_domains = _split_env("OPERON_TRUST_ALLOW_DOMAINS")

@@ -52,7 +52,7 @@ point and data on where time goes is welcome.
   `agent/policy/rules.py` without an LLM call, it should be. The thin harness for Claude
   has no rules by design: fix failures there through what the model sees or the executor.
 - **Experimental work goes behind an env flag, defaulting to off.** See the
-  `OPERON_BESTOFN_*`, `OPERON_GROUNDER`, and `OPERON_TRUST_*` flags for the
+  `OPERON_BESTOFN_*` and `OPERON_GROUNDER` flags for the
   pattern, and `docs/rfcs/` for the shape of a larger proposal.
 - **`.env.example` is a contract.** Every variable in it must be read by code in
   `src/`. Don't document configuration that isn't wired up.

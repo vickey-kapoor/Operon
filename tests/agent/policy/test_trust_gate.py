@@ -119,9 +119,29 @@ def test_describe_tolerates_missing_fields() -> None:
 
 # ── make_trust_gate env wiring ────────────────────────────────────────────
 
-def test_make_trust_gate_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPERON_TRUST_GATE", raising=False)
-    assert make_trust_gate().enabled is False
+def test_make_trust_gate_on_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("OPERON_TRUST_GATE", "OPERON_TRUST_CONFIRM", "OPERON_TRUST_DENY", "OPERON_TRUST_ALLOW_DOMAINS"):
+        monkeypatch.delenv(name, raising=False)
+    gate = make_trust_gate()
+    assert gate.enabled is True
+    assert "place order" in gate.confirm  # built-in confirm list
+    assert gate.deny == ()
+    assert gate.allow_domains == ()
+    result = gate.evaluate(_action(element_name="Place order"))
+    assert result.verdict is TrustVerdict.CONFIRM
+
+
+@pytest.mark.parametrize("value", ["off", "OFF", " false ", "0", "no"])
+def test_make_trust_gate_explicit_off_disables(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("OPERON_TRUST_GATE", value)
+    gate = make_trust_gate()
+    assert gate.enabled is False
+    assert gate.evaluate(_action(element_name="Place order")).verdict is TrustVerdict.ALLOW
+
+
+def test_make_trust_gate_empty_value_keeps_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPERON_TRUST_GATE", "")
+    assert make_trust_gate().enabled is True
 
 
 def test_make_trust_gate_enabled_uses_default_confirm_list(monkeypatch: pytest.MonkeyPatch) -> None:

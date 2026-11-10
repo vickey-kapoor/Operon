@@ -292,6 +292,14 @@ def _server_env() -> dict[str, str]:
     return {**os.environ, **dotenv}
 
 
+def trust_gate_label() -> str:
+    """``on`` or ``off``: the trust gate the server runs (KAN-15). It is on by default;
+    benchmarks run with ``OPERON_TRUST_GATE=off`` so a confirm pause doesn't change
+    their scores. Parsed like ``operon.agent.policy.trust_gate.make_trust_gate``."""
+    value = (_server_env().get("OPERON_TRUST_GATE") or "on").strip().lower()
+    return "off" if value in {"off", "false", "0", "no"} else "on"
+
+
 def critic_label(profile, mode: str = "browser") -> str | None:
     """Which step critic a full run used, for the report: ``same:<model>`` with
     OPERON_CRITIC=same (KAN-68), else ``<provider>:<model>`` from the verifier settings;
@@ -892,6 +900,7 @@ def build_report(
         "model_adapter": profile.adapter if profile is not None else None,
         "model_id": profile.model if profile is not None else None,
         "zoom": os.getenv("OPERON_CLAUDE_ZOOM", "").strip().lower() in {"1", "true", "yes", "on"},
+        "trust_gate": trust_gate_label(),
         "repeat": repeat,
         # --only / --category: some of the suite's tasks; spend counts, pass rates don't.
         "partial": bool(args.only or args.category),
@@ -953,6 +962,13 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     if not tasks:
         print("No tasks match.", file=sys.stderr)
         return 2
+    if trust_gate_label() == "on":
+        print(
+            "Warning: the trust gate is on (OPERON_TRUST_GATE unset or on), so risky actions pause for "
+            "approval and scores aren't comparable with earlier runs. Start the server with "
+            "OPERON_TRUST_GATE=off for benchmarks.",
+            file=sys.stderr,
+        )
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results: list[TaskResult] = []
     stopped = None

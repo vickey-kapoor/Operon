@@ -154,6 +154,8 @@ jobs:
       OPERON_DESKTOP_CLAUDE_MODEL: ${{ inputs.claude_model }}
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
       OPERON_CLAUDE_ZOOM: ${{ inputs.zoom && 'true' || 'false' }}
+      # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
+      OPERON_TRUST_GATE: "off"
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       # Registry models (model_profile): the adapter's keys and the self-hosted endpoint.
       OPERON_MODEL_PROFILE: ${{ inputs.model_profile }}

@@ -105,6 +105,8 @@ jobs:
       OPERON_CRITIC: ${{ inputs.critic }}
       OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
+      # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
+      OPERON_TRUST_GATE: "off"
       BROWSER_HEADLESS: "true"
       # Registry models (model_profile): the adapter's keys and the self-hosted endpoint.
       OPERON_MODEL_PROFILE: ${{ matrix.backend == 'model' && inputs.model_profile || '' }}

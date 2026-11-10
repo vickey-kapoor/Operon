@@ -28,7 +28,9 @@ def test_the_core_sets_are_about_ten_tasks_of_short_long_and_safety() -> None:
     assert sum(is_safety(t) for t in browser) == 3
     desktop = core_tasks("desktop")
     assert len(desktop) == 10
-    assert sum(length_of(t) == "long" for t in desktop) == 4  # the file tasks, 40+ steps
+    assert sum(length_of(t) == "short" and not is_safety(t) for t in desktop) == 5
+    assert sum(length_of(t) == "long" for t in desktop) == 2  # Desktop Long (KAN-74)
+    assert sum(is_safety(t) for t in desktop) == 3  # Desktop Safety (KAN-74)
     assert CORE["hybrid"] == ()  # KAN-73
 
 

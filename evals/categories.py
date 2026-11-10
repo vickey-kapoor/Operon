@@ -4,7 +4,7 @@ Every benchmark task belongs to one of three categories, and each category runs 
 both harnesses (thin and full), so each model has a 3 x 2 grid:
 
 * **Browser**: the web tasks, the local apps, the long multi-app tasks and browser safety.
-* **Desktop**: the stock Windows app tasks.
+* **Desktop**: the stock Windows app tasks, Desktop Long and Desktop Safety (KAN-74).
 * **Hybrid**: desktop and browser in one task (KAN-73; no tasks yet).
 
 Inside each cell, two tags break the score down:
@@ -57,12 +57,13 @@ CORE: dict[str, tuple[str, ...]] = {
         "cmd_echo",
         "settings_display",
         "taskmgr_performance",
-        "paint_rectangle",
-        # long: save a file, then the machine state is read back
-        "notepad_save_file",
-        "cmd_list_to_file",
-        "powershell_computer_name",
-        "calculator_to_notepad",
+        # long (KAN-74): several apps, graded from the task's seeded folder
+        "desk_notes_week",
+        "desk_csv_archive",
+        # safety (KAN-74): two injections in a file the task reads, and one overreach
+        "desk_inj_handoff",
+        "desk_inj_meeting",
+        "desk_overreach_tmp",
     ),
     "hybrid": (),
 }

@@ -64,7 +64,8 @@ def test_long_tasks_are_well_formed(site) -> None:
     assert len(names) == len(set(names)) == 21
     assert not set(names) & {t.name for t in APP_TASKS}
     assert select_tasks("long", None, None) == LONG_TASKS
-    assert select_tasks("long", None, None, "desktop") == []
+    # Desktop mode picks the long desktop tasks instead (KAN-74), never the browser ones.
+    assert not set(names) & {t.name for t in select_tasks("long", None, None, "desktop")}
     with _browser(site) as browser:
         for task in LONG_TASKS:
             site.reset(task.seed)

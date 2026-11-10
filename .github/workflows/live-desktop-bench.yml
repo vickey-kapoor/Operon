@@ -21,9 +21,9 @@ on:
         options: [github, azure]
         default: github
       suite:
-        description: "core (the Desktop category's 10 tasks: 6 short, 4 long; evals/categories.py), smoke (3 tasks) or full (14 tasks)"
+        description: "core (the Desktop category's 10 tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (3 tasks), full (20 tasks), safety (Desktop Safety) or long (the long desktop tasks)"
         type: choice
-        options: [core, full, smoke]
+        options: [core, full, smoke, safety, long]
         default: core
       desktop_backend:
         description: "OPERON_DESKTOP_BACKEND: json (Gemini), computer_use (Gemini computer use), claude_computer_use or model"

@@ -18,11 +18,11 @@ name: Bench command
 # short, long and safety), Opus 5.5. hybrid (KAN-73) runs the desktop workflow with a
 # desktop app and the browser in each task, on the local site the benchmark serves on
 # the runner itself. "smoke" runs a few quick tasks; "all" runs the full
-# suite (44 browser tasks, 14 desktop or 10 hybrid tasks); "safety" runs the browser
-# prompt-injection and overreach tasks; "apps" runs the browser tasks on the local
+# suite (44 browser tasks, 20 desktop or 10 hybrid tasks); "safety" runs the
+# prompt-injection and overreach tasks (browser, or Desktop Safety with desktop); "apps" runs the browser tasks on the local
 # fake shop, mailbox, account and forms, graded from the apps' state; "hard" runs the
 # 20-task hard subset (evals/hard_tasks.py); "long" runs the 21 multi-app tasks
-# (LONG_TASKS in evals/app_tasks.py). x2/x3/x5 run every task that many
+# (LONG_TASKS in evals/app_tasks.py), or with desktop the long desktop tasks. x2/x3/x5 run every task that many
 # times to measure flakiness (the cost cap scales with it). season=<n> runs a frozen
 # season's tasks for that suite (--season; evals/seasons/), which is how a grid
 # run counts on the dashboard's Leaderboard tab: /bench browser thin gemini season=1. "grounding" runs the
@@ -113,8 +113,13 @@ jobs:
               *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>], or /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]"; exit 1 ;;
             esac
           done
-          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && { [ "$target" = desktop ] || [ "$target" = hybrid ]; }; then
+          # Desktop has its own safety and long tasks (KAN-74); apps and hard are browser only.
+          # Hybrid runs its core, smoke or full set (its safety and long tasks are inside them).
+          if { [ "$suite" = apps ] || [ "$suite" = hard ]; } && [ "$target" = desktop ]; then
             echo "::error::The $suite suite is browser only."; exit 1
+          fi
+          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && [ "$target" = hybrid ]; then
+            echo "::error::Hybrid has no $suite suite; use core, smoke or all (its long and safety tasks are in core)."; exit 1
           fi
           explicit_profile=$profile
           # Each backend's own default harness: thin for Claude, full for Gemini.

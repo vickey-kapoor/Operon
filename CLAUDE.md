@@ -67,9 +67,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
 .venv\Scripts\python -m evals.judge_check run labels.jsonl [--repeat 3]
 
-# Live desktop benchmark: Desktop core (10 tasks) by default, --suite full for all 14; drives the real mouse and keyboard
+# Live desktop benchmark: Desktop core (10 tasks) by default, --suite full for all 20 (safety|long for Desktop Safety/Long); drives the real mouse and keyboard
 # (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
-.venv\Scripts\python -m evals.live_desktop_bench [--suite smoke|full] [--keep-screens]
+.venv\Scripts\python -m evals.live_desktop_bench [--suite smoke|full|safety|long] [--keep-screens]
 # Live Hybrid benchmark (KAN-73): 10 tasks that each use a desktop app and Edge on the local site, which it serves
 # on 127.0.0.1 on the same machine; graded from the site's /state and files in Documents\OperonFiles (evals/hybrid_tasks.py)
 .venv\Scripts\python -m evals.live_hybrid_bench [--suite core|smoke|full] [--keep-screens]

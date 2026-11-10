@@ -28,9 +28,9 @@ on:
         options: [desktop, hybrid]
         default: desktop
       suite:
-        description: "core (the category's 10 tasks; evals/categories.py), smoke (2 or 3 tasks) or full (Desktop 14 tasks, Hybrid 10)"
+        description: "core (the category's 10 tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (2 or 3 tasks), full (Desktop 20 tasks, Hybrid 10), safety (Desktop Safety) or long (the long desktop tasks); safety and long are Desktop only"
         type: choice
-        options: [core, full, smoke]
+        options: [core, full, smoke, safety, long]
         default: core
       desktop_backend:
         description: "OPERON_DESKTOP_BACKEND: json (Gemini), computer_use (Gemini computer use), claude_computer_use or model"

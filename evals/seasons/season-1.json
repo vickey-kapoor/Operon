@@ -1,8 +1,8 @@
 {
   "format": 1,
   "season": 1,
-  "frozen_at": "2026-11-10T12:33:56Z",
-  "operon_commit": "61897f12a4c8481730d9fe0f4d17532d6eded087",
+  "frozen_at": "2026-11-10T15:50:32Z",
+  "operon_commit": "ae7ffca5583eda358d1fdd2d8ef9e0947f2ee675",
   "suites": {
     "browser-core": {
       "runner": "live_bench",
@@ -34,11 +34,11 @@
         "cmd_echo": "9540716d1ae70d9159170dab6cace012d6f1297939676d4a40e709741361add9",
         "settings_display": "44a8c50185237e0a9771f8ac987f508ef2115a61735855513eb9dca48fc6f8ec",
         "taskmgr_performance": "dda8968a8e9ae5b189a32f306db8a7b990898c6f1a8964e797984bec599a6caa",
-        "paint_rectangle": "ab9ed79ebf4d566ff8702f6779106d8c2afb5e39122f900d7c3aeee7119f1dab",
-        "notepad_save_file": "37fc0fab4d172d87573d517fc94da876fc7505039d08aba068231915af4a7a45",
-        "cmd_list_to_file": "e2617a1c5eb441693440dd8be0220f8ff21914ed8613010beafd9e3ce0e80286",
-        "powershell_computer_name": "3cf46395c6225b598e95692c0d31c9cb0125756e0874847b1e98ceb5aac5f2e9",
-        "calculator_to_notepad": "3af090bea80039440f5c1bef1c3c1746d33603d46fea0bdf8a4368f562401d46"
+        "desk_notes_week": "93603245cb4c8625f2843fc1837ff482b98e6763579a3b303fa7762a335a4e59",
+        "desk_csv_archive": "683e396c2116409e98f28636d5bdaa590d02a8225b9c1bcdb182d2ec85c64e78",
+        "desk_inj_handoff": "9eaccbe97397b0da7d03bc6e07e9f6f64f268a03fdee9f95991579d0d841c48b",
+        "desk_inj_meeting": "f4e3785c0e70a00bb0a7488a2e9d0a819ccea818d0551990091bcd1a1ba8c4e4",
+        "desk_overreach_tmp": "a29eb4f1426e1c4d39e99ee3cb0dcbcbb87e14a90aaa428ab80e8c8a05952be2"
       },
       "held_out": {}
     },
@@ -120,7 +120,13 @@
         "notepad_save_file": "37fc0fab4d172d87573d517fc94da876fc7505039d08aba068231915af4a7a45",
         "cmd_list_to_file": "e2617a1c5eb441693440dd8be0220f8ff21914ed8613010beafd9e3ce0e80286",
         "powershell_computer_name": "3cf46395c6225b598e95692c0d31c9cb0125756e0874847b1e98ceb5aac5f2e9",
-        "calculator_to_notepad": "3af090bea80039440f5c1bef1c3c1746d33603d46fea0bdf8a4368f562401d46"
+        "calculator_to_notepad": "3af090bea80039440f5c1bef1c3c1746d33603d46fea0bdf8a4368f562401d46",
+        "desk_notes_week": "93603245cb4c8625f2843fc1837ff482b98e6763579a3b303fa7762a335a4e59",
+        "desk_rename_reports": "d05dae8d478ffa7278ee4986fc90ed5af1271bf5113a660e4044e86d67a2b058",
+        "desk_csv_archive": "683e396c2116409e98f28636d5bdaa590d02a8225b9c1bcdb182d2ec85c64e78",
+        "desk_inj_handoff": "9eaccbe97397b0da7d03bc6e07e9f6f64f268a03fdee9f95991579d0d841c48b",
+        "desk_inj_meeting": "f4e3785c0e70a00bb0a7488a2e9d0a819ccea818d0551990091bcd1a1ba8c4e4",
+        "desk_overreach_tmp": "a29eb4f1426e1c4d39e99ee3cb0dcbcbb87e14a90aaa428ab80e8c8a05952be2"
       },
       "held_out": {
         "h-6aa7b7c4bf": "703fcaaebc7bf067d7aab1777add75b31f75bf7510409a70bbcd3106264c1e3c",
@@ -128,7 +134,9 @@
         "h-f05473a331": "5bde61c749e98e38ea866a9b9a3ef51839e743fcf50efd00548aca30ab286022",
         "h-f0e7d98bba": "b94ec4ccb883ba5145ed2240d9a342ee237960a19417bad73d6b38b823044c40",
         "h-1fe9d5115d": "7c5257ef23160f45ca92d858ac1e2d9e3dde2b5b3fdb08ac5a3c6c3c49412828",
-        "h-391824ce01": "7a292e409607ba56f2939ed58e48ce6f42806d798521249ea86a530668d71bca"
+        "h-391824ce01": "7a292e409607ba56f2939ed58e48ce6f42806d798521249ea86a530668d71bca",
+        "h-d18f4be389": "f4d27c0ede3eed088bfdff8fd03e50e4793e11b24aeed8fc1a612e0dfa76af4f",
+        "h-254291a5ab": "64b17be365f064d105cb6dd6e8239f2779fae3ca3843b197ff705f10bd6fc002"
       }
     },
     "hybrid": {
@@ -215,5 +223,5 @@
     }
   },
   "retired": [],
-  "season_hash": "4a9b7a812a2a0cc5410dab7a41d9fbd270603db855d64a3ec9d622d62fd29380"
+  "season_hash": "423cd257962fe0784fc775b977fa83a046d8efec53f416591458ba99c0939e81"
 }

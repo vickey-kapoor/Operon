@@ -293,20 +293,24 @@ def _server_env() -> dict[str, str]:
     return {**os.environ, **dotenv}
 
 
-def trust_gate_label() -> str:
+def trust_gate_label(default: str = "on") -> str:
     """``on`` or ``off``: the trust gate a server started from this shell would run (KAN-15).
     It is on by default; benchmarks run with ``OPERON_TRUST_GATE=off`` so a confirm pause
     doesn't change their scores. Parsed like ``operon.agent.policy.trust_gate.make_trust_gate``.
     Only a fallback: ``server_trust_gate`` asks the running server."""
-    value = (_server_env().get("OPERON_TRUST_GATE") or "on").strip().lower()
+    value = (_server_env().get("OPERON_TRUST_GATE") or default).strip().lower()
     return "off" if value in {"off", "false", "0", "no"} else "on"
 
 
 async def server_trust_gate(client: httpx.AsyncClient) -> str:
-    """The trust gate the running server actually has (``/observer/api/settings``); a server
-    from before that endpoint falls back to this shell's settings (``trust_gate_label``)."""
+    """The trust gate the running server actually has (``/observer/api/settings``). A server
+    from before that endpoint (404) also predates the gate being on by default, so this
+    shell's settings are read with that server's default, off; any other failure falls
+    back to this shell's settings with today's default."""
     try:
         response = await client.get("/observer/api/settings")
+        if response.status_code == 404:
+            return trust_gate_label(default="off")
         value = response.json().get("trust_gate") if response.status_code == 200 else None
     except (httpx.HTTPError, ValueError, AttributeError):
         value = None

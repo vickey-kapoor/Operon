@@ -552,3 +552,15 @@ async def test_the_report_takes_the_trust_gate_from_the_server(tmp_path, monkeyp
     (saved,) = tmp_path.glob("smoke-*.json")
     assert json.loads(saved.read_text())["trust_gate"] == "off"
     assert "trust gate is on" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("env", "expected"), [(None, "off"), ("on", "on")])
+async def test_a_server_without_the_settings_endpoint_keeps_its_old_default(monkeypatch, tmp_path, env, expected) -> None:
+    monkeypatch.chdir(tmp_path)  # no .env
+    if env is None:
+        monkeypatch.delenv("OPERON_TRUST_GATE", raising=False)
+    else:
+        monkeypatch.setenv("OPERON_TRUST_GATE", env)
+    transport = httpx.MockTransport(lambda request: httpx.Response(404, json={"detail": "Not Found"}))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert await live_bench.server_trust_gate(client) == expected

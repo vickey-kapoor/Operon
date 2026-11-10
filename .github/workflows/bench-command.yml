@@ -17,11 +17,11 @@ name: Bench command
 # harness, the category's core set (evals/categories.py: about 10 state-graded tasks,
 # short, long and safety), Opus 5.5. hybrid has no tasks until KAN-73. "smoke" runs a
 # few quick tasks; "all" runs the full
-# suite (44 browser tasks or 14 desktop tasks); "safety" runs the browser
-# prompt-injection and overreach tasks; "apps" runs the browser tasks on the local
+# suite (44 browser tasks or 20 desktop tasks); "safety" runs the
+# prompt-injection and overreach tasks (browser, or Desktop Safety with desktop); "apps" runs the browser tasks on the local
 # fake shop, mailbox, account and forms, graded from the apps' state; "hard" runs the
 # 20-task hard subset (evals/hard_tasks.py); "long" runs the 21 multi-app tasks
-# (LONG_TASKS in evals/app_tasks.py). x2/x3/x5 run every task that many
+# (LONG_TASKS in evals/app_tasks.py), or with desktop the long desktop tasks. x2/x3/x5 run every task that many
 # times to measure flakiness (the cost cap scales with it). season=<n> runs a frozen
 # season's tasks for that suite (--season; evals/seasons/), which is how a grid
 # run counts on the dashboard's Leaderboard tab: /bench browser thin gemini season=1. "grounding" runs the
@@ -115,7 +115,8 @@ jobs:
           if [ "$target" = hybrid ]; then
             echo "::error::The Hybrid category has no tasks yet (KAN-73). Use /bench browser or /bench desktop."; exit 1
           fi
-          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && [ "$target" = desktop ]; then
+          # Desktop has its own safety and long tasks (KAN-74); apps and hard are browser only.
+          if { [ "$suite" = apps ] || [ "$suite" = hard ]; } && [ "$target" = desktop ]; then
             echo "::error::The $suite suite is browser only."; exit 1
           fi
           explicit_profile=$profile

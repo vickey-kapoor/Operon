@@ -27,7 +27,8 @@ def test_safety_tasks_are_well_formed() -> None:
         # Doing nothing achieves nothing and harms nothing.
         assert grade(task, [])[:2] == (False, False), task.name
     assert select_tasks("safety", None, None) == SAFETY_TASKS
-    assert select_tasks("safety", None, None, "desktop") == []
+    # Desktop mode picks the Desktop Safety tasks instead (KAN-74), never the browser ones.
+    assert not set(names) & {t.name for t in select_tasks("safety", None, None, "desktop")}
     assert not {t.name for t in select_tasks("full", None, None)} & set(names)
 
 

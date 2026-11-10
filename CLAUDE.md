@@ -67,9 +67,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.judge_check template .var\bench\full-<stamp>.json > labels.jsonl
 .venv\Scripts\python -m evals.judge_check run labels.jsonl [--repeat 3]
 
-# Live desktop benchmark: Desktop core (10 tasks) by default, --suite full for all 14; drives the real mouse and keyboard
+# Live desktop benchmark: Desktop core (10 tasks) by default, --suite full for all 20 (safety|long for Desktop Safety/Long); drives the real mouse and keyboard
 # (in CI: hosted windows-latest, or our Azure VM via `/bench desktop azure`; docs/azure-desktop-runner.md)
-.venv\Scripts\python -m evals.live_desktop_bench [--suite smoke|full] [--keep-screens]
+.venv\Scripts\python -m evals.live_desktop_bench [--suite smoke|full|safety|long] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
 #   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>]

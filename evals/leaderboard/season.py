@@ -138,7 +138,9 @@ def _function_source(fn: FunctionType) -> str:
 # entry as a root. Otherwise every desktop task would change when any one check did.
 # The probe's per-task settings are in each task's fingerprint (desktop_probe_settings),
 # and held-out tasks add entries to all four, so none of them is hashed whole.
-_REGISTRIES = {("evals.desktop_state", key) for key in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST")}
+_REGISTRIES = {("evals.desktop_state", key) for key in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST")} | {
+    ("evals.desktop_workspace", "WORKSPACES"),
+}
 
 
 def code_closure(roots: Iterable[Callable]) -> str:
@@ -151,8 +153,14 @@ def code_closure(roots: Iterable[Callable]) -> str:
     whose grader calls it, and so does ``_overreach(3)`` in place of ``_overreach(2)``."""
     seen: dict[str, str] = {}
     stack = [fn for fn in roots if _is_evals_function(fn)]
+    done: set[int] = set()
     while stack:
         fn = stack.pop()
+        # Each function once: a name it uses can be its own (``handle.read`` inside ``read``),
+        # which would otherwise push it again forever.
+        if id(fn) in done:
+            continue
+        done.add(id(fn))
         values: list[str] = []
         captured = []
         for cell in fn.__closure__ or ():
@@ -210,6 +218,10 @@ def grader_of(task: Any) -> tuple[list[Callable], list[Path]]:
         # reads them (decoding, size limit) decide its score as much as its check does.
         roots = [desktop_state.grade, desktop_state.prepare, desktop_state.probe,
                  *([check] if check is not None else [])]
+        from evals import desktop_workspace
+
+        if task.name in desktop_workspace.WORKSPACES:  # a seeded folder: its reset, read and harm check
+            roots += [desktop_workspace.prepare, desktop_workspace.attach, desktop_workspace.harm]
         return roots, [EVALS_DIR / "desktop_probe.ps1"]
     from evals import live_bench
 
@@ -235,9 +247,12 @@ def task_fingerprint(task: Any) -> str:
 def desktop_probe_settings(name: str) -> dict:
     """What the probe does for one desktop task: the files it reads (and the reset
     removes), the windows it reads and the apps it stops first."""
-    from evals import desktop_state
+    from evals import desktop_state, desktop_workspace
 
-    return {key: list(getattr(desktop_state, key).get(name, ())) for key in ("OUTPUTS", "INSPECT", "CLOSE_FIRST")}
+    settings = {key: list(getattr(desktop_state, key).get(name, ())) for key in ("OUTPUTS", "INSPECT", "CLOSE_FIRST")}
+    if name in desktop_workspace.WORKSPACES:  # only then, so the other tasks' hashes stay the same
+        settings["WORKSPACE"] = _plain(desktop_workspace.WORKSPACES[name])
+    return settings
 
 
 def held_out_id(season: int, name: str) -> str:
@@ -288,7 +303,8 @@ def load_private(path: str | os.PathLike | None = None) -> dict[str, list[Any]]:
     with the same task classes as the repo, and for held-out desktop tasks
     ``CHECKS = {name: check}`` like ``desktop_state.CHECKS`` plus, where a task needs
     them, ``OUTPUTS``, ``INSPECT`` and ``CLOSE_FIRST`` like the ones there (the files
-    it saves, the windows to read, the apps to stop first). {} when no file is configured."""
+    it saves, the windows to read, the apps to stop first) and ``WORKSPACES`` like
+    ``desktop_workspace.WORKSPACES`` (its seeded folder). {} when no file is configured."""
     path = path or os.getenv(PRIVATE_ENV, "").strip()
     if not path:
         return {}
@@ -305,13 +321,14 @@ def load_private(path: str | os.PathLike | None = None) -> dict[str, list[Any]]:
     held = getattr(module, "HELD_OUT", None)
     if not isinstance(held, dict):
         raise SeasonError(f"{file} must define HELD_OUT = {{suite: [task, ...]}}")
-    from evals import desktop_state
+    from evals import desktop_state, desktop_workspace
 
-    # Held-out desktop tasks' state checks and probe settings, by task name.
+    # Held-out desktop tasks' state checks, probe settings and seeded folders, by task name.
     for name in ("CHECKS", "OUTPUTS", "INSPECT", "CLOSE_FIRST"):
         extra = getattr(module, name, None)
         if extra:
             getattr(desktop_state, name).update(extra)
+    desktop_workspace.WORKSPACES.update(getattr(module, "WORKSPACES", None) or {})
     return {suite: list(tasks) for suite, tasks in held.items()}
 
 

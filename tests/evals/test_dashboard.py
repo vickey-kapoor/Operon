@@ -475,3 +475,23 @@ def test_import_compares_each_run_with_the_cells_previous_run_and_fills_older_ru
     assert changes[second_key]["broke"] == ["t3"] and changes[second_key]["previous"]["key"] == first_key
     assert [r["summary"]["success"] for r in rows] == [10, 9]
     assert filled[0]["broke"] == ["t3"] and filled[1]["score"] == 0.9
+
+
+@pytest.mark.skipif(not os.getenv("OPERON_TEST_DATABASE_URL"), reason="no test database")
+def test_a_failing_backfill_keeps_the_imported_reports(tmp_path, monkeypatch) -> None:
+    psycopg = pytest.importorskip("psycopg")
+    import evals.dashboard as dashboard
+
+    def broken(conn):
+        conn.execute("SELECT no_such_column FROM bench_runs")
+
+    monkeypatch.setattr(dashboard, "fill_changes", broken)
+    path = tmp_path / "full-20261024T012945Z.json"
+    path.write_text(json.dumps(_report()))
+    with psycopg.connect(os.environ["OPERON_TEST_DATABASE_URL"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS bench_task_results, bench_runs")
+        conn.commit()
+        keys = import_reports([path], conn, {})
+    with psycopg.connect(os.environ["OPERON_TEST_DATABASE_URL"]) as conn:
+        stored = [row[0] for row in conn.execute("SELECT key FROM bench_runs").fetchall()]
+    assert stored == keys and len(keys) == 1

@@ -73,3 +73,9 @@ def test_the_pr_comment_has_a_row_per_cell_with_score_change_and_flips() -> None
     assert "| gemini · Browser · Thin (core) | 10/10 | 100% (range 100% to 100%) | First run | – |" in text
     assert "https://dash" in text
     assert change_markdown([]) == ""
+
+
+def test_a_flagged_run_says_why_next_to_its_count() -> None:
+    summary = {"success": 3, "tasks": 3, "score_range": score_range(_run(3, 3)), "change": None}
+    text = change_markdown([{"cell": "c", "summary": summary, "flagged": "stopped at the $3 cost cap after 3 of 10 tasks"}])
+    assert "| c | 3/3 ⚠️ stopped at the $3 cost cap after 3 of 10 tasks | 100% (range 100% to 100%) | – | – |" in text

@@ -1788,8 +1788,14 @@ function planCellView(cell, why, id) {
     cell.critics.length ? `critic: ${cell.critics.join(", ")}` : null].filter(Boolean).join(" · ");
   const rate = cell.rate;
   const open = state.lbCell === id;
-  const toggle = () => { state.lbCell = open ? null : id; renderRunPlan(); };
-  return el("td", { title, class: `plan-cell${open ? " open" : ""}`, tabindex: "0", role: "button", "aria-expanded": String(open),
+  // Re-rendering replaces the cell, so focus moves to its replacement to keep the keyboard's place.
+  const toggle = () => {
+    state.lbCell = open ? null : id;
+    renderRunPlan();
+    const again = [...document.querySelectorAll("#lb-plan td[data-cell]")].find((td) => td.dataset.cell === id);
+    if (again) again.focus();
+  };
+  return el("td", { title, class: `plan-cell${open ? " open" : ""}`, "data-cell": id, tabindex: "0", role: "button", "aria-expanded": String(open),
     onclick: toggle, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } } },
     rate === null ? el("span", { class: "pill none" }, "no tasks")
       : el("span", { class: `pill ${rate >= 0.9 ? "success" : rate >= 0.6 ? "missed" : "failure"}` }, fmtPct(rate)),

@@ -123,8 +123,9 @@ def cell_name(report: Mapping) -> str:
 def change_markdown(rows: Iterable[Mapping], dashboard_url: str | None = None) -> str:
     """The /bench PR comment: one table row per imported report.
 
-    Each row: ``{"cell", "summary", "run_url"}``, with ``summary`` holding
-    ``success``, ``tasks``, ``score_range`` and ``change``."""
+    Each row: ``{"cell", "summary", "run_url", "flagged"}``, with ``summary`` holding
+    ``success``, ``tasks``, ``score_range`` and ``change``. A flagged run (stopped at its
+    cost cap, incomplete, partial) says why next to its count: its tasks are not the cell's."""
     rows = list(rows)
     if not rows:
         return ""
@@ -139,7 +140,8 @@ def change_markdown(rows: Iterable[Mapping], dashboard_url: str | None = None) -
         cell = f"[{row['cell']}]({row['run_url']})" if row.get("run_url") else row["cell"]
         change = s.get("change")
         flips = fmt_flips(change)
-        lines.append(f"| {cell} | {s.get('success')}/{s.get('tasks')} | {fmt_range(s.get('score_range'))} | {fmt_change(change)} | {flips} |")
+        passed = f"{s.get('success')}/{s.get('tasks')}" + (f" ⚠️ {row['flagged']}" if row.get("flagged") else "")
+        lines.append(f"| {cell} | {passed} | {fmt_range(s.get('score_range'))} | {fmt_change(change)} | {flips} |")
     lines += [
         "",
         "Improved or Regressed shows only when the 95% range of the paired difference excludes zero; with about "

@@ -595,7 +595,9 @@ def fill_changes(conn) -> int:
 
 
 def comment_row(report: dict) -> dict:
-    return {"cell": cell_name(report), "summary": report["summary"], "run_url": report["config"].get("github_run_url")}
+    config = report["config"]
+    return {"cell": cell_name(report), "summary": report["summary"], "run_url": config.get("github_run_url"),
+            "flagged": config.get("flagged")}
 
 
 def import_reports(
@@ -628,6 +630,9 @@ def import_reports(
                 add_change(conn, report)
             except Exception as exc:  # the results matter more than the comparison
                 print(f"::warning::Could not compare {path.name} with the previous run: {exc}", file=sys.stderr)
+            # End the read-only transaction the comparison opened, so write_report's own
+            # transaction commits the report rather than nesting as a savepoint.
+            conn.rollback()
             keys.append(write_report(conn, report))
             if comment_rows is not None and report.get("mode") != "grounding":
                 comment_rows.append(comment_row(report))
@@ -636,6 +641,7 @@ def import_reports(
                     check_alerts(conn, report, notify)
                 except Exception as exc:  # an alert failing must not lose the import
                     print(f"::warning::Could not check or send the alert for {path.name}: {exc}", file=sys.stderr)
+    conn.commit()  # the imported reports stay whatever happens to the backfill below
     try:
         filled = fill_changes(conn)
         if filled:

@@ -633,3 +633,18 @@ async def test_stop_verdict_records_whether_the_critic_checked_it(tmp_path: Path
 
     assert checked.critic_model_used is True and checked.critic_fallback_reason is None
     assert unchecked.critic_model_used is False and unchecked.critic_fallback_reason
+
+
+def test_a_critic_reply_with_prose_around_the_json_still_parses() -> None:
+    from operon.agent.policy.verifier import _parse_verification_output
+
+    raw = 'Looking at the screenshot, the folder was created.\n{"status": "success", "expected_outcome_met": true, "stop_condition_met": false, "reason": "Folder visible"}\nDone.'
+    parsed = _parse_verification_output(raw)
+    assert parsed is not None
+    assert parsed.status.value == "success"
+
+
+def test_a_critic_reply_with_no_json_object_does_not_parse() -> None:
+    from operon.agent.policy.verifier import _parse_verification_output
+
+    assert _parse_verification_output("The step looks fine to me.") is None

@@ -376,7 +376,10 @@ class DeterministicVerifierService(VerifierService):
         bg_writer.enqueue(debug_artifacts.raw_response_artifact_path, raw_output)
         parsed = _parse_verification_output(raw_output)
         if parsed is None:
-            logger.warning("Critic response could not be parsed, using deterministic fallback")
+            logger.warning(
+                "Critic response could not be parsed, using deterministic fallback: %r",
+                raw_output[:300],
+            )
             self._write_fallback_debug(debug_artifacts, "critic_parse_failed", raw_output=raw_output)
             return None
         normalized = _normalize_verification_result(parsed).model_copy(
@@ -623,7 +626,15 @@ def _parse_verification_output(raw_output: str) -> VerificationResult | None:
     try:
         payload = json.loads(cleaned)
     except json.JSONDecodeError:
-        return None
+        # Some critics (Claude Sonnet 5.5) write a sentence before or after the
+        # JSON object; read the outermost object instead of dropping the verdict.
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start == -1 or end <= start:
+            return None
+        try:
+            payload = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError:
+            return None
     if isinstance(payload, dict):
         # Critics often write JSON null as a string ("failure_type": "null"), which
         # would fail validation and throw the whole verdict away.

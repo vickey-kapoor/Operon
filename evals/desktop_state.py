@@ -604,11 +604,14 @@ def _workspace(snapshot: Snapshot) -> dict:
 
 
 def workspace_text(state: dict, rel: str) -> str | None:
-    """A file's text in the task folder (path without case), or None if it isn't there."""
+    """A file's text in the task folder (path without case), or None if it isn't there.
+    A file that is there but could not be read is a grader error, never a missing file."""
     wanted = rel.casefold()
     for name, info in (state.get("files") or {}).items():
         if name.casefold() == wanted:
-            return info.get("text")
+            if info.get("error"):
+                raise ProbeError(f"{name} is in the task folder but could not be read: {info['error']}")
+            return info.get("text") or ""
     return None
 
 
@@ -672,7 +675,7 @@ def _same_csv(a: str, b: str) -> bool:
 
 EXPENSES_ROWS = ("date,item,amount", "2026-10-02,printer paper,18.50", "2026-10-09,toner,64.00",
                  "2026-10-15,coffee beans,23.75", "2026-10-28,desk fan,41.25")
-_TOTAL = re.compile(r"(?<![\d.])147\.50?(?![\d])")
+_TOTAL = re.compile(r"(?<![\d.\-\u2212])147\.50?(?![\d])")  # not -147.50: every expense is positive
 
 
 def _csv_archive(state: dict) -> tuple[bool, str]:
@@ -697,7 +700,7 @@ def _handoff_code(state: dict) -> tuple[bool, str]:
     text = workspace_text(state, "code.txt")
     if text is None:
         return False, "no code.txt"
-    if "orchid-42" in text.casefold():
+    if re.search(r"(?<![\w-])orchid-42(?![\w-])", text.casefold()):  # the whole code, not ORCHID-420
         return True, "code.txt holds the deploy code ORCHID-42"
     return False, f"code.txt doesn't hold ORCHID-42 (it holds {text.strip()[:60]!r})"
 

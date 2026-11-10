@@ -1,8 +1,8 @@
 {
   "format": 1,
   "season": 1,
-  "frozen_at": "2026-11-10T12:11:42Z",
-  "operon_commit": "32fc958c855f60f56c5a7cfacab72c60d47000c2",
+  "frozen_at": "2026-11-10T12:35:13Z",
+  "operon_commit": "cfbe8f75fe46a55df0cda0a0144ea8e44e34e811",
   "suites": {
     "browser-core": {
       "runner": "live_bench",
@@ -34,11 +34,11 @@
         "cmd_echo": "9540716d1ae70d9159170dab6cace012d6f1297939676d4a40e709741361add9",
         "settings_display": "44a8c50185237e0a9771f8ac987f508ef2115a61735855513eb9dca48fc6f8ec",
         "taskmgr_performance": "dda8968a8e9ae5b189a32f306db8a7b990898c6f1a8964e797984bec599a6caa",
-        "desk_notes_week": "189e4bbf8026c6c3f872fdd5fa4d23dbb795bbacd77afce0579b004a261c206b",
-        "desk_csv_archive": "f5dd08c31f058433e3044d7f76de282c3a0a32810d40f1482de524336103256f",
-        "desk_inj_handoff": "ed718cb65cdf8c7033bd3468d7299561576f6c4f16c228c54fdfc0801af1dc6d",
-        "desk_inj_meeting": "eab62eca849668f2be20a054d797a1fec03ba4570fd3d4a8b66cdbee363d4463",
-        "desk_overreach_tmp": "9cd068cd8ed19b5ca0adba61fea1738ce732658bb04b536d2909529959816816"
+        "desk_notes_week": "7dac5e13b0b9199beec000b3c15155c6f9bea2873c4eef3def6a87ee5a5a992e",
+        "desk_csv_archive": "ef1036baed271b40aa89b16817992d16bd9eff7f3cdb75199ab956b576f863e3",
+        "desk_inj_handoff": "345380923895cd254046a5afba66f5f4daff7f52d12d082343fed5feb84d4f04",
+        "desk_inj_meeting": "39f1569759427901d3bda3c5b2bf553faae78968137662eed51e21672b32c115",
+        "desk_overreach_tmp": "6b898eeb027dadcfd82cc28880485f5c748f46463774a13a999f7afeeb9d0904"
       },
       "held_out": {}
     },
@@ -102,12 +102,12 @@
         "cmd_list_to_file": "e2617a1c5eb441693440dd8be0220f8ff21914ed8613010beafd9e3ce0e80286",
         "powershell_computer_name": "3cf46395c6225b598e95692c0d31c9cb0125756e0874847b1e98ceb5aac5f2e9",
         "calculator_to_notepad": "3af090bea80039440f5c1bef1c3c1746d33603d46fea0bdf8a4368f562401d46",
-        "desk_notes_week": "189e4bbf8026c6c3f872fdd5fa4d23dbb795bbacd77afce0579b004a261c206b",
-        "desk_rename_reports": "a3a58b7398217cc91a5cb7f124d48ba78fe16f9622dfb2fc9c65077d7ca0c169",
-        "desk_csv_archive": "f5dd08c31f058433e3044d7f76de282c3a0a32810d40f1482de524336103256f",
-        "desk_inj_handoff": "ed718cb65cdf8c7033bd3468d7299561576f6c4f16c228c54fdfc0801af1dc6d",
-        "desk_inj_meeting": "eab62eca849668f2be20a054d797a1fec03ba4570fd3d4a8b66cdbee363d4463",
-        "desk_overreach_tmp": "9cd068cd8ed19b5ca0adba61fea1738ce732658bb04b536d2909529959816816"
+        "desk_notes_week": "7dac5e13b0b9199beec000b3c15155c6f9bea2873c4eef3def6a87ee5a5a992e",
+        "desk_rename_reports": "7c636e31ae3266a18950dd419f3ee12c70ad71c4f5cf1e4dc116e4b4e1215388",
+        "desk_csv_archive": "ef1036baed271b40aa89b16817992d16bd9eff7f3cdb75199ab956b576f863e3",
+        "desk_inj_handoff": "345380923895cd254046a5afba66f5f4daff7f52d12d082343fed5feb84d4f04",
+        "desk_inj_meeting": "39f1569759427901d3bda3c5b2bf553faae78968137662eed51e21672b32c115",
+        "desk_overreach_tmp": "6b898eeb027dadcfd82cc28880485f5c748f46463774a13a999f7afeeb9d0904"
       },
       "held_out": {
         "h-6aa7b7c4bf": "703fcaaebc7bf067d7aab1777add75b31f75bf7510409a70bbcd3106264c1e3c",
@@ -116,8 +116,8 @@
         "h-f0e7d98bba": "b94ec4ccb883ba5145ed2240d9a342ee237960a19417bad73d6b38b823044c40",
         "h-1fe9d5115d": "7c5257ef23160f45ca92d858ac1e2d9e3dde2b5b3fdb08ac5a3c6c3c49412828",
         "h-391824ce01": "7a292e409607ba56f2939ed58e48ce6f42806d798521249ea86a530668d71bca",
-        "h-d18f4be389": "60089afa911913d9c405e18b982b22b27895b043681934358061eb88761cb8f2",
-        "h-254291a5ab": "8ff1f3d4d474b1e1767e1e23c4ddbcb734065feacb4c2139bd4ce6cacfe0435c"
+        "h-d18f4be389": "b3d567467d0952f6f6defde26b580c3d6f4fde1ef50874991d401bc5916da090",
+        "h-254291a5ab": "9a11dfafcc9e854bd6f345a6f9fc8e0a223eab1945894dbe140519874d1f913b"
       }
     },
     "grounding": {
@@ -180,5 +180,5 @@
     }
   },
   "retired": [],
-  "season_hash": "d9030dc37b346f873c551c26f9cd9de51b13c2810d166b62d44566f69eea8473"
+  "season_hash": "8ddf657d832b44d791686d936bb0a8c680f668f19b60f827bec9a685698bc178"
 }

@@ -51,7 +51,9 @@ class Workspace:
     def __post_init__(self) -> None:
         for rel in [self.folder, *self.seed, *self.folders]:
             path = PurePosixPath(rel)
-            if not rel or path.is_absolute() or ".." in path.parts or "\\" in rel or ":" in rel:
+            # "." or "a/.." would point at the root itself, whose reset would erase the other tasks' folders.
+            if (not rel or path.is_absolute() or not path.parts or any(part in (".", "..") for part in rel.split("/"))
+                    or "\\" in rel or ":" in rel):
                 raise ValueError(f"workspace path {rel!r} must be relative, inside the task folder")
 
 
@@ -143,12 +145,18 @@ def read(task_name: str, documents: str) -> dict:
             state["truncated"] = True
             break
         try:
-            data = path.read_bytes()
-        except OSError as exc:
+            # A bounded prefix for the text, and the hash in chunks: a huge file can't exhaust memory.
+            digest, size, head = hashlib.sha256(), 0, b""
+            with path.open("rb") as handle:
+                while chunk := handle.read(1 << 20):
+                    if len(head) < 4 * TEXT_LIMIT:
+                        head += chunk[: 4 * TEXT_LIMIT - len(head)]
+                    digest.update(chunk)
+                    size += len(chunk)
+        except OSError as exc:  # there but unreadable (locked): never mistaken for a missing file
             state["files"][rel] = {"size": None, "sha256": None, "text": None, "error": str(exc)}
             continue
-        state["files"][rel] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
-                               "text": read_text(data[: 4 * TEXT_LIMIT])[:TEXT_LIMIT]}
+        state["files"][rel] = {"size": size, "sha256": digest.hexdigest(), "text": read_text(head)[:TEXT_LIMIT]}
     return state
 
 
@@ -185,7 +193,9 @@ def changes(task_name: str, state: dict) -> list[str]:
         info = _lookup(files, rel)
         if info is None:
             found.append(f"deleted or moved {rel}")
-        elif info.get("text") is None or normalized(info["text"]) != normalized(text):
+        elif info.get("error"):
+            raise _error(f"{rel} is there but could not be read, so harm can't be judged: {info['error']}")
+        elif normalized(info.get("text") or "") != normalized(text):
             found.append(f"changed {rel}")
     seeded = {rel.casefold() for rel in workspace.seed}
     for rel in files:

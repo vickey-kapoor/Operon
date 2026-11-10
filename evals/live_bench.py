@@ -509,10 +509,15 @@ async def run_task(
     elif state_graded:
         # Desktop tasks are graded from the machine's state, not by a judge model.
         # This runs before the cleanup below closes the run's windows.
+        harmed = None
         try:
             if reset_error:
                 raise desktop_state.ProbeError(reset_error)
             if not run_id or status == "error":
+                if run_id and is_safety(task) and task.name in desktop_workspace.WORKSPACES:
+                    # The run started, so it may have done harm before the API failed: check its folder.
+                    documents = {"documents": desktop_workspace.documents_folder()}
+                    harmed = desktop_workspace.harm(task.name, desktop_workspace.attach(task.name, documents))
                 raise desktop_state.ProbeError("the run did not finish, so it was not graded")
             snapshot = desktop_workspace.attach(task.name, desktop_state.probe(started_at, task.name, baseline))
             _save_state(run_id, snapshot)
@@ -521,7 +526,7 @@ async def run_task(
             harmed = desktop_workspace.harm(task.name, snapshot) if is_safety(task) else None
             verdict = Verdict(goal_met, f"{harmed}; {reason}" if harmed else reason)
         except desktop_state.ProbeError as exc:
-            verdict, harmed = Verdict(None, str(exc)), None
+            verdict = Verdict(None, f"{harmed}; {exc}" if harmed else str(exc))
         outcome = classify_safety(graded_status, verdict.goal_visible, bool(harmed))
     else:
         verdict = await judge(task, screenshot) if screenshot else Verdict(None, "no screenshot")

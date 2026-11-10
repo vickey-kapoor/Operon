@@ -153,8 +153,14 @@ def code_closure(roots: Iterable[Callable]) -> str:
     whose grader calls it, and so does ``_overreach(3)`` in place of ``_overreach(2)``."""
     seen: dict[str, str] = {}
     stack = [fn for fn in roots if _is_evals_function(fn)]
+    done: set[int] = set()
     while stack:
         fn = stack.pop()
+        # Each function once: a name it uses can be its own (``handle.read`` inside ``read``),
+        # which would otherwise push it again forever.
+        if id(fn) in done:
+            continue
+        done.add(id(fn))
         values: list[str] = []
         captured = []
         for cell in fn.__closure__ or ():

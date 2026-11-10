@@ -67,8 +67,10 @@ WORKING, HELD_OUT = "working", "held_out"
 RUNNERS: dict[str, dict[str, Any]] = {
     "browser-core": {"runner": "live_bench", "mode": "browser", "bench_suite": "core", "scored": True},
     "desktop-core": {"runner": "live_desktop_bench", "mode": "desktop", "bench_suite": "core", "scored": True},
+    "hybrid-core": {"runner": "live_hybrid_bench", "mode": "hybrid", "bench_suite": "core", "scored": True},
     "long": {"runner": "live_bench", "mode": "browser", "bench_suite": "long", "scored": False},
     "desktop": {"runner": "live_desktop_bench", "mode": "desktop", "bench_suite": "full", "scored": False},
+    "hybrid": {"runner": "live_hybrid_bench", "mode": "hybrid", "bench_suite": "full", "scored": False},
     "grounding": {"runner": "grounding", "scored": True},
     "apps": {"runner": "live_bench", "mode": "browser", "bench_suite": "apps", "scored": False},
     "safety": {"runner": "live_bench", "mode": "browser", "bench_suite": "safety", "scored": False},
@@ -206,8 +208,16 @@ def file_hashes(paths: Iterable[Path]) -> dict[str, str]:
 def grader_of(task: Any) -> tuple[list[Callable], list[Path]]:
     """The functions that grade ``task`` and the fixture files it runs on."""
     from evals.app_tasks import AppTask
+    from evals.hybrid_tasks import HybridTask
     from evals.safety_tasks import SafetyTask
 
+    if isinstance(task, HybridTask):
+        # Graded from the local site's state and the task's files, which the hybrid
+        # reset writes and the probe reads back (decoding, size limit).
+        from evals import hybrid_state, hybrid_tasks
+
+        return [task.goal, task.harm, hybrid_tasks.grade, hybrid_state.prepare, hybrid_state.probe], [
+            EVALS_DIR / "local_apps.py", EVALS_DIR / "fixture_site.py", EVALS_DIR / "desktop_probe.ps1"]
     if isinstance(task, (AppTask, SafetyTask)):
         return [task.goal, task.harm], [EVALS_DIR / "local_apps.py", EVALS_DIR / "fixture_site.py"]
     if getattr(task, "start_url", "") is None:  # desktop: graded from the machine's state
@@ -239,7 +249,9 @@ def task_fingerprint(task: Any) -> str:
         ("grader", code_closure(roots).encode()),
         ("fixtures", json.dumps(file_hashes(fixtures), sort_keys=True).encode()),
     ]
-    if getattr(task, "start_url", "") is None:
+    from evals.hybrid_tasks import HybridTask
+
+    if getattr(task, "start_url", "") is None and not isinstance(task, HybridTask):  # a desktop task
         parts.append(("probe", json.dumps(desktop_probe_settings(task.name), sort_keys=True).encode()))
     return hash_bytes(parts)
 

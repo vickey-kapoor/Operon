@@ -47,7 +47,7 @@ def _rows(runs: str) -> dict:
 
 def _both(model: str, category: str, rate_thin: tuple[int, int], rate_full: tuple[int, int], mode: str | None = None) -> str:
     mode = mode or category
-    suite = "desktop-core" if mode == "desktop" else "core"
+    suite = "core" if mode == "browser" else f"{mode}-core"
     return (f"run('20261110T000000Z', '{mode}', '{suite}', {model}('thin'), {rate_thin[0]}, {rate_thin[1]}),"
             f"run('20261110T000000Z', '{mode}', '{suite}', {model}('full'), {rate_full[0]}, {rate_full[1]}),")
 
@@ -61,7 +61,8 @@ def test_an_empty_grid_has_a_row_per_model_and_category_and_says_why_each_cell_i
     assert by[("Gemini", "browser")]["thinWhy"] == by[("Gemini", "desktop")]["fullWhy"] == "not run yet"
     assert by[("Claude", "browser")]["thinWhy"] == "waits for your approval after Gemini's grid has run"
     assert by[("GPT", "desktop")]["fullWhy"] == "waits for your approval after Gemini's grid has run"
-    assert by[("Gemini", "hybrid")]["thinWhy"] == by[("Claude", "hybrid")]["fullWhy"] == "no tasks until KAN-73"
+    assert by[("Gemini", "hybrid")]["thinWhy"] == "not run yet"  # Hybrid has tasks since KAN-73
+    assert by[("Claude", "hybrid")]["fullWhy"] == "waits for your approval after Gemini's grid has run"
     assert [r["first"] for r in rows[:3]] == [True, False, False]  # step and model span the model's rows
 
 
@@ -104,7 +105,11 @@ def test_full_minus_thin_per_category_and_the_approval_gate_after_geminis_grid()
     assert rows[("Claude", "browser")]["thinWhy"] == "waits for your approval after Gemini's grid has run"
     rows = _rows(_both("gemini", "browser", (6, 10), (8, 10)) + _both("gemini", "desktop", (9, 10), (7, 10)))
     assert rows[("Gemini", "desktop")]["delta"] == pytest.approx(-0.2)
-    # Hybrid has no tasks yet, so Gemini's grid is done without it.
+    # Hybrid (KAN-73) is part of Gemini's grid too: Claude waits until it ran.
+    assert rows[("Claude", "browser")]["thinWhy"] == "waits for your approval after Gemini's grid has run"
+    rows = _rows(_both("gemini", "browser", (6, 10), (8, 10)) + _both("gemini", "desktop", (9, 10), (7, 10))
+                 + _both("gemini", "hybrid", (5, 10), (6, 10)))
+    assert rows[("Gemini", "hybrid")]["delta"] == pytest.approx(0.1)
     assert rows[("Claude", "browser")]["thinWhy"] == "not run yet"
 
 

@@ -30,7 +30,7 @@ record it as `"cell"`.
 |---|---|---|
 | Browser | the 44 live web tasks, local apps, long multi-app tasks, browser safety | 10 tasks: 5 short app tasks, 2 long multi-app tasks, 3 safety tasks |
 | Desktop | 20 stock Windows app tasks, including Desktop Long and Desktop Safety (plus held-out in the season) | 10 tasks: 5 short, 2 long, 3 safety (see below) |
-| Hybrid | desktop and browser in one task (KAN-73) | none yet; `/bench hybrid` says so |
+| Hybrid | 10 tasks that each need a desktop app and the browser (KAN-73; plus 4 held-out in the season) | all 10: 5 short (a file or a command to the local site, or back), 2 long (both ways in one task), 3 safety (an instruction planted in a file or an email, and a "don't send" overreach) |
 
 **Desktop Long and Desktop Safety** (KAN-74). Each of these tasks works in its own folder,
 `Documents\OperonDesk\<folder>`, which the benchmark fills with known files before the task
@@ -76,6 +76,7 @@ Every live suite spends real model credits, so none of them run on pushes or mer
 | Long multi-app suite | `python -m evals.live_bench --suite long` | 21 tasks that chain the local apps from a workspace page (an email asks for an order, a registration or a support request, then a reply with its number or total), 20 to 50 steps each, graded from state |
 | Hard subset, repeated | `python -m evals.live_bench --suite hard --repeat 3` | 20 of the harder app, live and safety tasks, each run 3 times: pass@1 with a 95% CI, pass^3, flaky tasks |
 | Grounding | `python -m evals.grounding [--per-set 100] [--set v2-web] [--backend computer_use]` | 300 ScreenSpot-v2 and ScreenSpot-Pro samples (one screenshot and instruction each) through Operon's own backend; scores whether the first click lands in the target's box |
+| Hybrid benchmark | `python -m evals.live_hybrid_bench [--suite core\|smoke\|full]` | 10 tasks in desktop mode that each use a stock Windows app (Notepad, Command Prompt, PowerShell) and Edge on the local apps site, which the benchmark serves on `127.0.0.1` on the same machine (2 in smoke). Graded from the site's state and request log and the files under `Documents\OperonFiles` the task was given or saved (`evals/hybrid_tasks.py`, `evals/hybrid_state.py`); **drives the real mouse and keyboard** |
 | Desktop benchmark | `python -m evals.live_desktop_bench [--suite core\|smoke\|full\|safety\|long]` | 20 tasks on stock Windows apps (10 in core, the default; 3 in smoke), graded from the machine's state (windows, their text, files saved under `Documents\OperonFiles` or a task's seeded folder under `Documents\OperonDesk`; `evals/desktop_state.py`), not by a judge; **drives the real mouse and keyboard** |
 | Judge check | `python -m evals.judge_check template <report.json> > labels.jsonl`, then `judge_check run labels.jsonl [--repeat 3] [--save]` | Compares the benchmark judge with hand labels; `--save` records it for the dashboard (needs `DATABASE_URL`) |
 
@@ -146,6 +147,8 @@ instead, in the full harness unless `thin` is given; a thin Gemini run ends on G
 | `/bench desktop` | Desktop core set on GitHub's hosted Windows runner |
 | `/bench desktop smoke` | Desktop smoke (3 tasks) |
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
+| `/bench hybrid full gemini azure season=1` | Gemini · Hybrid · Full on Season 1, on the Azure VM (run `scripts/edge-policies.ps1` on the VM once first; [azure-desktop-runner.md](azure-desktop-runner.md)) |
+| `/bench hybrid smoke` | Hybrid smoke (2 tasks) on GitHub's hosted Windows runner |
 | `/bench sonnet check-haiku` | Sonnet acting, Haiku for the completion check |
 | `/bench apps model=qwen3-vl-32b` | Apps suite on a model registry profile (see below) |
 | `/bench long full same-critic model=openai-computer-use` | Long suite on GPT in the full harness, with GPT as its own step critic |
@@ -251,7 +254,8 @@ the sampling seed and the scoring code.
 Each suite is split into **working** tasks, which are in the repo and whose failures get
 triaged and fixed, and **held-out** tasks (about 30%). Held-out tasks are kept out of the repo
 in a Python file whose path is `$OPERON_SEASON_PRIVATE`; it defines
-`HELD_OUT = {"long": [AppTask(...), ...], "desktop": [LiveTask(...), ...]}`, and for held-out
+`HELD_OUT = {"long": [AppTask(...), ...], "desktop": [LiveTask(...), ...], "hybrid": [HybridTask(...), ...]}`
+(a held-out Hybrid task carries its own files and grader), and for held-out
 desktop tasks `CHECKS`, `OUTPUTS`, `INSPECT` and `CLOSE_FIRST` like the ones in
 `evals/desktop_state.py`, and `WORKSPACES` like the one in `evals/desktop_workspace.py`. The manifest records only an opaque id (`h-...`)
 and a hash for each, and reports give their results as counts only. In CI the file comes from
@@ -259,13 +263,15 @@ the `OPERON_SEASON_PRIVATE_PY` repo secret (the file, base64-encoded): the bench
 workflows write it to the runner's temp folder and set `$OPERON_SEASON_PRIVATE` to it.
 
 ```powershell
-.venv\Scripts\python -m evals.leaderboard.season freeze 1 --suite browser-core --suite desktop-core --suite long --suite desktop --suite grounding --suite apps --suite safety
+.venv\Scripts\python -m evals.leaderboard.season freeze 1 --suite browser-core --suite desktop-core --suite hybrid-core --suite long --suite desktop --suite hybrid --suite grounding --suite apps --suite safety
 .venv\Scripts\python -m evals.leaderboard.season check 1 [--working-only]
 .venv\Scripts\python -m evals.leaderboard.season retire 1 long <task> "<reason>"
 .venv\Scripts\python -m evals.live_bench --suite long --season 1 [--working-only]
 .venv\Scripts\python -m evals.live_bench --season 1                # Browser core
 .venv\Scripts\python -m evals.live_desktop_bench --season 1        # Desktop core
 .venv\Scripts\python -m evals.live_desktop_bench --suite full --season 1
+.venv\Scripts\python -m evals.live_hybrid_bench --season 1         # Hybrid core
+.venv\Scripts\python -m evals.live_hybrid_bench --suite full --season 1
 .venv\Scripts\python -m evals.grounding --season 1
 ```
 
@@ -274,7 +280,7 @@ suite (no `--only`/`--category`) and adds a `season` block to the report: the se
 the Operon commit, Operon's `OPERON_*` settings (secrets left out) and the held-out counts.
 Held-out results are left out of the report's `results` and summary, and `--keep-screens`
 skips their screenshots and run folders. The core set of each category
-(`browser-core`, `desktop-core`) and grounding are scored; the larger long and desktop pools run
+(`browser-core`, `desktop-core`, `hybrid-core`) and grounding are scored; the larger long, desktop and hybrid pools run
 on request, and apps and safety are pass/fail gates, since every model passes them. A broken task is never edited in place: `retire`
 logs it in the manifest with the date and reason, for every model, and later runs skip it.
 

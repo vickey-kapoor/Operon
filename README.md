@@ -67,8 +67,8 @@ curl -X POST http://127.0.0.1:8080/run-task \
 
 > [!WARNING]
 > Desktop runs control your real mouse and keyboard. Use a machine you can spare, or a VM.
-> Set `OPERON_TRUST_GATE=on` to pause for approval before risky actions, and
-> `OPERON_TRUST_ALLOW_DOMAINS` to pin browser runs to the sites you expect
+> The trust gate (`OPERON_TRUST_GATE`, on by default) pauses for approval before risky actions;
+> set `OPERON_TRUST_ALLOW_DOMAINS` to pin browser runs to the sites you expect
 > ([configuration](docs/configuration.md)). The API requires the key it generates in
 > `.var/api-key` (or one from `API_KEYS`).
 

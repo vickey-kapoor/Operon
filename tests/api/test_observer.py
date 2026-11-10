@@ -928,3 +928,11 @@ def test_desktop_loop_holds_run_never_builds_the_desktop_loop(monkeypatch) -> No
     monkeypatch.setattr(loops, "_desktop_agent_loop", None)
     assert loops.desktop_loop_holds_run("anything") is False
     assert loops._desktop_agent_loop is None
+
+
+def test_observer_settings_reports_the_trust_gate(monkeypatch) -> None:
+    client = TestClient(app)
+    monkeypatch.delenv("OPERON_TRUST_GATE", raising=False)
+    assert client.get("/observer/api/settings").json() == {"trust_gate": "on"}
+    monkeypatch.setenv("OPERON_TRUST_GATE", "off")
+    assert client.get("/observer/api/settings").json() == {"trust_gate": "off"}

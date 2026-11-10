@@ -175,7 +175,7 @@ These are load-bearing — violating them silently breaks the agent.
 - **Lazy `ws_stream`.** Never import `ws_stream` at module load in `browser/manager.py`
   — use the `_ws_stream()` accessor to avoid a circular import.
 - **Experimental work ships behind an env flag defaulting to off.** Follow the
-  `OPERON_BESTOFN_*`, `OPERON_GROUNDER`, `OPERON_TRUST_*` pattern; larger proposals
+  `OPERON_BESTOFN_*`, `OPERON_GROUNDER` pattern (the trust gate graduated to on by default); larger proposals
   get an RFC in `docs/rfcs/`.
 - **`.env.example` is a contract.** Every variable in it must actually be read by
   code in `src/`, and new settings must be added there.

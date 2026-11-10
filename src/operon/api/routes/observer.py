@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
 
+from operon.agent.policy.trust_gate import make_trust_gate
 from operon.api.dependencies import (
     desktop_loop_holds_run,
     get_agent_loop,
@@ -61,6 +62,13 @@ async def observer_run(run_id: str) -> dict:
 async def observer_usage(limit: int = Query(default=500, ge=1, le=2000)) -> dict:
     """Return aggregated model usage and cost estimates across recent runs."""
     return usage_dashboard(limit=limit)
+
+
+@router.get("/observer/api/settings")
+async def observer_settings() -> dict:
+    """Settings that change how runs behave, as this server sees them (env plus ``.env``).
+    The benchmarks record ``trust_gate`` so a gate-on run is never compared with gate-off ones."""
+    return {"trust_gate": "on" if make_trust_gate().enabled else "off"}
 
 
 @router.get("/observer/api/artifact")

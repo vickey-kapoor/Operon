@@ -52,8 +52,8 @@ The security boundary is the host, not the agent. Operon does not sandbox itself
   but localhost, and never set `OPERON_ALLOW_UNAUTHENTICATED` there.
 - **Set `CORS_ORIGINS` explicitly.** Empty means no origins are allowed, which is
   the safe default — do not widen it to `*`.
-- **Turn the trust gate on** for anything unattended: `OPERON_TRUST_GATE=on`,
-  plus `OPERON_TRUST_ALLOW_DOMAINS` to fail closed on navigation.
+- **Keep the trust gate on** (the default; `OPERON_TRUST_GATE=off` disables it),
+  and for anything unattended add `OPERON_TRUST_ALLOW_DOMAINS` to fail closed on navigation.
 - **Prefer a VM or dedicated machine** for desktop runs. There is no undo.
 - **Run artifacts contain full screenshots** of whatever was on screen, written
   under `.var/runs/<run_id>/`. Treat them as sensitive and scrub before sharing.

@@ -327,6 +327,8 @@ async def test_a_finished_run_marks_its_report_complete(tmp_path, monkeypatch) -
     async def fake_run_task(client, task, judge, **kwargs):
         return _costly(task.name, 0.1)
 
+    monkeypatch.setenv("OPERON_TRUST_GATE", "off")  # as the benchmarks run
+
     monkeypatch.setattr(live_bench, "run_task", fake_run_task)
     real_client = httpx.AsyncClient
     health = httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True}))
@@ -478,3 +480,87 @@ async def test_a_refused_stop_is_reported(tmp_path, monkeypatch, capsys) -> None
         await run_task(client, TASKS[0], judge, timeout_s=60, approve_pauses=0)
 
     assert "could not stop run run-err" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, "on"), ("on", "on"), ("off", "off"), ("False", "off"), ("0", "off")])
+def test_trust_gate_label_follows_the_server_default(monkeypatch, tmp_path, value, expected) -> None:
+    monkeypatch.chdir(tmp_path)  # no .env
+    if value is None:
+        monkeypatch.delenv("OPERON_TRUST_GATE", raising=False)
+    else:
+        monkeypatch.setenv("OPERON_TRUST_GATE", value)
+    assert live_bench.trust_gate_label() == expected
+
+
+def test_trust_gate_label_reads_the_dotenv_the_server_loads(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPERON_TRUST_GATE", "on")
+    (tmp_path / ".env").write_text("OPERON_TRUST_GATE=off\n")
+    assert live_bench.trust_gate_label() == "off"
+
+
+async def test_a_bench_report_records_the_trust_gate_and_warns_when_on(tmp_path, monkeypatch, capsys) -> None:
+    async def fake_run_task(client, task, judge, **kwargs):
+        return _costly(task.name, 0.1)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPERON_TRUST_GATE", raising=False)
+    monkeypatch.setattr(live_bench, "run_task", fake_run_task)
+    real_client = httpx.AsyncClient
+    health = httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True}))
+    monkeypatch.setattr(live_bench.httpx, "AsyncClient", lambda **kw: real_client(transport=health, **kw))
+    args = live_bench.build_parser(default_suite="smoke").parse_args(["--out-dir", str(tmp_path / "on"), "--json"])
+    assert await live_bench.run_bench(args, judge=None) == 0
+    (saved,) = (tmp_path / "on").glob("smoke-*.json")
+    assert json.loads(saved.read_text())["trust_gate"] == "on"
+    assert "trust gate is on" in capsys.readouterr().err
+
+    monkeypatch.setenv("OPERON_TRUST_GATE", "off")
+    args = live_bench.build_parser(default_suite="smoke").parse_args(["--out-dir", str(tmp_path / "off"), "--json"])
+    assert await live_bench.run_bench(args, judge=None) == 0
+    (saved,) = (tmp_path / "off").glob("smoke-*.json")
+    assert json.loads(saved.read_text())["trust_gate"] == "off"
+    assert "trust gate is on" not in capsys.readouterr().err
+
+
+def test_previous_report_only_compares_the_same_trust_gate(tmp_path) -> None:
+    for stamp, gate in (("1", None), ("2", "on")):
+        report = {"model_profile": None, "budget_stop": None, "started_at": stamp}
+        if gate:
+            report["trust_gate"] = gate
+        (tmp_path / f"smoke-{stamp}.json").write_text(json.dumps(report))
+    assert live_bench._previous_report(tmp_path, "smoke")["started_at"] == "1"  # unrecorded = off
+    assert live_bench._previous_report(tmp_path, "smoke", trust_gate="on")["started_at"] == "2"
+
+
+async def test_the_report_takes_the_trust_gate_from_the_server(tmp_path, monkeypatch, capsys) -> None:
+    async def fake_run_task(client, task, judge, **kwargs):
+        return _costly(task.name, 0.1)
+
+    def server(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/observer/api/settings":
+            return httpx.Response(200, json={"trust_gate": "off"})
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPERON_TRUST_GATE", raising=False)  # this shell would guess "on"
+    monkeypatch.setattr(live_bench, "run_task", fake_run_task)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(live_bench.httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(server), **kw))
+    args = live_bench.build_parser(default_suite="smoke").parse_args(["--out-dir", str(tmp_path), "--json"])
+    assert await live_bench.run_bench(args, judge=None) == 0
+    (saved,) = tmp_path.glob("smoke-*.json")
+    assert json.loads(saved.read_text())["trust_gate"] == "off"
+    assert "trust gate is on" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("env", "expected"), [(None, "off"), ("on", "on")])
+async def test_a_server_without_the_settings_endpoint_keeps_its_old_default(monkeypatch, tmp_path, env, expected) -> None:
+    monkeypatch.chdir(tmp_path)  # no .env
+    if env is None:
+        monkeypatch.delenv("OPERON_TRUST_GATE", raising=False)
+    else:
+        monkeypatch.setenv("OPERON_TRUST_GATE", env)
+    transport = httpx.MockTransport(lambda request: httpx.Response(404, json={"detail": "Not Found"}))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert await live_bench.server_trust_gate(client) == expected

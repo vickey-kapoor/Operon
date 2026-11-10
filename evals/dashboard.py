@@ -51,6 +51,13 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from evals.leaderboard.changes import (
+    cell_name,
+    change_markdown,
+    run_change,
+    score_range,
+)
+
 # Per-task fields that only make sense on the machine that ran the benchmark.
 DROPPED_RESULT_FIELDS = ("final_screenshot",)
 TASK_COLUMNS = (
@@ -513,6 +520,92 @@ def check_alerts(conn, report: dict, notify: Callable[[str], None]) -> list[str]
     return problems
 
 
+# ---------- run-over-run changes (KAN-60) ----------
+
+# The cell a run belongs to: same mode, suite, backend, harness, model, registry profile and
+# season. Only unflagged runs count, so a run cut short at its cost cap is never a baseline.
+_CELL_SQL = """SELECT key, summary, github_run_url, started_at FROM bench_runs
+    WHERE mode = %s AND suite = %s AND backend IS NOT DISTINCT FROM %s
+      AND harness_profile IS NOT DISTINCT FROM %s AND model IS NOT DISTINCT FROM %s
+      AND model_profile IS NOT DISTINCT FROM %s AND (config->>'season') IS NOT DISTINCT FROM %s
+      AND flagged IS NULL AND started_at < %s AND key <> %s
+    ORDER BY started_at DESC LIMIT 1"""
+
+
+def previous_cell_run(conn, run: dict, season: object) -> dict | None:
+    """The latest unflagged run of the same grid cell before ``run``."""
+    row = conn.execute(
+        _CELL_SQL,
+        (run["mode"], run["suite"], run["backend"], run["harness_profile"], run["model"], run["model_profile"],
+         None if season is None else str(season), run["started_at"], run["key"]),
+    ).fetchone()
+    if not row:
+        return None
+    summary = row[1] or {}
+    started = row[3]
+    return {
+        "key": row[0], "github_run_url": row[2], "success": summary.get("success"), "tasks": summary.get("tasks"),
+        "started_at": started.strftime("%Y%m%dT%H%M%SZ") if hasattr(started, "strftime") else started,
+    }
+
+
+def run_task_outcomes(conn, key: str) -> list[dict]:
+    rows = conn.execute("SELECT task, outcome FROM bench_task_results WHERE run_key = %s", (key,)).fetchall()
+    return [{"task": task, "outcome": outcome} for task, outcome in rows]
+
+
+def add_change(conn, report: dict) -> None:
+    """Put the score's 95% range and the change vs the cell's previous run in the report's summary.
+
+    A flagged or grounding run gets the range only: it is no fair comparison."""
+    summary = report["summary"] = dict(report["summary"])
+    if report.get("mode") == "grounding" or not report["results"]:
+        return
+    rng = score_range(report["results"])
+    if rng:
+        summary.setdefault("score_range", rng)
+    run, _ = to_rows(report)
+    if run["flagged"]:
+        summary.pop("change", None)
+        return
+    previous = previous_cell_run(conn, run, report["config"].get("season"))
+    summary["change"] = run_change(
+        report["results"], run_task_outcomes(conn, previous["key"]) if previous else None, previous
+    )
+
+
+def fill_changes(conn) -> int:
+    """Add the range and change to stored runs from before KAN-60; returns how many it filled."""
+    from psycopg.types.json import Jsonb
+
+    rows = conn.execute(
+        """SELECT key, mode, suite, backend, harness_profile, model, model_profile, started_at, config, summary
+             FROM bench_runs WHERE flagged IS NULL AND mode <> 'grounding' AND NOT (summary ? 'change')
+            ORDER BY started_at"""
+    ).fetchall()
+    filled = 0
+    for key, mode, suite, backend, harness, model, profile, started_at, config, summary in rows:
+        results = run_task_outcomes(conn, key)
+        if not results:
+            continue
+        run = {"key": key, "mode": mode, "suite": suite, "backend": backend, "harness_profile": harness,
+               "model": model, "model_profile": profile, "started_at": started_at}
+        previous = previous_cell_run(conn, run, (config or {}).get("season"))
+        extra = {"change": run_change(results, run_task_outcomes(conn, previous["key"]) if previous else None, previous)}
+        if not (summary or {}).get("score_range") and (rng := score_range(results)):
+            extra["score_range"] = rng
+        conn.execute("UPDATE bench_runs SET summary = summary || %s WHERE key = %s", (Jsonb(extra), key))
+        filled += 1
+    conn.commit()
+    return filled
+
+
+def comment_row(report: dict) -> dict:
+    config = report["config"]
+    return {"cell": cell_name(report), "summary": report["summary"], "run_url": config.get("github_run_url"),
+            "flagged": config.get("flagged")}
+
+
 def import_reports(
     paths: list[Path],
     conn,
@@ -521,6 +614,7 @@ def import_reports(
     *,
     uploader: Uploader | None = None,
     notify: Callable[[str], None] | None = None,
+    comment_rows: list[dict] | None = None,
 ) -> list[str]:
     conn.execute(SCHEMA)
     conn.commit()
@@ -538,12 +632,29 @@ def import_reports(
                     print(f"uploaded {count} screenshot and trace files for {path.name}")
                 except Exception as exc:  # the results matter more than their screenshots
                     print(f"::warning::Could not upload the screenshots for {path.name}: {exc}", file=sys.stderr)
+            try:
+                add_change(conn, report)
+            except Exception as exc:  # the results matter more than the comparison
+                print(f"::warning::Could not compare {path.name} with the previous run: {exc}", file=sys.stderr)
+            # End the read-only transaction the comparison opened, so write_report's own
+            # transaction commits the report rather than nesting as a savepoint.
+            conn.rollback()
             keys.append(write_report(conn, report))
+            if comment_rows is not None and report.get("mode") != "grounding":
+                comment_rows.append(comment_row(report))
             if notify:
                 try:
                     check_alerts(conn, report, notify)
                 except Exception as exc:  # an alert failing must not lose the import
                     print(f"::warning::Could not check or send the alert for {path.name}: {exc}", file=sys.stderr)
+    conn.commit()  # the imported reports stay whatever happens to the backfill below
+    try:
+        filled = fill_changes(conn)
+        if filled:
+            print(f"added score ranges and changes to {filled} earlier runs")
+    except Exception as exc:
+        conn.rollback()
+        print(f"::warning::Could not fill changes for earlier runs: {exc}", file=sys.stderr)
     return keys
 
 
@@ -589,6 +700,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--skip-partial", action="store_true", help="leave out partial-*.json (--only/--category runs; imported and flagged by default)")
     add.add_argument("--blob", action="store_true", help="upload screenshots and traces to Vercel Blob ($BLOB_READ_WRITE_TOKEN)")
     add.add_argument("--alert", action="store_true", help="post regressions to Slack ($SLACK_WEBHOOK_URL)")
+    add.add_argument("--comment-file", type=Path, help="write the results table for a /bench PR comment (Markdown) here")
     commands.add_parser("models", help="rewrite dashboard/models.json from evals/models.yaml")
     return parser
 
@@ -624,7 +736,12 @@ def main(argv: list[str]) -> int:
         else:
             print("::warning::SLACK_WEBHOOK_URL is not set; no alerts.", file=sys.stderr)
     with connect(args.database_url) as conn:
-        keys = import_reports(args.paths, conn, overrides, not args.skip_partial, uploader=uploader, notify=notify)
+        rows: list[dict] = []
+        keys = import_reports(
+            args.paths, conn, overrides, not args.skip_partial, uploader=uploader, notify=notify, comment_rows=rows
+        )
+    if args.comment_file and rows:
+        args.comment_file.write_text(change_markdown(rows, DASHBOARD_URL), encoding="utf-8")
     for key in keys:
         print(f"imported {key}")
     if not keys:

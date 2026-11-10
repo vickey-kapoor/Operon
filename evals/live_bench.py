@@ -293,11 +293,23 @@ def _server_env() -> dict[str, str]:
 
 
 def trust_gate_label() -> str:
-    """``on`` or ``off``: the trust gate the server runs (KAN-15). It is on by default;
-    benchmarks run with ``OPERON_TRUST_GATE=off`` so a confirm pause doesn't change
-    their scores. Parsed like ``operon.agent.policy.trust_gate.make_trust_gate``."""
+    """``on`` or ``off``: the trust gate a server started from this shell would run (KAN-15).
+    It is on by default; benchmarks run with ``OPERON_TRUST_GATE=off`` so a confirm pause
+    doesn't change their scores. Parsed like ``operon.agent.policy.trust_gate.make_trust_gate``.
+    Only a fallback: ``server_trust_gate`` asks the running server."""
     value = (_server_env().get("OPERON_TRUST_GATE") or "on").strip().lower()
     return "off" if value in {"off", "false", "0", "no"} else "on"
+
+
+async def server_trust_gate(client: httpx.AsyncClient) -> str:
+    """The trust gate the running server actually has (``/observer/api/settings``); a server
+    from before that endpoint falls back to this shell's settings (``trust_gate_label``)."""
+    try:
+        response = await client.get("/observer/api/settings")
+        value = response.json().get("trust_gate") if response.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, AttributeError):
+        value = None
+    return value if value in {"on", "off"} else trust_gate_label()
 
 
 def critic_label(profile, mode: str = "browser") -> str | None:
@@ -709,7 +721,8 @@ def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float, gp
 
 
 def _previous_report(
-    bench_dir: Path, suite: str, model_profile: str | None = None, harness_profile: str | None = None
+    bench_dir: Path, suite: str, model_profile: str | None = None, harness_profile: str | None = None,
+    trust_gate: str = "off",
 ) -> dict | None:
     # A run stopped at the cost cap covers only some tasks, so it is no baseline; nor
     # is a run of another registry model, or one judged another way (thin vs thin-own).
@@ -721,6 +734,10 @@ def _previous_report(
             continue
         # An incomplete report (the run died midway) is no baseline either.
         if report.get("budget_stop") or report.get("complete") is False or report.get("model_profile") != model_profile:
+            continue
+        # A gate-on run pauses before risky actions, so it is no baseline for a gate-off one (or
+        # the reverse). Reports from before trust_gate was recorded ran with it off.
+        if report.get("trust_gate", "off") != trust_gate:
             continue
         if harness_profile is None or report.get("harness_profile") in {None, harness_profile}:
             return report
@@ -860,6 +877,7 @@ def build_report(
     stopped: dict | None,
     complete: bool,
     season_run=None,
+    trust_gate: str | None = None,
 ) -> dict:
     """The saved report. ``complete`` is False while the run is still going: a run that
     dies midway (a crash, a timeout, a cancelled workflow) leaves that version behind,
@@ -900,7 +918,7 @@ def build_report(
         "model_adapter": profile.adapter if profile is not None else None,
         "model_id": profile.model if profile is not None else None,
         "zoom": os.getenv("OPERON_CLAUDE_ZOOM", "").strip().lower() in {"1", "true", "yes", "on"},
-        "trust_gate": trust_gate_label(),
+        "trust_gate": trust_gate or trust_gate_label(),
         "repeat": repeat,
         # --only / --category: some of the suite's tasks; spend counts, pass rates don't.
         "partial": bool(args.only or args.category),
@@ -962,13 +980,6 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     if not tasks:
         print("No tasks match.", file=sys.stderr)
         return 2
-    if trust_gate_label() == "on":
-        print(
-            "Warning: the trust gate is on (OPERON_TRUST_GATE unset or on), so risky actions pause for "
-            "approval and scores aren't comparable with earlier runs. Start the server with "
-            "OPERON_TRUST_GATE=off for benchmarks.",
-            file=sys.stderr,
-        )
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     results: list[TaskResult] = []
     stopped = None
@@ -978,16 +989,17 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     bench_dir = Path(args.out_dir)
     # Desktop reports get their own prefix so they never compare against browser runs.
     suite_name = f"desktop-{args.suite}" if args.mode == "desktop" else args.suite
-    # Found before this run's own report is first written below.
     gpu_priced = gpu_cost_usd([], profile) is not None
-    previous = _previous_report(bench_dir, suite_name, profile.name if profile else None, harness_label(profile, args.mode)) if not (args.only or args.category) else None
+    # The server's trust gate, asked once it answers /health below; this shell's guess until then.
+    trust_gate = trust_gate_label()
+    previous = None
     name = report_name(args, started_at)
     bench_dir.mkdir(parents=True, exist_ok=True)
 
     def save(complete: bool) -> dict:
         report = build_report(
             args, started_at, results, profile=profile, repeat=repeat, planned=len(planned), stopped=stopped, complete=complete,
-            season_run=season_run,
+            season_run=season_run, trust_gate=trust_gate,
         )
         # Write then rename, so a run killed mid-write keeps its last good checkpoint.
         tmp = bench_dir / f".{name}.tmp"
@@ -1005,6 +1017,18 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         headers = {"X-API-Key": api_key} if api_key else {}
         async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0, headers=headers) as client:
             (await client.get("/health")).raise_for_status()
+            trust_gate = await server_trust_gate(client)
+            if trust_gate == "on":
+                print(
+                    "Warning: the server's trust gate is on, so risky actions pause for approval and scores "
+                    "aren't comparable with gate-off runs. Start the server with OPERON_TRUST_GATE=off for benchmarks.",
+                    file=sys.stderr,
+                )
+            # Found before this run's own report is first written below.
+            if not (args.only or args.category):
+                previous = _previous_report(
+                    bench_dir, suite_name, profile.name if profile else None, harness_label(profile, args.mode), trust_gate
+                )
             for index, (attempt, task) in enumerate(planned, 1):
                 active = {"task": task, "attempt": attempt, "run_id": None, "started": time.monotonic()}
                 try:

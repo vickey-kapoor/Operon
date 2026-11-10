@@ -255,6 +255,12 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
             f"incomplete: the run ended after {len(report['results'])}" + (f" of {planned}" if planned else "")
             + " tasks (crashed, timed out or cancelled)"
         )
+    if report.get("trust_gate"):
+        config.setdefault("trust_gate", report["trust_gate"])
+    if config.get("trust_gate") == "on" and not config.get("flagged"):
+        # KAN-15: the gate pauses before risky actions, so such a run is no baseline for (and
+        # never compared with) the gate-off benchmark runs. Older reports ran with it off.
+        config["flagged"] = "trust gate on: risky actions paused for approval, not comparable with gate-off runs"
     if report.get("partial") and not config.get("flagged"):
         config["flagged"] = "partial run (--only / --category)"
     unpriced = (report.get("summary") or {}).get("unpriced_calls")

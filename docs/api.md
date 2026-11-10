@@ -48,6 +48,7 @@ GET  /observer/api/runs
 GET  /observer/api/run/{run_id}
 GET  /observer/api/artifact
 GET  /observer/api/usage
+GET  /observer/api/settings          # {"trust_gate": "on"|"off"}, read by the benchmarks
 GET  /observer/api/export/{run_id}
 GET  /observer/api/live-browser/{run_id}
 

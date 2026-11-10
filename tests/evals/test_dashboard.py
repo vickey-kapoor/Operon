@@ -375,3 +375,12 @@ def test_prepare_keeps_a_full_runs_critic_for_the_page() -> None:
     )
     assert report["config"]["critic_model"] == "same:computer-use-preview"
     assert "critic_model" not in prepare(_report(harness_profile="thin", critic=None), {})["config"]
+
+
+def test_a_gate_on_run_is_flagged_so_it_is_never_a_baseline() -> None:
+    config = prepare(_report(trust_gate="on"), {})["config"]
+    assert config["trust_gate"] == "on"
+    assert config["flagged"].startswith("trust gate on")
+    off = prepare(_report(trust_gate="off"), {})["config"]
+    assert off["trust_gate"] == "off" and "flagged" not in off
+    assert "trust_gate" not in prepare(_report(), {})["config"]  # older reports: unrecorded, ran with it off

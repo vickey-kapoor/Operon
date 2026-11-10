@@ -19,6 +19,24 @@ class AnthropicClientError(RuntimeError):
     """Raised when Anthropic requests or responses are invalid."""
 
 
+# Models where thinking can't be turned off: omit ``thinking`` and keep effort low.
+_THINKING_ALWAYS_ON = ("claude-opus-5-5", "claude-fable-", "claude-mythos-")
+
+
+def thinking_off_fields(model: str) -> dict[str, Any]:
+    """Request fields that turn thinking off (or as low as it goes) for ``model``.
+
+    Claude Sonnet 5.5 rejects ``{"type": "disabled"}`` with a 400 and takes
+    ``{"type": "between_tools"}`` instead; Opus 5.5, Fable and Mythos reject any way of
+    turning it off, so they get low effort. Older models keep ``disabled``."""
+    name = (model or "").lower()
+    if "claude-sonnet-5-5" in name:
+        return {"thinking": {"type": "between_tools"}}
+    if any(prefix in name for prefix in _THINKING_ALWAYS_ON):
+        return {"output_config": {"effort": "low"}}
+    return {"thinking": {"type": "disabled"}}
+
+
 class AnthropicHttpClient:
     """Async HTTP client for Anthropic Messages API."""
 
@@ -54,12 +72,10 @@ class AnthropicHttpClient:
         return await self._post_message(
             payload={
                 "model": self.model,
-                "max_tokens": 1024,
-                # Sonnet 5 (and Opus 4.7+) reject a non-default temperature; it runs
-                # adaptive thinking by default, which would consume this 1024-token
-                # budget. Disable thinking to preserve the prior deterministic,
-                # full-budget planner behavior.
-                "thinking": {"type": "disabled"},
+                "max_tokens": 4096,
+                # No temperature (Opus 4.7+ and Sonnet 5+ reject one); thinking off
+                # where the model allows it (see thinking_off_fields).
+                **thinking_off_fields(self.model),
                 "messages": [{"role": "user", "content": prompt}],
             },
             request_kind="text",
@@ -75,9 +91,9 @@ class AnthropicHttpClient:
         return await self._post_message(
             payload={
                 "model": self.model,
-                "max_tokens": 1024,
-                # See generate_policy: no temperature, thinking disabled for Sonnet 5+.
-                "thinking": {"type": "disabled"},
+                "max_tokens": 4096,
+                # See generate_policy: no temperature, thinking off where allowed.
+                **thinking_off_fields(self.model),
                 "messages": [
                     {
                         "role": "user",

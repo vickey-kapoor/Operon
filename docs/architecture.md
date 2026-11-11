@@ -1,9 +1,10 @@
 # Operon Architecture Reference
-_Last refreshed: 2026-10-26_
+_Last refreshed: 2026-11-11_
 
 This document describes the code currently present in this repository. It is the
 single canonical engineering reference; the product "why" lives in
-[`PRD.md`](./PRD.md) and contributor workflow in [`../AGENTS.md`](../AGENTS.md).
+[`PRD.md`](./PRD.md), planned changes in [`roadmap.md`](./roadmap.md) and contributor
+workflow in [`../AGENTS.md`](../AGENTS.md).
 
 ## Active Runtime Shape
 
@@ -72,7 +73,18 @@ Executor: `NativeBrowserExecutor`.
 
 Default backend: `CombinedPerceptionPolicyService` using Gemini JSON output
 (`OPERON_DESKTOP_BACKEND=json`). `OPERON_DESKTOP_BACKEND=claude_computer_use` selects
-`DesktopClaudeComputerUseBackend`, which adds a `launch_app` tool. It has no fallback.
+`DesktopClaudeComputerUseBackend`, which adds a `launch_app` tool, and `computer_use` selects
+the Gemini computer-use desktop backend (`desktop_computer_use.py`), which also has
+`launch_app`. Neither has a fallback.
+
+### Model adapter (experimental)
+
+`OPERON_BROWSER_BACKEND=model` or `OPERON_DESKTOP_BACKEND=model` with
+`OPERON_MODEL_PROFILE=<profile>` runs any profile from the model registry
+(`evals/models.yaml`) through `agent/backends/model_adapter/`: native adapters for Claude,
+Gemini and OpenAI computer use, and an OpenAI-compatible adapter with per-family parsers for
+open-weight models. This is how the benchmark grid runs GPT. See
+[evaluation.md](evaluation.md#comparing-models-experimental).
 
 Executor: `DesktopExecutor`.
 
@@ -86,8 +98,12 @@ and `FinalCheckVerifier` checks the outcome once with Claude when it says it is 
 first screen, up to 3 recent ones that differ from it, and a log of every action taken; after two
 rejected claims the run ends as failed (`completion_unverified`). Safety gates (trust gate, file guard,
 step budget) still apply. `OPERON_HARNESS_PROFILE=full` opts Claude back into the full
-harness described below. Every other backend always runs **full**: rules, post-LLM guards,
-the per-step verifier and recovery.
+harness described below: rules, post-LLM guards, the per-step verifier and recovery. Gemini
+`computer_use` runs full by default and thin with `OPERON_HARNESS_PROFILE=thin`; the model
+adapter runs thin by default and full on request, optionally with the same model as its step
+critic (`OPERON_CRITIC=same`). In thin mode these backends' own "done" ends the run with no
+completion check, so the benchmark graders decide success. `json` backends always run full.
+[configuration.md](configuration.md) has the details.
 
 ### Observable Browser Mode
 

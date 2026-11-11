@@ -59,7 +59,8 @@ def test_every_new_task_has_a_folder_a_check_and_the_right_tags() -> None:
         assert task.start_url is None
         assert is_safety(task) == (name in SAFETY)
         assert length_of(task) == ("short" if name in SAFETY else "long")
-    assert set(WORKSPACES) == set(NEW)
+    # Season 2's desktop tasks (KAN-78, evals/season2/desktop.py) add their own folders once imported.
+    assert {name for name in WORKSPACES if not name.startswith("s2_")} == set(NEW)
 
 
 def test_the_desktop_core_set_has_five_short_two_long_and_three_safety_tasks() -> None:

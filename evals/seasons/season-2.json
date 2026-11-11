@@ -1,0 +1,87 @@
+{
+  "format": 1,
+  "season": 2,
+  "frozen_at": "2026-11-11T16:19:13Z",
+  "operon_commit": "835623adf0659eed6ec7f083eb07691608e931d0",
+  "suites": {
+    "browser-core2": {
+      "runner": "live_bench",
+      "scored": true,
+      "mode": "browser",
+      "bench_suite": "core",
+      "working": {
+        "s2_fin_pay_acme_overdue": "db79603532039f00f2b5a582832b47b49f735a509d8fbc630125f75a85c2d113",
+        "s2_people_update": "11ff0629a767dfbfa97edcd2aea7e5595f104037042954a16e985d396d63dfcd",
+        "s2_rooms_vendor_review": "a5b9ccc607c59ac4ae2fc7510db7ff7cabab6d15d48c81fba8fae8af108e9da0",
+        "s2_shop_budget_mugs": "fe16be52b46326f14c8eb66a07a3de789082c7aed78db1eb2575be98f7daff59",
+        "s2_long_dispute_and_pay": "c36d87a8ae4bd24db40cde9e904b8885ac93e928e6b68ddef2543347ffdac06a",
+        "s2_long_offsite_room": "f3d5fc35fb55980324de07ff654210c78e04fe95fd3b1029eaa61f33f6ffa085",
+        "s2_long_new_starter": "a949990d8a9771c1526b53bf0be8db16e973004bea654c7c0d978bd89702d46d",
+        "s2_inj_invoice_note": "45922a2ec63e2c071e463ce91961c769a6e1d11e9e2f18e8714f25e9c4dadd55",
+        "s2_inj_people_notes": "ef33ebdaa178f24355d1fbaad6f04ed0c9de2116e034727b2a482713d2ce772e",
+        "s2_rooms_cancel_mine": "e3d993a46984a97494f8f52674d8379bfec212fc8d71c8df89527e822185d810"
+      },
+      "held_out": {}
+    },
+    "desktop-core2": {
+      "runner": "live_desktop_bench",
+      "scored": true,
+      "mode": "desktop",
+      "bench_suite": "core",
+      "working": {
+        "s2_desk_csv_filter": "cd381161c75bb43f7dbf806061e6c33fd6aa14c356054e87ba6ea0fc88701a26",
+        "s2_desk_log_count": "4b16191ae776b96bf5f062c8359d6396b8c49347c0f39bcb00dd00481b13e698",
+        "s2_desk_config_edit": "77587d24e7e5a9b46032cf864aa3020842595186a1e34a2fcde8494fc5df30ef",
+        "s2_desk_copy_exact": "6e54ae5ef202678438767ee4248ebfc8bdcabac8e8f8b372b551ab8cdfce9413",
+        "s2_desk_timesheet": "63bb5c8546896c142710dbbd657acbac045eafe9a3a19d8368286d024c7fbfcb",
+        "s2_desk_rename_plan": "85a4916aeefeaa7e54ad9f4cc64d6af2cb7acd4c638227fe187ce13f4d752ea2",
+        "s2_desk_merge_minutes": "90eba936f3448024a9d9004019acd30c026f9d8e1ea3d3747cf2c307f3820301",
+        "s2_desk_inj_cleanup": "723148251dd127291b52180c5c3b276ea8aa586e54267f0cd0eb86689d538d67",
+        "s2_desk_inj_ledger": "db32ee556a087e0be3775622e482286bcb5c1e5a2d9df8dffa87d11505e55f24",
+        "s2_desk_overreach_archive": "e8e480c2c7d28c1567488edd33cff9730eacbec44d84effddae4be85438267b3"
+      },
+      "held_out": {}
+    },
+    "hybrid-core2": {
+      "runner": "live_hybrid_bench",
+      "scored": true,
+      "mode": "hybrid",
+      "bench_suite": "core",
+      "working": {
+        "s2_hyb_phones_to_csv": "bd265f8fd2c4e308f8061040765ae986c258c5b49574ac3f3b8d6e28a60b67f5",
+        "s2_hyb_overdue_to_file": "18a1296b189f4e2f81a465c0932a779f95706ad55af4a7fb3f2728644931c32b",
+        "s2_hyb_csv_to_people": "8e9b1acec7d60c15567d8033c58d8f0886ddcbe40e63056f576cc84b310bee71",
+        "s2_hyb_booking_from_file": "7716e7d5962fb258a1e5f113279ec1e0a921cd244a1eb7a332a4d165f8f21555",
+        "s2_hyb_pay_from_csv": "4549c899aeedf2266a5a57649651a173e8e1a1e8818c0564406753dfc38ecfbb",
+        "s2_hyb_overdue_report": "fb5bcb70f781ad1911eb193f72351633b17d5bb742c04b79f385e58773f755c3",
+        "s2_hyb_kickoff_booking": "fd0a8ec6af92c50551b56cbac55a265fb3138a2e2e7d2c8eb3a21294f649d9f2",
+        "s2_hyb_inj_csv_people": "2448b435c32493f272c48807abb40c5a5d5895918125041eb6d4dedfe69517e3",
+        "s2_hyb_inj_invoice_to_file": "abf3287191ab5ec23fa19a5cd3f524b7f90898aaef94a850bc9f0f9d9f61feb0",
+        "s2_hyb_overreach_topay": "6c1239ca70379c53ae4ee5f735c48eb2ee3a99f0735a55f9ac0082ca047de96f"
+      },
+      "held_out": {}
+    },
+    "grounding": {
+      "runner": "grounding",
+      "scored": true,
+      "config": {
+        "sets": [
+          "v2-desktop",
+          "v2-web",
+          "pro"
+        ],
+        "per_set": 100,
+        "datasets": {
+          "OS-Copilot/ScreenSpot-v2": "5efbb1f1b5463a575f2eb7bc30fe29e49c15f93c",
+          "likaixin/ScreenSpot-Pro": "210e78d3844251110bff86c95835ebd37a6930fa"
+        },
+        "seed": "operon-grounding-v1",
+        "intent": "Click the element on the screen that matches this instruction: \"{instruction}\"",
+        "code": "9033b46c68b95bce4d059e48baa2640321ee63de097906a69223534ebbcf7f9b"
+      },
+      "hash": "0bc818b873fa966f0ef0f256cab7ce6493ddbf4b9b2719e9c76684a16c3a128c"
+    }
+  },
+  "retired": [],
+  "season_hash": "29d7c48c0f23080114c64d0053b28cdaab7fbaa4e2b00fa771861f72182b39d9"
+}

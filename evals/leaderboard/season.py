@@ -74,6 +74,13 @@ RUNNERS: dict[str, dict[str, Any]] = {
     "grounding": {"runner": "grounding", "scored": True},
     "apps": {"runner": "live_bench", "mode": "browser", "bench_suite": "apps", "scored": False},
     "safety": {"runner": "live_bench", "mode": "browser", "bench_suite": "safety", "scored": False},
+    # Season 2's core sets (KAN-78, evals/season2/): run as --suite core with --season 2, so
+    # reports keep the suite "core" and the season tells them apart; "select" is the task set.
+    "browser-core2": {"runner": "live_bench", "mode": "browser", "bench_suite": "core", "select": "core2", "scored": True},
+    "desktop-core2": {"runner": "live_desktop_bench", "mode": "desktop", "bench_suite": "core", "select": "core2",
+                      "scored": True},
+    "hybrid-core2": {"runner": "live_hybrid_bench", "mode": "hybrid", "bench_suite": "core", "select": "core2",
+                     "scored": True},
 }
 
 # Settings whose names contain these are secrets: never copied into a report.
@@ -211,15 +218,22 @@ def grader_of(task: Any) -> tuple[list[Callable], list[Path]]:
     from evals.hybrid_tasks import HybridTask
     from evals.safety_tasks import SafetyTask
 
+    # Season 2's browser and hybrid tasks run on the Season 2 site, whose new apps are a fixture too.
+    season2_site = [EVALS_DIR / "season2" / "apps.py"] if getattr(task, "uses_season2_site", False) else []
     if isinstance(task, HybridTask):
         # Graded from the local site's state and the task's files, which the hybrid
         # reset writes and the probe reads back (decoding, size limit).
         from evals import hybrid_state, hybrid_tasks
 
-        return [task.goal, task.harm, hybrid_tasks.grade, hybrid_state.prepare, hybrid_state.probe], [
-            EVALS_DIR / "local_apps.py", EVALS_DIR / "fixture_site.py", EVALS_DIR / "desktop_probe.ps1"]
+        report = hybrid_tasks.grade
+        if season2_site:
+            from evals.season2 import hybrid as season2_hybrid
+
+            report = season2_hybrid.grade
+        return [task.goal, task.harm, report, hybrid_state.prepare, hybrid_state.probe], [
+            EVALS_DIR / "local_apps.py", EVALS_DIR / "fixture_site.py", EVALS_DIR / "desktop_probe.ps1", *season2_site]
     if isinstance(task, (AppTask, SafetyTask)):
-        return [task.goal, task.harm], [EVALS_DIR / "local_apps.py", EVALS_DIR / "fixture_site.py"]
+        return [task.goal, task.harm], [EVALS_DIR / "local_apps.py", EVALS_DIR / "fixture_site.py", *season2_site]
     if getattr(task, "start_url", "") is None:  # desktop: graded from the machine's state
         from evals import desktop_state
 
@@ -305,7 +319,7 @@ def suite_tasks(suite: str) -> list[Any]:
     spec = RUNNERS.get(suite)
     if spec is None or spec["runner"] == "grounding":
         raise SeasonError(f"{suite!r} has no tasks to fingerprint (suites: {', '.join(RUNNERS)})")
-    return select_tasks(spec["bench_suite"], None, None, spec["mode"])
+    return select_tasks(spec.get("select", spec["bench_suite"]), None, None, spec["mode"])
 
 
 def load_private(path: str | os.PathLike | None = None) -> dict[str, list[Any]]:

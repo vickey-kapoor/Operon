@@ -12,6 +12,9 @@ It needs a server started with a real ``GEMINI_API_KEY``::
 about 10 tasks, all graded from the apps' or the machine's state, one cell of the
 Browser / Desktop x Thin / Full grid. The report names that cell (``"cell"``) and
 breaks the score down by tag (``summary.by_tag``: short, long and safety).
+``--suite core2`` runs Season 2's harder core set instead (KAN-78, ``evals/season2/``),
+on the Season 2 site (``evals/season2/apps.py``: Finance, People and Rooms beside the
+Season 1 apps); ``--season 2`` runs it as the frozen season, with ``--suite core``.
 
 ``--suite safety`` runs the prompt-injection and overreach tasks in
 ``evals/safety_tasks.py`` on a local site this script serves; those are graded
@@ -101,12 +104,14 @@ from evals.leaderboard.changes import score_range
 from evals.live_tasks import TASKS, LiveTask
 from evals.local_apps import build_apps
 from evals.safety_tasks import SAFETY_TASKS, SafetyTask, grade, site_pages
+from evals.season2 import apps as season2_apps
+from evals.season2 import hybrid as season2_hybrid
 from operon.api.auth import client_api_key
 from operon.core.paths import runs_dir
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error", "compromised")
-SUITES = ("core", "smoke", "full", "safety", "apps", "hard", "long")
+SUITES = ("core", "core2", "smoke", "full", "safety", "apps", "hard", "long")
 LOCAL_TASKS = (SafetyTask, AppTask)  # run on the local site and graded from it, not by the judge
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
 MODES = ("browser", "desktop", "hybrid")
@@ -477,7 +482,8 @@ async def run_task(
             snapshot["site"] = site.state()
             snapshot["events"] = [asdict(e) for e in site.snapshot()]
             _save_state(run_id, snapshot)
-            goal_met, harmed, reason = hybrid_tasks.grade(task, snapshot)
+            grader = season2_hybrid.grade if isinstance(task, season2_hybrid.Season2HybridTask) else hybrid_tasks.grade
+            goal_met, harmed, reason = grader(task, snapshot)
             verdict = Verdict(goal_met, reason)
             if status == "error":
                 outcome = "compromised" if harmed else "error"
@@ -700,6 +706,7 @@ def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float) ->
 
 def _previous_report(
     bench_dir: Path, suite: str, harness_profile: str | None = None, trust_gate: str = "off",
+    season: int | None = None,
 ) -> dict | None:
     # A run stopped at the cost cap covers only some tasks, so it is no baseline; nor
     # is a run of another model (older reports), or one judged another way (thin vs thin-own).
@@ -715,6 +722,9 @@ def _previous_report(
         # A gate-on run pauses before risky actions, so it is no baseline for a gate-off one (or
         # the reverse). Reports from before trust_gate was recorded ran with it off.
         if report.get("trust_gate", "off") != trust_gate:
+            continue
+        # Season 2 runs as "core" too, on harder tasks: only the same season is a baseline.
+        if (report.get("season") or {}).get("season") != season:
             continue
         if harness_profile is None or report.get("harness_profile") in {None, harness_profile}:
             return report
@@ -826,8 +836,8 @@ def task_timeout(task: LiveTask, override: float | None) -> float:
 def select_tasks(
     suite: str, only: list[str] | None, category: list[str] | None, mode: str = "browser"
 ) -> list[LiveTask]:
-    if suite == "core":
-        pool = core_tasks(mode)
+    if suite in ("core", "core2"):
+        pool = core_tasks(mode, suite)
     elif mode == "hybrid":
         pool = HYBRID_TASKS if suite in ("full", "smoke") else []
     elif suite == "hard":
@@ -841,12 +851,20 @@ def select_tasks(
         pool = [] if mode == "desktop" else {"safety": SAFETY_TASKS, "apps": APP_TASKS, "long": LONG_TASKS}[suite]
     else:
         pool = DESKTOP_TASKS if mode == "desktop" else TASKS
-    tasks = [t for t in pool if suite in ("core", "full", "safety", "apps", "hard", "long") or suite in t.tags]
+    tasks = [t for t in pool if suite in ("core", "core2", "full", "safety", "apps", "hard", "long") or suite in t.tags]
     if only:
         tasks = [t for t in tasks if t.name in only]
     if category:
         tasks = [t for t in tasks if t.category in category]
     return tasks
+
+
+def site_apps(tasks: list[LiveTask]) -> list:
+    """The local site's apps: the Season 2 site (Finance, People and Rooms too) when a task
+    needs it, else exactly the Season 1 site, so Season 1 tasks see what they were frozen on."""
+    if any(getattr(t, "uses_season2_site", False) for t in tasks):
+        return season2_apps.build_apps()
+    return build_apps()
 
 
 def build_report(
@@ -928,13 +946,18 @@ def season_for(args: argparse.Namespace):
         sys.exit("--season runs the whole season suite: drop --only / --category")
     try:
         manifest = load(args.season)
+        # A season suite runs as its bench suite (Season 2's core sets as --suite core, so a
+        # report's suite stays "core" and the season tells the two apart), or by the task set it
+        # selects (--suite core2 --season 2).
         matches = [
             name for name in manifest["suites"]
-            if RUNNERS.get(name, {}).get("bench_suite") == args.suite and RUNNERS[name].get("mode") == args.mode
+            if args.suite in (RUNNERS.get(name, {}).get("bench_suite"), RUNNERS.get(name, {}).get("select"))
+            and RUNNERS[name].get("mode") == args.mode
         ]
         if not matches:
             sys.exit(f"season {args.season} has no {args.mode} suite run as --suite {args.suite} "
                      f"(it has: {', '.join(manifest['suites'])})")
+        args.suite = RUNNERS[matches[0]]["bench_suite"]
         return check(manifest, matches[0], working_only=args.working_only)
     except (SeasonError, SuiteMismatchError) as exc:
         sys.exit(str(exc))
@@ -987,7 +1010,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     for task in tasks:  # held-out safety tasks bring their own pages
         if isinstance(task, SafetyTask):
             pages.update(task.pages)
-    site = FixtureSite(pages, apps=build_apps()).start() if any(isinstance(t, (*LOCAL_TASKS, HybridTask)) for t in tasks) else None
+    site = FixtureSite(pages, apps=site_apps(tasks)).start() if any(isinstance(t, (*LOCAL_TASKS, HybridTask)) for t in tasks) else None
     try:
         api_key = client_api_key()
         headers = {"X-API-Key": api_key} if api_key else {}
@@ -1002,7 +1025,10 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                 )
             # Found before this run's own report is first written below.
             if not (args.only or args.category):
-                previous = _previous_report(bench_dir, suite_name, harness_label(args.mode), trust_gate)
+                previous = _previous_report(
+                    bench_dir, suite_name, harness_label(args.mode), trust_gate,
+                    season_run.season if season_run else None,
+                )
             for index, (attempt, task) in enumerate(planned, 1):
                 active = {"task": task, "attempt": attempt, "run_id": None, "started": time.monotonic()}
                 try:
@@ -1071,7 +1097,7 @@ def _max_cost_default() -> float:
 
 def build_parser(default_suite: str = "core", default_mode: str = "browser") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="core (the default: the category's ~10 state-graded tasks, evals/categories.py), smoke, full, or safety / apps / hard / long (browser only)")
+    parser.add_argument("--suite", choices=SUITES, default=default_suite, help="core (the default: the category's ~10 state-graded tasks, evals/categories.py), core2 (Season 2's harder core set), smoke, full, or safety / apps / hard / long (browser only)")
     parser.add_argument("--mode", choices=MODES, default=default_mode, help="browser, desktop or hybrid (desktop and browser) tasks")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--only", action="append", help="run only the named task(s)")

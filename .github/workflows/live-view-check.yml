@@ -6,10 +6,6 @@ run-name: Gemini · task page live view (KAN-89)
 # with a report (evals/live_view_check.py). Spends a few cents of Gemini calls.
 on:
   workflow_dispatch:
-  # Temporary, for the first check on its PR branch; removed before merge.
-  push:
-    branches: [claude/project-thread-cxenx0]
-    paths: [evals/live_view_check.py, .github/workflows/live-view-check.yml]
 
 permissions:
   contents: read

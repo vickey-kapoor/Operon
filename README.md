@@ -14,24 +14,19 @@ the result. No DOM, no selectors, no accessibility tree.
 
 </div>
 
-<p align="center">
-  <img src="docs/assets/claude-vs-gemini-benchmark.png" alt="Claude vs Gemini on 44 live web tasks: Claude completed 96% in 30 s and 1.7 steps per task, Gemini 91% in 48 s and 3.6 steps" width="480">
-  <br>
-  <sub>44 live web tasks, one run each, 25 Oct 2026. Rolling results across runs are in <a href="docs/evaluation.md#latest-results">Evaluation</a>.</sub>
-</p>
-
 ## Highlights
 
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages and native Windows apps.
-- **Claude or Gemini.** Claude computer use is the default when an Anthropic key is set;
-  Gemini is fully supported, and is the fallback when Claude runs with the full harness.
-- **A thin harness for strong models.** Claude makes every decision and checks its own
-  result once at the end; Gemini gets rules, guards and recovery around it.
-- **Safety around the loop.** A file guard and step budget on every run, plus an optional
-  trust gate that blocks or asks a human before risky actions.
-- **Measured.** A 44-task live web benchmark, a prompt-injection suite, local test apps and a
-  Windows desktop suite, with cost per task, on an [eval dashboard](https://operon-evals.vercel.app).
+- **Gemini computer use.** Every run uses Gemini 3.5 Flash, which has computer use built in.
+  Other models will come back through a simpler model onboarding (see the roadmap).
+- **Two harnesses.** The full harness (Gemini's default) puts rules, guards, a per-step verifier
+  and recovery around the model; the thin harness lets the model make every decision.
+- **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on
+  by default) that blocks or asks a human before risky actions.
+- **Measured.** Browser, Desktop and Hybrid benchmarks graded from app and machine state, each
+  in both harnesses, on a frozen task set (Season 1), plus safety, grounding and cost tracking
+  on an [eval dashboard](https://operon-evals.vercel.app).
 
 ## How it works
 
@@ -52,7 +47,7 @@ Requires Python 3.11+ and Chromium.
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 playwright install chromium
-cp .env.example .env    # then set ANTHROPIC_API_KEY and/or GEMINI_API_KEY
+cp .env.example .env    # then set GEMINI_API_KEY
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 
@@ -72,16 +67,28 @@ curl -X POST http://127.0.0.1:8080/run-task \
 > ([configuration](docs/configuration.md)). The API requires the key it generates in
 > `.var/api-key` (or one from `API_KEYS`).
 
+## Status and roadmap
+
+Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Gemini computer use.
+On the Season 1 core sets Gemini scores 9 or 10 of 10 in most cells, so the next step
+is harder tasks (Season 2), then an architecture in line with today's leading computer-use
+agents: a simple way to run a task, typed shell and file tools beside the GUI, isolated and
+parallel run environments, a grounding slot and fewer steps. A Python SDK release comes last.
+See the [roadmap](docs/roadmap.md) for what has been built, where things stand and what is next.
+
 ## Documentation
 
 | Topic | |
 |---|---|
+| [Roadmap](docs/roadmap.md) | What has been built, the current results, and what comes next |
 | [Configuration](docs/configuration.md) | Model keys, backends, harness profiles, every setting |
 | [HTTP API](docs/api.md) | Routes for browser and desktop runs, the live stream, auth |
 | [Evaluation](docs/evaluation.md) | Latest results, benchmark suites, `/bench` PR commands, cost caps, dashboard |
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |
 | [Azure desktop runner](docs/azure-desktop-runner.md) | Running the desktop benchmark on a cloud Windows VM |
+| [Reports](docs/reports/) | Benchmark write-ups, including the [Season 1 grid](docs/reports/season-1-grid.md) |
+| [PRD](docs/PRD.md) and [RFCs](docs/rfcs/) | Product context and design proposals |
 
 ## Development
 

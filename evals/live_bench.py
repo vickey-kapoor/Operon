@@ -60,12 +60,6 @@ after that ends as ``failure``. Every run's results are saved under
 ``.var/bench/`` and the report compares them with the previous saved run.
 The judge model is ``OPERON_BENCH_JUDGE_MODEL`` (default ``gemini-3.5-flash``).
 
-``--model PROFILE`` names the model registry profile (``evals/models.yaml``) the
-server runs (``OPERON_*_BACKEND=model``, ``OPERON_MODEL_PROFILE``). The report then
-records the profile, each task's invalid-reply count (replies the adapter could not
-turn into an action) and, for self-hosted models, the GPU cost of the run's wall time
-at the profile's ``gpu_hour_usd``.
-
 Spend is capped per benchmark run: after each task, the agent's and the judge's
 cost so far is checked against ``--max-cost-usd`` (``MAX_RUN_COST_USD``, default
 $3; 0 turns the cap off). With ``--repeat N`` the cap is N times that, since each
@@ -153,9 +147,6 @@ class TaskResult:
     cache_write_tokens: int = 0
     cost_usd: float = 0.0
     judge_cost_usd: float = 0.0
-    # Model-adapter runs: replies the parser could not use, out of all replies.
-    invalid_replies: int = 0
-    model_replies: int = 0
     by_model: dict = field(default_factory=dict)
     # Model calls with tokens but no price (a model missing from the price table): they
     # count as $0, so the report says how many there were and for which models.
@@ -236,19 +227,21 @@ def _run_dir(run_id: str) -> Path:
 
 def _backends_used(run_id: str) -> tuple[int, int]:
     steps = sorted(_run_dir(run_id).glob("step_*"))
-    cu = sum((step / "computer_use_raw.json").exists() or (step / "model_raw.json").exists() for step in steps)
+    cu = sum((step / "computer_use_raw.json").exists() for step in steps)
     return cu, len(steps) - cu
 
+
+# Operon's model (operon.api.runtime_config), which also judges the browser suites.
+DEFAULT_MODEL = "gemini-3.5-flash"
 
 USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_usd")
 
 
-def run_usage(run_id: str, *, gpu_priced: bool = False) -> dict:
+def run_usage(run_id: str) -> dict:
     """Tokens and estimated USD of every model call a run saved (``step_*/*_usage.json``).
 
     A call that used tokens but has no estimated cost is counted in ``unpriced_calls``:
     its model is missing from the price table, so it would otherwise add $0 silently.
-    Self-hosted models (``openai_compat``) are priced by GPU time instead and never count.
     """
     total = dict.fromkeys(USAGE_FIELDS, 0)
     by_model: dict[str, dict] = {}
@@ -269,9 +262,7 @@ def run_usage(run_id: str, *, gpu_priced: bool = False) -> dict:
             "cost_usd": usage.get("estimated_cost_usd") or 0.0,
         }
         used_tokens = row["input_tokens"] or row["output_tokens"] or row["cache_read_tokens"] or row["cache_write_tokens"]
-        # A self-hosted model is priced by GPU time instead, but only when its profile has a GPU rate.
-        gpu_billed = gpu_priced and usage.get("provider") == "openai_compat"
-        if usage.get("estimated_cost_usd") is None and used_tokens and not gpu_billed:
+        if usage.get("estimated_cost_usd") is None and used_tokens:
             unpriced += 1
             unpriced_models.add(str(usage.get("model") or "unknown"))
         bucket = by_model.setdefault(str(usage.get("model") or "unknown"), {"requests": 0, **dict.fromkeys(USAGE_FIELDS, 0)})
@@ -282,19 +273,6 @@ def run_usage(run_id: str, *, gpu_priced: bool = False) -> dict:
     for bucket in (total, *by_model.values()):
         bucket["cost_usd"] = round(bucket["cost_usd"], 6)
     return {**total, "by_model": by_model, "unpriced_calls": unpriced, "unpriced_models": sorted(unpriced_models)}
-
-
-def run_replies(run_id: str) -> tuple[int, int]:
-    """(invalid replies, replies) of a model-adapter run, from ``step_*/model_parsed.json``."""
-    invalid = replies = 0
-    for path in _run_dir(run_id).glob("step_*/model_parsed.json"):
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        replies += 1
-        invalid += bool(isinstance(parsed, dict) and parsed.get("invalid"))
-    return invalid, replies
 
 
 def _server_env() -> dict[str, str]:
@@ -336,102 +314,36 @@ def server_mode(mode: str) -> str:
     return "desktop" if mode == "hybrid" else mode
 
 
-def critic_label(profile, mode: str = "browser") -> str | None:
+def critic_label(mode: str = "browser") -> str | None:
     """Which step critic a full run used, for the report: ``same:<model>`` with
-    OPERON_CRITIC=same (KAN-68), else ``<provider>:<model>`` from the verifier settings;
-    None for a thin run, which has no step critic."""
+    OPERON_CRITIC=same (KAN-68), else the verifier model; None for a thin run, which
+    has no step critic. Defaults as in ``operon.api.runtime_config``."""
     mode = server_mode(mode)
-    if harness_label(profile, mode) != "full":
+    if harness_label(mode) != "full":
         return None
     env = _server_env()
+    prefix = f"OPERON_{mode.upper()}_"
     if (env.get("OPERON_CRITIC") or "").strip().lower() == "same":
-        if profile is not None:
-            return f"same:{profile.model}"
-        # The acting model, with the server's defaults (operon.api.runtime_config).
-        backend, prefix = _server_backend(env, mode), f"OPERON_{mode.upper()}_"
-        if backend == "claude_computer_use":
-            return "same:" + ((env.get(prefix + "CLAUDE_MODEL") or "").strip() or "claude-opus-5-5")
-        default = "gemini-3.5-flash" if mode == "browser" or backend == "computer_use" else "gemini-2.5-flash"
-        return "same:" + ((env.get(prefix + "MODEL") or "").strip() or default)
-    defaults = {"browser": "gemini-3.5-flash", "desktop": "gemini-2.5-flash"}
-    provider = (env.get(f"OPERON_{mode.upper()}_VERIFIER_PROVIDER") or "gemini").strip().lower()
-    model = (env.get(f"OPERON_{mode.upper()}_VERIFIER_MODEL") or "").strip() or defaults.get(mode, "server default")
-    return f"{provider}:{model}"
+        return "same:" + ((env.get(prefix + "MODEL") or "").strip() or DEFAULT_MODEL)
+    return "gemini:" + ((env.get(prefix + "VERIFIER_MODEL") or "").strip() or DEFAULT_MODEL)
 
 
 def _server_backend(env: dict[str, str], mode: str) -> str:
     """The backend the server runs (operon.api.runtime_config): OPERON_<MODE>_BACKEND,
-    else Claude in the browser with ANTHROPIC_API_KEY, Gemini computer use without it,
-    and json on the desktop."""
+    else Gemini computer use, in the browser and on the desktop."""
     mode = server_mode(mode)
-    backend = (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower()
-    if backend:
-        return backend
-    if mode == "browser":
-        return "claude_computer_use" if env.get("ANTHROPIC_API_KEY") else "computer_use"
-    return "json"
+    return (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower() or "computer_use"
 
 
-def harness_label(profile, mode: str = "browser") -> str:
-    """The report's harness: ``thin``, ``full``, or ``thin-own`` for a thin run that takes
-    the model's own "done", so it is never compared with runs judged by the completion
-    check: Claude with OPERON_COMPLETION_CHECK=own, and Gemini computer use, which has no
-    completion check. Registry models run thin with own done (``thin``) unless
-    OPERON_HARNESS_PROFILE=full (KAN-68). Read from the settings the server sees
-    (shell plus ``.env``)."""
-    mode = server_mode(mode)
+def harness_label(mode: str = "browser") -> str:
+    """The report's harness: ``full``, or ``thin-own`` for a thin run, which takes the
+    model's own "done". Read from the settings the server sees (shell plus ``.env``)."""
     env = _server_env()
-
-    def get(name: str) -> str:
-        return (env.get(name) or "").strip().lower()
-
-    if profile is not None:
-        return "full" if get("OPERON_HARNESS_PROFILE") == "full" else "thin"
-
-    backend = _server_backend(env, mode)
-    requested = get("OPERON_HARNESS_PROFILE")
-    if backend == "computer_use":
+    requested = (env.get("OPERON_HARNESS_PROFILE") or "").strip().lower()
+    if _server_backend(env, mode) == "computer_use" and requested == "thin":
         # Gemini computer use runs full unless thin is asked for (operon.agent.policy.thin).
-        return "thin-own" if requested == "thin" else "full"
-    harness = requested or "full"
-    if harness == "thin" and get("OPERON_COMPLETION_CHECK") == "own":
         return "thin-own"
-    return harness
-
-
-def resolve_model_profile(name: str | None, mode: str):
-    """The registry profile ``--model`` names, checked against this shell's server
-    settings when they are visible here; None without ``--model``."""
-    if not name:
-        return None
-    mode = server_mode(mode)
-    from operon.agent.backends.model_adapter.registry import (
-        ModelRegistryError,
-        resolve_profile,
-    )
-
-    try:
-        profile = resolve_profile(name)
-    except ModelRegistryError as exc:
-        sys.exit(f"--model: {exc}")
-    if mode not in profile.environments:
-        sys.exit(f"--model: profile {name} does not support {mode}")
-    configured = (os.getenv("OPERON_MODEL_PROFILE") or "").strip()
-    backend = (os.getenv(f"OPERON_{mode.upper()}_BACKEND") or "").strip()
-    if configured and configured != name:
-        sys.exit(f"--model {name}, but OPERON_MODEL_PROFILE={configured}: the server runs another model")
-    if backend and backend != "model":
-        sys.exit(f"--model {name}, but OPERON_{mode.upper()}_BACKEND={backend}: start the server with backend=model")
-    return profile
-
-
-def gpu_cost_usd(results: list["TaskResult"], profile) -> float | None:
-    """GPU time of a self-hosted model over the tasks' wall time (a lower bound: the
-    VM also bills while it starts and idles)."""
-    rate = getattr(getattr(profile, "pricing", None), "gpu_hour_usd", None)
-    if rate is None:
-        return None
-    return round(sum(r.seconds for r in results) / 3600 * rate, 4)
+    return "full"
 
 
 def _final_screenshot(run_id: str) -> str | None:
@@ -470,7 +382,6 @@ async def run_task(
     approve_pauses: int,
     mode: str = "browser",
     site: FixtureSite | None = None,
-    gpu_priced: bool = False,
     on_run: Callable[[str], None] | None = None,
     label: str | None = None,
 ) -> TaskResult:
@@ -617,9 +528,8 @@ async def run_task(
             await client.post("/desktop/cleanup", json={"run_id": run_id})
         except httpx.HTTPError as exc:
             print(f"  {name}: cleanup failed: {exc}", file=sys.stderr)
-    usage = run_usage(run_id, gpu_priced=gpu_priced) if run_id else {"by_model": {}}
+    usage = run_usage(run_id) if run_id else {"by_model": {}}
     judge_unpriced = [verdict.unpriced_model] if verdict.unpriced_model else []
-    invalid_replies, model_replies = run_replies(run_id) if run_id else (0, 0)
     return TaskResult(
         task=task.name,
         category=task.category,
@@ -639,8 +549,6 @@ async def run_task(
         by_model=usage["by_model"],
         unpriced_calls=usage.get("unpriced_calls", 0) + len(judge_unpriced),
         unpriced_models=sorted({*usage.get("unpriced_models", []), *judge_unpriced}),
-        invalid_replies=invalid_replies,
-        model_replies=model_replies,
         tags=tags_of(task),
     )
 
@@ -652,10 +560,10 @@ def hybrid_state():
     return module
 
 
-def interrupted_result(active: dict, *, gpu_priced: bool = False) -> TaskResult:
+def interrupted_result(active: dict) -> TaskResult:
     """The task that was running when the benchmark stopped, with the spend it had logged."""
     task, run_id = active["task"], active.get("run_id")
-    usage = run_usage(run_id, gpu_priced=gpu_priced) if run_id else {"by_model": {}}
+    usage = run_usage(run_id) if run_id else {"by_model": {}}
     return TaskResult(
         task=task.name,
         category=task.category,
@@ -695,7 +603,6 @@ def summarize(results: list[TaskResult]) -> dict:
         "paused_tasks": sum(1 for r in results if r.pauses),
         **cost_summary(results, counts["success"]),
         **({"repeat": repeat_summary(results)} if any(r.attempt > 1 for r in results) else {}),
-        **invalid_summary(results),
         **({"by_tag": tag_summary(results)} if any(r.tags for r in results) else {}),
         **({"score_range": rng} if (rng := score_range({"task": r.task, "outcome": r.outcome} for r in results)) else {}),
     }
@@ -717,15 +624,6 @@ def tag_summary(results: list[TaskResult]) -> dict:
         if tag == "safety":
             out[tag] |= {"compromised": compromised, "passed": compromised == 0 and success == len(tagged)}
     return out
-
-
-def invalid_summary(results: list[TaskResult]) -> dict:
-    """Invalid-action rate of a model-adapter run: replies the parser could not use."""
-    replies = sum(r.model_replies for r in results)
-    if not replies:
-        return {}
-    invalid = sum(r.invalid_replies for r in results)
-    return {"model_replies": replies, "invalid_replies": invalid, "invalid_action_rate": round(invalid / replies, 4)}
 
 
 def repeat_summary(results: list[TaskResult]) -> dict:
@@ -792,21 +690,19 @@ def spent_usd(results: list[TaskResult]) -> float:
     return round(sum(r.cost_usd + r.judge_cost_usd for r in results), 6)
 
 
-def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float, gpu_usd: float | None = None) -> dict | None:
-    """The ``budget_stop`` record once a run has spent its cap with tasks left, else None.
-    ``gpu_usd`` is a self-hosted model's GPU time so far, which reports no token cost."""
-    spent = round(spent_usd(results) + (gpu_usd or 0.0), 6)
+def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float) -> dict | None:
+    """The ``budget_stop`` record once a run has spent its cap with tasks left, else None."""
+    spent = spent_usd(results)
     if max_cost_usd <= 0 or spent < max_cost_usd or len(results) >= planned:
         return None
     return {"limit_usd": max_cost_usd, "spent_usd": spent, "tasks_run": len(results), "tasks_planned": planned}
 
 
 def _previous_report(
-    bench_dir: Path, suite: str, model_profile: str | None = None, harness_profile: str | None = None,
-    trust_gate: str = "off",
+    bench_dir: Path, suite: str, harness_profile: str | None = None, trust_gate: str = "off",
 ) -> dict | None:
     # A run stopped at the cost cap covers only some tasks, so it is no baseline; nor
-    # is a run of another registry model, or one judged another way (thin vs thin-own).
+    # is a run of another model (older reports), or one judged another way (thin vs thin-own).
     # Reports from before harness_profile was recorded match any harness.
     for path in sorted(bench_dir.glob(f"{suite}-*.json"), reverse=True):
         try:
@@ -814,7 +710,7 @@ def _previous_report(
         except (OSError, ValueError):
             continue
         # An incomplete report (the run died midway) is no baseline either.
-        if report.get("budget_stop") or report.get("complete") is False or report.get("model_profile") != model_profile:
+        if report.get("budget_stop") or report.get("complete") is False or not _gemini_report(report):
             continue
         # A gate-on run pauses before risky actions, so it is no baseline for a gate-off one (or
         # the reverse). Reports from before trust_gate was recorded ran with it off.
@@ -823,6 +719,12 @@ def _previous_report(
         if harness_profile is None or report.get("harness_profile") in {None, harness_profile}:
             return report
     return None
+
+
+def _gemini_report(report: dict) -> bool:
+    """Whether a saved report ran Gemini. Reports from before Operon became Gemini-only
+    may hold another model's run (a registry profile or the Claude backend)."""
+    return not report.get("model_profile") and not str(report.get("backend", "")).startswith("claude")
 
 
 def format_report(results: list[TaskResult], summary: dict, previous: dict | None) -> str:
@@ -863,15 +765,6 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         )
         for model, bucket in sorted(summary["by_model"].items()):
             lines.append(f"  {model}: {bucket['requests']} calls, ${bucket['cost_usd']:.4f}")
-    if summary.get("model_replies"):
-        lines.append(
-            f"invalid replies {summary['invalid_replies']}/{summary['model_replies']} "
-            f"({summary['invalid_action_rate']:.1%} invalid-action rate)"
-        )
-    if summary.get("gpu_cost_usd") is not None:
-        lines.append(
-            f"GPU ${summary['gpu_cost_usd']:.4f} over the tasks' wall time · total ${summary['total_cost_usd']:.4f}"
-        )
     if summary.get("repeat"):
         rep = summary["repeat"]
         low, high = rep["pass_at_1_ci95"]
@@ -961,7 +854,6 @@ def build_report(
     started_at: str,
     results: list[TaskResult],
     *,
-    profile,
     repeat: int,
     planned: int,
     stopped: dict | None,
@@ -980,15 +872,10 @@ def build_report(
     held = [r for r in results if r.task in held_names]
     results = [r for r in results if r.task not in held_names]
     summary = summarize(results)
-    if profile is not None:
-        gpu = gpu_cost_usd(results, profile)
-        summary["gpu_cost_usd"] = gpu
-        summary["total_cost_usd"] = round(summary["cost_usd"] + (gpu or 0.0), 6)
     if held:
         # Held-out spend stays in the summary as one total (no names), so the dashboard's
         # Cost tab and monthly budget still count it.
-        held_gpu = gpu_cost_usd(held, profile) if profile is not None else None
-        summary["held_out_cost_usd"] = round(sum(r.cost_usd + r.judge_cost_usd for r in held) + (held_gpu or 0.0), 6)
+        summary["held_out_cost_usd"] = round(sum(r.cost_usd + r.judge_cost_usd for r in held), 6)
     suite_name = mode_suite(args.mode, args.suite)
     model_key = f"{args.mode}_model"
     env_mode = server_mode(args.mode).upper()
@@ -997,18 +884,14 @@ def build_report(
         "mode": args.mode,
         # The grid cell this run fills: category x harness (evals/categories.py).
         "category": category_of(None, args.mode),
-        "cell": cell_name(args.mode, harness_label(profile, args.mode)),
+        "cell": cell_name(args.mode, harness_label(args.mode)),
         "started_at": started_at,
-        model_key: os.getenv(f"OPERON_{env_mode}_MODEL", "server default"),
+        # The effective model and backend: Gemini defaults when the env var is unset.
+        model_key: os.getenv(f"OPERON_{env_mode}_MODEL") or DEFAULT_MODEL,
         "judge_model": args.judge_model,
-        "backend": os.getenv(f"OPERON_{env_mode}_BACKEND", "server default"),
-        "claude_model": os.getenv(f"OPERON_{env_mode}_CLAUDE_MODEL", "server default"),
-        "harness_profile": harness_label(profile, args.mode),
-        "critic": critic_label(profile, args.mode),
-        "model_profile": profile.name if profile is not None else None,
-        "model_adapter": profile.adapter if profile is not None else None,
-        "model_id": profile.model if profile is not None else None,
-        "zoom": os.getenv("OPERON_CLAUDE_ZOOM", "").strip().lower() in {"1", "true", "yes", "on"},
+        "backend": os.getenv(f"OPERON_{env_mode}_BACKEND") or "computer_use",
+        "harness_profile": harness_label(args.mode),
+        "critic": critic_label(args.mode),
         "trust_gate": trust_gate or trust_gate_label(),
         "repeat": repeat,
         # --only / --category: some of the suite's tasks; spend counts, pass rates don't.
@@ -1071,7 +954,6 @@ def report_name(args: argparse.Namespace, started_at: str) -> str:
 async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     season_run = season_for(args)
     tasks = season_run.tasks() if season_run else select_tasks(args.suite, args.only, args.category, args.mode)
-    profile = resolve_model_profile(getattr(args, "model", None), args.mode)
     if not tasks:
         print("No tasks match.", file=sys.stderr)
         return 2
@@ -1084,7 +966,6 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     bench_dir = Path(args.out_dir)
     # Desktop and hybrid reports get their own prefix so they never compare against browser runs.
     suite_name = mode_suite(args.mode, args.suite)
-    gpu_priced = gpu_cost_usd([], profile) is not None
     # The server's trust gate, asked once it answers /health below; this shell's guess until then.
     trust_gate = trust_gate_label()
     previous = None
@@ -1093,7 +974,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
 
     def save(complete: bool) -> dict:
         report = build_report(
-            args, started_at, results, profile=profile, repeat=repeat, planned=len(planned), stopped=stopped, complete=complete,
+            args, started_at, results, repeat=repeat, planned=len(planned), stopped=stopped, complete=complete,
             season_run=season_run, trust_gate=trust_gate,
         )
         # Write then rename, so a run killed mid-write keeps its last good checkpoint.
@@ -1121,9 +1002,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                 )
             # Found before this run's own report is first written below.
             if not (args.only or args.category):
-                previous = _previous_report(
-                    bench_dir, suite_name, profile.name if profile else None, harness_label(profile, args.mode), trust_gate
-                )
+                previous = _previous_report(bench_dir, suite_name, harness_label(args.mode), trust_gate)
             for index, (attempt, task) in enumerate(planned, 1):
                 active = {"task": task, "attempt": attempt, "run_id": None, "started": time.monotonic()}
                 try:
@@ -1133,13 +1012,12 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                         approve_pauses=pause_budget(task, args.approve_pauses, args.no_approve),
                         mode=args.mode,
                         site=site,
-                        gpu_priced=gpu_priced,
                         on_run=lambda run_id, active=active: active.update(run_id=run_id),
                         label=season_run.held_out_id(task) if season_run else None,
                     )
                 except BaseException:
                     # Cancelled or crashed mid-task: keep what the task already spent.
-                    results.append(interrupted_result(active, gpu_priced=gpu_priced))
+                    results.append(interrupted_result(active))
                     save(complete=False)
                     raise
                 result.attempt = attempt
@@ -1150,7 +1028,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                         label = season_run.held_out_id(task)  # never print a held-out task's name
                     label = label if repeat == 1 else f"{label} #{attempt}"
                     print(f"[{index}/{len(planned)}] {label}: {result.outcome} ({result.steps} steps, {result.seconds}s)", flush=True)
-                stopped = budget_stop(results, len(planned), max_cost_usd, gpu_cost_usd(results, profile))
+                stopped = budget_stop(results, len(planned), max_cost_usd)
                 if stopped:
                     print(
                         f"Stopping: spent ${stopped['spent_usd']:.2f}, over the ${max_cost_usd:.2f} cap "
@@ -1203,17 +1081,13 @@ def build_parser(default_suite: str = "core", default_mode: str = "browser") -> 
     parser.add_argument("--no-approve", action="store_true", help="do not approve pauses for confirmation")
     parser.add_argument("--approve-pauses", type=int, default=None,
                         help=f"pauses to approve per task (default {DEFAULT_PAUSES}; {LONG_PAUSES} for the long suite)")
-    parser.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", "gemini-3.5-flash"))
+    parser.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", DEFAULT_MODEL))
     parser.add_argument("--out-dir", default=str(BENCH_DIR))
     parser.add_argument("--keep-screens", action="store_true", help="copy each graded screenshot next to the report")
     parser.add_argument("--repeat", type=int, default=1, help="run every task this many times (measures flakiness)")
     parser.add_argument(
         "--max-cost-usd", type=float, default=_max_cost_default(),
         help=f"stop once the run has spent this much on model calls (default $MAX_RUN_COST_USD or {DEFAULT_MAX_COST_USD:g}; 0: no cap)",
-    )
-    parser.add_argument(
-        "--model", default=os.getenv("OPERON_MODEL_PROFILE") or None,
-        help="model registry profile the server runs (evals/models.yaml; default $OPERON_MODEL_PROFILE)",
     )
     parser.add_argument(
         "--season", type=int, default=None,

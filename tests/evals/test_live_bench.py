@@ -186,14 +186,14 @@ def test_run_usage_sums_every_model_call_in_the_run(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)
     run = tmp_path / "run-1"
     _write_usage(
-        run / "step_1", kind="computer_use", model="claude-opus-5-5", input_tokens=10,
+        run / "step_1", kind="computer_use", model="gemini-3.5-flash", input_tokens=10,
         output_tokens=200, cache_creation_input_tokens=3000, cache_read_input_tokens=0, estimated_cost_usd=0.02,
     )
     _write_usage(
-        run / "step_2", kind="computer_use", model="claude-opus-5-5", input_tokens=10,
+        run / "step_2", kind="computer_use", model="gemini-3.5-flash", input_tokens=10,
         output_tokens=100, cache_creation_input_tokens=1500, cache_read_input_tokens=3000, estimated_cost_usd=0.01,
     )
-    _write_usage(run / "step_2", kind="final_check", model="claude-opus-5-5", input_tokens=1200, output_tokens=50, estimated_cost_usd=0.006)
+    _write_usage(run / "step_2", kind="final_check", model="gemini-3.5-flash", input_tokens=1200, output_tokens=50, estimated_cost_usd=0.006)
     (run / "step_2" / "broken_usage.json").write_text("{not json", encoding="utf-8")
 
     usage = live_bench.run_usage("run-1")
@@ -201,27 +201,22 @@ def test_run_usage_sums_every_model_call_in_the_run(tmp_path, monkeypatch) -> No
     assert usage["cost_usd"] == 0.036
     assert usage["cache_write_tokens"] == 4500 and usage["cache_read_tokens"] == 3000
     assert usage["output_tokens"] == 350
-    assert usage["by_model"]["claude-opus-5-5"]["requests"] == 3
+    assert usage["by_model"]["gemini-3.5-flash"]["requests"] == 3
 
 
 def test_run_usage_counts_calls_whose_model_has_no_price(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)
     run = tmp_path / "run-1"
-    _write_usage(run / "step_1", kind="computer_use", model="claude-new-model", input_tokens=900, output_tokens=40, estimated_cost_usd=None)
+    _write_usage(run / "step_1", kind="computer_use", model="gemini-new-model", input_tokens=900, output_tokens=40, estimated_cost_usd=None)
     _write_usage(run / "step_1", kind="verification", model="gemini-3.5-flash", input_tokens=500, output_tokens=20, estimated_cost_usd=0.001)
-    # A self-hosted model is priced by GPU time, but only when its profile has a GPU rate.
-    _write_usage(run / "step_2", kind="model", provider="openai_compat", model="Qwen/Qwen3-VL-32B-Instruct", input_tokens=800, output_tokens=30)
-    _write_usage(run / "step_3", kind="computer_use", model="claude-new-model")  # no tokens: nothing was billed
+    _write_usage(run / "step_3", kind="computer_use", model="gemini-new-model")  # no tokens: nothing was billed
 
-    usage = live_bench.run_usage("run-1", gpu_priced=True)
-    assert usage["unpriced_calls"] == 1 and usage["unpriced_models"] == ["claude-new-model"]
-    # A hosted OpenAI-compatible endpoint with no prices at all is unpriced too.
-    hosted = live_bench.run_usage("run-1")
-    assert hosted["unpriced_calls"] == 2 and hosted["unpriced_models"] == ["Qwen/Qwen3-VL-32B-Instruct", "claude-new-model"]
+    usage = live_bench.run_usage("run-1")
+    assert usage["unpriced_calls"] == 1 and usage["unpriced_models"] == ["gemini-new-model"]
     result = live_bench.TaskResult("t", "c", "r", "succeeded", "success", "-", 1, 0, 5, 1, 0, "", "-",
-                                   unpriced_calls=1, unpriced_models=["claude-new-model"])
+                                   unpriced_calls=1, unpriced_models=["gemini-new-model"])
     summary = summarize([result, _costly("other", 0.01)])
-    assert summary["unpriced_calls"] == 1 and summary["unpriced_models"] == ["claude-new-model"]
+    assert summary["unpriced_calls"] == 1 and summary["unpriced_models"] == ["gemini-new-model"]
 
 
 def test_summary_reports_cost_per_task_and_per_success() -> None:
@@ -229,7 +224,7 @@ def test_summary_reports_cost_per_task_and_per_success() -> None:
         return live_bench.TaskResult(
             "t", "c", "r", "succeeded", outcome, "-", 2, 0, 10, 2, 0, "", "-",
             cost_usd=cost, judge_cost_usd=0.001,
-            by_model={"claude-opus-5-5": {"requests": 2, "input_tokens": 0, "output_tokens": 0,
+            by_model={"gemini-3.5-flash": {"requests": 2, "input_tokens": 0, "output_tokens": 0,
                                           "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": cost}},
         )
 
@@ -240,7 +235,7 @@ def test_summary_reports_cost_per_task_and_per_success() -> None:
     # The failed task's spend is charged to the one success.
     assert summary["cost_per_success_usd"] == 0.08
     assert summary["judge_cost_usd"] == 0.002
-    assert summary["by_model"]["claude-opus-5-5"]["requests"] == 4
+    assert summary["by_model"]["gemini-3.5-flash"]["requests"] == 4
     assert "per success" in live_bench.format_report([result("success", 0.03)], summarize([result("success", 0.03)]), None)
 
 
@@ -299,7 +294,7 @@ async def test_a_run_that_dies_midway_leaves_an_incomplete_report(tmp_path, monk
         if len(calls) == 3:
             # The third task spends money, then the runner dies before it returns.
             kwargs["on_run"]("run-3")
-            _write_usage(tmp_path / "runs" / "run-3" / "step_1", kind="computer_use", model="claude-opus-5-5",
+            _write_usage(tmp_path / "runs" / "run-3" / "step_1", kind="computer_use", model="gemini-3.5-flash",
                          input_tokens=100, output_tokens=10, estimated_cost_usd=0.05)
             raise RuntimeError("runner lost")
         return _costly(task.name, 0.2)

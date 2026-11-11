@@ -6,7 +6,7 @@
 | **Product** | Operon — vision-first computer-use agent |
 | **Version** | 1.0 (Draft for review) |
 | **Status** | Draft |
-| **Last updated** | 2026-06-13 |
+| **Last updated** | 2026-11-11 (§13 roadmap; the rest is from 2026-06-13) |
 | **Owner** | Operon maintainers |
 | **Related docs** | [`docs/architecture.md`](./architecture.md) (canonical engineering reference), [`README.md`](../README.md), [`AGENTS.md`](../AGENTS.md) |
 
@@ -60,7 +60,7 @@ Teams that want to automate real UI workflows face three bad options:
 1. **Reliability as the product, not a feature.** Deterministic rules before LLM fallback, verify-after-every-action, an explicit recovery ladder, and HITL turn "impressive demo" into "trustworthy run."
 2. **One loop, two surfaces.** Browser and desktop share the loop, verifier, recovery, and persistence — covering the desktop gap browser-only and Gemini-CUA leave open [8].
 3. **Open and inspectable.** Apache-2.0, self-hostable, with every run producing screenshots, model I/O, policy decisions, execution traces, and logs — an auditable record that closed metered APIs do not surface.
-4. **Backend-agnostic.** Pluggable backends (Claude or Gemini computer use, Gemini or Anthropic verifier) and a cheaper JSON perception/policy fallback give cost and vendor flexibility.
+4. **Backend-agnostic by design.** Backends are pluggable; today Operon runs Gemini only (computer use, with a cheaper JSON perception/policy fallback), and other models come back through a simple model onboarding.
 
 ---
 
@@ -133,9 +133,9 @@ Legend: **[Current]** implemented today (verified in code); **[Roadmap]** propos
 - **FR-4 [Current]** Visual click-servo stability check before browser/desktop clicks.
 
 ### 9.2 Backends & models
-- **FR-5 [Current]** Browser backend defaults to **Gemini Computer Use** on `gemini-3.5-flash` with an optional **JSON** perception/policy fallback.
-- **FR-6 [Current]** Desktop backend uses the **JSON combined** backend.
-- **FR-7 [Current]** Pluggable backend and verifier provider: **Claude or Gemini** (`OPERON_*_BACKEND`, `OPERON_*_VERIFIER_PROVIDER`).
+- **FR-5 [Current]** Browser backend defaults to **Gemini Computer Use** on `gemini-3.5-flash`, with an optional **JSON** perception/policy fallback in the full harness. Gemini is the only model for now.
+- **FR-6 [Current]** Desktop backend defaults to **Gemini Computer Use** on `gemini-3.5-flash` (with `launch_app`); the older **JSON combined** backend stays selectable.
+- **FR-7 [Roadmap]** Simple model onboarding: add other models (Claude, GPT, open-weight) back as pluggable backends. They were removed on 2026-11-11 to keep onboarding clean; their earlier benchmark data is kept.
 - **FR-8 [Roadmap]** Pluggable grounding/vision models (e.g., OmniParser-style screen parsing [11], UI-TARS-style grounding [9]) to improve coordinate accuracy.
 
 ### 9.3 Policy & memory
@@ -150,7 +150,7 @@ Legend: **[Current]** implemented today (verified in code); **[Roadmap]** propos
 
 ### 9.5 Human-in-the-loop
 - **FR-15 [Current]** Pause/resume on uncertain or blocked states; user override hints; configurable confidence threshold that pauses when policy confidence is low.
-- **FR-16 [Roadmap]** Explicit "high-risk action" confirmation gating (purchases, deletes, sends), mirroring Operator/Claude confirmation patterns [12][14].
+- **FR-16 [Current, 2026-11-10]** Explicit "high-risk action" confirmation gating (purchases, deletes, sends), mirroring Operator/Claude confirmation patterns [12][14]. Built as the trust gate, on by default.
 
 ### 9.6 Execution surfaces
 - **FR-17 [Current]** **Browser executor** (`NativeBrowserExecutor`, Playwright/Chromium) incl. **observable mode** via CDP screencast over `/ws/stream`.
@@ -196,7 +196,7 @@ Design invariants: browser and desktop share the loop, verifier, recovery, and p
 ## 11. Non-functional requirements
 
 - **NFR-1 Reliability.** The loop must verify every action and never advance on unverified success. Target: measurable task-success and recovery rates per release (see §12). *(Directly answers the category's top failure mode [12] and the reliability-driven project-cancellation risk [24].)*
-- **NFR-2 Safety & security.** Treat all on-screen/web content as untrusted (prompt injection is OWASP LLM01 #1 [13]). Requirements: HITL gating on uncertainty **[Current]**; high-risk-action confirmation **[Roadmap, FR-16]**; allow/deny policies **[Roadmap, FR-12]**; sandbox/VM deployment guidance **[Roadmap]**; full audit trail **[Current]**. Adopt Anthropic/OWASP best practices (untrusted content isolation, least privilege, screening) [13][14].
+- **NFR-2 Safety & security.** Treat all on-screen/web content as untrusted (prompt injection is OWASP LLM01 #1 [13]). Requirements: HITL gating on uncertainty **[Current]**; high-risk-action confirmation **[Current, FR-16]**; allow/deny policies **[Roadmap, FR-12]**; sandbox/VM deployment guidance **[Roadmap]**; full audit trail **[Current]**. Adopt Anthropic/OWASP best practices (untrusted content isolation, least privilege, screening) [13][14].
 - **NFR-3 Performance/latency.** Browser web tasks should stay competitive with low-latency CUAs (Gemini CUA reports ~70%+ web accuracy at ~225s/task class [8]); track latency-per-step and end-to-end task time per release.
 - **NFR-4 Cost transparency.** Token usage and estimated cost must be visible per run; JSON fallback offers a cheaper path than frontier CUA tokens.
 - **NFR-5 Portability.** Browser path cross-platform via Playwright; desktop path Windows-first today with macOS/Linux parity on the roadmap (FR-20). Python 3.11+ (3.14 for dev).
@@ -224,10 +224,22 @@ Design invariants: browser and desktop share the loop, verifier, recovery, and p
 
 ## 13. Release plan & roadmap
 
-- **v0.1 (Current).** Vision-first browser + desktop loop; Gemini CU + JSON backends; deterministic rules; 6-state verifier; recovery ladder; HITL pause/resume + confidence threshold; click servo; observable browser via `/ws/stream`; Observer API + replay + usage; run artifacts + retention; uniform shutdown teardown; Tauri shell. Apache-2.0.
-- **v0.2 (Near-term).** High-risk-action confirmation gating (FR-16); user-authored allow/deny policies (FR-12); hardened safety defaults (untrusted-content handling per [13][14]); expanded automated eval suite + published internal success metrics.
-- **v0.3 (Mid-term).** macOS/Linux desktop parity (FR-20); pluggable grounding/vision models (FR-8); cost/latency dashboards.
-- **v1.0 (Vision).** Non-technical supervised-run UX (persona Sam); curated reliability benchmarks published; enterprise governance (credential vaulting, RBAC) competitive with Copilot Studio's posture [11].
+The live roadmap is [`roadmap.md`](./roadmap.md); it supersedes the release plan first written
+here in June 2026. In short:
+
+- **Built (October to November 2026).** Gemini computer use in thin and full harnesses;
+  desktop mode on Windows; Browser, Desktop and Hybrid benchmarks graded
+  from state, in a model x category x harness grid on a frozen Season 1; safety, grounding and
+  cost tracking on an eval dashboard; the trust gate on by default (FR-16's confirmation gating).
+- **Now.** Operon runs Gemini only; Claude, GPT and the cross-model adapter were removed on
+  2026-11-11, with their earlier data kept. The Season 1 core sets are saturated (most cells 9 or
+  10 of 10).
+- **Next (epic KAN-77).** Harder Season 2 core sets; a front door (local task page and
+  `operon run`); typed shell, file and HTTP or MCP tools beside the GUI, all through the trust
+  gate; isolated, parallel, resumable run environments; a grounder slot with Operon-side zoom;
+  task-level best-of-N; fewer steps; saved task files. Pixels stay the only GUI perception.
+- **Later.** A Windows app for specific back-office jobs with a same-day MCP server (proposed,
+  awaiting decisions); a simple model onboarding that brings other models back; the SDK release (`operon-agent` on PyPI) last.
 
 *(Roadmap is directional, not a commitment; sequencing subject to change.)*
 
@@ -236,7 +248,7 @@ Design invariants: browser and desktop share the loop, verifier, recovery, and p
 ## 14. Dependencies, assumptions, risks
 
 ### Dependencies
-- Model providers: Google Gemini (Computer Use + flash), optionally Anthropic; Playwright/Chromium; pyautogui/mss (desktop); FastAPI/uvicorn; Tauri (shell).
+- Model providers: Google Gemini (Computer Use + flash); Playwright/Chromium; pyautogui/mss (desktop); FastAPI/uvicorn; Tauri (shell).
 - Network access to provider APIs (unless a future local-model path is added).
 
 ### Assumptions

@@ -2,34 +2,22 @@ name: Live benchmark
 
 # Runs the live web benchmark (evals/live_bench.py) against a real API
 # server and real websites. Manual only: every run spends model credits.
-# Needs repo secrets GEMINI_API_KEY (always: the judge and critic are Gemini)
-# and ANTHROPIC_API_KEY (for the claude_computer_use backend).
+# Needs the repo secret GEMINI_API_KEY: Gemini is the agent, the critic and the judge.
 # Each backend's run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
-# Backend "model" runs the registry profile model_profile (evals/models.yaml) and
-# also reads OPENAI_API_KEY, OPENWEIGHT_BASE_URL and OPENWEIGHT_API_KEY when set.
 
 on:
   workflow_dispatch:
     inputs:
       backends:
-        description: "Browser backends to compare, space-separated"
-        default: "computer_use claude_computer_use"
-      claude_model:
-        description: "Model for claude_computer_use"
-        default: "claude-opus-5-5"
-      claude_effort:
-        description: "Effort for claude_computer_use (low, medium, high)"
-        default: "low"
+        description: "Browser backends to compare, space-separated: computer_use (Gemini computer use) and/or json (Gemini JSON)"
+        default: "computer_use"
       harness_profile:
-        description: "OPERON_HARNESS_PROFILE: thin or full, for Claude, Gemini computer use and registry models (thin ends on the model's own done, except Claude's)."
+        description: "OPERON_HARNESS_PROFILE: thin or full, for Gemini computer use (thin ends on the model's own done)."
         type: choice
         options: [thin, full]
-        default: thin
+        default: full
       critic:
         description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
-        default: ""
-      final_check_model:
-        description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
         default: ""
       suite:
         description: "core (the Browser category's 10 state-graded tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), or long (21 multi-app tasks on the local apps, 20 to 50 steps each)"
@@ -42,33 +30,22 @@ on:
       max_cost_usd:
         description: "Stop a backend's run once it has spent this many USD (0: no cap)"
         default: "3"
-      model_profile:
-        description: "Registry profile (evals/models.yaml) for backend 'model', e.g. qwen3-vl-32b (experimental)"
-        default: ""
   # Called by bench-command.yml when someone comments /bench on a PR.
   workflow_call:
     inputs:
-      backends: {type: string, default: "claude_computer_use"}
-      claude_model: {type: string, default: "claude-opus-5-5"}
-      claude_effort: {type: string, default: "low"}
-      harness_profile: {type: string, default: "thin"}
+      backends: {type: string, default: "computer_use"}
+      harness_profile: {type: string, default: "full"}
       critic: {type: string, default: ""}
-      final_check_model: {type: string, default: ""}
       suite: {type: string, default: "core"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
-      model_profile: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
         default: ""
     # Only these secrets reach a /bench run; the caller passes them by name.
     secrets:
-      ANTHROPIC_API_KEY: {required: false}
       GEMINI_API_KEY: {required: false}
-      OPENAI_API_KEY: {required: false}
-      OPENWEIGHT_BASE_URL: {required: false}
-      OPENWEIGHT_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -97,35 +74,18 @@ jobs:
     env:
       UV_PYTHON: "3.14"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPERON_BROWSER_BACKEND: ${{ matrix.backend }}
-      OPERON_BROWSER_CLAUDE_MODEL: ${{ inputs.claude_model }}
-      OPERON_BROWSER_CLAUDE_EFFORT: ${{ inputs.claude_effort }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_CRITIC: ${{ inputs.critic }}
-      OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
       OPERON_TRUST_GATE: "off"
       BROWSER_HEADLESS: "true"
-      # Registry models (model_profile): the adapter's keys and the self-hosted endpoint.
-      OPERON_MODEL_PROFILE: ${{ matrix.backend == 'model' && inputs.model_profile || '' }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENWEIGHT_BASE_URL: ${{ secrets.OPENWEIGHT_BASE_URL }}
-      OPENWEIGHT_API_KEY: ${{ secrets.OPENWEIGHT_API_KEY }}
     steps:
       - name: Check the secrets
         run: |
-          missing=""
-          [ -n "$GEMINI_API_KEY" ] || missing="$missing GEMINI_API_KEY"
-          if [ "$OPERON_BROWSER_BACKEND" = "claude_computer_use" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
-            missing="$missing ANTHROPIC_API_KEY"
-          fi
-          if [ "$OPERON_BROWSER_BACKEND" = "model" ] && [ -z "$OPERON_MODEL_PROFILE" ]; then
-            echo "::error::backend 'model' needs a model_profile (evals/models.yaml)."; exit 1
-          fi
-          if [ -n "$missing" ]; then
-            echo "::error::Missing repository secret(s):$missing. Add them under Settings > Secrets and variables > Actions."
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::Missing repository secret GEMINI_API_KEY. Add it under Settings > Secrets and variables > Actions."
             exit 1
           fi
 
@@ -190,7 +150,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: bench-${{ matrix.backend }}${{ matrix.backend == 'model' && format('-{0}', inputs.model_profile) || '' }}
+          name: bench-${{ matrix.backend }}
           path: |
             bench.txt
             uvicorn.log

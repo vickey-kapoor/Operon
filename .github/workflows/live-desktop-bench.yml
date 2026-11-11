@@ -8,8 +8,7 @@ name: Live desktop benchmark
 # set up per docs/azure-desktop-runner.md). For azure, the run starts the VM,
 # runs on it, and deallocates it afterwards, so it costs nothing while idle.
 # Manual only: every run spends model credits.
-# Needs repo secret GEMINI_API_KEY (the judge and verifier are Gemini), and
-# ANTHROPIC_API_KEY when desktop_backend is claude_computer_use. runner: azure
+# Needs repo secret GEMINI_API_KEY (Gemini is the agent, the verifier and the judge). runner: azure
 # also needs secret AZURE_CREDENTIALS; repo variables AZURE_VM_RESOURCE_GROUP and
 # AZURE_VM_NAME override the VM's default names (operon-bench, operon-desktop).
 # The run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
@@ -33,68 +32,47 @@ on:
         options: [core, full, smoke, safety, long]
         default: core
       desktop_backend:
-        description: "OPERON_DESKTOP_BACKEND: json (Gemini), computer_use (Gemini computer use), claude_computer_use or model"
+        description: "OPERON_DESKTOP_BACKEND: computer_use (Gemini computer use) or json (Gemini JSON)"
         type: choice
-        options: [json, computer_use, claude_computer_use, model]
-        default: json
+        options: [computer_use, json]
+        default: computer_use
       harness_profile:
-        description: "OPERON_HARNESS_PROFILE: thin or full, for Claude, Gemini computer use and registry models (thin ends on the model's own done, except Claude's)."
+        description: "OPERON_HARNESS_PROFILE: thin or full, for Gemini computer use (thin ends on the model's own done)."
         type: choice
         options: [thin, full]
-        default: thin
+        default: full
       critic:
         description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
-        default: ""
-      claude_model:
-        description: "OPERON_DESKTOP_CLAUDE_MODEL for claude_computer_use"
-        default: "claude-opus-5-5"
-      final_check_model:
-        description: "OPERON_FINAL_CHECK_MODEL for the thin harness (empty: the acting Claude model)"
         default: ""
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
-      zoom:
-        description: "Let Claude zoom into the screenshot (OPERON_CLAUDE_ZOOM)"
-        type: boolean
-        default: false
       args:
         description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"
         default: ""
       max_cost_usd:
         description: "Stop the run once it has spent this many USD (0: no cap)"
         default: "3"
-      model_profile:
-        description: "Registry profile (evals/models.yaml) for desktop_backend 'model' (experimental)"
-        default: ""
   # Called by bench-command.yml when someone comments /bench desktop on a PR.
   workflow_call:
     inputs:
       runner: {type: string, default: "github"}
       category: {type: string, default: "desktop"}
       suite: {type: string, default: "core"}
-      desktop_backend: {type: string, default: "claude_computer_use"}
-      harness_profile: {type: string, default: "thin"}
+      desktop_backend: {type: string, default: "computer_use"}
+      harness_profile: {type: string, default: "full"}
       critic: {type: string, default: ""}
-      claude_model: {type: string, default: "claude-opus-5-5"}
-      final_check_model: {type: string, default: ""}
       desktop_model: {type: string, default: ""}
-      zoom: {type: boolean, default: false}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
-      model_profile: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
         default: ""
     # Only these secrets reach a /bench run; the caller passes them by name.
     secrets:
-      ANTHROPIC_API_KEY: {required: false}
       GEMINI_API_KEY: {required: false}
       AZURE_CREDENTIALS: {required: false}
-      OPENAI_API_KEY: {required: false}
-      OPENWEIGHT_BASE_URL: {required: false}
-      OPENWEIGHT_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -155,34 +133,17 @@ jobs:
       UV_PYTHON: "3.14"
       PYTHONUTF8: "1"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_CRITIC: ${{ inputs.critic }}
-      OPERON_DESKTOP_CLAUDE_MODEL: ${{ inputs.claude_model }}
-      OPERON_FINAL_CHECK_MODEL: ${{ inputs.final_check_model }}
-      OPERON_CLAUDE_ZOOM: ${{ inputs.zoom && 'true' || 'false' }}
       # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
       OPERON_TRUST_GATE: "off"
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
-      # Registry models (model_profile): the adapter's keys and the self-hosted endpoint.
-      OPERON_MODEL_PROFILE: ${{ inputs.model_profile }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENWEIGHT_BASE_URL: ${{ secrets.OPENWEIGHT_BASE_URL }}
-      OPENWEIGHT_API_KEY: ${{ secrets.OPENWEIGHT_API_KEY }}
     steps:
       - name: Check the secrets
         run: |
-          $missing = @()
-          if (-not $env:GEMINI_API_KEY) { $missing += "GEMINI_API_KEY" }
-          $needsClaude = $env:OPERON_DESKTOP_BACKEND -eq "claude_computer_use"
-          if ($needsClaude -and -not $env:ANTHROPIC_API_KEY) { $missing += "ANTHROPIC_API_KEY" }
-          if ($env:OPERON_DESKTOP_BACKEND -eq "model" -and -not $env:OPERON_MODEL_PROFILE) {
-            Write-Output "::error::desktop_backend 'model' needs a model_profile (evals/models.yaml)."
-            exit 1
-          }
-          if ($missing.Count -gt 0) {
-            Write-Output "::error::Missing repository secret(s): $($missing -join ', '). Add them under Settings > Secrets and variables > Actions."
+          if (-not $env:GEMINI_API_KEY) {
+            Write-Output "::error::Missing repository secret GEMINI_API_KEY. Add it under Settings > Secrets and variables > Actions."
             exit 1
           }
 
@@ -314,7 +275,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: bench-${{ inputs.category || 'desktop' }}${{ inputs.model_profile && format('-{0}', inputs.model_profile) || '' }}
+          name: bench-${{ inputs.category || 'desktop' }}
           # .var/bench holds the JSON report and each task's graded screenshot.
           path: |
             bench.txt

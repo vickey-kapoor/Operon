@@ -13,7 +13,7 @@ dependency: only the "Dashboard data" workflow and a person backfilling by hand
 run it.
 
 The dashboard groups runs by ``config`` (backend, harness, model, commit, workflow
-run), filled from the report's own ``backend``/``claude_model``/``harness_profile``
+run), filled from the report's own ``backend``/``<mode>_model``/``harness_profile``
 fields and from the options below. Older reports don't record the backend or
 harness; pass ``--backend``/``--harness``/``--model`` for those, and
 ``--run-url``/``--git-sha`` to link a run to its workflow and commit. ``--flag
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS bench_runs (
     imported_at     timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS bench_runs_started_at ON bench_runs (started_at);
--- Cross-model benchmark: the model registry profile (evals/models.yaml) a run used.
+-- Earlier cross-model runs: the model registry profile a run used (none since Operon became Gemini-only).
 ALTER TABLE bench_runs ADD COLUMN IF NOT EXISTS model_profile text;
 CREATE TABLE IF NOT EXISTS bench_task_results (
     run_key            text NOT NULL REFERENCES bench_runs (key) ON DELETE CASCADE,
@@ -182,10 +182,10 @@ def grounding_as_run(report: dict) -> dict:
         "cost_usd": s.get("cost_usd", 0.0),
         "judge_cost_usd": 0.0,
         "cost_per_task_usd": s.get("cost_per_sample_usd"),
-        **{k: s.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")},
+        # Older self-hosted grounding reports billed GPU time here; keep it so spend stays whole.
         **({"gpu_cost_usd": s["gpu_cost_usd"]} if s.get("gpu_cost_usd") is not None else {}),
-        # model_id is the model itself (model is the registry profile): the same key as benchmark usage.
-        "by_model": {report.get("model_id") or report.get("model") or "unknown": {"requests": samples, "cost_usd": s.get("cost_usd", 0.0)}},
+        **{k: s.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")},
+        "by_model": {report.get("model") or "unknown": {"requests": samples, "cost_usd": s.get("cost_usd", 0.0)}},
         "unpriced_calls": s.get("unpriced_calls", 0),
         "unpriced_models": s.get("unpriced_models", []),
         "grounding": {k: v for k, v in s.items() if k in ("hit", "miss", "no_click", "error", "accuracy", "by_set")},
@@ -194,8 +194,8 @@ def grounding_as_run(report: dict) -> dict:
         "backend": report.get("backend"),
         "model": report.get("model"),
         "harness_profile": "grounding",
+        # Older reports of other models: keep the profile so a reimport keeps the same run key.
         **({"model_profile": report["model_profile"]} if report.get("model_profile") else {}),
-        **({"zoom": report["zoom"]} if "zoom" in report else {}),
         **(report.get("config") or {}),
     }
     return {
@@ -221,8 +221,9 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
     known = {k: v for k in ("backend", "harness_profile") if (v := report.get(k)) and v != "server default"}
     for field, value in known.items():
         config.setdefault(field, value)
+    # Older reports of other models (kept on the dashboard) name the model in their own fields;
+    # reading them keeps a reimport on the same run key and label.
     if report.get("model_profile"):
-        # A registry model: the profile names it, and its id is the model.
         config.setdefault("model_profile", report["model_profile"])
         model = report.get("model_id")
     elif config.get("backend") == "claude_computer_use":
@@ -232,7 +233,7 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
     if model and model != "server default":
         config.setdefault("model", model)
     if report.get("critic"):
-        # A full run's step critic (live_bench critic_label): "same:<model>" or "<provider>:<model>".
+        # A full run's step critic (live_bench critic_label): "same:<model>" or "gemini:<model>".
         config.setdefault("critic_model", report["critic"])
     for field, value in overrides.items():
         if value is not None:
@@ -658,33 +659,6 @@ def import_reports(
     return keys
 
 
-# ---------- model registry for the Leaderboard ----------
-
-MODELS_JSON = Path(__file__).resolve().parents[1] / "dashboard" / "models.json"
-
-
-def registry_models() -> list[dict]:
-    """Every registry profile (``evals/models.yaml``) as the Leaderboard lists it, so a
-    model shows up before its first run. ``dashboard/models.json`` holds this list
-    (Vercel serves only ``dashboard/``); ``python -m evals.dashboard models`` rewrites it."""
-    from operon.agent.backends.model_adapter.registry import load_registry
-
-    return [
-        {
-            "profile": profile.name,
-            "model": profile.model,
-            "adapter": profile.adapter,
-            "environments": list(profile.environments),
-            "self_hosted": profile.pricing.gpu_hour_usd is not None,
-        }
-        for profile in load_registry().values()
-    ]
-
-
-def models_json() -> str:
-    return json.dumps({"source": "evals/models.yaml", "models": registry_models()}, indent=2) + "\n"
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -701,16 +675,11 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--blob", action="store_true", help="upload screenshots and traces to Vercel Blob ($BLOB_READ_WRITE_TOKEN)")
     add.add_argument("--alert", action="store_true", help="post regressions to Slack ($SLACK_WEBHOOK_URL)")
     add.add_argument("--comment-file", type=Path, help="write the results table for a /bench PR comment (Markdown) here")
-    commands.add_parser("models", help="rewrite dashboard/models.json from evals/models.yaml")
     return parser
 
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "models":
-        MODELS_JSON.write_text(models_json(), encoding="utf-8")
-        print(f"wrote {MODELS_JSON}")
-        return 0
     if not args.database_url:
         print("Set DATABASE_URL (or pass --database-url) to the dashboard's Postgres database.", file=sys.stderr)
         return 2

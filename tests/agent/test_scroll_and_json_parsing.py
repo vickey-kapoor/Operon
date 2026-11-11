@@ -120,21 +120,6 @@ def test_gemini_vertical_scroll_is_unchanged() -> None:
     assert action["scroll_amount"] < 0
 
 
-def test_claude_sideways_scroll_is_horizontal() -> None:
-    from operon.agent.actions.translation import normalize_claude_computer_calls
-
-    payload = normalize_claude_computer_calls(
-        [{"name": "scroll", "input": {"coordinate": [10, 10], "scroll_direction": "left", "scroll_amount": 2}}],
-        scale_x=1.0,
-        scale_y=1.0,
-        screen_width=1000,
-        screen_height=800,
-    )
-
-    assert payload["horizontal"] is True
-    assert payload["scroll_amount"] < 0
-
-
 def test_horizontal_is_only_valid_on_scroll() -> None:
     with pytest.raises(ValueError):
         AgentAction(action_type=ActionType.CLICK, x=1, y=1, horizontal=True)

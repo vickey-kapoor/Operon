@@ -5,20 +5,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
-from operon.clients.anthropic_computer_use import LAUNCH_APP_TOOL
 from operon.clients.gemini_computer_use import GeminiComputerUseClient
 
 DESKTOP_ENVIRONMENT = "ENVIRONMENT_DESKTOP"
 
 # Gemini's desktop environment has OS-level cursor and key actions but no navigate,
-# so apps are opened with this custom function: the same name, description and app
-# list as Claude's launch_app tool, in Gemini's function-declaration shape.
+# so apps are opened with this custom function. Only catalog apps can be launched;
+# the executor refuses anything else.
 GEMINI_LAUNCH_APP_FUNCTION: dict[str, Any] = {
-    "name": LAUNCH_APP_TOOL["name"],
-    "description": LAUNCH_APP_TOOL["description"],
+    "name": "launch_app",
+    "description": (
+        "Open a desktop application by name. Use this instead of clicking the Start menu, "
+        "taskbar or desktop icons. Opening an app that is already running opens another window."
+    ),
     "parameters": {
-        key: value for key, value in LAUNCH_APP_TOOL["input_schema"].items() if key != "additionalProperties"
+        "type": "object",
+        "properties": {
+            "app": {"type": "string", "enum": sorted(APP_LAUNCH_TARGETS), "description": "Application to open."},
+        },
+        "required": ["app"],
     },
 }
 

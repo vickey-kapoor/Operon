@@ -203,7 +203,8 @@
 
   // ---- live stream: frames and events over /ws/stream with a short-lived token ----
   async function connectStream() {
-    if (ws) { ws.close(); ws = null; }
+    // Drop the old socket's handler first, or closing it schedules a second reconnect.
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
     let token;
     try { token = (await api("POST", "/app/api/stream-token", { scope: "control" })).token; }
     catch (e) { $("conn").textContent = "stream unavailable"; return; }

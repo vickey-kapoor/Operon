@@ -59,7 +59,9 @@ owner connection string the importer uses. In the Neon SQL editor:
 CREATE ROLE dashboard_ro LOGIN PASSWORD '<a new password>';
 GRANT CONNECT ON DATABASE neondb TO dashboard_ro;
 GRANT USAGE ON SCHEMA public TO dashboard_ro;
-GRANT SELECT ON bench_runs, bench_task_results, judge_checks TO dashboard_ro;
+GRANT SELECT ON bench_runs, bench_task_results TO dashboard_ro;
+-- After the first `judge_check run --save` creates it:
+GRANT SELECT ON judge_checks TO dashboard_ro;
 ```
 
 Then add a Vercel environment variable `DASHBOARD_DATABASE_URL` with that role's

@@ -32,7 +32,9 @@ def _grade(name: str, snapshot: dict) -> bool:
 
 
 def test_every_desktop_task_has_a_state_check() -> None:
-    assert {task.name for task in DESKTOP_TASKS} == set(desktop_state.CHECKS)
+    from evals.season2.desktop import DESKTOP_TASKS as SEASON2_DESKTOP
+
+    assert {task.name for task in [*DESKTOP_TASKS, *SEASON2_DESKTOP]} == set(desktop_state.CHECKS)
 
 
 def test_notepad_checks_read_the_document_text() -> None:

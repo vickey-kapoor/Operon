@@ -62,6 +62,8 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.leaderboard.season check 1
 .venv\Scripts\python -m evals.live_bench --season 1               # Browser core; refuses if any task changed
 .venv\Scripts\python -m evals.live_bench --suite long --season 1   # held-out from $OPERON_SEASON_PRIVATE
+# Season 2 (KAN-78): harder core sets (evals/season2/, CORE2; new Finance/People/Rooms apps), run as core
+.venv\Scripts\python -m evals.live_bench --season 2               # also live_desktop_bench / live_hybrid_bench
 
 # Judge check: compare the benchmark judge with hand labels (judge calls only, no agent runs)
 .venv\Scripts\python -m evals.judge_check template .var\bench\full-<stamp>.json > labels.jsonl

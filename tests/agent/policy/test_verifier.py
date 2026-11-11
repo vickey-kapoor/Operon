@@ -648,3 +648,46 @@ def test_a_critic_reply_with_no_json_object_does_not_parse() -> None:
     from operon.agent.policy.verifier import _parse_verification_output
 
     assert _parse_verification_output("The step looks fine to me.") is None
+
+
+def test_a_critic_reply_with_a_free_text_stop_reason_keeps_its_verdict() -> None:
+    from operon.agent.policy.verifier import _parse_verification_output
+
+    # GPT's reply from a Browser Full run (KAN-71): valid JSON, but stop_reason is a sentence.
+    raw = (
+        '{\n  "status": "success",\n  "expected_outcome_met": true,\n  "stop_condition_met": true,\n'
+        '  "reason": "The cart shows mug quantity 4 with a confirmation message, no notebook, and no checkout initiated.",\n'
+        '  "failure_type": null,\n  "stop_reason": "Task complete; remain in the cart without checking out."\n}'
+    )
+    parsed = _parse_verification_output(raw)
+    assert parsed is not None
+    assert parsed.status.value == "success"
+    assert parsed.stop_condition_met is True
+    assert parsed.stop_reason is None
+
+
+def test_a_critic_reply_with_an_unknown_failure_type_or_extra_key_keeps_its_verdict() -> None:
+    from operon.agent.policy.verifier import _parse_verification_output
+
+    raw = (
+        '{"status": "failure", "expected_outcome_met": false, "stop_condition_met": false,'
+        ' "reason": "Nothing changed", "failure_type": "click_missed", "confidence": 0.8,'
+        ' "critic_model_used": true}'
+    )
+    parsed = _parse_verification_output(raw)
+    assert parsed is not None
+    assert parsed.status.value == "failure"
+    assert parsed.failure_type is None
+    assert parsed.critic_model_used is False
+
+
+def test_a_critic_reply_with_a_listed_stop_reason_keeps_it() -> None:
+    from operon.agent.policy.verifier import _parse_verification_output
+
+    raw = (
+        '{"status": "success", "expected_outcome_met": true, "stop_condition_met": true,'
+        ' "reason": "Done", "stop_reason": "task_completed"}'
+    )
+    parsed = _parse_verification_output(raw)
+    assert parsed is not None
+    assert parsed.stop_reason is not None and parsed.stop_reason.value == "task_completed"

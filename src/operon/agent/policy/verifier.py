@@ -613,6 +613,32 @@ def _has_phrase(phrase: str, text: str) -> bool:
 
 _NULL_STRINGS = frozenset({"null", "none"})
 
+# Optional label fields a critic may fill with its own words instead of one of the
+# listed values (GPT writes stop_reason as a sentence). An unknown label is dropped,
+# not the whole verdict: status, expected_outcome_met and reason still count.
+_OPTIONAL_LABELS = {
+    "failure_type": VerificationFailureType,
+    "failure_category": FailureCategory,
+    "failure_stage": LoopStage,
+    "stop_reason": StopReason,
+}
+# Fields the verifier sets itself, never the critic.
+_CRITIC_FIELDS = frozenset(VerificationResult.model_fields) - {
+    "critic_model_used",
+    "critic_fallback_reason",
+    "patience_retries",
+    "video_verified",
+    "video_detail",
+}
+
+
+def _known_label(enum_type, value) -> bool:
+    try:
+        enum_type(value)
+    except ValueError:
+        return False
+    return True
+
 
 def _parse_verification_output(raw_output: str) -> VerificationResult | None:
     cleaned = raw_output.strip()
@@ -642,6 +668,13 @@ def _parse_verification_output(raw_output: str) -> VerificationResult | None:
             key: None if key != "reason" and isinstance(value, str) and value.strip().lower() in _NULL_STRINGS else value
             for key, value in payload.items()
         }
+        # Keys outside the verdict's shape (a critic may add its own) and labels
+        # outside the listed values would fail strict validation and drop the verdict.
+        payload = {key: value for key, value in payload.items() if key in _CRITIC_FIELDS}
+        for key, enum_type in _OPTIONAL_LABELS.items():
+            value = payload.get(key)
+            if value is not None and not _known_label(enum_type, value):
+                payload[key] = None
     try:
         return VerificationResult.model_validate(payload)
     except ValidationError:

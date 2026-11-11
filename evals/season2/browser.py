@@ -81,10 +81,12 @@ def banks_changed(state: dict) -> bool:
 def people_diff(state: dict) -> tuple[dict[str, dict], set[str], dict[str, dict]]:
     """``(changed, removed, added)``: each changed person's new values by field, the ids
     removed, and the people added."""
-    people = state["people"]["people"]
-    changed = {pid: {k: v for k, v in p.items() if v != PEOPLE[pid][k]} for pid, p in people.items() if pid in PEOPLE}
-    return ({pid: c for pid, c in changed.items() if c}, set(PEOPLE) - set(people),
-            {pid: p for pid, p in people.items() if pid not in PEOPLE})
+    # PEOPLE read once into a local: a module name used inside a comprehension is hashed once per
+    # comprehension on Python 3.11 but once in all on 3.12+, so the season fingerprint would differ.
+    people, seed = state["people"]["people"], PEOPLE
+    changed = {pid: {k: v for k, v in p.items() if v != seed[pid][k]} for pid, p in people.items() if pid in seed}
+    return ({pid: c for pid, c in changed.items() if c}, set(seed) - set(people),
+            {pid: p for pid, p in people.items() if pid not in seed})
 
 
 def new_bookings(state: dict) -> list[dict]:

@@ -121,8 +121,15 @@ jobs:
           if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ]; } && [ "$target" = hybrid ]; then
             echo "::error::Hybrid has no $suite suite; use core, smoke or all (its long and safety tasks are in core)."; exit 1
           fi
-          explicit_profile=$profile
-          # Each backend's own default harness: thin for Claude, full for Gemini.
+          # Settle the backend before the harness and the checks that depend on it.
+          if [ -n "$model_profile" ]; then
+            if [ "$zoom" = true ] || [ -n "$named_model" ]; then
+              drop=$named_model; [ "$zoom" = true ] && drop="${drop:+$drop and }zoom"
+              echo "::error::model= picks the model itself; drop $drop."; exit 1
+            fi
+            backend=model
+          fi
+          # Each backend's own default harness: full for Gemini, thin for Claude and registry models.
           if [ -z "$profile" ]; then
             if [ "$backend" = computer_use ]; then profile=full; else profile=thin; fi
           fi
@@ -146,10 +153,6 @@ jobs:
           fi
           if [ "$backend" = computer_use ]; then model=; fi  # Gemini's own default model
           if [ -n "$model_profile" ]; then
-            if [ "$zoom" = true ] || [ -n "$named_model" ]; then
-              echo "::error::model= picks the model itself; drop zoom and $named_model."; exit 1
-            fi
-            profile=${explicit_profile:-thin} backend=model
             [ "$target" = grounding ] && model=$model_profile
           fi
           echo "target=$target profile=$profile suite=$suite model=$model check_model=$check_model runner=$runner repeat=$repeat backend=$backend zoom=$zoom model_profile=$model_profile critic=$critic extra=$extra"

@@ -5,15 +5,26 @@ suite, a grounding eval, repeated runs for flakiness, and a check of the benchma
 
 ## Latest results
 
-As of October 2026.
+As of 2026-11-11. Season 1 core sets, 10 tasks per cell, graded from state; one pass each.
+Triage of every miss is in [reports/season-1-grid.md](reports/season-1-grid.md), and the plan
+that follows from it is in the [roadmap](roadmap.md).
+
+| Model | Browser Thin | Browser Full | Desktop Thin | Desktop Full | Hybrid Thin | Hybrid Full |
+|---|---|---|---|---|---|---|
+| Gemini 3.5 Flash | 10/10 | 10/10 | 9/10 | 10/10 | 9/10 | 7/10 |
+| Claude Sonnet 5.5 | 9/10 | 10/10 | 10/10\* | 10/10\* | not run | not run |
+| GPT (`openai-computer-use`) | 10/10 | in progress | 10/10 | in progress | not run | not run |
+
+\* On the Desktop core before the long and safety tasks were added (KAN-74).
+
+Earlier results, before the grid:
 
 | Benchmark | Configuration | Result |
 |---|---|---|
-| Browser, 44 live web tasks | Claude Opus 5.5, thin harness | 41 to 43 of 44 over the last three runs, about 29 s and $0.04 to $0.06 per task |
-| Browser, 44 live web tasks | Gemini, full harness | 40/44, about 50 s per task |
-| Desktop smoke, 3 Windows tasks | Claude Opus 5.5, thin harness | 3/3, 24 s per task |
-| Desktop smoke on the Azure VM | Claude Opus 5.5, thin harness | 3/3 in both runs so far, 32 to 36 s and $0.06 to $0.07 per task |
-| Safety, 9 injection and overreach tasks | Claude, thin harness | 6/9, none compromised; the 3 misses were fixture pages, since fixed |
+| Browser, 44 live web tasks (October 2026) | Claude Opus 5.5, thin harness | 41 to 43 of 44 over three runs, about 29 s and $0.04 to $0.06 per task |
+| Browser, 44 live web tasks (October 2026) | Gemini, full harness | 40/44, about 50 s per task |
+| Grounding, ScreenSpot-Pro | Claude Opus 5.5 / Gemini 3.5 Flash | 70% (83% with zoom) / 48%; see [reports/grounding-and-flakiness.md](reports/grounding-and-flakiness.md) |
+| Safety, 9 injection and overreach tasks | Claude, thin harness | none compromised; see [reports/safety-and-judge-check.md](reports/safety-and-judge-check.md) |
 | Judge vs 88 hand labels | Gemini 3.5 Flash judge | 99% accuracy, 100% recall |
 
 The eval dashboard at https://operon-evals.vercel.app has every run.
@@ -284,9 +295,11 @@ skips their screenshots and run folders. The core set of each category
 on request, and apps and safety are pass/fail gates, since every model passes them. A broken task is never edited in place: `retire`
 logs it in the manifest with the date and reason, for every model, and later runs skip it.
 
-Season 1 gets frozen once its harder tasks exist (KAN-65). Running held-out tasks in CI is not
-wired up yet. Before it is, the benchmark workflows have to fetch the private file and stop
-uploading `uvicorn.log` and run folders, both of which name the tasks.
+Season 1 was frozen on 2026-11-10 (`evals/seasons/season-1.json`, season hash
+`423cd257962f...`; KAN-65, with the core sets from KAN-72, KAN-73 and KAN-74). Season 2, with
+harder core sets, is planned (KAN-78; see the [roadmap](roadmap.md)); Season 1 stays for history. The
+benchmark workflows load the held-out file from the secret, but they still upload `uvicorn.log`
+with the report, and that log can name held-out tasks.
 
 ## Eval dashboard
 

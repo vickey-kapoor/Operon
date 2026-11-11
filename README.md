@@ -24,14 +24,16 @@ the result. No DOM, no selectors, no accessibility tree.
 
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages and native Windows apps.
-- **Claude or Gemini.** Claude computer use is the default when an Anthropic key is set;
-  Gemini is fully supported, and is the fallback when Claude runs with the full harness.
-- **A thin harness for strong models.** Claude makes every decision and checks its own
-  result once at the end; Gemini gets rules, guards and recovery around it.
-- **Safety around the loop.** A file guard and step budget on every run, plus an optional
-  trust gate that blocks or asks a human before risky actions.
-- **Measured.** A 44-task live web benchmark, a prompt-injection suite, local test apps and a
-  Windows desktop suite, with cost per task, on an [eval dashboard](https://operon-evals.vercel.app).
+- **Any computer-use model.** Claude computer use is the default when an Anthropic key is set;
+  Gemini is fully supported, and a model adapter runs GPT and open-weight models on the same
+  tasks.
+- **A thin harness for strong models.** The model makes every decision (Claude's "done" is
+  checked once at the end); the full harness adds rules, guards, a per-step verifier and recovery.
+- **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on
+  by default) that blocks or asks a human before risky actions.
+- **Measured.** Browser, Desktop and Hybrid benchmarks graded from app and machine state, each
+  in both harnesses, on a frozen task set (Season 1), plus safety, grounding and cost tracking
+  on an [eval dashboard](https://operon-evals.vercel.app).
 
 ## How it works
 
@@ -72,16 +74,28 @@ curl -X POST http://127.0.0.1:8080/run-task \
 > ([configuration](docs/configuration.md)). The API requires the key it generates in
 > `.var/api-key` (or one from `API_KEYS`).
 
+## Status and roadmap
+
+Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Claude, Gemini or GPT.
+On the Season 1 core sets Gemini and Claude score 9 or 10 of 10 in most cells, so the next step
+is harder tasks (Season 2), then an architecture in line with today's leading computer-use
+agents: a simple way to run a task, typed shell and file tools beside the GUI, isolated and
+parallel run environments, a grounding slot and fewer steps. A Python SDK release comes last.
+See the [roadmap](docs/roadmap.md) for what has been built, where things stand and what is next.
+
 ## Documentation
 
 | Topic | |
 |---|---|
+| [Roadmap](docs/roadmap.md) | What has been built, the current results, and what comes next |
 | [Configuration](docs/configuration.md) | Model keys, backends, harness profiles, every setting |
 | [HTTP API](docs/api.md) | Routes for browser and desktop runs, the live stream, auth |
 | [Evaluation](docs/evaluation.md) | Latest results, benchmark suites, `/bench` PR commands, cost caps, dashboard |
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |
 | [Azure desktop runner](docs/azure-desktop-runner.md) | Running the desktop benchmark on a cloud Windows VM |
+| [Reports](docs/reports/) | Benchmark write-ups, including the [Season 1 grid](docs/reports/season-1-grid.md) |
+| [PRD](docs/PRD.md) and [RFCs](docs/rfcs/) | Product context and design proposals |
 
 ## Development
 

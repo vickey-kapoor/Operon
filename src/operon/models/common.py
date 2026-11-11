@@ -130,6 +130,8 @@ class RunTaskRequest(StrictModel):
     benchmark: str | None = Field(default=None, min_length=1)
     mode: str = Field(default="batch", pattern=r"^(observable|batch)$")
     max_steps: int = Field(default=25, ge=1, le=200)
+    # ask | risky | auto (see agent/policy/trust_gate.py); None = OPERON_PERMISSION_MODE.
+    permission_mode: str | None = Field(default=None, pattern=r"^(ask|risky|auto)$")
 
     @field_validator("intent", mode="before")
     @classmethod

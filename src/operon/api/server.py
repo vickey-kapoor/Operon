@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dotenv import find_dotenv, load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from operon.core.paths import runs_dir
 
@@ -101,7 +102,34 @@ def create_app() -> FastAPI:
         logger.info("API_KEYS not set: clients must send the key in %s as X-API-Key", api_key_file())
     app.include_router(router, dependencies=[Depends(require_api_key)])
     app.include_router(ws_router)
+
+    # The local task page (KAN-89). Served without the key: it holds no secret and
+    # asks for the key (or reads it from the #key= fragment `operon serve` prints).
+    @app.get("/app", include_in_schema=False)
+    async def task_page() -> HTMLResponse:
+        return HTMLResponse(task_page_html(), headers=_PAGE_HEADERS)
+
     return app
+
+
+# The page runs only its own inline script and talks only to this server.
+_PAGE_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "img-src 'self' blob: data:; connect-src 'self' ws: wss:; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def task_page_html() -> str:
+    """The task page's HTML, shipped as package data (operon/api/static/app.html)."""
+    from importlib.resources import files
+
+    return files("operon.api").joinpath("static/app.html").read_text(encoding="utf-8")
 
 
 app = create_app()

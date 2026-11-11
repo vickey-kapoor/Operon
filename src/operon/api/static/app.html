@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operon</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc;
+    --accent: #2f5bd3; --accent-ink: #ffffff; --warn-bg: #fff4dc; --warn-line: #e7b54a;
+    --ok: #1f7a46; --bad: #b4322b; --takeover-bg: #e9f0ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151514; --panel: #1e1e1c; --ink: #ecebe6; --muted: #9d9c95; --line: #33332f;
+      --accent: #7b9cff; --accent-ink: #10131c; --warn-bg: #3a2f17; --warn-line: #a7802f;
+      --ok: #5cc48a; --bad: #ff7a70; --takeover-bg: #1d2740;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
+  header .conn { margin-left: auto; color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  textarea, input[type=text], input[type=password], input[type=number], select {
+    width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); font: inherit; }
+  textarea { min-height: 76px; resize: vertical; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > * { flex: 1 1 auto; }
+  button { font: inherit; padding: 8px 14px; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  .modes { display: grid; gap: 6px; }
+  .modes label { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--ink); font-size: 14px; cursor: pointer; }
+  .modes small { display: block; color: var(--muted); }
+  .screen { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 10;
+            display: flex; align-items: center; justify-content: center; }
+  .screen img { max-width: 100%; max-height: 100%; display: block; }
+  .screen .empty { color: #8a8a85; font-size: 14px; padding: 20px; text-align: center; }
+  .screen.takeover img { cursor: crosshair; outline: 3px solid var(--accent); }
+  .status { display: flex; gap: 10px; align-items: center; margin: 10px 0 0; flex-wrap: wrap; }
+  .pill { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.running { color: var(--accent); border-color: var(--accent); }
+  .pill.succeeded { color: var(--ok); border-color: var(--ok); }
+  .pill.failed, .pill.cancelled { color: var(--bad); border-color: var(--bad); }
+  .pill.waiting_for_user { color: var(--warn-line); border-color: var(--warn-line); }
+  .card { border-radius: 8px; padding: 12px; margin-top: 12px; }
+  .card.ask { background: var(--warn-bg); border: 1px solid var(--warn-line); }
+  .card.takeover { background: var(--takeover-bg); border: 1px solid var(--accent); }
+  .card p { margin: 0 0 10px; }
+  ol.steps { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
+  ol.steps li { padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  ol.steps li:first-child { border-top: 0; }
+  ol.steps .n { color: var(--muted); display: inline-block; min-width: 2.2em; }
+  ol.steps .why { color: var(--muted); display: block; margin-left: 2.2em; }
+  ol.steps .bad { color: var(--bad); }
+  .report dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0 0; font-size: 14px; }
+  .report dt { color: var(--muted); }
+  .report dd { margin: 0; }
+  .hidden { display: none !important; }
+  .err { color: var(--bad); font-size: 13px; margin-top: 8px; min-height: 1em; }
+  .note { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Operon</h1>
+  <span class="note">local task page</span>
+  <span class="conn" id="conn">not connected</span>
+</header>
+
+<main>
+  <div>
+    <section id="key-panel" class="hidden">
+      <h2>API key</h2>
+      <p class="note">Paste the key from <code>.var/api-key</code> (or <code>API_KEYS</code>). It stays in this tab only.</p>
+      <div class="row">
+        <input type="password" id="key" autocomplete="off" placeholder="API key">
+        <button class="primary" id="key-save" style="flex:0 0 auto">Use key</button>
+      </div>
+    </section>
+
+    <section id="live">
+      <h2>Live view</h2>
+      <div class="screen" id="screen"><div class="empty" id="screen-empty">Start a task to watch it here.</div><img id="frame" class="hidden" alt="Live view of the run"></div>
+      <div class="status">
+        <span class="pill" id="status-pill">idle</span>
+        <span id="status-text" class="note"></span>
+        <span style="margin-left:auto" class="row">
+          <button id="btn-takeover" disabled>Take over</button>
+          <button id="btn-stop" class="danger" disabled>Stop</button>
+        </span>
+      </div>
+
+      <div class="card ask hidden" id="ask-card">
+        <p><strong id="ask-title">Operon needs your approval</strong><br><span id="ask-reason"></span></p>
+        <div class="row">
+          <button class="primary" id="btn-approve" style="flex:0 0 auto">Approve</button>
+          <input type="text" id="decline-note" placeholder="Optional: what to do instead">
+          <button id="btn-decline" style="flex:0 0 auto">Decline</button>
+        </div>
+      </div>
+
+      <div class="card takeover hidden" id="takeover-card">
+        <p><strong>You are in control.</strong> Operon is paused: it takes no screenshots and makes no model calls until you hand back.
+          <span id="takeover-hint"></span></p>
+        <div class="row" id="takeover-keys">
+          <input type="text" id="takeover-text" placeholder="Type into the focused field">
+          <button id="btn-type" style="flex:0 0 auto">Type</button>
+          <button data-key="Enter" style="flex:0 0 auto">Enter</button>
+          <button data-key="Tab" style="flex:0 0 auto">Tab</button>
+          <button data-key="Escape" style="flex:0 0 auto">Esc</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="handback-note" placeholder="Optional: tell Operon what you did">
+          <button class="primary" id="btn-handback" style="flex:0 0 auto">Hand back</button>
+        </div>
+      </div>
+      <div class="err" id="err"></div>
+    </section>
+
+    <section id="report" class="report hidden" style="margin-top:16px">
+      <h2>Result</h2>
+      <div><strong id="report-summary"></strong></div>
+      <p id="report-final" class="note"></p>
+      <dl id="report-facts"></dl>
+    </section>
+  </div>
+
+  <div>
+    <section id="task-panel">
+      <h2>New task</h2>
+      <label for="intent">What should Operon do?</label>
+      <textarea id="intent" maxlength="500" placeholder="e.g. Find the cheapest 1 TB SSD on the shop page and add it to the cart"></textarea>
+      <div class="row">
+        <div>
+          <label for="environment">Where</label>
+          <select id="environment">
+            <option value="browser">Browser</option>
+            <option value="desktop">Desktop</option>
+          </select>
+        </div>
+        <div>
+          <label for="max-steps">Max steps</label>
+          <input type="number" id="max-steps" min="1" max="200" value="25">
+        </div>
+      </div>
+      <label for="start-url">Start page (optional)</label>
+      <input type="text" id="start-url" placeholder="https://...">
+      <label>Permissions</label>
+      <div class="modes">
+        <label><input type="radio" name="mode" value="ask"><span>Ask every time<small>Approve each action before it runs.</small></span></label>
+        <label><input type="radio" name="mode" value="risky" checked><span>Ask for risky actions<small>Purchases, payments, deletions and the like wait for you.</small></span></label>
+        <label><input type="radio" name="mode" value="auto"><span>Auto<small>No approvals. Blocked actions stay blocked.</small></span></label>
+      </div>
+      <div style="margin-top:14px"><button class="primary" id="btn-start" style="width:100%">Start task</button></div>
+    </section>
+
+    <section style="margin-top:16px">
+      <h2>Steps</h2>
+      <ol class="steps" id="steps"><li class="note">No steps yet.</li></ol>
+    </section>
+  </div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
+  };
+
+  // The key arrives in the URL fragment (never sent to the server) or is pasted once.
+  const params = new URLSearchParams(location.hash.slice(1));
+  if (params.get("key")) store.set("operon-key", params.get("key"));
+  let runId = params.get("run") || store.get("operon-run");
+  if (location.hash) history.replaceState(null, "", location.pathname + (runId ? "#run=" + runId : ""));
+  let apiKey = store.get("operon-key") || "";
+  let status = null, ws = null, frameUrl = null, wsFrames = false, lastShot = null, polling = null;
+
+  function showError(msg) { $("err").textContent = msg || ""; }
+
+  async function api(method, path, body) {
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers["X-API-Key"] = apiKey;
+    const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    if (res.status === 401) { $("key-panel").classList.remove("hidden"); throw new Error("The API key was refused."); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : res.statusText);
+    return data;
+  }
+
+  // ---- live stream: frames and events over /ws/stream with a short-lived token ----
+  async function connectStream() {
+    // Drop the old socket's handler first, or closing it schedules a second reconnect.
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    let token;
+    try { token = (await api("POST", "/app/api/stream-token", { scope: "control" })).token; }
+    catch (e) { $("conn").textContent = "stream unavailable"; return; }
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws/stream`, ["x-stream-token", token]);
+    ws.binaryType = "blob";
+    ws.onopen = () => { $("conn").textContent = "connected"; };
+    ws.onclose = () => { $("conn").textContent = "stream closed"; wsFrames = false; setTimeout(() => { if (runId && !(status && status.done)) connectStream(); }, 3000); };
+    ws.onmessage = (ev) => {
+      if (ev.data instanceof Blob) { wsFrames = true; showFrame(ev.data); return; }
+      try {
+        const msg = JSON.parse(ev.data);
+        if (!runId || !msg.run_id || msg.run_id === runId) refresh();
+      } catch {}
+    };
+  }
+
+  function showFrame(blob) {
+    const url = URL.createObjectURL(blob);
+    $("frame").src = url;
+    $("frame").classList.remove("hidden");
+    $("screen-empty").classList.add("hidden");
+    if (frameUrl) URL.revokeObjectURL(frameUrl);
+    frameUrl = url;
+  }
+
+  // Desktop runs (and browser runs between frames) show the latest step screenshot.
+  async function showScreenshot(path) {
+    if (!path || path === lastShot || wsFrames) return;
+    lastShot = path;
+    try {
+      const headers = apiKey ? { "X-API-Key": apiKey } : {};
+      const res = await fetch("/observer/api/artifact?path=" + encodeURIComponent(path), { headers });
+      if (res.ok) showFrame(await res.blob());
+    } catch {}
+  }
+
+  // ---- run state ----
+  async function refresh() {
+    if (!runId) return;
+    try { status = await api("GET", `/app/api/runs/${runId}`); }
+    catch (e) { showError(e.message); return; }
+    render();
+    if (status.done) { stopPolling(); loadReport(); }
+  }
+
+  function startPolling() { stopPolling(); polling = setInterval(refresh, 1500); }
+  function stopPolling() { if (polling) clearInterval(polling); polling = null; }
+
+  function render() {
+    const s = status;
+    const pill = $("status-pill");
+    pill.className = "pill " + s.status;
+    pill.textContent = s.in_takeover ? "you are in control" : s.status.replace(/_/g, " ");
+    $("status-text").textContent = `${s.step_count}/${s.max_steps} steps · ${s.environment} · ${s.permission_mode} mode`;
+    $("btn-stop").disabled = s.done;
+    $("btn-takeover").disabled = s.done || s.in_takeover;
+    $("btn-start").disabled = !s.done;
+    const w = s.waiting;
+    $("ask-card").classList.toggle("hidden", !w || w.kind === "takeover");
+    if (w && w.kind !== "takeover") {
+      $("ask-title").textContent = w.kind === "approval" ? "Operon needs your approval" : "Operon needs you";
+      $("ask-reason").textContent = w.reason;
+      $("btn-approve").textContent = w.kind === "approval" ? "Approve" : "Continue";
+    }
+    $("takeover-card").classList.toggle("hidden", !s.in_takeover);
+    $("screen").classList.toggle("takeover", s.in_takeover && s.environment === "browser");
+    $("takeover-keys").classList.toggle("hidden", s.environment !== "browser");
+    $("takeover-hint").textContent = s.environment === "browser"
+      ? "Click on the live view and use the keys below, or use the browser window itself."
+      : "Use your mouse and keyboard on the desktop.";
+    const list = $("steps");
+    list.replaceChildren();
+    if (!s.recent_steps.length) { const li = document.createElement("li"); li.className = "note"; li.textContent = "No steps yet."; list.append(li); }
+    for (const st of s.recent_steps) {
+      const li = document.createElement("li");
+      const n = document.createElement("span"); n.className = "n"; n.textContent = st.step + ".";
+      const a = document.createElement("span"); a.textContent = st.action; if (!st.ok) a.className = "bad";
+      li.append(n, a);
+      if (st.why) { const why = document.createElement("span"); why.className = "why"; why.textContent = st.why; li.append(why); }
+      list.append(li);
+    }
+    if (!frameUrl) $("screen-empty").textContent = s.done ? "No screen was captured." : "Waiting for the first screen...";
+    showScreenshot(s.latest_screenshot);
+  }
+
+  async function loadReport() {
+    let r;
+    try { r = await api("GET", `/app/api/runs/${runId}/report`); } catch (e) { showError(e.message); return; }
+    $("report").classList.remove("hidden");
+    $("report-summary").textContent = r.summary;
+    $("report-final").textContent = r.final_message ? "Last word: " + r.final_message : "";
+    const facts = [
+      ["Task", r.intent], ["Steps", `${r.steps} (${r.failed_steps} failed)`], ["Approvals", r.approvals],
+      ["Takeovers", r.takeovers], ["Mode", r.permission_mode],
+      ["Time", r.duration_s == null ? "n/a" : r.duration_s + " s"],
+      ["Cost", r.cost_usd == null ? "n/a" : "$" + r.cost_usd.toFixed(4)],
+      ["Stop reason", r.stop_reason || "n/a"], ["Artifacts", r.run_dir],
+    ];
+    const dl = $("report-facts"); dl.replaceChildren();
+    for (const [k, v] of facts) {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = String(v);
+      dl.append(dt, dd);
+    }
+  }
+
+  async function act(path, body) {
+    showError("");
+    try { status = await api("POST", `/app/api/runs/${runId}/${path}`, body); render(); }
+    catch (e) { showError(e.message); }
+  }
+
+  // Takeover input answers {"ok": true}, not a run status: keep the status as it is.
+  async function sendInput(body) {
+    showError("");
+    try { await api("POST", `/app/api/runs/${runId}/input`, body); }
+    catch (e) { showError(e.message); }
+  }
+
+  // ---- controls ----
+  $("btn-start").onclick = async () => {
+    showError("");
+    const intent = $("intent").value.trim();
+    if (!intent) { showError("Describe the task first."); return; }
+    const body = {
+      intent,
+      environment: $("environment").value,
+      permission_mode: document.querySelector("input[name=mode]:checked").value,
+      max_steps: Math.max(1, Math.min(200, parseInt($("max-steps").value, 10) || 25)),
+    };
+    const url = $("start-url").value.trim();
+    if (url) body.start_url = url;
+    try { status = await api("POST", "/app/api/runs", body); }
+    catch (e) { showError(e.message); return; }
+    runId = status.run_id; store.set("operon-run", runId);
+    history.replaceState(null, "", location.pathname + "#run=" + runId);
+    $("report").classList.add("hidden");
+    lastShot = null; wsFrames = false;
+    render(); startPolling(); connectStream();
+  };
+  $("btn-approve").onclick = () => act("approve");
+  $("btn-decline").onclick = () => { act("decline", { note: $("decline-note").value || null }); $("decline-note").value = ""; };
+  $("btn-takeover").onclick = () => act("takeover");
+  $("btn-handback").onclick = () => { act("handback", { note: $("handback-note").value || null }); $("handback-note").value = ""; };
+  $("btn-stop").onclick = () => act("stop");
+  $("btn-type").onclick = () => { sendInput({ input_type: "type", text: $("takeover-text").value }); $("takeover-text").value = ""; };
+  for (const b of document.querySelectorAll("#takeover-keys [data-key]")) b.onclick = () => sendInput({ input_type: "key", key: b.dataset.key });
+  $("frame").addEventListener("click", (ev) => {
+    if (!status || !status.in_takeover || status.environment !== "browser") return;
+    const r = ev.target.getBoundingClientRect();
+    sendInput({ input_type: "click", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height });
+  });
+  $("frame").addEventListener("wheel", (ev) => {
+    if (!status || !status.in_takeover || status.environment !== "browser") return;
+    ev.preventDefault();
+    const r = ev.target.getBoundingClientRect();
+    sendInput({ input_type: "scroll", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height, delta_y: Math.round(ev.deltaY) });
+  }, { passive: false });
+  $("key-save").onclick = () => {
+    apiKey = $("key").value.trim(); store.set("operon-key", apiKey); $("key").value = "";
+    $("key-panel").classList.add("hidden"); showError(""); if (runId) { refresh(); startPolling(); connectStream(); }
+  };
+
+  if (runId) { refresh(); startPolling(); connectStream(); }
+})();
+</script>
+</body>
+</html>

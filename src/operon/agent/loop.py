@@ -40,7 +40,12 @@ from operon.agent.policy.progress_tracker import (
     page_signature,
 )
 from operon.agent.policy.recovery import RecoveryManager, validate_benchmark_integrity
-from operon.agent.policy.trust_gate import TrustVerdict, make_trust_gate
+from operon.agent.policy.trust_gate import (
+    TrustVerdict,
+    apply_permission_mode,
+    make_trust_gate,
+    resolve_permission_mode,
+)
 from operon.agent.policy.verifier import VerifierService
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
@@ -108,6 +113,25 @@ def _leaf_actions(action: AgentAction) -> list[AgentAction]:
     if action.action_type is not ActionType.BATCH:
         return [action]
     return [leaf for child in action.actions or [] for leaf in _leaf_actions(child)]
+
+
+def _describe_for_approval(action: AgentAction) -> str:
+    """One line a person can approve: the action type, its target and what it types."""
+    parts = [action.action_type.value]
+    ctx = action.target_context
+    name = getattr(getattr(ctx, "original_target", None), "primary_name", None) if ctx is not None else None
+    if name:
+        parts.append(f"'{name}'")
+    if action.url:
+        parts.append(action.url)
+    if action.text:
+        parts.append(f"text '{action.text[:80]}'")
+    if action.key:
+        parts.append(f"key {action.key}")
+    if action.x is not None and action.y is not None and not name:
+        parts.append(f"at ({action.x}, {action.y})")
+    return " ".join(parts)
+
 
 class StartUrlBlockedError(ValueError):
     """``start_url`` is outside ``OPERON_TRUST_ALLOW_DOMAINS``; the run is not created."""
@@ -224,6 +248,10 @@ class AgentLoop:
             mode=request.mode,
             max_steps=request.max_steps,
         )
+        if request.permission_mode is not None:
+            # Kept on the run so every step (and its report) uses the mode it started with.
+            record.permission_mode = request.permission_mode
+            await self.run_store.save_state(record)
         _trace("START_RUN", f"run_id={record.run_id}")
         # Benchmark-safe session management: wipe per-run coordinator state (episodic
         # memory replay, hint cache, rule trace) so prior task context doesn't leak.
@@ -334,6 +362,58 @@ class AgentLoop:
             record = await self.run_store.set_status(run_id, RunStatus.WAITING_FOR_USER)
         return record
 
+    def pending_gate(self, run_id: str) -> str | None:
+        """The gate a paused run waits on for approval (``trust``, ``confidence``,
+        ``coordinate_thrash``), or None when its pause is not an approvable gate."""
+        pending = self._pending_gate_approvals.get(run_id)
+        return pending[1] if pending is not None else None
+
+    async def take_over(self, run_id: str) -> AgentState:
+        """Hand the screen to the person: pause the run and mark it under their control.
+
+        No step runs while the person is in control, so nothing is captured or sent to
+        the model; a step already in flight finishes its action first (see pause_run).
+        Raises ValueError when the run is missing or already finished."""
+        record = await self.pause_run(run_id)
+        if record.status is not RunStatus.WAITING_FOR_USER:
+            raise ValueError(f"Run {run_id!r} is {record.status.value}; nothing to take over")
+        # The pause stops any new step; wait for one already in flight to end, so the
+        # agent never captures, decides or acts on a screen the person is changing.
+        lock = self._run_locks.get(run_id)
+        if lock is None:
+            lock = self._run_locks[run_id] = asyncio.Lock()
+        async with lock:
+            record = await self.run_store.get_run(run_id)
+        if record is None or record.status is not RunStatus.WAITING_FOR_USER:
+            state = record.status.value if record is not None else "gone"
+            raise ValueError(f"Run {run_id!r} is {state}; nothing to take over")
+        if not getattr(record, "in_takeover", False):
+            record.in_takeover = True
+            record.takeover_count = getattr(record, "takeover_count", 0) + 1
+            await self.run_store.save_state(record)
+        return record
+
+    async def hand_back(self, run_id: str, note: str | None = None) -> RunResponse:
+        """End a takeover and let the agent continue from the screen as the person left it.
+
+        Resuming is not an approval: an action a gate paused on before the takeover
+        stays unapproved, and the model is told the screen may have changed."""
+        record = await self.run_store.get_run(run_id)
+        if record is None:
+            raise ValueError(f"Run {run_id!r} not found")
+        if not getattr(record, "in_takeover", False):
+            raise ValueError(f"Run {run_id!r} is not under the user's control")
+        hint = (
+            "The user took control of the screen and has now handed it back. The screen "
+            "may have changed: look at it again before acting."
+        )
+        if note and note.strip():
+            hint += f" The user says: {note.strip()}"
+        run_control.set_override_hint(run_id, hint)
+        record.in_takeover = False
+        record.force_fresh_perception = True
+        return await self.resume_run(run_id, approve_gated_action=False)
+
     async def resume_run(self, run_id: str, *, approve_gated_action: bool = True) -> RunResponse:
         """Resume a run that was paused waiting for user input.
 
@@ -359,8 +439,12 @@ class AgentLoop:
             prior = self._approved_gate_actions.get(run_id)
             gates = prior[1] if prior is not None and prior[0] == fingerprint else frozenset()
             self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
+            if hasattr(record, "approval_count"):
+                record.approval_count += 1
         self._pause_requests.discard(run_id)
         record.stop_reason = None
+        if hasattr(record, "pause_reason"):
+            record.pause_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
         return RunResponse(
             run_id=updated.run_id,
@@ -859,7 +943,13 @@ class AgentLoop:
             return None
 
     def _pre_execution_gate_text(
-        self, decision: PolicyDecision, *, intent: str, run_id: str, current_url: str | None = None
+        self,
+        decision: PolicyDecision,
+        *,
+        intent: str,
+        run_id: str,
+        current_url: str | None = None,
+        permission_mode: str | None = None,
     ) -> str | None:
         """Why ``decision`` must pause for a human before executing, or None to proceed.
 
@@ -867,7 +957,9 @@ class AgentLoop:
         1. Confidence: the operator's threshold (UI slider) is above the decision's
            confidence. Skips WAIT_FOR_USER and STOP, which already pause or end the run.
         2. Trust gate (RFC 0001 Move 5): deny/confirm policy; a no-op unless
-           OPERON_TRUST_GATE is on. DENY = blocked, CONFIRM = high-risk.
+           OPERON_TRUST_GATE is on. DENY = blocked, CONFIRM = high-risk. The run's
+           permission mode (KAN-89) then adjusts it: ``ask`` confirms every action,
+           ``auto`` skips confirmations; neither relaxes a DENY.
         3. File guard: a read_text / upload_file* path the user never named, outside
            the run dir and OPERON_ALLOWED_FILE_ROOTS.
 
@@ -899,7 +991,15 @@ class AgentLoop:
         # trust gate and file guard judge every one of them, not the container.
         leaves = _leaf_actions(action)
         if "trust" not in approved:
-            verdicts = [(leaf, self._trust_gate.evaluate(leaf, current_url=current_url)) for leaf in leaves]
+            verdicts = [
+                (
+                    leaf,
+                    apply_permission_mode(
+                        self._trust_gate.evaluate(leaf, current_url=current_url), leaf, permission_mode
+                    ),
+                )
+                for leaf in leaves
+            ]
             blocked = [pair for pair in verdicts if pair[1].verdict is not TrustVerdict.ALLOW]
             # A DENY anywhere in the batch outranks a CONFIRM.
             blocked.sort(key=lambda pair: pair[1].verdict is not TrustVerdict.DENY)
@@ -912,6 +1012,11 @@ class AgentLoop:
                         f"Blocked by policy: {leaf.action_type.value} action "
                         f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
                         "review and resume to override, or stop the run."
+                    )
+                if resolve_permission_mode(permission_mode).value == "ask" and trust.reason.startswith("ask mode"):
+                    return (
+                        f"Approval needed (ask mode): {_describe_for_approval(leaf)}. "
+                        "Approve to run it, or correct/stop."
                     )
                 return (
                     f"High-risk action needs approval: {leaf.action_type.value} "
@@ -986,7 +1091,11 @@ class AgentLoop:
 
         current_url = await self._current_url_for_trust_gate(record.run_id)
         gate_text = self._pre_execution_gate_text(
-            decision, intent=state.intent, run_id=record.run_id, current_url=current_url
+            decision,
+            intent=state.intent,
+            run_id=record.run_id,
+            current_url=current_url,
+            permission_mode=getattr(state, "permission_mode", None),
         )
         if gate_text is None:
             return None
@@ -1078,6 +1187,9 @@ class AgentLoop:
             gemini_client=self.gemini_client,
         )
         state.hitl_message = hitl_message
+        if hasattr(state, "pause_reason"):
+            # What the person is asked to approve or fix, in the loop's own words.
+            state.pause_reason = getattr(decision.action, "text", None) or hitl_message
 
         if log_step:
             executed_action = ExecutedAction(

@@ -45,3 +45,13 @@ class AgentState(StrictModel):
     # Observable clients use this to decide whether to auto-attach the live CDP view.
     # Only observable runs open the CDP debug port (9222); batch browsers never do.
     mode: str = Field(default="batch", pattern=r"^(observable|batch)$")
+    # Front door (KAN-89). The run's permission mode (ask | risky | auto); None means
+    # the server default (OPERON_PERMISSION_MODE).
+    permission_mode: str | None = Field(default=None, pattern=r"^(ask|risky|auto)$")
+    # True while the person has taken over the screen; no step runs until they hand back.
+    in_takeover: bool = False
+    takeover_count: int = Field(default=0, ge=0)
+    # Gate pauses the person approved.
+    approval_count: int = Field(default=0, ge=0)
+    # Why the run is paused for the person (the gate's or the model's own words).
+    pause_reason: str | None = None

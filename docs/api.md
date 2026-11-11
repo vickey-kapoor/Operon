@@ -18,6 +18,51 @@ Any `Host` other than loopback or `OPERON_ALLOWED_HOSTS` gets 400, which blocks 
 `OPERON_ALLOW_UNAUTHENTICATED=true` turns authentication off, which is only safe on a throwaway
 machine. See [configuration.md](configuration.md).
 
+## Task page and `operon run`
+
+`operon serve` starts the API and prints the task page's link, with the key in the URL
+fragment (`#key=...`, which the browser never sends to the server). On
+`http://127.0.0.1:8080/app` you type a task, pick Browser or Desktop and a permission mode,
+then watch it run:
+
+- **Live view.** Browser runs stream frames over `/ws/stream`; desktop runs show each step's
+  screenshot.
+- **Approvals.** When the run pauses, the page shows why. **Approve** runs the paused action
+  once. **Decline** refuses it, and an optional note tells the model what to do instead.
+- **Take over.** This pauses the run. While you are in control, Operon takes no screenshots
+  and makes no model calls. A step already in flight finishes its action first. For a
+  browser run, you can click, scroll and type on the live view, or use the browser window
+  itself. For a desktop run, you use the real mouse and keyboard. **Hand back** resumes the
+  run, and the model is told the screen may have changed. Handing back never approves an
+  action that was waiting before you took over.
+- **Permission modes.** `ask` approves every action that does something. `risky` (the
+  default, or `OPERON_PERMISSION_MODE`) asks only before the trust gate's confirm list.
+  `auto` asks for nothing. Deny rules and the domain allowlist block in every mode, and so
+  does a vendor safety confirmation. `ask` asks even when `OPERON_TRUST_GATE=off`.
+- **Report.** When the run ends, the page shows the outcome, steps, approvals, takeovers,
+  time, cost and the run's artifact folder.
+
+The page talks to `/app/api/...`, which needs the API key like every other route. The live
+stream uses a short-lived token from `POST /app/api/stream-token` instead of the key. The
+token is sent as the subprotocol pair `["x-stream-token", token]` and expires after
+`OPERON_STREAM_TOKEN_TTL_S` seconds (default 600). A `view` token gets frames and events only.
+A `control` token can also send control messages. The page itself is served without the key,
+because it holds no secret.
+
+From a terminal:
+
+```bash
+operon run "Search Wikipedia for Alan Turing" --url https://www.wikipedia.org --mode ask
+operon run --desktop "Open Notepad and type hello"
+operon run --request "Search Wikipedia for Alan Turing"   # send to a running API (OPERON_API_URL)
+```
+
+`operon run` prints each step and asks in the terminal when the run waits for you: `y`
+approves, `n` declines, any other text declines with that note, `t` takes over and `s`
+stops. Press Ctrl+C once to take over, and twice to quit. It ends with the report and exits
+0 when the task succeeded. With `--request` and no terminal (a script, for example), a run
+that waits is left paused for the page and the command exits 2.
+
 ## Routes
 
 The active FastAPI routes are registered from `src/operon/api/routes/`.
@@ -51,6 +96,19 @@ GET  /observer/api/usage
 GET  /observer/api/settings          # {"trust_gate": "on"|"off"}, read by the benchmarks
 GET  /observer/api/export/{run_id}
 GET  /observer/api/live-browser/{run_id}
+
+# Task page (KAN-89)
+GET  /app                              # the page; served without the key
+POST /app/api/runs                     # {intent, environment, start_url, permission_mode, max_steps, headless}
+GET  /app/api/runs/{run_id}            # status, what it waits on, recent steps
+GET  /app/api/runs/{run_id}/report
+POST /app/api/runs/{run_id}/approve
+POST /app/api/runs/{run_id}/decline    # {note}
+POST /app/api/runs/{run_id}/takeover
+POST /app/api/runs/{run_id}/handback   # {note}
+POST /app/api/runs/{run_id}/input      # your click/keys during a takeover (browser)
+POST /app/api/runs/{run_id}/stop
+POST /app/api/stream-token             # {scope: view|control}
 
 # Live stream
 WS   /ws/stream

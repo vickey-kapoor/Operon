@@ -198,6 +198,45 @@ class NativeBrowserExecutor(Executor):
             return None
         return await session.page.screenshot(type="png")
 
+    async def user_input(
+        self,
+        run_id: str,
+        *,
+        input_type: str,
+        x_ratio: float = 0.0,
+        y_ratio: float = 0.0,
+        text: str = "",
+        key: str = "",
+        delta_y: int = 300,
+    ) -> bool:
+        """Input from the person during a takeover (KAN-89), sent from the live view.
+
+        Coordinates are fractions of the viewport so the page's scaled image maps
+        back to real pixels. Returns False when the run has no browser session.
+        This is the person's own input, not the agent's, so it bypasses the policy
+        path entirely (and the visual servo, which guards the agent's clicks).
+        """
+        session = self._sessions.get(run_id)
+        if session is None:
+            return False
+        page = session.page
+        x = max(0.0, min(1.0, x_ratio)) * self._viewport_width
+        y = max(0.0, min(1.0, y_ratio)) * self._viewport_height
+        if input_type == "click":
+            await page.mouse.click(x, y)
+        elif input_type == "dblclick":
+            await page.mouse.dblclick(x, y)
+        elif input_type == "type":
+            await page.keyboard.type(text)
+        elif input_type == "key":
+            await page.keyboard.press(_normalize_key_playwright(key))
+        elif input_type == "scroll":
+            await page.mouse.move(x, y)
+            await page.mouse.wheel(0, delta_y)
+        else:
+            raise ValueError(f"unsupported input_type {input_type!r}")
+        return True
+
     async def execute(self, action: AgentAction) -> ExecutedAction:
         if action.action_type is ActionType.BATCH:
             return await self._execute_batch(action)

@@ -25,6 +25,10 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 ```powershell
 # Run the API
 .venv\Scripts\python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
+# Front door (KAN-89): API + task page link (/app#key=...); one task here, or sent to a running API
+.venv\Scripts\operon serve
+.venv\Scripts\operon run "task" [--desktop] [--url URL] [--mode ask|risky|auto]
+.venv\Scripts\operon run --request "task"
 
 # Offline test suite (~860 tests, ~45s, no network, no browser)
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests -q

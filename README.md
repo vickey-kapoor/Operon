@@ -51,7 +51,12 @@ cp .env.example .env    # then set GEMINI_API_KEY
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 
-Give it a task:
+Or start it with the task page: `operon serve` prints a link (with the key) to a local page
+where you type a task, watch it live, approve risky steps, take over, and get a short report.
+From a terminal, `operon run "task"` runs one here, and `operon run --request "task"` sends it
+to the running API ([details](docs/api.md#task-page-and-operon-run)).
+
+Or give it a task over HTTP:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/run-task \

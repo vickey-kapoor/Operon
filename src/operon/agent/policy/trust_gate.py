@@ -27,6 +27,17 @@ Config:
                                                  other URL is denied (fail-closed), and
                                                  so is any action taken while the page
                                                  itself is off the list (a followed link)
+    OPERON_PERMISSION_MODE      ask | risky | auto  default permission mode for a run
+                                                 that does not choose one (default risky)
+
+Permission modes (KAN-89) adjust the gate's verdict per run, after the rules above:
+
+- ``ask``: every action that does something needs approval, even with the gate off
+  (an explicit choice by the person running the task). Deny rules still block.
+- ``risky`` (default): the gate as configured: confirm-list actions need approval.
+- ``auto``: confirm-list actions run without approval; deny rules and the domain
+  allowlist still block. Vendor safety confirmations (Gemini ``require_confirmation``)
+  are not affected by any mode.
 """
 
 from __future__ import annotations
@@ -35,6 +46,12 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
+
+
+class PermissionMode(str, Enum):
+    ASK = "ask"
+    RISKY = "risky"
+    AUTO = "auto"
 
 
 class TrustVerdict(str, Enum):
@@ -156,3 +173,38 @@ def make_trust_gate() -> TrustGate:
     confirm = _split_env("OPERON_TRUST_CONFIRM") or _DEFAULT_CONFIRM
     allow_domains = _split_env("OPERON_TRUST_ALLOW_DOMAINS")
     return TrustGate(enabled=enabled, deny=deny, confirm=confirm, allow_domains=allow_domains)
+
+
+# Actions that change nothing on screen or disk: "ask" mode does not pause on them.
+_PASSIVE_ACTIONS = frozenset({"wait", "stop", "wait_for_user", "screenshot_region"})
+
+
+def default_permission_mode() -> PermissionMode:
+    """``OPERON_PERMISSION_MODE``, or ``risky`` when it is unset or not a known mode."""
+    raw = os.getenv("OPERON_PERMISSION_MODE", "").strip().lower()
+    try:
+        return PermissionMode(raw)
+    except ValueError:
+        return PermissionMode.RISKY
+
+
+def resolve_permission_mode(mode: str | PermissionMode | None) -> PermissionMode:
+    """A run's mode: its own when set, else the server default."""
+    if mode is None or mode == "":
+        return default_permission_mode()
+    return PermissionMode(mode)
+
+
+def apply_permission_mode(result: TrustResult, action: object, mode: str | PermissionMode | None) -> TrustResult:
+    """Adjust a gate verdict for a run's permission mode. DENY is never relaxed."""
+    resolved = resolve_permission_mode(mode)
+    if result.verdict is TrustVerdict.DENY:
+        return result
+    if resolved is PermissionMode.AUTO and result.verdict is TrustVerdict.CONFIRM:
+        return TrustResult(TrustVerdict.ALLOW, "auto mode skips confirmations", result.matched)
+    if resolved is PermissionMode.ASK and result.verdict is TrustVerdict.ALLOW:
+        action_type = getattr(action, "action_type", None)
+        value = getattr(action_type, "value", action_type)
+        if value not in _PASSIVE_ACTIONS:
+            return TrustResult(TrustVerdict.CONFIRM, "ask mode approves every action", str(value or "action"))
+    return result

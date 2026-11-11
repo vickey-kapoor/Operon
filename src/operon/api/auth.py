@@ -142,15 +142,19 @@ def _offered_subprotocols(websocket: WebSocket) -> list[str]:
     ]
 
 
+_CREDENTIAL_SUBPROTOCOLS = ("x-api-key", "x-stream-token")
+
+
 def websocket_subprotocol(websocket: WebSocket) -> str | None:
-    """The subprotocol to echo on accept: ``x-api-key`` when the client offered it.
+    """The subprotocol to echo on accept: ``x-api-key`` or ``x-stream-token`` when the
+    client offered it first.
 
     A browser that offers subprotocols drops the connection unless the server
-    selects one, so the key-carrying ``x-api-key`` offer must be echoed back
-    (whether or not auth is enabled) — never the key itself.
+    selects one, so the credential-carrying offer must be echoed back
+    (whether or not auth is enabled) — never the credential itself.
     """
     protocols = _offered_subprotocols(websocket)
-    return "x-api-key" if protocols[:1] == ["x-api-key"] else None
+    return protocols[0] if protocols[:1] and protocols[0] in _CREDENTIAL_SUBPROTOCOLS else None
 
 
 def websocket_api_key_ok(websocket: WebSocket) -> bool:
@@ -167,6 +171,27 @@ def websocket_api_key_ok(websocket: WebSocket) -> bool:
     protocols = _offered_subprotocols(websocket)
     presented = protocols[1] if len(protocols) >= 2 and protocols[0] == "x-api-key" else None
     return presented is not None and _key_matches(presented, accepted)
+
+
+def websocket_stream_scope(websocket: WebSocket) -> str | None:
+    """What a WebSocket handshake may do on the stream: ``control``, ``view``, or None
+    (refuse).
+
+    The API key (``["x-api-key", key]``) gives control, as does a server with
+    authentication turned off. A short-lived stream token (``["x-stream-token",
+    token]``, see ``operon.api.stream_tokens``) gives the scope it was minted with.
+    """
+    from operon.api import stream_tokens
+
+    protocols = _offered_subprotocols(websocket)
+    if len(protocols) >= 2 and protocols[0] == "x-stream-token":
+        scope = stream_tokens.check(protocols[1])
+        if scope is not None:
+            return scope
+        # An expired or unknown token is refused even when auth is off: the client
+        # asked to be judged by its token.
+        return None
+    return "control" if websocket_api_key_ok(websocket) else None
 
 
 _LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})

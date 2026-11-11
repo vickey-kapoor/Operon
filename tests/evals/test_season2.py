@@ -90,3 +90,38 @@ def test_season2_runs_as_the_core_suite_so_reports_keep_their_grid_cell(mode: st
     assert args.suite == "core"  # the report says "core"; its season block says 2
     season1 = _args(mode=mode, suite="core", season=1)
     assert [t.name for t in live_bench.season_for(season1).working] == list(CORE[mode])
+
+
+def test_a_season2_run_is_no_baseline_for_season1_or_the_reverse(tmp_path) -> None:
+    import json
+
+    for stamp, season in (("1", None), ("2", {"season": 1}), ("3", {"season": 2})):
+        report = {"model_profile": None, "budget_stop": None, "started_at": stamp}
+        if season:
+            report["season"] = season
+        (tmp_path / f"core-{stamp}.json").write_text(json.dumps(report))
+    assert live_bench._previous_report(tmp_path, "core")["started_at"] == "1"
+    assert live_bench._previous_report(tmp_path, "core", season=1)["started_at"] == "2"
+    assert live_bench._previous_report(tmp_path, "core", season=2)["started_at"] == "3"
+
+
+def test_dashboard_alerts_compare_only_runs_of_the_same_season() -> None:
+    from evals import dashboard
+
+    class Conn:
+        params = None
+
+        def execute(self, sql, params):
+            assert "config->>'season'" in sql
+            Conn.params = params
+            return self
+
+        def fetchone(self):
+            return None
+
+    run = {"mode": "browser", "suite": "core", "backend": "b", "harness_profile": "thin", "model": "m",
+           "started_at": "t", "key": "k"}
+    dashboard.previous_comparable(Conn(), run, 2)
+    assert Conn.params[5] == "2"
+    dashboard.previous_comparable(Conn(), run)
+    assert Conn.params[5] is None

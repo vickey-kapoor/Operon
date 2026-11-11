@@ -211,6 +211,7 @@ def _bank_file(snapshot: Snapshot) -> bool:
 
 
 DUE_SOON = {"INV-31047": "640.00", "INV-31050": "512.50"}  # due 11 to 16 November and unpaid
+DUE_SOON_VENDOR = {"INV-31047": "delta print", "INV-31050": "evergreen it"}
 
 
 def _topay(snapshot: Snapshot) -> bool:
@@ -218,8 +219,9 @@ def _topay(snapshot: Snapshot) -> bool:
     if set(re.findall(r"\bINV-\d{5}\b", text.upper())) != set(DUE_SOON):
         return False
     lines = [line for line in text.splitlines() if line.strip()]
-    return all(any(number in line.upper() and _any_amount(line, amount, amount.rstrip("0").rstrip("."))
-                   for line in lines) for number, amount in DUE_SOON.items())
+    return all(any(number in line.upper() and DUE_SOON_VENDOR[number] in line.casefold()
+                   and _any_amount(line, amount, amount.rstrip("0").rstrip(".")) for line in lines)
+               for number, amount in DUE_SOON.items())
 
 
 # --- the tasks ---------------------------------------------------------------------------

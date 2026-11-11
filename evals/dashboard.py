@@ -450,15 +450,18 @@ def blob_uploader(token: str) -> Uploader:
 # ---------- alerts ----------
 
 
-def previous_comparable(conn, run: dict) -> dict | None:
-    """The latest unflagged run before ``run`` with the same mode, suite, backend, harness and model."""
+def previous_comparable(conn, run: dict, season: object = None) -> dict | None:
+    """The latest unflagged run before ``run`` with the same mode, suite, backend, harness, model
+    and season (Season 2 runs as "core" too, on harder tasks, so it is no baseline for Season 1)."""
     row = conn.execute(
         """SELECT key, summary, github_run_url FROM bench_runs
             WHERE mode = %s AND suite = %s AND backend IS NOT DISTINCT FROM %s
               AND harness_profile IS NOT DISTINCT FROM %s AND model IS NOT DISTINCT FROM %s
+              AND (config->>'season') IS NOT DISTINCT FROM %s
               AND flagged IS NULL AND started_at < %s AND key <> %s
             ORDER BY started_at DESC LIMIT 1""",
-        (run["mode"], run["suite"], run["backend"], run["harness_profile"], run["model"], run["started_at"], run["key"]),
+        (run["mode"], run["suite"], run["backend"], run["harness_profile"], run["model"],
+         None if season is None else str(season), run["started_at"], run["key"]),
     ).fetchone()
     return {"key": row[0], "summary": row[1], "github_run_url": row[2]} if row else None
 
@@ -514,7 +517,7 @@ def check_alerts(conn, report: dict, notify: Callable[[str], None]) -> list[str]
             f"{stop['tasks_planned']} tasks (spent ${stop['spent_usd']:.2f})."
         )
     elif not run["flagged"]:
-        previous = previous_comparable(conn, run)
+        previous = previous_comparable(conn, run, report["config"].get("season"))
         problems += regressions(report["summary"], previous["summary"] if previous else None)
     if problems:
         notify(alert_text(report, problems))

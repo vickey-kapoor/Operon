@@ -706,6 +706,7 @@ def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float) ->
 
 def _previous_report(
     bench_dir: Path, suite: str, harness_profile: str | None = None, trust_gate: str = "off",
+    season: int | None = None,
 ) -> dict | None:
     # A run stopped at the cost cap covers only some tasks, so it is no baseline; nor
     # is a run of another model (older reports), or one judged another way (thin vs thin-own).
@@ -721,6 +722,9 @@ def _previous_report(
         # A gate-on run pauses before risky actions, so it is no baseline for a gate-off one (or
         # the reverse). Reports from before trust_gate was recorded ran with it off.
         if report.get("trust_gate", "off") != trust_gate:
+            continue
+        # Season 2 runs as "core" too, on harder tasks: only the same season is a baseline.
+        if (report.get("season") or {}).get("season") != season:
             continue
         if harness_profile is None or report.get("harness_profile") in {None, harness_profile}:
             return report
@@ -1021,7 +1025,10 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
                 )
             # Found before this run's own report is first written below.
             if not (args.only or args.category):
-                previous = _previous_report(bench_dir, suite_name, harness_label(args.mode), trust_gate)
+                previous = _previous_report(
+                    bench_dir, suite_name, harness_label(args.mode), trust_gate,
+                    season_run.season if season_run else None,
+                )
             for index, (attempt, task) in enumerate(planned, 1):
                 active = {"task": task, "attempt": attempt, "run_id": None, "started": time.monotonic()}
                 try:

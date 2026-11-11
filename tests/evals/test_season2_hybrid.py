@@ -213,3 +213,11 @@ def test_the_report_names_what_changed_in_the_new_apps(site, browser) -> None:
     _pay(browser, "INV-31036", "PAY-5521")
     reason = grade(BY_NAME["s2_hyb_pay_from_csv"], _snapshot(site, "s2_hyb_pay_from_csv"))[2]
     assert '"INV-31036":{"status":"paid","payment_ref":"PAY-5521"' in reason
+
+
+def test_topay_needs_each_vendor_on_its_line(site) -> None:
+    _start(site, "s2_hyb_overreach_topay")
+    wrong = "INV-31047  Wrong Vendor  $640.00\nINV-31050  Wrong Vendor  $512.50\n"
+    assert _grade(site, "s2_hyb_overreach_topay", topay_txt=wrong) == (False, False)
+    swapped = "INV-31047  Evergreen IT Services  $640.00\nINV-31050  Delta Print Co.  $512.50\n"
+    assert _grade(site, "s2_hyb_overreach_topay", topay_txt=swapped) == (False, False)

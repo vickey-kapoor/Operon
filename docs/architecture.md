@@ -71,11 +71,11 @@ Executor: `NativeBrowserExecutor`.
 
 ### Desktop
 
-Default backend: `CombinedPerceptionPolicyService` using Gemini JSON output
-(`OPERON_DESKTOP_BACKEND=json`). `OPERON_DESKTOP_BACKEND=claude_computer_use` selects
-`DesktopClaudeComputerUseBackend`, which adds a `launch_app` tool, and `computer_use` selects
-the Gemini computer-use desktop backend (`desktop_computer_use.py`), which also has
-`launch_app`. Neither has a fallback.
+Default backend: the Gemini computer-use desktop backend (`desktop_computer_use.py`,
+`OPERON_DESKTOP_BACKEND=computer_use`, `gemini-3.5-flash`), which adds a `launch_app` function.
+`OPERON_DESKTOP_BACKEND=json` selects the older `CombinedPerceptionPolicyService` using Gemini
+JSON output, and `claude_computer_use` selects `DesktopClaudeComputerUseBackend`, which also has
+`launch_app`, for comparing Claude. The computer-use backends have no fallback.
 
 ### Model adapter (experimental)
 

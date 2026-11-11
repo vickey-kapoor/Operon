@@ -272,6 +272,7 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
     try:
         with (
             patch("operon.api.runtime.loops.desktop_mode_config", return_value=gemini_config),
+            patch("operon.api.runtime.services.desktop_mode_config", return_value=gemini_config),
             patch("operon.api.runtime.loops.DesktopExecutor"),
             patch("operon.api.runtime.loops.FileBackedRunStore"),
             patch("operon.api.runtime.loops.FileBackedMemoryStore"),

@@ -213,4 +213,4 @@ def test_a_same_critic_report_names_the_model_the_server_defaults_to(monkeypatch
     assert live_bench.critic_label(None) == "same:claude-sonnet-5-5"
     monkeypatch.delenv("OPERON_BROWSER_BACKEND")
     assert live_bench.critic_label(None) == "same:gemini-3.5-flash"
-    assert live_bench.critic_label(None, "desktop") == "same:gemini-2.5-flash"  # json backend default
+    assert live_bench.critic_label(None, "desktop") == "same:gemini-3.5-flash"  # Gemini computer use default

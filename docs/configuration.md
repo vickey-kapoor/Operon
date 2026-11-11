@@ -65,7 +65,7 @@ the details.
 | `CORS_ORIGINS` | empty | Comma-separated exact origins (`scheme://host:port`) allowed to call the API from a browser, e.g. `http://localhost:3000`. `http://127.0.0.1:3000` is a different origin and needs its own entry. Also gates `/ws/stream`, which otherwise accepts only clients that send no `Origin` and loopback pages served from the API's own host and port. `*` allows any origin over HTTP but not on `/ws/stream`. Empty = no cross-origin access. |
 | `OPERON_BROWSER_BACKEND` | `computer_use` | `claude_computer_use` (Claude), `computer_use` (Gemini) or `json` |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend. Ignored under the thin harness, so a Claude error ends the run |
-| `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend: `json`, `computer_use` (Gemini computer use), `claude_computer_use` or `model` |
+| `OPERON_DESKTOP_BACKEND` | `computer_use` | Desktop backend: `computer_use` (Gemini computer use), `json` (the older Gemini JSON path), `claude_computer_use` or `model` |
 | `OPERON_BROWSER_MODEL` | `gemini-3.5-flash` | Browser primary model |
 | `OPERON_BROWSER_THINKING` | `low` | Computer Use thinking level (Gemini 3) |
 | `OPERON_BROWSER_VERIFIER_THINKING` | `low` | Browser critic thinking level |

@@ -1,4 +1,5 @@
-name: Live benchmark
+name: Browser benchmark
+run-name: Gemini · Browser · ${{ inputs.harness_profile }} · ${{ inputs.suite }} (manual)
 
 # Runs the live web benchmark (evals/live_bench.py) against a real API
 # server and real websites. Manual only: every run spends model credits.
@@ -52,6 +53,7 @@ permissions:
 
 jobs:
   plan:
+    name: Pick the backends
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -64,7 +66,7 @@ jobs:
 
   bench:
     needs: plan
-    name: Bench (${{ matrix.backend }})
+    name: ${{ matrix.backend == 'computer_use' && 'Run the tasks' || format('Run the tasks ({0} backend)', matrix.backend) }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     strategy:

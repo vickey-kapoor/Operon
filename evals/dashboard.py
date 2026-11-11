@@ -9,7 +9,7 @@ Neon Postgres database through its API routes. This script writes reports from
     DATABASE_URL=postgres://... .venv/bin/python -m evals.dashboard import downloaded-artifacts/ --backend json
 
 It needs ``psycopg`` (``pip install "psycopg[binary]"``), which is not a project
-dependency: only the "Dashboard data" workflow and a person backfilling by hand
+dependency: only the "Send results to dashboard" workflow and a person backfilling by hand
 run it.
 
 The dashboard groups runs by ``config`` (backend, harness, model, commit, workflow

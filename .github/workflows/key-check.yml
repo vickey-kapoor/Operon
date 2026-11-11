@@ -1,4 +1,4 @@
-name: API key check
+name: Check API key
 
 # Confirms the Gemini API key in repo secrets is accepted, by listing models.
 # Listing models is free: no tokens are generated. Prints only HTTP status codes.
@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   check:
+    name: Check the Gemini API key
     # Secrets are not passed to pull requests from forks.
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest

@@ -3,7 +3,7 @@
 Same runner, grading and options as ``python -m evals.live_bench``; this only defaults
 to ``--mode hybrid``. Like the desktop benchmark it drives the real mouse and keyboard
 through the ``/desktop`` routes, so run it on a Windows session you are not using (or
-the "Live desktop benchmark" workflow with category hybrid, ``/bench hybrid``). It
+the "Desktop and Hybrid benchmark" workflow with category hybrid, ``/bench hybrid``). It
 serves the local site on 127.0.0.1 itself, so it must run on the machine the API drives.
 """
 

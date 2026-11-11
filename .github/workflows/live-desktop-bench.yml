@@ -1,4 +1,5 @@
-name: Live desktop benchmark
+name: Desktop and Hybrid benchmark
+run-name: Gemini · ${{ inputs.category }} · ${{ inputs.harness_profile }} · ${{ inputs.suite }} on ${{ inputs.runner }} (manual)
 
 # Runs the live desktop benchmark (evals/live_desktop_bench.py), or with category
 # hybrid the Hybrid one (evals/live_hybrid_bench.py: a desktop app and the browser on
@@ -121,7 +122,7 @@ jobs:
       - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
 
   bench:
-    name: Bench (${{ inputs.category || 'desktop' }})
+    name: Run the tasks
     needs: start-vm
     if: ${{ !cancelled() && (needs.start-vm.result == 'success' || needs.start-vm.result == 'skipped') }}
     runs-on: ${{ inputs.runner == 'azure' && fromJSON('["self-hosted", "windows", "operon-desktop"]') || 'windows-latest' }}

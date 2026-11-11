@@ -155,7 +155,7 @@ the frozen season's tasks (`--season`), which is what the Leaderboard tab's grid
 | `/bench hybrid smoke` | Hybrid smoke (2 tasks) on GitHub's hosted Windows runner |
 | `/bench long same-critic` | Long suite in the full harness, with Gemini as its own step critic |
 
-The **Live benchmark**, **Live desktop benchmark** and **Grounding eval** workflows can also be started by hand,
+The **Browser benchmark**, **Desktop and Hybrid benchmark** and **Grounding benchmark** workflows can also be started by hand,
 with inputs for harness profile, suite and cost cap (`max_cost_usd`).
 
 ## Adding models later
@@ -190,7 +190,7 @@ After an Operon change, is a grid cell (model · category · harness, for exampl
 - **Score with a 95% range.** Every report's `summary.score_range` holds the pass rate and its
   bootstrapped 95% range over the run's tasks (a `--repeat` task scores its share of passed
   attempts). `live_bench` prints it under the results table.
-- **Change vs the previous run of the cell.** When the Dashboard data workflow imports a
+- **Change vs the previous run of the cell.** When the Send results to dashboard workflow imports a
   run, it finds the latest earlier unflagged run with the same mode, suite, backend, harness,
   model and season, and stores `summary.change`: the paired difference on
   the tasks both ran, its corrected 95% range, the label (Improved / Regressed only when that
@@ -309,7 +309,7 @@ reads Season 1 until `PLAN_SEASON` in `dashboard/app.js` moves to 2.
 
 Results are published at **https://operon-evals.vercel.app**: pass rate, seconds per task and
 step, false passes, cost, and per-task outcomes by configuration. After every benchmark
-workflow, the **Dashboard data** workflow writes the reports to a Neon Postgres database,
+workflow, the **Send results to dashboard** workflow writes the reports to a Neon Postgres database,
 uploads screenshots and traces to a private Vercel Blob store (the dashboard shows them for
 tasks that did not pass), adds each run's score range and change vs the previous run of its
 cell (see [Run-over-run changes](#run-over-run-changes-kan-60)), comments that table on the PR
@@ -332,7 +332,7 @@ that the workflow starts before the run and deallocates after. Setup is in
 | Name | Kind | Used by |
 |---|---|---|
 | `GEMINI_API_KEY` | secret | Every model call: backends, step critic and the benchmark judge |
-| `DATABASE_URL` | secret | Dashboard data import (also set in the Vercel project) |
+| `DATABASE_URL` | secret | Send results to dashboard import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
 | `SLACK_WEBHOOK_URL` | secret | Regression alerts; optional |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | variables | Starting and stopping the Azure VM via OIDC (no stored secret) |

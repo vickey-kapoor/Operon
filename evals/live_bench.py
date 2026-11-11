@@ -886,9 +886,10 @@ def build_report(
         "category": category_of(None, args.mode),
         "cell": cell_name(args.mode, harness_label(args.mode)),
         "started_at": started_at,
-        model_key: os.getenv(f"OPERON_{env_mode}_MODEL", "server default"),
+        # The effective model and backend: Gemini defaults when the env var is unset.
+        model_key: os.getenv(f"OPERON_{env_mode}_MODEL") or DEFAULT_MODEL,
         "judge_model": args.judge_model,
-        "backend": os.getenv(f"OPERON_{env_mode}_BACKEND", "server default"),
+        "backend": os.getenv(f"OPERON_{env_mode}_BACKEND") or "computer_use",
         "harness_profile": harness_label(args.mode),
         "critic": critic_label(args.mode),
         "trust_gate": trust_gate or trust_gate_label(),

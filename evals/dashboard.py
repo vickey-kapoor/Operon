@@ -182,6 +182,8 @@ def grounding_as_run(report: dict) -> dict:
         "cost_usd": s.get("cost_usd", 0.0),
         "judge_cost_usd": 0.0,
         "cost_per_task_usd": s.get("cost_per_sample_usd"),
+        # Older self-hosted grounding reports billed GPU time here; keep it so spend stays whole.
+        **({"gpu_cost_usd": s["gpu_cost_usd"]} if s.get("gpu_cost_usd") is not None else {}),
         **{k: s.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")},
         "by_model": {report.get("model") or "unknown": {"requests": samples, "cost_usd": s.get("cost_usd", 0.0)}},
         "unpriced_calls": s.get("unpriced_calls", 0),
@@ -192,6 +194,8 @@ def grounding_as_run(report: dict) -> dict:
         "backend": report.get("backend"),
         "model": report.get("model"),
         "harness_profile": "grounding",
+        # Older reports of other models: keep the profile so a reimport keeps the same run key.
+        **({"model_profile": report["model_profile"]} if report.get("model_profile") else {}),
         **(report.get("config") or {}),
     }
     return {
@@ -217,7 +221,15 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
     known = {k: v for k in ("backend", "harness_profile") if (v := report.get(k)) and v != "server default"}
     for field, value in known.items():
         config.setdefault(field, value)
-    model = report.get(f"{report['mode']}_model")
+    # Older reports of other models (kept on the dashboard) name the model in their own fields;
+    # reading them keeps a reimport on the same run key and label.
+    if report.get("model_profile"):
+        config.setdefault("model_profile", report["model_profile"])
+        model = report.get("model_id")
+    elif config.get("backend") == "claude_computer_use":
+        model = report.get("claude_model")
+    else:
+        model = report.get(f"{report['mode']}_model")
     if model and model != "server default":
         config.setdefault("model", model)
     if report.get("critic"):

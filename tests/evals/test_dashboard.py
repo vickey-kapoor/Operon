@@ -154,6 +154,20 @@ def test_grounding_spend_is_keyed_by_the_model_and_carries_unpriced_calls() -> N
     assert report["config"]["flagged"] == "4 model calls had no price (gemini-3.5-flash): their cost counts as $0"
 
 
+def test_older_reports_of_other_models_keep_their_run_key_and_gpu_spend() -> None:
+    # Operon runs Gemini only now, but earlier runs stay importable without being counted twice.
+    old = prepare(_report(backend="model", model_profile="qwen3-vl-32b", model_id="Qwen/Qwen3-VL-32B"), {})
+    assert old["config"]["model_profile"] == "qwen3-vl-32b" and old["config"]["model"] == "Qwen/Qwen3-VL-32B"
+    assert run_key(old) == "browser-full-model-full-qwen3-vl-32b-20261024T012945Z"
+    claude = prepare(_report(backend="claude_computer_use", claude_model="claude-opus-5-5"), {})
+    assert claude["config"]["model"] == "claude-opus-5-5"
+    raw = {**_grounding_report(), "model_profile": "qwen3-vl-32b"}
+    raw["summary"] = {**raw["summary"], "gpu_cost_usd": 1.25}
+    grounding = prepare(raw, {})
+    assert grounding["config"]["model_profile"] == "qwen3-vl-32b"
+    assert grounding["summary"]["gpu_cost_usd"] == 1.25
+
+
 def test_attach_traces_uploads_a_repeated_tasks_own_screen(tmp_path) -> None:
     screens = tmp_path / "screens"
     screens.mkdir()

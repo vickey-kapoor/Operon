@@ -109,14 +109,15 @@ function harnessSuffix(name, harness) {
 }
 
 // A Gemini run: no registry profile and a Gemini backend. Older reports may hold another model.
+// A run with no recorded backend used the server default, which is Gemini computer use.
 function isGeminiRun(run) {
   const c = run.config || {};
-  return !c.model_profile && Object.hasOwn(BACKEND_NAMES, c.backend || "");
+  return !c.model_profile && (!c.backend || Object.hasOwn(BACKEND_NAMES, c.backend));
 }
 
 function baseLabel(run) {
   const c = run.config || {};
-  const name = BACKEND_NAMES[c.backend] || c.backend || "Unknown backend";
+  const name = BACKEND_NAMES[c.backend || "computer_use"] || c.backend;
   return harnessSuffix(name, c.harness_profile);
 }
 

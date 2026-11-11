@@ -82,3 +82,11 @@ def test_previous_report_skips_earlier_runs_of_other_models(tmp_path) -> None:
     for stamp, report in reports.items():
         (tmp_path / f"full-{stamp}.json").write_text(json.dumps({**report, "results": []}), encoding="utf-8")
     assert live_bench._previous_report(tmp_path, "full")["backend"] == "computer_use"
+
+
+def test_a_report_with_no_backend_setting_records_the_gemini_default() -> None:
+    # Unset means the server default; recording it keeps the run on the dashboard's Gemini tabs.
+    args = live_bench.build_parser().parse_args([])
+    report = live_bench.build_report(args, "20261111T000000Z", [], repeat=1, planned=10, stopped=None, complete=True)
+    assert report["backend"] == "computer_use"
+    assert report["browser_model"] == "gemini-3.5-flash"

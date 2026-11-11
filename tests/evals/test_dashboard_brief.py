@@ -130,3 +130,6 @@ def test_earlier_runs_of_other_models_get_one_label() -> None:
     assert _run("configLabel(run('a', 1, 1, { config: { backend: 'claude_computer_use' } }))") == other
     assert _run("configLabel(run('a', 1, 1, { config: { backend: 'model', model_profile: 'openai-computer-use' } }))") == other
     assert _run("isGeminiRun(run('a', 1, 1, { config: { backend: 'json' } }))") is True
+    # No recorded backend means the server default, Gemini computer use.
+    assert _run("isGeminiRun(run('a', 1, 1, { config: {} }))") is True
+    assert _run("configLabel(run('a', 1, 1, { config: {} }))") == "Gemini"

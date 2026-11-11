@@ -35,3 +35,5 @@ Frozen with
 `python -m evals.leaderboard.season freeze 2 --suite browser-core2 --suite desktop-core2 --suite hybrid-core2 --suite grounding`.
 It is frozen ahead of its calibration run (KAN-87): if calibration shows a task outside the
 40 to 70% band for the wrong reason (a broken task, not a hard one), refreeze before any scored run.
+KAN-104 refroze it (hash 5126b757b7bc, was 29d7c48c0f23) after calibration: Gemini passed all ten
+Desktop tasks (KAN-87), so `desktop-core2` has ten harder tasks; the browser and hybrid sets are unchanged.

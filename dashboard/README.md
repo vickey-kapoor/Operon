@@ -32,7 +32,7 @@ importer; KAN-60, docs/evaluation.md).
 - `api/judge.js` (`GET /api/judge`): judge checks saved by `python -m evals.judge_check run labels.jsonl --save`, with what their judge calls cost.
 - `models.json`: the model registry for the Leaderboard; a test keeps it in step with `evals/models.yaml`.
 - `api/blob.js` (`GET /api/blob?url=<blob url>`): one screenshot or trace from the private Blob store.
-- `server/db.js`: the Postgres pool the routes share, from `DATABASE_URL`.
+- `server/db.js`: the Postgres pool the routes share, from `DASHBOARD_DATABASE_URL` (read-only role), else `DATABASE_URL`.
 - `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.
 
 Set `MONTHLY_BUDGET_USD` in the Vercel project's environment variables to see how
@@ -56,15 +56,18 @@ The page only reads the database, so give Vercel a read-only role rather than th
 owner connection string the importer uses. In the Neon SQL editor:
 
 ```sql
-CREATE ROLE dashboard_reader LOGIN PASSWORD '<a new password>';
-GRANT USAGE ON SCHEMA public TO dashboard_reader;
-GRANT SELECT ON bench_runs, bench_task_results TO dashboard_reader;
+CREATE ROLE dashboard_ro LOGIN PASSWORD '<a new password>';
+GRANT CONNECT ON DATABASE neondb TO dashboard_ro;
+GRANT USAGE ON SCHEMA public TO dashboard_ro;
+GRANT SELECT ON bench_runs, bench_task_results TO dashboard_ro;
 -- After the first `judge_check run --save` creates it:
-GRANT SELECT ON judge_checks TO dashboard_reader;
+GRANT SELECT ON judge_checks TO dashboard_ro;
 ```
 
-Then set the Vercel project's `DATABASE_URL` to that role's connection string; the
-GitHub `DATABASE_URL` secret keeps the owner role, since the importer writes.
+Then add a Vercel environment variable `DASHBOARD_DATABASE_URL` with that role's
+connection string and redeploy. The API reads it before `DATABASE_URL`, which the
+Neon integration manages (it holds the owner role and Vercel won't let you edit it).
+The GitHub `DATABASE_URL` secret keeps the owner role, since the importer writes.
 
 ## Data
 

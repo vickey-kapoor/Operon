@@ -28,11 +28,11 @@ name: Bench command
 # run counts on the dashboard's Leaderboard tab: /bench browser thin gemini season=1. "grounding" runs the
 # ScreenSpot grounding eval instead (one model call per sample, no browser); zoom
 # lets Claude zoom into the screenshot (OPERON_CLAUDE_ZOOM). gemini picks Gemini
-# computer use (OPERON_*_BACKEND=computer_use) for the browser, desktop or grounding:
-# full harness unless thin is given, and a thin Gemini run ends on Gemini's own
-# "done" (KAN-67). Claude is the backend otherwise.
-# opus/sonnet/haiku pick the acting Claude model; check-sonnet/check-haiku pick a
-# cheaper model for the thin harness's completion check. azure runs a desktop
+# computer use (OPERON_*_BACKEND=computer_use) for the browser, desktop or grounding,
+# and is the default: full harness unless thin is given, and a thin Gemini run ends on
+# Gemini's own "done" (KAN-67). opus/sonnet/haiku run Claude computer use with that
+# model instead (thin harness unless full is given); check-sonnet/check-haiku pick a
+# cheaper model for a Claude run's completion check. azure runs a desktop
 # benchmark on our Azure VM instead of GitHub's hosted runner. Reports show the cost.
 # Nothing runs on pushes or merges: every run spends model credits, so a run
 # happens only when someone with write access asks for one. PRs from forks are
@@ -75,7 +75,7 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           set -f  # no glob expansion of the comment's words
-          target=browser profile= suite=core model=claude-opus-5-5 check_model= runner=github repeat=1 backend=claude_computer_use zoom=false model_profile= critic= season=
+          target=browser profile= suite=core model= check_model= runner=github repeat=1 backend=computer_use zoom=false model_profile= critic= season= named_model=
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
@@ -90,11 +90,11 @@ jobs:
               hard) suite=hard ;;
               long) suite=long ;;
               x2|x3|x5) repeat=${word#x} ;;
-              gemini) backend=computer_use ;;
+              gemini) backend=computer_use model= named_model=gemini ;;
               zoom) zoom=true ;;
-              opus) model=claude-opus-5-5 ;;
-              sonnet) model=claude-sonnet-5-5 ;;
-              haiku) model=claude-haiku-5-5 ;;
+              opus) backend=claude_computer_use model=claude-opus-5-5 named_model=opus ;;
+              sonnet) backend=claude_computer_use model=claude-sonnet-5-5 named_model=sonnet ;;
+              haiku) backend=claude_computer_use model=claude-haiku-5-5 named_model=haiku ;;
               check-sonnet) check_model=claude-sonnet-5-5 ;;
               check-haiku) check_model=claude-haiku-5-5 ;;
               same-critic) critic=same ;;
@@ -127,7 +127,7 @@ jobs:
             if [ "$backend" = computer_use ]; then profile=full; else profile=thin; fi
           fi
           if [ "$backend" = computer_use ] && [ -n "$check_model" ]; then
-            echo "::error::check-sonnet/check-haiku pick Claude's completion check; a Gemini run has none."; exit 1
+            echo "::error::check-sonnet/check-haiku pick Claude's completion check; a Gemini run has none. Add opus, sonnet or haiku."; exit 1
           fi
           if [ -n "$season" ] && [ "$target" = grounding ]; then
             echo "::error::season= is for /bench browser, desktop and hybrid."; exit 1
@@ -142,12 +142,12 @@ jobs:
             echo "::error::same-critic picks the full harness's step critic; add full."; exit 1
           fi
           if [ "$zoom" = true ] && { [ "$target" = browser ] || [ "$backend" = computer_use ]; }; then
-            echo "::error::zoom is only an option for /bench desktop, hybrid and grounding with Claude."; exit 1
+            echo "::error::zoom is only an option for /bench desktop, hybrid and grounding with Claude: add opus, sonnet or haiku."; exit 1
           fi
           if [ "$backend" = computer_use ]; then model=; fi  # Gemini's own default model
           if [ -n "$model_profile" ]; then
-            if [ "$zoom" = true ] || [ "$backend" = computer_use ]; then
-              echo "::error::model= picks the model itself; drop zoom and gemini."; exit 1
+            if [ "$zoom" = true ] || [ -n "$named_model" ]; then
+              echo "::error::model= picks the model itself; drop zoom and $named_model."; exit 1
             fi
             profile=${explicit_profile:-thin} backend=model
             [ "$target" = grounding ] && model=$model_profile

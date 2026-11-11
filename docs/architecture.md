@@ -59,9 +59,9 @@ src/
 
 ### Browser
 
-Default backend: `BrowserClaudeComputerUseBackend` using `AnthropicComputerUseHttpClient`
-when `ANTHROPIC_API_KEY` is set (`OPERON_BROWSER_BACKEND=claude_computer_use`), otherwise
-`BrowserComputerUseBackend` using `GeminiComputerUseHttpClient` (`computer_use`).
+Default backend: `BrowserComputerUseBackend` using `GeminiComputerUseHttpClient`
+(`computer_use`), whatever keys are set. `OPERON_BROWSER_BACKEND=claude_computer_use` selects
+`BrowserClaudeComputerUseBackend` using `AnthropicComputerUseHttpClient`, for comparing Claude;
 `OPERON_BROWSER_BACKEND=json` selects `BrowserJsonBackend` alone.
 
 Fallback: with `OPERON_BROWSER_FALLBACK_BACKEND=json` (the default), `FallbackBackend`

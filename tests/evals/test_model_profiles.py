@@ -124,8 +124,7 @@ def test_grounding_reuses_one_client_per_kind(monkeypatch) -> None:
     [("thin", "", "thin"), ("thin", "own", "thin-own"), ("full", "own", "full")],
 )
 def test_report_harness_names_the_own_done_mode(monkeypatch, harness, check, expected) -> None:
-    monkeypatch.delenv("OPERON_BROWSER_BACKEND", raising=False)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")  # the server's default backend is then Claude
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "claude_computer_use")
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     monkeypatch.setenv("OPERON_COMPLETION_CHECK", check)
     assert live_bench.harness_label(None) == expected
@@ -160,18 +159,19 @@ def test_a_gemini_computer_use_report_names_its_harness(monkeypatch, mode, harne
 
 
 @pytest.mark.parametrize(("harness", "expected"), [("thin", "thin-own"), ("", "full")])
-def test_the_default_gemini_browser_backend_is_labelled_as_gemini(monkeypatch, harness, expected) -> None:
-    # No OPERON_BROWSER_BACKEND and no ANTHROPIC_API_KEY: the server runs Gemini computer use.
+@pytest.mark.parametrize("anthropic_key", ["", "fake-test-key"])
+def test_the_default_gemini_browser_backend_is_labelled_as_gemini(monkeypatch, harness, expected, anthropic_key) -> None:
+    # No OPERON_BROWSER_BACKEND: the server runs Gemini computer use, with or without an Anthropic key.
     monkeypatch.delenv("OPERON_BROWSER_BACKEND", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", anthropic_key)
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     monkeypatch.delenv("OPERON_COMPLETION_CHECK", raising=False)
     assert live_bench.harness_label(None) == expected
 
 
 def test_the_harness_label_reads_the_dotenv_the_server_loads(monkeypatch, tmp_path) -> None:
-    # ANTHROPIC_API_KEY only in .env: the server defaults to Claude, so a thin run is "thin".
-    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=fake-test-key\n", encoding="utf-8")
+    # The backend only in .env: the server runs Claude, so a thin run is "thin".
+    (tmp_path / ".env").write_text("OPERON_BROWSER_BACKEND=claude_computer_use\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     for name in ("OPERON_BROWSER_BACKEND", "ANTHROPIC_API_KEY", "OPERON_COMPLETION_CHECK"):
         monkeypatch.delenv(name, raising=False)
@@ -198,18 +198,19 @@ def test_a_registry_model_can_run_full_and_the_report_names_its_critic(monkeypat
 
 
 def test_a_same_critic_report_names_the_model_the_server_defaults_to(monkeypatch, tmp_path) -> None:
-    # With ANTHROPIC_API_KEY and no backend set, the server runs Claude: the critic is
-    # Claude, even when OPERON_BROWSER_MODEL names a Gemini model.
+    # With the Claude backend set, the critic is Claude, even when OPERON_BROWSER_MODEL
+    # names a Gemini model; with no backend set, the server runs Gemini, whatever keys are set.
     monkeypatch.chdir(tmp_path)  # no .env
     for name in ("OPERON_BROWSER_BACKEND", "OPERON_BROWSER_CLAUDE_MODEL", "OPERON_DESKTOP_BACKEND", "OPERON_DESKTOP_MODEL"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake")
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "claude_computer_use")
     monkeypatch.setenv("OPERON_BROWSER_MODEL", "gemini-3.5-flash")
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
     monkeypatch.setenv("OPERON_CRITIC", "same")
     assert live_bench.critic_label(None) == "same:claude-opus-5-5"
     monkeypatch.setenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-sonnet-5-5")
     assert live_bench.critic_label(None) == "same:claude-sonnet-5-5"
-    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.delenv("OPERON_BROWSER_BACKEND")
     assert live_bench.critic_label(None) == "same:gemini-3.5-flash"
     assert live_bench.critic_label(None, "desktop") == "same:gemini-2.5-flash"  # json backend default

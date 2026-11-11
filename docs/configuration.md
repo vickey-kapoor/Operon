@@ -6,12 +6,13 @@ it to `.env` to start.
 
 ## Model keys
 
-- `ANTHROPIC_API_KEY` makes Claude computer use the browser backend, running the thin
-  harness. Set `OPERON_DESKTOP_BACKEND=claude_computer_use` to use Claude on the desktop too
-  (`computer_use` for Gemini computer use on the desktop).
-- `GEMINI_API_KEY` runs the Gemini backends: the browser backend when there is no Anthropic
-  key, the browser fallback (full harness only), and the default desktop backend. The benchmark judge also uses
-  it. The Gemini JSON backends also accept `GOOGLE_API_KEY`; Gemini Computer Use reads
+- `GEMINI_API_KEY` runs Gemini, Operon's default model: the default browser backend (Gemini
+  computer use), the browser fallback (full harness only) and the default desktop backend. The
+  benchmark judge also uses it.
+- `ANTHROPIC_API_KEY` is needed only to run Claude as a comparison model. Setting it changes no
+  default: pick Claude with `OPERON_BROWSER_BACKEND=claude_computer_use` or
+  `OPERON_DESKTOP_BACKEND=claude_computer_use`, which runs the thin harness. GPT and other
+  registry models run with `OPERON_*_BACKEND=model` (below). The Gemini JSON backends also accept `GOOGLE_API_KEY`; Gemini Computer Use reads
   `GEMINI_API_KEY` only.
 
 ## Harness profiles
@@ -51,7 +52,7 @@ the details.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | unset | Gemini API key (Gemini Computer Use reads `GEMINI_API_KEY` only) |
-| `ANTHROPIC_API_KEY` | unset | Anthropic key; when set, browser runs default to Claude computer use |
+| `ANTHROPIC_API_KEY` | unset | Anthropic key for the `claude_computer_use` backends; changes no default |
 | `OPERON_MODEL_PROFILE` | unset | With `OPERON_BROWSER_BACKEND=model` or `OPERON_DESKTOP_BACKEND=model` (experimental): the model registry profile to run |
 | `OPERON_MODEL_REGISTRY` | `evals/models.yaml` | Model registry file |
 | `OPENWEIGHT_BASE_URL` / `OPENWEIGHT_API_KEY` | unset | Endpoint and key of the OpenAI-compatible model server for `openai_compat` profiles (a profile can name other variables) |
@@ -62,7 +63,7 @@ the details.
 | `OPERON_ALLOW_UNAUTHENTICATED` | `false` | With `API_KEYS` unset, `true` turns authentication off. Only safe on a throwaway machine, since the API can drive a real browser/desktop. |
 | `OPERON_ALLOWED_HOSTS` | unset | Extra host names the API answers to. Loopback names are always allowed; any other `Host` gets 400, which blocks DNS rebinding. |
 | `CORS_ORIGINS` | empty | Comma-separated exact origins (`scheme://host:port`) allowed to call the API from a browser, e.g. `http://localhost:3000`. `http://127.0.0.1:3000` is a different origin and needs its own entry. Also gates `/ws/stream`, which otherwise accepts only clients that send no `Origin` and loopback pages served from the API's own host and port. `*` allows any origin over HTTP but not on `/ws/stream`. Empty = no cross-origin access. |
-| `OPERON_BROWSER_BACKEND` | `claude_computer_use` with `ANTHROPIC_API_KEY`, else `computer_use` | `claude_computer_use` (Claude), `computer_use` (Gemini) or `json` |
+| `OPERON_BROWSER_BACKEND` | `computer_use` | `claude_computer_use` (Claude), `computer_use` (Gemini) or `json` |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Optional browser fallback backend. Ignored under the thin harness, so a Claude error ends the run |
 | `OPERON_DESKTOP_BACKEND` | `json` | Desktop backend: `json`, `computer_use` (Gemini computer use), `claude_computer_use` or `model` |
 | `OPERON_BROWSER_MODEL` | `gemini-3.5-flash` | Browser primary model |

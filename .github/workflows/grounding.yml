@@ -11,8 +11,8 @@ on:
       backend:
         description: "claude_computer_use, computer_use (Gemini), or model (a registry profile, named in model)"
         type: choice
-        options: [claude_computer_use, computer_use, model]
-        default: claude_computer_use
+        options: [computer_use, claude_computer_use, model]
+        default: computer_use
       model:
         description: "Model (empty: the backend's default); for backend model, the registry profile"
         default: ""
@@ -29,7 +29,7 @@ on:
   # Called by bench-command.yml for /bench grounding.
   workflow_call:
     inputs:
-      backend: {type: string, default: "claude_computer_use"}
+      backend: {type: string, default: "computer_use"}
       model: {type: string, default: ""}
       per_set: {type: string, default: "100"}
       max_cost_usd: {type: string, default: "5"}

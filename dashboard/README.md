@@ -82,8 +82,8 @@ Grounding evals (`evals.grounding`) are stored as runs with mode and suite
 `grounding` and no task rows: the Cost tab counts them, the Evals tab and the
 Leaderboard leave them out.
 
-The **Dashboard data** workflow (`.github/workflows/dashboard-data.yml`) runs after
-every "Live benchmark", "Live desktop benchmark", "Bench command" or "Grounding eval"
+The **Send results to dashboard** workflow (`.github/workflows/dashboard-data.yml`) runs after
+every "Browser benchmark", "Desktop and Hybrid benchmark", "Benchmark from PR comment" or "Grounding benchmark"
 run, cancelled ones included, and writes its reports to the database, using the
 `DATABASE_URL` repository secret. Importing a report again replaces it. Run the workflow by hand to import older workflow runs
 (`run_ids`) or reports committed at a git ref (`backfill_ref`).

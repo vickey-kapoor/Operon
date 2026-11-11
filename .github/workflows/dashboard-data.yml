@@ -1,4 +1,5 @@
-name: Dashboard data
+name: Send results to dashboard
+run-name: Send results to dashboard (${{ github.event.workflow_run.name || 'manual import' }})
 
 # After a live benchmark finishes, write its reports to the eval dashboard's
 # Postgres database (Neon, connected to the operon-evals Vercel project); the
@@ -18,7 +19,7 @@ name: Dashboard data
 
 on:
   workflow_run:
-    workflows: ["Live benchmark", "Live desktop benchmark", "Bench command", "Grounding eval"]
+    workflows: ["Browser benchmark", "Desktop and Hybrid benchmark", "Benchmark from PR comment", "Grounding benchmark"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -42,6 +43,7 @@ concurrency:
 
 jobs:
   import:
+    name: Import the reports and post the results
     # Cancelled runs are imported too: the tasks they ran still cost money, and live_bench
     # saves its report after every task (marked incomplete until the run finishes).
     runs-on: ubuntu-latest

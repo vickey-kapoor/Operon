@@ -90,7 +90,7 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard. Benchmarks cost real credits: run only when asked.
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
-# (the import needs `pip install "psycopg[binary]"`; the "Dashboard data" workflow does it after each benchmark)
+# (the import needs `pip install "psycopg[binary]"`; the "Send results to dashboard" workflow does it after each benchmark)
 $env:DATABASE_URL = "postgres://..."; .venv\Scripts\python -m evals.dashboard import .var\bench\full-<stamp>.json
 cd dashboard; npm install; npm run dev   # page + API on :3000, reads $env:DATABASE_URL
 

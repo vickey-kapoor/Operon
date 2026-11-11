@@ -1,4 +1,5 @@
-name: Bench command
+name: Benchmark from PR comment
+run-name: "Benchmark from a comment on PR #${{ github.event.issue.number }}"
 
 # Runs a live benchmark on a pull request's head when a repository owner, member
 # or collaborator comments on it:
@@ -41,6 +42,7 @@ permissions:
 
 jobs:
   parse:
+    name: Read the /bench comment
     if: >-
       github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '/bench') &&
@@ -55,6 +57,7 @@ jobs:
       repeat: ${{ steps.args.outputs.repeat }}
       critic: ${{ steps.args.outputs.critic }}
       extra: ${{ steps.args.outputs.extra }}
+      label: ${{ steps.args.outputs.label }}
       sha: ${{ steps.pr.outputs.sha }}
     steps:
       - id: args
@@ -108,10 +111,24 @@ jobs:
           if [ "$critic" = same ] && [ "$profile" != full ]; then
             echo "::error::same-critic picks the full harness's step critic; drop thin."; exit 1
           fi
-          echo "target=$target profile=$profile suite=$suite runner=$runner repeat=$repeat critic=$critic extra=$extra"
+          # The run's name in the Actions list, the way runs are named in chat:
+          # "Gemini · Browser · Thin", plus the suite, season and repeats when not the default.
+          cap() { printf '%s' "$1" | sed 's/./\U&/'; }
+          if [ "$target" = grounding ]; then
+            label="Gemini · Grounding"
+          else
+            label="Gemini · $(cap "$target") · $(cap "$profile")"
+            if [ "$suite" != core ]; then label="$label · $suite"; fi
+            if [ -n "$season" ]; then label="$label · Season $season"; fi
+            if [ "$repeat" != 1 ]; then label="$label · x$repeat"; fi
+            if [ "$critic" = same ]; then label="$label · same critic"; fi
+            if [ "$runner" = azure ]; then label="$label · Azure VM"; fi
+          fi
+          echo "target=$target profile=$profile suite=$suite runner=$runner repeat=$repeat critic=$critic extra=$extra label=$label"
           {
             echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
             echo "runner=$runner"; echo "repeat=$repeat"; echo "critic=$critic"; echo "extra=$extra"
+            echo "label=$label"
           } >> "$GITHUB_OUTPUT"
 
       - id: pr
@@ -134,7 +151,7 @@ jobs:
           fi
           echo "sha=$(gh api "$PR_URL" --jq '.head.sha')" >> "$GITHUB_OUTPUT"
 
-      # The "Dashboard data" workflow reads this after the run to post the results table
+      # The "Send results to dashboard" workflow reads this after the run to post the results table
       # (score with its 95% range, change vs the previous run, flipped tasks) on the PR.
       - name: Record the pull request
         env:
@@ -148,6 +165,7 @@ jobs:
           retention-days: 14
 
   browser:
+    name: ${{ needs.parse.outputs.label }}
     needs: parse
     if: needs.parse.outputs.target == 'browser'
     uses: ./.github/workflows/live-bench.yml
@@ -165,6 +183,7 @@ jobs:
 
   # Desktop and Hybrid both run on the Windows desktop; category picks the tasks.
   desktop:
+    name: ${{ needs.parse.outputs.label }}
     needs: parse
     if: needs.parse.outputs.target == 'desktop' || needs.parse.outputs.target == 'hybrid'
     # id-token reaches only the VM start/stop jobs, which ask for it; the bench job
@@ -189,6 +208,7 @@ jobs:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
   grounding:
+    name: ${{ needs.parse.outputs.label }}
     needs: parse
     if: needs.parse.outputs.target == 'grounding'
     uses: ./.github/workflows/grounding.yml

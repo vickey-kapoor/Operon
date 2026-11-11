@@ -68,7 +68,7 @@ def build_verifier_client(*, config):
     verifier_provider = config.verifier_provider.lower()
     verifier_model = config.verifier_model or config.fallback_model or config.primary_model
     if verifier_provider == "anthropic":
-        verifier_model = verifier_model or "claude-sonnet-5"
+        verifier_model = verifier_model or "claude-sonnet-5-5"
         return AnthropicHttpClient(model=verifier_model, timeout_seconds=120.0)
     return GeminiHttpClient(
         model=verifier_model,

@@ -47,7 +47,7 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.live_bench --suite hard --repeat 3
 
 # Grounding eval: ScreenSpot-v2/Pro samples, one model call each through the real backend, click scored vs the box
-.venv\Scripts\python -m evals.grounding [--per-set 100] [--set v2-web] [--backend computer_use] [--list]
+.venv\Scripts\python -m evals.grounding [--per-set 100] [--set v2-web] [--list]
 
 # Live safety suite: prompt-injection and overreach tasks on a local site, graded from its request log
 .venv\Scripts\python -m evals.live_bench --suite safety
@@ -75,12 +75,11 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\python -m evals.live_hybrid_bench [--suite core|smoke|full] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>]
-#   (category, then harness: one grid cell; core is the default; hybrid runs on the desktop workflow)
-#   /bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
-# Cross-model (experimental): model=<profile> / --model <profile> runs a profile from evals/models.yaml
-# (OPERON_*_BACKEND=model + OPERON_MODEL_PROFILE; adapters in src/operon/agent/backends/model_adapter/)
-# Repo secrets: ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, OPENWEIGHT_BASE_URL, OPENWEIGHT_API_KEY (optional), DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
+#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [azure] [season=<n>]
+#   (category, then harness: one grid cell; core and full are the defaults; hybrid runs on the desktop workflow)
+#   /bench grounding
+# Every run uses Gemini (gemini-3.5-flash), Operon's only model for now; other models come back later.
+# Repo secrets: GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard. Benchmarks cost real credits: run only when asked.
 
@@ -129,7 +128,7 @@ Layer map:
 | Package | Role |
 |---|---|
 | `agent/perception/` | Screen capture, geometry, screen-diff, perception service |
-| `agent/backends/` | Model backends: `browser_claude_computer_use` / `desktop_claude_computer_use` (Claude, default with `ANTHROPIC_API_KEY`), `browser_computer_use` (Gemini CU), `browser_json`, plus `fallback`/`combined` wrappers; `model_adapter/` (experimental, `backend=model`) plugs in any registry model |
+| `agent/backends/` | Model backends (Gemini only): `browser_computer_use` / `desktop_computer_use` (Gemini CU, the default), `browser_json`, plus `fallback`/`combined` wrappers |
 | `agent/policy/` | `rules.py` (deterministic engine), `coordinator.py` (post-LLM guards), `verifier.py`, `recovery.py`, `trust_gate.py`, `best_of_n.py` |
 | `agent/actions/` | Grounding, target selection, action translation, retry hardening |
 | `executor/` | `browser_native.py`, `desktop.py`, `os_picker_macro.py` + adapters to the unified contract |
@@ -159,8 +158,7 @@ These are load-bearing — violating them silently breaks the agent.
 - **Rules before LLM (full harness).** Anything decidable deterministically belongs in
   `PolicyRuleEngine` (`agent/policy/rules.py`). Post-LLM guards (e.g.
   `_semantic_anchor_check`) live on `PolicyCoordinator`. The thin harness
-  (`agent/policy/thin.py`, the default for `claude_computer_use`; `OPERON_HARNESS_PROFILE=full`
-  opts out) runs none of them: Claude's
+  (`agent/policy/thin.py`, opt in with `OPERON_HARNESS_PROFILE=thin`) runs none of them: the model's
   action is never replaced, retried or reset by the loop; fix failures there by
   improving what the model sees or the executor, not by adding rules.
 - **No scenario hardcoding.** Never branch on a specific site, task, or benchmark

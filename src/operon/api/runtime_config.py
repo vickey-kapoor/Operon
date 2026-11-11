@@ -4,66 +4,45 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 
-# "model" is the cross-model adapter (experimental): the registry profile named by
-# OPERON_MODEL_PROFILE picks the model (evals/models.yaml).
-_VALID_DESKTOP_BACKENDS = frozenset({"json", "computer_use", "claude_computer_use", "model"})
-_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "claude_computer_use", "model"})
-_VALID_PROVIDERS = frozenset({"gemini", "anthropic"})
+# Gemini is Operon's only model: computer_use (Gemini computer use, the default) or
+# json (the older Gemini JSON path).
+_VALID_DESKTOP_BACKENDS = frozenset({"json", "computer_use"})
+_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use"})
+_DEFAULT_MODEL = "gemini-3.5-flash"
 
 
 @dataclass(frozen=True)
 class RuntimeModeConfig:
     backend: str
     primary_model: str
-    verifier_provider: str = "gemini"
     fallback_backend: str | None = None
     fallback_model: str | None = None
     verifier_model: str | None = None
     # Gemini thinking settings: a level ("low") on Gemini 3, a token budget ("0") on 2.5.
     thinking: str | None = None
     verifier_thinking: str | None = None
-    # Claude computer use backend (OPERON_BROWSER_BACKEND=claude_computer_use).
-    claude_model: str | None = None
-    claude_effort: str | None = None
 
 
 def desktop_mode_config() -> RuntimeModeConfig:
-    backend = os.getenv("OPERON_DESKTOP_BACKEND", "json")
-    # Gemini computer use needs a computer-use model; the json backend's default is not one.
-    default_model = "gemini-3.5-flash" if backend == "computer_use" else "gemini-2.5-flash"
     return RuntimeModeConfig(
-        backend=backend,
-        primary_model=os.getenv("OPERON_DESKTOP_MODEL") or default_model,
+        backend=(os.getenv("OPERON_DESKTOP_BACKEND") or "").strip() or "computer_use",
+        primary_model=os.getenv("OPERON_DESKTOP_MODEL") or _DEFAULT_MODEL,
         thinking=os.getenv("OPERON_DESKTOP_THINKING", "low") or None,
-        verifier_provider=os.getenv("OPERON_DESKTOP_VERIFIER_PROVIDER", "gemini"),
-        fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-2.5-flash"),
-        verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-2.5-flash"),
-        verifier_thinking=os.getenv("OPERON_DESKTOP_VERIFIER_THINKING") or None,
-        claude_model=os.getenv("OPERON_DESKTOP_CLAUDE_MODEL", "claude-opus-5-5"),
-        claude_effort=os.getenv("OPERON_DESKTOP_CLAUDE_EFFORT", "low") or None,
+        fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL") or _DEFAULT_MODEL,
+        verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL") or _DEFAULT_MODEL,
+        verifier_thinking=os.getenv("OPERON_DESKTOP_VERIFIER_THINKING", "low") or None,
     )
-
-
-def _default_browser_backend() -> str:
-    """Claude computer use when an Anthropic key is present, else Gemini Computer Use."""
-    return "claude_computer_use" if os.getenv("ANTHROPIC_API_KEY") else "computer_use"
 
 
 def browser_mode_config() -> RuntimeModeConfig:
     return RuntimeModeConfig(
-        backend=os.getenv("OPERON_BROWSER_BACKEND") or _default_browser_backend(),
-        primary_model=os.getenv(
-            "OPERON_BROWSER_MODEL",
-            "gemini-3.5-flash",
-        ),
-        verifier_provider=os.getenv("OPERON_BROWSER_VERIFIER_PROVIDER", "gemini"),
+        backend=(os.getenv("OPERON_BROWSER_BACKEND") or "").strip() or "computer_use",
+        primary_model=os.getenv("OPERON_BROWSER_MODEL") or _DEFAULT_MODEL,
         fallback_backend=os.getenv("OPERON_BROWSER_FALLBACK_BACKEND", "json"),
-        fallback_model=os.getenv("OPERON_BROWSER_FALLBACK_MODEL", "gemini-2.5-flash"),
-        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL", "gemini-3.5-flash"),
+        fallback_model=os.getenv("OPERON_BROWSER_FALLBACK_MODEL") or _DEFAULT_MODEL,
+        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL") or _DEFAULT_MODEL,
         thinking=os.getenv("OPERON_BROWSER_THINKING", "low") or None,
         verifier_thinking=os.getenv("OPERON_BROWSER_VERIFIER_THINKING", "low") or None,
-        claude_model=os.getenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-opus-5-5"),
-        claude_effort=os.getenv("OPERON_BROWSER_CLAUDE_EFFORT", "low") or None,
     )
 
 
@@ -86,49 +65,7 @@ def validate_modes() -> list[str]:
         errors.append(
             f"OPERON_BROWSER_FALLBACK_BACKEND={browser.fallback_backend!r} is not one of {sorted(_VALID_BROWSER_BACKENDS)}"
         )
-    for cfg, label in ((desktop, "desktop"), (browser, "browser")):
-        if cfg.verifier_provider not in _VALID_PROVIDERS:
-            errors.append(
-                f"OPERON_{label.upper()}_VERIFIER_PROVIDER={cfg.verifier_provider!r} is not one of {sorted(_VALID_PROVIDERS)}"
-            )
-        if cfg.backend == "claude_computer_use" and not os.getenv("ANTHROPIC_API_KEY"):
-            errors.append(f"{label} backend=claude_computer_use but ANTHROPIC_API_KEY is unset")
-        if cfg.backend == "model":
-            errors.extend(f"{label} backend=model: {problem}" for problem in _model_profile_problems(label))
     return errors
-
-
-def _model_profile_problems(environment: str) -> list[str]:
-    from operon.agent.backends.model_adapter.registry import (
-        ModelRegistryError,
-        resolve_profile,
-    )
-
-    try:
-        profile = resolve_profile()
-    except ModelRegistryError as exc:
-        return [str(exc)]
-    problems = []
-    if environment not in profile.environments:
-        problems.append(f"profile {profile.name} does not support {environment}")
-    required_key = {
-        "claude_native": "ANTHROPIC_API_KEY",
-        "gemini_native": "GEMINI_API_KEY",
-        "openai_native": "OPENAI_API_KEY",
-    }.get(profile.adapter)
-    if required_key and not os.getenv(required_key):
-        problems.append(f"profile {profile.name} needs {required_key}")
-    if profile.adapter == "openai_native" and (
-        profile.pricing.input_per_mtok is None or profile.pricing.output_per_mtok is None
-    ):
-        # Without prices every step costs $0 and the run cost cap never stops a paid run.
-        problems.append(f"profile {profile.name} needs pricing (input_per_mtok and output_per_mtok)")
-    if profile.adapter == "openai_compat":
-        try:
-            profile.resolved_base_url()
-        except ModelRegistryError as exc:
-            problems.append(str(exc))
-    return problems
 
 
 def main() -> int:

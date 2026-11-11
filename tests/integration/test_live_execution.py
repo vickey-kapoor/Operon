@@ -8,7 +8,7 @@ watch the agent act in real time.
 Run with:
     .venv/Scripts/python -m pytest tests/integration/test_live_execution.py --live -v -s
 
-Requires: server running at 127.0.0.1:8080 with real GEMINI_API_KEY / ANTHROPIC_API_KEY.
+Requires: server running at 127.0.0.1:8080 with real GEMINI_API_KEY.
 """
 
 from __future__ import annotations

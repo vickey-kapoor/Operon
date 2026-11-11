@@ -49,7 +49,7 @@ point and data on where time goes is welcome.
   reach for the DOM, accessibility tree, or app-specific APIs to make targeting
   easier defeat the point. Improving *perception* is the intended path.
 - **Deterministic rules run before the model (full harness).** If something can be handled by
-  `agent/policy/rules.py` without an LLM call, it should be. The thin harness for Claude
+  `agent/policy/rules.py` without an LLM call, it should be. The thin harness
   has no rules by design: fix failures there through what the model sees or the executor.
 - **Experimental work goes behind an env flag, defaulting to off.** See the
   `OPERON_BESTOFN_*` and `OPERON_GROUNDER` flags for the

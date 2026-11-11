@@ -617,14 +617,3 @@ async def test_asking_the_model_again_tells_it_the_last_proposal_did_not_run(mon
     assert delegate.replaced == []
 
 
-@pytest.mark.asyncio
-async def test_a_model_that_gives_up_is_not_turned_into_a_confirmed_rule_success() -> None:
-    from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
-
-    root = _local_test_dir("test-policy-coordinator-confirm-gave-up")
-    gave_up = _decision({"action_type": "stop"}, f"{GAVE_UP_PREFIX}the rest of the task failed")
-    coordinator = PolicyCoordinator(delegate=_ScriptedDelegate(gave_up), memory_store=FileBackedMemoryStore(root_dir=root / "runs"))
-    rule_stop = _decision({"action_type": "stop"}, "Success detected by rule.")
-    state = AgentState(run_id="run-1", intent="Send the message", status=RunStatus.RUNNING)
-    confirmed = await coordinator._confirm_success(state, _form_perception(root, page_hint="form_success"), rule_stop)
-    assert confirmed is gave_up

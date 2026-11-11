@@ -11,9 +11,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from operon.agent._agent_utils import collect_latest_usage
-from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.policy.keywords import terminal_patterns
-from operon.clients.anthropic import AnthropicClientError
 from operon.clients.gemini import GeminiClient, GeminiClientError
 from operon.core.paths import prompts_dir
 from operon.models.common import FailureCategory, LoopStage, StopReason
@@ -90,20 +88,6 @@ class DeterministicVerifierService(VerifierService):
         self._last_debug_artifacts = None
         action = decision.action
         latest_perception = state.observation_history[-1] if state.observation_history else None
-
-        # A model that gave up (a registry model's ``fail``) never counts as done. Checked
-        # before the terminal state: its own words ("the email was not sent") become the
-        # perception summary and could otherwise match a success signal.
-        if action.action_type is ActionType.STOP and (decision.rationale or "").startswith(GAVE_UP_PREFIX):
-            return VerificationResult(
-                status=VerificationStatus.FAILURE,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason=f"Stop rejected: the model gave up, so the task is not done ({decision.rationale[:200]})",
-                failure_type=VerificationFailureType.EXPECTED_OUTCOME_NOT_MET,
-                failure_category=FailureCategory.EXPECTED_OUTCOME_NOT_MET,
-                failure_stage=LoopStage.VERIFY,
-            )
 
         # Terminal-state check: look for visual evidence of the goal before checking
         # action success. This means the loop ends as soon as the goal is visible —
@@ -362,7 +346,7 @@ class DeterministicVerifierService(VerifierService):
                 logger.warning("Critic unavailable: %s has no verification method", type(self.gemini_client).__name__)
                 self._write_fallback_debug(debug_artifacts, "client_missing_verification_method")
                 return None
-        except (AnthropicClientError, GeminiClientError, NotImplementedError, RuntimeError) as exc:
+        except (GeminiClientError, NotImplementedError, RuntimeError) as exc:
             # Warn on every failure: the fallback verdict can be SUCCESS, so a dead
             # critic (bad key, exhausted credits, outage) is otherwise invisible.
             logger.warning("Critic call failed, using deterministic fallback: %s: %s", type(exc).__name__, exc)
@@ -614,7 +598,7 @@ def _has_phrase(phrase: str, text: str) -> bool:
 _NULL_STRINGS = frozenset({"null", "none"})
 
 # Optional label fields a critic may fill with its own words instead of one of the
-# listed values (GPT writes stop_reason as a sentence). An unknown label is dropped,
+# listed values (a critic may write stop_reason as a sentence). An unknown label is dropped,
 # not the whole verdict: status, expected_outcome_met and reason still count.
 _OPTIONAL_LABELS = {
     "failure_type": VerificationFailureType,
@@ -652,7 +636,7 @@ def _parse_verification_output(raw_output: str) -> VerificationResult | None:
     try:
         payload = json.loads(cleaned)
     except json.JSONDecodeError:
-        # Some critics (Claude Sonnet 5.5) write a sentence before or after the
+        # Some critic replies have a sentence before or after the
         # JSON object; read the outermost object instead of dropping the verdict.
         start, end = cleaned.find("{"), cleaned.rfind("}")
         if start == -1 or end <= start:

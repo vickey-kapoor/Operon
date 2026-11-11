@@ -162,36 +162,35 @@
             <div class="table-wrap"><table id="cost-tasks"></table></div>
           </div>
         </div>
-        <p class="note" id="cost-scope">Counts what benchmark runs, grounding evals and judge checks spent on model calls, plus GPU time of self-hosted models while they ran.
+        <p class="note" id="cost-scope">Counts what benchmark runs, grounding evals and judge checks spent on model calls, including earlier runs of other models.
           It leaves out spend outside them: local runs, the Azure desktop VM and GPU VM hours while idle. Each provider's billing page has the full bill.</p>
       </div>
     </section>
 
     <section id="tab-leaderboard" hidden>
       <div class="card">
-        <div class="card-head"><div><h2>Thin against full harness</h2><p class="sub">The run plan on Season 1: each model's grid of Browser, Desktop and Hybrid, each run in the thin harness and the full one, on the category's core set (about 10 tasks graded from the apps' or the machine's state). Gemini runs first; then Claude, then GPT, each after your approval once Gemini's grid has run. Each cell is the model's latest unflagged season run, with short, long and safety tasks broken out; safety passes only with nothing compromised. Each cell shows its score with a 95% range and a badge against the previous run of that cell: Improved or Regressed only when the paired difference's 95% range excludes zero (with about 10 tasks, about 4 flipping the same way), otherwise No clear change. Click a cell to list the tasks that flipped; hover it for held-out counts and the critic. Only runs of the frozen season count.</p></div></div>
+        <div class="card-head"><div><h2>Thin against full harness</h2><p class="sub">The run plan on Season 1: Gemini's grid of Browser, Desktop and Hybrid, each run in the thin harness and the full one, on the category's core set (about 10 tasks graded from the apps' or the machine's state). Each cell is the latest unflagged season run, with short, long and safety tasks broken out; safety passes only with nothing compromised. Each cell shows its score with a 95% range and a badge against the previous run of that cell: Improved or Regressed only when the paired difference's 95% range excludes zero (with about 10 tasks, about 4 flipping the same way), otherwise No clear change. Click a cell to list the tasks that flipped; hover it for held-out counts and the critic. Only runs of the frozen season count.</p></div></div>
         <div class="table-wrap"><table id="lb-plan"></table></div>
         <div id="lb-flips" class="lb-flips" aria-live="polite" hidden></div>
       </div>
       <div id="lb-empty" class="card empty-state" hidden>
         <div class="empty-icon" aria-hidden="true">#</div>
-        <h2>No model runs yet</h2>
-        <p class="note">Models appear here once a benchmark runs with a model registry profile
-          (<code>/bench model=&lt;profile&gt;</code>, or <code>live_bench --model</code>). Each model is
-          judged by its own "done" and the same graders.</p>
+        <h2>No Gemini runs yet</h2>
+        <p class="note">Configurations appear here once a benchmark runs (<code>/bench</code>, or
+          <code>python -m evals.live_bench</code>).</p>
       </div>
       <div id="lb-body">
         <div class="card hero" id="lb-brief"></div>
         <div class="card">
-          <div class="card-head"><div><h2>Models by suite</h2><p class="sub">Pass rate of each model's latest unflagged run per suite. Hover a cell for false passes, cost and speed.</p></div></div>
+          <div class="card-head"><div><h2>Configurations by suite</h2><p class="sub">Pass rate of each configuration's latest unflagged run per suite. Hover a cell for false passes, cost and speed.</p></div></div>
           <div class="table-wrap"><table class="matrix" id="lb-matrix"></table></div>
         </div>
         <div class="card">
-          <div class="card-head"><div><h2>Models</h2><p class="sub">Totals over each model's latest run per suite; every registry model is listed, run or not. Cost is the agent's model calls plus GPU time, without the judge (every model has the same one). Invalid: replies the adapter could not turn into an action.</p></div></div>
+          <div class="card-head"><div><h2>Configurations</h2><p class="sub">Totals over each configuration's latest run per suite. Cost is the agent's model calls, without the judge.</p></div></div>
           <div class="table-wrap"><table id="lb-models"></table></div>
         </div>
         <div class="card">
-          <div class="card-head"><div><h2>Cost against success</h2><p class="sub">Each model over its latest runs: cost per task (agent plus GPU time, log scale) against pass rate. Up and left is better.</p></div><div class="legend" id="lg-lb-scatter"></div></div>
+          <div class="card-head"><div><h2>Cost against success</h2><p class="sub">Each configuration over its latest runs: cost per task (agent model calls, log scale) against pass rate. Up and left is better.</p></div><div class="legend" id="lg-lb-scatter"></div></div>
           <div class="chart" id="ch-lb-scatter"></div>
         </div>
       </div>

@@ -63,6 +63,9 @@ onboarding ([roadmap](roadmap.md)).
 | `OPERON_TRUST_DENY` | unset | Comma-separated phrases that **block** an action (the run pauses for a human; the action never runs autonomously). Matched case-insensitively against the action text, URL, and target-element name. |
 | `OPERON_TRUST_CONFIRM` | built-in set | Comma-separated phrases that require **human approval** before running. Defaults to a conservative high-risk set (`delete account`, `permanently delete`, `deactivate`, `close account`, `confirm payment`, `place order`, `buy now`, `complete purchase`, `send money`, `transfer funds`, `uninstall`) when this is unset. |
 | `OPERON_TRUST_ALLOW_DOMAINS` | unset | Comma-separated domains (subdomains included). When set, navigation is **restricted to these domains** — any other URL is denied (fail-closed). Unset = no domain restriction. |
+| `OPERON_PERMISSION_MODE` | `risky` | Permission mode for a run that does not choose one (the task page and `operon run --mode` choose per run). `ask` approves every action that does something, even with the gate off. `risky` uses the gate's confirm list. `auto` approves nothing. Deny rules and the domain allowlist block in every mode. |
+| `OPERON_STREAM_TOKEN_TTL_S` | `600` | Lifetime of the short-lived `/ws/stream` tokens from `POST /app/api/stream-token` (10 to 86400 s). Checked at connect, so an open stream is not cut off. |
+| `OPERON_API_URL` | `http://127.0.0.1:8080` | Where `operon run --request` sends the task. |
 | `OPERON_ALLOWED_FILE_ROOTS` | unset | Extra directories that `read_text` / `upload_file` may touch. The file guard is always on: any path not named in the task or inside the run directory pauses the run for a human. |
 | `OPERON_SITE_ADAPTERS` | unset | Built-in site adapters to load (`wikipedia`, `github`, or `all`) |
 | `OPERON_RUNS_RETAIN_DAYS` | `14` | Days of run directories kept by the startup sweep; `-1` disables it |

@@ -104,11 +104,14 @@ async def _sender(ws: WebSocket, q: asyncio.Queue) -> None:
             await ws.send_text(json.dumps(item))
 
 
-async def _receiver(ws: WebSocket) -> None:
-    """Consume control messages from observable clients."""
+async def _receiver(ws: WebSocket, scope: str = "control") -> None:
+    """Consume control messages from observable clients. A ``view`` client only watches."""
     async for raw in ws.iter_text():
         try:
             msg = json.loads(raw)
+            if scope != "control":
+                publish_event({"type": "control_ack", "action": msg.get("type"), "error": "view-only stream"})
+                continue
             await _handle_control(msg)
         except Exception:
             # One bad message must not drop the connection, but it must not vanish either.
@@ -217,12 +220,15 @@ async def stream(ws: WebSocket) -> None:
     # subprotocol. No-op only when OPERON_ALLOW_UNAUTHENTICATED is set.
     # The Origin gate is always on: CORS does not cover WebSockets, so without it
     # any page in a local browser could connect and drive the agent.
+    # A short-lived stream token (x-stream-token, KAN-89) also opens it, with the
+    # scope it was minted for: "view" clients get frames and events but no control.
     from operon.api.auth import (
-        websocket_api_key_ok,
         websocket_origin_ok,
+        websocket_stream_scope,
         websocket_subprotocol,
     )
-    if not websocket_origin_ok(ws) or not websocket_api_key_ok(ws):
+    scope = websocket_stream_scope(ws) if websocket_origin_ok(ws) else None
+    if scope is None:
         await ws.close(code=1008)  # 1008 = policy violation (unauthorized)
         return
     await ws.accept(subprotocol=websocket_subprotocol(ws))
@@ -237,7 +243,7 @@ async def stream(ws: WebSocket) -> None:
 
     frame_task = asyncio.create_task(_frame_pusher(q))
     send_task = asyncio.create_task(_sender(ws, q))
-    recv_task = asyncio.create_task(_receiver(ws))
+    recv_task = asyncio.create_task(_receiver(ws, scope))
 
     try:
         done, pending = await asyncio.wait(

@@ -25,6 +25,9 @@ dependencies = [
     "pyyaml>=6.0.3,<7.0.0",
 ]
 
+[project.scripts]
+operon = "operon.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1.1,<10.0.0",
@@ -41,7 +44,7 @@ where = ["src"]
 include = ["operon*"]
 
 [tool.setuptools.package-data]
-operon = ["prompts/*.txt"]
+operon = ["prompts/*.txt", "api/static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

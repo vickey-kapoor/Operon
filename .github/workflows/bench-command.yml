@@ -133,8 +133,8 @@ jobs:
           if [ -z "$profile" ]; then
             if [ "$backend" = computer_use ]; then profile=full; else profile=thin; fi
           fi
-          if [ "$backend" = computer_use ] && [ -n "$check_model" ]; then
-            echo "::error::check-sonnet/check-haiku pick Claude's completion check; a Gemini run has none. Add opus, sonnet or haiku."; exit 1
+          if [ "$backend" != claude_computer_use ] && [ -n "$check_model" ]; then
+            echo "::error::check-sonnet/check-haiku pick Claude's completion check; only a Claude run has one. Add opus, sonnet or haiku, and drop model=."; exit 1
           fi
           if [ -n "$season" ] && [ "$target" = grounding ]; then
             echo "::error::season= is for /bench browser, desktop and hybrid."; exit 1

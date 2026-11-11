@@ -47,7 +47,7 @@ async def start(task: frontdoor.FrontDoorTask) -> dict[str, Any]:
     if task.environment == "browser" and not test_safe_mode_enabled():
         from operon.api.dependencies import ensure_cdp_ready
 
-        await ensure_cdp_ready(mode="batch")
+        await ensure_cdp_ready(mode="observable")
     try:
         return await frontdoor.start_task(task, auto_run=not test_safe_mode_enabled())
     except ValueError as exc:  # StartUrlBlockedError and friends

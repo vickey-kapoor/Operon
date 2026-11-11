@@ -274,7 +274,7 @@
     $("screen").classList.toggle("takeover", s.in_takeover && s.environment === "browser");
     $("takeover-keys").classList.toggle("hidden", s.environment !== "browser");
     $("takeover-hint").textContent = s.environment === "browser"
-      ? "Click on the live view and use the keys below, or use the browser window itself."
+      ? "Click on the live view and use the keys below."
       : "Use your mouse and keyboard on the desktop.";
     const list = $("steps");
     list.replaceChildren();

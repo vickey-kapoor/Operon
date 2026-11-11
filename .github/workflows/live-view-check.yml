@@ -1,0 +1,79 @@
+name: Live view check
+run-name: Gemini · task page live view (KAN-89)
+
+# One short real task on the task page (/app), watched by a headless browser:
+# frames reach the live view, keep coming during a takeover, and the run ends
+# with a report (evals/live_view_check.py). Spends a few cents of Gemini calls.
+on:
+  workflow_dispatch:
+  # Temporary, for the first check on its PR branch; removed before merge.
+  push:
+    branches: [claude/project-thread-cxenx0]
+    paths: [evals/live_view_check.py, .github/workflows/live-view-check.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Watch one task on the task page
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: "3.14"
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      API_KEYS: live-view-check
+      BROWSER_HEADLESS: "true"
+    steps:
+      - name: Check the secrets
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::Missing repository secret GEMINI_API_KEY."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Start the API
+        run: |
+          nohup uv run python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080 > uvicorn.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8080/health > /dev/null && exit 0
+            sleep 2
+          done
+          cat uvicorn.log
+          exit 1
+
+      - name: Run the check
+        run: uv run python -m evals.live_view_check --out live-view-check | tee check.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '## Live view check'
+            echo '```'
+            cat check.txt 2>/dev/null || echo "no result"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: live-view-check
+          path: |
+            live-view-check/
+            uvicorn.log
+          retention-days: 14

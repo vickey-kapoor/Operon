@@ -1,0 +1,48 @@
+name: PR review (PR-Agent)
+
+# Free AI PR review: the open-source PR-Agent (https://github.com/the-pr-agent/pr-agent),
+# run on GitHub's runner with the repo's GEMINI_API_KEY. Costs only Gemini tokens (about cents a PR).
+# It reviews when a PR is opened, reopened or marked ready, and answers PR comments that
+# start with a slash command: /review, /improve, /describe, /ask "<question>".
+# It never rewrites the PR description on its own (auto_describe is off).
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  pr_agent:
+    # Same-repo PRs only (fork PRs get no secrets); comments only when they are a slash command on a PR.
+    if: >-
+      (github.event_name == 'pull_request'
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && github.actor != 'dependabot[bot]')
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && startsWith(github.event.comment.body, '/')
+        && github.event.comment.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: PR-Agent
+        # Image 0.50.0-github_action, pinned by digest.
+        uses: docker://pragent/pr-agent@sha256:548e894a88071180832b2f4233f734d0acd0db1a879e2fcbaa70bac8b8372ebe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          config.model: "gemini/gemini-3.5-flash"
+          config.fallback_models: '[]'
+          config.custom_model_max_tokens: "1048576"
+          github_action_config.auto_describe: "false"
+          github_action_config.auto_review: "true"
+          github_action_config.auto_improve: "true"

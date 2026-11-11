@@ -162,12 +162,17 @@ def test_the_backend_flag_selects_claude_on_the_desktop(monkeypatch: pytest.Monk
     assert validate_modes() == []
 
 
-def test_gemini_stays_the_default_desktop_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gemini_computer_use_is_the_default_desktop_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     from operon.api.runtime_config import desktop_mode_config
 
     monkeypatch.delenv("OPERON_DESKTOP_BACKEND", raising=False)
+    monkeypatch.delenv("OPERON_DESKTOP_MODEL", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key")
 
+    config = desktop_mode_config()
+    assert config.backend == "computer_use"
+    assert config.primary_model == "gemini-3.5-flash"
+    monkeypatch.setenv("OPERON_DESKTOP_BACKEND", "json")
     assert desktop_mode_config().backend == "json"
 
 

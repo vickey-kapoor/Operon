@@ -28,7 +28,8 @@ class RuntimeModeConfig:
 
 
 def desktop_mode_config() -> RuntimeModeConfig:
-    backend = os.getenv("OPERON_DESKTOP_BACKEND", "json")
+    # Gemini computer use is the default model everywhere; json is the older Gemini JSON path.
+    backend = (os.getenv("OPERON_DESKTOP_BACKEND") or "").strip() or "computer_use"
     # Gemini computer use needs a computer-use model; the json backend's default is not one.
     default_model = "gemini-3.5-flash" if backend == "computer_use" else "gemini-2.5-flash"
     return RuntimeModeConfig(

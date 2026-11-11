@@ -377,6 +377,16 @@ class AgentLoop:
         record = await self.pause_run(run_id)
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}; nothing to take over")
+        # The pause stops any new step; wait for one already in flight to end, so the
+        # agent never captures, decides or acts on a screen the person is changing.
+        lock = self._run_locks.get(run_id)
+        if lock is None:
+            lock = self._run_locks[run_id] = asyncio.Lock()
+        async with lock:
+            record = await self.run_store.get_run(run_id)
+        if record is None or record.status is not RunStatus.WAITING_FOR_USER:
+            state = record.status.value if record is not None else "gone"
+            raise ValueError(f"Run {run_id!r} is {state}; nothing to take over")
         if not getattr(record, "in_takeover", False):
             record.in_takeover = True
             record.takeover_count = getattr(record, "takeover_count", 0) + 1

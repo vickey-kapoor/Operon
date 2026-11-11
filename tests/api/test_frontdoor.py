@@ -183,3 +183,29 @@ def test_format_report_reads_as_plain_text() -> None:
 
 def test_status_marks_terminal_states_done() -> None:
     assert RunStatus.SUCCEEDED in frontdoor.TERMINAL and RunStatus.WAITING_FOR_USER not in frontdoor.TERMINAL
+
+
+async def test_a_paused_step_shows_its_before_screenshot(monkeypatch, tmp_path, scheduled) -> None:
+    loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
+    _use(monkeypatch, loop)
+    async with _client() as client:
+        run_id = (await _start(client, permission_mode="ask"))["run_id"]
+        await loop.step_run(StepRequest(run_id=run_id))  # paused before acting: no after-image
+        status = (await client.get(f"/app/api/runs/{run_id}")).json()
+
+    assert status["latest_screenshot"].endswith("before.png")
+
+
+async def test_the_report_gives_the_stop_answer(monkeypatch, tmp_path, scheduled) -> None:
+    from operon.models.policy import ActionType, AgentAction
+
+    answer = "The cheapest 1 TB SSD is the Crucial P3 at $49.99, listed on page 2. " * 3
+    loop, _ = build_loop(monkeypatch, tmp_path, [AgentAction(action_type=ActionType.STOP, text=answer)])
+    _use(monkeypatch, loop)
+    async with _client() as client:
+        run_id = (await _start(client, permission_mode="auto"))["run_id"]
+        await loop.step_run(StepRequest(run_id=run_id))
+        report = (await client.get(f"/app/api/runs/{run_id}/report")).json()
+
+    assert report["final_message"] == answer
+    assert report["timeline"][-1]["text"] == answer

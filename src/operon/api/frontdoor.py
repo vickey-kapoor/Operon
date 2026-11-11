@@ -117,6 +117,13 @@ def _action_summary(action) -> str:
     return " ".join(parts)
 
 
+def _screenshot(entry: StepLog) -> str:
+    """The step's after-image, or its before-image when no action ran (a gate pause
+    logs an after path that is never written)."""
+    after = entry.after_artifact_path
+    return after if Path(after).exists() else entry.before_artifact_path
+
+
 def _steps(loop, run_id: str) -> list[dict[str, Any]]:
     try:
         entries = load_run_replay(run_id, root_dir=loop.run_store.root_dir)
@@ -134,7 +141,9 @@ def _steps(loop, run_id: str) -> list[dict[str, Any]]:
             "detail": entry.executed_action.detail,
             "verification": entry.verification_result.status.value,
             "why": entry.policy_decision.rationale,
-            "screenshot": entry.after_artifact_path,
+            # The full typed text: a STOP carries the task's answer here.
+            "text": entry.executed_action.action.text,
+            "screenshot": _screenshot(entry),
         })
     return steps
 
@@ -272,7 +281,8 @@ def _final_message(steps: list[dict[str, Any]], record) -> str | None:
     """The model's own last word: its STOP text or rationale, else the last pause reason."""
     for step in reversed(steps):
         if step["action_type"] == "stop":
-            return step["why"] or step["detail"]
+            # The answer of an information task is the STOP text, not the rationale.
+            return step.get("text") or step["why"] or step["detail"]
     if steps:
         return steps[-1]["why"] or steps[-1]["detail"]
     return getattr(record, "pause_reason", None) or record.hitl_message

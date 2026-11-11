@@ -318,6 +318,13 @@
     catch (e) { showError(e.message); }
   }
 
+  // Takeover input answers {"ok": true}, not a run status: keep the status as it is.
+  async function sendInput(body) {
+    showError("");
+    try { await api("POST", `/app/api/runs/${runId}/input`, body); }
+    catch (e) { showError(e.message); }
+  }
+
   // ---- controls ----
   $("btn-start").onclick = async () => {
     showError("");
@@ -344,18 +351,18 @@
   $("btn-takeover").onclick = () => act("takeover");
   $("btn-handback").onclick = () => { act("handback", { note: $("handback-note").value || null }); $("handback-note").value = ""; };
   $("btn-stop").onclick = () => act("stop");
-  $("btn-type").onclick = () => { act("input", { input_type: "type", text: $("takeover-text").value }); $("takeover-text").value = ""; };
-  for (const b of document.querySelectorAll("#takeover-keys [data-key]")) b.onclick = () => act("input", { input_type: "key", key: b.dataset.key });
+  $("btn-type").onclick = () => { sendInput({ input_type: "type", text: $("takeover-text").value }); $("takeover-text").value = ""; };
+  for (const b of document.querySelectorAll("#takeover-keys [data-key]")) b.onclick = () => sendInput({ input_type: "key", key: b.dataset.key });
   $("frame").addEventListener("click", (ev) => {
     if (!status || !status.in_takeover || status.environment !== "browser") return;
     const r = ev.target.getBoundingClientRect();
-    act("input", { input_type: "click", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height });
+    sendInput({ input_type: "click", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height });
   });
   $("frame").addEventListener("wheel", (ev) => {
     if (!status || !status.in_takeover || status.environment !== "browser") return;
     ev.preventDefault();
     const r = ev.target.getBoundingClientRect();
-    act("input", { input_type: "scroll", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height, delta_y: Math.round(ev.deltaY) });
+    sendInput({ input_type: "scroll", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height, delta_y: Math.round(ev.deltaY) });
   }, { passive: false });
   $("key-save").onclick = () => {
     apiKey = $("key").value.trim(); store.set("operon-key", apiKey); $("key").value = "";

@@ -163,3 +163,33 @@ async def test_hand_back_refuses_a_run_not_taken_over(monkeypatch, tmp_path) -> 
 
     with pytest.raises(ValueError):
         await loop.hand_back(run_id)
+
+
+async def test_takeover_waits_for_the_step_in_flight(monkeypatch, tmp_path) -> None:
+    """Control passes only once the agent's current step has ended, so it never acts
+    on a screen the person is already changing."""
+    import asyncio
+
+    loop, executor = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
+    run_id = await _start(loop, "auto")
+    release = asyncio.Event()
+    real_perceive = loop.perception_service.perceive
+
+    async def slow_perceive(*args, **kwargs):
+        await release.wait()
+        return await real_perceive(*args, **kwargs)
+
+    loop.perception_service.perceive = slow_perceive
+    step = asyncio.create_task(_step(loop, run_id))
+    await asyncio.sleep(0.05)  # the step is now waiting on the model
+    takeover = asyncio.create_task(loop.take_over(run_id))
+    await asyncio.sleep(0.05)
+
+    assert not takeover.done()
+    state = await loop.run_store.get_run(run_id)
+    assert not state.in_takeover
+
+    release.set()
+    await step
+    state = await takeover
+    assert state.in_takeover and state.status is RunStatus.WAITING_FOR_USER

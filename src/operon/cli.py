@@ -183,6 +183,9 @@ async def drive(
                 if leave_paused:
                     out(f"Waiting for you: {waiting['reason']}")
                     out("Left paused: approve it on the task page, or run again in a terminal.")
+                    page = getattr(client, "base_url", None)
+                    if page:
+                        out(f"Follow it on {page}/app#run={run_id}")
                     return 2, None
                 out(f"Waiting for you, but there is no terminal to ask: {waiting['reason']}. Stopping.")
                 status = await client.stop(run_id)
@@ -270,8 +273,6 @@ async def _run(args: argparse.Namespace) -> int:
             interrupts=interrupts,
             leave_paused=bool(args.request),
         )
-        if args.request and code == 2:
-            print(f"Follow it on {client.base_url}/app")
         return code
     except Exception as exc:  # noqa: BLE001 - a refused task or an unreachable API ends the command
         print(f"operon run: {exc}", file=sys.stderr)

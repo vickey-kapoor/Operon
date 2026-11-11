@@ -191,6 +191,8 @@ async def test_request_mode_leaves_a_paused_run_for_the_page(monkeypatch, tmp_pa
 
     assert code == 2 and report is None
     assert any(line.startswith("Left paused") for line in lines)
+    link = [line for line in lines if line.startswith("Follow it on ")]
+    assert link and "/app#run=" in link[0] and len(link[0].split("#run=")[1]) > 8
 
 
 async def test_remote_errors_carry_the_api_detail() -> None:

@@ -24,11 +24,11 @@ the result. No DOM, no selectors, no accessibility tree.
 
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages and native Windows apps.
-- **Any computer-use model.** Claude computer use is the default when an Anthropic key is set;
-  Gemini is fully supported, and a model adapter runs GPT and open-weight models on the same
-  tasks.
-- **A thin harness for strong models.** The model makes every decision (Claude's "done" is
-  checked once at the end); the full harness adds rules, guards, a per-step verifier and recovery.
+- **Gemini by default, any model to compare.** Every run uses Gemini computer use unless you
+  pick another backend; Claude computer use and, through a model adapter, GPT and open-weight
+  models run on the same tasks for benchmarking.
+- **Two harnesses.** The full harness (Gemini's default) puts rules, guards, a per-step verifier
+  and recovery around the model; the thin harness lets the model make every decision.
 - **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on
   by default) that blocks or asks a human before risky actions.
 - **Measured.** Browser, Desktop and Hybrid benchmarks graded from app and machine state, each
@@ -54,7 +54,7 @@ Requires Python 3.11+ and Chromium.
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 playwright install chromium
-cp .env.example .env    # then set ANTHROPIC_API_KEY and/or GEMINI_API_KEY
+cp .env.example .env    # then set GEMINI_API_KEY (ANTHROPIC_API_KEY only to compare Claude)
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 

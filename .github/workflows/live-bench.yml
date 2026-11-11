@@ -13,7 +13,7 @@ on:
     inputs:
       backends:
         description: "Browser backends to compare, space-separated"
-        default: "computer_use claude_computer_use"
+        default: "computer_use"
       claude_model:
         description: "Model for claude_computer_use"
         default: "claude-opus-5-5"
@@ -24,7 +24,7 @@ on:
         description: "OPERON_HARNESS_PROFILE: thin or full, for Claude, Gemini computer use and registry models (thin ends on the model's own done, except Claude's)."
         type: choice
         options: [thin, full]
-        default: thin
+        default: full
       critic:
         description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
         default: ""
@@ -48,10 +48,10 @@ on:
   # Called by bench-command.yml when someone comments /bench on a PR.
   workflow_call:
     inputs:
-      backends: {type: string, default: "claude_computer_use"}
+      backends: {type: string, default: "computer_use"}
       claude_model: {type: string, default: "claude-opus-5-5"}
       claude_effort: {type: string, default: "low"}
-      harness_profile: {type: string, default: "thin"}
+      harness_profile: {type: string, default: "full"}
       critic: {type: string, default: ""}
       final_check_model: {type: string, default: ""}
       suite: {type: string, default: "core"}

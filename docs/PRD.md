@@ -133,7 +133,7 @@ Legend: **[Current]** implemented today (verified in code); **[Roadmap]** propos
 - **FR-4 [Current]** Visual click-servo stability check before browser/desktop clicks.
 
 ### 9.2 Backends & models
-- **FR-5 [Current]** Browser backend defaults to **Claude computer use** when `ANTHROPIC_API_KEY` is set, otherwise **Gemini Computer Use** on `gemini-3.5-flash`, with an optional **JSON** perception/policy fallback in the full harness.
+- **FR-5 [Current]** Browser backend defaults to **Gemini Computer Use** on `gemini-3.5-flash`, with an optional **JSON** perception/policy fallback in the full harness. Claude computer use and registry models (GPT, open-weight) are selected explicitly, as comparison models.
 - **FR-6 [Current]** Desktop backend uses the **JSON combined** backend.
 - **FR-7 [Current]** Pluggable backend and verifier provider: **Claude or Gemini** (`OPERON_*_BACKEND`, `OPERON_*_VERIFIER_PROVIDER`), plus an experimental model adapter that runs GPT and open-weight models from a registry (`OPERON_*_BACKEND=model`).
 - **FR-8 [Roadmap]** Pluggable grounding/vision models (e.g., OmniParser-style screen parsing [11], UI-TARS-style grounding [9]) to improve coordinate accuracy.
@@ -227,8 +227,8 @@ Design invariants: browser and desktop share the loop, verifier, recovery, and p
 The live roadmap is [`roadmap.md`](./roadmap.md); it supersedes the release plan first written
 here in June 2026. In short:
 
-- **Built (October to November 2026).** Claude computer use as the default backend with a thin
-  harness; Gemini in thin and full harnesses; a cross-model adapter that runs GPT and
+- **Built (October to November 2026).** Gemini computer use as the default backend; Claude
+  computer use with a thin harness; Gemini in thin and full harnesses; a cross-model adapter that runs GPT and
   open-weight models; desktop mode on Windows; Browser, Desktop and Hybrid benchmarks graded
   from state, in a model x category x harness grid on a frozen Season 1; safety, grounding and
   cost tracking on an eval dashboard; the trust gate on by default (FR-16's confirmation gating).

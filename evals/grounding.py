@@ -534,7 +534,7 @@ def _default_backend() -> str:
     explicit = os.getenv("OPERON_BROWSER_BACKEND")
     if explicit in BACKENDS:
         return explicit
-    return "claude_computer_use" if os.getenv("ANTHROPIC_API_KEY") else "computer_use"
+    return "computer_use"
 
 
 def _max_cost_default() -> float:

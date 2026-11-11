@@ -361,14 +361,13 @@ def critic_label(profile, mode: str = "browser") -> str | None:
 
 def _server_backend(env: dict[str, str], mode: str) -> str:
     """The backend the server runs (operon.api.runtime_config): OPERON_<MODE>_BACKEND,
-    else Claude in the browser with ANTHROPIC_API_KEY, Gemini computer use without it,
-    and json on the desktop."""
+    else Gemini computer use in the browser and json on the desktop."""
     mode = server_mode(mode)
     backend = (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower()
     if backend:
         return backend
     if mode == "browser":
-        return "claude_computer_use" if env.get("ANTHROPIC_API_KEY") else "computer_use"
+        return "computer_use"
     return "json"
 
 

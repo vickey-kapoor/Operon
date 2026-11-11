@@ -36,12 +36,12 @@ on:
         description: "OPERON_DESKTOP_BACKEND: json (Gemini), computer_use (Gemini computer use), claude_computer_use or model"
         type: choice
         options: [json, computer_use, claude_computer_use, model]
-        default: json
+        default: computer_use
       harness_profile:
         description: "OPERON_HARNESS_PROFILE: thin or full, for Claude, Gemini computer use and registry models (thin ends on the model's own done, except Claude's)."
         type: choice
         options: [thin, full]
-        default: thin
+        default: full
       critic:
         description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
         default: ""
@@ -73,8 +73,8 @@ on:
       runner: {type: string, default: "github"}
       category: {type: string, default: "desktop"}
       suite: {type: string, default: "core"}
-      desktop_backend: {type: string, default: "claude_computer_use"}
-      harness_profile: {type: string, default: "thin"}
+      desktop_backend: {type: string, default: "computer_use"}
+      harness_profile: {type: string, default: "full"}
       critic: {type: string, default: ""}
       claude_model: {type: string, default: "claude-opus-5-5"}
       final_check_model: {type: string, default: ""}

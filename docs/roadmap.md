@@ -11,9 +11,9 @@ approved, and every paid benchmark run needs its own cost approval. Nothing unde
 
 ### October 2026: the agent and the first benchmarks
 
-- **Claude computer use backend** for the browser and the desktop. It is the browser default
-  when an Anthropic key is set; desktop runs choose it with
-  `OPERON_DESKTOP_BACKEND=claude_computer_use`. Gemini computer use stays a supported backend.
+- **Claude computer use backend** for the browser and the desktop, chosen with
+  `OPERON_*_BACKEND=claude_computer_use`. Gemini computer use is Operon's default model; Claude
+  and GPT are comparison models for benchmarking.
 - **Thin harness** (#157, #162): Claude makes every decision and one completion check judges its
   "done". The full harness (rules, post-model guards, per-step verifier, recovery) remains for
   other backends and on request.

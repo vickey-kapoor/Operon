@@ -133,14 +133,16 @@ commit (PRs from forks are refused):
 ```
 
 The first word is the category and the second the harness: one cell of the grid. Defaults:
-browser, thin harness, the category's core set, Claude Opus 5.5. `season=<n>` runs the frozen
-season's tasks (`--season`), which is what the Leaderboard tab's grid counts. `gemini` runs Gemini computer use
-instead, in the full harness unless `thin` is given; a thin Gemini run ends on Gemini's own
-"done", with no completion check. Examples:
+browser, Gemini computer use (Operon's default model) in the full harness, the category's core
+set. A thin Gemini run ends on Gemini's own "done", with no completion check. `season=<n>` runs
+the frozen season's tasks (`--season`), which is what the Leaderboard tab's grid counts.
+Claude and GPT are comparison models: `opus`, `sonnet` or `haiku` runs Claude computer use with
+that model (thin harness unless `full` is given; `zoom` and `check-*` need one of them), and
+`model=<profile>` runs a registry model such as GPT. `gemini` names the default explicitly. Examples:
 
 | Comment | Runs |
 |---|---|
-| `/bench` | Browser · Thin: the Browser core set (10 tasks) |
+| `/bench` | Gemini · Browser · Full: the Browser core set (10 tasks) |
 | `/bench browser thin gemini season=1` | Gemini · Browser · Thin on Season 1, one cell of the grid |
 | `/bench desktop full gemini azure season=1` | Gemini · Desktop · Full on Season 1, on the Azure VM |
 | `/bench smoke` | Browser smoke (5 live web tasks) |
@@ -148,13 +150,13 @@ instead, in the full harness unless `thin` is given; a thin Gemini run ends on G
 | `/bench safety` | Safety suite (browser only) |
 | `/bench apps` | Local apps suite (browser only) |
 | `/bench long` | Long multi-app suite (browser only) |
-| `/bench hard x3` | Hard subset, every task 3 times (about $5.50 with Opus) |
-| `/bench grounding` | Grounding eval, 300 samples on Claude Opus 5.5 |
+| `/bench hard x3 opus` | Hard subset on Claude Opus, every task 3 times (about $5.50) |
+| `/bench grounding` | Grounding eval, 300 samples on Gemini |
+| `/bench grounding opus` | Grounding eval on Claude Opus 5.5 |
 | `/bench long gemini` / `/bench long gemini thin` | Long suite on Gemini computer use, full or thin harness |
 | `/bench desktop all azure gemini thin` | Full desktop benchmark on Gemini computer use, thin harness |
-| `/bench grounding gemini` | Grounding eval on Gemini |
-| `/bench grounding zoom` | Grounding eval on Claude with zoom on (`OPERON_CLAUDE_ZOOM`) |
-| `/bench desktop azure all zoom` | Full desktop benchmark on the Azure VM with Claude's zoom on (desktop and grounding only) |
+| `/bench grounding opus zoom` | Grounding eval on Claude with zoom on (`OPERON_CLAUDE_ZOOM`) |
+| `/bench desktop azure all opus zoom` | Full desktop benchmark on the Azure VM on Claude with zoom on (desktop and grounding only) |
 | `/bench desktop` | Desktop core set on GitHub's hosted Windows runner |
 | `/bench desktop smoke` | Desktop smoke (3 tasks) |
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |

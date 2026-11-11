@@ -514,13 +514,14 @@ def test_the_full_harness_keeps_the_gemini_fallback_for_claude(monkeypatch: pyte
     assert backend.primary.client.model == "claude-sonnet-5-5"
 
 
-def test_claude_is_the_default_browser_backend_when_an_anthropic_key_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gemini_stays_the_default_when_an_anthropic_key_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Gemini is the default model everywhere; Claude runs only when asked for.
     from operon.api.runtime_config import browser_mode_config, validate_modes
 
     monkeypatch.delenv("OPERON_BROWSER_BACKEND", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key")
 
-    assert browser_mode_config().backend == "claude_computer_use"
+    assert browser_mode_config().backend == "computer_use"
     assert validate_modes() == []
 
 

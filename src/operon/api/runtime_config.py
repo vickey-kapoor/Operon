@@ -45,8 +45,9 @@ def desktop_mode_config() -> RuntimeModeConfig:
 
 
 def _default_browser_backend() -> str:
-    """Claude computer use when an Anthropic key is present, else Gemini Computer Use."""
-    return "claude_computer_use" if os.getenv("ANTHROPIC_API_KEY") else "computer_use"
+    """Gemini computer use, whatever keys are set: Gemini is Operon's default model.
+    Claude runs only when asked for with OPERON_BROWSER_BACKEND=claude_computer_use."""
+    return "computer_use"
 
 
 def browser_mode_config() -> RuntimeModeConfig:

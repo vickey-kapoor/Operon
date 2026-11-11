@@ -179,9 +179,9 @@ def test_unknown_suites_are_refused():
 
 
 def test_report_settings_leave_out_secrets():
-    env = {"OPERON_BROWSER_BACKEND": "claude_computer_use", "OPERON_API_KEY": "x", "OPERON_BLOB_TOKEN": "y",
+    env = {"OPERON_BROWSER_BACKEND": "computer_use", "OPERON_API_KEY": "x", "OPERON_BLOB_TOKEN": "y",
            "GEMINI_API_KEY": "z", "OPERON_HARNESS_PROFILE": "thin"}
-    assert s.operon_settings(env) == {"OPERON_BROWSER_BACKEND": "claude_computer_use", "OPERON_HARNESS_PROFILE": "thin"}
+    assert s.operon_settings(env) == {"OPERON_BROWSER_BACKEND": "computer_use", "OPERON_HARNESS_PROFILE": "thin"}
 
 
 def _result(task: str, outcome: str, cost: float = 0.1) -> live_bench.TaskResult:
@@ -203,7 +203,7 @@ def test_a_season_report_gives_held_out_results_as_counts_only(long_only, tmp_pa
         _result("secret_two", "missed", cost=0.25),
     ]
     report = live_bench.build_report(
-        _args(), "20261109T000000Z", results, profile=None, repeat=1, planned=3, stopped=None, complete=True,
+        _args(), "20261109T000000Z", results, repeat=1, planned=3, stopped=None, complete=True,
         season_run=run,
     )
     assert "secret" not in json.dumps(report["results"]) + json.dumps(report["summary"])
@@ -233,7 +233,7 @@ def test_season_for_finds_the_suite_and_checks_it(long_only, monkeypatch):
 
 def test_no_season_means_no_season_block():
     report = live_bench.build_report(
-        _args(season=None), "20261109T000000Z", [_result("t", "success")], profile=None, repeat=1, planned=1,
+        _args(season=None), "20261109T000000Z", [_result("t", "success")], repeat=1, planned=1,
         stopped=None, complete=True,
     )
     assert "season" not in report

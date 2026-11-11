@@ -14,19 +14,12 @@ the result. No DOM, no selectors, no accessibility tree.
 
 </div>
 
-<p align="center">
-  <img src="docs/assets/claude-vs-gemini-benchmark.png" alt="Claude vs Gemini on 44 live web tasks: Claude completed 96% in 30 s and 1.7 steps per task, Gemini 91% in 48 s and 3.6 steps" width="480">
-  <br>
-  <sub>44 live web tasks, one run each, 25 Oct 2026. Rolling results across runs are in <a href="docs/evaluation.md#latest-results">Evaluation</a>.</sub>
-</p>
-
 ## Highlights
 
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages and native Windows apps.
-- **Gemini by default, any model to compare.** Every run uses Gemini computer use unless you
-  pick another backend; Claude computer use and, through a model adapter, GPT and open-weight
-  models run on the same tasks for benchmarking.
+- **Gemini computer use.** Every run uses Gemini 3.5 Flash, which has computer use built in.
+  Other models will come back through a simpler model onboarding (see the roadmap).
 - **Two harnesses.** The full harness (Gemini's default) puts rules, guards, a per-step verifier
   and recovery around the model; the thin harness lets the model make every decision.
 - **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on
@@ -54,7 +47,7 @@ Requires Python 3.11+ and Chromium.
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 playwright install chromium
-cp .env.example .env    # then set GEMINI_API_KEY (ANTHROPIC_API_KEY only to compare Claude)
+cp .env.example .env    # then set GEMINI_API_KEY
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 
@@ -76,8 +69,8 @@ curl -X POST http://127.0.0.1:8080/run-task \
 
 ## Status and roadmap
 
-Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Claude, Gemini or GPT.
-On the Season 1 core sets Gemini and Claude score 9 or 10 of 10 in most cells, so the next step
+Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Gemini computer use.
+On the Season 1 core sets Gemini scores 9 or 10 of 10 in most cells, so the next step
 is harder tasks (Season 2), then an architecture in line with today's leading computer-use
 agents: a simple way to run a task, typed shell and file tools beside the GUI, isolated and
 parallel run environments, a grounding slot and fewer steps. A Python SDK release comes last.

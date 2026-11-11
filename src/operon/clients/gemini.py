@@ -84,7 +84,7 @@ class GeminiHttpClient(GeminiClient):
         # A thinking level ("low", "high") for Gemini 3 models, or a token budget
         # ("0" turns it off) for Gemini 2.5. None leaves the model's default.
         self.thinking = thinking
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         self.use_vertex = use_vertex if use_vertex is not None else os.getenv("OPERON_USE_VERTEX", "").lower() in ("1", "true", "yes")
         self.vertex_project = vertex_project or _VERTEX_PROJECT
         self.vertex_location = vertex_location or _VERTEX_LOCATION

@@ -4,10 +4,13 @@
 "use strict";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const BACKEND_NAMES = { claude_computer_use: "Claude", computer_use: "Gemini", json: "Gemini", model: "Model" };
+const BACKEND_NAMES = { computer_use: "Gemini", json: "Gemini" };
+// Operon runs Gemini only. Runs of other models from before that stay in the database;
+// they count toward spend on the Cost tab and are left out everywhere else.
+const OTHER_MODEL = "Other model (earlier runs)";
 // Colors follow the configuration, never its rank: known ones get fixed slots,
 // anything new takes the next free slot in order of first appearance.
-const FIXED_SLOTS = { "Claude": 1, "Gemini": 2, "Claude · thin": 3 };
+const FIXED_SLOTS = { "Gemini": 1, "Gemini · thin, own done": 2 };
 const MAX_SLOTS = 6;
 const OUTCOME_LABELS = {
   success: "pass", false_success: "false pass", missed: "missed",
@@ -21,7 +24,8 @@ const OUTCOME_COLORS = {
 };
 
 const state = {
-  runs: [],
+  runs: [],     // Gemini runs: the Evals tab and the Leaderboard
+  allRuns: [],  // every run, for spend on the Cost tab
   tab: "evals",
   mode: "browser",
   suite: "full",
@@ -30,13 +34,12 @@ const state = {
   costSelected: null,
   slots: {},
   // Backend + harness labels whose runs used more than one model: their labels
-  // carry the model, so an Opus and a Sonnet run are two configurations.
+  // carry the model, so two Gemini models are two configurations.
   multiModel: new Set(),
   reports: {},
   tasks: null,
   judge: null,
   budget: null,
-  registry: [],
   trendMetric: "pass",
   lbCell: null, // the Leaderboard grid cell whose flipped tasks are listed (KAN-60)
 };
@@ -105,10 +108,10 @@ function harnessSuffix(name, harness) {
   return (harness || "full") === "thin" ? `${name} · thin` : name;
 }
 
-// A registry model's label: its profile, plus "· full" for a full-harness run (KAN-68),
-// so thin and full runs of one model are two rows.
-function registryLabel(c) {
-  return c.harness_profile === "full" ? `${c.model_profile} · full` : c.model_profile;
+// A Gemini run: no registry profile and a Gemini backend. Older reports may hold another model.
+function isGeminiRun(run) {
+  const c = run.config || {};
+  return !c.model_profile && Object.hasOwn(BACKEND_NAMES, c.backend || "");
 }
 
 function baseLabel(run) {
@@ -119,7 +122,7 @@ function baseLabel(run) {
 
 function configLabel(run) {
   const c = run.config || {};
-  if (c.model_profile) return registryLabel(c);  // a registry model: own "done"
+  if (!isGeminiRun(run)) return OTHER_MODEL;
   const base = baseLabel(run);
   // Only where one backend ran several models, so history from before the model
   // was recorded (and single-model configs) keeps its label and colour.
@@ -130,7 +133,7 @@ function noteModels(runs) {
   const models = new Map();
   for (const run of runs) {
     const c = run.config || {};
-    if (c.model_profile || !c.model) continue;
+    if (!isGeminiRun(run) || !c.model) continue;
     const base = baseLabel(run);
     if (!models.has(base)) models.set(base, new Set());
     models.get(base).add(c.model);
@@ -1016,7 +1019,7 @@ function suiteColor(id) {
 }
 
 function costRuns() {
-  return state.runs.filter(hasCost).sort((a, b) => parseStamp(a.started_at) - parseStamp(b.started_at));
+  return state.allRuns.filter(hasCost).sort((a, b) => parseStamp(a.started_at) - parseStamp(b.started_at));
 }
 
 function stat(label, value, hint) {
@@ -1480,18 +1483,16 @@ async function selectCostRun(run) {
 // ---------- shell ----------
 
 // ---------- leaderboard tab ----------
-// One row per model: a registry profile (cross-model runs, judged by the model's own
-// "done") or, for runs from before the registry, the backend's model and harness.
+// One row per Gemini model and harness.
 
 function modelLabel(run) {
   const c = run.config || {};
-  if (c.model_profile) return registryLabel(c);
   const name = c.model || BACKEND_NAMES[c.backend] || c.backend || "unknown";
   return harnessSuffix(name, c.harness_profile);
 }
 
 function runTotalCost(run) {
-  return (run.summary.cost_usd || 0) + (run.summary.gpu_cost_usd || 0);
+  return run.summary.cost_usd || 0;
 }
 
 function leaderboardData() {
@@ -1510,10 +1511,9 @@ function leaderboardData() {
     const runs = [...bySuite.values()];
     const sum = (f) => runs.reduce((acc, r) => acc + (Number(f(r)) || 0), 0);
     const tasks = sum((r) => r.summary.tasks);
-    const replies = sum((r) => r.summary.model_replies);
     return {
       model, bySuite,
-      ownDone: runs.some((r) => r.config && (r.config.model_profile || r.config.harness_profile === "thin-own")),
+      ownDone: runs.some((r) => r.config && r.config.harness_profile === "thin-own"),
       tasks,
       rate: tasks ? sum((r) => r.summary.success) / tasks : null,
       falsePass: sum((r) => r.summary.false_success),
@@ -1521,16 +1521,8 @@ function leaderboardData() {
       secondsPerTask: tasks ? sum((r) => r.summary.mean_seconds * r.summary.tasks) / tasks : null,
       costPerTask: tasks && runs.some(hasCost) ? sum(runTotalCost) / tasks : null,
       costPerSuccess: runs.some(hasCost) && sum((r) => r.summary.success) ? sum(runTotalCost) / sum((r) => r.summary.success) : null,
-      invalidRate: replies ? sum((r) => r.summary.invalid_replies) / replies : null,
     };
   }).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1));
-  // Registry models (evals/models.yaml, via models.json) that have no run yet still get a row.
-  const seen = new Set(models.map((m) => m.model));
-  for (const r of state.registry || []) {
-    if (seen.has(r.profile)) continue;
-    models.push({ model: r.profile, bySuite: new Map(), notRun: true, registry: r, ownDone: true, tasks: 0, rate: null,
-      falsePass: null, compromised: null, secondsPerTask: null, costPerTask: null, costPerSuccess: null, invalidRate: null });
-  }
   return { suites, models };
 }
 
@@ -1557,7 +1549,6 @@ function renderLeaderboardMatrix(data) {
           `${s.success}/${s.tasks} pass`, `${s.false_success || 0} false pass`,
           s.compromised ? `${s.compromised} compromised` : null,
           `${s.mean_seconds} s/task`, hasCost(run) ? `${fmtUsd(runTotalCost(run) / (s.tasks || 1))}/task` : null,
-          s.invalid_action_rate !== undefined ? `${(s.invalid_action_rate * 100).toFixed(1)}% invalid replies` : null,
         ].filter(Boolean).join(" · ");
         const rate = s.success_rate || 0;
         return el("td", { class: "num", title }, el("span", { class: `pill ${rate >= 0.9 ? "success" : rate >= 0.6 ? "missed" : "failure"}` }, `${Math.round(rate * 100)}%`),
@@ -1573,21 +1564,16 @@ function renderLeaderboardModels(data) {
   table.replaceChildren(el("thead", {}, el("tr", {},
     el("th", {}, "Model"), el("th", { class: "num" }, "Pass"), el("th", { class: "num" }, "False pass"),
     el("th", { class: "num" }, "Compromised"), el("th", { class: "num" }, "s/task"),
-    el("th", { class: "num", title: "Agent model calls plus GPU time, per task" }, "$/task"),
-    el("th", { class: "num", title: "Agent model calls plus GPU time, per passed task" }, "$/success"),
-    el("th", { class: "num" }, "Invalid"))));
-  table.append(el("tbody", {}, data.models.map((m, i) => m.notRun ? el("tr", { class: "not-run-row" },
-    el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model,
-      el("span", { class: "sub" }, ` ${m.registry.model}${m.registry.self_hosted ? " · self-hosted" : ""}`))),
-    el("td", { class: "num not-run", colspan: 7 }, `not run yet · ${m.registry.environments.join(" and ")}`)) : el("tr", {},
+    el("th", { class: "num", title: "Agent model calls, per task" }, "$/task"),
+    el("th", { class: "num", title: "Agent model calls, per passed task" }, "$/success"))));
+  table.append(el("tbody", {}, data.models.map((m, i) => el("tr", {},
     el("td", {}, el("span", { class: "config-cell" }, key(m.model, "key", lbColor(i)), m.model)),
     el("td", { class: "num" }, pctText(m.rate)),
     el("td", { class: "num" }, String(m.falsePass)),
     el("td", { class: "num" }, String(m.compromised)),
     el("td", { class: "num" }, m.secondsPerTask === null ? "–" : m.secondsPerTask.toFixed(0)),
     el("td", { class: "num" }, fmtUsd(m.costPerTask)),
-    el("td", { class: "num" }, fmtUsd(m.costPerSuccess)),
-    el("td", { class: "num" }, pctText(m.invalidRate))))));
+    el("td", { class: "num" }, fmtUsd(m.costPerSuccess))))));
 }
 
 function renderLeaderboardScatter(data) {
@@ -1633,10 +1619,9 @@ function renderLeaderboardScatter(data) {
 }
 
 function renderLeaderboardBrief(data) {
-  const ran = data.models.filter((m) => !m.notRun);
-  const total = data.models.length;
+  const ran = data.models;
   const lead = ran[0];
-  let text = `${ran.length} of ${total} model${total === 1 ? "" : "s"} ${ran.length === 1 ? "has" : "have"} run.`;
+  let text = `${ran.length} Gemini configuration${ran.length === 1 ? "" : "s"} ${ran.length === 1 ? "has" : "have"} run.`;
   if (lead && lead.rate !== null) {
     text += ` ${lead.model} leads at ${fmtPct(lead.rate)}`;
     const cheaper = ran.slice(1).filter((m) => m.costPerTask > 0 && lead.costPerTask > 0)
@@ -1649,20 +1634,17 @@ function renderLeaderboardBrief(data) {
   const mixed = ran.some((m) => !m.ownDone);
   document.getElementById("lb-brief").replaceChildren(
     el("div", { class: "eyebrow" }, mixed
-      ? "Same tasks and graders for every model. Rows marked (check) were judged by Operon's completion check, the rest by the model's own \"done\""
-      : "Same tasks and graders for every model, each judged by its own \"done\""),
+      ? "Same tasks and graders for every row. Thin rows are judged by the model's own \"done\", full rows by the harness"
+      : "Same tasks and graders for every row, each judged by the model's own \"done\""),
     el("h1", { class: "headline" }, text),
-    el("p", { class: "lede" }, "Ranked by pass rate over each model's latest unflagged run per suite. Models that haven't run show the command that runs them."));
+    el("p", { class: "lede" }, "Ranked by pass rate over each configuration's latest unflagged run per suite."));
 }
 
-// ---------- run plan: each model's Browser / Desktop / Hybrid x Thin / Full grid ----------
-// Vickey's order (Nov 9; Jira KAN-66, KAN-70, KAN-71): Gemini first, then Claude, then GPT.
-// Claude and GPT wait for Vickey's approval after Gemini's grid has run. `needs` names the
-// story that builds a harness the model can't run yet: drop the entry when that story merges.
+// ---------- run plan: Gemini's Browser / Desktop / Hybrid x Thin / Full grid ----------
+// Operon runs Gemini only (Nov 11); other models come back later through model onboarding.
+// `needs` names the story that builds a harness the model can't run yet.
 const RUN_PLAN = [
   { family: "Gemini", story: "KAN-66", needs: {} },
-  { family: "Claude", story: "KAN-70", afterGemini: true, needs: {} },
-  { family: "GPT", story: "KAN-71", afterGemini: true, needs: {} },
 ];
 // The season the plan runs on, and each category's core set as suiteId gives it (KAN-72,
 // evals/categories.py). A category with `needs` has no tasks until that story merges.
@@ -1673,17 +1655,9 @@ const PLAN_CATEGORIES = [
   { id: "desktop", name: "Desktop", suite: "desktop|core" },
   { id: "hybrid", name: "Hybrid", suite: "hybrid|core" },
 ];
-const ADAPTER_FAMILIES = { claude_native: "Claude", gemini_native: "Gemini", openai_native: "GPT" };
-const BACKEND_FAMILIES = { claude_computer_use: "Claude", computer_use: "Gemini", json: "Gemini" };
-
-// The plan row a run belongs to (Gemini, Claude or GPT), or null (an open-weight model).
-function modelFamily(run, registry) {
-  const c = run.config || {};
-  if (c.model_profile) {
-    const entry = (registry || []).find((r) => r.profile === c.model_profile);
-    return (entry && ADAPTER_FAMILIES[entry.adapter]) || null;
-  }
-  return BACKEND_FAMILIES[c.backend] || null;
+// The plan row a run belongs to: Gemini, or null for an earlier run of another model.
+function modelFamily(run) {
+  return isGeminiRun(run) ? "Gemini" : null;
 }
 
 function harnessMode(run) {
@@ -1736,13 +1710,13 @@ function rangeText(range) {
 
 // One row per planned model and category: its latest unflagged Season 1 core run per
 // harness, or, for a cell with nothing yet, why.
-function planGrid(runs, registry) {
+function planGrid(runs) {
   const allowed = new Set(PLAN_CATEGORIES.map((cat) => cat.suite));
   const byKey = new Map();
   for (const run of runs) {
     const c = run.config || {};
     if (!run.summary || c.flagged || c.season !== PLAN_SEASON) continue;
-    const family = modelFamily(run, registry);
+    const family = modelFamily(run);
     const harness = harnessMode(run);
     const suite = suiteId(run);
     if (!family || !harness || !allowed.has(suite)) continue;
@@ -1756,15 +1730,12 @@ function planGrid(runs, registry) {
     thin: planCell(byKey.get(`${plan.family}|thin|${cat.suite}`)),
     full: planCell(byKey.get(`${plan.family}|full|${cat.suite}`)),
   })));
-  // Gemini's grid is done once every category that has tasks ran in both harnesses.
-  const geminiDone = rows.filter((r) => r.family === "Gemini" && !r.categoryNeeds).every((r) => r.thin && r.full);
   for (const row of rows) {
     for (const harness of ["thin", "full"]) {
       if (row[harness]) continue;
       row[`${harness}Why`] = row.categoryNeeds ? `no tasks until ${row.categoryNeeds}`
         : row.needs[harness] ? `needs ${row.needs[harness]}`
-          : row.afterGemini && !geminiDone ? "waits for your approval after Gemini's grid has run"
-            : "not run yet";
+          : "not run yet";
     }
     row.delta = harnessDelta(row.thin, row.full);
   }
@@ -1810,7 +1781,7 @@ function planCellView(cell, why, id) {
 }
 
 function renderRunPlan() {
-  const rows = planGrid(state.runs, state.registry);
+  const rows = planGrid(state.runs);
   const table = document.getElementById("lb-plan");
   table.replaceChildren(el("thead", {}, el("tr", {},
     el("th", {}, "Step"), el("th", {}, "Model"), el("th", {}, "Category"), el("th", {}, "Thin harness"),
@@ -1983,14 +1954,14 @@ async function main() {
   const extras = Promise.all([
     getJson("api/tasks").then((d) => { state.tasks = d.tasks || []; }).catch(() => { state.tasks = []; state.tasksFailed = true; }),
     getJson("api/judge").then((d) => { state.judge = d.checks || []; }).catch(() => { state.judge = []; }),
-    getJson("models.json").then((d) => { state.registry = d.models || []; }).catch(() => { state.registry = []; }),
   ]);
   try {
     const index = await getJson("api/runs");
-    state.runs = index.runs || [];
+    state.allRuns = index.runs || [];
+    state.runs = state.allRuns.filter(isGeminiRun);
     state.budget = index.budget_usd || null;
     noteModels(state.runs);
-    assignSlots(state.runs);
+    assignSlots(state.allRuns);
     const generated = index.generated_at ? new Date(index.generated_at) : null;
     document.getElementById("meta").textContent =
       `${state.runs.length} benchmark runs` + (generated ? ` · updated ${timeFmt.format(generated)}` : "");

@@ -8,7 +8,7 @@ passes), with a "likely cause" for each miss: the judge's or grader's reason, or
 run has none (model comparisons run without a judge), how the task ended and why the
 agent stopped. Below it: number tiles with trends, one trend chart that switches
 between pass rate, speed, steps and cost, false
-passes, per-task outcomes by configuration (Claude or Gemini backend, full or thin
+passes, per-task outcomes by configuration (Gemini model, full or thin
 harness), why tasks fail, pass rate by category, each task's history across runs
 (flaky ones first) and the judge's agreement with hand labels. The Cost tab shows
 spend across every environment and suite (flagged, incomplete and partial runs
@@ -17,10 +17,9 @@ monthly budget (used, left, per-day pace, month-end projection), spend by month,
 a running total, spend per run, spend by model per day, cache hit rate, the most
 expensive tasks, wasted spend, spend by suite, and each run's spend by model and by
 task. Spend is the agent's model calls, the judge and a self-hosted model's GPU
-time; months are calendar months in UTC. The Leaderboard lists every model in the
-registry (`models.json`, written from `evals/models.yaml` by
-`python -m evals.dashboard models`), with "not run yet" until a model has a run.
-Its thin-against-full grid shows each cell's score with a 95% range and an Improved /
+time; months are calendar months in UTC. Operon runs Gemini only: the Evals tab and
+the Leaderboard show Gemini runs, and earlier runs of other models still in the
+database count only toward spend on the Cost tab. The Leaderboard's thin-against-full grid shows each cell's score with a 95% range and an Improved /
 Regressed / No clear change badge against the previous run of that cell; clicking a cell
 lists the tasks that flipped (`summary.score_range` and `summary.change`, written by the
 importer; KAN-60, docs/evaluation.md).
@@ -30,7 +29,6 @@ importer; KAN-60, docs/evaluation.md).
 - `api/report.js` (`GET /api/report?key=<run key>`): one run with its per-task results.
 - `api/tasks.js` (`GET /api/tasks`): every task result of every run, slimmed for the history and cost cards.
 - `api/judge.js` (`GET /api/judge`): judge checks saved by `python -m evals.judge_check run labels.jsonl --save`, with what their judge calls cost.
-- `models.json`: the model registry for the Leaderboard; a test keeps it in step with `evals/models.yaml`.
 - `api/blob.js` (`GET /api/blob?url=<blob url>`): one screenshot or trace from the private Blob store.
 - `server/db.js`: the Postgres pool the routes share, from `DASHBOARD_DATABASE_URL` (read-only role), else `DATABASE_URL`.
 - `scripts/blob-upload.mjs`: uploads screenshots and traces to Vercel Blob for the importer.

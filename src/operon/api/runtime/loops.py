@@ -4,21 +4,16 @@ from __future__ import annotations
 
 import importlib
 
-from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.coordinator import PolicyCoordinator
 from operon.agent.policy.recovery import RuleBasedRecoveryManager
 from operon.agent.policy.rules import PolicyRuleEngine
 from operon.agent.policy.thin import (
-    OWN_DONE,
     THIN,
-    FinalCheckVerifier,
     OwnDoneVerifier,
     ThinPolicy,
     ThinRecovery,
-    completion_check,
-    final_check_model,
     harness_profile,
 )
 from operon.agent.policy.verifier import DeterministicVerifierService
@@ -29,7 +24,6 @@ from operon.api.runtime.services import (
     build_desktop_services,
 )
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
-from operon.clients.anthropic import AnthropicHttpClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.store.memory import FileBackedMemoryStore
 from operon.store.run_store import FileBackedRunStore
@@ -63,18 +57,9 @@ def _loop_layers(*, config, services, memory_store, desktop: bool = False) -> di
     """Policy, verifier and recovery for the configured harness profile."""
     profile = harness_profile(config.backend)
     if profile == THIN:
-        delegate = services.policy_delegate
-        if completion_check(config.backend) == OWN_DONE:
-            verifier = OwnDoneVerifier(gave_up_prefix=GAVE_UP_PREFIX)
-        else:
-            verifier = FinalCheckVerifier(
-                AnthropicHttpClient(model=final_check_model(config.claude_model), timeout_seconds=120.0),
-                on_rejected=lambda run_id, hint: delegate.add_advisory_hints([hint], source="final_check", run_id=run_id),
-                effort=config.claude_effort,
-            )
         return {
-            "policy_service": ThinPolicy(delegate),
-            "verifier_service": verifier,
+            "policy_service": ThinPolicy(services.policy_delegate),
+            "verifier_service": OwnDoneVerifier(),
             "recovery_manager": ThinRecovery(),
             "harness_profile": profile,
         }

@@ -265,7 +265,6 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
     gemini_config = RuntimeModeConfig(
         backend="json",
         primary_model="gemini-3-flash-preview",
-        verifier_provider="gemini",
         verifier_model="gemini-3-flash-preview",
     )
 
@@ -290,47 +289,6 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
             assert mock_gemini.call_count == 2
             calls = mock_gemini.call_args_list
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in calls)
-    finally:
-        routes_module._desktop_agent_loop = original
-
-
-def test_desktop_agent_loop_uses_anthropic_verifier_when_configured() -> None:
-    """The Gemini combined backend can pair with an Anthropic verifier."""
-    import operon.api.runtime.loops as routes_module
-    from operon.api.runtime_config import RuntimeModeConfig
-
-    original = routes_module._desktop_agent_loop
-    routes_module._desktop_agent_loop = None
-
-    try:
-        anthropic_config = RuntimeModeConfig(
-            backend="json",
-            primary_model="gemini-3-flash-preview",
-            verifier_provider="anthropic",
-            fallback_model="gemini-2.5-flash",
-            verifier_model="claude-sonnet-5",
-        )
-        with (
-            patch("operon.api.runtime.loops.desktop_mode_config", return_value=anthropic_config),
-            patch("operon.api.runtime.services.desktop_mode_config", return_value=anthropic_config),
-            patch("operon.api.runtime.loops.DesktopExecutor"),
-            patch("operon.api.runtime.loops.FileBackedRunStore"),
-            patch("operon.api.runtime.loops.FileBackedMemoryStore"),
-            patch("operon.api.runtime.services.GeminiHttpClient") as mock_gemini,
-            patch("operon.api.runtime.services.AnthropicHttpClient") as mock_anthropic,
-            patch("operon.api.runtime.loops.ScreenCaptureService"),
-            patch("operon.api.runtime.services.CombinedPerceptionPolicyService"),
-            patch("operon.api.runtime.loops.PolicyCoordinator"),
-            patch("operon.api.runtime.loops.DeterministicVerifierService"),
-            patch("operon.api.runtime.loops.RuleBasedRecoveryManager"),
-            patch("operon.api.runtime.loops.AgentLoop"),
-        ):
-            routes_module.get_desktop_agent_loop()
-
-            # Gemini combined backend = 1 Gemini client; the verifier is Claude.
-            assert mock_gemini.call_count == 1
-            assert mock_anthropic.call_count == 1
-            assert mock_anthropic.call_args.kwargs["model"] == "claude-sonnet-5"
     finally:
         routes_module._desktop_agent_loop = original
 

@@ -11,15 +11,10 @@ approved, and every paid benchmark run needs its own cost approval. Nothing unde
 
 ### October 2026: the agent and the first benchmarks
 
-- **Claude computer use backend** for the browser and the desktop, chosen with
-  `OPERON_*_BACKEND=claude_computer_use`. Gemini computer use is Operon's default model; Claude
-  and GPT are comparison models for benchmarking.
-- **Thin harness** (#157, #162): Claude makes every decision and one completion check judges its
-  "done". The full harness (rules, post-model guards, per-step verifier, recovery) remains for
-  other backends and on request.
-- **Claude on the desktop** (#154 to #156): stock Windows apps, driven with the real mouse and keyboard.
-- **Live web benchmark**: 44 real web tasks graded by a screenshot judge. First comparison
-  (25 Oct): Claude 96% at 30 s per task, Gemini 91% at 48 s.
+- **Thin harness** (#157, #162): the model makes every decision. The full harness (rules,
+  post-model guards, per-step verifier, recovery) remains the default.
+- **Desktop mode** (#154 to #156): stock Windows apps, driven with the real mouse and keyboard.
+- **Live web benchmark**: 44 real web tasks graded by a screenshot judge.
 - **Measurement around it**: cost per task and per success (#159), a per-run cost cap, Slack
   alerts and screenshots on the [eval dashboard](https://operon-evals.vercel.app) (#167); a
   local apps suite graded from app state; a prompt-injection and overreach safety suite graded
@@ -28,15 +23,10 @@ approved, and every paid benchmark run needs its own cost approval. Nothing unde
 - **Security audit fixes** (#177, #185): the API requires a key by default and the batch
   browser has no debug port.
 - **Repo restructure** (#191): `evals/` at the top level, prompts inside the package.
-- **Claude zoom** behind `OPERON_CLAUDE_ZOOM` (#190), off by default: ScreenSpot-Pro went from
-  70% to 83%, while desktop tasks scored 10/10 either way.
 
-### November 2026: one yardstick for every model
+### November 2026: one yardstick
 
-- **Cross-model adapter** (#204, KAN-20): any model in [`evals/models.yaml`](../evals/models.yaml)
-  runs on the same tasks, executor and graders. Native adapters for Claude, Gemini and OpenAI
-  computer use, and an OpenAI-compatible adapter for open-weight models. Gemini got a desktop
-  backend (#207), and Gemini and registry models (GPT) run in both harnesses (#224, #226).
+- **Gemini on the desktop** (#207), and Gemini in both harnesses (#224, #226).
 - **Graded from state, not a judge**: the desktop benchmark reads the machine's state (#209,
   #212), and model comparisons use no screenshot judge.
 - **Categories and the grid** (#227, KAN-72): every benchmark belongs to Browser, Desktop or
@@ -47,13 +37,15 @@ approved, and every paid benchmark run needs its own cost approval. Nothing unde
   run-over-run change labels per grid cell on the dashboard and on `/bench` PR comments.
 - **Season 1** (#225, KAN-65): frozen on 2026-11-10 with held-out tasks kept out of the repo.
   See [evaluation](evaluation.md#seasons).
-- **Full harness fixes** (#228, KAN-75) and a working Claude step critic (#233, KAN-70).
+- **Full harness fixes** (#228, KAN-75).
 - **Trust gate on by default** (#232, KAN-15): risky actions pause for a human's approval.
   Benchmarks turn it off.
 - **Whole-repo review fixes** (#212 to #220, KAN-46 to KAN-51), a monthly budget on the dashboard's
   Cost tab (#208), a redesigned dashboard (#210) that reads through a read-only database role
   (#234, KAN-28), and the Azure desktop runner logging in with OIDC (KAN-27).
-- **Removed**: the Command Center UI (#206), which was unused.
+- **Removed**: the Command Center UI (#206), which was unused, and, on 2026-11-11, every model
+  but Gemini (Claude, GPT and the cross-model adapter), so that model onboarding can be rebuilt
+  clean and simple. Their earlier benchmark data stays on the dashboard.
 
 ## Present: where Operon stands
 
@@ -65,10 +57,6 @@ in [reports/season-1-grid.md](reports/season-1-grid.md).
 | Model | Browser Thin | Browser Full | Desktop Thin | Desktop Full | Hybrid Thin | Hybrid Full |
 |---|---|---|---|---|---|---|
 | Gemini 3.5 Flash | 10/10 | 10/10 | 9/10 | 10/10 | 9/10 | 7/10 |
-| Claude Sonnet 5.5 | 9/10 | 10/10 | 10/10\* | 10/10\* | not run | not run |
-| GPT (OpenAI computer use) | 10/10 | in progress | 10/10 | in progress | not run | not run |
-
-\* On the Desktop core before the long and safety tasks were added (KAN-74).
 
 What this tells us:
 
@@ -76,13 +64,12 @@ What this tells us:
   a change to Operon helps. Harder tasks (Season 2) are the first item under Next.
 - **Hybrid is the hardest category**, and most of its misses come from writing files or
   commands by typing into a shell, which the tool channel (A1 below) addresses.
-- **Grounding**: on ScreenSpot-Pro, Claude scores 70% (83% with zoom) and Gemini 48%.
+- **Grounding**: Gemini scores 48% on ScreenSpot-Pro.
 
 ### In progress
 
-- **GPT grid (KAN-71).** Browser Thin and Desktop Thin are done (10/10 each). The Full cells
-  wait on more OpenAI API credit and on PR #235, which keeps a GPT critic verdict whose reason
-  is free text instead of dropping it.
+- **Gemini only.** Operon runs Gemini 3.5 Flash for every run; the GPT grid (KAN-71) is on hold
+  until other models are onboarded again.
 - **Plans awaiting decisions**: the consumer product plan and the CUA market research, both
   under [Later](#later).
 
@@ -120,7 +107,7 @@ each step by vision, keeping best-of-N (KAN-84) for benchmarks only, adding a sa
 (confirmations by action category, secrets never shown to the model, a redacted audit bundle)
 and bringing the MCP server forward to right after the tool channel.
 
-Small items alongside: finish KAN-71, triage the `hybrid_it_inventory` failure from KAN-76, and
+Small items alongside: triage the `hybrid_it_inventory` failure from KAN-76, and
 split `loop.py` along its seams before the async work.
 
 ## Later
@@ -130,7 +117,8 @@ split `loop.py` along its seams before the async work.
   (for example bookkeepers in desktop accounting software), not a general consumer assistant,
   built on the front door (KAN-89). A local MCP server would ship the same day, with a no-key
   first run, design partners and, later, phone approvals and a hosted browser-only MCP server.
-- **Open-weight models** through the `openai_compat` adapter, once a GPU is available (KAN-21).
+- **Model onboarding**: a clean, simple way to add models back (Claude, GPT, open-weight models
+  once a GPU is available, KAN-21), compared with Gemini on the same grid.
 - **SDK release last** (epic KAN-41, KAN-34 to KAN-40): `pip install operon-agent` (the PyPI name
   is reserved), a Python API and CLI, an MCP server and Docker, with the repo going public on the
   same day. Safe defaults: desktop opt-in, trust gate on.

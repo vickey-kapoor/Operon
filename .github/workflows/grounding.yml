@@ -1,20 +1,15 @@
 name: Grounding eval
 
 # Runs the ScreenSpot grounding eval (evals/grounding.py): one model call per
-# sample through Operon's computer-use backend, scored hit or miss against the
+# sample through Operon's Gemini computer-use backend, scored hit or miss against the
 # target's box. No browser and no API server. Manual only: every run spends model
 # credits. Stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
 on:
   workflow_dispatch:
     inputs:
-      backend:
-        description: "claude_computer_use, computer_use (Gemini), or model (a registry profile, named in model)"
-        type: choice
-        options: [computer_use, claude_computer_use, model]
-        default: computer_use
       model:
-        description: "Model (empty: the backend's default); for backend model, the registry profile"
+        description: "Gemini model (empty: gemini-3.5-flash)"
         default: ""
       per_set:
         description: "Samples per set (v2-desktop, v2-web, pro)"
@@ -22,28 +17,18 @@ on:
       max_cost_usd:
         description: "Stop once the run has spent this many USD (0: no cap)"
         default: "5"
-      zoom:
-        description: "Let Claude zoom into the screenshot (OPERON_CLAUDE_ZOOM)"
-        type: boolean
-        default: false
   # Called by bench-command.yml for /bench grounding.
   workflow_call:
     inputs:
-      backend: {type: string, default: "computer_use"}
       model: {type: string, default: ""}
       per_set: {type: string, default: "100"}
       max_cost_usd: {type: string, default: "5"}
-      zoom: {type: boolean, default: false}
       ref:
         description: "Git ref to evaluate (empty: the triggering ref)"
         type: string
         default: ""
     secrets:
-      ANTHROPIC_API_KEY: {required: false}
       GEMINI_API_KEY: {required: false}
-      OPENAI_API_KEY: {required: false}
-      OPENWEIGHT_BASE_URL: {required: false}
-      OPENWEIGHT_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -55,26 +40,12 @@ jobs:
     env:
       UV_PYTHON: "3.14"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
-      OPERON_CLAUDE_ZOOM: ${{ inputs.zoom && 'true' || 'false' }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENWEIGHT_BASE_URL: ${{ secrets.OPENWEIGHT_BASE_URL }}
-      OPENWEIGHT_API_KEY: ${{ secrets.OPENWEIGHT_API_KEY }}
     steps:
       - name: Check the secrets
-        env:
-          BACKEND: ${{ inputs.backend }}
-          MODEL: ${{ inputs.model }}
         run: |
-          if [ "$BACKEND" = "claude_computer_use" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::Missing repository secret ANTHROPIC_API_KEY."; exit 1
-          fi
-          if [ "$BACKEND" = "computer_use" ] && [ -z "$GEMINI_API_KEY" ]; then
+          if [ -z "$GEMINI_API_KEY" ]; then
             echo "::error::Missing repository secret GEMINI_API_KEY."; exit 1
-          fi
-          if [ "$BACKEND" = "model" ] && [ -z "$MODEL" ]; then
-            echo "::error::backend model needs model set to a registry profile (evals/models.yaml)."; exit 1
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,12 +61,11 @@ jobs:
 
       - name: Run the grounding eval
         env:
-          BACKEND: ${{ inputs.backend }}
           MODEL: ${{ inputs.model }}
           PER_SET: ${{ inputs.per_set }}
         run: |
           set -o pipefail
-          uv run python -m evals.grounding --backend "$BACKEND" --per-set "$PER_SET" ${MODEL:+--model "$MODEL"} | tee grounding.txt
+          uv run python -m evals.grounding --per-set "$PER_SET" ${MODEL:+--model "$MODEL"} | tee grounding.txt
 
       - name: Summary
         if: always()
@@ -112,7 +82,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           # Not bench-*: the Dashboard data workflow imports those as benchmark runs.
-          name: grounding-${{ inputs.backend }}${{ inputs.backend == 'model' && format('-{0}', inputs.model) || '' }}${{ inputs.zoom && '-zoom' || '' }}
+          name: grounding-computer_use
           path: |
             grounding.txt
             .var/bench/grounding-*.json

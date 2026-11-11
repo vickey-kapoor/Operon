@@ -31,7 +31,7 @@ src/
               browser backends, fallback backend, targeting, progress tracking
   api/        FastAPI server, routes, observer endpoints, runtime config, websocket stream
   browser/    CDP BrowserManager for observable browser mode
-  clients/    Gemini, Gemini Computer Use, and Anthropic HTTP clients
+  clients/    Gemini and Gemini Computer Use HTTP clients
   core/       shared Environment enum used to select the execution path
   executor/   browser, desktop, adapters, native upload macro
   models/     Pydantic schemas for state, perception, policy, execution, logs, memory
@@ -60,9 +60,9 @@ src/
 ### Browser
 
 Default backend: `BrowserComputerUseBackend` using `GeminiComputerUseHttpClient`
-(`computer_use`), whatever keys are set. `OPERON_BROWSER_BACKEND=claude_computer_use` selects
-`BrowserClaudeComputerUseBackend` using `AnthropicComputerUseHttpClient`, for comparing Claude;
-`OPERON_BROWSER_BACKEND=json` selects `BrowserJsonBackend` alone.
+(`computer_use`, `gemini-3.5-flash`). `OPERON_BROWSER_BACKEND=json` selects `BrowserJsonBackend`
+alone. Gemini is Operon's only model for now; other models come back later through a simpler
+model onboarding.
 
 Fallback: with `OPERON_BROWSER_FALLBACK_BACKEND=json` (the default), `FallbackBackend`
 hands a step to the Gemini `BrowserJsonBackend` when the primary backend's call fails.
@@ -74,35 +74,19 @@ Executor: `NativeBrowserExecutor`.
 Default backend: the Gemini computer-use desktop backend (`desktop_computer_use.py`,
 `OPERON_DESKTOP_BACKEND=computer_use`, `gemini-3.5-flash`), which adds a `launch_app` function.
 `OPERON_DESKTOP_BACKEND=json` selects the older `CombinedPerceptionPolicyService` using Gemini
-JSON output, and `claude_computer_use` selects `DesktopClaudeComputerUseBackend`, which also has
-`launch_app`, for comparing Claude. The computer-use backends have no fallback.
-
-### Model adapter (experimental)
-
-`OPERON_BROWSER_BACKEND=model` or `OPERON_DESKTOP_BACKEND=model` with
-`OPERON_MODEL_PROFILE=<profile>` runs any profile from the model registry
-(`evals/models.yaml`) through `agent/backends/model_adapter/`: native adapters for Claude,
-Gemini and OpenAI computer use, and an OpenAI-compatible adapter with per-family parsers for
-open-weight models. This is how the benchmark grid runs GPT. See
-[evaluation.md](evaluation.md#comparing-models-experimental).
+JSON output. The computer-use backend has no fallback.
 
 Executor: `DesktopExecutor`.
 
 ### Harness profiles
 
 `OPERON_HARNESS_PROFILE` (`agent/policy/thin.py`) picks how much scaffolding surrounds the
-model. A `claude_computer_use` backend runs **thin** by default: `ThinPolicy` passes Claude's
-action through with no rules, guards or retries, failures go back to Claude as tool results,
-and `FinalCheckVerifier` checks the outcome once with Claude when it says it is done
-(`OPERON_FINAL_CHECK_MODEL` can pick a cheaper model). The check sees the final screen, the run's
-first screen, up to 3 recent ones that differ from it, and a log of every action taken; after two
-rejected claims the run ends as failed (`completion_unverified`). Safety gates (trust gate, file guard,
-step budget) still apply. `OPERON_HARNESS_PROFILE=full` opts Claude back into the full
-harness described below: rules, post-LLM guards, the per-step verifier and recovery. Gemini
-`computer_use` runs full by default and thin with `OPERON_HARNESS_PROFILE=thin`; the model
-adapter runs thin by default and full on request, optionally with the same model as its step
-critic (`OPERON_CRITIC=same`). In thin mode these backends' own "done" ends the run with no
-completion check, so the benchmark graders decide success. `json` backends always run full.
+model. Gemini `computer_use` runs **full** by default: rules, post-LLM guards, the per-step
+critic and recovery, described below. `OPERON_HARNESS_PROFILE=thin` switches it to **thin**:
+`ThinPolicy` passes Gemini's action through with no rules, guards or retries, and its own
+"done" ends the run (`OwnDoneVerifier`), so the benchmark graders decide success. Safety gates
+(trust gate, file guard, step budget) still apply. `OPERON_CRITIC=same` makes the full
+harness's step critic the acting model. `json` backends always run full.
 [configuration.md](configuration.md) has the details.
 
 ### Observable Browser Mode
@@ -266,17 +250,13 @@ Core runtime configuration is in `src/operon/api/runtime_config.py`.
 
 Important variables:
 - `GOOGLE_API_KEY` / `GEMINI_API_KEY`
-- `ANTHROPIC_API_KEY`
 - `OPERON_BROWSER_BACKEND`
 - `OPERON_BROWSER_FALLBACK_BACKEND`
 - `OPERON_BROWSER_MODEL`
-- `OPERON_BROWSER_CLAUDE_MODEL` / `OPERON_DESKTOP_CLAUDE_MODEL`
 - `OPERON_HARNESS_PROFILE`
-- `OPERON_FINAL_CHECK_MODEL`
 - `OPERON_DESKTOP_BACKEND`
 - `OPERON_DESKTOP_MODEL`
-- `OPERON_BROWSER_VERIFIER_PROVIDER`
-- `OPERON_DESKTOP_VERIFIER_PROVIDER`
+- `OPERON_BROWSER_VERIFIER_MODEL` / `OPERON_DESKTOP_VERIFIER_MODEL`
 - `OPERON_TRACE`
 - `OPERON_TEST_SAFE_MODE`
 - `BROWSER_HEADLESS`

@@ -451,7 +451,7 @@ class AgentLoop:
         _trace("  1 CAPTURE OK", f"{_record_stage('capture', _t0):.2f}s  frame={type(frame).__name__}")
 
         # Consume any correction the user sent during a HITL pause before perceive():
-        # combined backends (Claude, Gemini) choose the action inside perceive(), so a
+        # combined backends (Gemini) choose the action inside perceive(), so a
         # hint added after it would only reach the model a step late.
         _override_text = None
         _override_sent = False
@@ -1867,7 +1867,7 @@ class AgentLoop:
         """If the same subgoal persists for 3+ steps without progress, inject a hint.
 
         Not under the thin harness: the model sees every screen itself, and the hint
-        names a stop action Claude computer use does not have."""
+        names a stop action a computer-use model may not have."""
         if self.thin_harness:
             return
         ps = state.progress_state

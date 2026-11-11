@@ -6,7 +6,6 @@ import json
 import logging
 from pathlib import Path
 
-from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.policy import PolicyService
 from operon.agent.policy.rules import (
     _ANCHOR_DISTANCE_THRESHOLD,
@@ -277,10 +276,6 @@ class PolicyCoordinator(PolicyService):
             return rule_stop
 
         if llm_decision.action.action_type is ActionType.STOP:
-            if (llm_decision.rationale or "").startswith(GAVE_UP_PREFIX):
-                # The model gave up: keep its failure rather than confirming the rule's success.
-                logger.warning("Rule success stop answered by a model that gave up; keeping the give-up.")
-                return llm_decision
             logger.info(
                 "Success confirmed by LLM policy (page_hint=%r).",
                 perception.page_hint.value,

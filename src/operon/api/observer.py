@@ -634,7 +634,7 @@ def summarize_run_usage(run_id: str) -> UsageAggregate:
         step_index = int(step_dir.name.split("_", 1)[1])
         if step_index <= latest_logged_step_index:
             return aggregate
-        for filename in ("combined_usage.json", "computer_use_usage.json", "model_usage.json", "perception_usage.json", "policy_usage.json", "verification_usage.json", "final_check_usage.json"):
+        for filename in ("combined_usage.json", "computer_use_usage.json", "model_usage.json", "perception_usage.json", "policy_usage.json", "verification_usage.json"):
             usage = _usage_from_path(step_dir / filename)
             if usage is not None:
                 _merge_usage(aggregate, usage)

@@ -12,19 +12,16 @@ that follows from it is in the [roadmap](roadmap.md).
 | Model | Browser Thin | Browser Full | Desktop Thin | Desktop Full | Hybrid Thin | Hybrid Full |
 |---|---|---|---|---|---|---|
 | Gemini 3.5 Flash | 10/10 | 10/10 | 9/10 | 10/10 | 9/10 | 7/10 |
-| Claude Sonnet 5.5 | 9/10 | 10/10 | 10/10\* | 10/10\* | not run | not run |
-| GPT (`openai-computer-use`) | 10/10 | in progress | 10/10 | in progress | not run | not run |
 
-\* On the Desktop core before the long and safety tasks were added (KAN-74).
+Operon runs Gemini only for now. Earlier runs of other models stay in the dashboard's database
+and in [reports/](reports/), and come back when those models are onboarded again.
 
 Earlier results, before the grid:
 
 | Benchmark | Configuration | Result |
 |---|---|---|
-| Browser, 44 live web tasks (October 2026) | Claude Opus 5.5, thin harness | 41 to 43 of 44 over three runs, about 29 s and $0.04 to $0.06 per task |
 | Browser, 44 live web tasks (October 2026) | Gemini, full harness | 40/44, about 50 s per task |
-| Grounding, ScreenSpot-Pro | Claude Opus 5.5 / Gemini 3.5 Flash | 70% (83% with zoom) / 48%; see [reports/grounding-and-flakiness.md](reports/grounding-and-flakiness.md) |
-| Safety, 9 injection and overreach tasks | Claude, thin harness | none compromised; see [reports/safety-and-judge-check.md](reports/safety-and-judge-check.md) |
+| Grounding, ScreenSpot-Pro | Gemini 3.5 Flash | 48%; see [reports/grounding-and-flakiness.md](reports/grounding-and-flakiness.md) |
 | Judge vs 88 hand labels | Gemini 3.5 Flash judge | 99% accuracy, 100% recall |
 
 The eval dashboard at https://operon-evals.vercel.app has every run.
@@ -110,8 +107,7 @@ The grounding eval isolates the "clicked the wrong spot" failure. Each sample go
 the same backend, prompt, screenshot downscaling and coordinate scaling as a live step, and
 only the first proposed click is scored. The sample is fixed (stratified by text and icon
 targets, and by app group for Pro) and the datasets are pinned to a revision, so runs are
-comparable. Claude runs web samples through the browser backend and the rest through the
-desktop backend; Gemini uses its browser Computer Use backend for all. Expect Pro to score
+comparable. Gemini uses its browser Computer Use backend for all samples. Expect Pro to score
 far lower than v2: its screens are up to 3840 px wide and are downscaled to 1280 px before
 the model sees them.
 
@@ -128,82 +124,45 @@ Repository owners, members and collaborators can comment on a PR to benchmark it
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [opus|sonnet|haiku|gemini] [check-sonnet|check-haiku] [same-critic] [azure] [zoom] [season=<n>] [model=<profile>]
-/bench grounding [opus|sonnet|haiku|gemini] [zoom] [model=<profile>]
+/bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [azure] [season=<n>]
+/bench grounding
 ```
 
 The first word is the category and the second the harness: one cell of the grid. Defaults:
-browser, Gemini computer use (Operon's default model) in the full harness, the category's core
-set. A thin Gemini run ends on Gemini's own "done", with no completion check. `season=<n>` runs
+browser, the full harness, the category's core set. Every run uses Gemini computer use
+(`gemini-3.5-flash`). A thin run ends on Gemini's own "done", with no completion check. `season=<n>` runs
 the frozen season's tasks (`--season`), which is what the Leaderboard tab's grid counts.
-Claude and GPT are comparison models: `opus`, `sonnet` or `haiku` runs Claude computer use with
-that model (thin harness unless `full` is given; `zoom` and `check-*` need one of them), and
-`model=<profile>` runs a registry model such as GPT. `gemini` names the default explicitly. Examples:
+`same-critic` makes a full run's step critic the acting model. Examples:
 
 | Comment | Runs |
 |---|---|
 | `/bench` | Gemini · Browser · Full: the Browser core set (10 tasks) |
-| `/bench browser thin gemini season=1` | Gemini · Browser · Thin on Season 1, one cell of the grid |
-| `/bench desktop full gemini azure season=1` | Gemini · Desktop · Full on Season 1, on the Azure VM |
+| `/bench browser thin season=1` | Gemini · Browser · Thin on Season 1, one cell of the grid |
+| `/bench desktop full azure season=1` | Gemini · Desktop · Full on Season 1, on the Azure VM |
 | `/bench smoke` | Browser smoke (5 live web tasks) |
 | `/bench all` | Full browser benchmark (44 tasks) |
 | `/bench safety` | Safety suite (browser only) |
 | `/bench apps` | Local apps suite (browser only) |
 | `/bench long` | Long multi-app suite (browser only) |
-| `/bench hard x3 opus` | Hard subset on Claude Opus, every task 3 times (about $5.50) |
+| `/bench hard x3` | Hard subset, every task 3 times |
 | `/bench grounding` | Grounding eval, 300 samples on Gemini |
-| `/bench grounding opus` | Grounding eval on Claude Opus 5.5 |
-| `/bench long gemini` / `/bench long gemini thin` | Long suite on Gemini computer use, full or thin harness |
-| `/bench desktop all azure gemini thin` | Full desktop benchmark on Gemini computer use, thin harness |
-| `/bench grounding opus zoom` | Grounding eval on Claude with zoom on (`OPERON_CLAUDE_ZOOM`) |
-| `/bench desktop azure all opus zoom` | Full desktop benchmark on the Azure VM on Claude with zoom on (desktop and grounding only) |
+| `/bench long thin` | Long suite in the thin harness |
+| `/bench desktop all azure thin` | Full desktop benchmark, thin harness |
 | `/bench desktop` | Desktop core set on GitHub's hosted Windows runner |
 | `/bench desktop smoke` | Desktop smoke (3 tasks) |
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
-| `/bench hybrid full gemini azure season=1` | Gemini · Hybrid · Full on Season 1, on the Azure VM (run `scripts/edge-policies.ps1` on the VM once first; [azure-desktop-runner.md](azure-desktop-runner.md)) |
+| `/bench hybrid full azure season=1` | Gemini · Hybrid · Full on Season 1, on the Azure VM (run `scripts/edge-policies.ps1` on the VM once first; [azure-desktop-runner.md](azure-desktop-runner.md)) |
 | `/bench hybrid smoke` | Hybrid smoke (2 tasks) on GitHub's hosted Windows runner |
-| `/bench sonnet check-haiku` | Sonnet acting, Haiku for the completion check |
-| `/bench apps model=qwen3-vl-32b` | Apps suite on a model registry profile (see below) |
-| `/bench long full same-critic model=openai-computer-use` | Long suite on GPT in the full harness, with GPT as its own step critic |
+| `/bench long same-critic` | Long suite in the full harness, with Gemini as its own step critic |
 
 The **Live benchmark**, **Live desktop benchmark** and **Grounding eval** workflows can also be started by hand,
-with inputs for backends, models, harness profile, suite and cost cap (`max_cost_usd`).
+with inputs for harness profile, suite and cost cap (`max_cost_usd`).
 
-## Comparing models (experimental)
+## Adding models later
 
-The cross-model benchmark runs any model on the same tasks, executor and graders. Models are
-profiles in [`evals/models.yaml`](../evals/models.yaml); the server runs one with
-`OPERON_BROWSER_BACKEND=model` (or `OPERON_DESKTOP_BACKEND=model`) and
-`OPERON_MODEL_PROFILE=<profile>`. Every such run uses the thin harness and ends on the
-model's own "done": no second model checks the claim, and the graders decide success, so
-false passes count the same way for every model.
-
-| Adapter | Models | How Operon talks to them |
-|---|---|---|
-| `claude_native` | Claude Opus, Sonnet, Haiku | Claude's computer-use toolset (the existing backend) |
-| `gemini_native` | Gemini computer use (browser and desktop) | Gemini Computer Use: `environment: browser`, or `desktop` with a `launch_app` function |
-| `openai_native` | OpenAI computer use | Responses API with the `computer` tool, chained by `previous_response_id` |
-| `openai_compat` | Open-weight models on vLLM, SGLang or a hosted endpoint | `/v1/chat/completions`, with a parser per model family: `neutral_tools` (tool calling, e.g. Qwen3-VL), `ui_tars` (UI-TARS text actions), `opencua` (OpenCUA pyautogui code) |
-
-Each profile sets its coordinate space (pixels of the sent image, 0 to 1000, or 0 to 1), how
-the screenshot is resized (a long-edge cap, or Qwen-style `smart` resizing to multiples of
-28 or 32) and how many screenshots stay in the history. A reply the parser cannot turn into
-an action is recorded and answered with a short wait, and the model is told why; the report
-counts these as the invalid-action rate.
-
-```powershell
-# Server: a self-hosted model behind vLLM's OpenAI-compatible server
-$env:OPERON_BROWSER_BACKEND = "model"; $env:OPERON_MODEL_PROFILE = "qwen3-vl-32b"
-$env:OPENWEIGHT_BASE_URL = "https://<gpu-vm>:8000/v1"; $env:OPENWEIGHT_API_KEY = "<vllm --api-key>"
-# Benchmark: --model checks the profile and records it, the invalid-action rate and GPU cost
-.venv\Scripts\python -m evals.live_bench --suite apps --model qwen3-vl-32b
-.venv\Scripts\python -m evals.grounding --backend model --model qwen3-vl-32b
-```
-
-GPU cost is the tasks' wall time at the profile's `gpu_hour_usd` (a lower bound: the VM also
-bills while it starts and idles). The dashboard's **Leaderboard** tab shows each model's
-latest run per suite, a cost-against-success chart and per-model totals. Every paid run,
-including a smoke run of a new model, waits for an approved cost estimate.
+Claude, GPT and the cross-model adapter were removed on 2026-11-11 so that model onboarding
+can be rebuilt clean and simple. Their earlier benchmark runs stay in the dashboard's database:
+the Evals and Leaderboard tabs show Gemini runs, and the Cost tab still counts every run's spend.
 
 ## Leaderboard machinery
 
@@ -233,7 +192,7 @@ After an Operon change, is a grid cell (model · category · harness, for exampl
   attempts). `live_bench` prints it under the results table.
 - **Change vs the previous run of the cell.** When the Dashboard data workflow imports a
   run, it finds the latest earlier unflagged run with the same mode, suite, backend, harness,
-  model, registry profile and season, and stores `summary.change`: the paired difference on
+  model and season, and stores `summary.change`: the paired difference on
   the tasks both ran, its corrected 95% range, the label (Improved / Regressed only when that
   range excludes zero, otherwise No clear change; "First run" when there is nothing before),
   and the tasks that flipped (`fixed`: fail to pass, `broke`: pass to fail). Runs imported
@@ -329,10 +288,7 @@ that the workflow starts before the run and deallocates after. Setup is in
 
 | Name | Kind | Used by |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | secret | Claude backends in the live benchmarks |
-| `GEMINI_API_KEY` | secret | Gemini backends and the benchmark judge |
-| `OPENAI_API_KEY` | secret | OpenAI computer use (`openai_native` profiles); optional |
-| `OPENWEIGHT_BASE_URL`, `OPENWEIGHT_API_KEY` | secrets | The self-hosted model server (`openai_compat` profiles); optional |
+| `GEMINI_API_KEY` | secret | Every model call: backends, step critic and the benchmark judge |
 | `DATABASE_URL` | secret | Dashboard data import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
 | `SLACK_WEBHOOK_URL` | secret | Regression alerts; optional |

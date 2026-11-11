@@ -493,10 +493,10 @@ def test_a_hybrid_report_names_its_cell_and_suite(monkeypatch) -> None:
     assert live_bench.cell_name("hybrid", "full") == "Hybrid · Full"
     assert live_bench.mode_suite("hybrid", "core") == "hybrid-core"
     # A hybrid run is a desktop run on the server: it reads the OPERON_DESKTOP_* settings.
-    assert live_bench.harness_label(None, "hybrid") == live_bench.harness_label(None, "desktop") == "full"
+    assert live_bench.harness_label("hybrid") == live_bench.harness_label("desktop") == "full"
     args = live_bench.build_parser(default_mode="hybrid").parse_args([])
     assert args.mode == "hybrid" and args.suite == "core"
-    report = live_bench.build_report(args, "20261110T000000Z", [], profile=None, repeat=1, planned=10, stopped=None,
+    report = live_bench.build_report(args, "20261110T000000Z", [], repeat=1, planned=10, stopped=None,
                                      complete=True)
     assert (report["suite"], report["mode"], report["category"], report["cell"]) == (
         "hybrid-core", "hybrid", "hybrid", "Hybrid · Full")

@@ -6,7 +6,7 @@ same prompt, screenshot downscaling and coordinate scaling as a live step, and t
 first click it proposes is scored as a hit when it lands inside the box. One model
 call per sample: no browser, no API server, no desktop.
 
-    .venv/bin/python -m evals.grounding [--per-set 100] [--set v2-web] [--backend claude_computer_use]
+    .venv/bin/python -m evals.grounding [--per-set 100] [--set v2-web]
 
 Sets (a fixed, stratified sample of each, the same on every run):
 
@@ -15,10 +15,7 @@ Sets (a fixed, stratified sample of each, the same on every run):
 - ``pro``: ScreenSpot-Pro (likaixin/ScreenSpot-Pro), high-resolution screens of
   professional apps (CAD, IDEs, Office, creative tools), spread across its groups.
 
-Claude runs web samples through the browser backend and desktop and Pro samples
-through the desktop backend; Gemini (``--backend computer_use``) uses its browser
-Computer Use backend for all of them. With ``--backend model``, a profile with a
-desktop backend (Gemini's included) sends desktop and Pro samples there, as Claude does. The datasets are pinned to a revision and their files cached under
+Every sample goes through Gemini's browser computer use backend. The datasets are pinned to a revision and their files cached under
 ``.var/grounding/cache``; ScreenSpot-v2's images come out of its 1.3 GB zip by
 HTTP range requests, so only the sampled screenshots are downloaded.
 
@@ -58,7 +55,7 @@ PRO_REPO, PRO_REVISION = "likaixin/ScreenSpot-Pro", "210e78d3844251110bff86c9583
 V2_ZIP = "screenspotv2_image.zip"
 SETS = ("v2-desktop", "v2-web", "pro")
 OUTCOMES = ("hit", "miss", "no_click", "error")
-BACKENDS = ("claude_computer_use", "computer_use", "model")
+BACKEND = "computer_use"
 DEFAULT_PER_SET = 100
 DEFAULT_MAX_COST_USD = 5.0
 BUDGET_EXIT_CODE = 3
@@ -302,60 +299,22 @@ class Backend(Protocol):
 
 
 class BackendFactory:
-    """One backend per sample (fresh conversation), sharing one HTTP client per kind."""
+    """One backend per sample (fresh conversation), sharing one HTTP client."""
 
-    def __init__(self, backend: str, model: str, effort: str | None) -> None:
-        self.backend, self.model, self.effort = backend, model, effort
-        self._clients: dict[str, Any] = {}
+    def __init__(self, model: str, effort: str | None) -> None:
+        self.model, self.effort = model, effort
+        self._client: Any = None
 
     def __call__(self, sample: Sample) -> Backend:
-        if self.backend == "model":
-            return self._model_backend(sample)
-        from operon.agent.backends.browser_claude_computer_use import (
-            BrowserClaudeComputerUseBackend,
-        )
         from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
-        from operon.agent.backends.desktop_claude_computer_use import (
-            DesktopClaudeComputerUseBackend,
-        )
-        from operon.clients.anthropic_computer_use import (
-            LAUNCH_APP_TOOL,
-            NAVIGATE_TOOL,
-            AnthropicComputerUseHttpClient,
-        )
         from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
         from operon.core.paths import prompts_dir
 
-        if self.backend == "computer_use":
-            if "gemini" not in self._clients:
-                self._clients["gemini"] = GeminiComputerUseHttpClient(model=self.model, thinking_level=self.effort)
-            return BrowserComputerUseBackend(
-                client=self._clients["gemini"], prompt_path=prompts_dir() / "browser_computer_use_prompt.txt"
-            )
-        kind = "browser" if sample.set == "v2-web" else "desktop"
-        if kind not in self._clients:
-            tools = (NAVIGATE_TOOL,) if kind == "browser" else (LAUNCH_APP_TOOL,)
-            self._clients[kind] = AnthropicComputerUseHttpClient(model=self.model, effort=self.effort, custom_tools=tools)
-        backend_cls = BrowserClaudeComputerUseBackend if kind == "browser" else DesktopClaudeComputerUseBackend
-        return backend_cls(
-            client=self._clients[kind], prompt_path=prompts_dir() / f"{kind}_claude_computer_use_prompt.txt"
+        if self._client is None:
+            self._client = GeminiComputerUseHttpClient(model=self.model, thinking_level=self.effort)
+        return BrowserComputerUseBackend(
+            client=self._client, prompt_path=prompts_dir() / "browser_computer_use_prompt.txt"
         )
-
-
-    def _model_backend(self, sample: Sample) -> Backend:
-        """A registry profile (``--backend model --model <profile>``): desktop and Pro
-        samples go to its desktop backend when it has one, else everything is browser."""
-        from operon.agent.backends.model_adapter.registry import resolve_profile
-        from operon.api.runtime.services import build_model_backend
-
-        profile = resolve_profile(self.model)
-        kind = "browser" if sample.set == "v2-web" or "desktop" not in profile.environments else "desktop"
-        key = f"model:{kind}"
-        # One transport client per kind, as for the other backends; the backend itself is
-        # fresh per sample so no conversation state carries over.
-        backend = build_model_backend(kind, profile=profile, client=self._clients.get(key))
-        self._clients.setdefault(key, backend.client)
-        return backend
 
 
 def _image_size(data: bytes) -> tuple[int, int]:
@@ -430,7 +389,6 @@ async def run_samples(
     concurrency: int = 4,
     max_cost_usd: float = DEFAULT_MAX_COST_USD,
     on_result=None,
-    extra_cost=None,
 ) -> tuple[list[SampleResult], dict | None]:
     """Run every sample, ``concurrency`` at a time, until done or the cost cap is reached."""
     results: list[SampleResult] = []
@@ -438,8 +396,7 @@ async def run_samples(
     stopped: dict | None = None
 
     def spent() -> float:
-        # extra_cost: spend that no sample reports, such as a self-hosted model's GPU time so far.
-        return round(sum(r.cost_usd for r in results) + (extra_cost() if extra_cost else 0.0), 6)
+        return round(sum(r.cost_usd for r in results), 6)
 
     async def worker() -> None:
         nonlocal stopped
@@ -519,22 +476,8 @@ def format_report(summary: dict) -> str:
     return "\n".join(lines)
 
 
-def _default_model(backend: str) -> str:
-    if backend == "model":
-        profile = (os.getenv("OPERON_MODEL_PROFILE") or "").strip()
-        if not profile:
-            sys.exit("--backend model needs --model <profile> (evals/models.yaml) or OPERON_MODEL_PROFILE")
-        return profile
-    if backend == "computer_use":
-        return os.getenv("OPERON_BROWSER_MODEL", "gemini-3.5-flash")
-    return os.getenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-opus-5-5")
-
-
-def _default_backend() -> str:
-    explicit = os.getenv("OPERON_BROWSER_BACKEND")
-    if explicit in BACKENDS:
-        return explicit
-    return "computer_use"
+def _default_model() -> str:
+    return os.getenv("OPERON_BROWSER_MODEL") or "gemini-3.5-flash"
 
 
 def _max_cost_default() -> float:
@@ -549,12 +492,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--set", action="append", choices=SETS, help="sets to run (default: all)")
     parser.add_argument("--per-set", type=int, default=DEFAULT_PER_SET, help="samples per set")
-    parser.add_argument("--backend", choices=BACKENDS, default=_default_backend())
-    parser.add_argument(
-        "--model",
-        help="model (default: the backend's server default); with --backend model, the registry profile",
-    )
-    parser.add_argument("--effort", help="Claude effort, or Gemini thinking level (default: low)")
+    parser.add_argument("--model", help="Gemini model (default: $OPERON_BROWSER_MODEL or gemini-3.5-flash)")
+    parser.add_argument("--effort", help="Gemini thinking level (default: $OPERON_BROWSER_THINKING or low)")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument(
         "--max-cost-usd", type=float, default=_max_cost_default(),
@@ -604,23 +543,9 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         for s in samples:
             print(f"{s.id:24} {s.set:10} {s.data_type:5} {s.source:28} {s.instruction}")
         return 0
-    model = args.model or _default_model(args.backend)
-    effort = args.effort or (os.getenv("OPERON_BROWSER_CLAUDE_EFFORT", "low") if args.backend != "computer_use"
-                             else os.getenv("OPERON_BROWSER_THINKING", "low")) or None
-    profile = None
-    if args.backend == "model":
-        from operon.agent.backends.model_adapter.registry import (
-            ModelRegistryError,
-            resolve_profile,
-        )
-
-        try:
-            profile = resolve_profile(model)
-        except ModelRegistryError as exc:
-            sys.exit(f"--model: {exc}")
-        effort = profile.effort
-    make_backend = make_backend or BackendFactory(args.backend, model, effort)
-    wall_started = time.monotonic()
+    model = args.model or _default_model()
+    effort = args.effort or os.getenv("OPERON_BROWSER_THINKING", "low") or None
+    make_backend = make_backend or BackendFactory(model, effort)
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = Path(args.out_dir)
     work_dir = Path(".var/grounding") / started_at
@@ -629,37 +554,20 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         if not args.json:
             print(f"[{done}/{total}] {result.id}: {result.outcome}", flush=True)
 
-    gpu_rate = profile.pricing.gpu_hour_usd if profile is not None else None
-
-    def gpu_cost() -> float:
-        return (time.monotonic() - wall_started) / 3600 * gpu_rate if gpu_rate is not None else 0.0
-
     results, stopped = await run_samples(
         samples, dataset, make_backend, work_dir,
         concurrency=args.concurrency, max_cost_usd=args.max_cost_usd, on_result=progress,
-        extra_cost=gpu_cost,
     )
     summary = summarize(results)
-    if profile is not None:
-        summary["invalid_replies"] = sum(1 for r in results if r.detail.startswith("wait: Invalid model reply"))
-        summary["invalid_action_rate"] = round(summary["invalid_replies"] / len(results), 4) if results else 0.0
-        if profile.pricing.gpu_hour_usd is not None:
-            # Priced by GPU time instead of tokens, so its calls are not "unpriced".
-            summary["unpriced_calls"], summary["unpriced_models"] = 0, []
-            # A lower bound: the GPU VM also bills while it starts and idles.
-            summary["gpu_cost_usd"] = round((time.monotonic() - wall_started) / 3600 * profile.pricing.gpu_hour_usd, 4)
     # "samples", not "results": the dashboard importer takes any JSON with both
     # "summary" and "results" for a live benchmark report.
     report = {
         "kind": "grounding",
         "suite": "grounding",
         "started_at": started_at,
-        "backend": args.backend,
+        "backend": BACKEND,
         "model": model,
         "effort": effort,
-        "zoom": args.backend == "claude_computer_use" and _zoom_enabled(),
-        "model_profile": profile.name if profile is not None else None,
-        "model_id": profile.model if profile is not None else None,
         "per_set": args.per_set,
         "datasets": {V2_REPO: V2_REVISION, PRO_REPO: PRO_REVISION},
         "budget_stop": stopped,
@@ -684,12 +592,6 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
             print(f"Stopped at the ${args.max_cost_usd:.2f} cost cap after {stopped['tasks_run']} of {len(samples)} samples.")
         print(f"\nsaved {path}")
     return BUDGET_EXIT_CODE if stopped else 0
-
-
-def _zoom_enabled() -> bool:
-    from operon.clients.anthropic_computer_use import zoom_enabled
-
-    return zoom_enabled()
 
 
 def main(argv: list[str]) -> int:

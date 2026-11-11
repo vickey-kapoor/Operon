@@ -60,7 +60,7 @@ Teams that want to automate real UI workflows face three bad options:
 1. **Reliability as the product, not a feature.** Deterministic rules before LLM fallback, verify-after-every-action, an explicit recovery ladder, and HITL turn "impressive demo" into "trustworthy run."
 2. **One loop, two surfaces.** Browser and desktop share the loop, verifier, recovery, and persistence — covering the desktop gap browser-only and Gemini-CUA leave open [8].
 3. **Open and inspectable.** Apache-2.0, self-hostable, with every run producing screenshots, model I/O, policy decisions, execution traces, and logs — an auditable record that closed metered APIs do not surface.
-4. **Backend-agnostic.** Pluggable backends (Claude or Gemini computer use, Gemini or Anthropic verifier) and a cheaper JSON perception/policy fallback give cost and vendor flexibility.
+4. **Backend-agnostic by design.** Backends are pluggable; today Operon runs Gemini only (computer use, with a cheaper JSON perception/policy fallback), and other models come back through a simple model onboarding.
 
 ---
 
@@ -133,9 +133,9 @@ Legend: **[Current]** implemented today (verified in code); **[Roadmap]** propos
 - **FR-4 [Current]** Visual click-servo stability check before browser/desktop clicks.
 
 ### 9.2 Backends & models
-- **FR-5 [Current]** Browser backend defaults to **Gemini Computer Use** on `gemini-3.5-flash`, with an optional **JSON** perception/policy fallback in the full harness. Claude computer use and registry models (GPT, open-weight) are selected explicitly, as comparison models.
-- **FR-6 [Current]** Desktop backend uses the **JSON combined** backend.
-- **FR-7 [Current]** Pluggable backend and verifier provider: **Claude or Gemini** (`OPERON_*_BACKEND`, `OPERON_*_VERIFIER_PROVIDER`), plus an experimental model adapter that runs GPT and open-weight models from a registry (`OPERON_*_BACKEND=model`).
+- **FR-5 [Current]** Browser backend defaults to **Gemini Computer Use** on `gemini-3.5-flash`, with an optional **JSON** perception/policy fallback in the full harness. Gemini is the only model for now.
+- **FR-6 [Current]** Desktop backend defaults to **Gemini Computer Use** on `gemini-3.5-flash` (with `launch_app`); the older **JSON combined** backend stays selectable.
+- **FR-7 [Roadmap]** Simple model onboarding: add other models (Claude, GPT, open-weight) back as pluggable backends. They were removed on 2026-11-11 to keep onboarding clean; their earlier benchmark data is kept.
 - **FR-8 [Roadmap]** Pluggable grounding/vision models (e.g., OmniParser-style screen parsing [11], UI-TARS-style grounding [9]) to improve coordinate accuracy.
 
 ### 9.3 Policy & memory
@@ -227,19 +227,19 @@ Design invariants: browser and desktop share the loop, verifier, recovery, and p
 The live roadmap is [`roadmap.md`](./roadmap.md); it supersedes the release plan first written
 here in June 2026. In short:
 
-- **Built (October to November 2026).** Gemini computer use as the default backend; Claude
-  computer use with a thin harness; Gemini in thin and full harnesses; a cross-model adapter that runs GPT and
-  open-weight models; desktop mode on Windows; Browser, Desktop and Hybrid benchmarks graded
+- **Built (October to November 2026).** Gemini computer use in thin and full harnesses;
+  desktop mode on Windows; Browser, Desktop and Hybrid benchmarks graded
   from state, in a model x category x harness grid on a frozen Season 1; safety, grounding and
   cost tracking on an eval dashboard; the trust gate on by default (FR-16's confirmation gating).
-- **Now.** The GPT grid is being finished. The Season 1 core sets are saturated (most cells 9 or
+- **Now.** Operon runs Gemini only; Claude, GPT and the cross-model adapter were removed on
+  2026-11-11, with their earlier data kept. The Season 1 core sets are saturated (most cells 9 or
   10 of 10).
 - **Next (epic KAN-77).** Harder Season 2 core sets; a front door (local task page and
   `operon run`); typed shell, file and HTTP or MCP tools beside the GUI, all through the trust
   gate; isolated, parallel, resumable run environments; a grounder slot with Operon-side zoom;
   task-level best-of-N; fewer steps; saved task files. Pixels stay the only GUI perception.
 - **Later.** A Windows app for specific back-office jobs with a same-day MCP server (proposed,
-  awaiting decisions); open-weight models; the SDK release (`operon-agent` on PyPI) last.
+  awaiting decisions); a simple model onboarding that brings other models back; the SDK release (`operon-agent` on PyPI) last.
 
 *(Roadmap is directional, not a commitment; sequencing subject to change.)*
 
@@ -248,7 +248,7 @@ here in June 2026. In short:
 ## 14. Dependencies, assumptions, risks
 
 ### Dependencies
-- Model providers: Google Gemini (Computer Use + flash), optionally Anthropic; Playwright/Chromium; pyautogui/mss (desktop); FastAPI/uvicorn; Tauri (shell).
+- Model providers: Google Gemini (Computer Use + flash); Playwright/Chromium; pyautogui/mss (desktop); FastAPI/uvicorn; Tauri (shell).
 - Network access to provider APIs (unless a future local-model path is added).
 
 ### Assumptions

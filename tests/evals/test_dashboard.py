@@ -10,7 +10,6 @@ import pytest
 
 from evals.dashboard import (
     BLOB_SCRIPT,
-    MODELS_JSON,
     add_change,
     attach_traces,
     check_alerts,
@@ -18,7 +17,6 @@ from evals.dashboard import (
     find_reports,
     import_reports,
     main,
-    models_json,
     prepare,
     regressions,
     run_key,
@@ -46,17 +44,17 @@ def _report(**top) -> dict:
 
 def test_prepare_reads_the_reports_own_backend_and_drops_runner_paths() -> None:
     report = prepare(
-        _report(backend="claude_computer_use", claude_model="claude-opus-5-5", harness_profile="thin"),
+        _report(backend="computer_use", browser_model="gemini-3.5-flash", harness_profile="thin"),
         {"github_run_url": "https://github.com/o/r/actions/runs/1"},
     )
     assert report["config"] == {
-        "backend": "claude_computer_use",
+        "backend": "computer_use",
         "harness_profile": "thin",
-        "model": "claude-opus-5-5",
+        "model": "gemini-3.5-flash",
         "github_run_url": "https://github.com/o/r/actions/runs/1",
     }
     assert all("final_screenshot" not in r for r in report["results"])
-    assert run_key(report) == "browser-full-claude_computer_use-thin-20261024T012945Z"
+    assert run_key(report) == "browser-full-computer_use-thin-20261024T012945Z"
 
 
 def test_prepare_ignores_server_default_and_takes_overrides_for_old_reports() -> None:
@@ -100,9 +98,9 @@ def test_hybrid_reports_keep_their_mode_and_drop_the_suite_prefix() -> None:
 
 
 def _artifacts(tmp_path):
-    artifacts = tmp_path / "artifacts" / "bench-claude_computer_use" / ".var" / "bench"
+    artifacts = tmp_path / "artifacts" / "bench-computer_use" / ".var" / "bench"
     artifacts.mkdir(parents=True)
-    (artifacts / "full-20261024T012945Z.json").write_text(json.dumps(_report(backend="claude_computer_use")))
+    (artifacts / "full-20261024T012945Z.json").write_text(json.dumps(_report(backend="computer_use")))
     (artifacts / "partial-20261024T020000Z.json").write_text(json.dumps(_report(started_at="20261024T020000Z")))
     (artifacts / "state.json").write_text(json.dumps({"status": "succeeded"}))
     return tmp_path / "artifacts"
@@ -119,16 +117,16 @@ def test_partial_incomplete_and_unpriced_runs_are_flagged_but_kept() -> None:
     incomplete = prepare(_report(complete=False, tasks_planned=44), {})
     assert incomplete["config"]["flagged"] == "incomplete: the run ended after 2 of 44 tasks (crashed, timed out or cancelled)"
     assert "flagged" not in prepare(_report(complete=True), {})["config"]
-    summary = {"tasks": 2, "success": 1, "unpriced_calls": 3, "unpriced_models": ["claude-new-model"]}
+    summary = {"tasks": 2, "success": 1, "unpriced_calls": 3, "unpriced_models": ["gemini-new-model"]}
     assert prepare(_report(summary=summary), {})["config"]["flagged"] == (
-        "3 model calls had no price (claude-new-model): their cost counts as $0"
+        "3 model calls had no price (gemini-new-model): their cost counts as $0"
     )
 
 
 def _grounding_report() -> dict:
     return {
         "kind": "grounding", "suite": "grounding", "started_at": "20261027T050131Z",
-        "backend": "claude_computer_use", "model": "claude-opus-5-5", "effort": "low", "budget_stop": None,
+        "backend": "computer_use", "model": "gemini-3.5-flash", "effort": "low", "budget_stop": None,
         "summary": {"samples": 300, "hit": 267, "miss": 24, "no_click": 9, "error": 0, "accuracy": 0.89,
                     "mean_seconds": 2.91, "cost_usd": 3.2, "cost_per_sample_usd": 0.010667,
                     "input_tokens": 1200, "output_tokens": 24731, "cache_read_tokens": 1144525, "cache_write_tokens": 494336},
@@ -141,15 +139,15 @@ def test_grounding_reports_are_imported_as_cost_only_runs(tmp_path) -> None:
     assert [p.name for p in find_reports([tmp_path])] == ["grounding-20261027T050131Z.json"]
     report = prepare(_grounding_report(), {})
     run, tasks = to_rows(report)
-    assert (run["mode"], run["suite"], run["backend"], run["model"]) == ("grounding", "grounding", "claude_computer_use", "claude-opus-5-5")
-    assert run["key"] == "grounding-grounding-claude_computer_use-grounding-20261027T050131Z"
+    assert (run["mode"], run["suite"], run["backend"], run["model"]) == ("grounding", "grounding", "computer_use", "gemini-3.5-flash")
+    assert run["key"] == "grounding-grounding-computer_use-grounding-20261027T050131Z"
     assert run["summary"]["cost_usd"] == 3.2 and run["summary"]["judge_cost_usd"] == 0.0
     assert (run["summary"]["tasks"], run["summary"]["success"]) == (300, 267)
     assert tasks == []
 
 
 def test_grounding_spend_is_keyed_by_the_model_and_carries_unpriced_calls() -> None:
-    raw = {**_grounding_report(), "backend": "model", "model": "gemini-computer-use", "model_id": "gemini-3.5-flash"}
+    raw = {**_grounding_report(), "model": "gemini-3.5-flash"}
     raw["summary"] = {**raw["summary"], "unpriced_calls": 4, "unpriced_models": ["gemini-3.5-flash"]}
     report = prepare(raw, {})
     assert list(report["summary"]["by_model"]) == ["gemini-3.5-flash"]
@@ -187,20 +185,15 @@ def test_every_attempt_of_a_repeated_run_gets_its_own_row() -> None:
     ]
 
 
-def test_dashboard_models_json_matches_the_registry() -> None:
-    # Regenerate with: python -m evals.dashboard models
-    assert MODELS_JSON.read_text(encoding="utf-8") == models_json()
-
-
 def test_to_rows_splits_a_report_into_a_run_and_its_tasks() -> None:
-    report = _report(backend="claude_computer_use")
+    report = _report(backend="computer_use")
     report["results"][0].update(category="navigation", steps=2, seconds=31, cost_usd=0.04, input_tokens=900)
     report["results"].append({"task": "click_link", "outcome": "failure"})  # listed twice
     run, tasks = to_rows(prepare(report, {"flagged": "broken runner", "git_sha": "abc123"}))
 
-    assert run["key"] == "browser-full-claude_computer_use-full-20261024T012945Z"
+    assert run["key"] == "browser-full-computer_use-full-20261024T012945Z"
     assert run["started_at"] == datetime(2026, 10, 24, 1, 29, 45, tzinfo=timezone.utc)
-    assert (run["backend"], run["flagged"], run["git_sha"]) == ("claude_computer_use", "broken runner", "abc123")
+    assert (run["backend"], run["flagged"], run["git_sha"]) == ("computer_use", "broken runner", "abc123")
     assert run["summary"]["success"] == 1
     assert [(t["task"], t["outcome"], t["position"], t["attempt"]) for t in tasks] == [
         ("click_link", "success", 0, 1), ("go_back", "failure", 1, 1),
@@ -226,14 +219,14 @@ def test_import_writes_runs_and_replaces_them_on_reimport(tmp_path) -> None:
         artifacts = _artifacts(tmp_path)
         # Only the full report: partial-run import is covered by the find_reports tests.
         assert import_reports([artifacts], conn, {"flagged": "broken runner"}, include_partial=False) == [
-            "browser-full-claude_computer_use-full-20261024T012945Z"
+            "browser-full-computer_use-full-20261024T012945Z"
         ]
         assert import_reports([artifacts], conn, {}, include_partial=False) == [
-            "browser-full-claude_computer_use-full-20261024T012945Z"
+            "browser-full-computer_use-full-20261024T012945Z"
         ]
         runs = conn.execute("SELECT key, flagged, config->>'git_sha', summary->'success' FROM bench_runs").fetchall()
         tasks = conn.execute("SELECT task, outcome, result ? 'final_screenshot' FROM bench_task_results ORDER BY position").fetchall()
-    assert runs == [("browser-full-claude_computer_use-full-20261024T012945Z", None, None, 1)]
+    assert runs == [("browser-full-computer_use-full-20261024T012945Z", None, None, 1)]
     assert tasks == [("click_link", "success", False), ("go_back", "failure", False)]
 
 
@@ -252,7 +245,7 @@ def test_attach_traces_uploads_every_final_screen_and_the_failures_steps(tmp_pat
         (screens / "go_back" / f"step_{step}").mkdir(parents=True)
         (screens / "go_back" / f"step_{step}" / "before.png").write_bytes(b"png")
     (screens / "go_back" / "state.json").write_text("{}")
-    report = prepare(_report(backend="claude_computer_use"), {})
+    report = prepare(_report(backend="computer_use"), {})
     uploaded = []
 
     def uploader(files):
@@ -312,12 +305,12 @@ class _OneRowConn:
 def test_check_alerts_compares_with_the_previous_comparable_run() -> None:
     previous = ("old-key", {"success_rate": 1.0, "success": 2, "tasks": 2, "cost_per_task_usd": 0.02}, None)
     conn, sent = _OneRowConn(previous), []
-    report = prepare(_report(backend="claude_computer_use", harness_profile="thin"), {"github_run_url": "https://gh/run/1"})
+    report = prepare(_report(backend="computer_use", harness_profile="thin"), {"github_run_url": "https://gh/run/1"})
 
     problems = check_alerts(conn, report, sent.append)
 
     assert problems == ["Pass rate fell 50 points: 50% (1/2), was 100% (2/2)."]
-    assert conn.queries[0][:5] == ("browser", "full", "claude_computer_use", "thin", None)
+    assert conn.queries[0][:5] == ("browser", "full", "computer_use", "thin", None)
     assert "Pass rate fell 50 points" in sent[0] and "<https://gh/run/1|Workflow run>" in sent[0]
 
 
@@ -340,10 +333,10 @@ def test_import_uploads_traces_and_alerts_against_the_previous_run(tmp_path) -> 
     psycopg = pytest.importorskip("psycopg")
     folder = tmp_path / "bench"
     folder.mkdir()
-    good = _report(backend="claude_computer_use", started_at="20261023T000000Z")
+    good = _report(backend="computer_use", started_at="20261023T000000Z")
     good["summary"] = {**good["summary"], "success": 2, "success_rate": 1.0}
     (folder / "full-20261023T000000Z.json").write_text(json.dumps(good))
-    (folder / "full-20261024T012945Z.json").write_text(json.dumps(_report(backend="claude_computer_use")))
+    (folder / "full-20261024T012945Z.json").write_text(json.dumps(_report(backend="computer_use")))
     (folder / "full-20261024T012945Z").mkdir()
     (folder / "full-20261024T012945Z" / "go_back.png").write_bytes(b"png")
     sent: list[str] = []
@@ -357,7 +350,7 @@ def test_import_uploads_traces_and_alerts_against_the_previous_run(tmp_path) -> 
         import_reports([folder], conn, {}, uploader=uploader, notify=sent.append)
         url = conn.execute("SELECT result->>'screenshot_url' FROM bench_task_results WHERE task = 'go_back'").fetchall()
 
-    assert ("https://blob.example/bench/browser-full-claude_computer_use-full-20261024T012945Z/go_back/final.png",) in url
+    assert ("https://blob.example/bench/browser-full-computer_use-full-20261024T012945Z/go_back/final.png",) in url
     assert len(sent) == 1 and "Pass rate fell 50 points" in sent[0]
 
 
@@ -365,27 +358,12 @@ def test_blob_script_path_points_at_dashboard_scripts() -> None:
     assert BLOB_SCRIPT.is_file(), BLOB_SCRIPT
 
 
-def test_a_registry_model_run_keeps_its_profile_and_model_id() -> None:
-    report = _report(
-        backend="model", harness_profile="thin", model_profile="qwen3-vl-32b",
-        model_id="Qwen/Qwen3-VL-32B-Instruct", browser_model="gemini-3.5-flash",
-    )
-    run, _ = to_rows(prepare(report, {}))
-    assert run["model_profile"] == "qwen3-vl-32b"
-    assert run["model"] == "Qwen/Qwen3-VL-32B-Instruct"
-    assert run["config"]["model_profile"] == "qwen3-vl-32b"
-    # Two models run at the same moment never share a key.
-    assert run["key"] == "browser-full-model-thin-qwen3-vl-32b-20261024T012945Z"
-    assert "ADD COLUMN IF NOT EXISTS model_profile" in __import__("evals.dashboard").dashboard.SCHEMA
-
-
 def test_prepare_keeps_a_full_runs_critic_for_the_page() -> None:
     report = prepare(
-        _report(backend="model", model_profile="openai-computer-use", model_id="computer-use-preview",
-                harness_profile="full", critic="same:computer-use-preview"),
+        _report(backend="computer_use", harness_profile="full", critic="same:gemini-3.5-flash"),
         {},
     )
-    assert report["config"]["critic_model"] == "same:computer-use-preview"
+    assert report["config"]["critic_model"] == "same:gemini-3.5-flash"
     assert "critic_model" not in prepare(_report(harness_profile="thin", critic=None), {})["config"]
 
 

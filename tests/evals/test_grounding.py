@@ -132,7 +132,7 @@ async def test_run_scores_every_sample_and_saves_a_report(tmp_path, monkeypatch)
         Sample("d", "v2-desktop", "boom", "d.png", box, "text", "windows"),
     ]
     args = grounding.build_parser().parse_args(["--per-set", "5", "--out-dir", str(tmp_path / "out"), "--set", "v2-web",
-                                                "--set", "v2-desktop", "--backend", "claude_computer_use"])
+                                                "--set", "v2-desktop"])
 
     code = await grounding.run(args, make_backend=lambda s: FakeBackend(s, usage), dataset=FakeDataset(samples))
 

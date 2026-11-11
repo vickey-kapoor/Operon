@@ -27,19 +27,32 @@ class RuntimeModeConfig:
     claude_effort: str | None = None
 
 
+# The step critic's default model per verifier provider. Gemini matches the acting model;
+# Anthropic gets a Claude model, never a Gemini name it would reject.
+_DEFAULT_VERIFIER_MODELS = {"gemini": "gemini-3.5-flash", "anthropic": "claude-sonnet-5-5"}
+
+
+def _verifier_settings(provider_var: str, model_var: str) -> tuple[str, str]:
+    """The critic's provider (default gemini) and model, else that provider's default model."""
+    provider = (os.getenv(provider_var) or "").strip().lower() or "gemini"
+    model = (os.getenv(model_var) or "").strip() or _DEFAULT_VERIFIER_MODELS.get(provider, "")
+    return provider, model
+
+
 def desktop_mode_config() -> RuntimeModeConfig:
     # Gemini computer use is the default model everywhere; json is the older Gemini JSON path.
     backend = (os.getenv("OPERON_DESKTOP_BACKEND") or "").strip() or "computer_use"
     # Gemini computer use needs a computer-use model; the json backend's default is not one.
     default_model = "gemini-3.5-flash" if backend == "computer_use" else "gemini-2.5-flash"
+    verifier_provider, verifier_model = _verifier_settings("OPERON_DESKTOP_VERIFIER_PROVIDER", "OPERON_DESKTOP_VERIFIER_MODEL")
     return RuntimeModeConfig(
         backend=backend,
         primary_model=os.getenv("OPERON_DESKTOP_MODEL") or default_model,
         thinking=os.getenv("OPERON_DESKTOP_THINKING", "low") or None,
-        verifier_provider=os.getenv("OPERON_DESKTOP_VERIFIER_PROVIDER", "gemini"),
+        verifier_provider=verifier_provider,
         fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-2.5-flash"),
-        verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-2.5-flash"),
-        verifier_thinking=os.getenv("OPERON_DESKTOP_VERIFIER_THINKING") or None,
+        verifier_model=verifier_model,
+        verifier_thinking=os.getenv("OPERON_DESKTOP_VERIFIER_THINKING", "low") or None,
         claude_model=os.getenv("OPERON_DESKTOP_CLAUDE_MODEL", "claude-opus-5-5"),
         claude_effort=os.getenv("OPERON_DESKTOP_CLAUDE_EFFORT", "low") or None,
     )
@@ -52,16 +65,17 @@ def _default_browser_backend() -> str:
 
 
 def browser_mode_config() -> RuntimeModeConfig:
+    verifier_provider, verifier_model = _verifier_settings("OPERON_BROWSER_VERIFIER_PROVIDER", "OPERON_BROWSER_VERIFIER_MODEL")
     return RuntimeModeConfig(
         backend=os.getenv("OPERON_BROWSER_BACKEND") or _default_browser_backend(),
         primary_model=os.getenv(
             "OPERON_BROWSER_MODEL",
             "gemini-3.5-flash",
         ),
-        verifier_provider=os.getenv("OPERON_BROWSER_VERIFIER_PROVIDER", "gemini"),
+        verifier_provider=verifier_provider,
         fallback_backend=os.getenv("OPERON_BROWSER_FALLBACK_BACKEND", "json"),
         fallback_model=os.getenv("OPERON_BROWSER_FALLBACK_MODEL", "gemini-2.5-flash"),
-        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL", "gemini-3.5-flash"),
+        verifier_model=verifier_model,
         thinking=os.getenv("OPERON_BROWSER_THINKING", "low") or None,
         verifier_thinking=os.getenv("OPERON_BROWSER_VERIFIER_THINKING", "low") or None,
         claude_model=os.getenv("OPERON_BROWSER_CLAUDE_MODEL", "claude-opus-5-5"),
@@ -92,6 +106,12 @@ def validate_modes() -> list[str]:
         if cfg.verifier_provider not in _VALID_PROVIDERS:
             errors.append(
                 f"OPERON_{label.upper()}_VERIFIER_PROVIDER={cfg.verifier_provider!r} is not one of {sorted(_VALID_PROVIDERS)}"
+            )
+        expected = {"gemini": "gemini-", "anthropic": "claude-"}.get(cfg.verifier_provider)
+        if expected and cfg.verifier_model and not cfg.verifier_model.lower().startswith(expected):
+            errors.append(
+                f"OPERON_{label.upper()}_VERIFIER_MODEL={cfg.verifier_model!r} is not a {cfg.verifier_provider} model "
+                f"(OPERON_{label.upper()}_VERIFIER_PROVIDER={cfg.verifier_provider})"
             )
         if cfg.backend == "claude_computer_use" and not os.getenv("ANTHROPIC_API_KEY"):
             errors.append(f"{label} backend=claude_computer_use but ANTHROPIC_API_KEY is unset")

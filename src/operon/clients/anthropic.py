@@ -44,7 +44,7 @@ class AnthropicHttpClient:
         self,
         *,
         api_key: str | None = None,
-        model: str = "claude-sonnet-5",
+        model: str = "claude-sonnet-5-5",
         api_base_url: str | None = None,
         timeout_seconds: float = 30.0,
         max_retries: int = 2,

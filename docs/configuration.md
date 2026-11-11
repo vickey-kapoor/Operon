@@ -68,7 +68,9 @@ the details.
 | `OPERON_DESKTOP_BACKEND` | `computer_use` | Desktop backend: `computer_use` (Gemini computer use), `json` (the older Gemini JSON path), `claude_computer_use` or `model` |
 | `OPERON_BROWSER_MODEL` | `gemini-3.5-flash` | Browser primary model |
 | `OPERON_BROWSER_THINKING` | `low` | Computer Use thinking level (Gemini 3) |
-| `OPERON_BROWSER_VERIFIER_THINKING` | `low` | Browser critic thinking level |
+| `OPERON_BROWSER_VERIFIER_PROVIDER` / `OPERON_DESKTOP_VERIFIER_PROVIDER` | `gemini` | Full-harness step critic provider: `gemini` or `anthropic` |
+| `OPERON_BROWSER_VERIFIER_MODEL` / `OPERON_DESKTOP_VERIFIER_MODEL` | `gemini-3.5-flash` (`claude-sonnet-5-5` with `anthropic`) | Step critic model; must belong to the provider, or the server refuses to start |
+| `OPERON_BROWSER_VERIFIER_THINKING` / `OPERON_DESKTOP_VERIFIER_THINKING` | `low` | Critic thinking level |
 | `OPERON_BROWSER_CLAUDE_MODEL` | `claude-opus-5-5` | Model for `claude_computer_use` |
 | `OPERON_BROWSER_CLAUDE_EFFORT` | `low` | Claude effort level for `claude_computer_use` |
 | `OPERON_CLAUDE_ZOOM` | `false` | Experimental: turn on the toolset's `zoom` member (browser and desktop); each zoom is answered with a full-resolution crop of the current screenshot, up to 3 per step |

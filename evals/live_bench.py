@@ -353,9 +353,10 @@ def critic_label(profile, mode: str = "browser") -> str | None:
             return "same:" + ((env.get(prefix + "CLAUDE_MODEL") or "").strip() or "claude-opus-5-5")
         default = "gemini-3.5-flash" if mode == "browser" or backend == "computer_use" else "gemini-2.5-flash"
         return "same:" + ((env.get(prefix + "MODEL") or "").strip() or default)
-    defaults = {"browser": "gemini-3.5-flash", "desktop": "gemini-2.5-flash"}
+    # Same defaults as operon.api.runtime_config: one per provider, for browser and desktop alike.
+    defaults = {"gemini": "gemini-3.5-flash", "anthropic": "claude-sonnet-5-5"}
     provider = (env.get(f"OPERON_{mode.upper()}_VERIFIER_PROVIDER") or "gemini").strip().lower()
-    model = (env.get(f"OPERON_{mode.upper()}_VERIFIER_MODEL") or "").strip() or defaults.get(mode, "server default")
+    model = (env.get(f"OPERON_{mode.upper()}_VERIFIER_MODEL") or "").strip() or defaults.get(provider, "server default")
     return f"{provider}:{model}"
 
 

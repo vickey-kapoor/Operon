@@ -1,12 +1,13 @@
-// Shared Postgres access for the API routes. Vercel's Neon integration sets
-// DATABASE_URL (POSTGRES_URL on older setups); evals/dashboard.py writes the
-// tables. One small pool per function instance is plenty for a dashboard.
+// Shared Postgres access for the API routes. DASHBOARD_DATABASE_URL is the
+// read-only role's connection string; it comes first because Vercel's Neon
+// integration manages DATABASE_URL (POSTGRES_URL on older setups), which holds
+// the owner role and can't be edited. evals/dashboard.py writes the tables. One small pool per function instance is plenty for a dashboard.
 import pg from "pg";
 
 let pool;
 
 export function db() {
-  const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  const connectionString = process.env.DASHBOARD_DATABASE_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL;
   if (!connectionString) throw new Error("DATABASE_URL is not set");
   pool ??= new pg.Pool({ connectionString, max: 2, idleTimeoutMillis: 10_000 });
   return pool;

@@ -567,6 +567,12 @@ class PolicyRuleEngine:
             return None
 
         if _already_searched or _already_tried_search:
+            # The fallback below needs to know the page did NOT change. An unknown page
+            # hint (the computer-use backends never set one) says nothing either way, so
+            # leave the next step to the model: it may already be on the article and
+            # ready to answer, and a forced navigate would override that answer.
+            if perception.page_hint is PageHint.UNKNOWN:
+                return None
             # Search was already submitted but we're still not on a results/article page —
             # keyboard Enter didn't navigate. This applies whether the rule or the LLM typed.
             _needs_navigate = (
@@ -578,6 +584,8 @@ class PolicyRuleEngine:
             )
             if _hint_str not in _POST_SEARCH_HINTS:
                 _search_url = resolve_search_url(query, state.start_url or "")
+                if not _is_absolute_url(_search_url):
+                    return None  # no start page to search from; the model decides
                 return PolicyDecision(
                     action=AgentAction(action_type=ActionType.NAVIGATE, url=_search_url),
                     rationale=f"Search submitted but page did not navigate — using direct search URL for '{query}'.",
@@ -596,6 +604,8 @@ class PolicyRuleEngine:
             # rather than typing the same query again.
             if "_search_query_rule" in _last_trace and "action=type" in _last_trace:
                 _search_url = resolve_search_url(query, state.start_url or "")
+                if not _is_absolute_url(_search_url):
+                    return None  # no start page to search from; the model decides
                 return PolicyDecision(
                     action=AgentAction(action_type=ActionType.NAVIGATE, url=_search_url),
                     rationale=f"Search typed but Enter did not navigate — using direct search URL for '{query}'.",
@@ -1299,3 +1309,8 @@ def _nearest_element_by_box(
         if best is None or dist < best[1]:
             best = (elem, dist)
     return best
+
+
+def _is_absolute_url(url: str) -> bool:
+    """A navigate target the browser can open: ``search?q=x`` with no start page is not."""
+    return url.startswith(("http://", "https://"))

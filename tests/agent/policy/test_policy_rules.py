@@ -617,3 +617,38 @@ async def test_asking_the_model_again_tells_it_the_last_proposal_did_not_run(mon
     assert delegate.replaced == []
 
 
+
+
+def _after_search_state(start_url: str | None) -> AgentState:
+    typed = AgentAction(action_type=ActionType.TYPE, text="Alan Turing", press_enter=True, x=10, y=10)
+    return AgentState(
+        run_id="run-turing",
+        intent="On wikipedia.org, search for Alan Turing and tell me the year he was born",
+        status=RunStatus.RUNNING,
+        start_url=start_url,
+        action_history=[ExecutedAction(action=typed, success=True, detail="Executed type")],
+    )
+
+
+def _page(page_hint: str) -> ScreenPerception:
+    return ScreenPerception(summary="Alan Turing was born in 1912.", page_hint=page_hint,
+                            capture_artifact_path="runs/x/step_3/before.png", visible_elements=[])
+
+
+def test_search_fallback_leaves_an_unknown_page_to_the_model() -> None:
+    """Gemini computer use never sets a page hint. A Vickey run (2026-11-11) sat on the
+    article with the answer, and the rule forced 'navigate search?q=...' three times."""
+    from operon.agent.policy.rules import PolicyRuleEngine
+
+    rule = PolicyRuleEngine()._search_query_rule
+    assert rule(_after_search_state(None), _page("unknown")) is None
+    assert rule(_after_search_state("https://www.wikipedia.org"), _page("unknown")) is None
+
+
+def test_search_fallback_never_navigates_to_a_relative_url() -> None:
+    from operon.agent.policy.rules import PolicyRuleEngine
+
+    rule = PolicyRuleEngine()._search_query_rule
+    assert rule(_after_search_state(None), _page("form_page")) is None
+    decision = rule(_after_search_state("https://example.com/"), _page("form_page"))
+    assert decision.action.url == "https://example.com/search?q=Alan+Turing"

@@ -66,6 +66,11 @@ on:
       desktop_model: {type: string, default: ""}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
+      # The batch workflow (bench-batch.yml) starts the Azure VM once for all its Desktop and
+      # Hybrid cells and deallocates it after the last one: it passes "false" here.
+      manage_vm: {type: string, default: "true"}
+      # Set by the batch workflow so its cells' artifacts don't share a name.
+      artifact_suffix: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
@@ -87,7 +92,7 @@ concurrency:
 jobs:
   start-vm:
     name: Start the Azure VM
-    if: inputs.runner == 'azure'
+    if: inputs.runner == 'azure' && inputs.manage_vm != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # id-token: sign in to Azure with GitHub's OIDC token when AZURE_CLIENT_ID is set.
@@ -276,7 +281,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: bench-${{ inputs.category || 'desktop' }}
+          name: bench-${{ inputs.category || 'desktop' }}${{ inputs.artifact_suffix }}
           # .var/bench holds the JSON report and each task's graded screenshot.
           path: |
             bench.txt
@@ -289,7 +294,7 @@ jobs:
   stop-vm:
     name: Deallocate the Azure VM
     needs: [start-vm, bench]
-    if: ${{ always() && inputs.runner == 'azure' && needs.start-vm.result == 'success' }}
+    if: ${{ always() && inputs.runner == 'azure' && inputs.manage_vm != 'false' && needs.start-vm.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

@@ -62,6 +62,9 @@ class StepLog(StrictModel):
     failure: FailureRecord | None = None
     decision_source: str | None = None
     visual_variance: float | None = None
+    # Actions this step ran before ``executed_action`` that failed their check and
+    # were retried in the same step (full harness), oldest first.
+    earlier_attempts: list[ExecutedAction] = Field(default_factory=list)
 
 
 class PreStepFailureLog(StrictModel):

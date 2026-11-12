@@ -47,4 +47,6 @@ class VerificationResult(StrictModel):
     video_detail: str | None = Field(default=None, min_length=1)
     critic_model_used: bool = False
     critic_fallback_reason: str | None = Field(default=None, min_length=1)
+    # True when nothing judged the outcome (the thin harness takes the model's word).
+    unchecked: bool = False
     patience_retries: int = 0  # number of PENDING re-verify attempts before settling

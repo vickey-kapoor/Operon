@@ -433,6 +433,10 @@ class AgentLoop:
             self._discard_held_actions(
                 run_id, "Not executed: the user declined this action and sent a correction."
             )
+        if approve_gated_action and self._has_held_actions(run_id) and hasattr(record, "approval_count"):
+            # The model asked to confirm its action (Gemini's require_confirmation)
+            # and the person said yes: that is an approval like a gate's.
+            record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
         if approve_gated_action and pending is not None:
             fingerprint, gate = pending
@@ -446,6 +450,16 @@ class AgentLoop:
         if hasattr(record, "pause_reason"):
             record.pause_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
+        if hasattr(self.executor, "restore_work_window"):
+            # The person answered on the task page, which is now in front of the app
+            # the run was using: put that app back before the next screenshot.
+            try:
+                # Under the executor lock: another run's step must not have its window
+                # switched while it waits on the model or acts.
+                async with self._executor_lock:
+                    await self.executor.restore_work_window(run_id)
+            except Exception as exc:
+                logger.warning("restore_work_window failed for %s: %s", run_id, exc)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -620,12 +634,17 @@ class AgentLoop:
         deferred_pause: PolicyDecision | None = None
         retries_used = 0
         attempt_index = 1
+        earlier_attempts: list[ExecutedAction] = []
+        executed_action: ExecutedAction | None = None
 
         while True:
             if attempt_index > 1 and await self._run_cancelled(record.run_id):
                 # Stopped during a retry: record the attempt that ran, run no more.
                 _trace("  RETRY_LOOP -> cancelled", "run was stopped; not retrying")
                 break
+            if attempt_index > 1 and executed_action is not None:
+                # A replacement is about to run: the last attempt becomes an earlier one.
+                earlier_attempts.append(executed_action)
             _trace("  4 EXECUTE", f"attempt={attempt_index}  action={decision.action.action_type.value!r}  executor={type(self.executor).__name__}")
             blocked_action = None if self.thin_harness else self._block_redundant_action(state, decision.action, step_index)
             if blocked_action is None:
@@ -817,6 +836,7 @@ class AgentLoop:
             failure=failure,
             decision_source=_decision_source,
             visual_variance=executed_action.visual_variance,
+            earlier_attempts=earlier_attempts,
         )
         append_step_log(self._run_log_path(record.run_id), step_log)
 
@@ -1142,6 +1162,16 @@ class AgentLoop:
             note(run_id, reason)
         except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
             logger.warning("note_not_executed failed for run %s: %s", run_id[:8], exc)
+
+    def _has_held_actions(self, run_id: str) -> bool:
+        for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():
+            held = getattr(service, "has_held_actions", None)
+            try:
+                if held is not None and held(run_id):
+                    return True
+            except Exception as exc:  # noqa: BLE001 - only feeds a counter
+                logger.warning("has_held_actions failed for run %s: %s", run_id[:8], exc)
+        return False
 
     def _discard_held_actions(self, run_id: str, reason: str) -> None:
         for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():

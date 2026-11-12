@@ -56,6 +56,11 @@ class PolicyService(ABC):
         if note is not None:
             note(run_id, reason)
 
+    def has_held_actions(self, run_id: str) -> bool:
+        """Whether the delegate holds calls the model asked the user to confirm."""
+        held = getattr(getattr(self, "delegate", None), "has_held_actions", None)
+        return bool(held is not None and held(run_id))
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         """The user resumed a confirmation pause with a correction: wrappers pass it
         to their delegate, and a backend holding the paused calls drops them."""

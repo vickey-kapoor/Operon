@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import Field
 
 from operon.api import frontdoor, stream_tokens
@@ -54,6 +54,12 @@ async def start(task: frontdoor.FrontDoorTask) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+@router.get("/runs")
+async def list_runs(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
+    """The newest runs on this computer, for the page's Home and History."""
+    return {"runs": frontdoor.recent_runs(limit)}
+
+
 @router.get("/runs/{run_id}")
 async def get_status(run_id: str) -> dict[str, Any]:
     validate_run_id(run_id)
@@ -88,6 +94,11 @@ async def approve(run_id: str) -> dict[str, Any]:
 @router.post("/runs/{run_id}/decline")
 async def decline(run_id: str, body: NoteRequest | None = None) -> dict[str, Any]:
     return await _call(frontdoor.decline, run_id, body.note if body else None)
+
+
+@router.post("/runs/{run_id}/pause")
+async def pause(run_id: str) -> dict[str, Any]:
+    return await _call(frontdoor.pause, run_id)
 
 
 @router.post("/runs/{run_id}/takeover")

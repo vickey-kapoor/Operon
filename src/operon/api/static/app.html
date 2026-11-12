@@ -5,191 +5,387 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Operon</title>
 <style>
+  /* Operon Desktop v0.1 (KAN-106): Home, Live run and Run recording on one local page.
+     Fonts come from the computer (the page loads nothing from the internet). */
   :root {
-    --bg: #f6f6f3; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc;
-    --accent: #2f5bd3; --accent-ink: #ffffff; --warn-bg: #fff4dc; --warn-line: #e7b54a;
-    --ok: #1f7a46; --bad: #b4322b; --takeover-bg: #e9f0ff;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #151514; --panel: #1e1e1c; --ink: #ecebe6; --muted: #9d9c95; --line: #33332f;
-      --accent: #7b9cff; --accent-ink: #10131c; --warn-bg: #3a2f17; --warn-line: #a7802f;
-      --ok: #5cc48a; --bad: #ff7a70; --takeover-bg: #1d2740;
-    }
+    --bg: #0B0E13; --bar: #0F1318; --panel: #151A21; --raised: #1D232C;
+    --line: #2A313C; --line-strong: #3A4350;
+    --ink: #E8ECF1; --muted: #9AA4B2;
+    --accent: #6CB6FF; --accent-ink: #0B0E13;
+    --warn: #F2A65A; --warn-bg: #2A1E14;
+    --bad: #FF8F87;
+    --sans: Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --display: "Space Grotesk", Inter, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
-  header .conn { margin-left: auto; color: var(--muted); font-size: 13px; }
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
-  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
-  textarea, input[type=text], input[type=password], input[type=number], select {
-    width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line);
-    background: var(--bg); color: var(--ink); font: inherit; }
-  textarea { min-height: 76px; resize: vertical; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .row > * { flex: 1 1 auto; }
-  button { font: inherit; padding: 8px 14px; border-radius: 7px; border: 1px solid var(--line);
-           background: var(--panel); color: var(--ink); cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-  button.danger { color: var(--bad); }
-  button:disabled { opacity: .5; cursor: default; }
-  .modes { display: grid; gap: 6px; }
-  .modes label { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--ink); font-size: 14px; cursor: pointer; }
-  .modes small { display: block; color: var(--muted); }
-  .screen { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 10;
-            display: flex; align-items: center; justify-content: center; }
-  .screen img { max-width: 100%; max-height: 100%; display: block; }
-  .screen .empty { color: #8a8a85; font-size: 14px; padding: 20px; text-align: center; }
-  .screen.takeover img { cursor: crosshair; outline: 3px solid var(--accent); }
-  .status { display: flex; gap: 10px; align-items: center; margin: 10px 0 0; flex-wrap: wrap; }
-  .pill { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
-  .pill.running { color: var(--accent); border-color: var(--accent); }
-  .pill.succeeded { color: var(--ok); border-color: var(--ok); }
-  .pill.failed, .pill.cancelled { color: var(--bad); border-color: var(--bad); }
-  .pill.waiting_for_user { color: var(--warn-line); border-color: var(--warn-line); }
-  .card { border-radius: 8px; padding: 12px; margin-top: 12px; }
-  .card.ask { background: var(--warn-bg); border: 1px solid var(--warn-line); }
-  .card.takeover { background: var(--takeover-bg); border: 1px solid var(--accent); }
-  .card p { margin: 0 0 10px; }
-  ol.steps { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
-  ol.steps li { padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
-  ol.steps li:first-child { border-top: 0; }
-  ol.steps .n { color: var(--muted); display: inline-block; min-width: 2.2em; }
-  ol.steps .why { color: var(--muted); display: block; margin-left: 2.2em; }
-  ol.steps .bad { color: var(--bad); }
-  .report dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0 0; font-size: 14px; }
-  .report dt { color: var(--muted); }
-  .report dd { margin: 0; }
+  html, body { background: var(--bg); }
+  body { margin: 0; color: var(--ink); font: 15px/1.45 var(--sans); min-height: 100vh; }
+  a { color: var(--muted); }
+  a:hover { color: var(--ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .hidden { display: none !important; }
-  .err { color: var(--bad); font-size: 13px; margin-top: 8px; min-height: 1em; }
-  .note { color: var(--muted); font-size: 13px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* ---- top bar ---- */
+  .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding: 8px 24px;
+            background: var(--bar); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 10px; font: 600 18px var(--display); color: var(--ink); text-decoration: none; }
+  .brand:hover { color: var(--ink); }
+  .topbar nav { display: flex; flex-wrap: wrap; gap: 4px 24px; font-size: 14px; }
+  .topbar nav a { text-decoration: none; line-height: 44px; }
+  .topbar nav a[aria-current="page"] { color: var(--ink); font-weight: 600; }
+  .spacer { flex-grow: 1; }
+  .conn { display: flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  .dot.off { background: var(--line-strong); }
+  .dot.warn { background: var(--warn); }
+  .dot.lg { width: 10px; height: 10px; }
+
+  /* ---- shared pieces ---- */
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 28px 24px 40px; display: flex; flex-direction: column; gap: 20px; }
+  .wrap.narrow { max-width: 960px; padding-top: 56px; gap: 40px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; min-width: 0; }
+  .eyebrow { margin: 0; font: 500 12px var(--mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+  .panel > .eyebrow { padding: 16px 20px 12px; }
+  .row-split { display: flex; flex-wrap: wrap; gap: 20px; }
+  .main-col { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  .side-col { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  h1, h2 { font-family: var(--display); font-weight: 600; margin: 0; }
+  .title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+  .title-row > .titles { flex: 999 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .title-row h1 { font-size: 1.75rem; line-height: 1.2; overflow-wrap: anywhere; }
+  .state { display: flex; align-items: center; gap: 8px; font: 12px var(--mono); letter-spacing: .06em; color: var(--accent); text-transform: uppercase; }
+  .state.warn { color: var(--warn); }
+  .state.warn .dot { background: var(--warn); }
+  .state.bad { color: var(--bad); }
+  .state.bad .dot { background: var(--bad); }
+  .state.muted { color: var(--muted); }
+  .state.muted .dot { background: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .note { margin: 0; font-size: 13px; color: var(--muted); }
+  .err { color: var(--bad); font-size: 13px; min-height: 1em; margin: 0; }
+
+  button, .btn { font: 500 14px var(--sans); height: 44px; padding: 0 18px; border-radius: 8px; cursor: pointer;
+           background: var(--raised); border: 1px solid var(--line); color: var(--ink); }
+  button:hover:not(:disabled) { border-color: var(--line-strong); }
+  button.primary { background: var(--accent); border: 0; color: var(--accent-ink); font-weight: 600; font-size: 15px; height: 46px; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  button.ghost { background: transparent; }
+  button.danger { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: 8px; height: 44px; padding: 0 12px; min-width: 0; }
+  select { padding-right: 8px; }
+
+  /* ---- home ---- */
+  .hero { display: flex; flex-direction: column; gap: 20px; }
+  .hero h1 { font-size: 2.5rem; line-height: 1.15; }
+  .ask { display: flex; flex-wrap: wrap; gap: 12px; }
+  .ask input { flex: 999 1 320px; height: 56px; padding: 0 18px; border-radius: 10px; font-size: 17px; }
+  .ask button { flex: 1 1 120px; height: 56px; border-radius: 10px; font-size: 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chips button { background: var(--panel); border-radius: 22px; padding: 0 16px; font-weight: 400; }
+  details.options { color: var(--muted); font-size: 14px; }
+  details.options summary { cursor: pointer; line-height: 44px; width: max-content; }
+  .opts { display: flex; flex-wrap: wrap; gap: 16px 24px; padding: 8px 0 4px; }
+  .opts label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .opts .grow { flex: 1 1 260px; }
+  .modes { display: flex; flex-direction: column; gap: 6px; flex: 1 1 100%; }
+  .modes legend { font-size: 13px; padding: 0; margin-bottom: 6px; }
+  .modes fieldset { border: 0; margin: 0; padding: 0; }
+  .modes label { display: flex; gap: 10px; align-items: flex-start; color: var(--ink); cursor: pointer; padding: 4px 0; }
+  .modes small { display: block; color: var(--muted); font-size: 13px; }
+  .modes input { margin-top: 4px; accent-color: var(--accent); }
+  .runlist a { text-decoration: none; color: var(--ink); display: flex; align-items: center; gap: 12px;
+               padding: 14px 20px; border-top: 1px solid var(--line); min-height: 44px; }
+  .runlist a:hover { background: var(--raised); }
+  .runlist .intent { flex-grow: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .runlist .when { font-size: 13px; color: var(--muted); flex: none; }
+  .runlist .when.warn { color: var(--warn); font-weight: 600; }
+  .runlist .when.live { color: var(--accent); font-weight: 600; }
+  .runlist .empty { padding: 14px 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+
+  /* ---- live view and recording ---- */
+  .screen { position: relative; min-height: 320px; aspect-ratio: 16 / 10; background: var(--bar); border: 1px dashed var(--line-strong);
+            border-radius: 12px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .screen.has-frame { border-style: solid; border-color: var(--line); background: #000; }
+  .screen img { max-width: 100%; max-height: 100%; display: block; }
+  .screen .empty { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; padding: 20px; text-align: center; }
+  .screen.takeover { border: 2px solid var(--accent); }
+  .screen.takeover img { cursor: crosshair; }
+  .card-ask { border-color: var(--warn); padding: 18px; gap: 12px; }
+  .card-ask h2, .card-done h2, .card-you h2 { font-size: 20px; line-height: 1.25; overflow-wrap: anywhere; }
+  .card-ask p, .card-you p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+  .card-ask button, .card-you button { width: 100%; }
+  .card-you { border-color: var(--accent); padding: 18px; gap: 12px; }
+  .keys { display: flex; flex-wrap: wrap; gap: 8px; }
+  .keys input { flex: 1 1 160px; }
+  .keys button { width: auto; flex: none; }
+  .card-done { padding: 18px 20px; gap: 12px; }
+  .facts { display: flex; flex-direction: column; font-size: 15px; }
+  .facts div { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .facts div:last-child { border-bottom: 1px solid var(--line); }
+  .facts .n { width: 34px; font: 500 15px var(--mono); text-align: right; flex: none; }
+  .facts .muted { color: var(--muted); }
+  .last-word { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .foot { display: flex; align-items: center; gap: 8px; padding: 12px 20px; margin: 0 -20px -18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  ol.steps { list-style: none; margin: 0; padding: 0; max-height: 440px; overflow: auto; }
+  ol.steps li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 18px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+  ol.steps li.now { color: var(--ink); }
+  ol.steps li.failed { color: var(--bad); }
+  ol.steps .ico { width: 16px; height: 20px; display: flex; align-items: center; justify-content: center; flex: none; }
+  ol.steps .txt { min-width: 0; overflow-wrap: anywhere; }
+
+  .scrub { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .scrub input[type=range] { flex: 999 1 200px; min-width: 0; height: 44px; accent-color: var(--accent); background: transparent; border: 0; padding: 0; }
+  .scrub .count { font: 13px var(--mono); color: var(--muted); }
+  .why-block { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border-top: 1px solid var(--line); }
+  .why-block:first-child { border-top: 0; }
+  .why-block span:last-child { font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .table-box { overflow-x: auto; }
+  table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 14px; text-align: left; }
+  th { padding: 12px 18px; font: 500 12px var(--mono); letter-spacing: .06em; color: var(--muted); }
+  td { padding: 0 18px; border-top: 1px solid var(--line); color: var(--muted); vertical-align: middle; }
+  td:nth-child(2) { color: var(--ink); }
+  td button { height: 44px; padding: 0; background: transparent; border: 0; color: inherit; font: 14px var(--mono); width: 100%; text-align: left; }
+  tr.sel td { background: var(--raised); color: var(--ink); }
+  td.why { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.no { color: var(--bad); }
 </style>
 </head>
 <body>
-<header>
-  <h1>Operon</h1>
-  <span class="note">local task page</span>
-  <span class="conn" id="conn">not connected</span>
+<header class="topbar">
+  <a class="brand" href="#home">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent)"><rect x="3" y="3" width="16" height="16" rx="4"></rect><circle cx="11" cy="11" r="3"></circle></svg>
+    <span>Operon</span>
+  </a>
+  <nav aria-label="Main">
+    <a href="#home" id="nav-home">Home</a>
+    <a href="#history" id="nav-history">History</a>
+  </nav>
+  <div class="spacer"></div>
+  <div class="conn" role="status"><span class="dot off" id="conn-dot" aria-hidden="true"></span><span id="conn">Running on this PC</span></div>
 </header>
 
-<main>
-  <div>
-    <section id="key-panel" class="hidden">
-      <h2>API key</h2>
-      <p class="note">Paste the key from <code>.var/api-key</code> (or <code>API_KEYS</code>). It stays in this tab only.</p>
-      <div class="row">
-        <input type="password" id="key" autocomplete="off" placeholder="API key">
-        <button class="primary" id="key-save" style="flex:0 0 auto">Use key</button>
-      </div>
-    </section>
+<!-- API key: only when the page was opened without the #key= link `operon serve` prints -->
+<div class="wrap narrow hidden" id="key-panel" style="padding-bottom:0">
+  <section class="panel" style="padding: 18px 20px; gap: 12px">
+    <h2 style="font-size:20px">Connect to Operon</h2>
+    <p class="note">Paste the key from <code>.var/api-key</code> (or <code>API_KEYS</code>). It stays in this tab only.</p>
+    <div class="ask">
+      <label for="key" class="sr-only">API key</label>
+      <input type="password" id="key" autocomplete="off" placeholder="API key" style="height:44px;font-size:15px">
+      <button class="primary" id="key-save" style="height:44px">Use key</button>
+    </div>
+  </section>
+</div>
 
-    <section id="live">
-      <h2>Live view</h2>
-      <div class="screen" id="screen"><div class="empty" id="screen-empty">Start a task to watch it here.</div><img id="frame" class="hidden" alt="Live view of the run"></div>
-      <div class="status">
-        <span class="pill" id="status-pill">idle</span>
-        <span id="status-text" class="note"></span>
-        <span style="margin-left:auto" class="row">
-          <button id="btn-takeover" disabled>Take over</button>
-          <button id="btn-stop" class="danger" disabled>Stop</button>
-        </span>
-      </div>
-
-      <div class="card ask hidden" id="ask-card">
-        <p><strong id="ask-title">Operon needs your approval</strong><br><span id="ask-reason"></span></p>
-        <div class="row">
-          <button class="primary" id="btn-approve" style="flex:0 0 auto">Approve</button>
-          <input type="text" id="decline-note" placeholder="Optional: what to do instead">
-          <button id="btn-decline" style="flex:0 0 auto">Decline</button>
-        </div>
-      </div>
-
-      <div class="card takeover hidden" id="takeover-card">
-        <p><strong>You are in control.</strong> Operon is paused: it takes no screenshots and makes no model calls until you hand back.
-          <span id="takeover-hint"></span></p>
-        <div class="row" id="takeover-keys">
-          <input type="text" id="takeover-text" placeholder="Type into the focused field">
-          <button id="btn-type" style="flex:0 0 auto">Type</button>
-          <button data-key="Enter" style="flex:0 0 auto">Enter</button>
-          <button data-key="Tab" style="flex:0 0 auto">Tab</button>
-          <button data-key="Escape" style="flex:0 0 auto">Esc</button>
-        </div>
-        <div class="row" style="margin-top:8px">
-          <input type="text" id="handback-note" placeholder="Optional: tell Operon what you did">
-          <button class="primary" id="btn-handback" style="flex:0 0 auto">Hand back</button>
-        </div>
-      </div>
-      <div class="err" id="err"></div>
-    </section>
-
-    <section id="report" class="report hidden" style="margin-top:16px">
-      <h2>Result</h2>
-      <div><strong id="report-summary"></strong></div>
-      <p id="report-final" class="note"></p>
-      <dl id="report-facts"></dl>
-    </section>
-  </div>
-
-  <div>
-    <section id="task-panel">
-      <h2>New task</h2>
-      <label for="intent">What should Operon do?</label>
-      <textarea id="intent" maxlength="500" placeholder="e.g. Find the cheapest 1 TB SSD on the shop page and add it to the cart"></textarea>
-      <div class="row">
-        <div>
-          <label for="environment">Where</label>
+<!-- ===== Home ===== -->
+<main id="view-home" class="wrap narrow hidden">
+  <div class="hero">
+    <h1 id="home-title">What should Operon do?</h1>
+    <form class="ask" id="task-form">
+      <label for="intent" class="sr-only">Describe a task</label>
+      <input type="text" id="intent" maxlength="500" placeholder="Describe a task in your own words" autocomplete="off">
+      <button type="submit" class="primary" id="btn-start">Start</button>
+    </form>
+    <div class="chips" id="chips">
+      <button type="button" data-env="desktop">Sort my Downloads folder</button>
+      <button type="button" data-env="browser">Clean up newsletters in my inbox</button>
+      <button type="button" data-env="desktop">Fill in a form from a spreadsheet</button>
+    </div>
+    <details class="options">
+      <summary>Where it runs and when it asks</summary>
+      <div class="opts">
+        <label class="field">Where
           <select id="environment">
             <option value="browser">Browser</option>
             <option value="desktop">Desktop</option>
           </select>
-        </div>
-        <div>
-          <label for="max-steps">Max steps</label>
-          <input type="number" id="max-steps" min="1" max="200" value="25">
+        </label>
+        <label class="field grow">Start page (browser, optional)
+          <input type="text" id="start-url" placeholder="https://...">
+        </label>
+        <label class="field">Max steps
+          <input type="number" id="max-steps" min="1" max="200" value="25" style="width:110px">
+        </label>
+        <div class="modes">
+          <fieldset>
+            <legend>When it asks you</legend>
+            <label><input type="radio" name="mode" value="ask"><span>Every time<small>Approve each action before it runs.</small></span></label>
+            <label><input type="radio" name="mode" value="risky" checked><span>Before anything risky<small>Purchases, payments, deletions and the like wait for you.</small></span></label>
+            <label><input type="radio" name="mode" value="auto"><span>Never<small>No approvals. Blocked actions stay blocked.</small></span></label>
+          </fieldset>
         </div>
       </div>
-      <label for="start-url">Start page (optional)</label>
-      <input type="text" id="start-url" placeholder="https://...">
-      <label>Permissions</label>
-      <div class="modes">
-        <label><input type="radio" name="mode" value="ask"><span>Ask every time<small>Approve each action before it runs.</small></span></label>
-        <label><input type="radio" name="mode" value="risky" checked><span>Ask for risky actions<small>Purchases, payments, deletions and the like wait for you.</small></span></label>
-        <label><input type="radio" name="mode" value="auto"><span>Auto<small>No approvals. Blocked actions stay blocked.</small></span></label>
-      </div>
-      <div style="margin-top:14px"><button class="primary" id="btn-start" style="width:100%">Start task</button></div>
-    </section>
+    </details>
+    <p class="err" id="home-err" role="alert"></p>
+  </div>
 
-    <section style="margin-top:16px">
-      <h2>Steps</h2>
-      <ol class="steps" id="steps"><li class="note">No steps yet.</li></ol>
+  <section class="panel runlist" aria-labelledby="recent-h">
+    <h2 class="eyebrow" id="recent-h">Recent runs</h2>
+    <div id="recent"><div class="empty">No runs yet.</div></div>
+  </section>
+  <p class="note">This page is served by Operon on your own computer.</p>
+</main>
+
+<!-- ===== History ===== -->
+<main id="view-history" class="wrap narrow hidden">
+  <h1 style="font-size:2rem">History</h1>
+  <section class="panel runlist" aria-label="All runs">
+    <h2 class="eyebrow">Every run on this PC</h2>
+    <div id="history"><div class="empty">No runs yet.</div></div>
+  </section>
+</main>
+
+<!-- ===== Live run ===== -->
+<main id="view-run" class="wrap hidden">
+  <div class="title-row">
+    <div class="titles">
+      <div class="state" id="run-state"><span class="dot lg" aria-hidden="true"></span><span id="run-state-text">Starting</span></div>
+      <h1 id="run-title"></h1>
+    </div>
+    <div class="actions">
+      <button id="btn-pause">Pause</button>
+      <button id="btn-takeover">Take over</button>
+      <button id="btn-stop" class="danger">Stop</button>
+    </div>
+  </div>
+  <div class="row-split">
+    <div class="main-col">
+      <div class="screen" id="screen">
+        <div class="empty" id="screen-empty">
+          <svg aria-hidden="true" width="36" height="36" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="22" height="15" rx="2"></rect><path d="M10 24h8M14 20v4"></path></svg>
+          <span id="screen-empty-text">Live view of what Operon sees on your screen</span>
+        </div>
+        <img id="frame" class="hidden" alt="Live view of the run">
+      </div>
+      <p class="note" id="run-meta"></p>
+      <p class="err" id="run-err" role="alert"></p>
+    </div>
+    <div class="side-col">
+      <!-- approval or "needs you" -->
+      <section class="panel card-ask hidden" id="ask-card" aria-live="polite">
+        <h2 id="ask-title">Allow this?</h2>
+        <p id="ask-reason"></p>
+        <button class="primary" id="btn-approve">Allow once</button>
+        <label for="decline-note" class="sr-only">What to do instead (optional)</label>
+        <input type="text" id="decline-note" placeholder="Optional: what to do instead">
+        <button class="ghost" id="btn-decline">Don't allow</button>
+      </section>
+      <!-- takeover -->
+      <section class="panel card-you hidden" id="takeover-card" aria-live="polite">
+        <div class="state"><span class="dot lg" aria-hidden="true"></span><span>You are in control</span></div>
+        <p>Operon is paused: it takes no screenshots and makes no model calls until you hand back. <span id="takeover-hint"></span></p>
+        <div class="keys" id="takeover-keys">
+          <label for="takeover-text" class="sr-only">Text to type</label>
+          <input type="text" id="takeover-text" placeholder="Type into the focused field">
+          <button id="btn-type">Type</button>
+          <button data-key="Enter">Enter</button>
+          <button data-key="Tab">Tab</button>
+          <button data-key="Escape">Esc</button>
+        </div>
+        <label for="handback-note" class="sr-only">What you did (optional)</label>
+        <input type="text" id="handback-note" placeholder="Optional: tell Operon what you did">
+        <button class="primary" id="btn-handback">Hand back</button>
+      </section>
+      <!-- result -->
+      <section class="panel card-done hidden" id="done-card" aria-live="polite">
+        <div class="state" id="done-state"><span class="dot lg" aria-hidden="true"></span><span id="done-state-text">Done</span></div>
+        <h2 id="done-summary"></h2>
+        <p class="last-word" id="done-final"></p>
+        <div class="facts" id="done-facts"></div>
+        <div class="actions" style="padding-top:4px">
+          <button class="primary" id="btn-recording" style="flex:1 1 160px">Watch recording</button>
+          <button id="btn-new" style="flex:1 1 120px">New task</button>
+        </div>
+        <div class="foot">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8.5l3.2 3L13 4.5"></path></svg>
+          <span id="done-checked"></span>
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="steps-h">
+        <h2 class="eyebrow" id="steps-h" style="padding:14px 18px 10px">Steps so far</h2>
+        <ol class="steps" id="steps"></ol>
+      </section>
+    </div>
+  </div>
+</main>
+
+<!-- ===== Run recording ===== -->
+<main id="view-recording" class="wrap hidden">
+  <div class="title-row">
+    <div class="titles">
+      <div class="state" id="rec-state"><span id="rec-state-text"></span></div>
+      <h1 id="rec-title"></h1>
+    </div>
+    <div class="actions">
+      <button class="primary" id="btn-again" style="height:44px;font-size:14px">Run again</button>
+      <button id="btn-export">Download run</button>
+    </div>
+  </div>
+  <div class="row-split">
+    <div class="main-col">
+      <div class="screen" id="rec-screen">
+        <div class="empty" id="rec-empty">
+          <svg aria-hidden="true" width="36" height="36" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="22" height="15" rx="2"></rect><path d="M10 24h8M14 20v4"></path></svg>
+          <span id="rec-empty-text">No screen was captured.</span>
+        </div>
+        <img id="rec-frame" class="hidden" alt="">
+      </div>
+      <div class="scrub">
+        <button id="btn-prev">Previous</button>
+        <label for="rec-range" class="sr-only">Step</label>
+        <input type="range" id="rec-range" min="0" max="0" value="0">
+        <span class="count" id="rec-count"></span>
+        <button id="btn-next">Next</button>
+      </div>
+      <p class="err" id="rec-err" role="alert"></p>
+    </div>
+    <section class="panel side-col" style="gap:0" aria-label="This step">
+      <div class="why-block"><span class="eyebrow">What it did</span><span id="rec-what"></span></div>
+      <div class="why-block"><span class="eyebrow">Why</span><span id="rec-why"></span></div>
+      <div class="why-block"><span class="eyebrow">How it was checked</span><span id="rec-check"></span></div>
     </section>
   </div>
+  <section class="panel table-box" aria-label="Every step">
+    <table>
+      <thead><tr><th scope="col">STEP</th><th scope="col">ACTION</th><th scope="col">WHY</th><th scope="col">CHECKED</th></tr></thead>
+      <tbody id="rec-rows"></tbody>
+    </table>
+  </section>
 </main>
 
 <script>
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const store = {
     get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
   };
+  const SVG = "http://www.w3.org/2000/svg";
+  function icon(kind) {
+    const s = document.createElementNS(SVG, "svg");
+    s.setAttribute("aria-hidden", "true"); s.setAttribute("width", "16"); s.setAttribute("height", "16");
+    s.setAttribute("viewBox", "0 0 16 16"); s.setAttribute("fill", "none"); s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "1.8");
+    const p = document.createElementNS(SVG, "path");
+    p.setAttribute("d", kind === "x" ? "M4 4l8 8M12 4l-8 8" : "M3 8.5l3.2 3L13 4.5");
+    s.append(p); return s;
+  }
 
   // The key arrives in the URL fragment (never sent to the server) or is pasted once.
-  const params = new URLSearchParams(location.hash.slice(1));
-  if (params.get("key")) store.set("operon-key", params.get("key"));
-  let runId = params.get("run") || store.get("operon-run");
-  if (location.hash) history.replaceState(null, "", location.pathname + (runId ? "#run=" + runId : ""));
+  const first = new URLSearchParams(location.hash.slice(1));
+  if (first.get("key")) {
+    store.set("operon-key", first.get("key"));
+    first.delete("key");
+    history.replaceState(null, "", location.pathname + (first.toString() ? "#" + first.toString() : ""));
+  }
   let apiKey = store.get("operon-key") || "";
-  let status = null, ws = null, frameUrl = null, wsFrames = false, lastShot = null, polling = null;
-
-  function showError(msg) { $("err").textContent = msg || ""; }
 
   async function api(method, path, body) {
     const headers = { "Content-Type": "application/json" };
@@ -201,140 +397,130 @@
     return data;
   }
 
-  // ---- live stream: frames and events over /ws/stream with a short-lived token ----
-  async function connectStream() {
-    // Drop the old socket's handler first, or closing it schedules a second reconnect.
-    if (ws) { ws.onclose = null; ws.close(); ws = null; }
-    let token;
-    try { token = (await api("POST", "/app/api/stream-token", { scope: "control" })).token; }
-    catch (e) { $("conn").textContent = "stream unavailable"; return; }
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(`${proto}//${location.host}/ws/stream`, ["x-stream-token", token]);
-    ws.binaryType = "blob";
-    ws.onopen = () => { $("conn").textContent = "connected"; };
-    ws.onclose = () => { $("conn").textContent = "stream closed"; wsFrames = false; setTimeout(() => { if (runId && !(status && status.done)) connectStream(); }, 3000); };
-    ws.onmessage = (ev) => {
-      if (ev.data instanceof Blob) {
-        // Frames belong to runs with a live view: a browser run, or the Linux cloud computer.
-        // A local Windows desktop run shows its step screenshots.
-        if (status && status.live_view) { wsFrames = true; showFrame(ev.data); }
-        return;
-      }
-      try {
-        const msg = JSON.parse(ev.data);
-        if (!runId || !msg.run_id || msg.run_id === runId) refresh();
-      } catch {}
-    };
+  // Step screenshots live under the runs folder; the observer serves them behind the key.
+  const shotCache = new Map();
+  async function screenshotUrl(path) {
+    if (!path) return null;
+    if (shotCache.has(path)) return shotCache.get(path);
+    const headers = apiKey ? { "X-API-Key": apiKey } : {};
+    const res = await fetch("/observer/api/artifact?path=" + encodeURIComponent(path), { headers });
+    if (!res.ok) return null;
+    const url = URL.createObjectURL(await res.blob());
+    shotCache.set(path, url);
+    return url;
   }
 
-  function showFrame(blob) {
-    const url = URL.createObjectURL(blob);
-    $("frame").src = url;
-    $("frame").classList.remove("hidden");
-    $("screen-empty").classList.add("hidden");
-    if (frameUrl) URL.revokeObjectURL(frameUrl);
-    frameUrl = url;
+  // ---- words ----
+  const VERB = {
+    click: "Clicked", double_click: "Double-clicked", triple_click: "Triple-clicked", right_click: "Right-clicked",
+    type: "Typed", select: "Selected", press_key: "Pressed", hotkey: "Pressed", navigate: "Opened", wait: "Waited",
+    wait_for_user: "Asked you", stop: "Finished", launch_app: "Opened app", drag: "Dragged", scroll: "Scrolled",
+    hover: "Pointed at", read_clipboard: "Read the clipboard", write_clipboard: "Copied", screenshot_region: "Looked closer",
+    upload_file: "Uploaded", upload_file_native: "Uploaded", read_text: "Read", batch: "Did several actions",
+  };
+  function said(step) {
+    const verb = VERB[step.action_type] || step.action_type;
+    // A stop or a question carries its words in ``text``: shown in full where there is room.
+    if (step.action_type === "stop" || step.action_type === "wait_for_user") return verb;
+    const rest = (step.action || "").slice(step.action_type.length).trim();
+    return rest ? verb + " " + rest : verb;
+  }
+  const CHECK = {
+    success: "Yes", progressing_stable: "Yes, the screen changed", stable_wait: "Yes, once the screen settled",
+    pending: "The page was still loading", uncertain: "Not sure", failure: "No",
+  };
+  function checked(step) {
+    if (!step.ok) return "The action failed";
+    if (step.checked_by === "unchecked") return "Not checked: the action ran, but the checker didn't answer";
+    if (step.checked_by === "retried") return "No, so it tried again in the same step";
+    if (step.checked_by === "none") return "Not checked: in this mode the model judges its own steps";
+    return CHECK[step.verification] || step.verification;
+  }
+  function isChecked(step) { return step.ok && !["unchecked", "none", "retried"].includes(step.checked_by) && ["success", "progressing_stable", "stable_wait"].includes(step.verification); }
+
+  function when(epochS) {
+    const d = new Date(epochS * 1000), now = new Date();
+    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (d.toDateString() === now.toDateString()) return "today " + time;
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return "yesterday";
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  function duration(s) {
+    if (s == null) return "";
+    const m = Math.floor(s / 60), r = Math.round(s % 60);
+    return m ? `${m} min ${r} s` : `${r} s`;
   }
 
-  // Desktop runs (and browser runs between frames) show the latest step screenshot.
-  async function showScreenshot(path) {
-    if (!path || path === lastShot || wsFrames) return;
-    lastShot = path;
-    try {
-      const headers = apiKey ? { "X-API-Key": apiKey } : {};
-      const res = await fetch("/observer/api/artifact?path=" + encodeURIComponent(path), { headers });
-      if (res.ok) showFrame(await res.blob());
-    } catch {}
+  // The state line over a run: a dot, words and a color.
+  function stateOf(s) {
+    if (s.in_takeover) return ["You are in control", ""];
+    if (s.status === "waiting_for_user") return [s.waiting && s.waiting.kind === "approval" ? "Waiting for your OK" : "Needs you", "warn"];
+    return ({
+      pending: ["Starting", ""], running: ["Working", ""], succeeded: ["Done", ""],
+      failed: ["Failed", "bad"], cancelled: ["Stopped", "muted"],
+    })[s.status] || [s.status, "muted"];
   }
 
-  // ---- run state ----
-  async function refresh() {
-    if (!runId) return;
-    try { status = await api("GET", `/app/api/runs/${runId}`); }
-    catch (e) { showError(e.message); return; }
-    render();
-    if (status.done) { stopPolling(); loadReport(); }
+  // ---- views ----
+  let view = null, runId = null, status = null, report = null, polling = null, ws = null, frameUrl = null, wsFrames = false, lastShot = null;
+  const VIEWS = ["home", "history", "run", "recording"];
+
+  function route() {
+    const p = new URLSearchParams(location.hash.slice(1));
+    let next = "home", id = null;
+    if (p.get("run")) { next = "run"; id = p.get("run"); }
+    else if (p.get("recording")) { next = "recording"; id = p.get("recording"); }
+    else if (location.hash === "#history") next = "history";
+    show(next, id);
   }
 
-  function startPolling() { stopPolling(); polling = setInterval(refresh, 1500); }
+  function show(next, id) {
+    stopPolling();
+    if (next !== "run") closeStream();
+    view = next;
+    for (const v of VIEWS) $("view-" + v).classList.toggle("hidden", v !== next);
+    setCurrent("nav-home", next === "home");
+    setCurrent("nav-history", next === "history" || next === "recording");
+    if (next === "home") { loadRuns("recent", 6); polling = setInterval(() => loadRuns("recent", 6), 5000); }
+    else if (next === "history") loadRuns("history", 100);
+    else if (next === "run") openRun(id);
+    else if (next === "recording") openRecording(id);
+    window.scrollTo(0, 0);
+  }
+
+  function setCurrent(id, on) { if (on) $(id).setAttribute("aria-current", "page"); else $(id).removeAttribute("aria-current"); }
   function stopPolling() { if (polling) clearInterval(polling); polling = null; }
 
-  function render() {
-    const s = status;
-    const pill = $("status-pill");
-    pill.className = "pill " + s.status;
-    pill.textContent = s.in_takeover ? "you are in control" : s.status.replace(/_/g, " ");
-    $("status-text").textContent = `${s.step_count}/${s.max_steps} steps · ${s.environment} · ${s.permission_mode} mode`;
-    $("btn-stop").disabled = s.done;
-    $("btn-takeover").disabled = s.done || s.in_takeover;
-    $("btn-start").disabled = !s.done;
-    const w = s.waiting;
-    $("ask-card").classList.toggle("hidden", !w || w.kind === "takeover");
-    if (w && w.kind !== "takeover") {
-      $("ask-title").textContent = w.kind === "approval" ? "Operon needs your approval" : "Operon needs you";
-      $("ask-reason").textContent = w.reason;
-      $("btn-approve").textContent = w.kind === "approval" ? "Approve" : "Continue";
-    }
-    $("takeover-card").classList.toggle("hidden", !s.in_takeover);
-    $("screen").classList.toggle("takeover", s.in_takeover && s.live_view);
-    $("takeover-keys").classList.toggle("hidden", !s.live_view);
-    $("takeover-hint").textContent = s.live_view
-      ? "Click on the live view and use the keys below."
-      : "Use your mouse and keyboard on the desktop.";
-    const list = $("steps");
-    list.replaceChildren();
-    if (!s.recent_steps.length) { const li = document.createElement("li"); li.className = "note"; li.textContent = "No steps yet."; list.append(li); }
-    for (const st of s.recent_steps) {
-      const li = document.createElement("li");
-      const n = document.createElement("span"); n.className = "n"; n.textContent = st.step + ".";
-      const a = document.createElement("span"); a.textContent = st.action; if (!st.ok) a.className = "bad";
-      li.append(n, a);
-      if (st.why) { const why = document.createElement("span"); why.className = "why"; why.textContent = st.why; li.append(why); }
-      list.append(li);
-    }
-    if (!frameUrl) $("screen-empty").textContent = s.done ? "No screen was captured." : "Waiting for the first screen...";
-    showScreenshot(s.latest_screenshot);
-  }
-
-  async function loadReport() {
-    let r;
-    try { r = await api("GET", `/app/api/runs/${runId}/report`); } catch (e) { showError(e.message); return; }
-    $("report").classList.remove("hidden");
-    $("report-summary").textContent = r.summary;
-    $("report-final").textContent = r.final_message ? "Last word: " + r.final_message : "";
-    const facts = [
-      ["Task", r.intent], ["Steps", `${r.steps} (${r.failed_steps} failed)`], ["Approvals", r.approvals],
-      ["Takeovers", r.takeovers], ["Mode", r.permission_mode],
-      ["Time", r.duration_s == null ? "n/a" : r.duration_s + " s"],
-      ["Cost", r.cost_usd == null ? "n/a" : "$" + r.cost_usd.toFixed(4)],
-      ["Stop reason", r.stop_reason || "n/a"], ["Artifacts", r.run_dir],
-    ];
-    const dl = $("report-facts"); dl.replaceChildren();
-    for (const [k, v] of facts) {
-      const dt = document.createElement("dt"); dt.textContent = k;
-      const dd = document.createElement("dd"); dd.textContent = String(v);
-      dl.append(dt, dd);
+  // ---- home and history ----
+  async function loadRuns(target, limit) {
+    let runs;
+    try { runs = (await api("GET", `/app/api/runs?limit=${limit}`)).runs; }
+    catch (e) { if (target === "recent") $("home-err").textContent = e.message; return; }
+    const box = $(target); box.replaceChildren();
+    if (!runs.length) { box.append(el("div", "empty", "No runs yet. Describe a task above to start one.")); return; }
+    for (const r of runs) {
+      const a = el("a");
+      a.href = r.done ? "#recording=" + r.run_id : "#run=" + r.run_id;
+      a.append(el("span", "intent", r.intent));
+      let label = `${r.outcome}, ${when(r.updated_at)}`, cls = "when";
+      if (r.status === "waiting_for_user") { label = "Waiting for you"; cls += " warn"; }
+      else if (r.status === "running" || r.status === "pending") { label = "Working"; cls += " live"; }
+      else if (r.status === "cancelled") label = `Stopped, ${when(r.updated_at)}`;
+      a.append(el("span", cls, label));
+      box.append(a);
     }
   }
 
-  async function act(path, body) {
-    showError("");
-    try { status = await api("POST", `/app/api/runs/${runId}/${path}`, body); render(); }
-    catch (e) { showError(e.message); }
+  for (const chip of $("chips").querySelectorAll("button")) {
+    chip.onclick = () => { $("intent").value = chip.textContent; $("environment").value = chip.dataset.env; $("intent").focus(); };
   }
 
-  // Takeover input answers {"ok": true}, not a run status: keep the status as it is.
-  async function sendInput(body) {
-    showError("");
-    try { await api("POST", `/app/api/runs/${runId}/input`, body); }
-    catch (e) { showError(e.message); }
-  }
-
-  // ---- controls ----
-  $("btn-start").onclick = async () => {
-    showError("");
+  $("task-form").onsubmit = async (ev) => {
+    ev.preventDefault();
+    $("home-err").textContent = "";
     const intent = $("intent").value.trim();
-    if (!intent) { showError("Describe the task first."); return; }
+    if (!intent) { $("home-err").textContent = "Describe the task first."; $("intent").focus(); return; }
     const body = {
       intent,
       environment: $("environment").value,
@@ -342,20 +528,182 @@
       max_steps: Math.max(1, Math.min(200, parseInt($("max-steps").value, 10) || 25)),
     };
     const url = $("start-url").value.trim();
-    if (url) body.start_url = url;
-    try { status = await api("POST", "/app/api/runs", body); }
-    catch (e) { showError(e.message); return; }
-    runId = status.run_id; store.set("operon-run", runId);
-    history.replaceState(null, "", location.pathname + "#run=" + runId);
-    $("report").classList.add("hidden");
-    lastShot = null; wsFrames = false;
-    render(); startPolling(); connectStream();
+    if (url && body.environment === "browser") body.start_url = url;
+    $("btn-start").disabled = true;
+    try {
+      const s = await api("POST", "/app/api/runs", body);
+      $("intent").value = "";
+      location.hash = "run=" + s.run_id;
+    } catch (e) { $("home-err").textContent = e.message; }
+    finally { $("btn-start").disabled = false; }
   };
+
+  // ---- live run ----
+  function openRun(id) {
+    runId = id; status = null; report = null; frameUrl = null; wsFrames = false; lastShot = null;
+    $("frame").classList.add("hidden"); $("screen").classList.remove("has-frame");
+    $("screen-empty").classList.remove("hidden");
+    $("screen-empty-text").textContent = "Live view of what Operon sees on your screen";
+    $("run-title").textContent = ""; $("run-err").textContent = ""; $("done-card").classList.add("hidden");
+    $("steps").replaceChildren();
+    refresh();
+    polling = setInterval(refresh, 1500);
+    connectStream();
+  }
+
+  function closeStream() {
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    setConn(false, "Running on this PC");
+  }
+  function setConn(live, text) { $("conn-dot").classList.toggle("off", !live); $("conn").textContent = text; }
+
+  async function connectStream() {
+    closeStream();
+    let token;
+    try { token = (await api("POST", "/app/api/stream-token", { scope: "control" })).token; }
+    catch (e) { setConn(false, "Live view unavailable"); return; }
+    if (view !== "run") return;
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws/stream`, ["x-stream-token", token]);
+    ws.binaryType = "blob";
+    ws.onopen = () => setConn(true, "Running on this PC");
+    ws.onclose = () => {
+      setConn(false, "Reconnecting..."); wsFrames = false;
+      setTimeout(() => { if (view === "run" && !(status && status.done)) connectStream(); }, 3000);
+    };
+    ws.onmessage = (ev) => {
+      if (ev.data instanceof Blob) {
+        // Frames belong to runs with a live view: a browser run, or the Linux cloud computer.
+        // A local Windows desktop run shows its step screenshots.
+        if (status && status.live_view && !status.done) { wsFrames = true; showFrame(URL.createObjectURL(ev.data), true); }
+        return;
+      }
+      try { const msg = JSON.parse(ev.data); if (!msg.run_id || msg.run_id === runId) refresh(); } catch {}
+    };
+  }
+
+  function showFrame(url, owned) {
+    $("frame").src = url;
+    $("frame").classList.remove("hidden");
+    $("screen").classList.add("has-frame");
+    $("screen-empty").classList.add("hidden");
+    if (frameUrl && frameUrl.owned) URL.revokeObjectURL(frameUrl.url);
+    frameUrl = { url, owned };
+  }
+
+  async function refresh() {
+    if (!runId || view !== "run") return;
+    const asked = runId;
+    let fresh;
+    try { fresh = await api("GET", `/app/api/runs/${asked}`); }
+    catch (e) { if (asked === runId) $("run-err").textContent = e.message; return; }
+    if (asked !== runId || view !== "run") return;  // moved to another run while this loaded
+    status = fresh;
+    renderRun();
+    if (status.done) { stopPolling(); closeStream(); loadReport(); }
+  }
+
+  function renderRun() {
+    const s = status;
+    const [words, tone] = stateOf(s);
+    $("run-state").className = "state " + tone;
+    $("run-state-text").textContent = words;
+    $("run-title").textContent = s.intent;
+    document.title = `${words}: ${s.intent} · Operon`;
+    const mode = { ask: "asks every time", risky: "asks before anything risky", auto: "never asks" }[s.permission_mode] || s.permission_mode;
+    $("run-meta").textContent = `Step ${s.step_count} of up to ${s.max_steps} · ${s.environment === "desktop" ? "on your desktop" : "in the browser"} · ${mode}`;
+    for (const id of ["btn-pause", "btn-takeover", "btn-stop"]) $(id).classList.toggle("hidden", s.done);
+    $("btn-pause").disabled = !["running", "pending"].includes(s.status) || s.in_takeover;
+    $("btn-takeover").disabled = s.done || s.in_takeover;
+    $("btn-stop").disabled = s.done;
+
+    const w = s.waiting;
+    const asking = !!w && w.kind !== "takeover";
+    $("ask-card").classList.toggle("hidden", !asking);
+    if (asking) {
+      const approval = w.kind === "approval";
+      $("ask-title").textContent = approval ? "Allow this action?" : "Operon needs you";
+      $("ask-reason").textContent = w.reason;
+      $("btn-approve").textContent = approval ? "Allow once" : "Continue";
+      $("btn-decline").textContent = approval ? "Don't allow" : "Send what to do instead";
+      $("decline-note").placeholder = approval ? "Optional: what to do instead" : "What should it do instead?";
+    }
+    $("takeover-card").classList.toggle("hidden", !s.in_takeover);
+    $("screen").classList.toggle("takeover", s.in_takeover && s.live_view);
+    $("takeover-keys").classList.toggle("hidden", !s.live_view);
+    $("takeover-hint").textContent = s.live_view
+      ? "Click on the live view and use the keys below."
+      : "Use your own mouse and keyboard on the desktop.";
+
+    const list = $("steps"); list.replaceChildren();
+    for (const st of s.recent_steps) {
+      const li = el("li", st.ok ? "" : "failed");
+      const ico = el("span", "ico"); ico.append(icon(st.ok ? "check" : "x"));
+      li.append(ico, el("span", "txt", said(st)));
+      list.append(li);
+    }
+    if (!s.done) {
+      const li = el("li", "now");
+      const ico = el("span", "ico"); const d = el("span", "dot" + (asking ? " warn" : "")); ico.append(d);
+      const now = s.in_takeover ? "Waiting for you to hand back"
+        : asking ? (w.kind === "approval" ? "Asking before it acts" : "Waiting for you")
+        : s.status === "pending" ? "Getting ready" : `Working on step ${s.step_count + 1}`;
+      li.append(ico, el("span", "txt", now));
+      list.append(li);
+    }
+    if (!list.children.length) list.append(el("li", "", "No steps yet."));
+
+    if (!frameUrl) $("screen-empty-text").textContent = s.done ? "No screen was captured." : "Waiting for the first screen...";
+    if (!wsFrames && s.latest_screenshot && s.latest_screenshot !== lastShot) {
+      lastShot = s.latest_screenshot;
+      screenshotUrl(lastShot).then((u) => { if (u && view === "run" && !wsFrames) showFrame(u, false); });
+    }
+  }
+
+  async function loadReport() {
+    try { report = await api("GET", `/app/api/runs/${runId}/report`); }
+    catch (e) { $("run-err").textContent = e.message; return; }
+    const r = report;
+    const tone = r.status === "succeeded" ? "" : r.status === "failed" ? "bad" : "muted";
+    $("done-state").className = "state " + tone;
+    $("done-state-text").textContent = r.duration_s != null ? `${r.outcome} in ${duration(r.duration_s)}` : r.outcome;
+    $("done-summary").textContent = r.summary;
+    $("done-final").textContent = r.final_message || "";
+    $("done-final").classList.toggle("hidden", !r.final_message);
+    const facts = $("done-facts"); facts.replaceChildren();
+    const rows = [[r.steps, r.steps === 1 ? "step" : "steps", false], [r.approvals, "approved by you", r.approvals === 0],
+                  [r.takeovers, r.takeovers === 1 ? "time you took over" : "times you took over", r.takeovers === 0]];
+    if (r.failed_steps) rows.push([r.failed_steps, r.failed_steps === 1 ? "step failed" : "steps failed", false]);
+    for (const [n, text, quiet] of rows) {
+      const row = el("div", quiet ? "muted" : ""); row.append(el("span", "n", String(n)), el("span", "", text)); facts.append(row);
+    }
+    const ok = r.timeline.filter(isChecked).length;
+    $("done-checked").textContent = r.timeline.length
+      ? `${ok} of ${r.timeline.length} steps checked on screen after they ran`
+      : "No steps ran";
+    $("done-card").classList.remove("hidden");
+  }
+
+  async function act(path, body) {
+    $("run-err").textContent = "";
+    try { status = await api("POST", `/app/api/runs/${runId}/${path}`, body); renderRun(); if (status.done) refresh(); }
+    catch (e) { $("run-err").textContent = e.message; }
+  }
+  // Takeover input answers {"ok": true}, not a run status: keep the status as it is.
+  async function sendInput(body) {
+    $("run-err").textContent = "";
+    try { await api("POST", `/app/api/runs/${runId}/input`, body); }
+    catch (e) { $("run-err").textContent = e.message; }
+  }
+
+  $("btn-pause").onclick = () => act("pause");
   $("btn-approve").onclick = () => act("approve");
   $("btn-decline").onclick = () => { act("decline", { note: $("decline-note").value || null }); $("decline-note").value = ""; };
   $("btn-takeover").onclick = () => act("takeover");
   $("btn-handback").onclick = () => { act("handback", { note: $("handback-note").value || null }); $("handback-note").value = ""; };
   $("btn-stop").onclick = () => act("stop");
+  $("btn-recording").onclick = () => { location.hash = "recording=" + runId; };
+  $("btn-new").onclick = () => { location.hash = "home"; };
   $("btn-type").onclick = () => { sendInput({ input_type: "type", text: $("takeover-text").value }); $("takeover-text").value = ""; };
   for (const b of document.querySelectorAll("#takeover-keys [data-key]")) b.onclick = () => sendInput({ input_type: "key", key: b.dataset.key });
   $("frame").addEventListener("click", (ev) => {
@@ -369,12 +717,103 @@
     const r = ev.target.getBoundingClientRect();
     sendInput({ input_type: "scroll", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height, delta_y: Math.round(ev.deltaY) });
   }, { passive: false });
-  $("key-save").onclick = () => {
-    apiKey = $("key").value.trim(); store.set("operon-key", apiKey); $("key").value = "";
-    $("key-panel").classList.add("hidden"); showError(""); if (runId) { refresh(); startPolling(); connectStream(); }
+
+  // ---- run recording (the flight recorder) ----
+  let rec = null, recIndex = 0, pickSeq = 0;
+
+  async function openRecording(id) {
+    runId = id; rec = null; recIndex = 0;
+    $("rec-err").textContent = ""; $("rec-title").textContent = ""; $("rec-state-text").textContent = "";
+    $("rec-rows").replaceChildren();
+    try { rec = await api("GET", `/app/api/runs/${id}/report`); }
+    catch (e) { $("rec-err").textContent = e.message; return; }
+    if (view !== "recording" || runId !== id) return;
+    const tone = { succeeded: "", failed: "bad", cancelled: "muted" }[rec.status] ?? "warn";
+    $("rec-state").className = "state " + tone;
+    const bits = [rec.outcome];
+    if (rec.duration_s != null) bits.push(duration(rec.duration_s));
+    bits.push(`${rec.steps} ${rec.steps === 1 ? "step" : "steps"}`);
+    $("rec-state-text").textContent = bits.join(", ");
+    $("rec-title").textContent = rec.intent;
+    document.title = `Recording: ${rec.intent} · Operon`;
+
+    const tbody = $("rec-rows");
+    rec.timeline.forEach((st, i) => {
+      const tr = el("tr");
+      const b = el("button", "", String(st.step)); b.setAttribute("aria-label", `Show step ${st.step}`); b.onclick = () => pick(i);
+      const c0 = el("td"); c0.append(b);
+      const why = el("td", "why", st.why || ""); why.title = st.why || "";
+      tr.append(c0, el("td", "", said(st)), why, el("td", isChecked(st) ? "" : "no", checked(st)));
+      tbody.append(tr);
+    });
+    const n = rec.timeline.length;
+    $("rec-range").max = String(Math.max(0, n - 1));
+    $("rec-range").disabled = n < 2;
+    if (!n) { $("rec-count").textContent = "No steps"; $("btn-prev").disabled = $("btn-next").disabled = true; ["rec-what", "rec-why", "rec-check"].forEach((k) => $(k).textContent = ""); return; }
+    pick(n - 1);
+  }
+
+  async function pick(i) {
+    if (!rec) return;
+    const n = rec.timeline.length;
+    recIndex = Math.max(0, Math.min(n - 1, i));
+    const st = rec.timeline[recIndex];
+    $("rec-range").value = String(recIndex);
+    $("rec-count").textContent = `Step ${st.step} of ${rec.timeline[n - 1].step}`;
+    $("btn-prev").disabled = recIndex === 0;
+    $("btn-next").disabled = recIndex === n - 1;
+    let what = said(st);
+    if ((st.action_type === "stop" || st.action_type === "wait_for_user") && st.text) what += ": " + st.text;
+    else if (!st.ok && st.detail) what += ". " + st.detail;
+    $("rec-what").textContent = what;
+    $("rec-why").textContent = st.why || "No reason was recorded.";
+    $("rec-check").textContent = checked(st);
+    [...$("rec-rows").children].forEach((tr, k) => tr.classList.toggle("sel", k === recIndex));
+    $("rec-frame").alt = `Your screen at step ${st.step}`;
+    const seq = ++pickSeq;
+    const url = await screenshotUrl(st.screenshot).catch(() => null);
+    if (seq !== pickSeq) return;  // a newer step was picked while this one loaded
+    $("rec-frame").classList.toggle("hidden", !url);
+    $("rec-empty").classList.toggle("hidden", !!url);
+    $("rec-screen").classList.toggle("has-frame", !!url);
+    if (url) $("rec-frame").src = url;
+    else $("rec-empty-text").textContent = `No screenshot was saved for step ${st.step}.`;
+  }
+
+  $("btn-prev").onclick = () => pick(recIndex - 1);
+  $("btn-next").onclick = () => pick(recIndex + 1);
+  $("rec-range").oninput = () => pick(parseInt($("rec-range").value, 10));
+  $("btn-again").onclick = () => {
+    if (!rec) return;
+    // The same task with the same settings, not whatever the form last held.
+    location.hash = "home";
+    $("intent").value = rec.intent;
+    $("environment").value = rec.environment;
+    $("start-url").value = rec.start_url || "";
+    $("max-steps").value = rec.max_steps || 25;
+    const mode = document.querySelector(`input[name=mode][value="${rec.permission_mode}"]`);
+    if (mode) mode.checked = true;
+  };
+  $("btn-export").onclick = async () => {
+    $("rec-err").textContent = "";
+    try {
+      const headers = apiKey ? { "X-API-Key": apiKey } : {};
+      const res = await fetch(`/observer/api/export/${runId}`, { headers });
+      if (!res.ok) throw new Error("The run could not be downloaded.");
+      const url = URL.createObjectURL(await res.blob());
+      const a = el("a"); a.href = url; a.download = `operon-run-${runId}.zip`; document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (e) { $("rec-err").textContent = e.message; }
   };
 
-  if (runId) { refresh(); startPolling(); connectStream(); }
+  $("key-save").onclick = () => {
+    apiKey = $("key").value.trim(); store.set("operon-key", apiKey); $("key").value = "";
+    $("key-panel").classList.add("hidden");
+    route();
+  };
+
+  window.addEventListener("hashchange", route);
+  route();
 })();
 </script>
 </body>

@@ -76,6 +76,9 @@ class FallbackBackend(AgentBackend):
     def note_not_executed(self, run_id: str, reason: str) -> None:
         self._backend_for_run(run_id).note_not_executed(run_id, reason)
 
+    def has_held_actions(self, run_id: str) -> bool:
+        return self._backend_for_run(run_id).has_held_actions(run_id)
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         self._backend_for_run(run_id).discard_held_actions(run_id, reason)
 

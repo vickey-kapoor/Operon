@@ -54,6 +54,10 @@ class AgentBackend(ABC):
             if isinstance(cache, dict):
                 cache.pop(run_id, None)
 
+    def has_held_actions(self, run_id: str) -> bool:
+        """Whether the run is paused on calls the model asked the user to confirm."""
+        return False
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         """The user resumed a confirmation pause with a correction instead of an
         approval. Optional hook for backends that hold the paused calls to run them

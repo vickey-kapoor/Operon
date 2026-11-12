@@ -192,6 +192,10 @@ class BrowserComputerUseBackend(AgentBackend):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
 
+    def has_held_actions(self, run_id: str) -> bool:
+        conversation = self._conversations.get(run_id)
+        return bool(conversation is not None and conversation.held_calls)
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         conversation = self._conversations.get(run_id)
         if conversation is None or not conversation.held_calls:

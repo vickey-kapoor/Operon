@@ -137,3 +137,36 @@ def test_region_check_reads_pixels_at_negative_coordinates() -> None:
         executor._sample_region(-1000, 500)
 
     assert grabbed == [{"left": -1030, "top": 470, "width": 60, "height": 60}]
+
+
+@pytest.mark.asyncio
+async def test_a_run_ending_closes_its_apps_only_when_asked() -> None:
+    executor = _executor()
+    await _launch(executor, {100}, {100, 200})
+
+    # A benchmark run: the loop's end-of-run hook leaves the windows for the grader.
+    with patch("operon.executor.desktop.subprocess.run") as run:
+        assert await executor.aclose_run("run-1") == 0
+    run.assert_not_called()
+
+    # A task-page run: its apps close when it ends, and only once.
+    executor.close_apps_when_done("run-1")
+    with patch.object(executor, "cleanup_run", return_value=1) as cleanup:
+        assert await executor.aclose_run("run-1") == 1
+        assert await executor.aclose_run("run-1") == 0
+    cleanup.assert_called_once_with("run-1")
+
+
+@pytest.mark.asyncio
+async def test_resume_brings_back_the_window_the_run_last_acted_in() -> None:
+    executor = _executor()
+    with patch("operon.executor.desktop._foreground_window", return_value=4242):
+        await executor.execute(AgentAction(action_type=ActionType.STOP))
+
+    with patch("operon.executor.desktop._bring_to_front", return_value=True) as front:
+        assert await executor.restore_work_window("run-1") is True
+    front.assert_called_once_with(4242)
+    # Another run's resume touches nothing.
+    with patch("operon.executor.desktop._bring_to_front") as front:
+        assert await executor.restore_work_window("run-2") is False
+    front.assert_not_called()

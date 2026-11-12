@@ -265,6 +265,37 @@ def _foreground_monitor() -> dict | None:
     return None
 
 
+def _foreground_window() -> int | None:
+    """The handle of the window in front, or None off Windows or when there is none."""
+    if sys.platform != "win32":
+        return None
+    try:
+        return int(ctypes.windll.user32.GetForegroundWindow()) or None  # type: ignore[attr-defined]
+    except Exception:
+        return None
+
+
+def _bring_to_front(hwnd: int) -> bool:
+    """Put *hwnd* back in front. False when it is gone or already in front."""
+    if sys.platform != "win32":
+        return False
+    try:
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        if not user32.IsWindow(hwnd) or user32.GetForegroundWindow() == hwnd:
+            return False
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        # Windows only lets the process that had the last input change the foreground
+        # window; a tap of Alt counts as that input.
+        user32.keybd_event(0x12, 0, 0, 0)  # VK_MENU down
+        user32.keybd_event(0x12, 0, 0x0002, 0)  # VK_MENU up
+        user32.BringWindowToTop(hwnd)
+        return bool(user32.SetForegroundWindow(hwnd))
+    except Exception as exc:
+        logger.debug("_bring_to_front: %s", exc)
+        return False
+
+
 # PyAutoGUI expects lowercase key names. Normalise common variants the LLM may emit.
 _PYAUTOGUI_KEY_MAP: dict[str, str] = {
     "escape": "escape",
@@ -340,6 +371,11 @@ class DesktopExecutor(Executor):
         self.batch_child_check: Callable[[AgentAction], Awaitable[str | None]] | None = None
         self._run_recorders: dict[str, object] = {}   # run_id → ScreenRecorder
         self._run_video_paths: dict[str, Path] = {}   # run_id → final video path
+        # Runs whose apps close as soon as the run ends (the task page asks for this).
+        # Benchmarks leave it off: they grade the machine first, then call cleanup_run.
+        self._close_when_done: set[str] = set()
+        # run_id -> the window in front after the run's last action: the one it works in.
+        self._work_windows: dict[str, int] = {}
 
         _set_dpi_awareness()
         if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() != "true":
@@ -491,6 +527,17 @@ class DesktopExecutor(Executor):
         except Exception:
             logger.debug("session_reset: alt+tab cycle failed", exc_info=True)
 
+    def close_apps_when_done(self, run_id: str) -> None:
+        """Close the apps *run_id* opens once it ends (succeeded, failed or stopped)."""
+        self._close_when_done.add(run_id)
+
+    async def aclose_run(self, run_id: str) -> int:
+        """Called by the loop when a run ends: closes the apps it opened, if its caller asked."""
+        if run_id not in self._close_when_done:
+            return 0
+        self._close_when_done.discard(run_id)
+        return await asyncio.to_thread(self.cleanup_run, run_id)
+
     def cleanup_run(self, run_id: str) -> int:
         """Terminate all non-protected processes launched during *run_id*.
 
@@ -498,6 +545,7 @@ class DesktopExecutor(Executor):
         Uses taskkill as a fallback for apps where the launcher process
         exited immediately (e.g. Chrome, Settings via ms-* URIs).
         """
+        self._work_windows.pop(run_id, None)
         procs = self._launched_processes.pop(run_id, [])
         app_names = self._launched_app_names.pop(run_id, [])
         owned = self._owned_pids.pop(run_id, {})
@@ -644,7 +692,29 @@ class DesktopExecutor(Executor):
             ActionType.SELECT: self._exec_unsupported,
         }
         handler = dispatch.get(at, self._exec_unsupported)
-        return await handler(action)
+        result = await handler(action)
+        self._note_work_window()
+        return result
+
+    def _note_work_window(self) -> None:
+        hwnd = _foreground_window()
+        if hwnd and self._current_run_id is not None:
+            self._work_windows[self._current_run_id] = hwnd
+
+    async def restore_work_window(self, run_id: str) -> bool:
+        """Bring back the window the run was working in, when something else is in front.
+
+        Answering the run on the task page puts that browser window in front of the
+        app the run was using, and the next screenshot would show Operon's own page.
+        Called when a paused run resumes. True when it changed the window in front."""
+        hwnd = self._work_windows.get(run_id)
+        if hwnd is None:
+            return False
+        moved = await asyncio.to_thread(_bring_to_front, hwnd)
+        if moved:
+            logger.info("resume: brought the run's window back to the front")
+            await asyncio.sleep(0.3)
+        return moved
 
     # ── action handlers ──────────────────────────────────────────
 

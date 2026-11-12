@@ -93,6 +93,10 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
         mode="observable" if live_view and task.environment == "browser" else "batch",
     )
     response = await loop.start_run(request)
+    close_apps = getattr(loop.executor, "close_apps_when_done", None)
+    if close_apps is not None:
+        # A desktop task leaves the screen as it found it: the apps it opened close when it ends.
+        close_apps(response.run_id)
     _started_at[response.run_id] = time.time()
     _ws_stream.set_active_run(response.run_id)
     _ws_stream.publish_event({
@@ -129,6 +133,16 @@ def _screenshot(entry: StepLog) -> str:
     return after if Path(after).exists() else entry.before_artifact_path
 
 
+def _checked_by(result) -> str:
+    """Who judged the step: the screenshot critic, Operon's own rules, or nobody (the
+    critic was wanted but failed, so the verdict only says the action ran)."""
+    if result.critic_model_used:
+        return "critic"
+    if result.unchecked:
+        return "none"  # the thin harness: the model judges its own steps
+    return "unchecked" if result.critic_fallback_reason else "rules"
+
+
 def _steps(loop, run_id: str) -> list[dict[str, Any]]:
     try:
         entries = load_run_replay(run_id, root_dir=loop.run_store.root_dir)
@@ -138,6 +152,21 @@ def _steps(loop, run_id: str) -> list[dict[str, Any]]:
     for entry in entries:
         if not isinstance(entry, StepLog):
             continue
+        for attempt in entry.earlier_attempts:
+            # An action the full harness retried within this step: it ran, its check
+            # failed, and the step went on with another action (the row after it).
+            steps.append({
+                "step": entry.step_index,
+                "action": _action_summary(attempt.action),
+                "action_type": attempt.action.action_type.value,
+                "ok": attempt.success,
+                "detail": attempt.detail,
+                "verification": "failure",
+                "checked_by": "retried",
+                "why": "",
+                "text": attempt.action.text,
+                "screenshot": entry.before_artifact_path,
+            })
         steps.append({
             "step": entry.step_index,
             "action": _action_summary(entry.executed_action.action),
@@ -145,6 +174,7 @@ def _steps(loop, run_id: str) -> list[dict[str, Any]]:
             "ok": entry.executed_action.success,
             "detail": entry.executed_action.detail,
             "verification": entry.verification_result.status.value,
+            "checked_by": _checked_by(entry.verification_result),
             "why": entry.policy_decision.rationale,
             # The full typed text: a STOP carries the task's answer here.
             "text": entry.executed_action.action.text,
@@ -219,6 +249,18 @@ async def decline(run_id: str, hint: str | None = None) -> dict[str, Any]:
     return await run_status(run_id)
 
 
+async def pause(run_id: str) -> dict[str, Any]:
+    """Pause the run between steps; ``approve`` (Continue) picks it up again."""
+    loop, record = await _require_run(run_id)
+    if record.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
+        raise FrontDoorError(f"Run is {record.status.value}; nothing to pause")
+    record = await loop.pause_run(run_id)
+    record.pause_reason = "Paused by you. Continue when you are ready."
+    await loop.run_store.save_state(record)
+    _ws_stream.publish_event({"type": "control_ack", "action": "pause", "run_id": run_id})
+    return await run_status(run_id)
+
+
 async def take_over(run_id: str) -> dict[str, Any]:
     loop, record = await _require_run(run_id)
     if record.status in TERMINAL:
@@ -286,6 +328,41 @@ _OUTCOME = {
 }
 
 
+def recent_runs(limit: int = 20) -> list[dict[str, Any]]:
+    """The newest runs on this computer, newest first, for the page's Home and History.
+
+    Reads each run's ``state.json`` under the runs directory, which both loops share."""
+    from operon.models.state import AgentState
+
+    root = Path(_loops.get_agent_loop().run_store.root_dir)
+    if not root.exists():
+        return []
+    dirs = sorted(
+        (path for path in root.iterdir() if (path / "state.json").is_file()),
+        key=lambda path: (path / "state.json").stat().st_mtime,
+        reverse=True,
+    )
+    runs: list[dict[str, Any]] = []
+    for run_dir in dirs:
+        state_path = run_dir / "state.json"
+        try:
+            state = AgentState.model_validate_json(state_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - one unreadable run must not hide the rest
+            continue
+        runs.append({
+            "run_id": state.run_id,
+            "intent": state.intent,
+            "status": state.status.value,
+            "outcome": _OUTCOME.get(state.status, state.status.value),
+            "done": state.status in TERMINAL,
+            "step_count": state.step_count,
+            "updated_at": state_path.stat().st_mtime,
+        })
+        if len(runs) >= limit:
+            break
+    return runs
+
+
 def _final_message(steps: list[dict[str, Any]], record) -> str | None:
     """The model's own last word: its STOP text or rationale, else the last pause reason."""
     for step in reversed(steps):
@@ -342,6 +419,8 @@ async def build_report(run_id: str) -> dict[str, Any]:
         "approvals": approvals,
         "takeovers": takeovers,
         "permission_mode": resolve_permission_mode(getattr(record, "permission_mode", None)).value,
+        "start_url": record.start_url,
+        "max_steps": record.max_steps,
         "duration_s": duration,
         "cost_usd": _usage_cost(run_id),
         "run_dir": str(Path(loop.run_store.root_dir) / run_id),

@@ -340,6 +340,9 @@ class DesktopExecutor(Executor):
         self.batch_child_check: Callable[[AgentAction], Awaitable[str | None]] | None = None
         self._run_recorders: dict[str, object] = {}   # run_id → ScreenRecorder
         self._run_video_paths: dict[str, Path] = {}   # run_id → final video path
+        # Runs whose apps close as soon as the run ends (the task page asks for this).
+        # Benchmarks leave it off: they grade the machine first, then call cleanup_run.
+        self._close_when_done: set[str] = set()
 
         _set_dpi_awareness()
         if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() != "true":
@@ -490,6 +493,17 @@ class DesktopExecutor(Executor):
             await asyncio.sleep(0.3)
         except Exception:
             logger.debug("session_reset: alt+tab cycle failed", exc_info=True)
+
+    def close_apps_when_done(self, run_id: str) -> None:
+        """Close the apps *run_id* opens once it ends (succeeded, failed or stopped)."""
+        self._close_when_done.add(run_id)
+
+    async def aclose_run(self, run_id: str) -> int:
+        """Called by the loop when a run ends: closes the apps it opened, if its caller asked."""
+        if run_id not in self._close_when_done:
+            return 0
+        self._close_when_done.discard(run_id)
+        return await asyncio.to_thread(self.cleanup_run, run_id)
 
     def cleanup_run(self, run_id: str) -> int:
         """Terminate all non-protected processes launched during *run_id*.

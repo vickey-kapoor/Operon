@@ -137,3 +137,21 @@ def test_region_check_reads_pixels_at_negative_coordinates() -> None:
         executor._sample_region(-1000, 500)
 
     assert grabbed == [{"left": -1030, "top": 470, "width": 60, "height": 60}]
+
+
+@pytest.mark.asyncio
+async def test_a_run_ending_closes_its_apps_only_when_asked() -> None:
+    executor = _executor()
+    await _launch(executor, {100}, {100, 200})
+
+    # A benchmark run: the loop's end-of-run hook leaves the windows for the grader.
+    with patch("operon.executor.desktop.subprocess.run") as run:
+        assert await executor.aclose_run("run-1") == 0
+    run.assert_not_called()
+
+    # A task-page run: its apps close when it ends, and only once.
+    executor.close_apps_when_done("run-1")
+    with patch.object(executor, "cleanup_run", return_value=1) as cleanup:
+        assert await executor.aclose_run("run-1") == 1
+        assert await executor.aclose_run("run-1") == 0
+    cleanup.assert_called_once_with("run-1")

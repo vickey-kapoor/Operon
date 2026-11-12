@@ -93,6 +93,10 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
         mode="observable" if live_view and task.environment == "browser" else "batch",
     )
     response = await loop.start_run(request)
+    close_apps = getattr(loop.executor, "close_apps_when_done", None)
+    if close_apps is not None:
+        # A desktop task leaves the screen as it found it: the apps it opened close when it ends.
+        close_apps(response.run_id)
     _started_at[response.run_id] = time.time()
     _ws_stream.set_active_run(response.run_id)
     _ws_stream.publish_event({

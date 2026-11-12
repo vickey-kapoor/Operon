@@ -76,6 +76,17 @@ async def test_a_browser_run_from_the_page_streams_its_browser(monkeypatch, tmp_
     assert (await loop.run_store.get_run(run_id)).mode == "observable"
 
 
+async def test_a_run_from_the_page_closes_its_apps_when_it_ends(monkeypatch, tmp_path, scheduled) -> None:
+    loop, executor = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
+    marked: list[str] = []
+    executor.close_apps_when_done = marked.append
+    _use(monkeypatch, loop)
+    async with _client() as client:
+        status = await _start(client)
+
+    assert marked == [status["run_id"]]
+
+
 async def test_start_refuses_a_bad_mode(monkeypatch, tmp_path) -> None:
     loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
     _use(monkeypatch, loop)

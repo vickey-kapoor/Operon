@@ -693,10 +693,8 @@ class NativeBrowserExecutor(Executor):
             obs_browser = self._obs_browser
             logger.info("Observable mode: reusing persistent browser for run %s", run_id)
 
-        context = await obs_browser.new_context(
-            viewport={"width": self._viewport_width, "height": self._viewport_height},
-            device_scale_factor=1,
-        )
+        context_kwargs, video_dir = self._context_kwargs(run_id)
+        context = await obs_browser.new_context(**context_kwargs)
         page = await context.new_page()
         self._attach_page_listeners(page, run_id)
 
@@ -711,7 +709,7 @@ class NativeBrowserExecutor(Executor):
             browser=obs_browser,
             context=context,
             page=page,
-            video_dir=None,
+            video_dir=video_dir,
             browser_pid=None,
         )
         self._sessions[run_id] = session
@@ -756,18 +754,7 @@ class NativeBrowserExecutor(Executor):
         except Exception:
             await playwright.stop()
             raise
-        video_dir = self._video_dir_for_run(run_id) if self._record_video else None
-        context_kwargs: dict = {
-            "viewport": {"width": self._viewport_width, "height": self._viewport_height},
-            "device_scale_factor": 1,
-        }
-        if video_dir is not None:
-            video_dir.mkdir(parents=True, exist_ok=True)
-            context_kwargs["record_video_dir"] = str(video_dir)
-            context_kwargs["record_video_size"] = {
-                "width": self._viewport_width,
-                "height": self._viewport_height,
-            }
+        context_kwargs, video_dir = self._context_kwargs(run_id)
         context = await browser.new_context(**context_kwargs)
         page = await context.new_page()
         self._attach_page_listeners(page, run_id)
@@ -1093,7 +1080,40 @@ class NativeBrowserExecutor(Executor):
             except Exception:
                 continue
 
+    def _context_kwargs(self, run_id: str) -> tuple[dict, Path | None]:
+        """A run's browser context settings, with the session video when recording is on
+        (batch and observable runs alike)."""
+        video_dir = self._video_dir_for_run(run_id) if self._record_video else None
+        context_kwargs: dict = {
+            "viewport": {"width": self._viewport_width, "height": self._viewport_height},
+            "device_scale_factor": 1,
+        }
+        if video_dir is not None:
+            video_dir.mkdir(parents=True, exist_ok=True)
+            context_kwargs["record_video_dir"] = str(video_dir)
+            context_kwargs["record_video_size"] = {
+                "width": self._viewport_width,
+                "height": self._viewport_height,
+            }
+        return context_kwargs, video_dir
+
+    async def _stop_live_view(self) -> None:
+        """Stop the screencast once an observable run's page closes, so its last frame
+        isn't served to the next viewer (a desktop run's page, say). The next
+        observable run restarts it when it attaches."""
+        from operon.browser.manager import get_active_manager
+
+        manager = get_active_manager()
+        if manager is None:
+            return
+        try:
+            await manager.stop_screencast()
+        except Exception:
+            logger.debug("Observable mode: stopping the screencast failed", exc_info=True)
+
     async def _close_session(self, session: _BrowserSession, *, observable: bool = False) -> None:
+        if observable:
+            await self._stop_live_view()
         if observable and not session.owns_context:
             # CDP mode: the context is the user's default Chrome context — never close it.
             # Only close our task page.

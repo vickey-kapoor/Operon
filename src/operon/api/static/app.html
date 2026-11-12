@@ -214,7 +214,11 @@
     ws.onopen = () => { $("conn").textContent = "connected"; };
     ws.onclose = () => { $("conn").textContent = "stream closed"; wsFrames = false; setTimeout(() => { if (runId && !(status && status.done)) connectStream(); }, 3000); };
     ws.onmessage = (ev) => {
-      if (ev.data instanceof Blob) { wsFrames = true; showFrame(ev.data); return; }
+      if (ev.data instanceof Blob) {
+        // Browser frames belong to browser runs: a desktop run shows its step screenshots.
+        if (status && status.environment === "browser") { wsFrames = true; showFrame(ev.data); }
+        return;
+      }
       try {
         const msg = JSON.parse(ev.data);
         if (!runId || !msg.run_id || msg.run_id === runId) refresh();

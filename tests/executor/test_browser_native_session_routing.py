@@ -316,3 +316,43 @@ async def test_two_quick_popups_leave_the_live_view_on_the_newest_tab(executor):
     assert executor._sessions["obs1"].page is newer
     assert followed[-1] is newer
     assert older not in followed
+
+
+@pytest.mark.asyncio
+async def test_an_observable_run_records_its_session_video(executor, tmp_path):
+    """Streaming the browser must not cost the run its post-run recording."""
+    executor._run_mode["obs"] = "observable"
+    executor._artifact_dir = tmp_path
+    pw = _fake_pw()
+
+    with patch("playwright.async_api.async_playwright", return_value=pw), \
+         patch.object(executor, "_attach_page_listeners"), \
+         patch.object(executor, "_close_other_sessions", new=AsyncMock()), \
+         patch.object(executor, "_attach_live_view", new=AsyncMock()):
+        session = await executor._ensure_session_observable("obs", foreground=False)
+
+    browser = pw.chromium.launch.return_value
+    kwargs = browser.new_context.call_args.kwargs
+    assert kwargs["record_video_dir"] == str(tmp_path / "obs" / "session_video")
+    assert session.video_dir == tmp_path / "obs" / "session_video"
+
+
+@pytest.mark.asyncio
+async def test_closing_an_observable_run_stops_the_screencast(executor):
+    """Its last frame must not reach the next viewer, e.g. a desktop run's page."""
+    from operon.browser import manager as manager_mod
+
+    manager = MagicMock()
+    manager.stop_screencast = AsyncMock()
+    session = _session(AsyncMock())
+    session.owns_context = True
+    session.context = AsyncMock()
+    session.video_dir = None
+    session.browser = None
+    session.playwright = None
+
+    with patch.object(manager_mod, "get_active_manager", return_value=manager):
+        await executor._close_session(session, observable=True)
+        manager.stop_screencast.assert_awaited_once()
+        await executor._close_session(session, observable=False)
+        manager.stop_screencast.assert_awaited_once()  # batch sessions leave it alone

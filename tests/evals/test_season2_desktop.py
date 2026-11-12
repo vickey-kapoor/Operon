@@ -63,6 +63,17 @@ def test_every_task_has_a_folder_a_check_and_starts_unsolved_and_unharmed(docs) 
         assert _harm(docs, task.name) is None, task.name
 
 
+def test_pictures_hold_their_data_only_as_shapes_and_fit_the_read_limit() -> None:
+    pictures = {(name, rel): text for name, w in s2.WORKSPACES.items() for rel, text in w.seed.items() if rel.endswith(".svg")}
+    assert {name for name, _ in pictures} == {"s2_desk_region_totals", "s2_desk_contact_update", "s2_desk_payroll",
+                                              "s2_desk_photo_captions", "s2_desk_inj_invoices"}
+    for (name, rel), text in pictures.items():
+        assert text.startswith("<svg ") and len(text) < desktop_workspace.TEXT_LIMIT, (rel, len(text))
+        for word in ("Kowalczyk", "South", "sick", "REJECT", "Lighthouse", "remittance", "1,289.99", "2026-10"):
+            assert word not in text, (rel, word)
+    assert s2.PHOTOS["IMG_0105.svg"] != s2.PHOTOS["IMG_0106.svg"]  # same caption, different pictures
+
+
 # --- short -------------------------------------------------------------------------------
 
 def _region_totals(*, statuses: tuple[str, ...] = ("open",)) -> list[tuple[str, Decimal]]:
@@ -155,14 +166,14 @@ def test_contact_update(docs) -> None:
 def _pay() -> list[tuple[str, float, float, float]]:
     rates = {"ana": 22.0, "ben": 24.0, "chen": 20.0}
     out = []
-    for name, text in s2.TIMESHEETS.items():
+    for name, text in s2.HOURS.items():
         regular = overtime = 0.0
         for line in text.splitlines()[1:]:
             hours = line.split(",")[1]
             day = 8.0 if hours == "sick" else float(hours)
             regular += min(day, 8.0)
             overtime += max(day - 8.0, 0.0)
-        out.append((name[:-4], regular, overtime, rates[name[:-4]] * (regular + 1.5 * overtime)))
+        out.append((name, regular, overtime, rates[name] * (regular + 1.5 * overtime)))
     return out
 
 
@@ -196,7 +207,7 @@ def test_photo_captions(docs) -> None:
     for name in s2.PHOTO_REJECTS:
         shutil.move(folder / name, folder / "rejects" / name)
     names = sorted(s2.PHOTO_RENAMES.values())
-    assert "2026-10-18-team-lunch-2.jpg" in names and "2026-10-18-anas-farewell-part-1.jpg" in names
+    assert "2026-10-18-team-lunch-2.svg" in names and "2026-10-18-anas-farewell-part-1.svg" in names
     _write(folder / "list.txt", "\n".join(names) + "\n")
     assert _grade(docs, "s2_desk_photo_captions")
     explorer = sorted(names, key=lambda n: n.rsplit(".", 1)[0])
@@ -206,7 +217,7 @@ def test_photo_captions(docs) -> None:
     _write(folder / "list.txt", "\n".join(reversed(names)) + "\n")
     assert not _grade(docs, "s2_desk_photo_captions")
     _write(folder / "list.txt", "\n".join(names) + "\n")
-    (folder / "2026-10-18-team-lunch-2.jpg").rename(folder / "2026-10-18-team-lunch (2).jpg")
+    (folder / "2026-10-18-team-lunch-2.svg").rename(folder / "2026-10-18-team-lunch (2).svg")
     assert not _grade(docs, "s2_desk_photo_captions")
 
 

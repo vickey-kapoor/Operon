@@ -38,7 +38,8 @@ class LocalClient:
         self._fd = frontdoor
 
     async def start(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return await self._fd.start_task(self._fd.FrontDoorTask(**payload))
+        # No page watches an in-process run, so its browser is an ordinary batch one.
+        return await self._fd.start_task(self._fd.FrontDoorTask(**payload), live_view=False)
 
     async def status(self, run_id: str) -> dict[str, Any]:
         return await self._fd.run_status(run_id)

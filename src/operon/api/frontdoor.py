@@ -77,8 +77,12 @@ async def _require_run(run_id: str):
     return loop, record
 
 
-async def start_task(task: FrontDoorTask, *, auto_run: bool = True) -> dict[str, Any]:
-    """Create the run and, unless ``auto_run`` is False (offline tests), start stepping it."""
+async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: bool = True) -> dict[str, Any]:
+    """Create the run and, unless ``auto_run`` is False (offline tests), start stepping it.
+
+    A browser run with ``live_view`` runs in observable mode: one headless Chromium on
+    CDP port 9222 whose screencast reaches the page over ``/ws/stream``. Without it
+    (``operon run`` in process, where no page watches) it is an ordinary batch run."""
     loop = _loop_for_environment(task.environment)
     request = RunTaskRequest(
         intent=task.intent,
@@ -86,6 +90,7 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True) -> dict[str,
         headless=task.headless,
         max_steps=task.max_steps,
         permission_mode=task.permission_mode,
+        mode="observable" if live_view and task.environment == "browser" else "batch",
     )
     response = await loop.start_run(request)
     _started_at[response.run_id] = time.time()

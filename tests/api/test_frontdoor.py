@@ -62,6 +62,16 @@ async def test_start_reports_the_run_and_its_mode(monkeypatch, tmp_path, schedul
     assert status["waiting"] is None
 
 
+async def test_a_browser_run_from_the_page_streams_its_browser(monkeypatch, tmp_path, scheduled) -> None:
+    """The page's live view needs the CDP screencast, which only observable mode has."""
+    loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
+    _use(monkeypatch, loop)
+    async with _client() as client:
+        run_id = (await _start(client))["run_id"]
+
+    assert (await loop.run_store.get_run(run_id)).mode == "observable"
+
+
 async def test_start_refuses_a_bad_mode(monkeypatch, tmp_path) -> None:
     loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
     _use(monkeypatch, loop)

@@ -68,6 +68,7 @@ async def test_local_run_asks_approves_and_reports(monkeypatch, tmp_path) -> Non
     assert len(executor.executed) == 1
     assert any(line.startswith("Approval needed (ask mode)") for line in lines)
     assert "\nArtifacts: " in lines[-1]
+    assert (await loop.run_store.get_run(report["run_id"])).mode == "batch"  # no page watches it
 
 
 async def test_a_correction_typed_at_the_prompt_declines(monkeypatch, tmp_path) -> None:

@@ -37,3 +37,17 @@ def test_other_model_backends_are_refused(monkeypatch, backend) -> None:
     errors = validate_modes()
     assert any("OPERON_BROWSER_BACKEND" in e for e in errors)
     assert any("OPERON_DESKTOP_BACKEND" in e for e in errors)
+
+
+def test_a_leftover_non_gemini_model_is_refused(monkeypatch) -> None:
+    """An old .env naming a Claude critic made every verify call 404 and fall back."""
+    monkeypatch.setenv("OPERON_BROWSER_VERIFIER_MODEL", "claude-sonnet-4-6")
+    monkeypatch.setenv("OPERON_DESKTOP_MODEL", "gpt-5")
+    errors = validate_modes()
+    assert any("OPERON_BROWSER_VERIFIER_MODEL='claude-sonnet-4-6'" in e for e in errors)
+    assert any("OPERON_DESKTOP_MODEL='gpt-5'" in e for e in errors)
+
+
+def test_gemini_models_pass(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_BROWSER_MODEL", "gemini-2.5-flash")
+    assert validate_modes() == []

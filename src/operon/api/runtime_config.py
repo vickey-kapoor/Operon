@@ -65,6 +65,19 @@ def validate_modes() -> list[str]:
         errors.append(
             f"OPERON_BROWSER_FALLBACK_BACKEND={browser.fallback_backend!r} is not one of {sorted(_VALID_BROWSER_BACKENDS)}"
         )
+    # Gemini only: a leftover Claude or GPT name from an old .env would fail on every call
+    # (the critic quietly falls back to a guess), so refuse it at startup instead.
+    for mode, cfg in (("DESKTOP", desktop), ("BROWSER", browser)):
+        for name, model in (
+            ("MODEL", cfg.primary_model),
+            ("FALLBACK_MODEL", cfg.fallback_model),
+            ("VERIFIER_MODEL", cfg.verifier_model),
+        ):
+            if model and not model.strip().lower().startswith("gemini-"):
+                errors.append(
+                    f"OPERON_{mode}_{name}={model!r} is not a Gemini model; Operon runs Gemini only "
+                    f"(remove it from .env to use {_DEFAULT_MODEL})"
+                )
     return errors
 
 

@@ -1,0 +1,123 @@
+#cloud-config
+# Operon's cloud computer (KAN-108): a Debian 12 VM with an XFCE desktop on a virtual
+# display (Xvfb :1) and the Operon API on 127.0.0.1:8080, driving that desktop.
+# Pass it to `az vm create --custom-data`. Nothing listens on a public port: the
+# `operon cloud` command on your PC reaches the task page through an SSH tunnel.
+# Setup log on the VM: /var/log/cloud-init-output.log; done when /var/lib/operon/ready exists.
+
+package_update: true
+packages:
+  - xvfb
+  - xfce4
+  - xfce4-terminal
+  - dbus-x11
+  - mousepad
+  - galculator
+  - thunar
+  - ristretto
+  - chromium
+  - firefox-esr
+  - libreoffice-calc
+  - libreoffice-writer
+  - xclip
+  - python3-tk
+  - python3-dev
+  - python3-venv
+  - git
+  - curl
+  - fonts-dejavu
+
+users:
+  - default
+  - name: operon
+    gecos: Operon agent (owns the desktop and the API)
+    shell: /bin/bash
+    lock_passwd: true
+
+write_files:
+  - path: /etc/systemd/system/operon-display.service
+    content: |
+      [Unit]
+      Description=Operon virtual display (Xvfb :1)
+      After=network.target
+      [Service]
+      User=operon
+      ExecStart=/usr/bin/Xvfb :1 -screen 0 1280x800x24 -nolisten tcp
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/operon-desktop.service
+    content: |
+      [Unit]
+      Description=Operon XFCE desktop on :1
+      After=operon-display.service
+      Requires=operon-display.service
+      [Service]
+      User=operon
+      Environment=DISPLAY=:1
+      Environment=HOME=/home/operon
+      ExecStartPre=/bin/sleep 2
+      ExecStart=/usr/bin/dbus-launch --exit-with-session /usr/bin/startxfce4
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/operon-api.service
+    content: |
+      [Unit]
+      Description=Operon API (task page on 127.0.0.1:8080)
+      After=operon-desktop.service
+      Requires=operon-desktop.service
+      [Service]
+      User=operon
+      WorkingDirectory=/home/operon/Operon
+      Environment=DISPLAY=:1
+      Environment=HOME=/home/operon
+      EnvironmentFile=/home/operon/Operon/.env
+      EnvironmentFile=-/etc/operon/gemini.env
+      ExecStartPre=/bin/sleep 5
+      ExecStart=/home/operon/Operon/.venv/bin/operon serve --host 127.0.0.1 --port 8080
+      Restart=always
+      RestartSec=5
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/sbin/operon-setup
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # Clone Operon, install it, write its settings. OPERON_REF picks the branch.
+      set -euo pipefail
+      REF="${OPERON_REF:-main}"
+      sudo -u operon -H bash -lc "
+        set -euo pipefail
+        cd /home/operon
+        [ -d Operon ] || git clone --depth 1 --branch '$REF' https://github.com/vickey-kapoor/Operon.git
+        cd Operon
+        python3 -m venv .venv
+        .venv/bin/pip install -q --upgrade pip
+        .venv/bin/pip install -q -e .
+        .venv/bin/playwright install chromium
+      "
+      /home/operon/Operon/.venv/bin/playwright install-deps chromium
+      ENV=/home/operon/Operon/.env
+      if [ ! -f "$ENV" ]; then
+        KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+        cat > "$ENV" <<CONF
+      API_KEYS=$KEY
+      OPERON_DESKTOP_PLATFORM=linux
+      OPERON_DESKTOP_BACKEND=computer_use
+      OPERON_BROWSER_BACKEND=computer_use
+      CONF
+        chown operon:operon "$ENV"
+        chmod 600 "$ENV"
+      fi
+      # The admin user (the one `operon cloud` signs in as) reads the page's key from here.
+      install -d -m 0755 /etc/operon
+      grep '^API_KEYS=' "$ENV" | cut -d= -f2- > /etc/operon/api-key
+      chmod 0644 /etc/operon/api-key
+      touch /etc/operon/gemini.env && chmod 0600 /etc/operon/gemini.env
+      mkdir -p /var/lib/operon && touch /var/lib/operon/ready
+
+runcmd:
+  - [bash, -c, "OPERON_REF=__OPERON_REF__ /usr/local/sbin/operon-setup"]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, operon-display.service, operon-desktop.service, operon-api.service]

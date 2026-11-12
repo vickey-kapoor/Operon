@@ -3,6 +3,7 @@
     operon run "task"               run a task here, in this process, and print a report
     operon run --request "task"     send the task to a running API and follow it
     operon serve                    start the API and print the task page's link
+    operon cloud ...                Operon's own computer on an Azure Linux VM (see operon.cloud)
 
 Both ``run`` forms use the same front-door service as the task page
 (``operon.api.frontdoor``), so permission modes, approvals, takeover and the report
@@ -317,6 +318,10 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)
+
+    from operon import cloud
+
+    cloud.add_parser(sub)
     return parser
 
 

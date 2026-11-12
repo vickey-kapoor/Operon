@@ -6,14 +6,15 @@ import logging
 import os
 from dataclasses import dataclass
 
+from operon.agent.app_catalog import LINUX, desktop_platform
 from operon.agent.backends.base import AgentBackend
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.backends.browser_json import BrowserJsonBackend
 from operon.agent.backends.combined import CombinedPerceptionPolicyService
 from operon.agent.backends.desktop_computer_use import (
     DESKTOP_ENVIRONMENT,
-    GEMINI_LAUNCH_APP_FUNCTION,
     DesktopComputerUseBackend,
+    launch_app_function,
 )
 from operon.agent.backends.fallback import FallbackBackend
 from operon.agent.perception import PerceptionService
@@ -102,6 +103,13 @@ def build_browser_services(executor) -> RuntimeServices:
     raise ValueError(f"Unsupported browser backend {config.backend!r}")
 
 
+def desktop_prompt_name() -> str:
+    """The desktop computer-use prompt for the configured platform (Windows by default)."""
+    if desktop_platform() == LINUX:
+        return "desktop_computer_use_prompt_linux.txt"
+    return "desktop_computer_use_prompt.txt"
+
+
 def build_desktop_services() -> RuntimeServices:
     config = desktop_mode_config()
     if config.backend == "computer_use":
@@ -110,9 +118,9 @@ def build_desktop_services() -> RuntimeServices:
                 model=config.primary_model,
                 thinking_level=config.thinking,
                 environment=DESKTOP_ENVIRONMENT,
-                function_declarations=[GEMINI_LAUNCH_APP_FUNCTION],
+                function_declarations=[launch_app_function()],
             ),
-            prompt_path=_PROMPTS_DIR / "desktop_computer_use_prompt.txt",
+            prompt_path=_PROMPTS_DIR / desktop_prompt_name(),
         )
         return RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend != "json":

@@ -200,10 +200,14 @@ async def run_status(run_id: str, *, recent: int = 8) -> dict[str, Any]:
     if record.status in TERMINAL:
         _finished_at.setdefault(run_id, time.time())
     latest = steps[-1]["screenshot"] if steps else None
+    environment = _environment_of(run_id)
     return {
         "run_id": record.run_id,
         "intent": record.intent,
-        "environment": _environment_of(run_id),
+        "environment": environment,
+        # A desktop the page streams and drives during a takeover (the Linux cloud
+        # computer); a local Windows desktop shows step screenshots instead.
+        "live_view": environment == "browser" or hasattr(getattr(loop, "executor", None), "live_frame_png"),
         "status": record.status.value,
         "done": record.status in TERMINAL,
         "step_count": record.step_count,

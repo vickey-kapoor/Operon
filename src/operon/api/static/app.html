@@ -573,8 +573,9 @@
     };
     ws.onmessage = (ev) => {
       if (ev.data instanceof Blob) {
-        // Browser frames belong to browser runs: a desktop run shows its step screenshots.
-        if (status && status.environment === "browser" && !status.done) { wsFrames = true; showFrame(URL.createObjectURL(ev.data), true); }
+        // Frames belong to runs with a live view: a browser run, or the Linux cloud computer.
+        // A local Windows desktop run shows its step screenshots.
+        if (status && status.live_view && !status.done) { wsFrames = true; showFrame(URL.createObjectURL(ev.data), true); }
         return;
       }
       try { const msg = JSON.parse(ev.data); if (!msg.run_id || msg.run_id === runId) refresh(); } catch {}
@@ -628,9 +629,9 @@
       $("decline-note").placeholder = approval ? "Optional: what to do instead" : "What should it do instead?";
     }
     $("takeover-card").classList.toggle("hidden", !s.in_takeover);
-    $("screen").classList.toggle("takeover", s.in_takeover && s.environment === "browser");
-    $("takeover-keys").classList.toggle("hidden", s.environment !== "browser");
-    $("takeover-hint").textContent = s.environment === "browser"
+    $("screen").classList.toggle("takeover", s.in_takeover && s.live_view);
+    $("takeover-keys").classList.toggle("hidden", !s.live_view);
+    $("takeover-hint").textContent = s.live_view
       ? "Click on the live view and use the keys below."
       : "Use your own mouse and keyboard on the desktop.";
 
@@ -706,12 +707,12 @@
   $("btn-type").onclick = () => { sendInput({ input_type: "type", text: $("takeover-text").value }); $("takeover-text").value = ""; };
   for (const b of document.querySelectorAll("#takeover-keys [data-key]")) b.onclick = () => sendInput({ input_type: "key", key: b.dataset.key });
   $("frame").addEventListener("click", (ev) => {
-    if (!status || !status.in_takeover || status.environment !== "browser") return;
+    if (!status || !status.in_takeover || !status.live_view) return;
     const r = ev.target.getBoundingClientRect();
     sendInput({ input_type: "click", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height });
   });
   $("frame").addEventListener("wheel", (ev) => {
-    if (!status || !status.in_takeover || status.environment !== "browser") return;
+    if (!status || !status.in_takeover || !status.live_view) return;
     ev.preventDefault();
     const r = ev.target.getBoundingClientRect();
     sendInput({ input_type: "scroll", x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height, delta_y: Math.round(ev.deltaY) });

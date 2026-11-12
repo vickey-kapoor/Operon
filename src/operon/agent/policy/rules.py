@@ -7,7 +7,7 @@ import re
 
 from operon.agent import control as run_control
 from operon.agent.actions.selector import DeterministicTargetSelector
-from operon.agent.app_catalog import APP_LAUNCH_TARGETS
+from operon.agent.app_catalog import launch_targets
 from operon.agent.hitl import HITL_PAGE_HINT_KEYWORDS
 from operon.agent.policy.keywords import dismiss_tokens, overlay_tokens
 from operon.agent.policy.site_adapters import resolve_search_url
@@ -67,7 +67,7 @@ def _catalog_app_name(raw_name: str) -> str | None:
     while name != previous:
         previous = name
         name = _TRAILING_WORDS_RE.sub("", _LEADING_WORDS_RE.sub("", name)).strip()
-    return name if name in APP_LAUNCH_TARGETS else None
+    return name if name in launch_targets() else None
 
 
 # ---------------------------------------------------------------------------

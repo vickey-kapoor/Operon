@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 
+from operon.agent.app_catalog import LINUX, desktop_platform
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.coordinator import PolicyCoordinator
@@ -110,7 +111,12 @@ def get_desktop_agent_loop() -> AgentLoop:
     global _desktop_agent_loop, DesktopExecutor
     if _desktop_agent_loop is None:
         if DesktopExecutor is None:
-            from operon.executor.desktop import DesktopExecutor as _DesktopExecutor
+            if desktop_platform() == LINUX:
+                from operon.executor.linux_desktop import (
+                    LinuxDesktopExecutor as _DesktopExecutor,
+                )
+            else:
+                from operon.executor.desktop import DesktopExecutor as _DesktopExecutor
 
             DesktopExecutor = _DesktopExecutor
 
@@ -128,5 +134,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             environment=UnifiedEnvironment.DESKTOP,
             **_loop_layers(config=desktop_config, services=services, memory_store=memory_store, desktop=True),
         )
+        # The task page streams the desktop when its executor can (the Linux cloud computer).
+        _ws_stream.set_desktop_executor(executor)
     return _desktop_agent_loop
 

@@ -84,6 +84,8 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 #   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [azure] [season=<n>]
 #   (category, then harness: one grid cell; core and full are the defaults; hybrid runs on the desktop workflow)
 #   /bench grounding
+#   /bench batch  (then one cell per line, e.g. "desktop thin season=2 pr=242 cap=1.5"): the day's approved
+#   queue in one run, one Azure VM start, caps summed up front (KAN-105, bench-batch.yml, evals/bench_batch.py)
 # Every run uses Gemini (gemini-3.5-flash), Operon's only model for now; other models come back later.
 # Repo secrets: GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),

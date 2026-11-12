@@ -116,7 +116,7 @@ async def test_live_view_scales_wide_screens_down(executor, monkeypatch) -> None
     assert image.size == (1280, 720)
 
 
-async def test_takeover_input_maps_page_ratios_to_screen_pixels(executor, gui) -> None:
+async def test_takeover_input_maps_page_ratios_to_screen_pixels(executor, gui, monkeypatch) -> None:
     assert await executor.user_input("run-1", input_type="click", x_ratio=0.5, y_ratio=1.0)
     gui.click.assert_called_once_with(640, 799)
 
@@ -126,8 +126,11 @@ async def test_takeover_input_maps_page_ratios_to_screen_pixels(executor, gui) -
     assert await executor.user_input("run-1", input_type="key", key="ctrl+a")
     gui.hotkey.assert_called_with("ctrl", "a")
 
-    assert await executor.user_input("run-1", input_type="type", text="hello")
-    gui.write.assert_called_once_with("hello", interval=0.01)
+    copied: list[str] = []
+    monkeypatch.setattr(_desktop.pyperclip, "copy", copied.append)
+    assert await executor.user_input("run-1", input_type="type", text="Zoë 東京")
+    assert copied == ["Zoë 東京"]
+    gui.hotkey.assert_called_with("ctrl", "v")
 
 
 async def test_takeover_input_rejects_other_runs_and_unknown_keys(executor, gui) -> None:

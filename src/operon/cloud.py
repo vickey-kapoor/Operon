@@ -36,6 +36,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from operon.cli import RemoteClient
+
 IMAGE = "Debian:debian-12:12-gen2:latest"
 REMOTE_API_PORT = 8080
 # A daily safety net: Azure deallocates the VM at this UTC time even if a session was
@@ -271,8 +273,8 @@ def cmd_set_key(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_co
     if not key.strip():
         out("No key given.")
         return 1
-    ip = start_vm(cfg, run, out)
     try:
+        ip = start_vm(cfg, run, out)
         wait_for_ssh(cfg, ip, run)
         # The key goes over SSH's stdin, so it never appears in a command line or in Azure's logs.
         script = "sudo tee /etc/operon/gemini.env >/dev/null && sudo chmod 600 /etc/operon/gemini.env && sudo systemctl restart operon-api"
@@ -298,16 +300,14 @@ def cmd_open(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_comma
 
 
 def cmd_run(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_command, out=print) -> int:
-    from operon.cli import RemoteClient, drive
+    from operon.cli import drive
 
     payload = {"intent": args.task, "environment": "browser" if args.browser else "desktop", "max_steps": args.max_steps}
     if args.mode:
         payload["permission_mode"] = args.mode
     with _Session(cfg, run, keep=args.keep, out=out) as session:
-        out(f"Watch it live: {session.base_url}/app#key={session.api_key}")
-
         async def go() -> int:
-            client = RemoteClient(session.base_url, session.api_key)
+            client = _LinkingClient(session.base_url, session.api_key, out=out)
             try:
                 code, _ = await drive(client, payload, ask=input, interactive=sys.stdin.isatty())
                 return code
@@ -315,6 +315,24 @@ def cmd_run(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_comman
                 await client.close()
 
         return asyncio.run(go())
+
+
+def live_link(base_url: str, api_key: str, run_id: str) -> str:
+    """The task page for one run: the key and the run both ride in the fragment."""
+    return f"{base_url}/app#key={api_key}&run={run_id}"
+
+
+class _LinkingClient(RemoteClient):
+    """Prints the started run's task-page link, so a fresh tab opens that run."""
+
+    def __init__(self, base_url: str, api_key: str, *, out=print) -> None:
+        super().__init__(base_url, api_key)
+        self._key, self._out = api_key, out
+
+    async def start(self, payload):
+        status = await super().start(payload)
+        self._out(f"Watch it live: {live_link(self.base_url, self._key, status['run_id'])}")
+        return status
 
 
 def cmd_stop(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_command, out=print) -> int:  # noqa: ARG001

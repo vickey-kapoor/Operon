@@ -174,7 +174,9 @@ class LinuxDesktopExecutor(_desktop.DesktopExecutor):
         elif input_type == "dblclick":
             await asyncio.to_thread(gui.doubleClick, x, y)
         elif input_type == "type":
-            await asyncio.to_thread(gui.write, text, interval=0.01)
+            # Paste, like the agent's TYPE: key-by-key typing drops non-ASCII characters.
+            await asyncio.to_thread(_desktop.pyperclip.copy, text)
+            await asyncio.to_thread(gui.hotkey, "ctrl", "v")
         elif input_type == "key":
             keys = [_desktop._normalize_key_pyautogui(k.strip()) for k in key.split("+") if k.strip()]
             unknown = _desktop._unknown_keys(keys)

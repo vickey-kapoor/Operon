@@ -116,3 +116,31 @@ def test_the_cli_has_the_cloud_commands() -> None:
     assert args.cloud_command == "run" and args.task == "open mousepad" and args.keep
     for name in ("create", "set-key", "open", "stop"):
         assert build_parser().parse_args(["cloud", name]).cloud_command == name
+
+
+def test_set_key_deallocates_when_the_start_fails(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "gem-secret")
+
+    class NoIp(FakeRunner):
+        def __call__(self, argv, input_text=None) -> str:
+            out = super().__call__(argv, input_text)
+            return "" if list(argv)[:3] == ["az", "vm", "show"] else out
+
+    run = NoIp()
+    with pytest.raises(RuntimeError, match="no public IP"):
+        cloud.cmd_set_key(argparse.Namespace(keep=False), CFG, run, out=lambda *_: None)
+    assert run.verbs()[-1] == "az vm deallocate"
+
+
+async def test_run_prints_a_link_to_the_started_run() -> None:
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(202, json={"run_id": "r-42"})
+
+    lines: list[str] = []
+    client = cloud._LinkingClient("http://127.0.0.1:8090", "k3y", out=lines.append)
+    client._http = httpx.AsyncClient(base_url=client.base_url, transport=httpx.MockTransport(handler))
+    await client.start({"intent": "x"})
+    await client.close()
+    assert lines == ["Watch it live: http://127.0.0.1:8090/app#key=k3y&run=r-42"]

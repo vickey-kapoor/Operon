@@ -276,3 +276,15 @@ async def test_the_bare_address_opens_the_task_page() -> None:
     async with _client() as client:
         response = await client.get("/")
     assert response.status_code == 307 and response.headers["location"] == "/app"
+
+
+def test_a_step_the_critic_failed_on_is_not_shown_as_checked() -> None:
+    from operon.models.verification import VerificationResult, VerificationStatus
+
+    def result(**kw) -> VerificationResult:
+        return VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True,
+                                  stop_condition_met=False, reason="r", **kw)
+
+    assert frontdoor._checked_by(result(critic_model_used=True)) == "critic"
+    assert frontdoor._checked_by(result(critic_fallback_reason="critic_unavailable_or_unusable")) == "unchecked"
+    assert frontdoor._checked_by(result()) == "rules"

@@ -129,6 +129,14 @@ def _screenshot(entry: StepLog) -> str:
     return after if Path(after).exists() else entry.before_artifact_path
 
 
+def _checked_by(result) -> str:
+    """Who judged the step: the screenshot critic, Operon's own rules, or nobody (the
+    critic was wanted but failed, so the verdict only says the action ran)."""
+    if result.critic_model_used:
+        return "critic"
+    return "unchecked" if result.critic_fallback_reason else "rules"
+
+
 def _steps(loop, run_id: str) -> list[dict[str, Any]]:
     try:
         entries = load_run_replay(run_id, root_dir=loop.run_store.root_dir)
@@ -145,6 +153,7 @@ def _steps(loop, run_id: str) -> list[dict[str, Any]]:
             "ok": entry.executed_action.success,
             "detail": entry.executed_action.detail,
             "verification": entry.verification_result.status.value,
+            "checked_by": _checked_by(entry.verification_result),
             "why": entry.policy_decision.rationale,
             # The full typed text: a STOP carries the task's answer here.
             "text": entry.executed_action.action.text,

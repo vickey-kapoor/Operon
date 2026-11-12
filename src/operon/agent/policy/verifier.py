@@ -425,9 +425,9 @@ class DeterministicVerifierService(VerifierService):
     @staticmethod
     def _stop_reason_for_intentional_stop(state: AgentState, decision: PolicyDecision) -> StopReason:
         latest_perception = state.observation_history[-1] if state.observation_history else None
-        if decision.active_subgoal == "verify_success" or (
-            latest_perception is not None and latest_perception.page_hint is PageHint.FORM_SUCCESS
-        ):
+        # "Form submitted" only when a form's success page is on screen; any other
+        # task that the success rule stops is simply completed.
+        if latest_perception is not None and latest_perception.page_hint is PageHint.FORM_SUCCESS:
             return StopReason.FORM_SUBMITTED_SUCCESS
         if decision.active_subgoal == "stop for benchmark setup":
             return StopReason.BENCHMARK_PRECONDITION_FAILED

@@ -652,3 +652,21 @@ def test_a_critic_reply_with_a_listed_stop_reason_keeps_it() -> None:
     parsed = _parse_verification_output(raw)
     assert parsed is not None
     assert parsed.stop_reason is not None and parsed.stop_reason.value == "task_completed"
+
+
+@pytest.mark.parametrize(("page_hint", "expected"), [
+    ("form_success", StopReason.FORM_SUBMITTED_SUCCESS),
+    ("unknown", StopReason.TASK_COMPLETED),
+])
+def test_a_success_stop_says_form_submitted_only_on_a_form_success_page(page_hint, expected) -> None:
+    """"Open wikipedia" stopped by the success rule is a completed task, not a submitted form."""
+    state = AgentState(
+        run_id="run-stop",
+        intent="open wikipedia",
+        status="running",
+        observation_history=[ScreenPerception(summary="Wikipedia home", page_hint=page_hint,
+                                              capture_artifact_path="runs/x/step_1/before.png", visible_elements=[])],
+    )
+    decision = PolicyDecision(action=AgentAction(action_type=ActionType.STOP), rationale="done",
+                              confidence=1.0, active_subgoal="verify_success")
+    assert DeterministicVerifierService._stop_reason_for_intentional_stop(state, decision) is expected

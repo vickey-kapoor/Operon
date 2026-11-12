@@ -431,9 +431,10 @@
   };
   function checked(step) {
     if (!step.ok) return "The action failed";
+    if (step.checked_by === "unchecked") return "Not checked: the action ran, but the checker didn't answer";
     return CHECK[step.verification] || step.verification;
   }
-  function isChecked(step) { return step.ok && ["success", "progressing_stable", "stable_wait"].includes(step.verification); }
+  function isChecked(step) { return step.ok && step.checked_by !== "unchecked" && ["success", "progressing_stable", "stable_wait"].includes(step.verification); }
 
   function when(epochS) {
     const d = new Date(epochS * 1000), now = new Date();

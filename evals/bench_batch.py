@@ -15,8 +15,8 @@ cost cap::
 
 Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long``,
 ``x2|x3|x5``, ``same-critic``, ``season=<n>``, ``pr=<number>`` (that PR's head) or
-``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the cell's
-cost cap, default 3). ``azure`` and ``gemini`` are accepted and change nothing: batch
+``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
+cell's cost cap, default 3, repeats included). ``azure`` and ``gemini`` are accepted and change nothing: batch
 Desktop and Hybrid cells always run on the Azure VM. Blank lines and ``#`` comments are
 skipped. The batch is refused when its cells' caps add up to more than the batch cap,
 so the most it can spend is known before anything starts.
@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -78,6 +79,12 @@ class Cell:
         if self.season:
             words += ["--season", self.season]
         return " ".join(words)
+
+    @property
+    def run_cap(self) -> str:
+        """The cap to pass on as max_cost_usd: live_bench multiplies it by --repeat, so divide
+        here and ``cap=`` stays the whole cell's limit (rounded down, never over it)."""
+        return f"{math.floor(self.cap / self.repeat * 10000) / 10000:g}"
 
     @property
     def label(self) -> str:
@@ -220,7 +227,7 @@ def matrices(cells: list[Cell]) -> dict:
             "critic": cell.critic,
             "extra": cell.extra,
             "ref": cell.ref,
-            "cap": f"{cell.cap:g}",
+            "cap": cell.run_cap,
             "suffix": f"-cell{index}",
         }
 

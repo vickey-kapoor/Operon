@@ -173,7 +173,7 @@ hybrid full ref=main
 ```
 
 Each cell takes the `/bench` words above, plus `pr=<n>` (that PR's head, forks refused) or
-`ref=<branch|tag|commit>` (default: the default branch) and `cap=<USD>` (the cell's cost cap,
+`ref=<branch|tag|commit>` (default: the default branch) and `cap=<USD>` (the whole cell's cost cap, repeats included,
 default $3; `grounding` is not part of a batch). The batch is refused before anything starts when
 its caps add up to more than `max_total_usd` (default $10), so the most it can spend is known up
 front. Browser cells run side by side on hosted runners; Desktop and Hybrid cells run one after

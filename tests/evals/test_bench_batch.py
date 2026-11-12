@@ -99,7 +99,7 @@ def test_matrices_split_browser_from_the_vm_and_give_unique_artifact_names() -> 
     (browser,) = out["browser"]["include"]
     assert browser == {
         "label": "Gemini · Browser · Thin · x2", "category": "browser", "profile": "thin", "suite": "core",
-        "critic": "", "extra": "--repeat 2", "ref": "", "cap": "3", "suffix": "-cell2",
+        "critic": "", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
     }
     desktop = out["desktop"]["include"]
     assert [(d["category"], d["cap"], d["suffix"]) for d in desktop] == [("desktop", "1.5", "-cell1"), ("hybrid", "3", "-cell3")]
@@ -134,3 +134,11 @@ def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() ->
     # The dashboard import listens for the batch by its name.
     dashboard = yaml.safe_load((WORKFLOWS / "dashboard-data.yml").read_text(encoding="utf-8"))
     assert batch["name"] in dashboard[True]["workflow_run"]["workflows"]
+
+
+@pytest.mark.parametrize("line, run_cap", [("browser x5 cap=3", "0.6"), ("browser x3 cap=2", "0.6666"), ("desktop cap=1.5", "1.5")])
+def test_cap_is_the_whole_cell_limit_with_repeats(line: str, run_cap: str) -> None:
+    # live_bench multiplies max_cost_usd by --repeat, so the batch passes cap / repeat.
+    cell = parse_line(line, 1)
+    assert cell.run_cap == run_cap
+    assert float(run_cap) * cell.repeat <= cell.cap

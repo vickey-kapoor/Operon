@@ -159,6 +159,37 @@ async def test_resume_with_approval_keeps_held_actions(monkeypatch: pytest.Monke
     assert discarded == []
 
 
+async def test_approving_the_models_own_confirmation_counts_as_an_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    ask = AgentAction(action_type=ActionType.WAIT_FOR_USER, text="Saves the file.")
+    loop, _, _ = _loop(monkeypatch, [ask])
+    loop.policy_service.has_held_actions = lambda run_id: True
+
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+
+    assert (await loop.run_store.get_run("run-1")).approval_count == 1
+
+
+async def test_continuing_after_the_model_asked_for_help_is_not_an_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    ask = AgentAction(action_type=ActionType.WAIT_FOR_USER, text="Please log in.")
+    loop, _, _ = _loop(monkeypatch, [ask])
+    loop.policy_service.has_held_actions = lambda run_id: False
+
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+
+    assert (await loop.run_store.get_run("run-1")).approval_count == 0
+
+
+async def test_the_backend_reports_held_calls_until_they_run(tmp_path: Path) -> None:
+    backend = _backend(_RecordingClient([_confirm_reply(), _click_reply()]))
+
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+    assert backend.has_held_actions("run-1")
+    await backend.perceive(_frame(tmp_path, "b.png"), _state())  # resumed: runs the held call
+    assert not backend.has_held_actions("run-1")
+
+
 # G4: a stop that lands during a step stops it for real.
 
 

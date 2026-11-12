@@ -433,6 +433,10 @@ class AgentLoop:
             self._discard_held_actions(
                 run_id, "Not executed: the user declined this action and sent a correction."
             )
+        if approve_gated_action and self._has_held_actions(run_id) and hasattr(record, "approval_count"):
+            # The model asked to confirm its action (Gemini's require_confirmation)
+            # and the person said yes: that is an approval like a gate's.
+            record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
         if approve_gated_action and pending is not None:
             fingerprint, gate = pending
@@ -1152,6 +1156,16 @@ class AgentLoop:
             note(run_id, reason)
         except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
             logger.warning("note_not_executed failed for run %s: %s", run_id[:8], exc)
+
+    def _has_held_actions(self, run_id: str) -> bool:
+        for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():
+            held = getattr(service, "has_held_actions", None)
+            try:
+                if held is not None and held(run_id):
+                    return True
+            except Exception as exc:  # noqa: BLE001 - only feeds a counter
+                logger.warning("has_held_actions failed for run %s: %s", run_id[:8], exc)
+        return False
 
     def _discard_held_actions(self, run_id: str, reason: str) -> None:
         for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():

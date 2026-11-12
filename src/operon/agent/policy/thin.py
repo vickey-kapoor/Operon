@@ -97,6 +97,7 @@ class OwnDoneVerifier(VerifierService):
                 stop_condition_met=True,
                 reason=f"Model says done (not checked; graders decide): {decision.rationale}",
                 stop_reason=StopReason.TASK_COMPLETED,
+                unchecked=True,
             )
         if not executed_action.success:
             return VerificationResult(
@@ -112,6 +113,7 @@ class OwnDoneVerifier(VerifierService):
             expected_outcome_met=True,
             stop_condition_met=False,
             reason="Action executed; the model judges its effect from the next screenshot.",
+            unchecked=True,
         )
 
 

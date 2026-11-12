@@ -185,6 +185,7 @@ async def test_stop_and_report(monkeypatch, tmp_path, scheduled) -> None:
     assert report["summary"] == "Stopped after 3 steps, 1 approval, 1 takeover."
     assert [step["action_type"] for step in report["timeline"]] == ["click", "wait_for_user", "type"]
     assert report["permission_mode"] == "risky"
+    assert report["max_steps"] == 25 and report["start_url"] is None  # what Run again restores
     assert report["duration_s"] is not None
 
 
@@ -317,3 +318,13 @@ async def test_a_retried_action_shows_in_the_step_list(monkeypatch, tmp_path) ->
     steps = frontdoor._steps(loop, response.run_id)
 
     assert [(s["step"], s["action_type"], s["checked_by"]) for s in steps] == [(1, "type", "retried"), (1, "click", "rules")]
+
+
+def test_a_step_the_thin_harness_took_on_trust_is_not_checked() -> None:
+    from operon.models.verification import VerificationResult, VerificationStatus
+
+    result = VerificationResult(
+        status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=False, reason="ran", unchecked=True
+    )
+
+    assert frontdoor._checked_by(result) == "none"

@@ -81,6 +81,7 @@ async def test_an_ordinary_step_passes_through(tmp_path) -> None:
 
     assert result.status is VerificationStatus.SUCCESS
     assert result.stop_condition_met is False
+    assert result.unchecked  # the step list must not call it checked
 
 
 @pytest.mark.asyncio
@@ -107,6 +108,7 @@ async def test_the_models_own_done_ends_the_run_unchecked(tmp_path) -> None:
     assert result.stop_condition_met is True
     assert result.stop_reason is StopReason.TASK_COMPLETED
     assert "Archived it." in result.reason
+    assert result.unchecked
 
 
 @pytest.mark.asyncio

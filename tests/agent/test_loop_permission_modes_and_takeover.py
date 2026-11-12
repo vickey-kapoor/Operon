@@ -236,3 +236,25 @@ async def test_a_retried_action_stays_in_the_step_log(monkeypatch, tmp_path) -> 
     (entry,) = [e for e in load_run_replay(run_id, root_dir=loop.run_store.root_dir) if isinstance(e, StepLog)]
     assert entry.executed_action.action.action_type is ActionType.CLICK
     assert [a.action.text for a in entry.earlier_attempts] == ["purchase now"]
+
+
+async def test_a_retry_that_waits_for_approval_is_not_logged_as_a_retry(monkeypatch, tmp_path) -> None:
+    from operon.models.logs import StepLog
+    from operon.models.verification import VerificationResult, VerificationStatus
+    from operon.store.background_writer import bg_writer
+    from operon.store.replay import load_run_replay
+
+    loop, executor = build_loop(monkeypatch, tmp_path, [CLICK_SAVE, PURCHASE])
+    loop.verifier_service.verify.return_value = VerificationResult(
+        status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="not yet"
+    )
+    run_id = await _start(loop, "risky")
+
+    response = await _step(loop, run_id)  # the click fails its check; the retry (purchase) needs approval
+    await bg_writer.flush()
+
+    assert response.status is RunStatus.WAITING_FOR_USER
+    assert [a.action_type for a in executor.executed] == [ActionType.CLICK]
+    (entry,) = [e for e in load_run_replay(run_id, root_dir=loop.run_store.root_dir) if isinstance(e, StepLog)]
+    assert entry.executed_action.action.action_type is ActionType.CLICK
+    assert entry.earlier_attempts == []

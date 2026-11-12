@@ -138,6 +138,8 @@ def _checked_by(result) -> str:
     critic was wanted but failed, so the verdict only says the action ran)."""
     if result.critic_model_used:
         return "critic"
+    if result.unchecked:
+        return "none"  # the thin harness: the model judges its own steps
     return "unchecked" if result.critic_fallback_reason else "rules"
 
 
@@ -413,6 +415,8 @@ async def build_report(run_id: str) -> dict[str, Any]:
         "approvals": approvals,
         "takeovers": takeovers,
         "permission_mode": resolve_permission_mode(getattr(record, "permission_mode", None)).value,
+        "start_url": record.start_url,
+        "max_steps": record.max_steps,
         "duration_s": duration,
         "cost_usd": _usage_cost(run_id),
         "run_dir": str(Path(loop.run_store.root_dir) / run_id),

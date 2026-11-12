@@ -433,9 +433,10 @@
     if (!step.ok) return "The action failed";
     if (step.checked_by === "unchecked") return "Not checked: the action ran, but the checker didn't answer";
     if (step.checked_by === "retried") return "No, so it tried again in the same step";
+    if (step.checked_by === "none") return "Not checked: in this mode the model judges its own steps";
     return CHECK[step.verification] || step.verification;
   }
-  function isChecked(step) { return step.ok && step.checked_by !== "unchecked" && ["success", "progressing_stable", "stable_wait"].includes(step.verification); }
+  function isChecked(step) { return step.ok && !["unchecked", "none", "retried"].includes(step.checked_by) && ["success", "progressing_stable", "stable_wait"].includes(step.verification); }
 
   function when(epochS) {
     const d = new Date(epochS * 1000), now = new Date();
@@ -591,8 +592,12 @@
 
   async function refresh() {
     if (!runId || view !== "run") return;
-    try { status = await api("GET", `/app/api/runs/${runId}`); }
-    catch (e) { $("run-err").textContent = e.message; return; }
+    const asked = runId;
+    let fresh;
+    try { fresh = await api("GET", `/app/api/runs/${asked}`); }
+    catch (e) { if (asked === runId) $("run-err").textContent = e.message; return; }
+    if (asked !== runId || view !== "run") return;  // moved to another run while this loaded
+    status = fresh;
     renderRun();
     if (status.done) { stopPolling(); closeStream(); loadReport(); }
   }
@@ -777,7 +782,17 @@
   $("btn-prev").onclick = () => pick(recIndex - 1);
   $("btn-next").onclick = () => pick(recIndex + 1);
   $("rec-range").oninput = () => pick(parseInt($("rec-range").value, 10));
-  $("btn-again").onclick = () => { if (rec) { location.hash = "home"; $("intent").value = rec.intent; $("environment").value = rec.environment; } };
+  $("btn-again").onclick = () => {
+    if (!rec) return;
+    // The same task with the same settings, not whatever the form last held.
+    location.hash = "home";
+    $("intent").value = rec.intent;
+    $("environment").value = rec.environment;
+    $("start-url").value = rec.start_url || "";
+    $("max-steps").value = rec.max_steps || 25;
+    const mode = document.querySelector(`input[name=mode][value="${rec.permission_mode}"]`);
+    if (mode) mode.checked = true;
+  };
   $("btn-export").onclick = async () => {
     $("rec-err").textContent = "";
     try {

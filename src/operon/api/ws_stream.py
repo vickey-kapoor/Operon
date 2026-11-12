@@ -53,6 +53,16 @@ def set_executor(executor: Any) -> None:
     _executor = executor
 
 
+# The desktop loop's executor. Only one with a ``live_frame_png`` hook (the Linux
+# cloud computer, KAN-108) streams; a Windows desktop shows step screenshots instead.
+_desktop_executor: Any = None
+
+
+def set_desktop_executor(executor: Any) -> None:
+    global _desktop_executor
+    _desktop_executor = executor
+
+
 def set_active_run(run_id: str | None) -> None:
     global _active_run_id
     _active_run_id = run_id
@@ -197,6 +207,18 @@ async def _frame_pusher(q: asyncio.Queue) -> None:
     """
     while True:
         await asyncio.sleep(0.1)
+        # A desktop run streams its screen (it returns None for any run not on it).
+        if _active_run_id and _desktop_executor is not None and hasattr(_desktop_executor, "live_frame_png"):
+            try:
+                frame = await _desktop_executor.live_frame_png(_active_run_id)
+            except Exception:
+                frame = None
+            if frame:
+                try:
+                    q.put_nowait(frame)
+                except asyncio.QueueFull:
+                    pass
+                continue
         # BrowserManager is driving frames via CDP events — nothing to do here.
         if _browser_manager is not None:
             continue

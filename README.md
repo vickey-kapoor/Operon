@@ -92,6 +92,7 @@ See the [roadmap](docs/roadmap.md) for what has been built, where things stand a
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |
 | [Azure desktop runner](docs/azure-desktop-runner.md) | Running the desktop benchmark on a cloud Windows VM |
+| [Cloud computer](docs/azure-linux-computer.md) | Operon on its own Azure Linux VM, watched live on the task page (`operon cloud`) |
 | [Reports](docs/reports/) | Benchmark write-ups, including the [Season 1 grid](docs/reports/season-1-grid.md) |
 | [PRD](docs/PRD.md) and [RFCs](docs/rfcs/) | Product context and design proposals |
 

@@ -52,3 +52,48 @@ APP_LAUNCH_TARGETS: dict[str, str] = {
     "taskmgr": "taskmgr.exe",
     "settings": "ms-settings:",
 }
+
+
+# Linux desktop (KAN-108: the Azure Linux VM, an XFCE session on Debian). Same
+# spoken aliases where the Linux machine has a matching app; Office and the
+# Windows-only shells have none, so they are left out (and the model is never
+# offered them). Each value is a fixed argv string, split on spaces, never a shell line.
+LINUX_APP_LAUNCH_TARGETS: dict[str, str] = {
+    "notepad": "mousepad",
+    "text editor": "mousepad",
+    "mousepad": "mousepad",
+    "calculator": "galculator",
+    "calc": "galculator",
+    "file explorer": "thunar",
+    "files": "thunar",
+    "explorer": "thunar",
+    "file manager": "thunar",
+    "terminal": "xfce4-terminal",
+    "chrome": "chromium",
+    "google chrome": "chromium",
+    "chromium": "chromium",
+    "browser": "chromium",
+    "firefox": "firefox-esr",
+    "spreadsheet": "libreoffice --calc",
+    "excel": "libreoffice --calc",
+    "word": "libreoffice --writer",
+    "document": "libreoffice --writer",
+    "paint": "ristretto",
+    "settings": "xfce4-settings-manager",
+}
+
+WINDOWS = "windows"
+LINUX = "linux"
+
+
+def desktop_platform() -> str:
+    """``OPERON_DESKTOP_PLATFORM``: ``linux`` drives a Linux (X11) desktop; anything
+    else, the default, is the Windows desktop."""
+    import os
+
+    return LINUX if (os.getenv("OPERON_DESKTOP_PLATFORM") or "").strip().lower() == LINUX else WINDOWS
+
+
+def launch_targets() -> dict[str, str]:
+    """The launch catalog for the configured desktop platform."""
+    return LINUX_APP_LAUNCH_TARGETS if desktop_platform() == LINUX else APP_LAUNCH_TARGETS

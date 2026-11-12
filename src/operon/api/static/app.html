@@ -432,6 +432,7 @@
   function checked(step) {
     if (!step.ok) return "The action failed";
     if (step.checked_by === "unchecked") return "Not checked: the action ran, but the checker didn't answer";
+    if (step.checked_by === "retried") return "No, so it tried again in the same step";
     return CHECK[step.verification] || step.verification;
   }
   function isChecked(step) { return step.ok && step.checked_by !== "unchecked" && ["success", "progressing_stable", "stable_wait"].includes(step.verification); }

@@ -12,7 +12,7 @@ import pytest
 from operon.api import frontdoor, ws_stream
 from operon.api.runtime import loops, tasks
 from operon.api.server import app
-from operon.models.common import RunStatus, StepRequest
+from operon.models.common import RunStatus, RunTaskRequest, StepRequest
 from operon.store.background_writer import bg_writer
 from tests.fixtures.frontdoor import CLICK_SAVE, PURCHASE, build_loop
 
@@ -299,3 +299,21 @@ def test_a_step_the_critic_failed_on_is_not_shown_as_checked() -> None:
     assert frontdoor._checked_by(result(critic_model_used=True)) == "critic"
     assert frontdoor._checked_by(result(critic_fallback_reason="critic_unavailable_or_unusable")) == "unchecked"
     assert frontdoor._checked_by(result()) == "rules"
+
+
+async def test_a_retried_action_shows_in_the_step_list(monkeypatch, tmp_path) -> None:
+    from operon.models.verification import VerificationResult, VerificationStatus
+
+    loop, _ = build_loop(monkeypatch, tmp_path, [PURCHASE, CLICK_SAVE])
+    loop.verifier_service.verify.side_effect = [
+        VerificationResult(status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="no"),
+        VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=False, reason="ok"),
+    ]
+    _use(monkeypatch, loop)
+    response = await loop.start_run(RunTaskRequest(intent="Do the task", permission_mode="auto"))
+    await loop.step_run(StepRequest(run_id=response.run_id))
+    await bg_writer.flush()
+
+    steps = frontdoor._steps(loop, response.run_id)
+
+    assert [(s["step"], s["action_type"], s["checked_by"]) for s in steps] == [(1, "type", "retried"), (1, "click", "rules")]

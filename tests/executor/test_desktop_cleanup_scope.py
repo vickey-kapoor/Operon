@@ -155,3 +155,18 @@ async def test_a_run_ending_closes_its_apps_only_when_asked() -> None:
         assert await executor.aclose_run("run-1") == 1
         assert await executor.aclose_run("run-1") == 0
     cleanup.assert_called_once_with("run-1")
+
+
+@pytest.mark.asyncio
+async def test_resume_brings_back_the_window_the_run_last_acted_in() -> None:
+    executor = _executor()
+    with patch("operon.executor.desktop._foreground_window", return_value=4242):
+        await executor.execute(AgentAction(action_type=ActionType.STOP))
+
+    with patch("operon.executor.desktop._bring_to_front", return_value=True) as front:
+        assert await executor.restore_work_window("run-1") is True
+    front.assert_called_once_with(4242)
+    # Another run's resume touches nothing.
+    with patch("operon.executor.desktop._bring_to_front") as front:
+        assert await executor.restore_work_window("run-2") is False
+    front.assert_not_called()

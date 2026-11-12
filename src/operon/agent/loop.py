@@ -446,6 +446,13 @@ class AgentLoop:
         if hasattr(record, "pause_reason"):
             record.pause_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
+        if hasattr(self.executor, "restore_work_window"):
+            # The person answered on the task page, which is now in front of the app
+            # the run was using: put that app back before the next screenshot.
+            try:
+                await self.executor.restore_work_window(run_id)
+            except Exception as exc:
+                logger.warning("restore_work_window failed for %s: %s", run_id, exc)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -620,6 +627,7 @@ class AgentLoop:
         deferred_pause: PolicyDecision | None = None
         retries_used = 0
         attempt_index = 1
+        earlier_attempts: list[ExecutedAction] = []
 
         while True:
             if attempt_index > 1 and await self._run_cancelled(record.run_id):
@@ -733,6 +741,7 @@ class AgentLoop:
 
             retries_used += 1
             adaptation_trace.append(strategy)
+            earlier_attempts.append(executed_action)
             _trace("  RETRY_LOOP -> retry", f"retries_used={retries_used}  strategy={strategy!r}")
 
             frame = await self.capture_service.capture(state)
@@ -817,6 +826,7 @@ class AgentLoop:
             failure=failure,
             decision_source=_decision_source,
             visual_variance=executed_action.visual_variance,
+            earlier_attempts=earlier_attempts,
         )
         append_step_log(self._run_log_path(record.run_id), step_log)
 

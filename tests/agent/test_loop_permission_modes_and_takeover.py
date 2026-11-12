@@ -193,3 +193,46 @@ async def test_takeover_waits_for_the_step_in_flight(monkeypatch, tmp_path) -> N
     await step
     state = await takeover
     assert state.in_takeover and state.status is RunStatus.WAITING_FOR_USER
+
+
+async def test_resume_brings_back_the_window_the_run_was_using(monkeypatch, tmp_path) -> None:
+    loop, executor = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
+    restored: list[str] = []
+
+    async def restore_work_window(run_id: str) -> bool:
+        restored.append(run_id)
+        return True
+
+    executor.restore_work_window = restore_work_window
+    run_id = await _start(loop, "ask")
+    await _step(loop, run_id)  # paused; answering it puts the task page in front
+
+    await loop.resume_run(run_id)
+
+    assert restored == [run_id]
+
+
+async def test_a_retried_action_stays_in_the_step_log(monkeypatch, tmp_path) -> None:
+    from operon.models.logs import StepLog
+    from operon.models.verification import VerificationResult, VerificationStatus
+    from operon.store.background_writer import bg_writer
+    from operon.store.replay import load_run_replay
+
+    loop, executor = build_loop(monkeypatch, tmp_path, [PURCHASE, CLICK_SAVE])
+    loop.verifier_service.verify.side_effect = [
+        VerificationResult(
+            status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="not yet"
+        ),
+        VerificationResult(
+            status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=False, reason="done"
+        ),
+    ]
+    run_id = await _start(loop, "auto")
+
+    await _step(loop, run_id)
+    await bg_writer.flush()
+
+    assert [a.action_type for a in executor.executed] == [ActionType.TYPE, ActionType.CLICK]
+    (entry,) = [e for e in load_run_replay(run_id, root_dir=loop.run_store.root_dir) if isinstance(e, StepLog)]
+    assert entry.executed_action.action.action_type is ActionType.CLICK
+    assert [a.action.text for a in entry.earlier_attempts] == ["purchase now"]

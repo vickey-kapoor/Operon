@@ -150,6 +150,21 @@ def _steps(loop, run_id: str) -> list[dict[str, Any]]:
     for entry in entries:
         if not isinstance(entry, StepLog):
             continue
+        for attempt in entry.earlier_attempts:
+            # An action the full harness retried within this step: it ran, its check
+            # failed, and the step went on with another action (the row after it).
+            steps.append({
+                "step": entry.step_index,
+                "action": _action_summary(attempt.action),
+                "action_type": attempt.action.action_type.value,
+                "ok": attempt.success,
+                "detail": attempt.detail,
+                "verification": "failure",
+                "checked_by": "retried",
+                "why": "",
+                "text": attempt.action.text,
+                "screenshot": entry.before_artifact_path,
+            })
         steps.append({
             "step": entry.step_index,
             "action": _action_summary(entry.executed_action.action),

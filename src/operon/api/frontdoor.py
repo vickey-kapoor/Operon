@@ -215,6 +215,18 @@ async def decline(run_id: str, hint: str | None = None) -> dict[str, Any]:
     return await run_status(run_id)
 
 
+async def pause(run_id: str) -> dict[str, Any]:
+    """Pause the run between steps; ``approve`` (Continue) picks it up again."""
+    loop, record = await _require_run(run_id)
+    if record.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
+        raise FrontDoorError(f"Run is {record.status.value}; nothing to pause")
+    record = await loop.pause_run(run_id)
+    record.pause_reason = "Paused by you. Continue when you are ready."
+    await loop.run_store.save_state(record)
+    _ws_stream.publish_event({"type": "control_ack", "action": "pause", "run_id": run_id})
+    return await run_status(run_id)
+
+
 async def take_over(run_id: str) -> dict[str, Any]:
     loop, record = await _require_run(run_id)
     if record.status in TERMINAL:
@@ -280,6 +292,41 @@ _OUTCOME = {
     RunStatus.RUNNING: "Still running",
     RunStatus.PENDING: "Not started",
 }
+
+
+def recent_runs(limit: int = 20) -> list[dict[str, Any]]:
+    """The newest runs on this computer, newest first, for the page's Home and History.
+
+    Reads each run's ``state.json`` under the runs directory, which both loops share."""
+    from operon.models.state import AgentState
+
+    root = Path(_loops.get_agent_loop().run_store.root_dir)
+    if not root.exists():
+        return []
+    dirs = sorted(
+        (path for path in root.iterdir() if (path / "state.json").is_file()),
+        key=lambda path: (path / "state.json").stat().st_mtime,
+        reverse=True,
+    )
+    runs: list[dict[str, Any]] = []
+    for run_dir in dirs:
+        state_path = run_dir / "state.json"
+        try:
+            state = AgentState.model_validate_json(state_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - one unreadable run must not hide the rest
+            continue
+        runs.append({
+            "run_id": state.run_id,
+            "intent": state.intent,
+            "status": state.status.value,
+            "outcome": _OUTCOME.get(state.status, state.status.value),
+            "done": state.status in TERMINAL,
+            "step_count": state.step_count,
+            "updated_at": state_path.stat().st_mtime,
+        })
+        if len(runs) >= limit:
+            break
+    return runs
 
 
 def _final_message(steps: list[dict[str, Any]], record) -> str | None:

@@ -39,8 +39,11 @@ then watch it run:
   default, or `OPERON_PERMISSION_MODE`) asks only before the trust gate's confirm list.
   `auto` asks for nothing. Deny rules and the domain allowlist block in every mode, and so
   does a vendor safety confirmation. `ask` asks even when `OPERON_TRUST_GATE=off`.
-- **Report.** When the run ends, the page shows the outcome, steps, approvals, takeovers,
-  time, cost and the run's artifact folder.
+- **Screens.** **Home** takes a task and lists recent runs; **Live run** shows the live view,
+  any approval, the steps so far and Pause, Take over and Stop; **Run recording** replays a
+  finished run step by step: the screenshot, what it did, why, and how it was checked.
+- **Report.** When the run ends, the page shows the outcome, steps, approvals and takeovers,
+  and links to its recording, which can be downloaded as a zip.
 
 The page talks to `/app/api/...`, which needs the API key like every other route. The live
 stream uses a short-lived token from `POST /app/api/stream-token` instead of the key. The
@@ -100,10 +103,12 @@ GET  /observer/api/live-browser/{run_id}
 # Task page (KAN-89)
 GET  /app                              # the page; served without the key
 POST /app/api/runs                     # {intent, environment, start_url, permission_mode, max_steps, headless}
+GET  /app/api/runs?limit=20            # newest runs on this PC (Home and History)
 GET  /app/api/runs/{run_id}            # status, what it waits on, recent steps
 GET  /app/api/runs/{run_id}/report
 POST /app/api/runs/{run_id}/approve
 POST /app/api/runs/{run_id}/decline    # {note}
+POST /app/api/runs/{run_id}/pause      # pause between steps; approve continues
 POST /app/api/runs/{run_id}/takeover
 POST /app/api/runs/{run_id}/handback   # {note}
 POST /app/api/runs/{run_id}/input      # your click/keys during a takeover (browser)

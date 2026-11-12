@@ -3,6 +3,9 @@ hand back, stop and report, over HTTP against a real loop with scripted model ca
 
 from __future__ import annotations
 
+import os
+import time
+
 import httpx
 import pytest
 
@@ -10,6 +13,7 @@ from operon.api import frontdoor, ws_stream
 from operon.api.runtime import loops, tasks
 from operon.api.server import app
 from operon.models.common import RunStatus, StepRequest
+from operon.store.background_writer import bg_writer
 from tests.fixtures.frontdoor import CLICK_SAVE, PURCHASE, build_loop
 
 
@@ -219,3 +223,50 @@ async def test_the_report_gives_the_stop_answer(monkeypatch, tmp_path, scheduled
 
     assert report["final_message"] == answer
     assert report["timeline"][-1]["text"] == answer
+
+
+async def test_pause_waits_for_you_and_continue_resumes(monkeypatch, tmp_path, scheduled) -> None:
+    loop, executor = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
+    _use(monkeypatch, loop)
+    async with _client() as client:
+        run_id = (await _start(client, permission_mode="auto"))["run_id"]
+        paused = (await client.post(f"/app/api/runs/{run_id}/pause")).json()
+        assert paused["status"] == "waiting_for_user"
+        assert paused["waiting"] == {"kind": "needs_you", "gate": None, "reason": "Paused by you. Continue when you are ready."}
+        assert (await client.post(f"/app/api/runs/{run_id}/pause")).status_code == 409  # already paused
+
+        resumed = (await client.post(f"/app/api/runs/{run_id}/approve")).json()
+        assert resumed["status"] == "running" and resumed["waiting"] is None
+        await loop.step_run(StepRequest(run_id=run_id))
+
+    assert len(executor.executed) == 1
+
+
+async def test_the_run_list_shows_the_newest_runs_first(monkeypatch, tmp_path, scheduled) -> None:
+    loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
+    _use(monkeypatch, loop)
+    async with _client() as client:
+        older = (await _start(client, intent="Sort my Downloads folder"))["run_id"]
+        newer = (await _start(client, intent="Archive promotions"))["run_id"]
+        await client.post(f"/app/api/runs/{older}/stop")
+        await bg_writer.flush()
+        os.utime(tmp_path / older / "state.json", (time.time() + 60, time.time() + 60))
+        (tmp_path / "not-a-run").mkdir()
+        runs = (await client.get("/app/api/runs?limit=5")).json()["runs"]
+        one = (await client.get("/app/api/runs?limit=1")).json()["runs"]
+        too_many = await client.get("/app/api/runs?limit=500")
+
+    assert [run["run_id"] for run in runs] == [older, newer]  # newest state first
+    assert runs[0]["outcome"] == "Stopped" and runs[0]["done"]
+    assert runs[1]["intent"] == "Archive promotions" and not runs[1]["done"]
+    assert len(one) == 1
+    assert too_many.status_code == 422
+
+
+async def test_the_page_has_home_live_run_and_recording(monkeypatch) -> None:
+    async with _client() as client:
+        page = (await client.get("/app")).text
+
+    for view in ('id="view-home"', 'id="view-run"', 'id="view-recording"', 'id="view-history"'):
+        assert view in page
+    assert "fonts.googleapis.com" not in page  # the page loads nothing from the internet

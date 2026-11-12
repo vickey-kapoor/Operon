@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dotenv import find_dotenv, load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from operon.core.paths import runs_dir
 
@@ -105,6 +105,12 @@ def create_app() -> FastAPI:
 
     # The local task page (KAN-89). Served without the key: it holds no secret and
     # asks for the key (or reads it from the #key= fragment `operon serve` prints).
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        # A bare http://127.0.0.1:8080 opens the task page. The key stays in the
+        # browser's #fragment, so a link without it asks for the key once.
+        return RedirectResponse("/app", status_code=307)
+
     @app.get("/app", include_in_schema=False)
     async def task_page() -> HTMLResponse:
         return HTMLResponse(task_page_html(), headers=_PAGE_HEADERS)

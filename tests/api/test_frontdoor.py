@@ -270,3 +270,9 @@ async def test_the_page_has_home_live_run_and_recording(monkeypatch) -> None:
     for view in ('id="view-home"', 'id="view-run"', 'id="view-recording"', 'id="view-history"'):
         assert view in page
     assert "fonts.googleapis.com" not in page  # the page loads nothing from the internet
+
+
+async def test_the_bare_address_opens_the_task_page() -> None:
+    async with _client() as client:
+        response = await client.get("/")
+    assert response.status_code == 307 and response.headers["location"] == "/app"

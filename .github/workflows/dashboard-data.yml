@@ -19,7 +19,7 @@ run-name: Send results to dashboard (${{ github.event.workflow_run.name || 'manu
 
 on:
   workflow_run:
-    workflows: ["Browser benchmark", "Desktop and Hybrid benchmark", "Benchmark from PR comment", "Grounding benchmark"]
+    workflows: ["Browser benchmark", "Desktop and Hybrid benchmark", "Benchmark from PR comment", "Benchmark batch", "Grounding benchmark"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -78,8 +78,9 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           # A /bench comment runs on the default branch's workflow but benchmarks the
-          # PR's head, so its head_sha is not the commit that was measured.
-          GIT_SHA: ${{ github.event.workflow_run.event != 'issue_comment' && github.event.workflow_run.head_sha || '' }}
+          # PR's head, so its head_sha is not the commit that was measured; nor is a batch's,
+          # whose cells can each run a different PR or ref.
+          GIT_SHA: ${{ github.event.workflow_run.event != 'issue_comment' && github.event.workflow_run.name != 'Benchmark batch' && github.event.workflow_run.head_sha || '' }}
         run: |
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$RUN_ID" || true
           if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
@@ -105,8 +106,8 @@ jobs:
           RUN_IDS: ${{ inputs.run_ids }}
         run: |
           for run_id in $RUN_IDS; do
-            read -r run_url event head_sha < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha --jq '[.url, .event, .headSha] | @tsv')
-            [ "$event" = "issue_comment" ] && head_sha=""
+            read -r run_url event head_sha workflow < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha,workflowName --jq '[.url, .event, .headSha, .workflowName] | @tsv')
+            { [ "$event" = "issue_comment" ] || [ "$workflow" = "Benchmark batch" ]; } && head_sha=""
             gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$run_id"
             python3 -m evals.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
           done

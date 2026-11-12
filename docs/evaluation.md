@@ -158,6 +158,29 @@ the frozen season's tasks (`--season`), which is what the Leaderboard tab's grid
 The **Browser benchmark**, **Desktop and Hybrid benchmark** and **Grounding benchmark** workflows can also be started by hand,
 with inputs for harness profile, suite and cost cap (`max_cost_usd`).
 
+## Daily benchmark batch
+
+Paid runs are batched (KAN-105): during the day, the cells that need running go into a queue,
+and once a day the whole queue is sent for one cost approval and run as one **Benchmark batch**
+workflow run. Start it from the Actions tab (Benchmark batch > Run workflow, cells separated by
+`;`) or with one PR comment, one cell per line after the first:
+
+```text
+/bench batch
+browser thin season=2 pr=242
+desktop thin season=2 pr=242 cap=1.5
+hybrid full ref=main
+```
+
+Each cell takes the `/bench` words above, plus `pr=<n>` (that PR's head, forks refused) or
+`ref=<branch|tag|commit>` (default: the default branch) and `cap=<USD>` (the cell's cost cap,
+default $3; `grounding` is not part of a batch). The batch is refused before anything starts when
+its caps add up to more than `max_total_usd` (default $10), so the most it can spend is known up
+front. Browser cells run side by side on hosted runners; Desktop and Hybrid cells run one after
+another on a single start of the Azure VM, which is deallocated after the last one. Every cell's
+report goes to the dashboard, and a `/bench batch` comment gets one results table on its PR.
+`evals/bench_batch.py` reads and checks the cells.
+
 ## Adding models later
 
 Claude, GPT and the cross-model adapter were removed on 2026-11-11 so that model onboarding

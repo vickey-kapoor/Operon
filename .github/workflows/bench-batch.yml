@@ -1,0 +1,189 @@
+name: Benchmark batch
+run-name: Benchmark batch (${{ github.event_name == 'workflow_dispatch' && 'manual' || 'from a PR comment' }})
+
+# Runs a day's queued benchmark cells in one run (KAN-105), once Vickey has approved the
+# batch and its cost. Paid runs are no longer started one by one: threads add the cells
+# they need to the daily queue, and the approved batch runs here.
+#
+# Cells are /bench words, one per line or separated by ";" (evals/bench_batch.py):
+#
+#   browser thin season=2 pr=242; desktop thin season=2 pr=242 cap=1.5; hybrid full
+#
+# pr=<n> runs that PR's head (forks refused), ref=<branch|tag|commit> any ref, neither the
+# default branch. Browser cells run side by side on hosted runners. Desktop and Hybrid
+# cells run one after another on one start of the Azure VM, which is deallocated after
+# the last one. Each cell keeps its own cost cap (cap=, default $3) and the batch is
+# refused before anything starts when the caps add up to more than max_total_usd, so
+# the most a batch can spend is known up front. Every cell's report goes to the
+# dashboard ("Send results to dashboard"); a /bench batch comment also gets one results
+# table on its PR.
+#
+# Started by hand (Actions > Benchmark batch > Run workflow) or by a comment on a PR:
+#
+#   /bench batch
+#   browser thin season=2 pr=242
+#   desktop thin season=2 pr=242
+#
+# Never on a schedule or a push: every run spends model credits.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cells:
+        description: "Cells, separated by ';', e.g. browser thin season=2 pr=242; desktop thin season=2 pr=242 cap=1.5"
+        required: true
+      max_total_usd:
+        description: "Batch cost cap: refuse the batch if its cells' caps add up to more (0: no cap)"
+        default: "10"
+  # Called by bench-command.yml for a /bench batch comment.
+  workflow_call:
+    inputs:
+      cells: {type: string, required: true}
+      max_total_usd: {type: string, default: "10"}
+    secrets:
+      GEMINI_API_KEY: {required: false}
+      AZURE_CREDENTIALS: {required: false}
+
+permissions:
+  contents: read
+
+# One batch at a time. Each Desktop or Hybrid cell also takes the VM's own concurrency
+# group (azure-desktop-vm) while it runs.
+concurrency:
+  group: bench-batch
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Read the batch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      browser: ${{ steps.read.outputs.browser }}
+      desktop: ${{ steps.read.outputs.desktop }}
+      has_browser: ${{ steps.read.outputs.has_browser }}
+      has_desktop: ${{ steps.read.outputs.has_desktop }}
+    steps:
+      # The parser always comes from the default branch, never from a benchmarked PR.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - id: read
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CELLS: ${{ inputs.cells }}
+          MAX_TOTAL_USD: ${{ inputs.max_total_usd }}
+        run: printf '%s\n' "$CELLS" | python3 -m evals.bench_batch --max-total-usd "$MAX_TOTAL_USD"
+
+  start-vm:
+    name: Start the Azure VM
+    needs: plan
+    if: needs.plan.outputs.has_desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
+      VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
+    steps:
+      - name: Check the settings
+        run: |
+          if [ -z "$AZURE_CLIENT_ID" ] && [ -z "$AZURE_CREDENTIALS" ]; then
+            echo "::error::Set repo variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID (or the older AZURE_CREDENTIALS secret). See docs/azure-desktop-runner.md."
+            exit 1
+          fi
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.AZURE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.AZURE_CLIENT_ID == ''
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+
+  browser:
+    name: ${{ matrix.label }}
+    needs: plan
+    if: needs.plan.outputs.has_browser == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.browser) }}
+    uses: ./.github/workflows/live-bench.yml
+    with:
+      backends: computer_use
+      harness_profile: ${{ matrix.profile }}
+      critic: ${{ matrix.critic }}
+      suite: ${{ matrix.suite }}
+      args: ${{ matrix.extra }}
+      max_cost_usd: ${{ matrix.cap }}
+      artifact_suffix: ${{ matrix.suffix }}
+      ref: ${{ matrix.ref }}
+    # Named, not inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets.
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  # One cell at a time on the VM this batch started; the called workflow neither starts nor deallocates it.
+  desktop:
+    name: ${{ matrix.label }}
+    needs: [plan, start-vm]
+    if: ${{ !cancelled() && needs.plan.outputs.has_desktop == 'true' && needs.start-vm.result == 'success' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.desktop) }}
+    uses: ./.github/workflows/live-desktop-bench.yml
+    with:
+      runner: azure
+      manage_vm: "false"
+      category: ${{ matrix.category }}
+      desktop_backend: computer_use
+      harness_profile: ${{ matrix.profile }}
+      critic: ${{ matrix.critic }}
+      suite: ${{ matrix.suite }}
+      args: ${{ matrix.extra }}
+      max_cost_usd: ${{ matrix.cap }}
+      artifact_suffix: ${{ matrix.suffix }}
+      ref: ${{ matrix.ref }}
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  stop-vm:
+    name: Deallocate the Azure VM
+    needs: [start-vm, desktop]
+    if: ${{ always() && needs.start-vm.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
+      VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
+    steps:
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.AZURE_CLIENT_ID != ''
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        if: env.AZURE_CLIENT_ID == ''
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      # Deallocated, not just stopped: a stopped VM still bills for compute.
+      - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"

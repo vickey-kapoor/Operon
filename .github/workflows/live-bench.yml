@@ -40,6 +40,8 @@ on:
       suite: {type: string, default: "core"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
+      # Set by the batch workflow (bench-batch.yml) so its cells' artifacts don't share a name.
+      artifact_suffix: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
         type: string
@@ -152,7 +154,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: bench-${{ matrix.backend }}
+          name: bench-${{ matrix.backend }}${{ inputs.artifact_suffix }}
           path: |
             bench.txt
             uvicorn.log

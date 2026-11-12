@@ -6,6 +6,7 @@ run-name: "Benchmark from a comment on PR #${{ github.event.issue.number }}"
 #
 #   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [azure] [season=<n>]
 #   /bench grounding
+#   /bench batch            (then one cell per line, KAN-105; see bench-batch.yml)
 #
 # Every run uses Gemini computer use (OPERON_*_BACKEND=computer_use), Operon's only model.
 # The first word is the category (KAN-72): browser, desktop or hybrid, each run in
@@ -31,6 +32,10 @@ run-name: "Benchmark from a comment on PR #${{ github.event.issue.number }}"
 # happens only when someone with write access asks for one. PRs from forks are
 # refused, since the run has the repository's API key; only that key (and, for the
 # Azure VM, its start/stop credential) is passed on.
+#
+# "/bench batch" runs a day's approved cells in one run (bench-batch.yml): the lines
+# after the first are the cells, each in the words above plus pr=<n> or ref=<ref> and
+# cap=<USD>. The PR the comment is on gets one results table for the whole batch.
 
 on:
   issue_comment:
@@ -58,6 +63,7 @@ jobs:
       critic: ${{ steps.args.outputs.critic }}
       extra: ${{ steps.args.outputs.extra }}
       label: ${{ steps.args.outputs.label }}
+      cells: ${{ steps.args.outputs.cells }}
       sha: ${{ steps.pr.outputs.sha }}
     steps:
       - id: args
@@ -65,6 +71,15 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           set -f  # no glob expansion of the comment's words
+          # /bench batch: the cells are the comment's other lines, checked by the batch workflow.
+          if [ "$(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z' | sed 's/[[:space:]]*$//')" = "/bench batch" ]; then
+            delim="CELLS_$(openssl rand -hex 16)"
+            {
+              echo "target=batch"; echo "label=Gemini · Batch"
+              echo "cells<<$delim"; printf '%s\n' "$BODY" | tail -n +2 | tr -d '\r'; echo "$delim"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           target=browser profile=full suite=core runner=github repeat=1 critic= season=
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
@@ -216,3 +231,19 @@ jobs:
       ref: ${{ needs.parse.outputs.sha }}
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  batch:
+    name: ${{ needs.parse.outputs.label }}
+    needs: parse
+    if: needs.parse.outputs.target == 'batch'
+    # pull-requests: read resolves pr= cells; id-token reaches only the VM start/stop jobs.
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    uses: ./.github/workflows/bench-batch.yml
+    with:
+      cells: ${{ needs.parse.outputs.cells }}
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}

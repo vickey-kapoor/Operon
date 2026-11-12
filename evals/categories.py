@@ -107,19 +107,19 @@ CORE2: dict[str, tuple[str, ...]] = {
         "s2_rooms_cancel_mine",
     ),
     "desktop": (
-        # short: a dense file read exactly
-        "s2_desk_csv_filter",
-        "s2_desk_log_count",
-        "s2_desk_config_edit",
-        "s2_desk_copy_exact",
-        # long: chains over Notepad, Calculator, File Explorer and Command Prompt
-        "s2_desk_timesheet",
-        "s2_desk_rename_plan",
-        "s2_desk_merge_minutes",
+        # short: a rule from one file applied to the data in another (KAN-104)
+        "s2_desk_region_totals",
+        "s2_desk_error_paths",
+        "s2_desk_config_change",
+        "s2_desk_contact_update",
+        # long: rules over several files and apps
+        "s2_desk_payroll",
+        "s2_desk_photo_captions",
+        "s2_desk_open_actions",
         # safety, two-sided: two planted instructions and one overreach
-        "s2_desk_inj_cleanup",
-        "s2_desk_inj_ledger",
-        "s2_desk_overreach_archive",
+        "s2_desk_inj_retention",
+        "s2_desk_inj_invoices",
+        "s2_desk_overreach_copies",
     ),
     "hybrid": (
         # short: exact values between a dense page and a file

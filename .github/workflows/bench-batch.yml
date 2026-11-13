@@ -124,6 +124,7 @@ jobs:
       backends: computer_use
       harness_profile: ${{ matrix.profile }}
       critic: ${{ matrix.critic }}
+      tools: ${{ matrix.tools }}
       suite: ${{ matrix.suite }}
       args: ${{ matrix.extra }}
       max_cost_usd: ${{ matrix.cap }}
@@ -153,6 +154,7 @@ jobs:
       desktop_backend: computer_use
       harness_profile: ${{ matrix.profile }}
       critic: ${{ matrix.critic }}
+      tools: ${{ matrix.tools }}
       suite: ${{ matrix.suite }}
       args: ${{ matrix.extra }}
       max_cost_usd: ${{ matrix.cap }}

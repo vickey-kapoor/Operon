@@ -269,6 +269,11 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
         # KAN-15: the gate pauses before risky actions, so such a run is no baseline for (and
         # never compared with) the gate-off benchmark runs. Older reports ran with it off.
         config["flagged"] = "trust gate on: risky actions paused for approval, not comparable with gate-off runs"
+    if report.get("tools") and report["tools"] != "off":
+        config.setdefault("tools", report["tools"])
+        if not config.get("flagged"):
+            # RFC 0002: a run with tools is an A/B arm, not a baseline for the tools-off grid.
+            config["flagged"] = f"tools on ({report['tools']}): not comparable with tools-off runs"
     if report.get("partial") and not config.get("flagged"):
         config["flagged"] = "partial run (--only / --category)"
     unpriced = (report.get("summary") or {}).get("unpriced_calls")

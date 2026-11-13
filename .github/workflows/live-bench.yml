@@ -20,6 +20,9 @@ on:
       critic:
         description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
         default: ""
+      tools:
+        description: "OPERON_TOOLS (RFC 0002): off, on, all, or tool names; file tools may use ~/Documents"
+        default: "off"
       suite:
         description: "core (the Browser category's 10 state-graded tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), or long (21 multi-app tasks on the local apps, 20 to 50 steps each)"
         type: choice
@@ -37,6 +40,7 @@ on:
       backends: {type: string, default: "computer_use"}
       harness_profile: {type: string, default: "full"}
       critic: {type: string, default: ""}
+      tools: {type: string, default: "off"}
       suite: {type: string, default: "core"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
@@ -81,6 +85,8 @@ jobs:
       OPERON_BROWSER_BACKEND: ${{ matrix.backend }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_CRITIC: ${{ inputs.critic }}
+      # Tools next to screen actions (RFC 0002); off unless the run asks for them.
+      OPERON_TOOLS: ${{ inputs.tools || 'off' }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
       OPERON_TRUST_GATE: "off"
@@ -120,6 +126,11 @@ jobs:
 
       - name: Start the API
         run: |
+          if [ "${OPERON_TOOLS:-off}" != off ]; then
+            # The file tools may use ~/Documents; the file guard pauses on any other path.
+            mkdir -p "$HOME/Documents"
+            export OPERON_ALLOWED_FILE_ROOTS="$HOME/Documents"
+          fi
           nohup uv run python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080 > uvicorn.log 2>&1 &
           for _ in $(seq 1 60); do
             curl -sf http://127.0.0.1:8080/health > /dev/null && exit 0

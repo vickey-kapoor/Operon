@@ -299,6 +299,27 @@ def trust_gate_label(default: str = "on") -> str:
     return "off" if value in {"off", "false", "0", "no"} else "on"
 
 
+def tools_label() -> str:
+    """The tools a server started from this shell would turn on (``OPERON_TOOLS``, RFC 0002):
+    their names joined by commas, or ``off``. Only a fallback: ``server_tools`` asks the server."""
+    from operon.agent.tools import enabled_tools
+
+    return ",".join(enabled_tools(_server_env().get("OPERON_TOOLS") or "off")) or "off"
+
+
+async def server_tools(client: httpx.AsyncClient) -> str:
+    """The tools the running server turns on (``/observer/api/settings``); a server from
+    before RFC 0002 has none. Any other failure falls back to this shell's settings."""
+    try:
+        response = await client.get("/observer/api/settings")
+        if response.status_code == 404:
+            return "off"
+        value = response.json().get("tools", "off") if response.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, AttributeError):
+        value = None
+    return value if isinstance(value, str) and value else tools_label()
+
+
 async def server_trust_gate(client: httpx.AsyncClient) -> str:
     """The trust gate the running server actually has (``/observer/api/settings``). A server
     from before that endpoint (404) also predates the gate being on by default, so this
@@ -706,7 +727,7 @@ def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float) ->
 
 def _previous_report(
     bench_dir: Path, suite: str, harness_profile: str | None = None, trust_gate: str = "off",
-    season: int | None = None,
+    season: int | None = None, tools: str = "off",
 ) -> dict | None:
     # A run stopped at the cost cap covers only some tasks, so it is no baseline; nor
     # is a run of another model (older reports), or one judged another way (thin vs thin-own).
@@ -722,6 +743,9 @@ def _previous_report(
         # A gate-on run pauses before risky actions, so it is no baseline for a gate-off one (or
         # the reverse). Reports from before trust_gate was recorded ran with it off.
         if report.get("trust_gate", "off") != trust_gate:
+            continue
+        # Nor is a run with tools (RFC 0002) for one without; older reports had none.
+        if report.get("tools", "off") != tools:
             continue
         # Season 2 runs as "core" too, on harder tasks: only the same season is a baseline.
         if (report.get("season") or {}).get("season") != season:
@@ -878,6 +902,7 @@ def build_report(
     complete: bool,
     season_run=None,
     trust_gate: str | None = None,
+    tools: str | None = None,
 ) -> dict:
     """The saved report. ``complete`` is False while the run is still going: a run that
     dies midway (a crash, a timeout, a cancelled workflow) leaves that version behind,
@@ -911,6 +936,7 @@ def build_report(
         "harness_profile": harness_label(args.mode),
         "critic": critic_label(args.mode),
         "trust_gate": trust_gate or trust_gate_label(),
+        "tools": tools or tools_label(),
         "repeat": repeat,
         # --only / --category: some of the suite's tasks; spend counts, pass rates don't.
         "partial": bool(args.only or args.category),
@@ -991,6 +1017,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     suite_name = mode_suite(args.mode, args.suite)
     # The server's trust gate, asked once it answers /health below; this shell's guess until then.
     trust_gate = trust_gate_label()
+    tools = tools_label()
     previous = None
     name = report_name(args, started_at)
     bench_dir.mkdir(parents=True, exist_ok=True)
@@ -998,7 +1025,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     def save(complete: bool) -> dict:
         report = build_report(
             args, started_at, results, repeat=repeat, planned=len(planned), stopped=stopped, complete=complete,
-            season_run=season_run, trust_gate=trust_gate,
+            season_run=season_run, trust_gate=trust_gate, tools=tools,
         )
         # Write then rename, so a run killed mid-write keeps its last good checkpoint.
         tmp = bench_dir / f".{name}.tmp"
@@ -1017,6 +1044,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0, headers=headers) as client:
             (await client.get("/health")).raise_for_status()
             trust_gate = await server_trust_gate(client)
+            tools = await server_tools(client)
             if trust_gate == "on":
                 print(
                     "Warning: the server's trust gate is on, so risky actions pause for approval and scores "
@@ -1027,7 +1055,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
             if not (args.only or args.category):
                 previous = _previous_report(
                     bench_dir, suite_name, harness_label(args.mode), trust_gate,
-                    season_run.season if season_run else None,
+                    season_run.season if season_run else None, tools,
                 )
             for index, (attempt, task) in enumerate(planned, 1):
                 active = {"task": task, "attempt": attempt, "run_id": None, "started": time.monotonic()}

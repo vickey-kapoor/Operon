@@ -7,6 +7,7 @@ import mimetypes
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from operon.agent import tools as _tools
 from operon.agent._agent_utils import collect_latest_usage
 from operon.agent.actions.translation import (
     KeyHold,
@@ -20,6 +21,7 @@ from operon.clients.gemini_computer_use import (
     GeminiComputerUseError,
 )
 from operon.models.capture import CaptureFrame
+from operon.models.execution import ToolOutput
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import PageHint, ScreenPerception
 from operon.models.policy import ActionType, PolicyDecision
@@ -82,11 +84,15 @@ class BrowserComputerUseBackend(AgentBackend):
         client: GeminiComputerUseClient,
         prompt_path: Path,
         browser_runtime=None,
+        tools: tuple[str, ...] = (),
     ) -> None:
         self.client = client
         self.prompt_path = prompt_path
         self.browser_runtime = browser_runtime
+        # The tools the client declares (RFC 0002); their skill notes join the prompt.
+        self.tools = tuple(tools)
         self._prompt_template = prompt_path.read_text(encoding="utf-8")
+        self._skill_text = _tools.skill_text(self.tools)
         self._cached_decision: PolicyDecision | None = None
         self._last_frames: dict[str, CaptureFrame] = {}
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
@@ -277,12 +283,15 @@ class BrowserComputerUseBackend(AgentBackend):
             if self.browser_runtime is not None and hasattr(self.browser_runtime, "get_current_url"):
                 current_url = await self.browser_runtime.get_current_url()
             error = None
+            tool_outputs: list[ToolOutput] = []
             declined = conversation.declined_reason is not None
             if declined:
                 error = conversation.declined_reason
                 conversation.declined_reason = None
             elif len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
                 error = state.action_history[-1].detail
+            if not declined and len(state.action_history) > conversation.acknowledged_actions:
+                tool_outputs = list(state.action_history[-1].tool_outputs or [])
             ran = (
                 not declined
                 and len(state.action_history) > conversation.acknowledged_actions
@@ -301,6 +310,7 @@ class BrowserComputerUseBackend(AgentBackend):
                 screenshot_path=screenshot.artifact_path,
                 current_url=current_url,
                 error=error,
+                tool_outputs=tool_outputs,
             )
             if conversation.acknowledge_safety:
                 # The API rejects the answer to a require_confirmation call unless
@@ -356,7 +366,7 @@ class BrowserComputerUseBackend(AgentBackend):
             previous_summary=state.observation_history[-1].summary if state.observation_history else "none",
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             advisory_hints=hint_block,
-        )
+        ) + self._skill_text
 
     @staticmethod
     def _subgoal_for_calls(function_calls: list[dict]) -> str:
@@ -433,6 +443,7 @@ class BrowserComputerUseBackend(AgentBackend):
         screenshot_path: str,
         current_url: str | None,
         error: str | None = None,
+        tool_outputs: list[ToolOutput] | None = None,
     ) -> dict:
         first = self.client.build_function_response_content(
             function_name=function_names[0],
@@ -456,6 +467,26 @@ class BrowserComputerUseBackend(AgentBackend):
                 }
             )
         parts.append(first["parts"][1])
+        self._add_tool_outputs(parts, tool_outputs or [], error)
         return {"role": "user", "parts": parts}
+
+    @staticmethod
+    def _add_tool_outputs(parts: list[dict], tool_outputs: list[ToolOutput], error: str | None) -> None:
+        """Answer each tool call with its own output (RFC 0002), in call order. A tool
+        call with no output did not run, because an earlier call in the turn failed."""
+        outputs = iter(tool_outputs)
+        for part in parts:
+            response = part.get("function_response")
+            if not response or response.get("name") not in _tools.TOOL_NAMES:
+                continue
+            payload = response.setdefault("response", {})
+            result = next(outputs, None)
+            if result is None:
+                payload["error"] = f"Not run: {error}" if error else "This call did not run."
+            elif result.ok:
+                payload.pop("error", None)
+                payload["output"] = result.output
+            else:
+                payload["error"] = result.output
 
 

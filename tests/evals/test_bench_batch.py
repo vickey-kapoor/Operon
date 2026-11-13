@@ -40,6 +40,13 @@ def test_blank_and_comment_lines_are_skipped_and_semicolons_split_cells() -> Non
     assert [c.label for c in cells] == ["Gemini · Browser · Thin", "Gemini · Desktop · Thin"]
 
 
+def test_tools_word_turns_every_tool_on_and_is_its_own_cell() -> None:
+    cells = parse_batch("desktop thin season=2\ndesktop thin season=2 tools")
+    assert [c.tools for c in cells] == ["off", "all"]
+    assert cells[1].label == "Gemini · Desktop · Thin · Season 2 · tools"
+    assert matrices(cells)["desktop"]["include"][1]["tools"] == "all"
+
+
 def test_ref_keeps_its_case() -> None:
     assert parse_line("hybrid full ref=claude/Feature-X", 1).ref == "claude/Feature-X"
 
@@ -99,7 +106,7 @@ def test_matrices_split_browser_from_the_vm_and_give_unique_artifact_names() -> 
     (browser,) = out["browser"]["include"]
     assert browser == {
         "label": "Gemini · Browser · Thin · x2", "category": "browser", "profile": "thin", "suite": "core",
-        "critic": "", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
+        "critic": "", "tools": "off", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
     }
     desktop = out["desktop"]["include"]
     assert [(d["category"], d["cap"], d["suffix"]) for d in desktop] == [("desktop", "1.5", "-cell1"), ("hybrid", "3", "-cell3")]

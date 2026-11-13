@@ -933,6 +933,8 @@ def test_desktop_loop_holds_run_never_builds_the_desktop_loop(monkeypatch) -> No
 def test_observer_settings_reports_the_trust_gate(monkeypatch) -> None:
     client = TestClient(app)
     monkeypatch.delenv("OPERON_TRUST_GATE", raising=False)
-    assert client.get("/observer/api/settings").json() == {"trust_gate": "on"}
+    monkeypatch.delenv("OPERON_TOOLS", raising=False)
+    assert client.get("/observer/api/settings").json() == {"trust_gate": "on", "tools": "off"}
     monkeypatch.setenv("OPERON_TRUST_GATE", "off")
-    assert client.get("/observer/api/settings").json() == {"trust_gate": "off"}
+    monkeypatch.setenv("OPERON_TOOLS", "read_file,list_dir")
+    assert client.get("/observer/api/settings").json() == {"trust_gate": "off", "tools": "read_file,list_dir"}

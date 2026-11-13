@@ -82,6 +82,14 @@ class AnchorSnapInfo(StrictModel):
     drift_px: float
 
 
+class ToolOutput(StrictModel):
+    """What one tool call returned (RFC 0002): its output, or why it could not run."""
+
+    tool: str = Field(min_length=1)
+    ok: bool
+    output: str = ""
+
+
 class ExecutedAction(StrictModel):
     """Recorded outcome of executing a single agent action."""
 
@@ -99,3 +107,6 @@ class ExecutedAction(StrictModel):
     # For a failed batch: the index of the action it stopped on. Every action before
     # it ran; none after it did.
     batch_failed_index: int | None = Field(default=None, ge=0)
+    # The tool calls this action ran, in order (a tool action, or a batch holding some).
+    # The backend answers each of the model's tool calls with one of these.
+    tool_outputs: list[ToolOutput] | None = None

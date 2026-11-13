@@ -1,7 +1,9 @@
 """File-path guard for actions that read or write local files.
 
-``read_text`` writes page text to ``action.text`` and the ``upload_file*``
-actions hand ``action.text`` to the page's file chooser. That path comes from
+``read_text`` writes page text to ``action.text``, the ``upload_file*``
+actions hand ``action.text`` to the page's file chooser, and the file tools
+(RFC 0002: ``read_file``, ``list_dir``, ``write_file``) read or write
+``tool_args["path"]``. That path comes from
 model output, which a page can steer, so without a check a run could overwrite
 or upload any file the operator can reach.
 
@@ -23,12 +25,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from operon.agent.tools import FILE_TOOLS, tool_path
 from operon.models.policy import ActionType
 
 FILE_PATH_ACTIONS: frozenset[ActionType] = frozenset({
     ActionType.READ_TEXT,
     ActionType.UPLOAD_FILE,
     ActionType.UPLOAD_FILE_NATIVE,
+    ActionType.TOOL,
 })
 
 # Characters that continue a path; a match in the intent must not be followed
@@ -67,14 +71,23 @@ def allowed_file_roots() -> list[Path]:
 
 def blocked_file_path(action: object, *, intent: str, run_dir: Path) -> str | None:
     """Return the offending path if ``action`` uses a file path it may not, else None."""
-    if getattr(action, "action_type", None) not in FILE_PATH_ACTIONS:
+    action_type = getattr(action, "action_type", None)
+    if action_type not in FILE_PATH_ACTIONS:
         return None
-    path = getattr(action, "text", None)
-    if not path:
-        return None  # the executor rejects a missing path itself
+    if action_type is ActionType.TOOL:
+        if getattr(action, "tool", None) not in FILE_TOOLS:
+            return None
+        path = (getattr(action, "tool_args", None) or {}).get("path")
+        if not isinstance(path, str) or not path.strip():
+            return None  # the tool rejects a missing path itself
+        resolved = tool_path(path)  # relative to the home folder, as the tool reads it
+    else:
+        path = getattr(action, "text", None)
+        if not path:
+            return None  # the executor rejects a missing path itself
+        resolved = Path(path).expanduser().resolve()
     if _named_in_intent(path, intent):
         return None
-    resolved = Path(path).expanduser().resolve()
     if any(_under(resolved, root) for root in [run_dir.resolve(), *allowed_file_roots()]):
         return None
     return path

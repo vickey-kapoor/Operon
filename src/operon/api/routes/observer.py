@@ -67,8 +67,11 @@ async def observer_usage(limit: int = Query(default=500, ge=1, le=2000)) -> dict
 @router.get("/observer/api/settings")
 async def observer_settings() -> dict:
     """Settings that change how runs behave, as this server sees them (env plus ``.env``).
-    The benchmarks record ``trust_gate`` so a gate-on run is never compared with gate-off ones."""
-    return {"trust_gate": "on" if make_trust_gate().enabled else "off"}
+    The benchmarks record ``trust_gate`` so a gate-on run is never compared with gate-off ones,
+    and ``tools`` (RFC 0002) so a run with tools is never compared with one without."""
+    from operon.agent.tools import enabled_tools
+
+    return {"trust_gate": "on" if make_trust_gate().enabled else "off", "tools": ",".join(enabled_tools()) or "off"}
 
 
 @router.get("/observer/api/artifact")

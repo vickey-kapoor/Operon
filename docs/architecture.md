@@ -218,6 +218,15 @@ primitives internally to drive the native file dialog. Failure signals include
 `PICKER_NOT_DETECTED`, `FILE_NOT_REFLECTED`, and `EXECUTION_ERROR` (which covers the
 headed-mode requirement).
 
+## Tool Actions (experimental)
+
+Behind `OPERON_TOOLS` (off by default; [RFC 0002](rfcs/0002-tool-action-channel.md)), the Gemini
+computer-use model may call `read_file`, `list_dir`, `write_file`, `http_get` and (with `all`)
+`run_shell` next to its screen actions. A call becomes an `ActionType.TOOL` action, passes the same
+gates as any action (trust gate, file guard), and `ToolExecutor` (`executor/tools.py`) runs it in
+front of the environment's executor; the output goes back to the model as the answer to its call.
+Perception does not change: the screen stays the only thing the model sees on its own.
+
 ## Persistence
 
 Run data is file-backed:

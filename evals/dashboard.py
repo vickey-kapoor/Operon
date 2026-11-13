@@ -33,7 +33,7 @@ files through its ``/api/blob`` route.
 ``--alert`` posts to a Slack incoming webhook (``SLACK_WEBHOOK_URL``) only for critical
 problems: a run that stopped at its cost cap. (The workflow adds the other critical one: a
 benchmark or import run that failed.) Score and cost changes go in the daily summary instead:
-``digest`` posts every run of the last 24 hours with its score, cost and change against the
+``digest`` posts every run imported in the last 24 hours with its score, cost and change against the
 previous comparable run (same mode, suite, backend, harness, model and season, not flagged),
 plus this month's spend.
 """
@@ -505,13 +505,14 @@ def check_alerts(conn, report: dict, notify: Callable[[str], None]) -> list[str]
 
 _DIGEST_SQL = """SELECT key, mode, suite, backend, harness_profile, model, started_at, flagged,
         github_run_url, config, summary FROM bench_runs
-    WHERE started_at >= %s AND started_at < %s ORDER BY started_at"""
+    WHERE imported_at >= %s AND imported_at < %s ORDER BY started_at"""
 _MONTH_SQL = """SELECT COALESCE(SUM(COALESCE((summary->>'cost_usd')::float, 0)
-        + COALESCE((summary->>'judge_cost_usd')::float, 0)), 0) FROM bench_runs WHERE started_at >= %s"""
+        + COALESCE((summary->>'judge_cost_usd')::float, 0)
+        + COALESCE((summary->>'gpu_cost_usd')::float, 0)), 0) FROM bench_runs WHERE started_at >= %s"""
 
 
 def run_cost(summary: dict) -> float:
-    return float(summary.get("cost_usd") or 0) + float(summary.get("judge_cost_usd") or 0)
+    return sum(float(summary.get(field) or 0) for field in ("cost_usd", "judge_cost_usd", "gpu_cost_usd"))
 
 
 def digest_line(run: dict, previous: dict | None) -> str:
@@ -557,8 +558,9 @@ def digest_text(runs: list[tuple[dict, dict | None]], month_spend: float, day: s
 
 
 def collect_digest(conn, end: datetime, hours: float = 24) -> tuple[list[tuple[dict, dict | None]], float]:
-    """Runs that started in the ``hours`` before ``end``, each with its previous comparable run,
-    and the month's spend so far (UTC month of ``end``)."""
+    """Runs imported in the ``hours`` before ``end`` (so a run that finishes after one summary
+    goes in the next), each with its previous comparable run, and the month's spend so far
+    (UTC month of ``end``)."""
     columns = ("key", "mode", "suite", "backend", "harness_profile", "model", "started_at", "flagged",
                "github_run_url", "config", "summary")
     rows = conn.execute(_DIGEST_SQL, (end - timedelta(hours=hours), end)).fetchall()
@@ -729,7 +731,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--comment-file", type=Path, help="write the results table for a /bench PR comment (Markdown) here")
     digest = commands.add_parser("digest", help="post the daily summary of runs, scores and cost to Slack")
     digest.add_argument("--database-url", default=os.getenv("DATABASE_URL"), help="Postgres URL (default: $DATABASE_URL)")
-    digest.add_argument("--hours", type=float, default=24, help="runs that started this many hours back (default 24)")
+    digest.add_argument("--hours", type=float, default=24, help="runs imported this many hours back (default 24)")
     digest.add_argument("--dry-run", action="store_true", help="print the summary instead of posting it")
     return parser
 

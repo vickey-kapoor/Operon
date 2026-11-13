@@ -88,7 +88,8 @@ jobs:
           python3 -m evals.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert --alerts-file alerts.txt --comment-file results.md
 
       - name: Alert Slack that the benchmark run failed
-        # Critical: the run crashed or was stopped. Skipped when its cost-cap alert already went out.
+        # Critical: the run crashed or timed out. A cancelled run was stopped by a person, so no alert.
+        # Skipped when its cost-cap alert already went out.
         if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' && env.SLACK_WEBHOOK_URL != ''
         continue-on-error: true  # a Slack hiccup is not an import failure
         env:

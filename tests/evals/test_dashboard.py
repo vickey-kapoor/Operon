@@ -357,7 +357,7 @@ def _run_row(**summary):
 
 def test_the_daily_summary_lists_each_run_with_score_cost_and_change() -> None:
     conn = _DigestConn(
-        [_run_row(tasks=10, success=7, success_rate=0.7, cost_usd=1.2, judge_cost_usd=0.05)],
+        [_run_row(tasks=10, success=7, success_rate=0.7, cost_usd=1.2, judge_cost_usd=0.05, gpu_cost_usd=0.25)],
         ("k0", {"success_rate": 0.8}, None),
         12.5,
     )
@@ -366,9 +366,10 @@ def test_the_daily_summary_lists_each_run_with_score_cost_and_change() -> None:
 
     assert month == 12.5
     assert conn.queries[-1][1][0] == datetime(2026, 11, 1, tzinfo=timezone.utc)
-    assert text.splitlines()[0] == ":bar_chart: *Operon daily runs* (2026-11-14): 1 run, $1.25"
-    assert text.splitlines()[1] == "• <https://gh/run/9|*Desktop · core · Thin · Season 2* · 7/10 (70%) · $1.25 · -10 pts vs last run>"
+    assert text.splitlines()[0] == ":bar_chart: *Operon daily runs* (2026-11-14): 1 run, $1.50"
+    assert text.splitlines()[1] == "• <https://gh/run/9|*Desktop · core · Thin · Season 2* · 7/10 (70%) · $1.50 · -10 pts vs last run>"
     assert "Month to date: $12.50" in text
+    assert "imported_at >=" in conn.queries[0][0] and "gpu_cost_usd" in conn.queries[-1][0]
 
 
 def test_no_daily_summary_when_nothing_ran() -> None:

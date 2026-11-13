@@ -130,7 +130,7 @@ Slack (`SLACK_WEBHOOK_URL` repository secret) gets two kinds of posts.
 Critical alerts, right away, from the "Send results to dashboard" workflow:
 
 - a run stopped at its cost cap (`MAX_RUN_COST_USD`, the workflows' `max_cost_usd` input),
-- a benchmark run failed (crashed or was stopped), or
+- a benchmark run failed (crashed or timed out; a run you cancel yourself sends nothing), or
 - the dashboard import itself failed.
 
 One daily summary at 8 AM Chicago (`daily-summary.yml`, `python -m evals.dashboard digest`):

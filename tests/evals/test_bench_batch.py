@@ -110,10 +110,10 @@ def test_main_writes_the_workflow_outputs(tmp_path, monkeypatch, capsys) -> None
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO("browser thin season=2"))
     code = bench_batch.main(["--github-output", str(out), "--summary", str(summary), "--max-total-usd", "5"])
     assert code == 0
-    values = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    values = dict(line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines())
     assert json.loads(values["browser"])["include"][0]["extra"] == "--season 2"
     assert values["has_browser"] == "true" and values["has_desktop"] == "false" and values["total_cap"] == "3"
-    assert "Gemini · Browser · Thin · Season 2" in summary.read_text()
+    assert "Gemini · Browser · Thin · Season 2" in summary.read_text(encoding="utf-8")
 
 
 def test_main_refuses_a_bad_batch(monkeypatch, capsys) -> None:

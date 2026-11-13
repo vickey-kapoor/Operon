@@ -89,7 +89,7 @@ def test_cleanup_ends_each_launched_process_group(executor, monkeypatch) -> None
             raise ProcessLookupError
         killed.append((pid, sig))
 
-    monkeypatch.setattr(linux_desktop.os, "killpg", killpg)
+    monkeypatch.setattr(linux_desktop.os, "killpg", killpg, raising=False)  # no os.killpg on Windows
     procs = [SimpleNamespace(pid=1, wait=lambda timeout: 0), SimpleNamespace(pid=2, wait=lambda timeout: 0)]
     executor._launched_processes["run-1"] = procs
 

@@ -50,7 +50,7 @@ def _run(expression: str, multi_model: tuple[str, ...] = ()):
                "harness_profile: 'full', ...(extra.config || {}) }, summary: { success, tasks, success_rate: success / tasks, "
                "mean_seconds: 27.1 } });\n")
     script += f"process.stdout.write(JSON.stringify({expression}));"
-    done = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+    done = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", check=True)
     return json.loads(done.stdout)
 
 

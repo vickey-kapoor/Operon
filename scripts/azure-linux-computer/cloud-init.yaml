@@ -91,6 +91,8 @@ write_files:
       sudo -u operon -H bash -lc "
         set -euo pipefail
         cd /home/operon
+        # python-xlib (pyautogui's X11 backend) will not load without this file, even empty.
+        touch .Xauthority
         [ -d Operon ] || git clone --depth 1 --branch '$REF' https://github.com/vickey-kapoor/Operon.git
         cd Operon
         # Debian 12's python3 is 3.11; Operon needs 3.14, so uv installs it.

@@ -155,3 +155,4 @@ def test_cloud_init_installs_what_playwright_needs_and_can_rerun() -> None:
     text = cloud.render_cloud_init("main")
     assert "- libatomic1" in text
     assert "[ -x .venv/bin/python ] ||" in text
+    assert "touch .Xauthority" in text  # pyautogui does not load without it

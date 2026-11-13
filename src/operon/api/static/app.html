@@ -674,12 +674,14 @@
     const rows = [[r.steps, r.steps === 1 ? "step" : "steps", false], [r.approvals, "approved by you", r.approvals === 0],
                   [r.takeovers, r.takeovers === 1 ? "time you took over" : "times you took over", r.takeovers === 0]];
     if (r.failed_steps) rows.push([r.failed_steps, r.failed_steps === 1 ? "step failed" : "steps failed", false]);
+    if (r.retries) rows.push([r.retries, r.retries === 1 ? "action tried again" : "actions tried again", false]);
     for (const [n, text, quiet] of rows) {
       const row = el("div", quiet ? "muted" : ""); row.append(el("span", "n", String(n)), el("span", "", text)); facts.append(row);
     }
-    const ok = r.timeline.filter(isChecked).length;
-    $("done-checked").textContent = r.timeline.length
-      ? `${ok} of ${r.timeline.length} steps checked on screen after they ran`
+    const finals = r.timeline.filter((st) => st.checked_by !== "retried");
+    const ok = finals.filter(isChecked).length;
+    $("done-checked").textContent = finals.length
+      ? `${ok} of ${finals.length} steps checked on screen after they ran`
       : "No steps ran";
     $("done-card").classList.remove("hidden");
   }

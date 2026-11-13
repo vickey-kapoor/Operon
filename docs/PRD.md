@@ -199,7 +199,7 @@ Design invariants: browser and desktop share the loop, verifier, recovery, and p
 - **NFR-2 Safety & security.** Treat all on-screen/web content as untrusted (prompt injection is OWASP LLM01 #1 [13]). Requirements: HITL gating on uncertainty **[Current]**; high-risk-action confirmation **[Current, FR-16]**; allow/deny policies **[Roadmap, FR-12]**; sandbox/VM deployment guidance **[Roadmap]**; full audit trail **[Current]**. Adopt Anthropic/OWASP best practices (untrusted content isolation, least privilege, screening) [13][14].
 - **NFR-3 Performance/latency.** Browser web tasks should stay competitive with low-latency CUAs (Gemini CUA reports ~70%+ web accuracy at ~225s/task class [8]); track latency-per-step and end-to-end task time per release.
 - **NFR-4 Cost transparency.** Token usage and estimated cost must be visible per run; JSON fallback offers a cheaper path than frontier CUA tokens.
-- **NFR-5 Portability.** Browser path cross-platform via Playwright; desktop path Windows-first today with macOS/Linux parity on the roadmap (FR-20). Python 3.11+ (3.14 for dev).
+- **NFR-5 Portability.** Browser path cross-platform via Playwright; desktop path Windows-first today with macOS/Linux parity on the roadmap (FR-20). Python 3.14+.
 - **NFR-6 Observability.** 100% of runs produce a complete, exportable, replayable artifact bundle.
 - **NFR-7 Privacy/data residency.** Self-hostable; runtime artifacts stay local under `.var/` by default.
 

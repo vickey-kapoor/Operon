@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Vision-driven computer-use engine for UI-native automation."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.143.3,<1.0.0",
     "pydantic>=2.14.1,<3.0.0",
@@ -65,7 +65,7 @@ filterwarnings = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

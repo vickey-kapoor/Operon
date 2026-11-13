@@ -5,7 +5,7 @@ _For AI coding agents and contributors._
 Operon uses a Python `src/` layout. Core orchestration lives in `src/operon/agent/`, with focused `actions/`, `artifacts/`, `backends/`, `perception/`, and `policy/` subpackages. API routes live in `src/operon/api/routes/`, shared API runtime construction in `src/operon/api/runtime/`, CDP-based browser observation in `src/operon/browser/`, executors in `src/operon/executor/`, Gemini clients in `src/operon/clients/`, shared schemas in `src/operon/models/`, and persistence in `src/operon/store/`. Model prompts ship as package data in `src/operon/prompts/`. Tests live in `tests/` and mirror the package they cover; the opt-in live suites are in `tests/integration/`. Benchmarks and eval tools (`python -m evals.<tool>`) live in `evals/`, with their unit tests in `tests/evals/`. Long-form docs are in `docs/` (benchmark write-ups in `docs/reports/`), and maintenance scripts in `scripts/`.
 
 ## Build, Test, and Development Commands
-Use Python 3.14 locally. Package metadata remains compatible with Python 3.11+.
+Use Python 3.14 (the minimum supported version).
 
 ```powershell
 py -3.14 -m venv .venv
@@ -36,7 +36,7 @@ Operon is vision-only: no DOM, CSS selectors, XPath, or Playwright `locator()` i
 The full set of load-bearing invariants (spatial buffer TTLs, verification states, atomic TYPE, visual servo, observable-mode import rules) lives in [CLAUDE.md](CLAUDE.md#invariants). Read it before changing agent flow.
 
 ## Testing Guidelines
-Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs Python 3.11 and 3.14 plus Ruff.
+Tests use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"`). Name files and functions as `test_<behavior>`. Add or update tests whenever changing agent flow, API contracts, persistence, or executor behavior. CI runs the tests on Python 3.14 plus Ruff.
 
 Live-server and real-environment tests are opt-in and excluded from the default CI path:
 - `tests/integration/test_e2e_quick_tasks.py`, `tests/integration/test_bug_fixes_verification.py` - require a live server

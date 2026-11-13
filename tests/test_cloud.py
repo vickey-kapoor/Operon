@@ -149,3 +149,9 @@ async def test_run_prints_a_link_to_the_started_run() -> None:
 def test_auto_shutdown_lives_in_the_vms_region() -> None:
     cmd = cloud.az_auto_shutdown(cloud.CloudConfig(location="westus3"))
     assert cmd[cmd.index("-l") + 1] == "westus3"
+
+
+def test_cloud_init_installs_what_playwright_needs_and_can_rerun() -> None:
+    text = cloud.render_cloud_init("main")
+    assert "- libatomic1" in text
+    assert "[ -x .venv/bin/python ] ||" in text

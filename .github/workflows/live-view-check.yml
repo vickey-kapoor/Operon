@@ -52,7 +52,10 @@ jobs:
           exit 1
 
       - name: Run the check
-        run: uv run python -m evals.live_view_check --out live-view-check | tee check.txt
+        # pipefail: without it the step takes tee's exit code and a failed check shows green.
+        run: |
+          set -o pipefail
+          uv run python -m evals.live_view_check --out live-view-check | tee check.txt
 
       - name: Summary
         if: always()

@@ -23,6 +23,8 @@ import time
 from pathlib import Path
 
 TASK = "Add one pack of AA batteries to the cart in the shop, then stop."
+# The result card the live run shows once the run has ended.
+REPORT = "#done-card:not(.hidden)"
 
 
 class Watch:
@@ -47,8 +49,8 @@ async def _shown(page) -> dict:
         """() => { const img = document.getElementById('frame');
                    return { visible: !img.classList.contains('hidden'), width: img.naturalWidth,
                             height: img.naturalHeight, src: img.src,
-                            status: document.getElementById('status-pill').textContent,
-                            steps: document.getElementById('status-text').textContent }; }"""
+                            status: document.getElementById('run-state-text').textContent,
+                            steps: document.getElementById('run-meta').textContent }; }"""
     )
 
 
@@ -74,11 +76,16 @@ async def check(api: str, key: str, out: Path, *, max_steps: int, timeout_s: flo
             page = await browser.new_page(viewport={"width": 1400, "height": 900})
             page.on("websocket", lambda ws: ws.on("framereceived", watch.on_frame) if "/ws/stream" in ws.url else None)
             await page.goto(f"{api}/app#key={key}")
+            await page.wait_for_selector("#view-home:not(.hidden)")
             await page.fill("#intent", TASK)
+            # The run options sit in a collapsed "Where it runs and when it asks" section.
+            await page.click("details.options > summary")
+            await page.select_option("#environment", "browser")
             await page.fill("#start-url", site.url("/apps/shop/"))
             await page.fill("#max-steps", str(max_steps))
             await page.check("input[name=mode][value=auto]")
             await page.click("#btn-start")
+            await page.wait_for_selector("#view-run:not(.hidden)", timeout=30_000)
 
             # Watch the run; take over once frames show, click, and hand back.
             took_over = False
@@ -91,7 +98,7 @@ async def check(api: str, key: str, out: Path, *, max_steps: int, timeout_s: flo
                     sizes.add((shown["width"], shown["height"]))
                     images.add(shown["src"])
                 await _snap(page, out, watch, "watch")
-                if await page.is_visible("#report"):
+                if await page.is_visible(REPORT):
                     break
                 # Take over as soon as the live view shows the browser: a short task can end in two steps.
                 if not took_over and watch.frames >= 3 and shown["visible"] and shown["width"]:
@@ -112,7 +119,7 @@ async def check(api: str, key: str, out: Path, *, max_steps: int, timeout_s: flo
                     await page.fill("#handback-note", "I only moved the focus with Tab.")
                     await page.click("#btn-handback")
             await _snap(page, out, watch, "end")
-            report_text = await page.inner_text("#report") if await page.is_visible("#report") else ""
+            report_text = await page.inner_text(REPORT) if await page.is_visible(REPORT) else ""
             final = await _shown(page)
             await browser.close()
         shop = site.state().get("shop", {})

@@ -319,6 +319,10 @@ async def test_a_retried_action_shows_in_the_step_list(monkeypatch, tmp_path) ->
 
     assert [(s["step"], s["action_type"], s["checked_by"]) for s in steps] == [(1, "type", "retried"), (1, "click", "rules")]
 
+    report = await frontdoor.build_report(response.run_id)
+    assert (report["steps"], report["retries"], report["failed_steps"]) == (1, 1, 0)
+    assert report["summary"].startswith(f"{report['outcome']} after 1 step")
+
 
 def test_a_step_the_thin_harness_took_on_trust_is_not_checked() -> None:
     from operon.models.verification import VerificationResult, VerificationStatus

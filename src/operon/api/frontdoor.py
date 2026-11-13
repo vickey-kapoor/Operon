@@ -395,7 +395,10 @@ async def build_report(run_id: str) -> dict[str, Any]:
     if started is not None and status in TERMINAL and finished is None:
         finished = _finished_at.setdefault(run_id, time.time())
     duration = round(finished - started, 1) if started is not None and finished is not None else None
-    failed_steps = sum(1 for step in steps if not step["ok"])
+    # Rows for actions retried within a step are extras: a step counts once, by its final action.
+    final_rows = [step for step in steps if step["checked_by"] != "retried"]
+    retries = len(steps) - len(final_rows)
+    failed_steps = sum(1 for step in final_rows if not step["ok"])
     outcome = _OUTCOME.get(status, status.value)
     approvals = getattr(record, "approval_count", 0)
     takeovers = getattr(record, "takeover_count", 0)
@@ -414,7 +417,8 @@ async def build_report(run_id: str) -> dict[str, Any]:
         "summary": summary,
         "stop_reason": stop_reason,
         "final_message": _final_message(steps, record),
-        "steps": len(steps),
+        "steps": record.step_count,
+        "retries": retries,
         "failed_steps": failed_steps,
         "approvals": approvals,
         "takeovers": takeovers,

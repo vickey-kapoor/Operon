@@ -77,7 +77,7 @@ def run_command(argv: Sequence[str], *, input_text: str | None = None) -> str:
     exe = shutil.which(argv[0]) or argv[0]  # az is az.cmd on Windows
     result = subprocess.run([exe, *argv[1:]], capture_output=True, text=True, input=input_text)
     if result.returncode != 0:
-        raise RuntimeError(f"{argv[0]} {argv[1] if len(argv) > 1 else ''} failed: {result.stderr.strip() or result.stdout.strip()}")
+        raise RuntimeError(f"{' '.join(argv[:3])} failed: {result.stderr.strip() or result.stdout.strip()}")
     return result.stdout
 
 
@@ -123,7 +123,11 @@ def az_allow_ssh(cfg: CloudConfig, source_ip: str) -> list[str]:
 
 
 def az_auto_shutdown(cfg: CloudConfig) -> list[str]:
-    return ["az", "vm", "auto-shutdown", "-g", cfg.resource_group, "-n", cfg.vm, "--time", AUTO_SHUTDOWN_UTC, "-o", "none"]
+    # The schedule must sit in the VM's region, which can differ from the resource group's.
+    return [
+        "az", "vm", "auto-shutdown", "-g", cfg.resource_group, "-n", cfg.vm,
+        "--time", AUTO_SHUTDOWN_UTC, "-l", cfg.location, "-o", "none",
+    ]
 
 
 def ssh_base(cfg: CloudConfig, ip: str) -> list[str]:
@@ -164,7 +168,10 @@ def deallocate_vm(cfg: CloudConfig, run: Runner, out=print) -> None:
     out("Deallocated: no compute billing until the next start.")
 
 
-def wait_for_ssh(cfg: CloudConfig, ip: str, run: Runner, *, timeout_s: float = 300.0, sleep=time.sleep) -> None:
+def wait_for_ssh(cfg: CloudConfig, ip: str, run: Runner, *, timeout_s: float = 1800.0, sleep=time.sleep) -> None:
+    """Wait until the VM's first-boot setup is done (about 15 minutes after create;
+    seconds on later starts). Giving up early would deallocate it mid-setup, and the
+    setup does not run again on the next boot."""
     deadline = time.monotonic() + timeout_s
     while True:
         try:

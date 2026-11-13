@@ -144,3 +144,8 @@ async def test_run_prints_a_link_to_the_started_run() -> None:
     await client.start({"intent": "x"})
     await client.close()
     assert lines == ["Watch it live: http://127.0.0.1:8090/app#key=k3y&run=r-42"]
+
+
+def test_auto_shutdown_lives_in_the_vms_region() -> None:
+    cmd = cloud.az_auto_shutdown(cloud.CloudConfig(location="westus3"))
+    assert cmd[cmd.index("-l") + 1] == "westus3"

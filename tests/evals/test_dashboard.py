@@ -13,12 +13,13 @@ from evals.dashboard import (
     add_change,
     attach_traces,
     check_alerts,
+    collect_digest,
     comment_row,
+    digest_text,
     find_reports,
     import_reports,
     main,
     prepare,
-    regressions,
     run_key,
     to_rows,
     trace_files,
@@ -294,16 +295,6 @@ def test_trace_files_refuse_task_names_that_leave_the_screens_folder(tmp_path, t
     assert trace_files(screens, task) == (None, [], None)
 
 
-def test_regressions_flag_a_pass_rate_drop_and_a_cost_rise() -> None:
-    before = {"success_rate": 0.95, "success": 42, "tasks": 44, "cost_per_task_usd": 0.02}
-    assert regressions({"success_rate": 0.93, "cost_per_task_usd": 0.024}, before) == []
-    problems = regressions({"success_rate": 0.9, "success": 40, "tasks": 44, "cost_per_task_usd": 0.025}, before)
-    assert len(problems) == 2
-    assert problems[0].startswith("Pass rate fell 5 points") and problems[1].startswith("Cost per task rose 25%")
-    assert regressions({"success_rate": 0.5}, None) == []
-    assert regressions({"success_rate": 0.95, "cost_per_task_usd": 0.05}, {"success_rate": 0.95}) == []  # no old cost
-
-
 class _OneRowConn:
     def __init__(self, row):
         self.row, self.queries = row, []
@@ -316,16 +307,12 @@ class _OneRowConn:
         return self.row
 
 
-def test_check_alerts_compares_with_the_previous_comparable_run() -> None:
+def test_a_score_drop_is_not_a_critical_alert() -> None:
     previous = ("old-key", {"success_rate": 1.0, "success": 2, "tasks": 2, "cost_per_task_usd": 0.02}, None)
     conn, sent = _OneRowConn(previous), []
     report = prepare(_report(backend="computer_use", harness_profile="thin"), {"github_run_url": "https://gh/run/1"})
 
-    problems = check_alerts(conn, report, sent.append)
-
-    assert problems == ["Pass rate fell 50 points: 50% (1/2), was 100% (2/2)."]
-    assert conn.queries[0][:5] == ("browser", "full", "computer_use", "thin", None)
-    assert "Pass rate fell 50 points" in sent[0] and "<https://gh/run/1|Workflow run>" in sent[0]
+    assert check_alerts(conn, report, sent.append) == [] and sent == []
 
 
 def test_check_alerts_reports_a_budget_stop_without_comparing() -> None:
@@ -337,13 +324,59 @@ def test_check_alerts_reports_a_budget_stop_without_comparing() -> None:
     assert conn.queries == [] and len(sent) == 1
 
 
-def test_no_alert_without_a_previous_run() -> None:
+def test_a_budget_stop_alert_links_the_workflow_run() -> None:
+    stop = {"limit_usd": 3.0, "spent_usd": 3.2, "tasks_run": 4, "tasks_planned": 10}
     sent = []
-    assert check_alerts(_OneRowConn(None), prepare(_report(), {}), sent.append) == [] and sent == []
+    check_alerts(_OneRowConn(None), prepare(_report(budget_stop=stop), {"github_run_url": "https://gh/run/1"}), sent.append)
+    assert "cost cap" in sent[0] and "<https://gh/run/1|Workflow run>" in sent[0]
+
+
+class _DigestConn:
+    """Answers the digest's queries: the day's runs, each one's previous run, the month's spend."""
+
+    def __init__(self, runs, previous, month_spend):
+        self.runs, self.previous, self.month_spend, self.queries = runs, previous, month_spend, []
+
+    def execute(self, sql, params=None):
+        self.queries.append((sql, params))
+        self._sql = sql
+        return self
+
+    def fetchall(self):
+        return self.runs
+
+    def fetchone(self):
+        return (self.month_spend,) if "SUM(" in self._sql else self.previous
+
+
+def _run_row(**summary):
+    started = datetime(2026, 11, 13, 16, 50, tzinfo=timezone.utc)
+    return ("k1", "desktop", "core", "computer_use", "thin", "gemini-3.5-flash", started, None,
+            "https://gh/run/9", {"season": 2}, summary)
+
+
+def test_the_daily_summary_lists_each_run_with_score_cost_and_change() -> None:
+    conn = _DigestConn(
+        [_run_row(tasks=10, success=7, success_rate=0.7, cost_usd=1.2, judge_cost_usd=0.05)],
+        ("k0", {"success_rate": 0.8}, None),
+        12.5,
+    )
+    runs, month = collect_digest(conn, datetime(2026, 11, 14, 14, 0, tzinfo=timezone.utc))
+    text = digest_text(runs, month, "2026-11-14")
+
+    assert month == 12.5
+    assert conn.queries[-1][1][0] == datetime(2026, 11, 1, tzinfo=timezone.utc)
+    assert text.splitlines()[0] == ":bar_chart: *Operon daily runs* (2026-11-14): 1 run, $1.25"
+    assert text.splitlines()[1] == "• <https://gh/run/9|*Desktop · core · Thin · Season 2* · 7/10 (70%) · $1.25 · -10 pts vs last run>"
+    assert "Month to date: $12.50" in text
+
+
+def test_no_daily_summary_when_nothing_ran() -> None:
+    assert digest_text([], 4.0, "2026-11-14") is None
 
 
 @pytest.mark.skipif(not os.getenv("OPERON_TEST_DATABASE_URL"), reason="no test database")
-def test_import_uploads_traces_and_alerts_against_the_previous_run(tmp_path) -> None:
+def test_import_uploads_traces_and_sends_no_alert_for_a_score_drop(tmp_path) -> None:
     psycopg = pytest.importorskip("psycopg")
     folder = tmp_path / "bench"
     folder.mkdir()
@@ -365,7 +398,7 @@ def test_import_uploads_traces_and_alerts_against_the_previous_run(tmp_path) -> 
         url = conn.execute("SELECT result->>'screenshot_url' FROM bench_task_results WHERE task = 'go_back'").fetchall()
 
     assert ("https://blob.example/bench/browser-full-computer_use-full-20261024T012945Z/go_back/final.png",) in url
-    assert len(sent) == 1 and "Pass rate fell 50 points" in sent[0]
+    assert sent == []  # a score drop goes in the daily summary, not an alert
 
 
 def test_blob_script_path_points_at_dashboard_scripts() -> None:

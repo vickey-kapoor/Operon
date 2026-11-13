@@ -336,8 +336,11 @@ workflow, the **Send results to dashboard** workflow writes the reports to a Neo
 uploads screenshots and traces to a private Vercel Blob store (the dashboard shows them for
 tasks that did not pass), adds each run's score range and change vs the previous run of its
 cell (see [Run-over-run changes](#run-over-run-changes-kan-60)), comments that table on the PR
-for a `/bench` run, and posts a Slack alert when a run's pass rate drops 5 points,
-its cost per task rises 25% against the previous comparable run, or it hits its cost cap.
+for a `/bench` run, and posts a Slack alert only for critical problems: a run that hit its
+cost cap, a benchmark run that failed, or the import itself failing. Scores and cost go in
+one **Daily benchmark summary** post each morning (8 AM Chicago, `daily-summary.yml`): every run
+of the last 24 hours with its score, cost and change against the previous run of its cell, plus
+this month's spend; nothing is posted on a day with no runs.
 Run the workflow by hand to import older runs. The Cost tab shows this month's spend against
 the `MONTHLY_BUDGET_USD` budget (Vercel env) and spend by month (UTC), counting every
 benchmark run (incomplete and partial ones too), grounding evals and judge checks. See
@@ -357,7 +360,7 @@ that the workflow starts before the run and deallocates after. Setup is in
 | `GEMINI_API_KEY` | secret | Every model call: backends, step critic and the benchmark judge |
 | `DATABASE_URL` | secret | Send results to dashboard import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
-| `SLACK_WEBHOOK_URL` | secret | Regression alerts; optional |
+| `SLACK_WEBHOOK_URL` | secret | Critical alerts and the daily summary; optional |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | variables | Starting and stopping the Azure VM via OIDC (no stored secret) |
 | `AZURE_CREDENTIALS` | secret | Older fallback for the Azure VM while `AZURE_CLIENT_ID` is unset |
 | `AZURE_VM_RESOURCE_GROUP`, `AZURE_VM_NAME` | variables | Optional: override the Azure resource group and VM names |

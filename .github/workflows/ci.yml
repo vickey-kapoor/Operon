@@ -26,8 +26,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv
-        run: python -m pip install --upgrade pip uv
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies (exact versions from uv.lock)
         # --locked installs precisely what uv.lock pins (and fails if the lock is
@@ -69,8 +72,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv
-        run: python -m pip install --upgrade pip uv
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies (exact versions from uv.lock)
         run: uv sync --locked --extra dev

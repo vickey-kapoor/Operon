@@ -6,10 +6,12 @@ updates:
     schedule:
       interval: monthly
   # Python packages in uv.lock: one grouped PR a month, plus security fixes as they appear.
+  # lockfile-only: bump uv.lock, never the minimum versions in pyproject.toml (SDK users keep them).
   - package-ecosystem: uv
     directory: /
     schedule:
       interval: monthly
+    versioning-strategy: lockfile-only
     groups:
       python-packages:
         patterns: ["*"]

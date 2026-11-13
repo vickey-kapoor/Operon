@@ -6,8 +6,9 @@ run-name: Send results to dashboard (${{ github.event.workflow_run.name || 'manu
 # dashboard reads it through its API routes. Reports carry task names, outcomes,
 # cost and the judge's one-line reasons. Screenshots and traces of a finished run
 # go to Vercel Blob (BLOB_READ_WRITE_TOKEN secret) and the database keeps their
-# links; a Slack alert (SLACK_WEBHOOK_URL secret) goes out when a run's pass rate
-# or cost per task got worse than the previous comparable run, or it hit its cost cap.
+# links. Slack (SLACK_WEBHOOK_URL secret) gets critical alerts only: a run that hit its
+# cost cap, a benchmark run that failed, or this import failing. Scores and cost go in
+# the daily summary instead (daily-summary.yml).
 # Each run's summary gets its score with a 95% range and the change against the
 # previous run of the same grid cell (KAN-60); for a /bench run the same table is
 # posted as a comment on the pull request.
@@ -84,7 +85,21 @@ jobs:
         run: |
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$RUN_ID" || true
           if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
-          python3 -m evals.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert --comment-file results.md
+          python3 -m evals.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert --alerts-file alerts.txt --comment-file results.md
+
+      - name: Alert Slack that the benchmark run failed
+        # Critical: the run crashed or timed out. A cancelled run was stopped by a person, so no alert.
+        # Skipped when its cost-cap alert already went out.
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' && env.SLACK_WEBHOOK_URL != ''
+        continue-on-error: true  # a Slack hiccup is not an import failure
+        env:
+          RUN_NAME: ${{ github.event.workflow_run.display_title }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          if [ -s alerts.txt ]; then echo "The cost-cap alert already covers this run."; exit 0; fi
+          text=$(printf ':rotating_light: *Operon benchmark failed*: %s\n<%s|Workflow run>' "$RUN_NAME" "$RUN_URL")
+          jq -n --arg text "$text" '{text: $text}' | curl -sSf -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+          echo "sent a Slack alert"
 
       - name: Comment the results on the pull request
         if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'issue_comment'
@@ -122,3 +137,11 @@ jobs:
           mkdir -p backfill
           git archive FETCH_HEAD dashboard/data/reports | tar -x -C backfill
           python3 -m evals.dashboard import backfill/dashboard/data/reports
+
+      - name: Alert Slack that the import failed
+        if: failure() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          text=$(printf ':rotating_light: *Operon dashboard import failed*: results may be missing from the dashboard.\n<%s|Workflow run>' "$RUN_URL")
+          jq -n --arg text "$text" '{text: $text}' | curl -sSf -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"

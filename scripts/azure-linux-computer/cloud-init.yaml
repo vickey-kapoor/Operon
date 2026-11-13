@@ -92,9 +92,10 @@ write_files:
         cd /home/operon
         [ -d Operon ] || git clone --depth 1 --branch '$REF' https://github.com/vickey-kapoor/Operon.git
         cd Operon
-        python3 -m venv .venv
-        .venv/bin/pip install -q --upgrade pip
-        .venv/bin/pip install -q -e .
+        # Debian 12's python3 is 3.11; Operon needs 3.14, so uv installs it.
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        ~/.local/bin/uv venv --python 3.14 .venv
+        ~/.local/bin/uv pip install -q --python .venv/bin/python -e .
         .venv/bin/playwright install chromium
       "
       /home/operon/Operon/.venv/bin/playwright install-deps chromium

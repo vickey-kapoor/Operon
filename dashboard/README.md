@@ -125,13 +125,19 @@ Without the secret, results are imported without screenshots.
 
 ## Alerts
 
-After importing a finished benchmark run, the workflow (`--alert`) posts to a Slack
-incoming webhook (`SLACK_WEBHOOK_URL` repository secret) when:
+Slack (`SLACK_WEBHOOK_URL` repository secret) gets two kinds of posts.
 
-- its pass rate is 5 or more points below the previous comparable run (same mode,
-  suite, backend, harness and model, not flagged),
-- its agent cost per task is 25% or more above that run's, or
-- it stopped at its cost cap (`MAX_RUN_COST_USD`, the workflows' `max_cost_usd` input, $5 by default).
+Critical alerts, right away, from the "Send results to dashboard" workflow:
+
+- a run stopped at its cost cap (`MAX_RUN_COST_USD`, the workflows' `max_cost_usd` input),
+- a benchmark run failed (crashed or timed out; a run you cancel yourself sends nothing), or
+- the dashboard import itself failed.
+
+One daily summary at 8 AM Chicago (`daily-summary.yml`, `python -m evals.dashboard digest`):
+every run of the last 24 hours with its score, cost and change against the previous run of
+its cell (same mode, suite, backend, harness, model and season, not flagged), the day's total
+and this month's spend. Nothing is posted on a day with no runs; run the workflow by hand to
+post now, or `digest --dry-run` locally to print it.
 
 Without the secret, no alerts are sent.
 

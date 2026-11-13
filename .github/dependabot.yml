@@ -1,7 +1,15 @@
-# Actions are pinned to commit SHAs; this keeps those pins current.
+# Actions are pinned to commit SHAs and Python packages to uv.lock; this keeps both current.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+  # Python packages in uv.lock: one grouped PR a month, plus security fixes as they appear.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      python-packages:
+        patterns: ["*"]

@@ -1,0 +1,40 @@
+name: Daily benchmark summary
+run-name: Daily benchmark summary to Slack
+
+# Every morning, one Slack post (SLACK_WEBHOOK_URL secret) with the last 24 hours of
+# benchmark runs from the dashboard database: each run's score, cost and change against
+# the previous run of its cell, the day's total and this month's spend. Nothing is posted
+# on a day with no runs. Free: it only reads the database. Run it by hand to post now.
+on:
+  schedule:
+    - cron: "0 14 * * *"  # 8 AM Chicago (CST), after the day's batch is imported
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  summary:
+    name: Post the daily summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the secrets
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::error::The daily summary needs the DATABASE_URL and SLACK_WEBHOOK_URL repository secrets."
+            exit 1
+          fi
+
+      - name: Install the Postgres driver
+        run: python3 -m pip install --quiet "psycopg[binary]==3.2.9"
+
+      - name: Post the summary
+        run: python3 -m evals.dashboard digest

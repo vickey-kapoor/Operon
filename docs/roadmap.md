@@ -1,11 +1,11 @@
 # Roadmap
 
-Where Operon has been, where it is now and what comes next. Last updated 2026-11-11.
+Where Operon has been, where it is now and what comes next. Last updated 2026-11-14.
 
 Plans are written and approved in the project's Confluence space (OPERON) and tracked as Jira
-stories (project KAN); this page summarises them for the repo. A story starts only after it is
-approved, and every paid benchmark run needs its own cost approval. Nothing under
-[Next](#next) or [Later](#later) is built yet.
+stories (project KAN); this page summarises them for the repo. The plan of record is "Roadmap:
+scaling Operon in six stages", approved on 2026-11-14. A story starts only after it is approved,
+and every paid benchmark run needs its own cost approval.
 
 ## Past: what has been built
 
@@ -38,6 +38,14 @@ approved, and every paid benchmark run needs its own cost approval. Nothing unde
 - **Season 1** (#225, KAN-65): frozen on 2026-11-10 with held-out tasks kept out of the repo.
   See [evaluation](evaluation.md#seasons).
 - **Full harness fixes** (#228, KAN-75).
+- **Front door** (#240, KAN-89): `operon serve` and `operon run "task"`, with a local task page to
+  type a task, watch it, approve risky steps and see the result, later the first app screens (#245,
+  KAN-106).
+- **Season 2** (#237, KAN-78): harder 10-task core sets per category on new local apps (Finance,
+  People, Rooms), frozen on 2026-11-11. Calibration runs are under way (KAN-87).
+- **Tool action channel** (#254, KAN-79, [RFC 0002](rfcs/0002-tool-action-channel.md)): typed
+  `read_file`, `list_dir`, `write_file`, `http_get` and, opt-in, `run_shell` beside the GUI, behind
+  `OPERON_TOOLS` (off by default until the on/off comparison holds the score).
 - **Trust gate on by default** (#232, KAN-15): risky actions pause for a human's approval.
   Benchmarks turn it off.
 - **Whole-repo review fixes** (#212 to #220, KAN-46 to KAN-51), a monthly budget on the dashboard's
@@ -68,61 +76,40 @@ What this tells us:
 
 ### In progress
 
-- **Gemini only.** Operon runs Gemini 3.5 Flash for every run; the GPT grid (KAN-71) is on hold
-  until other models are onboarded again.
-- **Plans awaiting decisions**: the consumer product plan and the CUA market research, both
-  under [Later](#later).
+- **Gemini only.** Operon runs Gemini 3.5 Flash for every run; other models come back in stage 4.
+- **Season 2 calibration** (KAN-87): Gemini on the Season 2 core sets, then the tools on/off
+  comparison that decides whether `OPERON_TOOLS=on` becomes the default.
 
-## Next: architecture in line with the CUA market (epic KAN-77)
+## Next: scaling Operon in six stages
 
-Approved order from the Confluence plan "Plan: Operon next phase, architecture in line with the
-CUA market". The leading computer-use agents of 2026 share a hybrid action space, separate
-planning and grounding, parallel attempts, isolated environments and batched actions. Operon is
-ahead on verification, safety and state-graded benchmarks, and behind on the rest.
+**Get real users first, then build what they need.** Each stage ends with a test you can check,
+and the engine stays the same throughout: what changes is the form Operon ships in and who can
+use it. Today Operon is a repo you clone.
 
-Decided: **pixels stay Operon's only way of seeing and targeting the GUI** (no accessibility
-tree); typed tools are added beside it. Every workstream ships behind a flag that defaults to
-off, per the repo's rules, and is compared on the grid before it is turned on.
+| Stage | What it includes | Done when | Operon becomes |
+|---|---|---|---|
+| 1. Installable | PyPI alpha (`pip install operon-agent`), a one-step setup command, 5-minute quickstart and demo GIF | A stranger finishes a task in 5 minutes | PyPI package (alpha) |
+| 2. First 10 users | Soft launch, an opt-in way to see how people use it (nothing sent by default) | 10 people ran it and 3 came back | Tool with real users |
+| 3. Reliable | Season 2 calibration, the tool channel on by default, safety (KAN-103), verify before done (KAN-102), perception work (epic KAN-113) | Season 2 scores climb | Beta |
+| 4. Builders | Model onboarding beyond Gemini, local MCP server and Claude plugin (KAN-96), Docker (KAN-40), task files and replay cache (KAN-86) | An outside project builds on Operon | Platform |
+| 5. Public launch | Show HN, demo video, docs (KAN-37), launch post (KAN-39), a decision on publishing the benchmark grid | Stars become weekly installs | 1.0 project |
+| 6. Scale | Python SDK (KAN-35), the Windows desktop app (epics KAN-122 and KAN-94, including the bookkeeping pilot), parallel runs (KAN-80, KAN-81), hosted runs (KAN-107 to KAN-109) | Teams run it on a schedule | SDK + app + cloud |
 
-| Order | Story | What it adds |
-|---|---|---|
-| 1 | KAN-78 Season 2 core sets | Harder tasks that today's models pass 40% to 70% of the time, plus step counts, so the work below shows up in the grid |
-| 2 | KAN-89 Front door (A0) | A local task page (type a task, watch it, approve risky steps, see the result) and an `operon run "task"` command |
-| 3 | KAN-79 Hybrid action channel (A1) | RFC 0002, then `run_command`, `read_file`, `write_file` and HTTP or MCP tools beside the GUI, all through the trust gate, behind `OPERON_TOOLS` |
-| 4 | KAN-80 Run environments (A2) | Environment providers (local, Windows VM from a snapshot, Linux container), checkpoints after each verified step, resume |
-| 5 | KAN-81 Async loop (A2) | One API process drives several runs in parallel |
-| 6 | KAN-82 Grounder slot (A3) | Operon-side zoom for any model and a slot for a dedicated grounding model |
-| 7 | KAN-83 Planner (A3) | An optional planner that splits long tasks into subgoals |
-| 8 | KAN-84 Task-level best-of-N (A4) | Several attempts in parallel environments, the best picked by Operon's verifier |
-| 9 | KAN-85 Step efficiency (A5) | Action batching for every backend, loop detection, a step-efficiency score |
-| 10 | KAN-86 Task files (A6) | Saved, parameterised YAML tasks with expected-state checks and JUnit output |
-| 11 | KAN-87 Run: Season 2 calibration | Gemini, tools on and off (paid, about $5 to $8) |
-| 12 | KAN-88 Run: ScreenSpot-Pro with zoom | Grounding with Operon-side zoom (paid, about $1.50 per model) |
+Notes on the order:
 
-Proposed changes, not yet decided: the CUA research page ("Research: CUA market 2026 and
-recommended changes to Operon's plan") recommends dropping the planner (KAN-83) for a
-task-state note and a check before "done", running the zoom and screen-resolution
-measurement (KAN-88) earlier, growing task files (KAN-86) into a replay cache that re-checks
-each step by vision, keeping best-of-N (KAN-84) for benchmarks only, adding a safety story
-(confirmations by action category, secrets never shown to the model, a redacted audit bundle)
-and bringing the MCP server forward to right after the tool channel.
+- **The repo goes public with the PyPI alpha** in stage 1, because a wheel ships the source. The
+  repo is hardened first (KAN-34), and the big announcement waits for stage 5.
+- **The first users are developers** installing from PyPI. The bookkeeping design partner pilot
+  (KAN-100) moves to stage 6, once the Windows app exists.
+- **Architecture work from epic KAN-77 not named above** (grounder slot and zoom KAN-82/KAN-88,
+  best-of-N KAN-84, step efficiency KAN-85, Windows risks KAN-90 to KAN-93) belongs to stage 3 when
+  it improves reliability on what users try, and to stage 6 when it is about scale.
+- **Every workstream ships behind a flag that defaults to off** and is compared on the grid before
+  it is turned on. **Pixels stay Operon's only way of seeing and targeting the GUI**; typed tools
+  sit beside it.
 
-Small items alongside: triage the `hybrid_it_inventory` failure from KAN-76, and
-split `loop.py` along its seams before the async work.
-
-## Later
-
-- **Operon for Windows** (Confluence: "Plan: Operon as a consumer product", awaiting Vickey's
-  decisions). The recommendation is a signed Windows app for specific repetitive back-office jobs
-  (for example bookkeepers in desktop accounting software), not a general consumer assistant,
-  built on the front door (KAN-89). A local MCP server would ship the same day, with a no-key
-  first run, design partners and, later, phone approvals and a hosted browser-only MCP server.
-- **Model onboarding**: a clean, simple way to add models back (Claude, GPT, open-weight models
-  once a GPU is available, KAN-21), compared with Gemini on the same grid.
-- **SDK release last** (epic KAN-41, KAN-34 to KAN-40): `pip install operon-agent` (the PyPI name
-  is reserved), a Python API and CLI, an MCP server and Docker, with the repo going public on the
-  same day. Safe defaults: desktop opt-in, trust gate on.
-- **macOS or Linux desktop executor**, only if the SDK's users need it.
+Small items alongside: triage the `hybrid_it_inventory` failure from KAN-76, and split `loop.py`
+along its seams before the async work.
 
 ## Not planned
 

@@ -14,6 +14,8 @@ import shutil
 from datetime import date, timedelta
 from pathlib import Path
 
+from operon.core.paths import runs_dir
+
 
 def cleanup_old_runs(
     root_dir: str | Path = "runs",
@@ -53,11 +55,11 @@ def cleanup_old_runs(
     return to_delete, total_bytes
 
 
-def _fmt_bytes(n: int) -> str:
+def _fmt_bytes(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024:
             return f"{n:.1f} {unit}"
-        n //= 1024
+        n /= 1024
     return f"{n:.1f} TB"
 
 
@@ -77,14 +79,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--runs-dir",
-        default="runs",
+        default=None,
         metavar="PATH",
-        help="Root runs directory (default: runs).",
+        help="Root runs directory (default: the one Operon writes to, see operon.core.paths.runs_dir).",
     )
     args = parser.parse_args()
 
     dirs, freed = cleanup_old_runs(
-        root_dir=args.runs_dir,
+        root_dir=args.runs_dir or runs_dir(),
         keep_days=args.days,
         delete=args.delete,
     )

@@ -116,14 +116,6 @@ def test_a_crashing_step_that_cannot_be_marked_failed_is_500(client: TestClient)
     assert resp.json()["detail"] == "model exploded"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Gap: /step maps every ValueError to 404, and pydantic's ValidationError is a ValueError, "
-        "so a step that crashes on a model validation error returns 'not found' and the run is "
-        "never marked failed. Reported, not fixed."
-    ),
-)
 def test_a_step_crashing_on_a_validation_error_marks_the_run_failed(client: TestClient) -> None:
     class _Strict(BaseModel):
         x: int

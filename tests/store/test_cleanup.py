@@ -6,8 +6,6 @@ import os
 import time
 from pathlib import Path
 
-import pytest
-
 from operon.store import cleanup
 from operon.store.cleanup import _fmt_bytes, cleanup_old_runs
 
@@ -113,22 +111,10 @@ def test_cli_with_nothing_to_clean(tmp_path: Path, monkeypatch, capsys) -> None:
     assert capsys.readouterr().out.strip() == "Nothing to clean up."
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Gap: _fmt_bytes floors with //= 1024, so 1.5 KB prints as 1.0 KB. Reported, not fixed.",
-)
 def test_fmt_bytes_keeps_the_fraction() -> None:
     assert _fmt_bytes(1536) == "1.5 KB"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Gap: the CLI's --runs-dir defaults to the legacy ./runs, not core.paths.runs_dir() "
-        "(.var/runs, or ~/.operon/runs when pip-installed), so a bare `python -m operon.store.cleanup` "
-        "finds nothing. The server's startup sweep passes runs_dir() and is fine. Reported, not fixed."
-    ),
-)
 def test_cli_defaults_to_the_real_runs_dir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPERON_RUNS_ROOT", str(tmp_path))
     seen: dict = {}

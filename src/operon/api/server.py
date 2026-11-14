@@ -51,15 +51,10 @@ async def _lifespan(app: FastAPI):
     # desktop executor's still-active screen recorders + launched child apps.
     # Each executor exposes a uniform aclose(); we only touch loops that were
     # actually built (iter_built_executors never triggers lazy construction).
-    from operon.api.runtime.loops import iter_built_executors
-    for executor in iter_built_executors():
-        if not hasattr(executor, "aclose"):
-            continue
-        try:
-            await executor.aclose()
-        except Exception as exc:
-            # Shutdown cleanup must never raise out of the lifespan.
-            logger.warning("executor shutdown cleanup skipped: %s", exc)
+    # Then the desktop environment provider stops its machine (KAN-80).
+    from operon.api.runtime.loops import close_built_runtime
+
+    await close_built_runtime()
 
 
 def create_app() -> FastAPI:

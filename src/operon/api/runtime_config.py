@@ -53,6 +53,12 @@ def validate_modes() -> list[str]:
     desktop = desktop_mode_config()
     browser = browser_mode_config()
 
+    from operon.environments import environment_name, provider_names
+
+    if environment_name() not in provider_names():
+        errors.append(
+            f"OPERON_ENVIRONMENT={environment_name()!r} is not one of {provider_names()}"
+        )
     if desktop.backend not in _VALID_DESKTOP_BACKENDS:
         errors.append(
             f"OPERON_DESKTOP_BACKEND={desktop.backend!r} is not one of {sorted(_VALID_DESKTOP_BACKENDS)}"

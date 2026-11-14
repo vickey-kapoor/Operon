@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import logging
 
-from operon.agent.app_catalog import LINUX, desktop_platform
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.coordinator import PolicyCoordinator
@@ -27,13 +28,15 @@ from operon.api.runtime.services import (
 )
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
+from operon.environments import EnvironmentProvider, get_provider
 from operon.store.memory import FileBackedMemoryStore
 from operon.store.run_store import FileBackedRunStore
 
 _agent_loop: AgentLoop | None = None
 _desktop_agent_loop: AgentLoop | None = None
-DesktopExecutor = None
+_desktop_provider: EnvironmentProvider | None = None
 NativeBrowserExecutor = None
+logger = logging.getLogger(__name__)
 
 
 def iter_built_executors():
@@ -46,6 +49,40 @@ def iter_built_executors():
     for loop in (_agent_loop, _desktop_agent_loop):
         if loop is not None:
             yield loop.executor
+
+
+async def close_built_runtime() -> None:
+    """Release what the built loops hold: each executor's ``aclose()``, then the
+    desktop environment provider's ``stop()`` (KAN-80). Never raises."""
+    for executor in iter_built_executors():
+        aclose = getattr(executor, "aclose", None)
+        if aclose is None:
+            continue
+        try:
+            await aclose()
+        except Exception as exc:  # noqa: BLE001 - shutdown cleanup must not raise
+            logger.warning("executor shutdown cleanup skipped: %s", exc)
+    provider = _desktop_provider
+    if provider is not None:
+        try:
+            await asyncio.to_thread(provider.stop)
+        except Exception as exc:  # noqa: BLE001 - shutdown cleanup must not raise
+            logger.warning("environment %r stop skipped: %s", provider.name, exc)
+
+
+def desktop_provider() -> EnvironmentProvider:
+    """The desktop run environment (``OPERON_ENVIRONMENT``), built and started once."""
+    global _desktop_provider
+    if _desktop_provider is None:
+        provider = get_provider()
+        check = provider.check()
+        if not check.ok:
+            raise RuntimeError(
+                f"Environment {provider.name!r} cannot run here: " + " ".join(check.problems)
+            )
+        provider.start()
+        _desktop_provider = provider
+    return _desktop_provider
 
 
 def _build_browser_executor():
@@ -120,21 +157,12 @@ def desktop_loop_holds_run(run_id: str) -> bool:
 
 def get_desktop_agent_loop() -> AgentLoop:
     """Build the desktop runtime lazily so env loading can happen first."""
-    global _desktop_agent_loop, DesktopExecutor
+    global _desktop_agent_loop
     if _desktop_agent_loop is None:
-        if DesktopExecutor is None:
-            if desktop_platform() == LINUX:
-                from operon.executor.linux_desktop import (
-                    LinuxDesktopExecutor as _DesktopExecutor,
-                )
-            else:
-                from operon.executor.desktop import DesktopExecutor as _DesktopExecutor
-
-            DesktopExecutor = _DesktopExecutor
-
         desktop_config = desktop_mode_config()
         services = build_desktop_services()
-        executor = DesktopExecutor()
+        # KAN-80: the environment provider owns the machine and builds its executor.
+        executor = desktop_provider().build_executor()
         run_store = FileBackedRunStore()
         memory_store = FileBackedMemoryStore()
         _desktop_agent_loop = AgentLoop(

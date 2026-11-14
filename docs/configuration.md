@@ -40,6 +40,7 @@ onboarding ([roadmap](roadmap.md)).
 | `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `json` (Gemini JSON) |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Browser fallback backend. Ignored under the thin harness |
 | `OPERON_DESKTOP_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `json` (the older Gemini JSON path) |
+| `OPERON_ENVIRONMENT` | `live` | Where desktop runs happen (KAN-80). `live` is this machine's own screen; `operon envs` lists every environment and whether it can run here, and `operon run --env NAME` picks one for a single local run. See [environments.md](environments.md). |
 | `OPERON_BROWSER_MODEL` / `OPERON_DESKTOP_MODEL` | `gemini-3.5-flash` | Primary model |
 | `OPERON_BROWSER_FALLBACK_MODEL` / `OPERON_DESKTOP_FALLBACK_MODEL` | `gemini-3.5-flash` | Fallback (JSON) model |
 | `OPERON_BROWSER_THINKING` / `OPERON_DESKTOP_THINKING` | `low` | Thinking level (Gemini 3 levels) |

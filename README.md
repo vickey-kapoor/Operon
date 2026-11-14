@@ -73,7 +73,7 @@ short report of what it did.
 
 ![Operon finding the population of Paris on Wikipedia, from screenshots only](docs/assets/demo.gif)
 
-That run took 2 model steps, 23 seconds and about $0.015 of Gemini calls.
+That run took 2 model steps and 23 seconds. A task like this costs a few cents of Gemini calls on your key.
 
 **Next:** `operon serve` prints a link to a local task page, where you type tasks, watch them
 live, approve steps and take over with your own mouse. Add `--desktop` to `operon run` to drive

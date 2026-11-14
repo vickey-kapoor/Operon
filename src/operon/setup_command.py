@@ -104,9 +104,13 @@ async def _render_page() -> int:
         try:
             page = await browser.new_page(viewport={"width": 640, "height": 400})
             await page.set_content("<h1 style='font:48px sans-serif'>Operon self-check</h1>")
-            return len(await page.screenshot())
+            size = len(await page.screenshot())
         finally:
             await browser.close()
+    from operon.cli import settle_subprocess_pipes
+
+    await settle_subprocess_pipes()
+    return size
 
 
 def check_browser(render: Callable[[], int] | None = None) -> Check:

@@ -79,6 +79,19 @@ class LocalClient:
                 await aclose()
             except Exception:  # noqa: BLE001 - exiting anyway
                 pass
+        await settle_subprocess_pipes()
+
+
+async def settle_subprocess_pipes(delay_s: float = 0.25) -> None:
+    """Give Windows a moment to close Playwright's driver pipes before the event loop ends.
+
+    On Windows the proactor loop closes a stopped subprocess's pipes a few ticks later.
+    When ``asyncio.run`` closes the loop first, their ``__del__`` prints a scary
+    "Exception ignored ... I/O operation on closed pipe" traceback after an otherwise
+    clean run. Other platforms close them at once, so this is a no-op there.
+    """
+    if sys.platform == "win32":
+        await asyncio.sleep(delay_s)
 
 
 class RemoteClient:

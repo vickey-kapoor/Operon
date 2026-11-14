@@ -234,9 +234,9 @@ here in June 2026. In short:
 - **Now.** Operon runs Gemini only; Claude, GPT and the cross-model adapter were removed on
   2026-11-11, with their earlier data kept. The Season 1 core sets are saturated (most cells 9 or
   10 of 10). Operon installs from PyPI (`operon-agent` 0.1.0) with `operon setup`, a local task
-  page and `operon run`; typed tools beside the GUI exist behind `OPERON_TOOLS` (off by default).
+  page and `operon run`; typed file and web tools beside the GUI are on by default (`OPERON_TOOLS`; the shell stays opt-in).
 - **Next: six stages, users first** (approved 2026-11-14, epic KAN-139). 1 Installable (stranger
-  test left), 2 First 10 users, 3 Reliable (Season 2, tools on by default, verify before done,
+  test left), 2 First 10 users, 3 Reliable (Season 2, verify before done,
   safety), 4 Builders (more models, MCP server, task files), 5 Public launch, 6 Scale (SDK,
   Windows app, parallel and hosted runs). Pixels stay the only GUI perception.
 

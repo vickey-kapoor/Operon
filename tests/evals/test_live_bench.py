@@ -542,8 +542,10 @@ def test_previous_report_only_compares_the_same_tools(tmp_path) -> None:
 def test_tools_label_reads_the_server_env(monkeypatch) -> None:
     monkeypatch.setattr(live_bench, "_server_env", lambda: {"OPERON_TOOLS": "all"})
     assert live_bench.tools_label() == "read_file,list_dir,write_file,run_shell,http_get"
-    monkeypatch.setattr(live_bench, "_server_env", lambda: {})
+    monkeypatch.setattr(live_bench, "_server_env", lambda: {"OPERON_TOOLS": "off"})
     assert live_bench.tools_label() == "off"
+    monkeypatch.setattr(live_bench, "_server_env", lambda: {})  # unset: the server's default, on
+    assert live_bench.tools_label() == "read_file,list_dir,write_file,http_get"
 
 async def test_the_report_takes_the_trust_gate_from_the_server(tmp_path, monkeypatch, capsys) -> None:
     async def fake_run_task(client, task, judge, **kwargs):

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Built behind `OPERON_TOOLS` (default off); measured in KAN-87 part 2 |
+| **Status** | Built; `OPERON_TOOLS=on` is the default since 2026-11-14 (see §9) |
 | **Created** | 2026-11-13 |
 | **Story** | KAN-79 (epic KAN-77, workstream A1) |
 | **Related** | [RFC 0001](0001-cua-v2.md), [`../architecture.md`](../architecture.md), [`../configuration.md`](../configuration.md) |
@@ -67,8 +67,8 @@ Relative paths and the shell's working folder are the user's home folder.
 
 `OPERON_TOOLS`:
 
-- `off` (default): no tools are declared; Operon behaves exactly as before.
-- `on`: `read_file`, `list_dir`, `write_file`, `http_get`. No shell.
+- `off`: no tools are declared; Operon behaves exactly as before.
+- `on` (default since 2026-11-14): `read_file`, `list_dir`, `write_file`, `http_get`. No shell.
 - `all`: the four above plus `run_shell`.
 - a comma list of tool names, e.g. `read_file,list_dir`.
 
@@ -143,3 +143,20 @@ tasks must not get worse. Browser is measured once with `http_get` only.
   note, and its calls go through the same gates.
 - Per-tool categories and confirmations, secret redaction in outputs and audit (KAN-103).
 - Promote to on by default once the A/B shows it helps and safety tasks hold.
+
+## 9. Result and decision (2026-11-14)
+
+Gemini · Desktop · Thin · Season 2, one run each, benchmarks with the trust gate off:
+
+| `OPERON_TOOLS` | Passed | Cost |
+|---|---|---|
+| `off` | 8/10 | $1.38 |
+| `all` (with shell) | 6/10 | ~$1.35 |
+| `on` | 7/9 graded (cost cap hit before task 10) | $1.60 |
+| `on`, cap $2 | 10/10 | $1.23 |
+
+Every problem came from `run_shell`: a broad delete after an approved pause took a planted
+file too (compromised safety task), and `start "" file.svg` left a viewer holding the shell's
+output pipes so the step hung (fixed: output goes to temporary files). Vickey chose to make
+`on` the default; `run_shell` stays opt-in with `all`. Benchmark workflows keep `off` unless
+a run asks for tools, so scores stay comparable with earlier runs.

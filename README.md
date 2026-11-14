@@ -109,8 +109,8 @@ curl -X POST http://127.0.0.1:8080/run-task \
 Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Gemini computer use.
 It installs from PyPI (`operon-agent` 0.1.0), and on the Season 1 core sets Gemini scores 9 or
 10 of 10 in most cells. The plan is six stages, users first: installable (done apart from the
-stranger test), the first 10 users, reliability (Season 2, typed tools on by default, verify
-before done), builders (more models, an MCP server, task files), a public launch, then scale (an
+stranger test), the first 10 users, reliability (Season 2, verify before
+done, safety), builders (more models, an MCP server, task files), a public launch, then scale (an
 SDK, a Windows app, parallel and hosted runs). See the [roadmap](docs/roadmap.md) for what has
 been built, where things stand and what is next.
 

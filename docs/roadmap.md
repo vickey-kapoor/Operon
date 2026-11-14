@@ -45,7 +45,8 @@ and every paid benchmark run needs its own cost approval.
   People, Rooms), frozen on 2026-11-11. Calibration runs are under way (KAN-87).
 - **Tool action channel** (#254, KAN-79, [RFC 0002](rfcs/0002-tool-action-channel.md)): typed
   `read_file`, `list_dir`, `write_file`, `http_get` and, opt-in, `run_shell` beside the GUI, behind
-  `OPERON_TOOLS` (off by default until the on/off comparison holds the score).
+  `OPERON_TOOLS`, on by default since 2026-11-14 (files and web; shell stays opt-in) after Desktop
+  Season 2 scored 10/10 with tools against 8/10 without (KAN-87).
 - **Trust gate on by default** (#232, KAN-15): risky actions pause for a human's approval.
   Benchmarks turn it off.
 - **Whole-repo review fixes** (#212 to #220, KAN-46 to KAN-51), a monthly budget on the dashboard's
@@ -84,8 +85,9 @@ What this tells us:
 - **Gemini only.** Operon runs Gemini 3.5 Flash for every run; other models come back in stage 4.
 - **Stranger test** (KAN-142), the stage 1 finish test: Vickey's own fresh installs from PyPI
   pass in about 5 minutes; a run by someone new to Operon is next.
-- **Season 2 calibration** (KAN-87): Gemini on the Season 2 core sets, then the tools on/off
-  comparison that decides whether `OPERON_TOOLS=on` becomes the default.
+- **Season 2 calibration is done** (KAN-87): Browser and Hybrid Thin land at 6/10, in the
+  40-70% target, while Desktop Thin scores 10/10 and needs harder tasks. With tools on, Desktop
+  Thin went from 8/10 to 10/10, so tools are on by default.
 
 ## Next: scaling Operon in six stages
 
@@ -97,7 +99,7 @@ use it. Today Operon installs from PyPI, and stage 1 waits only on the stranger 
 |---|---|---|---|
 | 1. Installable | PyPI alpha (`pip install operon-agent`), a one-step setup command, 5-minute quickstart and demo GIF | A stranger finishes a task in 5 minutes | PyPI package (alpha) |
 | 2. First 10 users | Soft launch, an opt-in way to see how people use it (nothing sent by default) | 10 people ran it and 3 came back | Tool with real users |
-| 3. Reliable | Season 2 calibration, the tool channel on by default, safety (KAN-103), verify before done (KAN-102), perception work (epic KAN-113) | Season 2 scores climb | Beta |
+| 3. Reliable | Harder Season 2 Desktop tasks, safety (KAN-103), verify before done (KAN-102), perception work (epic KAN-113) | Season 2 scores climb | Beta |
 | 4. Builders | Model onboarding beyond Gemini, local MCP server and Claude plugin (KAN-96), Docker (KAN-40), task files and replay cache (KAN-86) | An outside project builds on Operon | Platform |
 | 5. Public launch | Show HN, demo video, docs (KAN-37), launch post (KAN-39), a decision on publishing the benchmark grid | Stars become weekly installs | 1.0 project |
 | 6. Scale | Python SDK (KAN-35), the Windows desktop app (epics KAN-122 and KAN-94, including the bookkeeping pilot), parallel runs (KAN-80, KAN-81), hosted runs (KAN-107 to KAN-109) | Teams run it on a schedule | SDK + app + cloud |

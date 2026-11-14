@@ -13,6 +13,15 @@ from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
 
 
+@pytest.fixture(autouse=True)
+def _no_window_settle_delays(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests fake the browser, so skip the real-window pauses (1.5 s per headed launch) and the
+    PowerShell Chrome-process listing a headed launch runs on Windows (~0.5 s, and a real subprocess)."""
+    monkeypatch.setattr(NativeBrowserExecutor, "_foreground_settle_s", 0.0)
+    monkeypatch.setattr(NativeBrowserExecutor, "_focus_retry_s", 0.0)
+    monkeypatch.setattr(NativeBrowserExecutor, "_chrome_process_ids", staticmethod(lambda _path: set()))
+
+
 @pytest.mark.asyncio
 async def test_close_session_finalizes_single_recorded_video(tmp_path: Path) -> None:
     video_dir = tmp_path / "run-1" / "session_video"

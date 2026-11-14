@@ -207,7 +207,8 @@ def test_a_run_folder_records_its_host(tmp_path):
     run_dir = next((tmp_path / "runs").iterdir())
     import os
 
-    assert json.loads((run_dir / "host.json").read_text()) == {"os": os.name, "home": str(Path.home())}
+    assert json.loads((run_dir / "host.json").read_text()) == {
+        "os": os.name, "home": str(Path.home()), "cwd": os.getcwd()}
 
 
 def test_file_roots_are_kept():
@@ -272,3 +273,17 @@ def test_a_run_from_another_os_judges_file_paths_its_way(tmp_path):
         assert blocked_file_path(outside, intent="task", run_dir=tmp_path) == r"C:\Windows\secret.txt"
         inside = outside.model_copy(update={"tool_args": {"path": r"documents\report.txt"}})
         assert blocked_file_path(inside, intent="task", run_dir=tmp_path) is None
+
+
+def test_relative_roots_follow_the_recorded_working_directory(tmp_path):
+    """Roots resolve against the run's working directory; tool paths against its home."""
+    from operon.agent.policy.file_guard import blocked_file_path
+    from operon.models.policy import ActionType, AgentAction
+
+    host = {"os": "nt", "home": r"C:\Users\alice", "cwd": r"C:\Operon"}
+    read = AgentAction(action_type=ActionType.TOOL, tool="read_file", tool_args={"path": "report.txt"},
+                       text="read_file: report.txt")
+    with rp.loop_environment({"OPERON_ALLOWED_FILE_ROOTS": "."}), rp.recorded_path_rules(host):
+        assert blocked_file_path(read, intent="task", run_dir=tmp_path) == "report.txt"  # C:\Users\alice\report.txt
+        in_cwd = read.model_copy(update={"tool_args": {"path": r"C:\Operon\report.txt"}})
+        assert blocked_file_path(in_cwd, intent="task", run_dir=tmp_path) is None

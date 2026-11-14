@@ -509,7 +509,9 @@ def recorded_path_rules(host: dict | None):
     """Judge file paths the way the recording's machine did. A Windows run replayed
     elsewhere keeps its ``C:\\...`` paths and ``OPERON_ALLOWED_FILE_ROOTS``, which this
     machine's ``Path`` would resolve as unrelated relative paths, so the file guard
-    compares them as Windows paths (case-insensitive, under the run's home folder)."""
+    compares them as Windows paths (case-insensitive). As on that machine, a tool's
+    relative path is under the home folder, and any other relative path (an allowed root,
+    an upload) is under the working directory the run started in."""
     if not host or host.get("os") != "nt" or os.name == "nt":
         yield
         return
@@ -517,14 +519,15 @@ def recorded_path_rules(host: dict | None):
     from operon.core.settings import get_settings
 
     home = PureWindowsPath(host.get("home") or r"C:\Users\replay")
+    cwd = PureWindowsPath(host.get("cwd") or home)
 
-    def windows_path(raw: str) -> PureWindowsPath:
+    def windows_path(raw: str, base: PureWindowsPath = home) -> PureWindowsPath:
         text = str(raw).strip()
         if text == "~" or text.startswith(("~/", "~\\")):
             text = str(home / text[2:])
         path = PureWindowsPath(text)
         if not path.is_absolute():
-            path = home / path
+            path = base / path
         return PureWindowsPath(ntpath.normpath(str(path)))
 
     class _WindowsPath:  # file_guard's ``Path(text).expanduser().resolve()``
@@ -535,14 +538,14 @@ def recorded_path_rules(host: dict | None):
             return self
 
         def resolve(self) -> PureWindowsPath:
-            return windows_path(self.raw)
+            return windows_path(self.raw, cwd)
 
     with ExitStack() as stack:
         stack.enter_context(patch.object(file_guard, "tool_path", windows_path))
         stack.enter_context(patch.object(file_guard, "Path", _WindowsPath))
         stack.enter_context(patch.object(
             file_guard, "allowed_file_roots",
-            lambda: [windows_path(p) for p in get_settings().allowed_file_roots],
+            lambda: [windows_path(p, cwd) for p in get_settings().allowed_file_roots],
         ))
         stack.enter_context(patch.object(file_guard, "_canon", lambda v: v.replace("\\", "/").casefold()))
         yield

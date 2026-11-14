@@ -182,7 +182,7 @@ class FileBackedRunStore(RunStore):
         path.write_text(json.dumps(get_settings().effective(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
         # The machine's path rules, so a replay elsewhere judges file paths as this
         # run did (evals/replay.py, KAN-167).
-        host = {"os": os.name, "home": str(Path.home())}
+        host = {"os": os.name, "home": str(Path.home()), "cwd": os.getcwd()}
         (path.parent / "host.json").write_text(json.dumps(host) + "\n", encoding="utf-8")
 
     def _state_path(self, run_id: str) -> Path:

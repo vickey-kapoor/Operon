@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from dotenv import find_dotenv, load_dotenv
@@ -11,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from operon.core.paths import runs_dir
+from operon.core.settings import check_startup_settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -18,16 +18,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Run startup checks: config validation (fail-fast) + bounded runs/ retention sweep."""
-    # 1. Config validation — fail fast on typos like OPERON_BROWSER_BACKEND=conputer_use.
-    from operon.api.runtime_config import validate_modes
-    errors = validate_modes()
-    if errors:
-        joined = "\n  - ".join(errors)
-        raise RuntimeError(f"Invalid Operon runtime configuration:\n  - {joined}")
+    # 1. Settings validation (KAN-157) — fail fast on typos like
+    # OPERON_BROWSER_BACKEND=conputer_use or BROWSER_WIDTH=wide; settings that fall
+    # back to their default are logged as warnings.
+    settings = check_startup_settings()
 
     # 2. Retention sweep — runs/ would otherwise grow forever.
     # Disable with OPERON_RUNS_RETAIN_DAYS=-1; default 14 days.
-    retain_days = int(os.getenv("OPERON_RUNS_RETAIN_DAYS", "14"))
+    retain_days = settings.runs_retain_days
     if retain_days >= 0:
         try:
             from operon.store.cleanup import cleanup_old_runs
@@ -110,7 +108,7 @@ def create_app() -> FastAPI:
             "API authentication is DISABLED (OPERON_ALLOW_UNAUTHENTICATED is set). Any client "
             "that can reach this server can drive the agent."
         )
-    elif not os.getenv("API_KEYS", "").strip():
+    elif not get_settings().api_keys:
         logger.info("API_KEYS not set: clients must send the key in %s as X-API-Key", api_key_file())
     app.include_router(router, dependencies=[Depends(require_api_key)])
     app.include_router(ws_router)

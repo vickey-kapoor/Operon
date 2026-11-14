@@ -12,8 +12,21 @@ def _env_path(name: str, default: Path) -> Path:
     A blank value (``OPERON_RUNS_ROOT=``) would otherwise become ``Path("")``,
     which silently means the current working directory.
     """
-    value = os.getenv(name, "")
-    return Path(value) if value.strip() else default
+    from operon.core.settings import get_settings
+
+    value = getattr(get_settings(), _PATH_FIELDS[name])
+    return value if value is not None else default
+
+
+# The folder settings, by variable (KAN-157: parsed in operon.core.settings).
+_PATH_FIELDS = {
+    "OPERON_CONFIG_DIR": "config_dir",
+    "OPERON_RUNTIME_ROOT": "runtime_root",
+    "OPERON_RUNS_ROOT": "runs_root",
+    "OPERON_BROWSER_ARTIFACTS_ROOT": "browser_artifacts_root",
+    "OPERON_DESKTOP_ARTIFACTS_ROOT": "desktop_artifacts_root",
+    "OPERON_TEST_ARTIFACTS_ROOT": "test_artifacts_root",
+}
 
 
 def project_root() -> Path:

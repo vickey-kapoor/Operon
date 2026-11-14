@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from operon.core.settings import get_settings
+
 if TYPE_CHECKING:
     from operon.clients.gemini import GeminiClient
 
@@ -176,7 +178,7 @@ async def post_hitl_webhook(
     This is the reliable notification channel — always attempted, always logged.
     Desktop notifications are best-effort; the webhook is the authoritative signal.
     """
-    webhook_url = os.getenv("HITL_WEBHOOK_URL", "").strip()
+    webhook_url = get_settings().hitl_webhook_url
     if not webhook_url:
         return
     payload = {

@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 
 from operon.agent.tools import FILE_TOOLS, tool_path
+from operon.core.settings import get_settings
 from operon.models.policy import ActionType
 
 FILE_PATH_ACTIONS: frozenset[ActionType] = frozenset({
@@ -65,8 +66,7 @@ def _under(path: Path, root: Path) -> bool:
 
 
 def allowed_file_roots() -> list[Path]:
-    raw = os.getenv("OPERON_ALLOWED_FILE_ROOTS", "")
-    return [Path(p.strip()).expanduser().resolve() for p in raw.split(",") if p.strip()]
+    return [Path(p).expanduser().resolve() for p in get_settings().allowed_file_roots]
 
 
 def blocked_file_path(action: object, *, intent: str, run_dir: Path) -> str | None:

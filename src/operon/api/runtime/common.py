@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import re as _re
 
 from fastapi import HTTPException, status
+
+from operon.core.settings import get_settings
 
 _MAX_RUN_ID_LENGTH = 64
 _RUN_ID_RE = _re.compile(r"^[A-Za-z0-9_\-]+$")
@@ -18,5 +19,5 @@ def validate_run_id(run_id: str) -> None:
 
 
 def test_safe_mode_enabled() -> bool:
-    return os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true"
+    return get_settings().test_safe_mode
 

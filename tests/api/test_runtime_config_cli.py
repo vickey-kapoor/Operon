@@ -6,7 +6,7 @@ from operon.api import runtime_config
 
 
 def test_valid_configuration_prints_both_modes_and_exits_0(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runtime_config, "validate_modes", lambda: [])
+    monkeypatch.setattr(runtime_config, "validate_modes", lambda settings=None: [])
 
     assert runtime_config.main() == 0
 
@@ -16,7 +16,7 @@ def test_valid_configuration_prints_both_modes_and_exits_0(monkeypatch, capsys) 
 
 
 def test_invalid_configuration_lists_errors_and_exits_1(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runtime_config, "validate_modes", lambda: ["OPERON_BROWSER_BACKEND='x' is not one of [...]"])
+    monkeypatch.setattr(runtime_config, "validate_modes", lambda settings=None: ["OPERON_BROWSER_BACKEND='x' is not one of [...]"])
 
     assert runtime_config.main() == 1
 

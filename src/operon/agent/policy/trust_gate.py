@@ -44,10 +44,11 @@ Permission modes (KAN-89) adjust the gate's verdict per run, after the rules abo
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
+
+from operon.core.settings import get_settings
 
 
 class PermissionMode(str, Enum):
@@ -85,11 +86,6 @@ _DEFAULT_CONFIRM: tuple[str, ...] = (
     "transfer funds",
     "uninstall",
 )
-
-
-def _split_env(name: str) -> tuple[str, ...]:
-    raw = os.getenv(name, "")
-    return tuple(s.strip().lower() for s in raw.split(",") if s.strip())
 
 
 @dataclass
@@ -204,11 +200,13 @@ def _names_no_target(action: object) -> bool:
 def make_trust_gate() -> TrustGate:
     """Build the gate from the environment. On by default; only an explicit
     ``off`` / ``false`` / ``0`` / ``no`` turns it into a pass-through."""
-    enabled = os.getenv("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"}
-    deny = _split_env("OPERON_TRUST_DENY")
-    confirm = _split_env("OPERON_TRUST_CONFIRM") or _DEFAULT_CONFIRM
-    allow_domains = _split_env("OPERON_TRUST_ALLOW_DOMAINS")
-    return TrustGate(enabled=enabled, deny=deny, confirm=confirm, allow_domains=allow_domains)
+    settings = get_settings()
+    return TrustGate(
+        enabled=settings.trust_gate,
+        deny=settings.trust_deny,
+        confirm=settings.trust_confirm or _DEFAULT_CONFIRM,
+        allow_domains=settings.trust_allow_domains,
+    )
 
 
 # Actions that change nothing on screen or disk: "ask" mode does not pause on them.
@@ -217,11 +215,8 @@ _PASSIVE_ACTIONS = frozenset({"wait", "stop", "wait_for_user", "screenshot_regio
 
 def default_permission_mode() -> PermissionMode:
     """``OPERON_PERMISSION_MODE``, or ``risky`` when it is unset or not a known mode."""
-    raw = os.getenv("OPERON_PERMISSION_MODE", "").strip().lower()
-    try:
-        return PermissionMode(raw)
-    except ValueError:
-        return PermissionMode.RISKY
+    raw = get_settings().permission_mode
+    return PermissionMode(raw) if raw else PermissionMode.RISKY
 
 
 def resolve_permission_mode(mode: str | PermissionMode | None) -> PermissionMode:

@@ -19,6 +19,7 @@ import numpy as np
 
 from operon.browser.keys import normalize_key
 from operon.core.paths import browser_artifacts_dir
+from operon.core.settings import get_settings
 from operon.executor.browser import Executor
 from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 from operon.models.capture import CaptureFrame
@@ -74,10 +75,11 @@ class NativeBrowserExecutor(Executor):
     ) -> None:
         self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else browser_artifacts_dir()
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
-        self._viewport_width = viewport_width or int(os.getenv("BROWSER_WIDTH", "1920"))
-        self._viewport_height = viewport_height or int(os.getenv("BROWSER_HEIGHT", "1080"))
+        settings = get_settings()
+        self._viewport_width = viewport_width or settings.browser_width
+        self._viewport_height = viewport_height or settings.browser_height
         if headless is None:
-            headless = os.getenv("BROWSER_HEADLESS", "false").lower() == "true"
+            headless = settings.browser_headless
         self._headless = headless
         if record_video is None:
             record_video = True
@@ -718,7 +720,7 @@ class NativeBrowserExecutor(Executor):
             launch_headless = self._run_headless.get(run_id)
             if launch_headless is None:
                 launch_headless = self._headless
-            if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true":
+            if get_settings().test_safe_mode:
                 launch_headless = True
             # browser_pid is only consumed by _bring_browser_to_foreground (gated
             # to non-headless runs). Skip the WMI/CIM PowerShell calls entirely

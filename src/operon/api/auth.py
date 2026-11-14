@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 from fastapi import Header, HTTPException, Request, WebSocket, status
 
 from operon.core.paths import runtime_dir
+from operon.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +37,11 @@ _OPEN_PATHS: frozenset[str] = frozenset({"/health"})
 
 def auth_disabled() -> bool:
     """Whether ``OPERON_ALLOW_UNAUTHENTICATED`` explicitly turns authentication off."""
-    return os.getenv("OPERON_ALLOW_UNAUTHENTICATED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return get_settings().allow_unauthenticated
 
 
 def _env_api_keys() -> set[str]:
-    raw = os.getenv("API_KEYS", "")
-    return {key.strip() for key in raw.split(",") if key.strip()}
+    return set(get_settings().api_keys)
 
 
 def api_key_file() -> Path:
@@ -99,7 +99,7 @@ def configured_api_keys() -> set[str]:
 def client_api_key() -> str | None:
     """The key a local client should send: the first of ``API_KEYS``, else the generated
     key file if the server has written one. Never creates the file."""
-    env_keys = [key.strip() for key in os.getenv("API_KEYS", "").split(",") if key.strip()]
+    env_keys = list(get_settings().api_keys)
     if env_keys:
         return env_keys[0]
     return _read_key_file(api_key_file())
@@ -107,8 +107,7 @@ def client_api_key() -> str | None:
 
 def configured_cors_origins() -> set[str]:
     """The browser origins allowed by ``CORS_ORIGINS`` (comma-separated). Empty ⇒ none."""
-    raw = os.getenv("CORS_ORIGINS", "")
-    return {origin.strip() for origin in raw.split(",") if origin.strip()}
+    return set(get_settings().cors_origins)
 
 
 def _key_matches(presented: str, accepted: set[str]) -> bool:
@@ -199,8 +198,7 @@ _LOOPBACK_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
 
 def configured_allowed_hosts() -> set[str]:
     """Host names accepted in the ``Host`` header: loopback plus ``OPERON_ALLOWED_HOSTS``."""
-    raw = os.getenv("OPERON_ALLOWED_HOSTS", "")
-    return set(_LOOPBACK_HOSTS) | {host.strip().lower() for host in raw.split(",") if host.strip()}
+    return set(_LOOPBACK_HOSTS) | set(get_settings().allowed_hosts)
 
 
 def _host_name(host_header: str) -> str:

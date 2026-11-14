@@ -41,9 +41,6 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 # see evals/CLAUDE.md. Benchmarks cost real credits: run only when asked, and name the run by cell
 # when asking Vickey: "Gemini · Browser · Thin · once, about $X".
 
-# Single test / file
-.venv\Scripts\python -m pytest tests/agent/test_loop.py::test_name -q
-
 # Lint (exactly what CI runs)
 .venv\Scripts\ruff check src tests evals --select E,F,W,I --ignore E501
 ```
@@ -56,10 +53,6 @@ that will drive the real mouse and keyboard:
 ```powershell
 $env:OPERON_RUN_LIVE_SERVER_TESTS = "true"; .venv\Scripts\python -m pytest tests -m live_server
 ```
-
-Opt-in suites (in `tests/integration/`): `test_e2e_quick_tasks.py`, `test_bug_fixes_verification.py` (live
-server), `test_live_execution.py` (capability regression gate),
-`test_upload_file_native_integration.py` (headed Windows, native OS file picker).
 
 ## Architecture
 

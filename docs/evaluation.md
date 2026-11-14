@@ -184,6 +184,19 @@ another on a single start of the Azure VM, which is deallocated after the last o
 report goes to the dashboard, and a `/bench batch` comment gets one results table on its PR.
 `evals/bench_batch.py` reads and checks the cells.
 
+### Nightly run (KAN-165)
+
+The batch also runs by itself: **Nightly benchmark run** (`nightly.yml`) fires at 2 AM Chicago
+(cron `0 8 * * *`, 3 AM in summer time) and runs the cells queued in `evals/nightly-queue.txt`.
+Threads queue a cell by adding a line in any PR: `2026-11-14 desktop thin season=2 cap=2.5  # note`
+(the date, the cell words above, an optional note). Each night `evals/nightly.py` takes the queued
+lines, oldest first, while their caps fit the budget: **$5 a night**, or what is left of
+**$100 for the month** (from the dashboard database), whichever is less. Lines that don't fit wait
+for the next night; a line runs once (run lines are kept in the `nightly-state` artifact, marked
+before the run so a failed cell isn't paid for twice); lines older than 7 days are skipped. If the
+month's spend can't be read, nothing runs. Run it by hand with `dry_run` to see the plan for free.
+Results reach the dashboard and the 8 AM Slack summary.
+
 ## Adding models later
 
 Claude, GPT and the cross-model adapter were removed on 2026-11-11 so that model onboarding

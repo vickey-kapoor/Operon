@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict
@@ -179,6 +180,10 @@ class FileBackedRunStore(RunStore):
         """Record the settings this run started with (KAN-157), secrets left out."""
         path = self._ensure_run_dir(run_id) / "settings.json"
         path.write_text(json.dumps(get_settings().effective(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        # The machine's path rules, so a replay elsewhere judges file paths as this
+        # run did (evals/replay.py, KAN-167).
+        host = {"os": os.name, "home": str(Path.home()), "cwd": os.getcwd()}
+        (path.parent / "host.json").write_text(json.dumps(host) + "\n", encoding="utf-8")
 
     def _state_path(self, run_id: str) -> Path:
         return self._ensure_run_dir(run_id) / "state.json"

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ntpath
 import os
 import re
 import sys
@@ -58,6 +59,7 @@ _ACTION_FIELDS = (
     "clear_before_typing", "scroll_amount", "horizontal", "wait_ms", "tool", "tool_args",
 )
 _NO_MODEL_CALL = "No model call"
+_WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 class RecordingError(ValueError):
@@ -147,6 +149,31 @@ def logged_steps(run_dir: Path) -> list[dict]:
     return steps
 
 
+def _run_host(run_dir: Path, steps: list[dict]) -> dict:
+    """The operating system the run's file paths follow and its home folder: from the
+    run's ``host.json``, or, for an older run, guessed from its logged paths (a Windows
+    run may be recorded from a folder copied to Linux)."""
+    if (run_dir / "host.json").is_file():
+        return _read_json(run_dir / "host.json")
+    paths = [str((s.get("perception_debug") or {}).get("raw_response_artifact_path") or "") for s in steps]
+    if any(_WINDOWS_PATH.match(p) for p in paths):
+        system = "nt"
+    elif any(p.startswith("/") for p in paths):
+        system = "posix"
+    else:  # relative paths: recorded where it ran
+        system = os.name
+    return {"os": system, "home": str(Path.home()) if system == os.name else None}
+
+
+def _gate_urls(run_dir: Path) -> list[str | None]:
+    """The page URLs the trust gate judged before each action (logged only when it has
+    a domain allowlist), in order."""
+    path = run_dir / "trust_gate_urls.jsonl"
+    if not path.is_file():
+        return []
+    return [json.loads(line).get("url") for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None,
                outcome: str | None = None) -> dict:
     """One run folder as a replayable recording (raises :class:`RecordingError`)."""
@@ -190,6 +217,8 @@ def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None
         "permission_mode": state.get("permission_mode"),
         "screen": {"width": size[0], "height": size[1]},
         "settings": recordable_settings(settings),
+        "host": _run_host(run_dir, steps),
+        "gate_urls": _gate_urls(run_dir),
         "turns": turns,
         "steps": logged_steps(run_dir),
     }
@@ -247,13 +276,16 @@ class ReplayClient:
 
 class ReplayExecutor:
     """A blank screen of the recorded size. Each action ends the way it did in the real
-    run (``outcomes``, in execution order; success once they run out)."""
+    run (``outcomes``, in execution order; success once they run out), and the trust
+    gate sees the pages it saw then (``gate_urls``, in order)."""
 
-    def __init__(self, width: int, height: int, frames_dir: Path, outcomes: list[dict] | None = None) -> None:
+    def __init__(self, width: int, height: int, frames_dir: Path, outcomes: list[dict] | None = None,
+                 gate_urls: list[str | None] | None = None) -> None:
         self.width, self.height = width, height
         self.frames_dir = frames_dir
         self.actions: list[Any] = []
         self._outcomes = list(outcomes or [])
+        self._gate_urls = list(gate_urls or [])
         self._n = 0
 
     def _frame(self) -> str:
@@ -292,6 +324,9 @@ class ReplayExecutor:
 
     async def get_current_url(self) -> str | None:
         return None
+
+    async def current_url_for_run(self, run_id: str) -> str | None:
+        return self._gate_urls.pop(0) if self._gate_urls else None
 
 
 @dataclass
@@ -373,7 +408,7 @@ class LoopRun:
 
 async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, height: int, root: Path,
                     max_steps: int, outcomes: list[dict] | None = None, permission_mode: str | None = None,
-                    resumes_allowed: int = 10) -> LoopRun:
+                    resumes_allowed: int = 10, gate_urls: list[str | None] | None = None) -> LoopRun:
     """Drive the real thin-harness loop with ``turns`` as the model's answers on a blank
     screen, in run folders under ``root`` (the caller sets the environment)."""
     from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
@@ -395,7 +430,7 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
     from operon.store.run_store import FileBackedRunStore
 
     (root / "frames").mkdir(parents=True, exist_ok=True)
-    executor = ReplayExecutor(width, height, root / "frames", outcomes)
+    executor = ReplayExecutor(width, height, root / "frames", outcomes, gate_urls)
     tools = enabled_tools()
     backend: Any
     if mode == "browser":
@@ -469,6 +504,53 @@ def loop_environment(settings: dict | None = None):
         yield
 
 
+@contextmanager
+def recorded_path_rules(host: dict | None):
+    """Judge file paths the way the recording's machine did. A Windows run replayed
+    elsewhere keeps its ``C:\\...`` paths and ``OPERON_ALLOWED_FILE_ROOTS``, which this
+    machine's ``Path`` would resolve as unrelated relative paths, so the file guard
+    compares them as Windows paths (case-insensitive). As on that machine, a tool's
+    relative path is under the home folder, and any other relative path (an allowed root,
+    an upload) is under the working directory the run started in."""
+    if not host or host.get("os") != "nt" or os.name == "nt":
+        yield
+        return
+    from operon.agent.policy import file_guard
+    from operon.core.settings import get_settings
+
+    home = PureWindowsPath(host.get("home") or r"C:\Users\replay")
+    cwd = PureWindowsPath(host.get("cwd") or home)
+
+    def windows_path(raw: str, base: PureWindowsPath = home) -> PureWindowsPath:
+        text = str(raw).strip()
+        if text == "~" or text.startswith(("~/", "~\\")):
+            text = str(home / text[2:])
+        path = PureWindowsPath(text)
+        if not path.is_absolute():
+            path = base / path
+        return PureWindowsPath(ntpath.normpath(str(path)))
+
+    class _WindowsPath:  # file_guard's ``Path(text).expanduser().resolve()``
+        def __init__(self, raw: str) -> None:
+            self.raw = raw
+
+        def expanduser(self) -> "_WindowsPath":
+            return self
+
+        def resolve(self) -> PureWindowsPath:
+            return windows_path(self.raw, cwd)
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(file_guard, "tool_path", windows_path))
+        stack.enter_context(patch.object(file_guard, "Path", _WindowsPath))
+        stack.enter_context(patch.object(
+            file_guard, "allowed_file_roots",
+            lambda: [windows_path(p, cwd) for p in get_settings().allowed_file_roots],
+        ))
+        stack.enter_context(patch.object(file_guard, "_canon", lambda v: v.replace("\\", "/").casefold()))
+        yield
+
+
 async def replay(recording: dict) -> ReplayResult:
     """Run ``recording`` through the real loop with its recorded answers and compare."""
     if recording.get("format") != FORMAT:
@@ -478,13 +560,18 @@ async def replay(recording: dict) -> ReplayResult:
     screen = recording["screen"]
     # The real run's own step budget, so a run that ran out of steps ends the same way.
     max_steps = int(recording.get("max_steps") or len(recorded) + 3)
-    with tempfile.TemporaryDirectory(prefix="operon-replay-") as tmp, loop_environment(recording.get("settings")):
+    with (
+        tempfile.TemporaryDirectory(prefix="operon-replay-") as tmp,
+        loop_environment(recording.get("settings")),
+        recorded_path_rules(recording.get("host")),
+    ):
         run = await run_turns(
             recording["turns"], mode=recording["mode"], intent=recording["intent"] or task,
             width=int(screen["width"]), height=int(screen["height"]), root=Path(tmp),
             max_steps=max_steps, outcomes=executed_outcomes(recording["steps"]),
             permission_mode=recording.get("permission_mode"),
             resumes_allowed=resumes_in(recording),
+            gate_urls=recording.get("gate_urls"),
         )
     return compare(task, recorded, run.actions, extra_turns=run.extra_turns, status=run.status)
 

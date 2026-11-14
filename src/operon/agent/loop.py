@@ -1125,18 +1125,35 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
-    async def _current_url_for_trust_gate(self, run_id: str) -> str | None:
+    async def _current_url_for_trust_gate(self, run_id: str, *, log: bool = False) -> str | None:
         """The browser's current URL, only when the trust gate has a domain allowlist
-        to judge it against; None otherwise or when the executor has no page."""
+        to judge it against; None otherwise or when the executor has no page.
+
+        ``log`` (the pre-execution check) appends it to the run's
+        ``trust_gate_urls.jsonl``, so a replay (evals/replay.py) can show the gate
+        the same pages."""
         if not (self._trust_gate.enabled and self._trust_gate.allow_domains):
             return None
         if not hasattr(self.executor, "current_url_for_run"):
             return None
         try:
-            return await self.executor.current_url_for_run(run_id)
+            url = await self.executor.current_url_for_run(run_id)
         except Exception as exc:
             self._recovered(run_id, "trust_gate_current_url", exc, level=logging.DEBUG)
-            return None
+            url = None
+        if log:
+            self._log_trust_gate_url(run_id, url)
+        return url
+
+    def _log_trust_gate_url(self, run_id: str, url: str | None) -> None:
+        root = getattr(self.run_store, "root_dir", None)
+        if root is None:
+            return
+        try:
+            with (Path(root) / run_id / "trust_gate_urls.jsonl").open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"url": url}) + "\n")
+        except OSError as exc:
+            self._recovered(run_id, "trust_gate_url_log", exc, level=logging.DEBUG)
 
     def _pre_execution_gate_text(
         self,
@@ -1289,7 +1306,7 @@ class AgentLoop:
                 )
             })
 
-        current_url = await self._current_url_for_trust_gate(record.run_id)
+        current_url = await self._current_url_for_trust_gate(record.run_id, log=True)
         gate_text = self._pre_execution_gate_text(
             decision,
             intent=state.intent,

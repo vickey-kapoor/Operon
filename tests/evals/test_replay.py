@@ -202,6 +202,15 @@ def test_a_run_that_ended_waiting_at_a_pause_replays(tmp_path):
     _replays(recording)
 
 
+def test_a_run_folder_records_its_host(tmp_path):
+    real_run(tmp_path)
+    run_dir = next((tmp_path / "runs").iterdir())
+    import os
+
+    assert json.loads((run_dir / "host.json").read_text()) == {
+        "os": os.name, "home": str(Path.home()), "cwd": os.getcwd()}
+
+
 def test_file_roots_are_kept():
     kept = rp.recordable_settings({"OPERON_ALLOWED_FILE_ROOTS": ["C:/Users/runner/Documents"], "OPERON_RUNS_ROOT": "/x"})
     assert kept == {"OPERON_ALLOWED_FILE_ROOTS": "C:/Users/runner/Documents"}
@@ -221,3 +230,60 @@ def test_the_run_permission_mode_is_restored(tmp_path):
     recording = _record(tmp_path, TURNS, permission_mode="ask")
     assert recording["permission_mode"] == "ask"
     _replays(recording)
+
+
+def test_the_trust_gate_sees_the_pages_it_saw(tmp_path):
+    """With a domain allowlist, an action on an off-list page pauses; the replay must show
+    the gate the same page, or the pause turns into an executed click."""
+    turns = [call("click_at", x=300, y=300), call("click_at", x=310, y=310), done()]
+    recording = _record(tmp_path, turns, settings={"OPERON_TRUST_GATE": "on", "OPERON_TRUST_ALLOW_DOMAINS": "example.com"},
+                        gate_urls=["https://example.com/", "https://evil.test/login"])
+    assert recording["gate_urls"][:2] == ["https://example.com/", "https://evil.test/login"]
+    assert [s["action"]["action_type"] for s in recording["steps"]][:2] == ["click", "wait_for_user"]
+    _replays(recording)
+    blind = asyncio.run(rp.replay({**recording, "gate_urls": []}))  # the gate never sees the page
+    assert not blind.ok and "step 2" in blind.message
+
+
+def test_a_run_from_another_os_judges_file_paths_its_way(tmp_path):
+    """A Windows run's Documents root authorizes C:\\...\\report.txt; replayed on Linux too."""
+    host = {"os": "nt", "home": r"C:\Users\alice"}
+    turns = [call("read_file", path=r"C:\Users\alice\Documents\report.txt"),
+             call("read_file", path=r"Documents\notes.txt"), done()]  # relative: under the home folder
+    settings = {"OPERON_ALLOWED_FILE_ROOTS": r"C:\Users\alice\Documents"}
+    with rp.recorded_path_rules(host), rp.loop_environment({"OPERON_DESKTOP_PLATFORM": "windows", **settings}):
+        run = asyncio.run(rp.run_turns(turns, mode="desktop", intent="task", width=1280, height=800,
+                                       root=tmp_path, max_steps=10))  # the guard as it ran on Windows
+    (run.run_dir / "host.json").write_text(json.dumps(host))  # what the Windows machine wrote
+    recording = rp.record_run(run.run_dir, task="t", mode="desktop")  # recorded after copying to Linux
+    assert recording["host"] == host
+    assert [s["action"]["action_type"] for s in recording["steps"]][:2] == ["tool", "tool"]
+    _replays(recording)
+    as_linux = asyncio.run(rp.replay({**recording, "host": {"os": "posix", "home": "/root"}}))
+    assert not as_linux.ok and "step 1" in as_linux.message
+    other_home = asyncio.run(rp.replay({**recording, "host": {"os": "nt", "home": None}}))
+    assert not other_home.ok and "step 2" in other_home.message
+
+    from operon.agent.policy.file_guard import blocked_file_path
+    from operon.models.policy import ActionType, AgentAction
+
+    outside = AgentAction(action_type=ActionType.TOOL, tool="read_file", tool_args={"path": r"C:\Windows\secret.txt"},
+                          text="read_file: secret")
+    with rp.loop_environment(settings), rp.recorded_path_rules(host):
+        assert blocked_file_path(outside, intent="task", run_dir=tmp_path) == r"C:\Windows\secret.txt"
+        inside = outside.model_copy(update={"tool_args": {"path": r"documents\report.txt"}})
+        assert blocked_file_path(inside, intent="task", run_dir=tmp_path) is None
+
+
+def test_relative_roots_follow_the_recorded_working_directory(tmp_path):
+    """Roots resolve against the run's working directory; tool paths against its home."""
+    from operon.agent.policy.file_guard import blocked_file_path
+    from operon.models.policy import ActionType, AgentAction
+
+    host = {"os": "nt", "home": r"C:\Users\alice", "cwd": r"C:\Operon"}
+    read = AgentAction(action_type=ActionType.TOOL, tool="read_file", tool_args={"path": "report.txt"},
+                       text="read_file: report.txt")
+    with rp.loop_environment({"OPERON_ALLOWED_FILE_ROOTS": "."}), rp.recorded_path_rules(host):
+        assert blocked_file_path(read, intent="task", run_dir=tmp_path) == "report.txt"  # C:\Users\alice\report.txt
+        in_cwd = read.model_copy(update={"tool_args": {"path": r"C:\Operon\report.txt"}})
+        assert blocked_file_path(in_cwd, intent="task", run_dir=tmp_path) is None

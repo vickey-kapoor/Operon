@@ -12,7 +12,12 @@ from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.clients.gemini import PlaceholderGeminiClient
 from operon.models.common import RunStatus
 from operon.models.execution import ExecutedAction
-from operon.models.perception import PageHint, ScreenPerception, UIElement, UIElementType
+from operon.models.perception import (
+    PageHint,
+    ScreenPerception,
+    UIElement,
+    UIElementType,
+)
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
 from operon.models.state import AgentState
 from operon.store.memory import FileBackedMemoryStore

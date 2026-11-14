@@ -149,9 +149,12 @@ def logged_steps(run_dir: Path) -> list[dict]:
     return steps
 
 
-def _run_host(steps: list[dict]) -> dict:
-    """The operating system the run's file paths follow (a Windows run may be recorded
-    from a folder copied to Linux) and, when that is this machine's, its home folder."""
+def _run_host(run_dir: Path, steps: list[dict]) -> dict:
+    """The operating system the run's file paths follow and its home folder: from the
+    run's ``host.json``, or, for an older run, guessed from its logged paths (a Windows
+    run may be recorded from a folder copied to Linux)."""
+    if (run_dir / "host.json").is_file():
+        return _read_json(run_dir / "host.json")
     paths = [str((s.get("perception_debug") or {}).get("raw_response_artifact_path") or "") for s in steps]
     if any(_WINDOWS_PATH.match(p) for p in paths):
         system = "nt"
@@ -214,7 +217,7 @@ def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None
         "permission_mode": state.get("permission_mode"),
         "screen": {"width": size[0], "height": size[1]},
         "settings": recordable_settings(settings),
-        "host": _run_host(steps),
+        "host": _run_host(run_dir, steps),
         "gate_urls": _gate_urls(run_dir),
         "turns": turns,
         "steps": logged_steps(run_dir),

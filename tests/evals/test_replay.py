@@ -202,6 +202,14 @@ def test_a_run_that_ended_waiting_at_a_pause_replays(tmp_path):
     _replays(recording)
 
 
+def test_a_run_folder_records_its_host(tmp_path):
+    real_run(tmp_path)
+    run_dir = next((tmp_path / "runs").iterdir())
+    import os
+
+    assert json.loads((run_dir / "host.json").read_text()) == {"os": os.name, "home": str(Path.home())}
+
+
 def test_file_roots_are_kept():
     kept = rp.recordable_settings({"OPERON_ALLOWED_FILE_ROOTS": ["C:/Users/runner/Documents"], "OPERON_RUNS_ROOT": "/x"})
     assert kept == {"OPERON_ALLOWED_FILE_ROOTS": "C:/Users/runner/Documents"}
@@ -238,16 +246,22 @@ def test_the_trust_gate_sees_the_pages_it_saw(tmp_path):
 
 def test_a_run_from_another_os_judges_file_paths_its_way(tmp_path):
     """A Windows run's Documents root authorizes C:\\...\\report.txt; replayed on Linux too."""
-    host = {"os": "nt", "home": r"C:\Users\runner"}
-    turns = [call("read_file", path=r"C:\Users\runner\Documents\report.txt"), done()]
-    settings = {"OPERON_ALLOWED_FILE_ROOTS": r"C:\Users\runner\Documents"}
-    with rp.recorded_path_rules(host):  # the guard as it ran on Windows
-        recording = _record(tmp_path, turns, settings=settings)
-    recording["host"] = host
-    assert recording["steps"][0]["action"]["action_type"] == "tool"
+    host = {"os": "nt", "home": r"C:\Users\alice"}
+    turns = [call("read_file", path=r"C:\Users\alice\Documents\report.txt"),
+             call("read_file", path=r"Documents\notes.txt"), done()]  # relative: under the home folder
+    settings = {"OPERON_ALLOWED_FILE_ROOTS": r"C:\Users\alice\Documents"}
+    with rp.recorded_path_rules(host), rp.loop_environment({"OPERON_DESKTOP_PLATFORM": "windows", **settings}):
+        run = asyncio.run(rp.run_turns(turns, mode="desktop", intent="task", width=1280, height=800,
+                                       root=tmp_path, max_steps=10))  # the guard as it ran on Windows
+    (run.run_dir / "host.json").write_text(json.dumps(host))  # what the Windows machine wrote
+    recording = rp.record_run(run.run_dir, task="t", mode="desktop")  # recorded after copying to Linux
+    assert recording["host"] == host
+    assert [s["action"]["action_type"] for s in recording["steps"]][:2] == ["tool", "tool"]
     _replays(recording)
     as_linux = asyncio.run(rp.replay({**recording, "host": {"os": "posix", "home": "/root"}}))
     assert not as_linux.ok and "step 1" in as_linux.message
+    other_home = asyncio.run(rp.replay({**recording, "host": {"os": "nt", "home": None}}))
+    assert not other_home.ok and "step 2" in other_home.message
 
     from operon.agent.policy.file_guard import blocked_file_path
     from operon.models.policy import ActionType, AgentAction

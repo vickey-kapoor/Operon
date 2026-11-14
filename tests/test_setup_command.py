@@ -22,6 +22,8 @@ def home(monkeypatch: pytest.MonkeyPatch, tmp_path):
     for name in ("GEMINI_API_KEY", "GEMINI_API_BASE_URL"):
         monkeypatch.setenv(name, "")
         monkeypatch.delenv(name)
+    monkeypatch.chdir(tmp_path)  # no .env from the checkout
+    monkeypatch.setattr(paths, "_shell_env", None)
     return tmp_path / "cfg"
 
 
@@ -102,14 +104,55 @@ def test_an_existing_key_is_kept_unless_new_key(home, monkeypatch) -> None:
     code, text = _run(fake)
     assert code == 0
     assert "ask" not in fake.calls
-    assert "already set" in text
+    assert "already set in your environment variables" in text
     assert not (home / "operon.env").exists()
 
+    monkeypatch.delenv("GEMINI_API_KEY")
+    paths.remember_shell_env()  # as `operon` does at start: no key in the shell
+    fake = Fake(key="first")
+    assert _run(fake)[0] == 0
     fake = Fake(key="replacement")
-    code, _ = _run(fake, "--new-key")
-    assert code == 0
+    code, text = _run(fake, "--new-key")
+    assert code == 0, text
     assert fake.calls[0] == "ask"
     assert (home / "operon.env").read_text(encoding="utf-8") == "GEMINI_API_KEY=replacement\n"
+    assert os.environ["GEMINI_API_KEY"] == "replacement"
+
+
+def test_new_key_warns_when_the_shell_key_still_wins(home, monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "old-shell-key")
+    paths.remember_shell_env()
+    code, text = _run(Fake(key="replacement"), "--new-key")
+    assert code == 1
+    assert (home / "operon.env").read_text(encoding="utf-8") == "GEMINI_API_KEY=replacement\n"
+    assert "keep using a different key" in text and "your environment variables" in text
+    assert "Ready" not in text
+    assert os.environ["GEMINI_API_KEY"] == "old-shell-key"
+
+
+def test_new_key_warns_when_a_local_env_file_still_wins(home, tmp_path) -> None:
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=old-file-key\n", encoding="utf-8")
+    code, text = _run(Fake(key="replacement"), "--new-key")
+    assert code == 1
+    assert str(tmp_path / ".env") in text
+    assert "Ready" not in text
+
+
+def test_new_key_matching_the_local_env_file_is_fine(home, tmp_path) -> None:
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=same\n", encoding="utf-8")
+    code, text = _run(Fake(key="same"), "--new-key")
+    assert code == 0, text
+    assert "Ready" in text
+
+
+def test_check_names_where_the_key_comes_from(home, tmp_path, monkeypatch) -> None:
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=from-file\n", encoding="utf-8")
+    monkeypatch.setenv("GEMINI_API_KEY", "from-file")
+    paths.remember_shell_env()
+    monkeypatch.setattr(paths, "_shell_env", {})
+    code, text = _run(Fake(), "--check", "--offline")
+    assert code == 0
+    assert f"GEMINI_API_KEY is set: from {tmp_path / '.env'}" in text
 
 
 def test_offline_and_skip_browser_skip_their_steps(home) -> None:

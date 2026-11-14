@@ -10,6 +10,8 @@ Three steps:
    folder, or a key saved earlier); otherwise asks for it with the input hidden, checks it
    with Gemini, and saves it to ``~/.operon/operon.env`` (``OPERON_CONFIG_DIR``), readable
    only by you. Every ``operon`` command reads that file, so it works from any folder.
+   A key in your environment variables or a local ``.env`` is read first, so when one of
+   those holds a different key, setup says where it is and stops short of "Ready".
 2. **Browser.** ``python -m playwright install chromium``, the browser Operon drives.
 3. **Self-check.** The key is set and Gemini accepts it (listing models, which costs
    nothing), the browser starts and renders a page, and the settings are valid.
@@ -77,6 +79,42 @@ def save_key(key: str, path: Path) -> None:
         os.chmod(path, 0o600)
     except OSError:  # pragma: no cover - Windows ignores POSIX modes
         pass
+
+
+def _dotenv_key() -> tuple[str, str]:
+    """``(path, key)`` from the ``.env`` an ``operon`` command in this folder loads; blanks if none."""
+    from dotenv import dotenv_values, find_dotenv
+
+    path = find_dotenv(usecwd=True)
+    if not path:
+        return "", ""
+    return path, str(dotenv_values(path).get(KEY_NAME) or "").strip()
+
+
+def key_origin() -> str:
+    """Where the key ``operon`` commands use comes from, in the order they look."""
+    from operon.core.paths import shell_env, user_env_file
+
+    if shell_env().get(KEY_NAME, "").strip():
+        return "your environment variables"
+    path, key = _dotenv_key()
+    if key:
+        return path
+    return str(user_env_file())
+
+
+def key_overrides(saved: str) -> list[str]:
+    """The places holding a different key that ``operon`` commands read before the saved one."""
+    from operon.core.paths import shell_env
+
+    places = []
+    shell = shell_env().get(KEY_NAME, "").strip()
+    if shell and shell != saved:
+        places.append(f"your environment variables ({KEY_NAME})")
+    path, key = _dotenv_key()
+    if key and key != saved:
+        places.append(path)
+    return places
 
 
 def _read_key(ask_secret: Callable[[str], str]) -> str:
@@ -155,7 +193,7 @@ def _print_check(check: Check, out: Callable[[str], None]) -> None:
 
 def self_check(*, offline: bool, skip_browser: bool, steps: Steps, out: Callable[[str], None]) -> list[Check]:
     key = os.getenv(KEY_NAME, "").strip()
-    checks = [Check(f"{KEY_NAME} is set", bool(key), "" if key else "run `operon setup` to add it")]
+    checks = [Check(f"{KEY_NAME} is set", bool(key), f"from {key_origin()}" if key else "run `operon setup` to add it")]
     if key and not offline:
         checks.append(steps.check_key(key))
     if not skip_browser:
@@ -175,7 +213,7 @@ def setup(args: argparse.Namespace, *, steps: Steps | None = None, out: Callable
         out("Operon setup\n")
         existing = os.getenv(KEY_NAME, "").strip()
         if existing and not args.new_key:
-            out("1. Gemini key: already set, keeping it (use --new-key to replace it).")
+            out(f"1. Gemini key: already set in {key_origin()}, keeping it (use --new-key to replace it).")
         else:
             out("1. Gemini key")
             key = _read_key(steps.ask_secret)
@@ -189,8 +227,15 @@ def setup(args: argparse.Namespace, *, steps: Steps | None = None, out: Callable
                     return 1
             path = user_env_file()
             save_key(key, path)
-            os.environ[KEY_NAME] = key
             out(f"   Saved to {path} (only you can read it).")
+            overrides = key_overrides(key)
+            if overrides:
+                out("   But Operon will keep using a different key from:")
+                for place in overrides:
+                    out(f"     - {place}")
+                out(f"   Remove {KEY_NAME} there (or set it to the new key), then run `operon setup --check`.")
+                return 1
+            os.environ[KEY_NAME] = key
         if args.skip_browser:
             out("2. Browser: skipped (--skip-browser).")
         else:

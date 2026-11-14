@@ -247,8 +247,9 @@ async def _answer(client, run_id: str, waiting: dict[str, Any], ask, out) -> dic
 def _load_env() -> None:
     from dotenv import find_dotenv, load_dotenv
 
-    from operon.core.paths import load_user_env
+    from operon.core.paths import load_user_env, remember_shell_env
 
+    remember_shell_env()
     load_dotenv(find_dotenv(usecwd=True), override=False)
     load_user_env()  # the key `operon setup` saved, for a pip install with no .env here
 

@@ -185,3 +185,16 @@ async def test_decisions_of_two_runs_do_not_mix(tmp_path: Path) -> None:
 
     assert (await backend.choose_action(one, _perception(_frame(tmp_path, "a.png")))).action.x == 100
     assert (await backend.choose_action(two, _perception(_frame(tmp_path, "b.png")))).action.x == 900
+
+
+async def test_approving_held_calls_keeps_the_models_own_reason(tmp_path: Path) -> None:
+    # A later gate (the trust gate reads the reason) must still see what the model said.
+    reply = dict(_click_reply(), rationale="Click Place order to buy it")
+    client = ScriptedClient([reply])
+    backend = _backend(client)
+    await _step(backend, _frame(tmp_path, "a.png"), _state())
+
+    backend.note_not_executed("run-1", "low confidence")
+    approved = await _step(backend, _frame(tmp_path, "b.png"), _state())
+
+    assert approved.rationale == "Click Place order to buy it"

@@ -53,6 +53,10 @@ class _ConversationState:
     # The calls of the model's latest turn, until they run or are set aside: a gate
     # pause holds them so the person's approval runs exactly what the model asked.
     last_calls: list[dict] = field(default_factory=list)
+    # The model's stated reason for ``last_calls`` / ``held_calls``: replaying held
+    # calls keeps it, so a later gate (the trust gate reads it) still sees it.
+    last_rationale: str | None = None
+    held_rationale: str | None = None
     # Why the open calls did not run when Operon set them aside without asking the
     # person (a rule ran something else, or a guard rejected the call); the next
     # answer reports it instead of an outcome.
@@ -134,13 +138,16 @@ class BrowserComputerUseBackend(AgentBackend):
             function_calls = [_without_safety_decision(call) for call in held]
             conversation.held_calls = []
             conversation.last_calls = list(held)
+            rationale = conversation.held_rationale or "Running the action the user confirmed."
+            conversation.last_rationale = conversation.held_rationale
+            conversation.held_rationale = None
             # The API rejects the answer to a require_confirmation call unless it
             # acknowledges the decision, and only those calls carry one.
             conversation.acknowledge_safety = any(_requires_confirmation(call) for call in held)
             response_payload = {
                 "function_call": function_calls[0],
                 "function_calls": function_calls,
-                "rationale": "Running the action the user confirmed.",
+                "rationale": rationale,
             }
         else:
             hints = self._take_hints(state)
@@ -150,9 +157,12 @@ class BrowserComputerUseBackend(AgentBackend):
                 prompt=prompt, screenshot=screenshot, state=state, hints=hints
             )
             function_calls = response_payload.get("function_calls") or []
-            self._conversations[state.run_id].last_calls = list(function_calls)
+            conversation = self._conversations[state.run_id]
+            conversation.last_calls = list(function_calls)
+            conversation.last_rationale = response_payload.get("rationale")
             if any(_requires_confirmation(call) for call in function_calls):
-                self._conversations[state.run_id].held_calls = function_calls
+                conversation.held_calls = function_calls
+                conversation.held_rationale = conversation.last_rationale
 
         bg_writer.enqueue(raw_path, json.dumps(response_payload, indent=2))
 
@@ -232,6 +242,7 @@ class BrowserComputerUseBackend(AgentBackend):
         if conversation is None or not conversation.held_calls:
             return
         conversation.held_calls = []
+        conversation.held_rationale = None
         conversation.last_calls = []
         conversation.acknowledge_safety = False
         conversation.declined_reason = reason
@@ -248,6 +259,7 @@ class BrowserComputerUseBackend(AgentBackend):
             return  # Already held for the model's own confirmation request.
         if conversation.last_calls and conversation.not_run_reason is None:
             conversation.held_calls = list(conversation.last_calls)
+            conversation.held_rationale = conversation.last_rationale
             return
         conversation.not_run_reason = f"Not executed: {reason}"
 

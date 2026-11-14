@@ -59,7 +59,10 @@ class FileBackedMemoryStore(MemoryStore):
         self.memory_dir = self.root_dir / "memory"
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_path = self.memory_dir / "memory.jsonl"
-        self._adopt_legacy_memory()
+        if root_dir is None:
+            # Only the default store: an explicitly rooted one (a test, an eval
+            # scenario) stays isolated from the old working-directory memory.
+            self._adopt_legacy_memory()
         self._cached_records: list[MemoryRecord] | None = None
         self._cached_mtime: float = 0.0
         self._seeded_guardrail_keys: set[str] = set()

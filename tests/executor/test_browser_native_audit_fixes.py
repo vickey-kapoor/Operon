@@ -70,3 +70,18 @@ async def test_upload_file_without_coordinates_fails_instead_of_using_the_dom(tm
     assert result.failure_category is FailureCategory.EXECUTION_TARGET_NOT_FOUND
     page.locator.assert_not_called()
     page.expect_file_chooser.assert_not_called()
+
+
+def test_upload_file_takes_the_upload_controls_coordinates() -> None:
+    from operon.agent.loop import AgentLoop
+    from operon.models.perception import UIElement, UIElementType
+
+    action = AgentAction(action_type=ActionType.UPLOAD_FILE, text="/tmp/cv.pdf", target_element_id="upload")
+    target = UIElement(
+        element_id="upload", element_type=UIElementType.BUTTON, label="Upload",
+        x=100, y=200, width=40, height=20, is_interactable=True, confidence=0.9,
+    )
+
+    placed = AgentLoop._normalize_action_target_coordinates(action, target)
+
+    assert (placed.x, placed.y) == (120, 210)

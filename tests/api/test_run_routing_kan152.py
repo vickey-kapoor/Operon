@@ -72,6 +72,20 @@ def test_memory_kept_under_the_old_working_directory_path_is_carried_over(
     assert store.memory_path.read_text(encoding="utf-8").startswith('{"kept": true}\n')
 
 
+
+def test_an_explicitly_rooted_memory_store_stays_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Eval scenarios and tests root their own store: no old records leak in.
+    monkeypatch.chdir(tmp_path)
+    legacy = tmp_path / "runs" / "memory" / "memory.jsonl"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('{"kept": true}\n', encoding="utf-8")
+
+    store = FileBackedMemoryStore(tmp_path / "scenario")
+
+    assert '"kept"' not in store.memory_path.read_text(encoding="utf-8") if store.memory_path.exists() else True
+
 def test_cleanup_never_deletes_the_memory_folder(tmp_path: Path) -> None:
     old = time.time() - 30 * 86400
     run = tmp_path / "old-run"

@@ -2002,6 +2002,7 @@ class AgentLoop:
         if action.action_type in {
             ActionType.CLICK,
             ActionType.HOVER,
+            ActionType.UPLOAD_FILE,
             ActionType.UPLOAD_FILE_NATIVE,
             ActionType.TYPE,
         }:

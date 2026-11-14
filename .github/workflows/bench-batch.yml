@@ -125,6 +125,7 @@ jobs:
       harness_profile: ${{ matrix.profile }}
       critic: ${{ matrix.critic }}
       tools: ${{ matrix.tools }}
+      zoom: ${{ matrix.zoom }}
       suite: ${{ matrix.suite }}
       args: ${{ matrix.extra }}
       max_cost_usd: ${{ matrix.cap }}
@@ -155,6 +156,7 @@ jobs:
       harness_profile: ${{ matrix.profile }}
       critic: ${{ matrix.critic }}
       tools: ${{ matrix.tools }}
+      zoom: ${{ matrix.zoom }}
       suite: ${{ matrix.suite }}
       args: ${{ matrix.extra }}
       max_cost_usd: ${{ matrix.cap }}

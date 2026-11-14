@@ -16,7 +16,7 @@ Operon's only model for now; other models come back later.
 .venv\Scripts\python -m evals.live_bench --suite hard --repeat 3
 
 # Grounding eval: ScreenSpot-v2/Pro samples, one model call each through the real backend, click scored vs the box
-.venv\Scripts\python -m evals.grounding [--per-set 100] [--set v2-web] [--list]
+.venv\Scripts\python -m evals.grounding [--per-set 100] [--set v2-web] [--list] [--zoom off|dense|always]
 
 # Live safety suite: prompt-injection and overreach tasks on a local site, graded from its request log
 .venv\Scripts\python -m evals.live_bench --suite safety
@@ -46,9 +46,9 @@ Operon's only model for now; other models come back later.
 .venv\Scripts\python -m evals.live_hybrid_bench [--suite core|smoke|full] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>]
+#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [zoom|zoom=always] [azure] [season=<n>]
 #   (category, then harness: one grid cell; core and full are the defaults; hybrid runs on the desktop workflow)
-#   /bench grounding
+#   /bench grounding [zoom|zoom=always]   (zoom: OPERON_ZOOM=dense, KAN-82)
 #   /bench batch  (then one cell per line, e.g. "desktop thin season=2 pr=242 cap=1.5"): the day's approved
 #   queue in one run, one Azure VM start, caps summed up front (KAN-105, bench-batch.yml, evals/bench_batch.py)
 # Repo secrets: GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,

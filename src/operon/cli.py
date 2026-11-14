@@ -69,16 +69,9 @@ class LocalClient:
 
     async def close(self) -> None:
         # Release the browser and desktop resources the run opened, as the server does at shutdown.
-        from operon.api.runtime.loops import iter_built_executors
+        from operon.api.runtime.loops import close_built_runtime
 
-        for executor in iter_built_executors():
-            aclose = getattr(executor, "aclose", None)
-            if aclose is None:
-                continue
-            try:
-                await aclose()
-            except Exception:  # noqa: BLE001 - exiting anyway
-                pass
+        await close_built_runtime()
         await settle_subprocess_pipes()
 
 
@@ -270,6 +263,12 @@ def _payload(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if getattr(args, "env", None):
+        if args.request:
+            print("operon run: --env picks this machine's environment; the API you --request uses its own "
+                  "OPERON_ENVIRONMENT.", file=sys.stderr)
+            return 2
+        os.environ["OPERON_ENVIRONMENT"] = args.env
     if args.request:
         from operon.api.auth import client_api_key
 
@@ -329,6 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--api", default=os.getenv("OPERON_API_URL", _DEFAULT_API), help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
     run.add_argument("--desktop", action="store_true", help="run on the desktop instead of in the browser")
+    run.add_argument("--env", default=None, help="desktop run environment (default $OPERON_ENVIRONMENT, else live; see `operon envs`)")
     run.add_argument("--url", default=None, help="page to open first (browser)")
     run.add_argument("--mode", choices=["ask", "risky", "auto"], default=None, help="permission mode (default $OPERON_PERMISSION_MODE, else risky)")
     run.add_argument("--max-steps", type=int, default=25)
@@ -341,9 +341,13 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(func=_serve)
 
     from operon import cloud, setup_command
+    from operon.environments import cli as environments_cli
+    from operon.environments import guest
 
     setup_command.add_parser(sub)
     cloud.add_parser(sub)
+    environments_cli.add_parser(sub)
+    guest.add_parser(sub)
     return parser
 
 

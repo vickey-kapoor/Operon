@@ -19,6 +19,10 @@ Every sample goes through Gemini's browser computer use backend. The datasets ar
 ``.var/grounding/cache``; ScreenSpot-v2's images come out of its 1.3 GB zip by
 HTTP range requests, so only the sampled screenshots are downloaded.
 
+``--zoom dense|always`` turns on zoom before clicking (KAN-82, ``OPERON_ZOOM``): a
+second request per zoomed sample, on a crop around the first click; the report
+records the zoom setting and its cost.
+
 Outcomes per sample: ``hit``, ``miss`` (clicked outside the box), ``no_click``
 (the first turn proposed no click) and ``error``. The report (``.var/bench/grounding-<stamp>.json``)
 gives accuracy per set and target type, and the cost. Spend is capped like the
@@ -44,6 +48,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from operon.agent.actions.zoom import zoom_settings
 from operon.models.capture import CaptureFrame
 from operon.models.common import RunStatus
 from operon.models.policy import AgentAction
@@ -506,6 +511,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--season", type=int, default=None,
         help="use a frozen season's grounding sets and sample count (evals/seasons/season-<n>.json); refuses on a change",
     )
+    parser.add_argument(
+        "--zoom", choices=("off", "dense", "always"),
+        help="refine each click on a zoomed crop (KAN-82; sets OPERON_ZOOM, default: $OPERON_ZOOM or off)",
+    )
     parser.add_argument("--list", action="store_true", help="list the selected samples and exit (no model calls)")
     parser.add_argument("--json", action="store_true")
     return parser
@@ -545,6 +554,9 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         return 0
     model = args.model or _default_model()
     effort = args.effort or os.getenv("OPERON_BROWSER_THINKING", "low") or None
+    if args.zoom:
+        os.environ["OPERON_ZOOM"] = args.zoom
+    zoom = zoom_settings()
     make_backend = make_backend or BackendFactory(model, effort)
     started_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = Path(args.out_dir)
@@ -568,6 +580,7 @@ async def run(args: argparse.Namespace, make_backend=None, dataset: Dataset | No
         "backend": BACKEND,
         "model": model,
         "effort": effort,
+        "zoom": {"mode": zoom.mode, "min_side": zoom.min_side, "factor": zoom.factor},
         "per_set": args.per_set,
         "datasets": {V2_REPO: V2_REVISION, PRO_REPO: PRO_REVISION},
         "budget_stop": stopped,

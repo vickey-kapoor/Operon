@@ -10,6 +10,7 @@ See [Quick Start](README.md#quick-start). Then confirm your environment is sane:
 ```bash
 GEMINI_API_KEY=fake-test-key python -m pytest tests -q
 ruff check src tests evals --select E,F,W,I --ignore E501
+mypy
 ```
 
 About 860 tests should pass (15 skip) in under a minute with no network access. If they don't,
@@ -18,12 +19,13 @@ that's a bug in the setup instructions — please report it.
 ## Before you open a PR
 
 - `ruff check src tests evals --select E,F,W,I --ignore E501` is clean
+- `mypy` is clean (modules still on the starting baseline are listed in `[tool.mypy]` in `pyproject.toml`; don't add new ones)
 - The offline suite passes
 - New behaviour has a test that runs **without** a live server or a real screen.
   If you genuinely can't test it offline, mark it `@pytest.mark.live_server` and
   say so in the PR — but that code path won't be covered by CI, so keep it thin.
 
-CI runs the offline suite on Python 3.11 and 3.14 plus ruff. It does not run the
+CI runs the offline suite on Python 3.14 with a coverage report, plus ruff and mypy. It does not run the
 `live_server` suite.
 
 ## Reporting bugs

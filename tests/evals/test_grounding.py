@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import zipfile
 
 import httpx
@@ -147,6 +148,20 @@ async def test_run_scores_every_sample_and_saves_a_report(tmp_path, monkeypatch)
     assert summary["by_set"]["v2-web"]["by_type"]["text"]["accuracy"] == 1.0
     assert summary["cost_usd"] == 0.03  # the errored sample made no call
     assert not (tmp_path / ".var" / "grounding").exists() or not any((tmp_path / ".var" / "grounding").iterdir())
+
+
+async def test_zoom_flag_turns_zoom_on_and_is_recorded(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPERON_ZOOM", raising=False)
+    usage = type("Usage", (), {"estimated_cost_usd": 0.01})()
+    samples = [Sample("a", "pro", "30,30", "a.png", (10, 10, 50, 50), "text", "app")]
+    args = grounding.build_parser().parse_args(["--set", "pro", "--zoom", "dense", "--out-dir", str(tmp_path / "out")])
+
+    assert await grounding.run(args, make_backend=lambda s: FakeBackend(s, usage), dataset=FakeDataset(samples)) == 0
+
+    assert os.environ["OPERON_ZOOM"] == "dense"  # the real backend reads it when built
+    (saved,) = (tmp_path / "out").glob("grounding-*.json")
+    assert json.loads(saved.read_text())["zoom"] == {"mode": "dense", "min_side": 2000, "factor": 2.0}
 
 
 async def test_run_stops_at_the_cost_cap(tmp_path) -> None:

@@ -28,6 +28,7 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 .venv\Scripts\operon serve
 .venv\Scripts\operon run "task" [--desktop] [--url URL] [--mode ask|risky|auto]
 .venv\Scripts\operon run --request "task"
+.venv\Scripts\operon envs      # KAN-80: list desktop run environments and whether each is ready here
 # Release (KAN-36): push tag v<version> matching pyproject.toml; release.yml uploads operon-agent to PyPI (docs/releasing.md)
 
 # Offline test suite (no network, no browser)
@@ -45,6 +46,10 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 
 # Lint (exactly what CI runs)
 .venv\Scripts\ruff check src tests evals --select E,F,W,I --ignore E501
+
+# Type check (KAN-159; CI "Type check" job). Baseline modules are listed in [tool.mypy] in
+# pyproject.toml: fix one, delete it from the list. Coverage: add --cov to the pytest command.
+.venv\Scripts\mypy
 ```
 
 `addopts = "-m 'not live_server'"` in `pyproject.toml` auto-deselects the ~350
@@ -72,7 +77,9 @@ over a typed `StepContext` (`agent/step_context.py`, KAN-155). Broad `except` bl
 loop go through `AgentLoop._recovered()`, which logs and counts them per run
 (`recovered_errors`); `OPERON_STRICT_ERRORS` (on in tests) re-raises bugs (KAN-158). Wiring is assembled in `src/operon/api/runtime/services.py`
 (`build_browser_services` / `build_desktop_services`) — that is where backends,
-executors, verifiers, and stores are chosen per environment. `src/operon/core/paths.py`
+executors, verifiers, and stores are chosen per environment. The desktop machine itself
+comes from an environment provider (`src/operon/environments/`, `OPERON_ENVIRONMENT`,
+default `live`; KAN-80, see `docs/environments.md`). `src/operon/core/paths.py`
 resolves every artifact directory and honors the `OPERON_*_ROOT` env overrides.
 
 `dashboard/` is Vercel's root directory, so don't move it.

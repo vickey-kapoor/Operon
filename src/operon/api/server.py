@@ -1,5 +1,6 @@
 """FastAPI application bootstrap for the MVP browser-only agent."""
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -44,6 +45,19 @@ async def _lifespan(app: FastAPI):
             # Cleanup failure must never block server startup.
             logger.warning("retention_sweep skipped: %s", exc)
 
+    # 3. A run environment other than the live desktop (KAN-80) boots its machine now,
+    # off the event loop, so the first desktop task doesn't wait for it.
+    from operon.environments import DEFAULT_ENVIRONMENT, environment_name
+
+    if environment_name() != DEFAULT_ENVIRONMENT:
+        from operon.api.runtime.loops import desktop_provider
+
+        try:
+            await asyncio.to_thread(desktop_provider)
+        except Exception as exc:
+            # The API still serves browser tasks; desktop tasks report this error.
+            logger.error("environment %r did not start: %s", environment_name(), exc)
+
     yield
 
     # Shutdown: release executor-held OS resources so they don't outlive the
@@ -51,15 +65,10 @@ async def _lifespan(app: FastAPI):
     # desktop executor's still-active screen recorders + launched child apps.
     # Each executor exposes a uniform aclose(); we only touch loops that were
     # actually built (iter_built_executors never triggers lazy construction).
-    from operon.api.runtime.loops import iter_built_executors
-    for executor in iter_built_executors():
-        if not hasattr(executor, "aclose"):
-            continue
-        try:
-            await executor.aclose()
-        except Exception as exc:
-            # Shutdown cleanup must never raise out of the lifespan.
-            logger.warning("executor shutdown cleanup skipped: %s", exc)
+    # Then the desktop environment provider stops its machine (KAN-80).
+    from operon.api.runtime.loops import close_built_runtime
+
+    await close_built_runtime()
 
 
 def create_app() -> FastAPI:

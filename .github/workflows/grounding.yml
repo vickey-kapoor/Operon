@@ -18,12 +18,18 @@ on:
       max_cost_usd:
         description: "Stop once the run has spent this many USD (0: no cap)"
         default: "5"
+      zoom:
+        description: "Zoom before clicking (KAN-82): off, dense or always"
+        type: choice
+        options: ["off", "dense", "always"]
+        default: "off"
   # Called by bench-command.yml for /bench grounding.
   workflow_call:
     inputs:
       model: {type: string, default: ""}
       per_set: {type: string, default: "100"}
       max_cost_usd: {type: string, default: "5"}
+      zoom: {type: string, default: "off"}
       ref:
         description: "Git ref to evaluate (empty: the triggering ref)"
         type: string
@@ -65,9 +71,10 @@ jobs:
         env:
           MODEL: ${{ inputs.model }}
           PER_SET: ${{ inputs.per_set }}
+          ZOOM: ${{ inputs.zoom || 'off' }}
         run: |
           set -o pipefail
-          uv run python -m evals.grounding --per-set "$PER_SET" ${MODEL:+--model "$MODEL"} | tee grounding.txt
+          uv run python -m evals.grounding --per-set "$PER_SET" --zoom "$ZOOM" ${MODEL:+--model "$MODEL"} | tee grounding.txt
 
       - name: Summary
         if: always()

@@ -27,6 +27,7 @@ def fake(tmp_path, monkeypatch):
     for name in ("show", "navigate", "back", "forward", "reload", "open_tab", "select_tab", "close_tab", "sign_out_everywhere"):
         setattr(browser, name, AsyncMock())
     browser.current_page = AsyncMock(return_value=object())
+    browser.run_of_active = MagicMock(return_value=None)
     monkeypatch.setattr("operon.api.routes.builtin_browser.get_builtin_browser", lambda: browser)
     return browser
 
@@ -99,3 +100,20 @@ def test_input_needs_an_open_browser_then_reaches_the_page(client: TestClient, f
     args, kwargs = manager.inject_input.call_args
     assert args == (0.0, 0.0, "text") and kwargs["text"] == "hi"
     assert client.post("/app/api/browser/input", json={"input_type": "drag"}).status_code == 422
+
+
+def test_input_to_a_running_tasks_tab_waits_for_takeover(client: TestClient, fake, monkeypatch) -> None:
+    manager = MagicMock(is_connected=True)
+    manager.inject_input = AsyncMock()
+    monkeypatch.setattr("operon.browser.manager.get_active_manager", lambda: manager)
+    fake.run_of_active.return_value = "run-1"
+    body = {"input_type": "key", "key": "Enter"}
+
+    monkeypatch.setattr("operon.api.ws_stream._active_run_in_takeover", AsyncMock(return_value=False))
+    resp = client.post("/app/api/browser/input", json=body)
+    assert resp.status_code == 409 and "Take over" in resp.json()["detail"]
+    manager.inject_input.assert_not_awaited()
+
+    monkeypatch.setattr("operon.api.ws_stream._active_run_in_takeover", AsyncMock(return_value=True))
+    assert client.post("/app/api/browser/input", json=body).status_code == 200
+    manager.inject_input.assert_awaited_once()

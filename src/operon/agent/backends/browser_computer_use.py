@@ -21,6 +21,7 @@ from operon.clients.gemini_computer_use import (
     GeminiComputerUseClient,
     GeminiComputerUseError,
 )
+from operon.core.paths import prompts_dir
 from operon.models.capture import CaptureFrame
 from operon.models.execution import ToolOutput
 from operon.models.logs import ModelDebugArtifacts
@@ -528,7 +529,19 @@ class BrowserComputerUseBackend(AgentBackend):
             previous_summary=state.observation_history[-1].summary if state.observation_history else "none",
             retry_counts=json.dumps(state.retry_counts, sort_keys=True),
             advisory_hints=hint_block,
-        ) + self._skill_text
+        ) + self._signin_text() + self._skill_text
+
+    @staticmethod
+    def _signin_text() -> str:
+        """Sign-in guidance, only when the built-in browser (saved sign-ins) is on (KAN-138)."""
+        from operon.browser.builtin import builtin_browser_enabled
+
+        if not builtin_browser_enabled():
+            return ""
+        try:
+            return (prompts_dir() / "browser_builtin_signin.txt").read_text(encoding="utf-8")
+        except OSError:
+            return ""
 
     @staticmethod
     def _subgoal_for_calls(function_calls: list[dict]) -> str:

@@ -201,6 +201,9 @@ class BuiltinBrowser:
         self._ids = itertools.count(1)
         self._tab_ids: dict[int, int] = {}  # id(page) -> tab id
         self._active: Any = None
+        # Pages a browser task owns (its tab and the popups it opens): id(page) -> (page, run id).
+        # Only these are gated and closed with the run; the user's own tabs are never touched.
+        self._owned: dict[int, tuple[Any, str]] = {}
         self.approvals = SiteApprovals(self.profile_dir)
 
     @property
@@ -217,6 +220,8 @@ class BuiltinBrowser:
                     self.profile_dir, width=self._width, height=self._height
                 )
                 self._context.on("close", lambda *_: self._on_closed())
+                self._context.on("page", self._on_new_page)
+                await self._context.route("**/*", self._gate)
                 pages = list(self._context.pages)
                 self._active = pages[0] if pages else await self._context.new_page()
                 logger.info("Built-in browser started (profile %s)", self.profile_dir)
@@ -225,6 +230,7 @@ class BuiltinBrowser:
     def _on_closed(self) -> None:
         self._context = None
         self._active = None
+        self._owned.clear()
 
     async def aclose(self) -> None:
         async with self._lock:
@@ -248,6 +254,7 @@ class BuiltinBrowser:
         shutil.rmtree(self.profile_dir, ignore_errors=True)
         self.approvals.clear()
         self._tab_ids.clear()
+        self._owned.clear()
 
     # ── Tabs ────────────────────────────────────────────────────────────────
 
@@ -369,35 +376,110 @@ class BuiltinBrowser:
     # ── Browser tasks ───────────────────────────────────────────────────────
 
     async def new_task_page(self, run_id: str, start_url: str | None = None) -> Any:
-        """A fresh tab for a browser task, with the site approval gate on it."""
+        """A fresh tab for a browser task. The site approval gate covers it and its popups."""
         context = await self.ensure_started()
         self.approvals.allow_for_run(run_id, start_url)
         page = await context.new_page()
-        await self.gate_page(page, run_id)
+        self.own_page(page, run_id)
+        self._active = page  # the Browser tab opens on the run, not on a stale tab
         return page
 
-    async def gate_page(self, page: Any, run_id: str) -> None:
-        """Only let ``page`` open sites the user allowed; ask about the rest."""
+    def own_page(self, page: Any, run_id: str) -> None:
+        """Mark ``page`` (a task's tab or a popup it opened) as the run's."""
+        self._owned[id(page)] = (page, run_id)
 
-        async def _route(route: Any) -> None:
-            request = route.request
+    def set_active(self, page: Any) -> None:
+        """The tab the live view shows now (a task followed a popup, say)."""
+        self._active = page
+
+    def run_of_active(self) -> str | None:
+        """The run that owns the tab in view, or None when it is the user's own tab."""
+        if self._active is None:
+            return None
+        owned = self._owned.get(id(self._active))
+        return owned[1] if owned else None
+
+    def pages_of_run(self, run_id: str) -> list[Any]:
+        """The run's open pages, oldest first."""
+        return [page for page, owner in self._owned.values() if owner == run_id and not page.is_closed()]
+
+    async def release_run(self, run_id: str) -> None:
+        """The run ended: close its tabs and popups (never the user's) and drop its approvals."""
+        for page in self.pages_of_run(run_id):
+            self._owned.pop(id(page), None)
             try:
-                is_page_load = (
-                    request.resource_type == "document"
-                    and request.is_navigation_request()
-                    and request.frame.parent_frame is None
-                )
+                await page.close()
             except Exception:
-                is_page_load = False
-            host = host_of(request.url) if is_page_load else None
-            if host is None or self.approvals.allows(host, run_id):
-                await route.continue_()
-                return
-            if self.approvals.ask(host, run_id, request.url):
-                _publish({"type": "site_approval_needed", "host": host, "run_id": run_id})
-            await route.abort("blockedbyclient")
+                logger.debug("Built-in browser: closing a task page failed", exc_info=True)
+        for key in [k for k, (_, owner) in self._owned.items() if owner == run_id]:
+            del self._owned[key]
+        self.approvals.forget_run(run_id)
+        if self._active is not None and self._active.is_closed():
+            self._active = None
 
-        await page.route("**/*", _route)
+    async def _owner_of(self, page: Any) -> str | None:
+        """The run that owns ``page``: its tab, or a popup opened (however deep) from it."""
+        owned = self._owned.get(id(page))
+        if owned is not None:
+            return owned[1]
+        opener = await page.opener()
+        if opener is None:
+            return None
+        run_id = await self._owner_of(opener)
+        if run_id is not None:
+            self.own_page(page, run_id)
+        return run_id
+
+    def _on_new_page(self, page: Any) -> None:
+        asyncio.get_running_loop().create_task(self._watch_popup(page))
+
+    async def _watch_popup(self, page: Any) -> None:
+        """Back-stop for a task's popups: Chromium can start a popup's first page load
+        before the route above sees it. If a popup of a task lands on a site the user has
+        not allowed, blank it and ask, so the agent never works on that page."""
+        try:
+            run_id = await self._owner_of(page)
+        except Exception:
+            return
+        if run_id is None:
+            return
+
+        async def check(frame: Any) -> None:
+            host = host_of(frame.url)
+            if host is None or self.approvals.allows(host, run_id):
+                return
+            if self.approvals.ask(host, run_id, frame.url):
+                _publish({"type": "site_approval_needed", "host": host, "run_id": run_id})
+            try:
+                await page.goto("about:blank")
+            except Exception:
+                logger.debug("Built-in browser: blanking a blocked popup failed", exc_info=True)
+
+        page.on("framenavigated", lambda frame: frame is page.main_frame and asyncio.get_running_loop().create_task(check(frame)))
+        await check(page.main_frame)
+
+    async def _gate(self, route: Any) -> None:
+        """Let a task's pages open only the sites the user allowed; ask about the rest.
+
+        Runs for every request of the shared context. The user's own tabs and every
+        subresource go straight through: only a task page's own page loads are held."""
+        request = route.request
+        try:
+            is_page_load = (
+                request.resource_type == "document"
+                and request.is_navigation_request()
+                and request.frame.parent_frame is None
+            )
+            host = host_of(request.url) if is_page_load else None
+            run_id = await self._owner_of(request.frame.page) if host is not None else None
+        except Exception:
+            host, run_id = None, None
+        if host is None or run_id is None or self.approvals.allows(host, run_id):
+            await route.continue_()
+            return
+        if self.approvals.ask(host, run_id, request.url):
+            _publish({"type": "site_approval_needed", "host": host, "run_id": run_id})
+        await route.abort("blockedbyclient")
 
 
 def _publish(event: dict[str, Any]) -> None:

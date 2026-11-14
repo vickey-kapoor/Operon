@@ -1004,6 +1004,7 @@
     apiKey = $("key").value.trim(); store.set("operon-key", apiKey); $("key").value = "";
     $("key-panel").classList.add("hidden");
     route();
+    checkBrowser();
   };
 
   window.addEventListener("hashchange", route);

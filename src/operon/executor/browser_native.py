@@ -58,6 +58,7 @@ class _BrowserSession:
     video_dir: Path | None = None
     browser_pid: int | None = None
     owns_context: bool = True   # False for CDP mode — context is the shared default, only page is ours
+    run_id: str | None = None   # set for a built-in browser run: its tabs are closed with it
 
 
 class NativeBrowserExecutor(Executor):
@@ -510,7 +511,12 @@ class NativeBrowserExecutor(Executor):
         session = self._sessions.get(self._current_run_id)
         if session is None:
             return
-        pages = session.context.pages
+        if session.run_id is not None:
+            # Built-in browser: the context also holds the user's own tabs. Only the
+            # run's own pages (its tab and its popups) count.
+            pages = get_builtin_browser().pages_of_run(session.run_id)
+        else:
+            pages = session.context.pages
         if len(pages) <= 1:
             return
         new_page = pages[-1]
@@ -737,6 +743,7 @@ class NativeBrowserExecutor(Executor):
             context=page.context,
             page=page,
             owns_context=False,
+            run_id=run_id,
         )
         self._sessions[run_id] = session
         self._fresh_session_run_id = run_id
@@ -854,6 +861,8 @@ class NativeBrowserExecutor(Executor):
             session = self._sessions.get(run_id)
             if session is None or session.page is not page:
                 return
+            if session.run_id is not None:
+                get_builtin_browser().set_active(page)
             await self._attach_live_view(page, 9222)
 
     def _attach_page_listeners(self, page: object, run_id: str) -> None:
@@ -864,6 +873,8 @@ class NativeBrowserExecutor(Executor):
             # Follow the event as well, including popups opened by a popup.
             self._attach_page_listeners(popup, run_id)
             session = self._sessions.get(run_id)
+            if session is not None and session.run_id is not None:
+                get_builtin_browser().own_page(popup, run_id)
             if session is not None and session.page is page:
                 session.page = popup
                 if self._run_mode.get(run_id) == "observable":
@@ -1140,7 +1151,11 @@ class NativeBrowserExecutor(Executor):
     async def _close_session(self, session: _BrowserSession, *, observable: bool = False) -> None:
         if observable:
             await self._stop_live_view()
-        if observable and not session.owns_context:
+        if session.run_id is not None:
+            # Built-in browser: close the run's own tabs and popups; the browser and the
+            # user's tabs stay.
+            await get_builtin_browser().release_run(session.run_id)
+        elif observable and not session.owns_context:
             # CDP mode: the context is the user's default Chrome context — never close it.
             # Only close our task page.
             try:

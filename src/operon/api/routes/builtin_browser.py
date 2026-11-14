@@ -138,10 +138,20 @@ async def user_input(body: BrowserInputRequest) -> dict[str, Any]:
     """The user's mouse and keyboard in the Browser tab, forwarded to the page in view."""
     from operon.browser.manager import get_active_manager
 
-    _browser()
+    browser = _browser()
     manager = get_active_manager()
     if manager is None or not manager.is_connected:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The browser is not open.")
+    if browser.run_of_active() is not None:
+        # The tab in view is a running task's: like any live view, input waits for Take over,
+        # so a click cannot land between the agent's screenshot and its action.
+        from operon.api.ws_stream import _active_run_in_takeover
+
+        if not await _active_run_in_takeover():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A task is using this tab. Take over the run first, or open another tab.",
+            )
     kwargs = body.model_dump(exclude={"input_type", "x_ratio", "y_ratio"})
     await manager.inject_input(body.x_ratio, body.y_ratio, body.input_type, **kwargs)
     return {"ok": True}

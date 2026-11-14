@@ -16,11 +16,11 @@ from operon.browser.builtin import (
 
 
 class FakeRequest:
-    def __init__(self, url: str, *, page_load: bool = True, main_frame: bool = True) -> None:
+    def __init__(self, page, url: str, *, page_load: bool = True, main_frame: bool = True) -> None:
         self.url = url
         self.resource_type = "document" if page_load else "image"
         self._nav = page_load
-        self.frame = type("F", (), {"parent_frame": None if main_frame else object()})()
+        self.frame = type("F", (), {"parent_frame": None if main_frame else object(), "page": page})()
 
     def is_navigation_request(self) -> bool:
         return self._nav
@@ -44,7 +44,9 @@ class FakePage:
         self.url = url
         self._title = ""
         self.closed = False
-        self.handler = None
+        self.opened_by: "FakePage | None" = None
+        self.main_frame = type("MF", (), {"url": url})()
+        self.page_listeners: dict = {}
         self.visited: list[str] = []
 
     async def title(self) -> str:
@@ -55,7 +57,11 @@ class FakePage:
 
     async def goto(self, url: str, **_: object) -> None:
         self.url = url
+        self.main_frame.url = url
         self.visited.append(url)
+
+    def on(self, event: str, handler) -> None:
+        self.page_listeners[event] = handler
 
     async def bring_to_front(self) -> None:
         return None
@@ -64,17 +70,22 @@ class FakePage:
         self.closed = True
         self.context.pages.remove(self)
 
-    async def route(self, pattern: str, handler) -> None:
-        self.handler = handler
+    async def opener(self) -> "FakePage | None":
+        return self.opened_by
 
 
 class FakeContext:
     def __init__(self) -> None:
         self.pages: list[FakePage] = []
         self.closed = False
+        self.handler = None
+        self.listeners: dict = {}
 
-    def on(self, *_: object) -> None:
-        return None
+    async def route(self, pattern: str, handler) -> None:
+        self.handler = handler
+
+    def on(self, event: str, handler) -> None:
+        self.listeners[event] = handler
 
     async def new_page(self) -> FakePage:
         page = FakePage(self)
@@ -154,15 +165,18 @@ def test_a_bad_answer_is_refused(tmp_path) -> None:
         SiteApprovals(tmp_path).decide("a.com", "maybe")
 
 
+async def _load(browser, page, url: str, **kw) -> FakeRoute:
+    route = FakeRoute(FakeRequest(page, url, **kw))
+    await browser.fake_context.handler(route)
+    return route
+
+
 async def test_a_task_page_may_open_its_start_site_but_must_ask_for_others(browser) -> None:
     page = await browser.new_task_page("run-1", "https://shop.example/start")
 
-    start = FakeRoute(FakeRequest("https://shop.example/cart"))
-    await page.handler(start)
-    other = FakeRoute(FakeRequest("https://elsewhere.test/login"))
-    await page.handler(other)
-    again = FakeRoute(FakeRequest("https://elsewhere.test/login"))
-    await page.handler(again)
+    start = await _load(browser, page, "https://shop.example/cart")
+    other = await _load(browser, page, "https://elsewhere.test/login")
+    again = await _load(browser, page, "https://elsewhere.test/login")
 
     assert start.outcome == "continue"
     assert other.outcome == "abort:blockedbyclient" and again.outcome == "abort:blockedbyclient"
@@ -170,20 +184,63 @@ async def test_a_task_page_may_open_its_start_site_but_must_ask_for_others(brows
     assert browser.published == [{"type": "site_approval_needed", "host": "elsewhere.test", "run_id": "run-1"}]
 
     browser.approvals.decide("elsewhere.test", "once")
-    allowed = FakeRoute(FakeRequest("https://elsewhere.test/login"))
-    await page.handler(allowed)
+    allowed = await _load(browser, page, "https://elsewhere.test/login")
     assert allowed.outcome == "continue" and not browser.approvals.pending
+
+
+async def test_a_popup_of_a_task_page_is_gated_too_but_the_users_tabs_are_not(browser) -> None:
+    task = await browser.new_task_page("run-1", "https://shop.example/")
+    popup = await browser.fake_context.new_page()
+    popup.opened_by = task
+    nested = await browser.fake_context.new_page()
+    nested.opened_by = popup
+    users = await browser.fake_context.new_page()
+
+    assert (await _load(browser, popup, "https://elsewhere.test/")).outcome == "abort:blockedbyclient"
+    assert (await _load(browser, nested, "https://other.test/")).outcome == "abort:blockedbyclient"
+    assert (await _load(browser, users, "https://elsewhere.test/")).outcome == "continue"
+    assert browser.pages_of_run("run-1") == [task, popup, nested]
+
+
+async def test_a_task_popup_that_slips_past_the_route_is_blanked_and_asked_about(browser) -> None:
+    task = await browser.new_task_page("run-1", "https://shop.example/")
+    popup = await browser.fake_context.new_page()
+    popup.opened_by = task
+    popup.main_frame.url = "https://elsewhere.test/ads"
+    popup.url = "https://elsewhere.test/ads"
+    users = await browser.fake_context.new_page()
+    users.main_frame.url = "https://elsewhere.test/mine"
+
+    browser.fake_context.listeners["page"](popup)
+    browser.fake_context.listeners["page"](users)
+    await asyncio.sleep(0.05)
+
+    assert popup.visited == ["about:blank"] and users.visited == []
+    assert list(browser.approvals.pending) == ["elsewhere.test"]
+    assert browser.published[-1]["type"] == "site_approval_needed"
 
 
 async def test_only_page_loads_are_gated(browser) -> None:
     page = await browser.new_task_page("run-1", None)
-    image = FakeRoute(FakeRequest("https://cdn.test/x.png", page_load=False))
-    frame = FakeRoute(FakeRequest("https://ads.test/frame", main_frame=False))
-    blank = FakeRoute(FakeRequest("about:blank"))
-    for route in (image, frame, blank):
-        await page.handler(route)
+    image = await _load(browser, page, "https://cdn.test/x.png", page_load=False)
+    frame = await _load(browser, page, "https://ads.test/frame", main_frame=False)
+    blank = await _load(browser, page, "about:blank")
     assert [image.outcome, frame.outcome, blank.outcome] == ["continue"] * 3
     assert not browser.approvals.pending
+
+
+async def test_ending_a_run_closes_its_pages_and_leaves_the_users(browser) -> None:
+    users_id = await browser.open_tab("example.com")
+    task = await browser.new_task_page("run-1", None)
+    popup = await browser.fake_context.new_page()
+    popup.opened_by = task
+    await _load(browser, popup, "https://shop.test/")  # adopted as the run's popup
+
+    assert browser.run_of_active() == "run-1"  # the Browser tab opens on the run
+    await browser.release_run("run-1")
+
+    assert task.closed and popup.closed and not browser._page_by_id(users_id).closed
+    assert browser.pages_of_run("run-1") == [] and browser.run_of_active() is None
 
 
 async def test_tabs_open_select_and_close(browser) -> None:

@@ -109,7 +109,7 @@ These are load-bearing — violating them silently breaks the agent.
 
 ## Runtime artifacts
 
-Runs write to `.var/runs/<run_id>/` (screenshots, model I/O, policy decisions,
+Runs write to `.var/runs/<run_id>/` (`~/.operon/runs/<run_id>/` when installed with pip) (screenshots, model I/O, policy decisions,
 execution traces, logs) — gitignored, and **screenshots capture the whole screen**,
 so review before sharing. Legacy `runs/`, `.browser-artifacts/`, `.desktop-artifacts/`
 paths still appear in old logs and tests.

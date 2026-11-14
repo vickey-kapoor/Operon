@@ -6,6 +6,7 @@ Gemini only, so every figure here is Gemini's.
 ## Measuring
 
 Every model call writes a `*_usage.json` next to its step in `.var/runs/<run_id>/step_N/`
+(`~/.operon/runs/<run_id>/` when installed with pip)
 (`computer_use_usage.json`, `verification_usage.json`, ...). `estimate_usage_cost`
 (`src/operon/models/usage.py`) prices each call from Gemini's list prices: cached prompt
 tokens at the cached rate, the rest of the prompt at the input rate, and output with the

@@ -8,10 +8,11 @@ python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 
 Every HTTP route except `/health` needs an `X-API-Key` header, and `/ws/stream` takes the key
 as an `x-api-key` subprotocol (never in the URL, which is logged). The key is one of `API_KEYS`,
-or, when that is unset, the one the server generates on first start in `.var/api-key`:
+or, when that is unset, the one the server generates on first start: `~/.operon/api-key` when
+Operon is installed with pip, `.var/api-key` in a source checkout (see `OPERON_RUNTIME_ROOT`):
 
 ```bash
-curl -H "X-API-Key: $(cat .var/api-key)" http://127.0.0.1:8080/run-task ...
+curl -H "X-API-Key: $(cat ~/.operon/api-key)" http://127.0.0.1:8080/run-task ...
 ```
 
 Any `Host` other than loopback or `OPERON_ALLOWED_HOSTS` gets 400, which blocks DNS rebinding.

@@ -51,6 +51,11 @@ and every paid benchmark run needs its own cost approval.
 - **Whole-repo review fixes** (#212 to #220, KAN-46 to KAN-51), a monthly budget on the dashboard's
   Cost tab (#208), a redesigned dashboard (#210) that reads through a read-only database role
   (#234, KAN-28), and the Azure desktop runner logging in with OIDC (KAN-27).
+- **Stage 1, installable** (#255, #265, #267, #269; KAN-140, KAN-141, KAN-147, KAN-36):
+  `pip install operon-agent` from PyPI (0.1.0, published from a tag by `release.yml`), `operon
+  setup` (saves the Gemini key to `~/.operon`, installs Chromium, runs a self-check), a per-user
+  data folder for runs installed with pip, a 5-minute README quick start with a demo GIF, and a
+  [step-by-step first run](first-run.md) for new users.
 - **Removed**: the Command Center UI (#206), which was unused, and, on 2026-11-11, every model
   but Gemini (Claude, GPT and the cross-model adapter), so that model onboarding can be rebuilt
   clean and simple. Their earlier benchmark data stays on the dashboard.
@@ -77,6 +82,8 @@ What this tells us:
 ### In progress
 
 - **Gemini only.** Operon runs Gemini 3.5 Flash for every run; other models come back in stage 4.
+- **Stranger test** (KAN-142), the stage 1 finish test: Vickey's own fresh installs from PyPI
+  pass in about 5 minutes; a run by someone new to Operon is next.
 - **Season 2 calibration** (KAN-87): Gemini on the Season 2 core sets, then the tools on/off
   comparison that decides whether `OPERON_TOOLS=on` becomes the default.
 
@@ -84,7 +91,7 @@ What this tells us:
 
 **Get real users first, then build what they need.** Each stage ends with a test you can check,
 and the engine stays the same throughout: what changes is the form Operon ships in and who can
-use it. Today Operon is a repo you clone.
+use it. Today Operon installs from PyPI, and stage 1 waits only on the stranger test.
 
 | Stage | What it includes | Done when | Operon becomes |
 |---|---|---|---|
@@ -101,7 +108,7 @@ Notes on the order:
   repo is hardened first (KAN-34), and the big announcement waits for stage 5.
 - **The first users are developers** installing from PyPI. The bookkeeping design partner pilot
   (KAN-100) moves to stage 6, once the Windows app exists.
-- **Architecture work from epic KAN-77 not named above** (grounder slot and zoom KAN-82/KAN-88,
+- **Architecture work from epic KAN-77 not named above** (zoom KAN-82/KAN-88, a decision on a swappable grounder slot KAN-148,
   best-of-N KAN-84, step efficiency KAN-85, Windows risks KAN-90 to KAN-93) belongs to stage 3 when
   it improves reliability on what users try, and to stage 6 when it is about scale.
 - **Every workstream ships behind a flag that defaults to off** and is compared on the grid before

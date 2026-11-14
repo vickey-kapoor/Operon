@@ -117,7 +117,8 @@ instead:
 
 ## Tell us how it went
 
-Report back as a comment on KAN-142, or in a GitHub issue:
+Open an issue at <https://github.com/vickey-kapoor/Operon/issues/new> (any GitHub account
+works), or send the same notes to the person who asked you to try Operon:
 
 - your total time, from step 1 to the answer
 - your OS and Python version

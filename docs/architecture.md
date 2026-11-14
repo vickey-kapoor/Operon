@@ -229,7 +229,8 @@ Perception does not change: the screen stays the only thing the model sees on it
 
 ## Persistence
 
-Run data is file-backed:
+Run data is file-backed, under `.var/runs/` in a source checkout and `~/.operon/runs/` when
+installed with pip (`OPERON_RUNTIME_ROOT`, `OPERON_RUNS_ROOT`):
 
 ```text
 .var/runs/<run_id>/

@@ -53,6 +53,10 @@ Operon's only model for now; other models come back later.
 #   queue in one run, one Azure VM start, caps summed up front (KAN-105, bench-batch.yml, evals/bench_batch.py)
 #   Nightly (KAN-165): paid runs happen once a night at 2 AM Chicago from evals/nightly-queue.txt
 #   ("2026-11-14 desktop thin season=2 cap=2.5  # note"), $5 a night, stop at $100 a month (evals/nightly.py)
+# Record and replay (KAN-167, evals/replay.py): --keep-screens also writes <report>/recordings/<task>.json for each
+# thin-harness run (Gemini's answers + the actions Operon ran). Copy one into evals/recordings/ and every PR
+# replays it through the real loop for $0 (tests/evals/test_replay.py); a changed action fails with the step.
+#   python -m evals.replay check [evals/recordings/*.json]
 # Repo secrets: GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard.

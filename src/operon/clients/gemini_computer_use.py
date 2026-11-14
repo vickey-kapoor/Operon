@@ -60,6 +60,7 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         function_declarations: list[dict[str, Any]] | None = None,
     ) -> None:
         self.model = model
+        self.answers: list[dict[str, Any]] = []
         # Gemini 3 thinking level ("minimal", "low", "high"); None keeps the model default.
         self.thinking_level = thinking_level
         self.api_key = api_key
@@ -92,7 +93,11 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         payload = self._build_payload(contents=contents)
         response_payload = await self._post_payload(payload)
         self._last_usage = _extract_usage(payload=response_payload, model=self.model)
-        return self._normalize_response(response_payload)
+        answer = self._normalize_response(response_payload)
+        # Every answer of the current step, retries and zoom included: the backend saves
+        # them with the step so the run can be replayed (KAN-167, evals/replay.py).
+        self.answers.append(answer)
+        return answer
 
     def latest_usage(self) -> ModelUsage | None:
         return self._last_usage

@@ -28,6 +28,12 @@ REVISIT_OUTCOMES_PER_ACTION = 3
 REVISIT_MAX_ACTIONS = 20
 
 
+def _screen_changed(screen_change_ratio: float | None) -> bool:
+    from operon.agent.perception.screen_diff import SCREEN_CHANGE_THRESHOLD
+
+    return screen_change_ratio is not None and screen_change_ratio >= SCREEN_CHANGE_THRESHOLD
+
+
 def progress_revisit_enabled() -> bool:
     """``OPERON_PROGRESS_REVISIT`` (RFC 0003): off unless set to on/true/1/yes."""
     return os.getenv("OPERON_PROGRESS_REVISIT", "off").strip().lower() in {"on", "true", "1", "yes"}
@@ -381,17 +387,22 @@ class ProgressTracker:
 
         # RFC 0003: a repeat that lands on a screen it already produced is not progress.
         # The stop condition and a subgoal change still count first, as above.
+        # A repeat that is already counted (not novel) but reaches a screen it never
+        # produced is progress, so one revisit does not block a legitimate repeat
+        # (scroll: A, B, A, C) for the rest of the run.
         revisited_screen = False
         if progress_revisit_enabled():
             after_path = getattr(executed_action, "artifact_path", None)
-            if (
-                progress_made
-                and executed_action.success
+            screen_only = (
+                executed_action.success
                 and not verification.stop_condition_met
                 and not subgoal_changed
-            ):
-                revisited_screen = self._revisits_known_screen(progress_state, action_sig, after_path)
+            )
+            if screen_only and progress_made:
+                revisited_screen = self._known_screen_match(progress_state, action_sig, after_path) is True
                 progress_made = not revisited_screen
+            elif screen_only and not is_novel_action and _screen_changed(screen_change_ratio):
+                progress_made = self._known_screen_match(progress_state, action_sig, after_path) is False
             if executed_action.success:
                 self._remember_outcome(progress_state, action_sig, after_path)
 
@@ -458,19 +469,20 @@ class ProgressTracker:
             final_stop_reason=stop_reason_for_failure(loop_failure_category),
         )
 
-    def _revisits_known_screen(self, progress_state, action_sig: str, after_path: str | None) -> bool:
-        """True when this action produced a near-identical screen earlier in the run.
+    def _known_screen_match(self, progress_state, action_sig: str, after_path: str | None) -> bool | None:
+        """Compare this after-screen with the ones the same action produced earlier in the run.
 
-        Fails open: a missing screenshot (now or before) never counts as the same screen,
-        since ``compute_screen_change_ratio`` reports 0.0 (identical) for a missing file."""
-        earlier = progress_state.action_outcomes.get(action_sig) or []
+        True: near-identical to one of them (a revisit). False: different from all of them
+        (a new screen). None: nothing to compare (no earlier outcome, or a screenshot is
+        missing), so callers keep today's verdict. Missing files are checked first, since
+        ``compute_screen_change_ratio`` reports 0.0 (identical) for a missing file."""
+        earlier = [path for path in progress_state.action_outcomes.get(action_sig) or [] if Path(path).exists()]
         if not earlier or not after_path or not Path(after_path).exists():
-            return False
+            return None
         from operon.agent.perception.screen_diff import compute_screen_change_ratio
 
         return any(
-            Path(path).exists() and compute_screen_change_ratio(path, after_path) < self.REVISIT_SAME_SCREEN_THRESHOLD
-            for path in earlier
+            compute_screen_change_ratio(path, after_path) < self.REVISIT_SAME_SCREEN_THRESHOLD for path in earlier
         )
 
     @staticmethod

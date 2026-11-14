@@ -8,6 +8,7 @@ signature helpers that those paths rest on.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -249,6 +250,34 @@ def test_a_repeat_that_reaches_new_screens_keeps_counting(tmp_path, revisit_on) 
     assert [t.progress_made for t in traces] == [True, True, True]
     assert not any(t.revisited_screen for t in traces)
     assert state.progress_state.no_progress_streak == 0
+
+
+def test_a_repeat_recovers_when_it_reaches_a_new_screen_after_a_revisit(tmp_path, revisit_on) -> None:
+    # Scroll lands on A, B, back on A (a revisit, no progress), then on a new screen C:
+    # C is progress again, so the repeat guard does not block the next scroll.
+    a, b, c = (_screen(tmp_path, n, col) for n, col in (("a", PAGE_1), ("b", PAGE_2), ("c", PAGE_3)))
+    state = _state()
+
+    traces = _run(pt.ProgressTracker(), state, _SCROLL, [a, b, a, c], subgoal="scroll to the footer")
+
+    assert [t.progress_made for t in traces] == [True, True, False, True]
+    assert [t.revisited_screen for t in traces] == [False, False, True, False]
+    assert state.progress_state.no_progress_streak == 0
+    assert pt.ProgressTracker().block_redundant_action(state, _SCROLL, 5, LOG) is None
+
+
+def test_a_counted_repeat_without_an_earlier_screenshot_keeps_todays_verdict(tmp_path, revisit_on) -> None:
+    # Nothing to compare (earlier screenshots gone): a counted repeat is still not progress.
+    a, b = _screen(tmp_path, "a", WINDOW_A), _screen(tmp_path, "b", WINDOW_B)
+    state = _state()
+    tracker = pt.ProgressTracker()
+    _run(tracker, state, _LAUNCH, [a, b, a])
+    Path(a).unlink()
+    Path(b).unlink()
+
+    [trace] = _run(tracker, state, _LAUNCH, [_screen(tmp_path, "c", PAGE_2)])
+
+    assert not trace.progress_made
 
 
 def test_a_missing_screenshot_never_counts_as_the_same_screen(tmp_path, revisit_on) -> None:

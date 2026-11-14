@@ -71,6 +71,10 @@ step. Before a risky action (placing an order, a payment, deleting an account), 
 `y` to approve, `n` to decline, `t` to take over. Ctrl+C takes over at any time. It ends with a
 short report of what it did.
 
+![Operon finding the population of Paris on Wikipedia, from screenshots only](docs/assets/demo.gif)
+
+That run took 2 model steps, 23 seconds and about $0.015 of Gemini calls.
+
 **Next:** `operon serve` prints a link to a local task page, where you type tasks, watch them
 live, approve steps and take over with your own mouse. Add `--desktop` to `operon run` to drive
 Windows apps instead of the browser (it moves your real mouse and keyboard). More in the

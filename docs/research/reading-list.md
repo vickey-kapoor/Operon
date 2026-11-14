@@ -80,3 +80,24 @@ Proposals only, not stories:
 
 ## 7. Weekly scans (newest first)
 
+### Weekly scan 2026-11-14
+
+Collected from arXiv automatically. Abstract excerpts, not yet reviewed; numbers are the authors' own claims.
+
+**GUI grounding**
+
+- [GroundCascade: Selective Second Opinions for GUI Grounding](https://arxiv.org/abs/2611.13177) (Adrian Phoulady et al., 2026-11-09): Graphical user interface (GUI) grounding maps a screenshot and a natural-language instruction to the screen location where an agent should act. Zoomed views can reveal small targets but may lose the context needed to identify them.
+
+**Agent designs**
+
+- [MobileProbe: Adaptive Security Evaluation of Mobile Agents via Trajectory-Aware Injection](https://arxiv.org/abs/2611.16693) (Yingbin Jin et al., 2026-11-12): Mobile GUI agents read the screen of a phone and operate apps on a user's behalf to complete multi-step tasks such as online shopping or messaging. Because the agent acts on whatever the screen shows, an attacker can embed malicious instructions into ordinary UI content and redirect its actions.
+- [Trained on What Screen Readers Cannot Read: Accessibility Debt in the GUI Corpora Behind Computer-Use Agents](https://arxiv.org/abs/2611.16107) (Obada Kraishan et al., 2026-11-11): Computer-use agents learn to operate mobile interfaces from corpora of captured screens and accessibility trees. The same trees are what a screen reader consumes, so an agent trained on them inherits whatever labelling gaps the underlying applications carry.
+- [Rational Use of Time for Social Coordination in Humans and AI](https://arxiv.org/abs/2611.14766) (Xiulin Yang et al., 2026-11-10): All social interactions are situated in time. Previous studies have shown that humans are able to use implicit temporal cues, such as the duration of a pause, to infer others' mental states. But how do humans use temporal cues for dynamic, fine-grained social coordination?
+
+**Benchmarks and grading**
+
+- [Scale-Induced Semantic Shift in Visual Prompt Injection Against VLMs and Web Agents](https://arxiv.org/abs/2611.16744) (Yiheng Zhao et al., 2026-11-12): Visual content in multimedia systems may be resized, compressed, or re-rendered before it is interpreted by a vision-language model.
+- [MemCredit: From Relevance to Utility for Decision-Time Memory in Long-Horizon Web Agents](https://arxiv.org/abs/2611.15600) (Quanjiang Guo et al., 2026-11-11): Large language model (LLM) agents increasingly operate over long Web interaction histories, making memory management critical for reliable and efficient decision making.
+- [GuardianAgentFlow: Multi-Agent Coordination for Web Privacy Protection](https://arxiv.org/abs/2611.15097) (Ruiyi Yang et al., 2026-11-11): Web agents need to use private context without unnecessarily disclosing it. Effective protection must distinguish between requests that may be sent after sanitization and those that must be withheld, while preserving the information needed for authorized tasks.
+- [Harness Matters: Measuring and Dissecting Security Resilience in Web Agents](https://arxiv.org/abs/2611.11971) (Xinyi Wu et al., 2026-11-09): Web agents extend LLMs from text generation to real-world web interaction by relying on execution harnesses that interpret user goals, perceive webpages, plan actions, and ground model decisions into browser operations.
+

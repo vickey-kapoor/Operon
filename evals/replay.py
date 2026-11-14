@@ -44,11 +44,12 @@ from PIL import Image
 
 RECORDINGS_DIR = Path(__file__).resolve().parent / "recordings"
 FORMAT = 1
-# Settings a recording does not carry: secrets, paths, hosts and URLs of the machine
-# that ran it, and test-only switches. Every other setting the run had (trust gate,
+# Settings a recording does not carry: secrets, storage paths, hosts and URLs of the
+# machine that ran it, and test-only switches (OPERON_ALLOWED_FILE_ROOTS is kept: it
+# decides which file actions need approval). Every other setting the run had (trust gate,
 # permission mode, tools, zoom, platform, ...) is restored for the replay.
 _SETTINGS_SKIPPED = re.compile(
-    r"(KEY|KEYS|TOKEN|ROOT|ROOTS|DIR|URL|BUNDLE|IMAGE|HOSTS|ORIGINS|VERTEX|TRACE|"
+    r"(KEY|KEYS|TOKEN|ROOT|DIR|URL|BUNDLE|IMAGE|HOSTS|ORIGINS|VERTEX|TRACE|"
     r"TEST_SAFE_MODE|STRICT_ERRORS|ALLOW_UNAUTHENTICATED|ENVIRONMENT|TIMEOUT|RETAIN_DAYS|TTL_S)$|VERTEX"
 )
 # The action fields compared between the recording and the replay.
@@ -132,6 +133,7 @@ def logged_steps(run_dir: Path) -> list[dict]:
     steps = []
     for step in _step_logs(Path(run_dir)):
         executed = step.get("executed_action") or {}
+        origin = (step.get("perception") or {}).get("monitor_origin") or [0, 0]
         steps.append({
             "step": step["step_index"],
             "action": compact_action(executed.get("action")),
@@ -139,6 +141,8 @@ def logged_steps(run_dir: Path) -> list[dict]:
             "detail": executed.get("detail") or "done",
             "failure_category": executed.get("failure_category"),
             "batch_failed_index": executed.get("batch_failed_index"),
+            # The captured monitor's origin (a secondary monitor's is not 0, 0).
+            "monitor_origin": [int(origin[0]), int(origin[1])],
         })
     return steps
 
@@ -183,6 +187,7 @@ def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None
         "status": state.get("status"),
         "stop_reason": state.get("stop_reason"),
         "max_steps": state.get("max_steps"),
+        "permission_mode": state.get("permission_mode"),
         "screen": {"width": size[0], "height": size[1]},
         "settings": recordable_settings(settings),
         "turns": turns,
@@ -261,7 +266,10 @@ class ReplayExecutor:
     async def capture(self):
         from operon.models.capture import CaptureFrame
 
-        return CaptureFrame(artifact_path=self._frame(), width=self.width, height=self.height)
+        # The monitor the real run captured for the step about to run.
+        left, top = (self._outcomes[0].get("monitor_origin") or [0, 0]) if self._outcomes else (0, 0)
+        return CaptureFrame(artifact_path=self._frame(), width=self.width, height=self.height,
+                            monitor_left=int(left), monitor_top=int(top))
 
     async def execute(self, action):
         from operon.models.execution import ExecutedAction
@@ -348,6 +356,13 @@ def executed_outcomes(steps: list[dict]) -> list[dict]:
     return [s for s in steps if (s.get("action") or {}).get("action_type") != "wait_for_user"]
 
 
+def resumes_in(recording: dict) -> int:
+    """How many pauses the real run was resumed from: all of them, unless it ended
+    waiting at its last one (the benchmark's approval budget ran out)."""
+    pauses = sum(1 for s in recording["steps"] if (s.get("action") or {}).get("action_type") == "wait_for_user")
+    return pauses - 1 if pauses and recording.get("status") == "waiting_for_user" else pauses
+
+
 @dataclass
 class LoopRun:
     run_dir: Path
@@ -357,7 +372,8 @@ class LoopRun:
 
 
 async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, height: int, root: Path,
-                    max_steps: int, outcomes: list[dict] | None = None) -> LoopRun:
+                    max_steps: int, outcomes: list[dict] | None = None, permission_mode: str | None = None,
+                    resumes_allowed: int = 10) -> LoopRun:
     """Drive the real thin-harness loop with ``turns`` as the model's answers on a blank
     screen, in run folders under ``root`` (the caller sets the environment)."""
     from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
@@ -409,13 +425,13 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
         harness_profile="thin",
     )
     terminal = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
-    run = await loop.start_run(RunTaskRequest(intent=intent, max_steps=max_steps))
+    run = await loop.start_run(RunTaskRequest(intent=intent, max_steps=max_steps, permission_mode=permission_mode))
     status, steps, resumes = run.status, 0, 0
     while steps < max_steps and status not in terminal:
         response = await loop.step_run(StepRequest(run_id=run.run_id))
         steps, status = response.step_count, response.status
         if status is RunStatus.WAITING_FOR_USER:
-            if resumes >= 10:  # the benchmark approves pauses too, up to its budget
+            if resumes >= resumes_allowed:  # the real run stopped at this pause
                 break
             resumes += 1
             await loop.resume_run(run.run_id)
@@ -467,6 +483,8 @@ async def replay(recording: dict) -> ReplayResult:
             recording["turns"], mode=recording["mode"], intent=recording["intent"] or task,
             width=int(screen["width"]), height=int(screen["height"]), root=Path(tmp),
             max_steps=max_steps, outcomes=executed_outcomes(recording["steps"]),
+            permission_mode=recording.get("permission_mode"),
+            resumes_allowed=resumes_in(recording),
         )
     return compare(task, recorded, run.actions, extra_turns=run.extra_turns, status=run.status)
 

@@ -122,10 +122,10 @@ def test_the_benchmark_saves_a_recording_per_thin_run(tmp_path, monkeypatch):
 # ── Codex review cases ─────────────────────────────────────────────────────
 
 
-def _record(tmp_path, turns, *, max_steps=10, outcomes=None, settings=None, expect=None):
+def _record(tmp_path, turns, *, max_steps=10, outcomes=None, settings=None, expect=None, **run_args):
     with rp.loop_environment({"OPERON_DESKTOP_PLATFORM": "windows", **(settings or {})}):
         run = asyncio.run(rp.run_turns(turns, mode="desktop", intent="task", width=1280, height=800,
-                                       root=tmp_path, max_steps=max_steps, outcomes=outcomes))
+                                       root=tmp_path, max_steps=max_steps, outcomes=outcomes, **run_args))
     if expect:
         assert run.status == expect
     return rp.record_run(run.run_dir, task="t", mode="desktop")
@@ -192,3 +192,32 @@ def test_backslash_paths_are_found_in_a_copied_folder(tmp_path):
     (step / "computer_use_raw.json").write_text("{}")
     found = rp._local(r"C:\Users\runner\.operon\runs\abc\step_1\computer_use_raw.json", tmp_path / "run")
     assert found == step / "computer_use_raw.json"
+
+
+def test_a_run_that_ended_waiting_at_a_pause_replays(tmp_path):
+    """The benchmark's approval budget ran out: the real run stopped at the pause."""
+    risky = call("click_at", x=300, y=300, safety_decision={"decision": "require_confirmation", "explanation": "buy"})
+    recording = _record(tmp_path, [risky, done()], resumes_allowed=0, expect="waiting_for_user")
+    assert rp.resumes_in(recording) == 0
+    _replays(recording)
+
+
+def test_file_roots_are_kept():
+    kept = rp.recordable_settings({"OPERON_ALLOWED_FILE_ROOTS": ["C:/Users/runner/Documents"], "OPERON_RUNS_ROOT": "/x"})
+    assert kept == {"OPERON_ALLOWED_FILE_ROOTS": "C:/Users/runner/Documents"}
+
+
+def test_a_secondary_monitor_origin_replays(tmp_path):
+    """Clicks on a monitor right of a 1920 px screen carry its offset; the replay must too."""
+    on_second = [{"success": True, "monitor_origin": [1920, 0]}] * 3
+    recording = _record(tmp_path, [call("click_at", x=500, y=500), call("click_at", x=100, y=100), done()],
+                        outcomes=on_second, expect="succeeded")
+    assert recording["steps"][0]["monitor_origin"] == [1920, 0]
+    assert recording["steps"][0]["action"]["x"] >= 1920
+    _replays(recording)
+
+
+def test_the_run_permission_mode_is_restored(tmp_path):
+    recording = _record(tmp_path, TURNS, permission_mode="ask")
+    assert recording["permission_mode"] == "ask"
+    _replays(recording)

@@ -117,3 +117,78 @@ def test_the_benchmark_saves_a_recording_per_thin_run(tmp_path, monkeypatch):
     saved = json.loads((target / "notepad-hello.json").read_text())
     assert saved["mode"] == "desktop" and saved["outcome"] == "success"
     assert asyncio.run(rp.replay(saved)).ok
+
+
+# ── Codex review cases ─────────────────────────────────────────────────────
+
+
+def _record(tmp_path, turns, *, max_steps=10, outcomes=None, settings=None, expect=None):
+    with rp.loop_environment({"OPERON_DESKTOP_PLATFORM": "windows", **(settings or {})}):
+        run = asyncio.run(rp.run_turns(turns, mode="desktop", intent="task", width=1280, height=800,
+                                       root=tmp_path, max_steps=max_steps, outcomes=outcomes))
+    if expect:
+        assert run.status == expect
+    return rp.record_run(run.run_dir, task="t", mode="desktop")
+
+
+def _replays(recording) -> None:
+    result = asyncio.run(rp.replay(json.loads(json.dumps(recording))))
+    assert result.ok, result.message
+
+
+def test_repeated_actions_replay_under_the_thin_harness(tmp_path):
+    """The full harness blocks a repeated action; the thin harness (what ran) does not."""
+    click = call("click_at", x=300, y=300)
+    recording = _record(tmp_path, [click, click, click, done()], expect="succeeded")
+    assert [s["action"]["action_type"] for s in recording["steps"]][:3] == ["click"] * 3
+    _replays(recording)
+
+
+def test_a_failed_action_replays_as_failed(tmp_path):
+    """After a failed action a text-only answer is not a 'done'; the replay keeps the failure."""
+    turns = [call("click_at", x=300, y=300), done(), call("click_at", x=310, y=310), done()]
+    recording = _record(tmp_path, turns, outcomes=[{"success": False, "detail": "missed"}])
+    assert recording["steps"][0]["success"] is False
+    _replays(recording)
+
+
+def test_a_retried_answer_is_recorded_and_replayed(tmp_path):
+    """A weak first answer gets a stronger retry in the same step: both answers are kept."""
+    weak = {**done(), "confidence": 0.1, "model_content": {"parts": [{"text": "Looking."}]}, "rationale": "Looking."}
+    recording = _record(tmp_path, [weak, call("launch_app", app="notepad"), done()], expect="succeeded")
+    assert len(recording["turns"]) == 3
+    _replays(recording)
+
+
+def test_a_run_that_ran_out_of_steps_replays(tmp_path):
+    turns = [call("click_at", x=100 + i, y=100) for i in range(3)]
+    recording = _record(tmp_path, turns, max_steps=3)
+    assert recording["max_steps"] == 3 and len(recording["steps"]) == 3
+    _replays(recording)
+
+
+def test_a_confirmation_pause_replays(tmp_path):
+    """Gemini's require_confirmation pauses the run (a logged step the executor never sees)."""
+    risky = call("click_at", x=300, y=300, safety_decision={"decision": "require_confirmation", "explanation": "buy"})
+    recording = _record(tmp_path, [risky, done()])
+    assert "wait_for_user" in [s["action"]["action_type"] for s in recording["steps"]]
+    _replays(recording)
+
+
+def test_the_run_settings_are_restored(tmp_path, monkeypatch):
+    recording = _record(tmp_path, TURNS, settings={"OPERON_TRUST_GATE": "off"})
+    assert recording["settings"]["OPERON_TRUST_GATE"] in ("off", "false")
+    assert not any(k in recording["settings"] for k in ("GEMINI_API_KEY", "OPERON_RUNS_ROOT", "OPERON_ALLOWED_HOSTS"))
+    monkeypatch.setenv("OPERON_TRUST_GATE", "on")
+    with rp.loop_environment(recording["settings"]):
+        from operon.core.settings import get_settings
+
+        assert get_settings().effective()["OPERON_TRUST_GATE"] in ("off", False)
+
+
+def test_backslash_paths_are_found_in_a_copied_folder(tmp_path):
+    step = tmp_path / "run" / "step_1"
+    step.mkdir(parents=True)
+    (step / "computer_use_raw.json").write_text("{}")
+    found = rp._local(r"C:\Users\runner\.operon\runs\abc\step_1\computer_use_raw.json", tmp_path / "run")
+    assert found == step / "computer_use_raw.json"

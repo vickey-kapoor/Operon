@@ -31,11 +31,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 from unittest.mock import patch
 
@@ -43,8 +44,13 @@ from PIL import Image
 
 RECORDINGS_DIR = Path(__file__).resolve().parent / "recordings"
 FORMAT = 1
-# Settings that change what the loop does with the same model answers.
-_SETTINGS_KEPT = ("OPERON_DESKTOP_PLATFORM", "OPERON_TOOLS", "OPERON_HARNESS_PROFILE")
+# Settings a recording does not carry: secrets, paths, hosts and URLs of the machine
+# that ran it, and test-only switches. Every other setting the run had (trust gate,
+# permission mode, tools, zoom, platform, ...) is restored for the replay.
+_SETTINGS_SKIPPED = re.compile(
+    r"(KEY|KEYS|TOKEN|ROOT|ROOTS|DIR|URL|BUNDLE|IMAGE|HOSTS|ORIGINS|VERTEX|TRACE|"
+    r"TEST_SAFE_MODE|STRICT_ERRORS|ALLOW_UNAUTHENTICATED|ENVIRONMENT|TIMEOUT|RETAIN_DAYS|TTL_S)$|VERTEX"
+)
 # The action fields compared between the recording and the replay.
 _ACTION_FIELDS = (
     "action_type", "x", "y", "x_end", "y_end", "text", "key", "url", "press_enter",
@@ -90,19 +96,51 @@ def compact_action(action: dict | None) -> dict | None:
 
 def _local(path: str | None, run_dir: Path) -> Path | None:
     """An artifact path from run.jsonl, found again inside ``run_dir`` (the folder may
-    have been copied out of the runs root, e.g. into a benchmark artifact)."""
+    have been copied out of the runs root, e.g. into a benchmark artifact, and a
+    Windows run's paths may be read on Linux)."""
     if not path:
         return None
     original = Path(path)
     if original.is_file():
         return original
-    parts = original.parts
+    parts = PureWindowsPath(path).parts if "\\" in path else original.parts
     for i, part in enumerate(parts):
         if part.startswith("step_"):
             candidate = run_dir.joinpath(*parts[i:])
             if candidate.is_file():
                 return candidate
     return None
+
+
+def recordable_settings(settings: dict) -> dict[str, str]:
+    """The run's settings as environment values, without the machine-specific ones."""
+    out: dict[str, str] = {}
+    for name, value in settings.items():
+        if value is None or value == "<set>" or _SETTINGS_SKIPPED.search(name):
+            continue
+        if isinstance(value, bool):
+            out[name] = "true" if value else "false"
+        elif isinstance(value, (list, tuple)):
+            out[name] = ",".join(str(v) for v in value)
+        else:
+            out[name] = str(value)
+    return out
+
+
+def logged_steps(run_dir: Path) -> list[dict]:
+    """Each logged step's action and execution outcome, as the replay compares them."""
+    steps = []
+    for step in _step_logs(Path(run_dir)):
+        executed = step.get("executed_action") or {}
+        steps.append({
+            "step": step["step_index"],
+            "action": compact_action(executed.get("action")),
+            "success": bool(executed.get("success", True)),
+            "detail": executed.get("detail") or "done",
+            "failure_category": executed.get("failure_category"),
+            "batch_failed_index": executed.get("batch_failed_index"),
+        })
+    return steps
 
 
 def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None,
@@ -117,7 +155,6 @@ def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None
     if not steps:
         raise RecordingError(f"{run_dir}: no completed steps")
     turns: list[dict] = []
-    recorded_steps: list[dict] = []
     size: tuple[int, int] | None = None
     for step in steps:
         debug = step.get("perception_debug") or {}
@@ -126,16 +163,15 @@ def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None
         if raw is None or prompt is None:
             raise RecordingError(f"step {step['step_index']}: the model answer was not saved")
         if not prompt.read_text(encoding="utf-8").startswith(_NO_MODEL_CALL):
-            turns.append(_read_json(raw))
+            # Every answer of the step (retries and zoom included) when the client
+            # listed them; otherwise the step's one answer.
+            answers = raw.parent / "computer_use_answers.json"
+            turns.extend(_read_json(answers) if answers.is_file() else [_read_json(raw)])
         if size is None:
             frame = _local(step.get("before_artifact_path"), run_dir)
             if frame is not None:
                 with Image.open(frame) as image:
                     size = image.size
-        recorded_steps.append({
-            "step": step["step_index"],
-            "action": compact_action((step.get("executed_action") or {}).get("action")),
-        })
     if size is None:
         raise RecordingError(f"{run_dir}: no screenshot to take the screen size from")
     return {
@@ -145,10 +181,12 @@ def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None
         "intent": intent or state.get("intent") or "",
         "outcome": outcome,
         "status": state.get("status"),
+        "stop_reason": state.get("stop_reason"),
+        "max_steps": state.get("max_steps"),
         "screen": {"width": size[0], "height": size[1]},
-        "settings": {k: settings.get(k) for k in _SETTINGS_KEPT},
+        "settings": recordable_settings(settings),
         "turns": turns,
-        "steps": recorded_steps,
+        "steps": logged_steps(run_dir),
     }
 
 
@@ -164,10 +202,12 @@ class ReplayClient:
         self.function_declarations = function_declarations
         self.used = 0
         self.extra_turns = 0
+        self.answers: list[dict] = []  # as the HTTP client keeps them, so replayed steps save them too
 
     async def generate_turn(self, *, contents: list[dict]) -> dict:
         if self.used < len(self._turns):
             self.used += 1
+            self.answers.append(self._turns[self.used - 1])
             return self._turns[self.used - 1]
         # The loop asked for more answers than the real run did: stop it.
         self.extra_turns += 1
@@ -201,12 +241,14 @@ class ReplayClient:
 
 
 class ReplayExecutor:
-    """A blank screen of the recorded size; every action 'succeeds' and is remembered."""
+    """A blank screen of the recorded size. Each action ends the way it did in the real
+    run (``outcomes``, in execution order; success once they run out)."""
 
-    def __init__(self, width: int, height: int, frames_dir: Path) -> None:
+    def __init__(self, width: int, height: int, frames_dir: Path, outcomes: list[dict] | None = None) -> None:
         self.width, self.height = width, height
         self.frames_dir = frames_dir
         self.actions: list[Any] = []
+        self._outcomes = list(outcomes or [])
         self._n = 0
 
     def _frame(self) -> str:
@@ -225,7 +267,14 @@ class ReplayExecutor:
         from operon.models.execution import ExecutedAction
 
         self.actions.append(action)
-        return ExecutedAction(action=action, success=True, detail="replayed", artifact_path=self._frame())
+        outcome = self._outcomes.pop(0) if self._outcomes else {}
+        if outcome.get("success", True):
+            return ExecutedAction(action=action, success=True, detail="replayed", artifact_path=self._frame())
+        return ExecutedAction(
+            action=action, success=False, detail=outcome.get("detail") or "failed in the real run",
+            artifact_path=self._frame(), failure_category=outcome.get("failure_category"),
+            batch_failed_index=outcome.get("batch_failed_index"),
+        )
 
     async def context_reset(self) -> None:
         return None
@@ -293,6 +342,12 @@ async def _no_sleep(*_args: Any, **_kwargs: Any) -> None:
     return None
 
 
+def executed_outcomes(steps: list[dict]) -> list[dict]:
+    """The execution outcomes of the recorded steps that reached the executor (a pause
+    for the person is logged as a step but never executed)."""
+    return [s for s in steps if (s.get("action") or {}).get("action_type") != "wait_for_user"]
+
+
 @dataclass
 class LoopRun:
     run_dir: Path
@@ -302,7 +357,7 @@ class LoopRun:
 
 
 async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, height: int, root: Path,
-                    max_steps: int) -> LoopRun:
+                    max_steps: int, outcomes: list[dict] | None = None) -> LoopRun:
     """Drive the real thin-harness loop with ``turns`` as the model's answers on a blank
     screen, in run folders under ``root`` (the caller sets the environment)."""
     from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
@@ -324,7 +379,7 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
     from operon.store.run_store import FileBackedRunStore
 
     (root / "frames").mkdir(parents=True, exist_ok=True)
-    executor = ReplayExecutor(width, height, root / "frames")
+    executor = ReplayExecutor(width, height, root / "frames", outcomes)
     tools = enabled_tools()
     backend: Any
     if mode == "browser":
@@ -351,6 +406,7 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
         recovery_manager=ThinRecovery(),
         memory_store=memory_store,
         environment=environment,
+        harness_profile="thin",
     )
     terminal = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
     run = await loop.start_run(RunTaskRequest(intent=intent, max_steps=max_steps))
@@ -370,20 +426,24 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
     return LoopRun(
         run_dir=Path(run_store.root_dir) / run.run_id,
         status=status.value,
-        actions=[compact_action(a.model_dump(mode="json", exclude_none=True)) for a in executor.actions],
+        # The logged steps, as a recording reads them (a pause is a step too).
+        actions=[s["action"] for s in logged_steps(Path(run_store.root_dir) / run.run_id)],
         extra_turns=client.extra_turns,
     )
 
 
 @contextmanager
 def loop_environment(settings: dict | None = None):
-    """The environment a replay runs in: the recorded settings, the thin harness, no zoom
-    (a recorded answer already has zoom's coordinates), and no real waits or alerts."""
-    env = {k: v for k, v in (settings or {}).items() if v is not None}
-    env.update({"OPERON_TEST_SAFE_MODE": "true", "OPERON_ZOOM": "off", "OPERON_HARNESS_PROFILE": "thin"})
+    """The environment a replay runs in: the recorded run's settings (trust gate,
+    permission mode, tools, zoom, ...), the thin harness, and no real waits or alerts."""
+    from operon.core.settings import get_settings
+
+    env = {k: str(v) for k, v in (settings or {}).items() if v is not None}
+    env.update({"OPERON_TEST_SAFE_MODE": "true", "OPERON_HARNESS_PROFILE": "thin"})
     with ExitStack() as stack:
         stack.enter_context(patch.dict(os.environ, {}))  # restores anything popped below
-        for name in _SETTINGS_KEPT:  # a setting the run did not have must not leak in from here
+        # A setting the run did not have must not leak in from this machine.
+        for name in recordable_settings(get_settings().effective()):
             os.environ.pop(name, None)
         stack.enter_context(patch.dict(os.environ, env))
         stack.enter_context(patch("operon.agent.loop.asyncio.sleep", _no_sleep))
@@ -400,11 +460,13 @@ async def replay(recording: dict) -> ReplayResult:
     task = recording["task"]
     recorded = [s["action"] for s in recording["steps"]]
     screen = recording["screen"]
+    # The real run's own step budget, so a run that ran out of steps ends the same way.
+    max_steps = int(recording.get("max_steps") or len(recorded) + 3)
     with tempfile.TemporaryDirectory(prefix="operon-replay-") as tmp, loop_environment(recording.get("settings")):
         run = await run_turns(
             recording["turns"], mode=recording["mode"], intent=recording["intent"] or task,
             width=int(screen["width"]), height=int(screen["height"]), root=Path(tmp),
-            max_steps=len(recorded) + 3,
+            max_steps=max_steps, outcomes=executed_outcomes(recording["steps"]),
         )
     return compare(task, recorded, run.actions, extra_turns=run.extra_turns, status=run.status)
 

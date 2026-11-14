@@ -222,8 +222,10 @@ class GeminiHttpClient(GeminiClient):
                 if attempt >= attempts:
                     raise last_error from exc
                 self._log_retry(attempt, attempts, f"timeout after {hard_timeout} seconds")
-            except httpx.ConnectError as exc:
-                last_error = GeminiClientError(f"Gemini connection failed: {exc}")
+            except httpx.TransportError as exc:
+                # Connect failures and dropped keep-alive connections (an HTTP/2
+                # reset surfaces as RemoteProtocolError or ReadError) are retryable.
+                last_error = GeminiClientError(f"Gemini connection failed: {exc!r}")
                 if attempt >= attempts:
                     raise last_error from exc
                 self._log_retry(attempt, attempts, f"connection error: {exc}")

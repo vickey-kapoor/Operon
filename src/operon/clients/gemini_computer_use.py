@@ -189,10 +189,14 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
 
         for attempt in range(1, attempts + 1):
             try:
-                response = await client.post(
-                    url,
-                    content=payload_bytes,
-                    headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+                # Hard timeout: a slow-drip response never trips httpx's per-read timeout.
+                response = await asyncio.wait_for(
+                    client.post(
+                        url,
+                        content=payload_bytes,
+                        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+                    ),
+                    timeout=self.timeout_seconds + 30.0,
                 )
                 if response.status_code != 200:
                     detail = response.text
@@ -209,8 +213,13 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
                         attempts,
                     )
                 else:
-                    return response.json()
-            except httpx.TimeoutException as exc:
+                    try:
+                        return response.json()
+                    except ValueError as exc:
+                        raise GeminiComputerUseError(
+                            f"Gemini Computer Use returned a response that is not JSON: {exc}"
+                        ) from exc
+            except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
                 last_error = GeminiComputerUseError(
                     f"Gemini Computer Use request timed out after {self.timeout_seconds} seconds."
                 )
@@ -221,8 +230,10 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
                     attempt,
                     attempts,
                 )
-            except httpx.ConnectError as exc:
-                last_error = GeminiComputerUseError(f"Gemini Computer Use connection failed: {exc}")
+            except httpx.TransportError as exc:
+                # Connect failures and dropped keep-alive connections (an HTTP/2
+                # reset surfaces as RemoteProtocolError or ReadError) are retryable.
+                last_error = GeminiComputerUseError(f"Gemini Computer Use connection failed: {exc!r}")
                 if attempt >= attempts:
                     raise last_error from exc
                 logger.warning(

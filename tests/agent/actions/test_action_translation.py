@@ -303,3 +303,17 @@ def test_calls_after_a_skipped_click_do_not_run() -> None:
     )
 
     assert all(a["action_type"] == "wait" for a in payload["actions"])
+
+
+@pytest.mark.parametrize(("direction", "sign"), [("right", 1), ("left", -1)])
+def test_sideways_scroll_stays_horizontal_through_to_the_action(direction, sign) -> None:
+    """A "scroll right" must not reach the executor as a vertical scroll (KAN-151)."""
+    payload = normalize_computer_use_actions(
+        [{"name": "scroll_document", "args": {"direction": direction}}], screen_width=1000, screen_height=800
+    )
+
+    action = build_policy_decision({"action": payload}).action
+
+    assert action.action_type is ActionType.SCROLL
+    assert action.horizontal is True
+    assert action.scroll_amount * sign > 0

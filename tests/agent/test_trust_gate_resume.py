@@ -9,6 +9,7 @@ import pytest
 
 from operon.agent.loop import AgentLoop
 from operon.agent.policy.trust_gate import TrustGate
+from operon.core.runtime import current_runtime
 from operon.models.capture import CaptureFrame
 from operon.models.common import RunStatus, StepRequest
 from operon.models.execution import ExecutedAction
@@ -28,12 +29,12 @@ def _debug() -> ModelDebugArtifacts:
 
 
 def _loop(monkeypatch: pytest.MonkeyPatch, actions: list[AgentAction]) -> tuple[AgentLoop, AsyncMock, AgentState]:
-    from operon.agent import control, hitl
+    from operon.agent import hitl
 
     monkeypatch.setattr(hitl, "notify_desktop", lambda **_: None)
     monkeypatch.setattr(hitl, "post_hitl_webhook", AsyncMock())
     monkeypatch.setattr(hitl, "start_escalation_timer", AsyncMock())
-    monkeypatch.setattr(control, "_confidence_threshold", 0.0)
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.0)
 
     run_root = unique_artifact_dir("test-gate-resume")
     state = AgentState(run_id="run-1", intent="Buy the item", status=RunStatus.RUNNING)
@@ -151,10 +152,9 @@ async def test_approval_does_not_carry_to_a_different_action(monkeypatch: pytest
 
 
 async def test_each_gate_needs_its_own_approval(monkeypatch: pytest.MonkeyPatch) -> None:
-    from operon.agent import control
 
     loop, execute, _ = _loop(monkeypatch, [PURCHASE, PURCHASE, PURCHASE])
-    monkeypatch.setattr(control, "_confidence_threshold", 0.95)  # decisions carry 0.9
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.95)  # decisions carry 0.9
 
     first = await loop.step_run(StepRequest(run_id="run-1"))  # confidence gate
     await loop.resume_run("run-1")

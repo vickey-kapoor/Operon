@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from operon.core.runtime import current_runtime
 from operon.models.common import RunResponse, RunStatus
 
 
@@ -259,8 +260,8 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
     from operon.api.runtime_config import RuntimeModeConfig
 
     # Reset the singleton so it gets rebuilt
-    original = routes_module._desktop_agent_loop
-    routes_module._desktop_agent_loop = None
+    original = current_runtime().desktop_loop
+    current_runtime().desktop_loop = None
 
     gemini_config = RuntimeModeConfig(
         backend="json",
@@ -290,7 +291,7 @@ def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
             calls = mock_gemini.call_args_list
             assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in calls)
     finally:
-        routes_module._desktop_agent_loop = original
+        current_runtime().desktop_loop = original
 
 
 # ── UIElementType._missing_ tests ──────────────────────────────

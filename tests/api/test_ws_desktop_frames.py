@@ -8,6 +8,7 @@ import asyncio
 import pytest
 
 from operon.api import frontdoor, ws_stream
+from operon.core.runtime import current_runtime
 
 
 class _Desktop:
@@ -21,9 +22,9 @@ class _Desktop:
 
 async def _frames_for(monkeypatch: pytest.MonkeyPatch, run_id: str) -> list[bytes]:
     desktop = _Desktop()
-    monkeypatch.setattr(ws_stream, "_desktop_executor", desktop)
-    monkeypatch.setattr(ws_stream, "_active_run_id", run_id)
-    monkeypatch.setattr(ws_stream, "_browser_manager", object())  # a browser screencast is also live
+    monkeypatch.setattr(current_runtime().stream, "desktop_executor", desktop)
+    monkeypatch.setattr(current_runtime().stream, "active_run_id", run_id)
+    monkeypatch.setattr(current_runtime().stream, "browser_manager", object())  # a browser screencast is also live
     q: asyncio.Queue = asyncio.Queue(maxsize=10)
     task = asyncio.create_task(ws_stream._frame_pusher(q))
     await asyncio.sleep(0.35)
@@ -44,10 +45,10 @@ async def test_other_runs_get_no_desktop_frames(monkeypatch) -> None:
 
 
 def test_desktop_executor_is_set_by_its_setter(monkeypatch) -> None:
-    monkeypatch.setattr(ws_stream, "_desktop_executor", None)
+    monkeypatch.setattr(current_runtime().stream, "desktop_executor", None)
     marker = object()
     ws_stream.set_desktop_executor(marker)
-    assert ws_stream._desktop_executor is marker
+    assert current_runtime().stream.desktop_executor is marker
 
 
 async def test_status_marks_a_streamable_desktop_as_live(monkeypatch) -> None:

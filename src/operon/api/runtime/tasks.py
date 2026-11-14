@@ -11,11 +11,28 @@ from operon.api.runtime.events import (
     publish_run_completed,
     publish_step_outcome,
 )
+from operon.core.runtime import current_runtime
 from operon.models.common import RunResponse, RunStatus, StepRequest, StopReason
 
 logger = logging.getLogger(__name__)
 
-_auto_run_tasks: dict[str, asyncio.Task] = {}
+
+
+def auto_run_task(run_id: str) -> asyncio.Task | None:
+    """The task stepping ``run_id``, kept on its run context (KAN-156)."""
+    context = current_runtime().peek_run(run_id)
+    return context.auto_run_task if context is not None else None
+
+
+def _clear_auto_run_task(run_id: str, task: asyncio.Task | None = None) -> asyncio.Task | None:
+    """Drop ``run_id``'s task (only if it is ``task``, when given) and return what was there."""
+    context = current_runtime().peek_run(run_id)
+    if context is None or context.auto_run_task is None:
+        return None
+    if task is not None and context.auto_run_task is not task:
+        return None
+    held, context.auto_run_task = context.auto_run_task, None
+    return held
 
 
 async def cleanup_cancelled_run(loop: AgentLoop, run_id: str) -> None:
@@ -27,8 +44,7 @@ async def cleanup_cancelled_run(loop: AgentLoop, run_id: str) -> None:
 
 def _auto_run_done_callback(run_id: str):
     def _callback(task: asyncio.Task) -> None:
-        if _auto_run_tasks.get(run_id) is task:
-            _auto_run_tasks.pop(run_id, None)
+        _clear_auto_run_task(run_id, task)
         if task.cancelled():
             logger.info("[loop] run %s auto-run task cancelled", run_id)
             return
@@ -40,15 +56,16 @@ def _auto_run_done_callback(run_id: str):
 
 
 def schedule_auto_run(loop: AgentLoop, run_id: str, max_steps: int) -> asyncio.Task:
-    existing = _auto_run_tasks.get(run_id)
+    context = current_runtime().run(run_id)
+    existing = context.auto_run_task
     if existing is not None:
         if not existing.done():
             logger.info("[loop] run %s auto-run already scheduled", run_id)
             return existing
-        _auto_run_tasks.pop(run_id, None)
+        context.auto_run_task = None
 
     task = asyncio.create_task(auto_run_loop(loop, run_id, max_steps))
-    _auto_run_tasks[run_id] = task
+    context.auto_run_task = task
     task.add_done_callback(_auto_run_done_callback(run_id))
     logger.info("[loop] run %s auto-run scheduled (max_steps=%d)", run_id, max_steps)
     return task
@@ -71,7 +88,7 @@ async def resume_and_schedule(loop: AgentLoop, run_id: str, *, approve_gated_act
 
 
 async def cancel_auto_run(run_id: str) -> None:
-    task = _auto_run_tasks.pop(run_id, None)
+    task = _clear_auto_run_task(run_id)
     if task is None or task.done():
         return
     task.cancel()

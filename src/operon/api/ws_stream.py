@@ -23,70 +23,58 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from operon.agent import control as _control
+from operon.core.runtime import StreamState, current_runtime
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# One asyncio.Queue per connected client. Items are either:
-#   dict  → serialised as a JSON text frame
-#   bytes → sent as a binary frame (raw JPEG)
-_subscribers: list[asyncio.Queue[dict | bytes]] = []
-
-# Optional executor reference for live frame capture (Operon agent loop path).
-_executor: Any = None
-# run_id of the currently active run (set/cleared by route handlers).
-_active_run_id: str | None = None
-
-# BrowserManager instance for CDP-attached screencast (command-center path).
-# When set, frame streaming is driven by BrowserManager.start_screencast() and
-# the _frame_pusher fallback is skipped automatically.
-_browser_manager: Any = None
-
-# Reference to the AgentLoop singleton so WS control messages can call resume_run().
-_agent_loop: Any = None
-
+# What the stream serves from (subscriber queues, executors, the active run, the
+# CDP browser manager) lives on the process runtime (KAN-156): ``_stream()``.
 # Confidence threshold, disabled rules and override hints live in
 # operon.agent.control, which the loop reads; this module only writes them.
 
 
+def _stream() -> StreamState:
+    return current_runtime().stream
+
+
 def set_executor(executor: Any) -> None:
-    global _executor
-    _executor = executor
-
-
-# The desktop loop's executor. Only one with a ``live_frame_png`` hook (the Linux
-# cloud computer, KAN-108) streams; a Windows desktop shows step screenshots instead.
-_desktop_executor: Any = None
+    """The browser loop's executor, for live frames when no CDP screencast runs."""
+    _stream().browser_executor = executor
 
 
 def set_desktop_executor(executor: Any) -> None:
-    global _desktop_executor
-    _desktop_executor = executor
-
-
-# The loop that owns the active run (browser or desktop). Control messages go to
-# it; ``_agent_loop`` (the browser loop) is only the fallback for callers that
-# don't say which loop started the run.
-_active_loop: Any = None
+    """The desktop loop's executor. Only one with a ``live_frame_png`` hook (the Linux
+    cloud computer, KAN-108) streams; a Windows desktop shows step screenshots instead."""
+    _stream().desktop_executor = executor
 
 
 def set_active_run(run_id: str | None, loop: Any = None) -> None:
-    global _active_run_id, _active_loop
-    _active_run_id = run_id
-    _active_loop = loop if run_id is not None else None
+    """The run on screen and the loop (browser or desktop) that owns it. Control
+    messages go to that loop; the browser loop is the fallback for callers that
+    don't say which loop started the run."""
+    stream = _stream()
+    stream.active_run_id = run_id
+    stream.active_loop = loop if run_id is not None else None
+
+
+def active_run_id() -> str | None:
+    return _stream().active_run_id
 
 
 def _control_loop() -> Any:
-    return _active_loop if _active_loop is not None else _agent_loop
+    stream = _stream()
+    return stream.active_loop if stream.active_loop is not None else current_runtime().browser_loop
 
 
 async def _active_run_in_takeover() -> bool:
     """Whether the active run (if any) is under the person's control."""
     loop = _control_loop()
-    if _active_run_id is None or loop is None:
+    run_id = _stream().active_run_id
+    if run_id is None or loop is None:
         return True  # No run to fight with: the live view is just a browser.
     try:
-        record = await loop.run_store.get_run(_active_run_id)
+        record = await loop.run_store.get_run(run_id)
     except Exception:  # noqa: BLE001 - refuse on doubt
         return False
     return record is None or bool(getattr(record, "in_takeover", False)) or record.status.value not in {
@@ -96,13 +84,12 @@ async def _active_run_in_takeover() -> bool:
 
 
 def set_browser_manager(manager: Any) -> None:
-    global _browser_manager
-    _browser_manager = manager
+    _stream().browser_manager = manager
 
 
 def set_agent_loop(loop: Any) -> None:
-    global _agent_loop
-    _agent_loop = loop
+    """The browser agent loop (control messages fall back to it)."""
+    current_runtime().browser_loop = loop
 
 
 set_confidence_threshold = _control.set_confidence_threshold
@@ -114,7 +101,7 @@ consume_override_hint = _control.consume_override_hint
 
 def publish_event(event: dict[str, Any]) -> None:
     """Fan out a JSON step event to all connected WS clients."""
-    for q in _subscribers:
+    for q in _stream().subscribers:
         try:
             q.put_nowait(event)
         except asyncio.QueueFull:
@@ -123,7 +110,7 @@ def publish_event(event: dict[str, Any]) -> None:
 
 def publish_frame(jpeg_bytes: bytes) -> None:
     """Fan out a raw JPEG screenshot frame to all connected WS clients."""
-    for q in _subscribers:
+    for q in _stream().subscribers:
         try:
             q.put_nowait(jpeg_bytes)
         except asyncio.QueueFull:
@@ -158,7 +145,7 @@ async def _receiver(ws: WebSocket, scope: str = "control") -> None:
 async def _resume_active_run(*, approve_gated_action: bool = True) -> None:
     # Local import: runtime.tasks imports this module at load time.
     from operon.api.runtime.tasks import resume_and_schedule
-    await resume_and_schedule(_control_loop(), _active_run_id, approve_gated_action=approve_gated_action)
+    await resume_and_schedule(_control_loop(), _stream().active_run_id, approve_gated_action=approve_gated_action)
 
 
 async def _handle_control(msg: dict) -> None:
@@ -171,8 +158,9 @@ async def _handle_control(msg: dict) -> None:
         if not await _active_run_in_takeover():
             publish_event({"type": "control_ack", "action": "inject_input", "error": "take control of the run first"})
             return
-        if _browser_manager is not None:
-            await _browser_manager.inject_input(
+        manager = _stream().browser_manager
+        if manager is not None:
+            await manager.inject_input(
                 x_ratio=float(msg.get("x_ratio", 0.0)),
                 y_ratio=float(msg.get("y_ratio", 0.0)),
                 input_type=msg.get("input_type", "click"),
@@ -193,11 +181,11 @@ async def _handle_control(msg: dict) -> None:
     elif msg_type == "pause":
         # Pause the active run for real: the auto-run loop stops at the next step
         # boundary, and a step in flight ends paused instead of RUNNING.
-        if _control_loop() is None or _active_run_id is None:
+        if _control_loop() is None or _stream().active_run_id is None:
             publish_event({"type": "control_ack", "action": "pause", "error": "no active run"})
             return
         try:
-            run = await _control_loop().pause_run(_active_run_id)
+            run = await _control_loop().pause_run(_stream().active_run_id)
         except Exception as exc:
             publish_event({"type": "control_ack", "action": "pause", "error": str(exc)})
             return
@@ -205,7 +193,7 @@ async def _handle_control(msg: dict) -> None:
 
     elif msg_type == "resume":
         # Resume a HITL-paused run from the UI "Proceed" button.
-        if _control_loop() is not None and _active_run_id is not None:
+        if _control_loop() is not None and _stream().active_run_id is not None:
             try:
                 await _resume_active_run()
                 publish_event({"type": "control_ack", "action": "resume"})
@@ -222,9 +210,9 @@ async def _handle_control(msg: dict) -> None:
     elif msg_type == "override":
         # Store the correction hint and resume the paused run in one shot.
         hint = msg.get("hint", "").strip()
-        if _active_run_id is not None:
-            _control.set_override_hint(_active_run_id, hint)
-        if _control_loop() is not None and _active_run_id is not None:
+        if _stream().active_run_id is not None:
+            _control.set_override_hint(_stream().active_run_id, hint)
+        if _control_loop() is not None and _stream().active_run_id is not None:
             try:
                 # A correction, not an approval: the paused action stays gated.
                 await _resume_active_run(approve_gated_action=False)
@@ -243,10 +231,13 @@ async def _frame_pusher(q: asyncio.Queue) -> None:
     """
     while True:
         await asyncio.sleep(0.1)
+        stream = _stream()
+        run_id = stream.active_run_id
         # A desktop run streams its screen (it returns None for any run not on it).
-        if _active_run_id and _desktop_executor is not None and hasattr(_desktop_executor, "live_frame_png"):
+        desktop = stream.desktop_executor
+        if run_id and desktop is not None and hasattr(desktop, "live_frame_png"):
             try:
-                frame = await _desktop_executor.live_frame_png(_active_run_id)
+                frame = await desktop.live_frame_png(run_id)
             except Exception:
                 frame = None
             if frame:
@@ -256,11 +247,12 @@ async def _frame_pusher(q: asyncio.Queue) -> None:
                     pass
                 continue
         # BrowserManager is driving frames via CDP events — nothing to do here.
-        if _browser_manager is not None:
+        if stream.browser_manager is not None:
             continue
-        if _active_run_id and _executor and hasattr(_executor, "live_frame_png"):
+        browser = stream.browser_executor
+        if run_id and browser and hasattr(browser, "live_frame_png"):
             try:
-                frame = await _executor.live_frame_png(_active_run_id)
+                frame = await browser.live_frame_png(run_id)
                 if frame:
                     try:
                         q.put_nowait(frame)
@@ -291,11 +283,12 @@ async def stream(ws: WebSocket) -> None:
         return
     await ws.accept(subprotocol=websocket_subprotocol(ws))
     q: asyncio.Queue = asyncio.Queue(maxsize=64)
-    _subscribers.append(q)
+    _stream().subscribers.append(q)
     # Static pages may emit no further CDP frames after this client connects.
     # The manager clears its cached frame when stopping or changing the stream.
-    if _browser_manager is not None:
-        frame = _browser_manager.latest_frame
+    manager = _stream().browser_manager
+    if manager is not None:
+        frame = manager.latest_frame
         if frame is not None:
             q.put_nowait(frame)
 
@@ -316,8 +309,9 @@ async def stream(ws: WebSocket) -> None:
         frame_task.cancel()
         send_task.cancel()
         recv_task.cancel()
-        if q in _subscribers:
-            _subscribers.remove(q)
+        subscribers = _stream().subscribers
+        if q in subscribers:
+            subscribers.remove(q)
         # Finish cancelling child tasks even when the ASGI request's AnyIO
         # cancellation scope has already been cancelled (including TestClient).
         with anyio.CancelScope(shield=True):

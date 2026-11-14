@@ -8,23 +8,22 @@ from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from operon.agent import control
 from operon.api import ws_stream
+from operon.core.runtime import current_runtime
 
 
 @pytest.fixture
 def stream_client(monkeypatch):
     monkeypatch.setenv("API_KEYS", "local-test-key")
-    monkeypatch.setattr(
-        ws_stream, "_browser_manager", SimpleNamespace(latest_frame=b"current frame")
+    monkeypatch.setattr(current_runtime().stream, "browser_manager", SimpleNamespace(latest_frame=b"current frame")
     )
-    monkeypatch.setattr(control, "_confidence_threshold", 0.0)
-    monkeypatch.setattr(ws_stream, "_subscribers", [])
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.0)
+    monkeypatch.setattr(current_runtime().stream, "subscribers", [])
     app = FastAPI()
     app.include_router(ws_stream.router)
     with TestClient(app) as client:
         yield client
-    assert not ws_stream._subscribers
+    assert not current_runtime().stream.subscribers
 
 
 def test_static_frame_replayed_on_initial_connection_and_reconnect(stream_client):
@@ -37,7 +36,7 @@ def test_static_frame_replayed_on_initial_connection_and_reconnect(stream_client
 def test_no_stale_frame_after_stream_is_cleared(stream_client, monkeypatch, manager):
     with stream_client.websocket_connect("/ws/stream", subprotocols=["x-api-key", "local-test-key"]) as ws:
         assert ws.receive_bytes() == b"current frame"
-    monkeypatch.setattr(ws_stream, "_browser_manager", manager)
+    monkeypatch.setattr(current_runtime().stream, "browser_manager", manager)
     with stream_client.websocket_connect("/ws/stream", subprotocols=["x-api-key", "local-test-key"]) as ws:
         ws.send_json({"type": "set_confidence_threshold", "threshold": 0.5})
         assert ws.receive_json() == {
@@ -55,8 +54,8 @@ def test_cached_frame_still_requires_authentication(stream_client):
 
 async def test_client_disconnect_does_not_send_another_close(monkeypatch):
     monkeypatch.delenv("API_KEYS", raising=False)
-    monkeypatch.setattr(ws_stream, "_browser_manager", None)
-    monkeypatch.setattr(ws_stream, "_subscribers", [])
+    monkeypatch.setattr(current_runtime().stream, "browser_manager", None)
+    monkeypatch.setattr(current_runtime().stream, "subscribers", [])
     received = asyncio.Queue()
     received.put_nowait({"type": "websocket.connect"})
     received.put_nowait({"type": "websocket.disconnect", "code": 1000})
@@ -71,4 +70,4 @@ async def test_client_disconnect_does_not_send_another_close(monkeypatch):
     ws = WebSocket({"type": "websocket", "headers": []}, receive=received.get, send=send)
     await asyncio.wait_for(ws_stream.stream(ws), timeout=1)
     assert [message["type"] for message in sent] == ["websocket.accept"]
-    assert not ws_stream._subscribers
+    assert not current_runtime().stream.subscribers

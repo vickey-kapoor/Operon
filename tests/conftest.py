@@ -45,15 +45,16 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_active_browser_manager():
-    """Reset the module-level BrowserManager singleton after each test.
+    """Reset the runtime's active BrowserManager after each test.
 
     _ensure_session routes through CDP when get_active_manager() is non-None.
     Without this reset, a test that sets an active manager pollutes subsequent
     tests that expect the batch routing path.
     """
-    import operon.browser.manager as _bm_mod
+    from operon.browser.manager import set_active_manager
+
     yield
-    _bm_mod._active_manager = None
+    set_active_manager(None)
 
 
 @pytest.fixture(autouse=True)

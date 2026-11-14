@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from operon.core.runtime import current_runtime
 from operon.executor.browser_native import NativeBrowserExecutor
 from operon.models.policy import AgentAction
 
@@ -75,7 +76,6 @@ async def test_static_page_streams_initial_and_last_changed_frame(tmp_path: Path
     from PIL import Image
     from playwright.async_api import async_playwright
 
-    from operon.api import ws_stream
     from operon.browser.manager import BrowserManager
 
     with socket.socket() as sock:
@@ -91,7 +91,7 @@ async def test_static_page_streams_initial_and_last_changed_frame(tmp_path: Path
         await page.screenshot()  # Wait for the static scene to render before attaching.
         manager = BrowserManager()
         frames = asyncio.Queue()
-        ws_stream._subscribers.append(frames)
+        current_runtime().stream.subscribers.append(frames)
 
         async def wait_for_color(expected: tuple[int, int, int]) -> None:
             async with asyncio.timeout(5):
@@ -113,5 +113,5 @@ async def test_static_page_streams_initial_and_last_changed_frame(tmp_path: Path
             assert browser.is_connected(), "Disconnect must preserve the external browser"
         finally:
             await manager.disconnect()
-            ws_stream._subscribers.remove(frames)
+            current_runtime().stream.subscribers.remove(frames)
             await browser.close()

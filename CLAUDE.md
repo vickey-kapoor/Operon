@@ -82,7 +82,11 @@ comes from an environment provider (`src/operon/environments/`, `OPERON_ENVIRONM
 default `live`; KAN-80, see `docs/environments.md`). `src/operon/core/paths.py`
 resolves every artifact directory and honors the `OPERON_*_ROOT` env overrides. Settings
 are one typed object, `get_settings()` in `src/operon/core/settings.py` (KAN-157): read fields
-there, never `os.getenv`; it is checked at startup and saved per run as `settings.json`.
+there, never `os.getenv`; it is checked at startup and saved per run as `settings.json`. Process
+state (the agent loops, desktop provider, live-view references, CDP browser manager, operator
+controls) lives on one `OperonRuntime` (`src/operon/core/runtime.py`, `current_runtime()`), and
+each run's own state (override hint, auto-run task, start/finish times) on its `RunContext`
+there (KAN-156): don't add module-level globals; tests patch `current_runtime()` fields.
 
 `dashboard/` is Vercel's root directory, so don't move it.
 

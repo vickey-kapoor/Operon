@@ -28,13 +28,12 @@ from operon.api.runtime.services import (
 )
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
+from operon.core.runtime import current_runtime
 from operon.environments import EnvironmentProvider, get_provider
 from operon.store.memory import FileBackedMemoryStore
 from operon.store.run_store import FileBackedRunStore
 
-_agent_loop: AgentLoop | None = None
-_desktop_agent_loop: AgentLoop | None = None
-_desktop_provider: EnvironmentProvider | None = None
+# The loops and the desktop provider live on the process runtime (KAN-156).
 NativeBrowserExecutor = None
 logger = logging.getLogger(__name__)
 
@@ -42,11 +41,12 @@ logger = logging.getLogger(__name__)
 def iter_built_executors():
     """Yield the executor of each agent loop that has actually been built.
 
-    Reads the module globals directly so it never triggers lazy construction
+    Reads the runtime's fields directly so it never triggers lazy construction
     (which would launch a browser). Used by the server lifespan to tear down
     executor-held resources at shutdown.
     """
-    for loop in (_agent_loop, _desktop_agent_loop):
+    runtime = current_runtime()
+    for loop in (runtime.browser_loop, runtime.desktop_loop):
         if loop is not None:
             yield loop.executor
 
@@ -62,7 +62,7 @@ async def close_built_runtime() -> None:
             await aclose()
         except Exception as exc:  # noqa: BLE001 - shutdown cleanup must not raise
             logger.warning("executor shutdown cleanup skipped: %s", exc)
-    provider = _desktop_provider
+    provider = current_runtime().desktop_provider
     if provider is not None:
         try:
             await asyncio.to_thread(provider.stop)
@@ -72,8 +72,8 @@ async def close_built_runtime() -> None:
 
 def desktop_provider() -> EnvironmentProvider:
     """The desktop run environment (``OPERON_ENVIRONMENT``), built and started once."""
-    global _desktop_provider
-    if _desktop_provider is None:
+    runtime = current_runtime()
+    if runtime.desktop_provider is None:
         provider = get_provider()
         check = provider.check()
         if not check.ok:
@@ -81,8 +81,8 @@ def desktop_provider() -> EnvironmentProvider:
                 f"Environment {provider.name!r} cannot run here: " + " ".join(check.problems)
             )
         provider.start()
-        _desktop_provider = provider
-    return _desktop_provider
+        runtime.desktop_provider = provider
+    return runtime.desktop_provider
 
 
 def _build_browser_executor():
@@ -127,14 +127,14 @@ def _loop_layers(*, config, services, memory_store, desktop: bool = False) -> di
 
 def get_agent_loop() -> AgentLoop:
     """Build the browser runtime lazily so env loading can happen first."""
-    global _agent_loop
-    if _agent_loop is None:
+    runtime = current_runtime()
+    if runtime.browser_loop is None:
         browser_config = browser_mode_config()
         executor = _build_browser_executor()
         services = build_browser_services(executor)
         run_store = FileBackedRunStore(environment="browser")
         memory_store = FileBackedMemoryStore()
-        _agent_loop = AgentLoop(
+        loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
             perception_service=services.perception_service,
             run_store=run_store,
@@ -143,22 +143,23 @@ def get_agent_loop() -> AgentLoop:
             environment=UnifiedEnvironment.BROWSER,
             **_loop_layers(config=browser_config, services=services, memory_store=memory_store, desktop=False),
         )
+        runtime.browser_loop = loop
         _ws_stream.set_executor(executor)
-        _ws_stream.set_agent_loop(_agent_loop)
-    return _agent_loop
+        _ws_stream.set_agent_loop(loop)
+    return runtime.browser_loop
 
 
 def desktop_loop_holds_run(run_id: str) -> bool:
     """Whether the desktop loop (if it was ever built) owns ``run_id``. Never builds it."""
-    loop = _desktop_agent_loop
+    loop = current_runtime().desktop_loop
     holds = getattr(getattr(loop, "run_store", None), "holds_run", None)
     return bool(holds is not None and holds(run_id))
 
 
 def get_desktop_agent_loop() -> AgentLoop:
     """Build the desktop runtime lazily so env loading can happen first."""
-    global _desktop_agent_loop
-    if _desktop_agent_loop is None:
+    runtime = current_runtime()
+    if runtime.desktop_loop is None:
         desktop_config = desktop_mode_config()
         services = build_desktop_services()
         # KAN-80: the environment provider owns the machine and builds its executor.
@@ -166,7 +167,7 @@ def get_desktop_agent_loop() -> AgentLoop:
         executor = provider.build_executor()
         run_store = FileBackedRunStore(environment="desktop")
         memory_store = FileBackedMemoryStore()
-        _desktop_agent_loop = AgentLoop(
+        runtime.desktop_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
             perception_service=services.perception_service,
             run_store=run_store,
@@ -179,5 +180,5 @@ def get_desktop_agent_loop() -> AgentLoop:
         )
         # The task page streams the desktop when its executor can (the Linux cloud computer).
         _ws_stream.set_desktop_executor(executor)
-    return _desktop_agent_loop
+    return runtime.desktop_loop
 

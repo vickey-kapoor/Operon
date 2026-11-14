@@ -10,6 +10,7 @@ import pytest
 
 from operon.agent.loop import AgentLoop
 from operon.agent.policy.trust_gate import TrustGate
+from operon.core.runtime import current_runtime
 from operon.models.capture import CaptureFrame
 from operon.models.common import RunResponse, RunStatus, StepRequest
 from operon.models.execution import ExecutedAction
@@ -178,9 +179,8 @@ def _decision(action: AgentAction, confidence: float = 0.9) -> PolicyDecision:
 
 @pytest.fixture
 def gate_loop(tmp_path, monkeypatch: pytest.MonkeyPatch) -> AgentLoop:
-    from operon.agent import control
 
-    monkeypatch.setattr(control, "_confidence_threshold", 0.0)
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.0)
     monkeypatch.delenv("OPERON_ALLOWED_FILE_ROOTS", raising=False)
     loop = _bare_loop()
     loop.run_store = SimpleNamespace(root_dir=str(tmp_path))
@@ -194,9 +194,8 @@ def test_gates_allow_an_ordinary_action(gate_loop: AgentLoop) -> None:
 
 
 def test_confidence_gate_blocks_below_threshold_but_not_stop(gate_loop: AgentLoop, monkeypatch: pytest.MonkeyPatch) -> None:
-    from operon.agent import control
 
-    monkeypatch.setattr(control, "_confidence_threshold", 0.8)
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.8)
     low = _decision(AgentAction(action_type=ActionType.WAIT, wait_ms=10), confidence=0.5)
     stop = _decision(AgentAction(action_type=ActionType.STOP), confidence=0.5)
     assert "below your threshold 80%" in gate_loop._pre_execution_gate_text(low, intent="x", run_id="r")
@@ -219,8 +218,7 @@ def test_file_guard_blocks_unnamed_path(gate_loop: AgentLoop) -> None:
 
 
 def test_first_failing_gate_wins(gate_loop: AgentLoop, monkeypatch: pytest.MonkeyPatch) -> None:
-    from operon.agent import control
 
-    monkeypatch.setattr(control, "_confidence_threshold", 0.95)
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.95)
     decision = _decision(AgentAction(action_type=ActionType.READ_TEXT, selector="main", text="/etc/hosts"), confidence=0.5)
     assert "below your threshold" in gate_loop._pre_execution_gate_text(decision, intent="x", run_id="r")

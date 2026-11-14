@@ -56,7 +56,7 @@ async def test_schedule_auto_run_deduplicates_active_task(monkeypatch: pytest.Mo
     """Only one background auto-run task should exist for a run_id."""
     from operon.api.runtime import tasks
 
-    tasks._auto_run_tasks.clear()
+    tasks.current_runtime().forget_run("run-dedupe")
     release = asyncio.Event()
 
     async def fake_auto_run(_loop, _run_id: str, _max_steps: int) -> None:
@@ -68,10 +68,10 @@ async def test_schedule_auto_run_deduplicates_active_task(monkeypatch: pytest.Mo
     second = tasks.schedule_auto_run(object(), "run-dedupe", 200)
 
     assert first is second
-    assert tasks._auto_run_tasks["run-dedupe"] is first
+    assert tasks.auto_run_task("run-dedupe") is first
 
     await tasks.cancel_auto_run("run-dedupe")
-    assert "run-dedupe" not in tasks._auto_run_tasks
+    assert tasks.auto_run_task("run-dedupe") is None
 
 
 @pytest.mark.asyncio
@@ -79,7 +79,7 @@ async def test_schedule_auto_run_removes_completed_task(monkeypatch: pytest.Monk
     """Completed auto-run tasks should not remain in the registry."""
     from operon.api.runtime import tasks
 
-    tasks._auto_run_tasks.clear()
+    tasks.current_runtime().forget_run("run-complete")
 
     async def fake_auto_run(_loop, _run_id: str, _max_steps: int) -> None:
         return None
@@ -90,7 +90,7 @@ async def test_schedule_auto_run_removes_completed_task(monkeypatch: pytest.Monk
     await task
     await asyncio.sleep(0)
 
-    assert "run-complete" not in tasks._auto_run_tasks
+    assert tasks.auto_run_task("run-complete") is None
 
 
 def test_submit_desktop_task_success(client: TestClient) -> None:

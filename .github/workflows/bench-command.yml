@@ -5,7 +5,7 @@ run-name: "Benchmark from a comment on PR #${{ github.event.issue.number }}"
 # or collaborator comments on it:
 #
 #   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [azure] [season=<n>]
-#   /bench grounding
+#   /bench grounding [zoom|zoom=always]
 #   /bench batch            (then one cell per line, KAN-105; see bench-batch.yml)
 #
 # Every run uses Gemini computer use (OPERON_*_BACKEND=computer_use), Operon's only model.
@@ -26,7 +26,8 @@ run-name: "Benchmark from a comment on PR #${{ github.event.issue.number }}"
 # run counts on the dashboard's Leaderboard tab: /bench browser thin season=1.
 # "same-critic" makes a full run's step critic the acting model (OPERON_CRITIC=same)
 # instead of the verifier model. "grounding" runs the ScreenSpot grounding eval instead
-# (one model call per sample, no browser). azure runs a desktop benchmark on our Azure
+# (one model call per sample, no browser); with "zoom" each click on a dense screen is
+# refined on a zoomed crop (OPERON_ZOOM=dense, KAN-82), "zoom=always" on every screen. azure runs a desktop benchmark on our Azure
 # VM instead of GitHub's hosted runner. Reports show the cost.
 # Nothing runs on pushes or merges: every run spends model credits, so a run
 # happens only when someone with write access asks for one. PRs from forks are
@@ -62,6 +63,7 @@ jobs:
       repeat: ${{ steps.args.outputs.repeat }}
       critic: ${{ steps.args.outputs.critic }}
       tools: ${{ steps.args.outputs.tools }}
+      zoom: ${{ steps.args.outputs.zoom }}
       extra: ${{ steps.args.outputs.extra }}
       label: ${{ steps.args.outputs.label }}
       cells: ${{ steps.args.outputs.cells }}
@@ -81,7 +83,7 @@ jobs:
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          target=browser profile=full suite=core runner=github repeat=1 critic= season= tools=off
+          target=browser profile=full suite=core runner=github repeat=1 critic= season= tools=off zoom=off
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
@@ -100,12 +102,14 @@ jobs:
               same-critic) critic=same ;;
               tools) tools=all ;;  # RFC 0002: shell, file and HTTP tools next to screen actions
               azure) runner=azure ;;
+              zoom|zoom=dense) zoom=dense ;;  # KAN-82: grounding only
+              zoom=always) zoom=always ;;
               season=*)
                 season=${word#season=}
                 if ! printf '%s' "$season" | grep -Eq '^[1-9][0-9]{0,2}$'; then
                   echo "::error::season= needs a season number such as 1."; exit 1
                 fi ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>], or /bench grounding"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>], or /bench grounding [zoom|zoom=always]"; exit 1 ;;
             esac
           done
           # Desktop has its own safety and long tasks (KAN-74); apps and hard are browser only.
@@ -125,6 +129,9 @@ jobs:
           if [ "$tools" != off ] && [ "$target" = grounding ]; then
             echo "::error::tools is for /bench browser, desktop and hybrid."; exit 1
           fi
+          if [ "$zoom" != off ] && [ "$target" != grounding ]; then
+            echo "::error::zoom is for /bench grounding for now."; exit 1
+          fi
           if [ "$critic" = same ] && [ "$target" = grounding ]; then
             echo "::error::same-critic picks the full harness's step critic; /bench grounding has none."; exit 1
           fi
@@ -136,6 +143,7 @@ jobs:
           cap() { printf '%s' "$1" | sed 's/./\U&/'; }
           if [ "$target" = grounding ]; then
             label="Gemini · Grounding"
+            if [ "$zoom" != off ]; then label="$label · zoom $zoom"; fi
           else
             label="Gemini · $(cap "$target") · $(cap "$profile")"
             if [ "$suite" != core ]; then label="$label · $suite"; fi
@@ -145,10 +153,10 @@ jobs:
             if [ "$tools" != off ]; then label="$label · tools"; fi
             if [ "$runner" = azure ]; then label="$label · Azure VM"; fi
           fi
-          echo "target=$target profile=$profile suite=$suite runner=$runner repeat=$repeat critic=$critic tools=$tools extra=$extra label=$label"
+          echo "target=$target profile=$profile suite=$suite runner=$runner repeat=$repeat critic=$critic tools=$tools zoom=$zoom extra=$extra label=$label"
           {
             echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
-            echo "runner=$runner"; echo "repeat=$repeat"; echo "critic=$critic"; echo "tools=$tools"; echo "extra=$extra"
+            echo "runner=$runner"; echo "repeat=$repeat"; echo "critic=$critic"; echo "tools=$tools"; echo "zoom=$zoom"; echo "extra=$extra"
             echo "label=$label"
           } >> "$GITHUB_OUTPUT"
 
@@ -237,6 +245,7 @@ jobs:
     uses: ./.github/workflows/grounding.yml
     with:
       ref: ${{ needs.parse.outputs.sha }}
+      zoom: ${{ needs.parse.outputs.zoom }}
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from operon.agent import tools as _tools
 from operon.agent._agent_utils import collect_latest_usage
+from operon.agent.actions import zoom as _zoom
 from operon.agent.actions.translation import (
     KeyHold,
     build_policy_decision,
@@ -98,6 +99,8 @@ class BrowserComputerUseBackend(AgentBackend):
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._conversations: dict[str, _ConversationState] = {}
+        # Zoom before clicking on dense screens (KAN-82, OPERON_ZOOM; off by default).
+        self.zoom = _zoom.zoom_settings()
 
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
         self._last_frames[state.run_id] = screenshot
@@ -109,6 +112,7 @@ class BrowserComputerUseBackend(AgentBackend):
 
         prompt = self._render_prompt(state)
         bg_writer.enqueue(prompt_path, prompt)
+        zoom_usage = None
 
         conversation = self._conversations.get(state.run_id)
         if conversation is not None and conversation.held_calls:
@@ -124,6 +128,8 @@ class BrowserComputerUseBackend(AgentBackend):
             }
         else:
             response_payload = await self._run_with_retry(prompt=prompt, screenshot=screenshot, state=state)
+            if self.zoom.enabled:
+                response_payload, zoom_usage = await self._zoom_first_click(response_payload, screenshot, state)
             function_calls = response_payload.get("function_calls") or []
             if any(_requires_confirmation(call) for call in function_calls):
                 self._conversations[state.run_id].held_calls = function_calls
@@ -169,12 +175,20 @@ class BrowserComputerUseBackend(AgentBackend):
                 }
             ),
         )
+        usage_path = step_dir / "computer_use_usage.json"
+        if zoom_usage is None:
+            usage = collect_latest_usage(self.client, usage_path)
+        else:
+            # The client only remembers the zoom request; the step's turn is the one before it.
+            usage = _zoom.merge_usage(zoom_usage[0], zoom_usage[1])
+            if usage is not None:
+                bg_writer.enqueue(usage_path, usage.model_dump_json(indent=2))
         self._last_debug_artifacts = ModelDebugArtifacts(
             prompt_artifact_path=str(prompt_path),
             raw_response_artifact_path=str(raw_path),
             parsed_artifact_path=str(parsed_path),
-            usage_artifact_path=str(step_dir / "computer_use_usage.json"),
-            usage=collect_latest_usage(self.client, step_dir / "computer_use_usage.json"),
+            usage_artifact_path=str(usage_path),
+            usage=usage,
         )
         return perception
 
@@ -231,6 +245,41 @@ class BrowserComputerUseBackend(AgentBackend):
 
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._advisory_hints.pop(run_id, None)
+
+    async def _zoom_first_click(
+        self, response_payload: dict, screenshot: CaptureFrame, state: AgentState
+    ) -> tuple[dict, tuple | None]:
+        """Refine the turn's first click on a zoomed crop (OPERON_ZOOM). Returns the
+        payload, with the click moved if zoom ran, and (turn usage, zoom usage) when a
+        zoom request was made. The conversation keeps the model's original call."""
+        function_calls = response_payload.get("function_calls") or []
+        if not function_calls:
+            return response_payload, None
+        turn_usage = self.client.latest_usage() if hasattr(self.client, "latest_usage") else None
+        result = await _zoom.refine_click(
+            client=self.client,
+            settings=self.zoom,
+            function_calls=function_calls,
+            screenshot_path=screenshot.artifact_path,
+            width=screenshot.width,
+            height=screenshot.height,
+            intent=state.intent,
+            rationale=str(response_payload.get("rationale") or ""),
+        )
+        if result.detail:
+            logger.info("%s", result.detail)
+        made_request = result.zoomed or result.usage is not None
+        if not result.zoomed:
+            return response_payload, ((turn_usage, result.usage) if made_request else None)
+        return (
+            {
+                **response_payload,
+                "function_call": result.function_calls[0],
+                "function_calls": result.function_calls,
+                "zoom": result.detail,
+            },
+            (turn_usage, result.usage),
+        )
 
     async def _run_with_retry(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
         try:

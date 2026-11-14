@@ -46,6 +46,10 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 
 # Lint (exactly what CI runs)
 .venv\Scripts\ruff check src tests evals --select E,F,W,I --ignore E501
+
+# Type check (KAN-159; CI "Type check" job). Baseline modules are listed in [tool.mypy] in
+# pyproject.toml: fix one, delete it from the list. Coverage: add --cov to the pytest command.
+.venv\Scripts\mypy
 ```
 
 `addopts = "-m 'not live_server'"` in `pyproject.toml` auto-deselects the ~350

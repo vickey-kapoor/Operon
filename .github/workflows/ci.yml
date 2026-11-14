@@ -45,7 +45,27 @@ jobs:
           OPERON_TEST_SAFE_MODE: "true"
         # Live-server suites are auto-deselected by the `live_server` marker
         # (configured via addopts in pyproject.toml).
-        run: uv run pytest tests/ -v --tb=short --junitxml=test-results.xml
+        # Coverage (KAN-159): line + branch coverage of src/operon, reported only (no
+        # minimum yet). The table goes to the job summary; coverage.xml is uploaded.
+        run: uv run pytest tests/ -v --tb=short --junitxml=test-results.xml --cov --cov-report=xml --cov-report=term:skip-covered
+
+      - name: Coverage summary
+        if: always() && hashFiles('coverage.xml') != ''
+        run: |
+          {
+            echo '## Coverage'
+            echo '```'
+            uv run coverage report --skip-covered --sort=cover | tail -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: always() && hashFiles('coverage.xml') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 14
 
       - name: Upload test artifacts on failure
         if: failure()
@@ -83,3 +103,29 @@ jobs:
 
       - name: Run ruff
         run: uv run ruff check src tests evals --select E,F,W,I --ignore E501
+
+  typecheck:
+    # KAN-159. mypy over src/operon; settings and the starting baseline (modules
+    # still allowed to have errors) are in [tool.mypy] in pyproject.toml.
+    name: Type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      UV_PYTHON: "3.14"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Run mypy
+        run: uv run mypy

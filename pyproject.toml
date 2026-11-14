@@ -48,6 +48,8 @@ dev = [
     "pytest-asyncio>=1.4.1.post1,<2.0.0",
     "ruff>=0.17.4,<1.0.0",
     "requests>=2.32.0,<3.0.0",
+    "mypy>=2.4.1,<3.0.0",
+    "pytest-cov>=7.1.0,<8.0.0",
 ]
 notifications = [
     "win11toast>=0.36.0",
@@ -87,3 +89,50 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["operon", "evals", "tests"]
+
+[tool.mypy]
+# KAN-159: CI type check. Starts from a baseline: modules that had errors when the
+# check was added are listed below with ignore_errors, so CI is green and every
+# other module (and every new one) is checked. Tighten by fixing a module and
+# deleting it from the list.
+python_version = "3.14"
+files = ["src/operon"]
+ignore_missing_imports = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "operon.agent.actions.retry_hardening",
+    "operon.agent.actions.selector",
+    "operon.agent.actions.translation",
+    "operon.agent.artifacts.screen_recorder",
+    "operon.agent.backends.browser_computer_use",
+    "operon.agent.hitl",
+    "operon.agent.loop",
+    "operon.agent.perception.screen_diff",
+    "operon.agent.policy.coordinator",
+    "operon.agent.policy.rules",
+    "operon.agent.policy.site_adapters",
+    "operon.agent.policy.verifier",
+    "operon.api.frontdoor",
+    "operon.api.observer",
+    "operon.api.runtime.loops",
+    "operon.api.runtime.services",
+    "operon.api.ws_stream",
+    "operon.cli",
+    "operon.clients.gemini",
+    "operon.clients.gemini_computer_use",
+    "operon.executor.browser_native",
+    "operon.executor.desktop",
+    "operon.models.perception",
+    "operon.store.memory",
+    "operon.store.replay",
+]
+ignore_errors = true
+
+[tool.coverage.run]
+source = ["operon"]
+branch = true
+
+[tool.coverage.report]
+skip_empty = true

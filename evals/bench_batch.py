@@ -14,7 +14,8 @@ cost cap::
     hybrid full ref=main
 
 Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long``,
-``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``season=<n>``, ``pr=<number>`` (that PR's head) or
+``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``
+(KAN-82: OPERON_ZOOM dense or always), ``season=<n>``, ``pr=<number>`` (that PR's head) or
 ``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
 cell's cost cap, default 3, repeats included). ``azure`` and ``gemini`` are accepted and change nothing: batch
 Desktop and Hybrid cells always run on the Azure VM. Blank lines and ``#`` comments are
@@ -66,6 +67,7 @@ class Cell:
     repeat: int = 1
     critic: str = ""
     tools: str = "off"
+    zoom: str = "off"
     season: str = ""
     pr: str = ""
     ref: str = ""
@@ -101,6 +103,8 @@ class Cell:
             label += " · same critic"
         if self.tools != "off":
             label += " · tools"
+        if self.zoom != "off":
+            label += f" · zoom {self.zoom}"
         if self.pr:
             label += f" · PR #{self.pr}"
         elif self.ref:
@@ -135,6 +139,8 @@ def parse_line(line: str, number: int) -> Cell | None:
             cell.critic = "same"
         elif word == "tools":
             cell.tools = "all"
+        elif word in ("zoom", "zoom=dense", "zoom=always"):
+            cell.zoom = "always" if word == "zoom=always" else "dense"
         elif word.startswith("season="):
             cell.season = word.removeprefix("season=")
             if not _SEASON.match(cell.season):
@@ -179,7 +185,7 @@ def parse_batch(text: str, max_total_usd: float = DEFAULT_MAX_TOTAL_USD) -> list
         raise BatchError(f"The batch has {len(cells)} cells; the most is {MAX_CELLS}.")
     seen: set[tuple] = set()
     for cell in cells:
-        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.critic, cell.tools, cell.season, cell.pr, cell.ref)
+        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.critic, cell.tools, cell.zoom, cell.season, cell.pr, cell.ref)
         if key in seen:
             raise BatchError(f"{cell.label} is in the batch twice.")
         seen.add(key)
@@ -231,6 +237,7 @@ def matrices(cells: list[Cell]) -> dict:
             "suite": cell.suite,
             "critic": cell.critic,
             "tools": cell.tools,
+            "zoom": cell.zoom,
             "extra": cell.extra,
             "ref": cell.ref,
             "cap": cell.run_cap,

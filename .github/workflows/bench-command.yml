@@ -4,7 +4,7 @@ run-name: "Benchmark from a comment on PR #${{ github.event.issue.number }}"
 # Runs a live benchmark on a pull request's head when a repository owner, member
 # or collaborator comments on it:
 #
-#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [azure] [season=<n>]
+#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [zoom|zoom=always] [azure] [season=<n>]
 #   /bench grounding [zoom|zoom=always]
 #   /bench batch            (then one cell per line, KAN-105; see bench-batch.yml)
 #
@@ -102,14 +102,14 @@ jobs:
               same-critic) critic=same ;;
               tools) tools=all ;;  # RFC 0002: shell, file and HTTP tools next to screen actions
               azure) runner=azure ;;
-              zoom|zoom=dense) zoom=dense ;;  # KAN-82: grounding only
+              zoom|zoom=dense) zoom=dense ;;  # KAN-82: OPERON_ZOOM; dense needs a screen side >= 2000 px
               zoom=always) zoom=always ;;
               season=*)
                 season=${word#season=}
                 if ! printf '%s' "$season" | grep -Eq '^[1-9][0-9]{0,2}$'; then
                   echo "::error::season= needs a season number such as 1."; exit 1
                 fi ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>], or /bench grounding [zoom|zoom=always]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [zoom|zoom=always] [azure] [season=<n>], or /bench grounding [zoom|zoom=always]"; exit 1 ;;
             esac
           done
           # Desktop has its own safety and long tasks (KAN-74); apps and hard are browser only.
@@ -128,9 +128,6 @@ jobs:
           [ -n "$season" ] && extra="${extra:+$extra }--season $season"
           if [ "$tools" != off ] && [ "$target" = grounding ]; then
             echo "::error::tools is for /bench browser, desktop and hybrid."; exit 1
-          fi
-          if [ "$zoom" != off ] && [ "$target" != grounding ]; then
-            echo "::error::zoom is for /bench grounding for now."; exit 1
           fi
           if [ "$critic" = same ] && [ "$target" = grounding ]; then
             echo "::error::same-critic picks the full harness's step critic; /bench grounding has none."; exit 1
@@ -151,6 +148,7 @@ jobs:
             if [ "$repeat" != 1 ]; then label="$label · x$repeat"; fi
             if [ "$critic" = same ]; then label="$label · same critic"; fi
             if [ "$tools" != off ]; then label="$label · tools"; fi
+            if [ "$zoom" != off ]; then label="$label · zoom $zoom"; fi
             if [ "$runner" = azure ]; then label="$label · Azure VM"; fi
           fi
           echo "target=$target profile=$profile suite=$suite runner=$runner repeat=$repeat critic=$critic tools=$tools zoom=$zoom extra=$extra label=$label"
@@ -203,6 +201,7 @@ jobs:
       harness_profile: ${{ needs.parse.outputs.profile }}
       critic: ${{ needs.parse.outputs.critic }}
       tools: ${{ needs.parse.outputs.tools }}
+      zoom: ${{ needs.parse.outputs.zoom }}
       suite: ${{ needs.parse.outputs.suite }}
       args: ${{ needs.parse.outputs.extra }}
       ref: ${{ needs.parse.outputs.sha }}
@@ -229,6 +228,7 @@ jobs:
       harness_profile: ${{ needs.parse.outputs.profile }}
       critic: ${{ needs.parse.outputs.critic }}
       tools: ${{ needs.parse.outputs.tools }}
+      zoom: ${{ needs.parse.outputs.zoom }}
       suite: ${{ needs.parse.outputs.suite }}
       args: ${{ needs.parse.outputs.extra }}
       ref: ${{ needs.parse.outputs.sha }}

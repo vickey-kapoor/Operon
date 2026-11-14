@@ -23,6 +23,9 @@ on:
       tools:
         description: "OPERON_TOOLS (RFC 0002): off, on, all, or tool names; file tools may use ~/Documents"
         default: "off"
+      zoom:
+        description: "OPERON_ZOOM (KAN-82): off, dense or always"
+        default: "off"
       suite:
         description: "core (the Browser category's 10 state-graded tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), or long (21 multi-app tasks on the local apps, 20 to 50 steps each)"
         type: choice
@@ -41,6 +44,7 @@ on:
       harness_profile: {type: string, default: "full"}
       critic: {type: string, default: ""}
       tools: {type: string, default: "off"}
+      zoom: {type: string, default: "off"}
       suite: {type: string, default: "core"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
@@ -87,6 +91,8 @@ jobs:
       OPERON_CRITIC: ${{ inputs.critic }}
       # Tools next to screen actions (RFC 0002); off unless the run asks for them.
       OPERON_TOOLS: ${{ inputs.tools || 'off' }}
+      # Zoom before clicking (KAN-82); off unless the run asks for it.
+      OPERON_ZOOM: ${{ inputs.zoom || 'off' }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
       OPERON_TRUST_GATE: "off"

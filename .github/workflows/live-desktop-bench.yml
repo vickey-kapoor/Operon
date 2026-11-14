@@ -48,6 +48,9 @@ on:
       tools:
         description: "OPERON_TOOLS (RFC 0002): off, on, all, or tool names; file tools may use the Documents folder"
         default: "off"
+      zoom:
+        description: "OPERON_ZOOM (KAN-82): off, dense or always"
+        default: "off"
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
@@ -67,6 +70,7 @@ on:
       harness_profile: {type: string, default: "full"}
       critic: {type: string, default: ""}
       tools: {type: string, default: "off"}
+      zoom: {type: string, default: "off"}
       desktop_model: {type: string, default: ""}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
@@ -148,6 +152,8 @@ jobs:
       OPERON_CRITIC: ${{ inputs.critic }}
       # Tools next to screen actions (RFC 0002); off unless the run asks for them.
       OPERON_TOOLS: ${{ inputs.tools || 'off' }}
+      # Zoom before clicking (KAN-82); off unless the run asks for it.
+      OPERON_ZOOM: ${{ inputs.zoom || 'off' }}
       # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
       OPERON_TRUST_GATE: "off"
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}

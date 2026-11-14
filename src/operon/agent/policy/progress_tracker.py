@@ -8,10 +8,10 @@ an explicit argument — no hidden coupling to a god-object self.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from operon.agent.actions.subgoal_utils import wrap_subgoal
+from operon.core.settings import get_settings
 from operon.models.common import FailureCategory, LoopStage, StopReason
 from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
@@ -36,7 +36,7 @@ def _screen_changed(screen_change_ratio: float | None) -> bool:
 
 def progress_revisit_enabled() -> bool:
     """``OPERON_PROGRESS_REVISIT`` (RFC 0003): off unless set to on/true/1/yes."""
-    return os.getenv("OPERON_PROGRESS_REVISIT", "off").strip().lower() in {"on", "true", "1", "yes"}
+    return get_settings().progress_revisit
 
 
 # --- pure signature helpers ---------------------------------------------------

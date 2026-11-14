@@ -4,6 +4,16 @@ Operon reads its settings from environment variables, usually through a `.env` f
 [`.env.example`](../.env.example) lists every setting the server reads, with comments; copy
 it to `.env` to start.
 
+Inside Operon, every setting is parsed in one place, `operon.core.settings` (KAN-157): code
+reads `get_settings().<field>` instead of calling `os.getenv`. Startup (`operon serve`, the
+API, and `operon run`) checks the settings once. A value Operon cannot use at all, such as
+`BROWSER_WIDTH=wide` or `OPERON_BROWSER_BACKEND=conputer_use`, stops startup with every
+problem listed. A value that falls back to its default, such as `OPERON_ZOOM=maybe`, is logged
+as a warning. `python -m operon.api.runtime_config` prints the same checks. Each run saves the
+settings it started with in `settings.json` in its run folder, with keys shown only as
+`"<set>"`. A new setting is a field on `Settings` plus a line in `.env.example`;
+`tests/test_settings.py` checks both.
+
 ## Model keys
 
 `GEMINI_API_KEY` runs Gemini, Operon's only model for now: the browser and desktop backends

@@ -27,6 +27,7 @@ from xml.sax.saxutils import escape
 
 import operon
 from operon.core.paths import user_config_dir
+from operon.core.settings import get_settings
 from operon.environments.base import (
     EnvironmentProvider,
     ProviderCheck,
@@ -45,13 +46,6 @@ _SANDBOX_PROCESSES = (
 )
 # Where the guest keeps its own files inside the sandbox (wiped on close).
 _GUEST_RUNTIME = r"C:\Users\WDAGUtilityAccount\operon-guest"
-
-
-def _int_env(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name) or default)
-    except ValueError:
-        return default
 
 
 def sandbox_exe() -> Path:
@@ -93,8 +87,9 @@ class WindowsSandboxProvider(EnvironmentProvider):
         self.work_dir = work_dir or (user_config_dir() / "windows-sandbox")
         self.exchange = self.work_dir / "exchange"
         self.port = DEFAULT_GUEST_PORT
-        self.memory_mb = _int_env("OPERON_SANDBOX_MEMORY_MB", 4096)
-        self.start_timeout_s = _int_env("OPERON_SANDBOX_START_TIMEOUT", 240)
+        settings = get_settings()
+        self.memory_mb = settings.sandbox_memory_mb
+        self.start_timeout_s = settings.sandbox_start_timeout
         self._token: str | None = None
         self._endpoint: str | None = None
         self._started = False

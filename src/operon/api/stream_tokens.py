@@ -16,10 +16,11 @@ The client presents one as the subprotocol pair ``["x-stream-token", "<token>"]`
 
 from __future__ import annotations
 
-import os
 import secrets
 import time
 from dataclasses import dataclass
+
+from operon.core.settings import get_settings
 
 SCOPES = ("view", "control")
 _DEFAULT_TTL_S = 600
@@ -38,11 +39,7 @@ _tokens: dict[str, StreamToken] = {}
 
 def token_ttl_s() -> int:
     """``OPERON_STREAM_TOKEN_TTL_S``, clamped to 10 s .. 1 day; default 600."""
-    try:
-        ttl = int(os.getenv("OPERON_STREAM_TOKEN_TTL_S", str(_DEFAULT_TTL_S)))
-    except ValueError:
-        ttl = _DEFAULT_TTL_S
-    return max(10, min(ttl, 86400))
+    return get_settings().stream_token_ttl_s
 
 
 def _prune(now: float) -> None:

@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-_READ = re.compile(r"""(?:getenv|environ\.get|environ\[|_split_env)\(?\s*["']([A-Z][A-Z0-9_]+)["']""")
+_READ = re.compile(r"""(?:getenv|environ\.get|environ\[|_env_field)\(?\s*["']([A-Z][A-Z0-9_]+)["']""")
 _LISTED = re.compile(r"^#?\s*([A-Z][A-Z0-9_]+)=", re.MULTILINE)
 
 

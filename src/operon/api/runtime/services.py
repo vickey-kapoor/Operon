@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 
 from operon.agent.app_catalog import LINUX, desktop_platform
@@ -25,6 +24,7 @@ from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.clients.gemini import GeminiHttpClient
 from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
 from operon.core.paths import prompts_dir
+from operon.core.settings import get_settings
 
 _PROMPTS_DIR = prompts_dir()
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ SAME_CRITIC = "same"
 def critic_setting() -> str:
     """``OPERON_CRITIC``: ``same`` runs the full harness's step critic on the acting
     model; anything else (the default) keeps the ``OPERON_*_VERIFIER_*`` critic."""
-    return (os.getenv("OPERON_CRITIC") or "").strip().lower()
+    return get_settings().critic
 
 
 def build_critic_client(*, config):

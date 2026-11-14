@@ -17,11 +17,11 @@ short skill note in ``prompts/tools/<tool>.md`` that tells the model when to use
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
 from operon.core.paths import prompts_dir
+from operon.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,10 @@ _ON = {"on", "true", "1", "yes"}
 
 def enabled_tools(setting: str | None = None) -> tuple[str, ...]:
     """The tools ``OPERON_TOOLS`` (or ``setting``) turns on, in a fixed order; empty when off."""
-    raw = (os.getenv("OPERON_TOOLS", "on") if setting is None else setting).strip().lower()
+    if setting is None:
+        setting = get_settings().tools
+        setting = "on" if setting is None else setting
+    raw = setting.strip().lower()
     if raw in _OFF:
         return ()
     if raw in _ON:

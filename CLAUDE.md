@@ -80,7 +80,9 @@ loop go through `AgentLoop._recovered()`, which logs and counts them per run
 executors, verifiers, and stores are chosen per environment. The desktop machine itself
 comes from an environment provider (`src/operon/environments/`, `OPERON_ENVIRONMENT`,
 default `live`; KAN-80, see `docs/environments.md`). `src/operon/core/paths.py`
-resolves every artifact directory and honors the `OPERON_*_ROOT` env overrides.
+resolves every artifact directory and honors the `OPERON_*_ROOT` env overrides. Settings
+are one typed object, `get_settings()` in `src/operon/core/settings.py` (KAN-157): read fields
+there, never `os.getenv`; it is checked at startup and saved per run as `settings.json`.
 
 `dashboard/` is Vercel's root directory, so don't move it.
 
@@ -117,7 +119,7 @@ These are load-bearing — violating them silently breaks the agent.
   `OPERON_BESTOFN_*`, `OPERON_GROUNDER` pattern (the trust gate graduated to on by default); larger proposals
   get an RFC in `docs/rfcs/`.
 - **`.env.example` is a contract.** Every variable in it must actually be read by
-  code in `src/`, and new settings must be added there.
+  code in `src/`, and new settings must be added there (and to `Settings`).
 
 ## Runtime artifacts
 

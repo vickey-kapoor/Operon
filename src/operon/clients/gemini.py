@@ -7,13 +7,14 @@ import base64
 import io
 import json
 import logging
-import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
 import httpx
 from PIL import Image
+
+from operon.core.settings import get_settings
 
 try:
     import google.auth
@@ -51,8 +52,6 @@ class GeminiClient(ABC):
         return 1.0
 
 
-_VERTEX_PROJECT = os.getenv("VERTEX_PROJECT")
-_VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
 _VERTEX_SYSTEM_INSTRUCTION = (
     "You are the visual cortex of Operon. "
     "Identify the element at (x,y) and describe the visual delta."
@@ -84,10 +83,11 @@ class GeminiHttpClient(GeminiClient):
         # A thinking level ("low", "high") for Gemini 3 models, or a token budget
         # ("0" turns it off) for Gemini 2.5. None leaves the model's default.
         self.thinking = thinking
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-        self.use_vertex = use_vertex if use_vertex is not None else os.getenv("OPERON_USE_VERTEX", "").lower() in ("1", "true", "yes")
-        self.vertex_project = vertex_project or _VERTEX_PROJECT
-        self.vertex_location = vertex_location or _VERTEX_LOCATION
+        settings = get_settings()
+        self.model = model or settings.gemini_model
+        self.use_vertex = use_vertex if use_vertex is not None else settings.use_vertex
+        self.vertex_project = vertex_project or settings.vertex_project
+        self.vertex_location = vertex_location or settings.vertex_location
         if self.use_vertex:
             if not self.vertex_project:
                 raise ValueError(
@@ -101,10 +101,7 @@ class GeminiHttpClient(GeminiClient):
             )
             logger.info("OPERON-INFRA: Targeting Vertex AI Project %s (location=%s)", self.vertex_project, self.vertex_location)
         else:
-            self.api_base_url = api_base_url or os.getenv(
-                "GEMINI_API_BASE_URL",
-                "https://generativelanguage.googleapis.com/v1beta/models",
-            )
+            self.api_base_url = api_base_url or settings.gemini_api_base_url
         self.timeout_seconds = timeout_seconds
         self.max_retries = max(0, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
@@ -181,7 +178,8 @@ class GeminiHttpClient(GeminiClient):
             url = f"{self.api_base_url}/{self.model}:generateContent"
             auth_headers = {"Authorization": f"Bearer {token}"}
         else:
-            api_key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            settings = get_settings()
+            api_key = self.api_key or settings.gemini_api_key or settings.google_api_key
             if not api_key:
                 raise GeminiClientError("Neither GEMINI_API_KEY nor GOOGLE_API_KEY is configured.")
             url = f"{self.api_base_url}/{self.model}:generateContent"

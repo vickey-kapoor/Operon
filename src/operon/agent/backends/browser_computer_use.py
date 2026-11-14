@@ -132,6 +132,11 @@ class BrowserComputerUseBackend(AgentBackend):
             # before it was recorded and replace the step's decision.
             return self._build_perception(payload={}, screenshot_path=screenshot.artifact_path)
         zoom_usage = None
+        # The client's answers for this step (retries and zoom included), saved below
+        # so the run can be replayed (KAN-167).
+        answers = getattr(self.client, "answers", None)
+        if isinstance(answers, list):
+            answers.clear()
 
         conversation = self._conversations.get(state.run_id)
         if conversation is not None and conversation.held_calls:
@@ -172,6 +177,8 @@ class BrowserComputerUseBackend(AgentBackend):
                 conversation.held_rationale = conversation.last_rationale
 
         bg_writer.enqueue(raw_path, json.dumps(response_payload, indent=2))
+        if isinstance(answers, list) and answers:
+            bg_writer.enqueue(step_dir / "computer_use_answers.json", json.dumps(answers))
 
         perception_payload = response_payload.get("perception") or {}
         perception = self._build_perception(

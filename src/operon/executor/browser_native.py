@@ -17,6 +17,7 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
+from operon.agent.perception.settle import frame_signature, settle_after_action
 from operon.browser.builtin import (
     CDP_PORT,
     builtin_browser_enabled,
@@ -452,7 +453,7 @@ class NativeBrowserExecutor(Executor):
                     # A slow page (or a popup that closed itself) is not a failed
                     # click: the verifier judges the outcome from the screen.
                     logger.debug("wait_for_load_state after %s did not finish: %s", at.value, exc)
-            await asyncio.sleep(self._action_delay(at))
+            await self.settle_now(self._action_delay(at))
             after_path = await self._capture_after()
             return self._ok(action, f"Executed {at.value}", after_path)
         except Exception as exc:
@@ -597,6 +598,20 @@ class NativeBrowserExecutor(Executor):
         if session is None:
             return None
         return session.page.url
+
+    async def settle_now(self, fallback_delay: float) -> None:
+        """Wait for the page to settle (OPERON_SETTLE_DETECT), else sleep ``fallback_delay``."""
+        await settle_after_action(self._grab_signature, fallback_delay)
+
+    async def _grab_signature(self) -> bytes | None:
+        """One small grayscale frame of the page, for settle detection."""
+        try:
+            page = await self._current_page(foreground=False)
+            shot = await page.screenshot(type="jpeg", quality=40)
+        except Exception as exc:  # noqa: BLE001 - settle falls back to a plain sleep
+            logger.debug("settle: page grab failed: %s", exc)
+            return None
+        return frame_signature(shot)
 
     async def context_reset(self) -> None:
         """Dismiss open modals/dropdowns, clear focus traps, scroll to top."""

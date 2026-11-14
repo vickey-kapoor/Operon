@@ -119,6 +119,9 @@ class Settings(BaseModel):
     progress_revisit: bool = _env_field("OPERON_PROGRESS_REVISIT", False)
     bestofn_n: int = _env_field("OPERON_BESTOFN_N", 1)
     bestofn_confidence: float = _env_field("OPERON_BESTOFN_CONFIDENCE", 1.0)
+    # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
+    settle_detect: bool = _env_field("OPERON_SETTLE_DETECT", False)
+    settle_max_s: float = _env_field("OPERON_SETTLE_MAX_S", 3.0)
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)
     trust_deny: tuple[str, ...] = _env_field("OPERON_TRUST_DENY", ())
     # Empty: the gate's built-in confirm list.
@@ -308,6 +311,8 @@ class _Parser:
             progress_revisit=self.flag("OPERON_PROGRESS_REVISIT", "off"),
             bestofn_n=max(1, self.number("OPERON_BESTOFN_N", "1", int, fatal=False)),
             bestofn_confidence=self.number("OPERON_BESTOFN_CONFIDENCE", "1.0", float, fatal=False),
+            settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
+            settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),
             trust_confirm=_split(self.text("OPERON_TRUST_CONFIRM"), lower=True),

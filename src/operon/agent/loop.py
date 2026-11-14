@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import shutil
@@ -371,7 +372,13 @@ class AgentLoop:
         if not record.force_fresh_perception:
             return
         settle_delay = 1.0 if self.environment is UnifiedEnvironment.BROWSER else 0.5
-        await asyncio.sleep(settle_delay)
+        # With OPERON_SETTLE_DETECT on, the executor waits for the screen to stop
+        # changing instead; off, or an executor without it, this is the same sleep.
+        settle_now = getattr(self.executor, "settle_now", None)
+        if inspect.iscoroutinefunction(settle_now):
+            await settle_now(settle_delay)
+        else:
+            await asyncio.sleep(settle_delay)
         record.force_fresh_perception = False
 
     async def pause_run(self, run_id: str) -> AgentState:

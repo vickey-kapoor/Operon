@@ -1,0 +1,47 @@
+name: Auto-merge
+run-name: Turn on auto-merge for PR #${{ github.event.pull_request.number }}
+
+# Turns on GitHub auto-merge (squash) as soon as a PR is opened or marked ready, so GitHub
+# merges it once the required checks pass; nobody merges by hand. Only PRs from the repo
+# owner or the Actions bot, never drafts. PRs that change .github/ (workflows, permissions)
+# wait for the owner to merge: on every push the changed files are checked again, and if
+# .github/ is touched auto-merge is switched off. If the file list can't be fetched the job
+# fails and changes nothing. Runs from main via pull_request_target and never checks out
+# the PR's code.
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    name: Enable auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      !github.event.pull_request.draft &&
+      (github.event.pull_request.user.login == 'vickey-kapoor' ||
+       github.event.pull_request.user.login == 'github-actions[bot]')
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: List the files the PR changes
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' > files.txt
+          echo "Fetched $(wc -l < files.txt) changed files."
+
+      - name: Enable auto-merge, or switch it off if .github/ changed
+        run: |
+          set -euo pipefail
+          if grep -q '^\.github/' files.txt; then
+            echo "PR #$PR changes .github/: auto-merge off, the owner merges this one."
+            gh pr merge "$PR" --repo "$REPO" --disable-auto || true
+          else
+            gh pr merge "$PR" --repo "$REPO" --auto --squash
+          fi

@@ -131,6 +131,6 @@ along its seams before the async work.
 ## Related documents
 
 - [PRD](PRD.md): market context, users and requirements.
-- [RFC 0002](rfcs/0002-tool-action-channel.md): the tool action channel beside pixel actions.
+- [RFC 0001](rfcs/0001-cua-v2.md): the first v2 design proposal, and which parts of it are built.
 - [Evaluation](evaluation.md): every suite, the grid, seasons and the dashboard.
 - [Reports](reports/): benchmark write-ups.

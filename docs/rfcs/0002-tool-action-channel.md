@@ -5,7 +5,7 @@
 | **Status** | Built behind `OPERON_TOOLS` (default off); measured in KAN-87 part 2 |
 | **Created** | 2026-11-13 |
 | **Story** | KAN-79 (epic KAN-77, workstream A1) |
-| **Related** | [`../architecture.md`](../architecture.md), [`../configuration.md`](../configuration.md) |
+| **Related** | [RFC 0001](0001-cua-v2.md), [`../architecture.md`](../architecture.md), [`../configuration.md`](../configuration.md) |
 
 > RFCs are design proposals, not implementation truth. The code and
 > [`../architecture.md`](../architecture.md) stay authoritative.

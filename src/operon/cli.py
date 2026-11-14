@@ -342,10 +342,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     from operon import cloud, setup_command
     from operon.environments import cli as environments_cli
+    from operon.environments import guest
 
     setup_command.add_parser(sub)
     cloud.add_parser(sub)
     environments_cli.add_parser(sub)
+    guest.add_parser(sub)
     return parser
 
 

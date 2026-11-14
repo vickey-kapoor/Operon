@@ -16,10 +16,17 @@ def _live() -> EnvironmentProvider:
     return LiveDesktopProvider()
 
 
+def _windows_sandbox() -> EnvironmentProvider:
+    from operon.environments.windows_sandbox import WindowsSandboxProvider
+
+    return WindowsSandboxProvider()
+
+
 # Name -> factory. Factories import lazily so an unused provider's dependencies
 # (pyautogui, docker, az) are never loaded.
 _PROVIDERS: dict[str, Callable[[], EnvironmentProvider]] = {
     "live": _live,
+    "windows-sandbox": _windows_sandbox,
 }
 
 

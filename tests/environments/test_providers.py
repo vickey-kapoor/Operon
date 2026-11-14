@@ -113,7 +113,7 @@ def test_live_is_always_ready_and_start_stop_are_noops():
     provider.stop()
 
 
-def test_live_builds_the_windows_executor_by_default(monkeypatch):
+def test_live_builds_the_default_desktop_executor(monkeypatch):
     monkeypatch.delenv("OPERON_DESKTOP_PLATFORM", raising=False)
     with patch("operon.executor.desktop.DesktopExecutor", return_value="win") as win:
         assert LiveDesktopProvider().build_executor() == "win"

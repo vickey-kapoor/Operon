@@ -1,5 +1,6 @@
 """FastAPI application bootstrap for the MVP browser-only agent."""
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -43,6 +44,19 @@ async def _lifespan(app: FastAPI):
         except Exception as exc:
             # Cleanup failure must never block server startup.
             logger.warning("retention_sweep skipped: %s", exc)
+
+    # 3. A run environment other than the live desktop (KAN-80) boots its machine now,
+    # off the event loop, so the first desktop task doesn't wait for it.
+    from operon.environments import DEFAULT_ENVIRONMENT, environment_name
+
+    if environment_name() != DEFAULT_ENVIRONMENT:
+        from operon.api.runtime.loops import desktop_provider
+
+        try:
+            await asyncio.to_thread(desktop_provider)
+        except Exception as exc:
+            # The API still serves browser tasks; desktop tasks report this error.
+            logger.error("environment %r did not start: %s", environment_name(), exc)
 
     yield
 

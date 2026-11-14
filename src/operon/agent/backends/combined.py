@@ -139,9 +139,8 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
 
         The combined service bakes perception+policy into one call and caches the
         decision in `perceive()`. The first `choose_action()` of a step pops it.
-        A second `choose_action()` (e.g., from `PolicyCoordinator._reject_premature_stop`
-        or `_reject_hallucinated_target`) finds the cache empty — for split
-        services that's fine because they re-call the policy LLM, but combined
+        A second `choose_action()` (e.g., from `PolicyCoordinator._reject_premature_stop`)
+        finds the cache empty — for split services that's fine because they re-call the policy LLM, but combined
         has nothing to fall back on. We re-issue the combined LLM call against
         the same screenshot. Any advisory hint the coordinator just appended
         (e.g., the premature-stop correction) is picked up by `_render_prompt`.

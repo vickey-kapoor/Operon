@@ -86,7 +86,8 @@ These are load-bearing — violating them silently breaks the agent.
   bad targeting.
 - **Rules before LLM (full harness).** Anything decidable deterministically belongs in
   `PolicyRuleEngine` (`agent/policy/rules.py`). Post-LLM guards (e.g.
-  `_semantic_anchor_check`) live on `PolicyCoordinator`. The thin harness
+  `_reject_premature_stop`) live on `PolicyCoordinator`. Gemini Computer Use reports no
+  element list or page type, so a rule must work without them or it never fires (KAN-161). The thin harness
   (`agent/policy/thin.py`, opt in with `OPERON_HARNESS_PROFILE=thin`) runs none of them: the model's
   action is never replaced, retried or reset by the loop; fix failures there by
   improving what the model sees or the executor, not by adding rules.

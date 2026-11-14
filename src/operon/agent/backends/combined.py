@@ -139,9 +139,8 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
 
         The combined service bakes perception+policy into one call and caches the
         decision in `perceive()`. The first `choose_action()` of a step pops it.
-        A second `choose_action()` (e.g., from `PolicyCoordinator._reject_premature_stop`
-        or `_reject_hallucinated_target`) finds the cache empty — for split
-        services that's fine because they re-call the policy LLM, but combined
+        A second `choose_action()` (e.g., from `PolicyCoordinator._reject_premature_stop`)
+        finds the cache empty — for split services that's fine because they re-call the policy LLM, but combined
         has nothing to fall back on. We re-issue the combined LLM call against
         the same screenshot. Any advisory hint the coordinator just appended
         (e.g., the premature-stop correction) is picked up by `_render_prompt`.
@@ -202,6 +201,10 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
 
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._advisory_hints.pop(run_id, None)
+
+    def discard_cached_decision(self, run_id: str) -> None:
+        """Forget the decision perceive() cached, so choose_action asks again."""
+        self._cached_decision.pop(run_id, None)
 
     def set_perception_only(self, value: bool) -> None:
         """When True, perceive() won't overwrite the cached policy decision."""

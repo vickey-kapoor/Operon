@@ -330,9 +330,9 @@ class AgentAction(StrictModel):
                 raise ValueError("upload_file cannot include typing flags")
             if any(
                 value is not None
-                for value in (self.key, self.url, self.wait_ms, self.x, self.y, *_new_fields)
+                for value in (self.key, self.url, self.wait_ms, *_new_fields)
             ):
-                raise ValueError("upload_file cannot include key, url, wait_ms, or coordinate fields")
+                raise ValueError("upload_file cannot include key, url, or wait_ms fields")
 
         elif self.action_type is ActionType.UPLOAD_FILE_NATIVE:
             if self.selector is None and self.target_element_id is None and (self.x is None or self.y is None):

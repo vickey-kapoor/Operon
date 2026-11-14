@@ -43,8 +43,21 @@ class AgentBackend(ABC):
         backends that answer the model's calls with their outcome."""
         return None
 
+    def note_replaced(self, run_id: str, action: str) -> None:
+        """The harness ran ``action`` instead of the last decision. Optional hook."""
+        return None
+
+    def note_rejected(self, run_id: str, reason: str) -> None:
+        """The harness dropped the last decision unrun and is asking again. Optional hook."""
+        return None
+
+    def note_attempt_failed(self, run_id: str, detail: str) -> None:
+        """The step's attempt failed before it was recorded, and the harness is about
+        to ask again in the same step. Optional hook."""
+        return None
+
     # Per-run caches the backends keep, keyed by run_id.
-    _PER_RUN_CACHES = ("_conversations", "_last_frames", "_advisory_hints", "_runs", "_hints")
+    _PER_RUN_CACHES = ("_conversations", "_last_frames", "_advisory_hints", "_runs", "_hints", "_cached_decisions")
 
     def release_run(self, run_id: str) -> None:
         """The run finished: drop everything kept for it (conversation, last frame,

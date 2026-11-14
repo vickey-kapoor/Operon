@@ -15,6 +15,8 @@ import base64
 import logging
 from typing import Any
 
+from operon.browser.keys import normalize_key
+
 logger = logging.getLogger(__name__)
 
 # Lazy import to avoid circular dependency at module load time.
@@ -387,7 +389,7 @@ class BrowserManager:
                 await self._page.mouse.wheel(0, delta_y)
 
             elif input_type == "key":
-                key = kwargs.get("key", "Enter")
+                key = normalize_key(kwargs.get("key", "Enter"))
                 await self._page.keyboard.press(key)
 
             else:

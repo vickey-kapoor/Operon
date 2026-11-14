@@ -43,10 +43,20 @@ def _read_perception_summary(perception_path: Path) -> str | None:
         perception = json.loads(perception_path.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if not isinstance(perception, dict):
+        return None
+    if isinstance(perception.get("perception"), dict):
+        perception = perception["perception"]  # {"perception": ..., "decision": ...}
     page_hint = perception.get("page_hint", "")
-    element_count = len(perception.get("elements", []))
-    focused = perception.get("focused_element") or {}
-    focused_text = str(focused.get("text", ""))[:40] if focused else ""
+    # ScreenPerception's keys (visible_elements, focused_element_id), or the older
+    # elements / focused_element shape.
+    elements = perception.get("visible_elements") or perception.get("elements") or []
+    element_count = len(elements)
+    focused = perception.get("focused_element")
+    if not isinstance(focused, dict):
+        focused_id = perception.get("focused_element_id")
+        focused = next((e for e in elements if isinstance(e, dict) and focused_id and e.get("element_id") == focused_id), None)
+    focused_text = str(focused.get("text") or focused.get("primary_name") or "")[:40] if focused else ""
     parts: list[str] = []
     if page_hint:
         parts.append(page_hint)
@@ -91,7 +101,15 @@ def _build_step_event(loop, response: RunResponse) -> dict:
     if value is not None:
         event["action_value"] = value
 
-    perception = _read_perception_summary(policy_path.parent / "perception_parsed.json")
+    # Each backend saves its parsed perception under its own name.
+    perception = next(
+        (
+            summary
+            for name in ("perception_parsed.json", "computer_use_parsed.json", "combined_parsed.json")
+            if (summary := _read_perception_summary(policy_path.parent / name)) is not None
+        ),
+        None,
+    )
     if perception:
         event["perception"] = perception
 

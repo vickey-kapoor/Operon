@@ -212,3 +212,47 @@ def test_build_payload_sets_the_thinking_level_only_when_configured() -> None:
         api_key="k", model="gemini-2.5-computer-use-preview-10-2025", thinking_level="low"
     )._build_payload(contents=[])
     assert "thinkingConfig" not in legacy["generationConfig"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [httpx.RemoteProtocolError("connection reset"), httpx.ReadError("read failed")],
+)
+async def test_post_payload_retries_a_dropped_connection(error: Exception) -> None:
+    client = GeminiComputerUseHttpClient(
+        api_key="test-key", model="m", timeout_seconds=1.0, max_retries=1, retry_backoff_seconds=0.0
+    )
+    attempts = {"count": 0}
+
+    async def fake_post(url, *, content=None, headers=None, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise error
+        return httpx.Response(200, json={"candidates": []})
+
+    mock_client = AsyncMock()
+    mock_client.post = fake_post
+    mock_client.is_closed = False
+    client._client = mock_client
+
+    assert await client._post_payload({"contents": []}) == {"candidates": []}
+    assert attempts["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_post_payload_reports_a_dropped_connection_as_a_client_error() -> None:
+    client = GeminiComputerUseHttpClient(
+        api_key="test-key", model="m", timeout_seconds=1.0, max_retries=0, retry_backoff_seconds=0.0
+    )
+
+    async def fake_post(url, *, content=None, headers=None, **kwargs):
+        raise httpx.RemoteProtocolError("connection reset")
+
+    mock_client = AsyncMock()
+    mock_client.post = fake_post
+    mock_client.is_closed = False
+    client._client = mock_client
+
+    with pytest.raises(GeminiComputerUseError):
+        await client._post_payload({"contents": []})

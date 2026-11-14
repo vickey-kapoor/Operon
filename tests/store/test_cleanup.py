@@ -59,10 +59,12 @@ def test_state_json_mtime_wins_over_the_directory_mtime(tmp_path: Path) -> None:
     assert cleanup_old_runs(tmp_path, keep_days=7)[0] == []
 
 
-def test_directory_mtime_is_used_without_state_json(tmp_path: Path) -> None:
-    run = _run_dir(tmp_path, "run", age_days=10, with_state=False)
+def test_folders_without_state_json_are_kept(tmp_path: Path) -> None:
+    # Only run folders have a state.json; memory/ and other stores beside them stay.
+    other = _run_dir(tmp_path, "memory", age_days=10, with_state=False)
 
-    assert cleanup_old_runs(tmp_path, keep_days=7)[0] == [run]
+    assert cleanup_old_runs(tmp_path, keep_days=7, delete=True)[0] == []
+    assert other.exists()
 
 
 def test_files_in_the_root_are_ignored(tmp_path: Path) -> None:

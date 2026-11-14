@@ -7,18 +7,12 @@ import logging
 from pathlib import Path
 
 from operon.agent.policy import PolicyService
-from operon.agent.policy.rules import (
-    _ANCHOR_DISTANCE_THRESHOLD,
-    _COORD_ANCHOR_ACTION_TYPES,
-    PolicyRuleEngine,
-    _nearest_element_by_box,
-)
+from operon.agent.policy.rules import PolicyRuleEngine
 from operon.models.common import FailureCategory
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.memory import MemoryHint
 from operon.models.perception import ScreenPerception
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
-from operon.models.selector import SelectorTrace
 from operon.models.state import AgentState
 from operon.store.background_writer import bg_writer
 from operon.store.memory import MemoryStore
@@ -43,6 +37,7 @@ class PolicyCoordinator(PolicyService):
         # Single-step hint cache: avoids re-loading memory JSONL twice per step.
         self._cached_hints: list[MemoryHint] | None = None
         self._cached_hints_key: tuple | None = None
+        self._hints_prepared_for: str | None = None
 
     def _get_hints(self, state: AgentState, perception: ScreenPerception | None) -> list[MemoryHint]:
         """Fetch hints, using a single-step in-memory cache to avoid double JSONL reads."""
@@ -77,8 +72,6 @@ class PolicyCoordinator(PolicyService):
         """
         self._cached_hints = None
         self._cached_hints_key = None
-        self.rule_engine._form_options_clicked.pop(run_id, None)
-        self.rule_engine._form_fields_filled.pop(run_id, None)
         logger.debug("PolicyCoordinator: run context reset for run_id=%r", run_id)
 
     def prepare_hints(self, state: AgentState, perception: ScreenPerception) -> None:
@@ -94,6 +87,11 @@ class PolicyCoordinator(PolicyService):
         memory_hints = self._get_hints(state, perception)
         if hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
+            # The rule trace goes in now too: perceive() is this step's model call,
+            # so a trace added after it would reach the model a step late.
+            if state.last_rule_trace:
+                self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
+        self._hints_prepared_for = state.run_id
 
     async def choose_action(
         self,
@@ -133,7 +131,6 @@ class PolicyCoordinator(PolicyService):
         memory_hints = self._get_hints(state, perception)
 
         decision = self.rule_engine.choose_action(state, perception, memory_hints)
-        selector_traces = self.rule_engine.latest_selector_traces()
         if decision is not None:
             # Stamp which rule fired so the loop can build a rule trace for the next LLM prompt
             fired_rule = self.rule_engine.last_fired_rule_name()
@@ -146,100 +143,26 @@ class PolicyCoordinator(PolicyService):
                     if hasattr(self.delegate, "latest_debug_artifacts"):
                         self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
                     return confirmed
-            self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision, selector_traces)
+            self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision)
             return decision
 
-        if hasattr(self.delegate, "add_advisory_hints"):
+        # prepare_hints() already queued this step's memory hints and rule trace
+        # before perceive(); queueing them again would repeat them next step.
+        prepared = getattr(self, "_hints_prepared_for", None) == state.run_id
+        self._hints_prepared_for = None
+        if not prepared and hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
 
-        # Rule-Augmented Generation: if a rule fired last step, inject its outcome
-        # so the LLM planner knows what was tried and whether it succeeded.
-        if state.last_rule_trace and hasattr(self.delegate, "add_advisory_hints"):
-            self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
+            # Rule-Augmented Generation: if a rule fired last step, inject its outcome
+            # so the LLM planner knows what was tried and whether it succeeded.
+            if state.last_rule_trace:
+                self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
 
         decision = await self._ask_delegate(state, perception)
-
-        # Semantic anchor check (highest-priority post-LLM guard): if the LLM targeted
-        # empty space (coordinate > 15px from every visible element), intercept and
-        # inject an anchor hint for the next step before re-perceiving.
-        anchor_intercept = self._semantic_anchor_check(state, perception, decision)
-        if anchor_intercept is not None:
-            if hasattr(self.delegate, "add_advisory_hints"):
-                self.delegate.add_advisory_hints(
-                    [anchor_intercept.rationale],
-                    source="anchor_check",
-                    run_id=state.run_id,
-                )
-            self._last_debug_artifacts = self._write_rule_debug_artifacts(
-                state, perception, memory_hints, anchor_intercept, selector_traces
-            )
-            return anchor_intercept
-
-        decision = await self._reject_hallucinated_target(state, perception, decision)
         decision = await self._reject_premature_stop(state, perception, decision)
         if hasattr(self.delegate, "latest_debug_artifacts"):
             self._last_debug_artifacts = self.delegate.latest_debug_artifacts()
-        self._last_debug_artifacts = self._attach_selector_trace(perception, self._last_debug_artifacts, selector_traces)
         return decision
-
-    def _semantic_anchor_check(
-        self,
-        state: AgentState,
-        perception: ScreenPerception,
-        decision: PolicyDecision,
-    ) -> PolicyDecision | None:
-        """Post-LLM guard: intercept hallucinated coordinates that target empty space.
-
-        Fires when the LLM produced a CLICK/DOUBLE_CLICK/RIGHT_CLICK/TYPE action whose
-        (x, y) is more than _ANCHOR_DISTANCE_THRESHOLD pixels from the bounding box of
-        every visible element in the current perception.
-
-        Returns a WAIT(300ms) decision with force_fresh_perception=True and an anchor
-        hint injected into the advisory-hints buffer for the next step.
-        Returns None when the coordinates look plausible.
-        """
-        action = decision.action
-        if action.action_type not in _COORD_ANCHOR_ACTION_TYPES:
-            return None
-        if action.x is None or action.y is None:
-            return None
-        if not perception.visible_elements:
-            return None
-
-        nearest_result = _nearest_element_by_box(action.x, action.y, perception.visible_elements)
-        if nearest_result is None:
-            return None
-        nearest_elem, min_dist = nearest_result
-
-        if min_dist <= _ANCHOR_DISTANCE_THRESHOLD:
-            return None
-
-        anchor_cx = nearest_elem.x + nearest_elem.width // 2
-        anchor_cy = nearest_elem.y + nearest_elem.height // 2
-        anchor_hint = (
-            f"You targeted empty space at ({action.x}, {action.y}) — "
-            f"the nearest element is '{nearest_elem.primary_name}' "
-            f"({nearest_elem.element_id}) at approximately ({anchor_cx}, {anchor_cy}), "
-            f"{min_dist:.0f} px away. "
-            "Refind the target within the active application window and use coordinates "
-            "that land on a visible element — do NOT click the taskbar or system tray."
-        )
-
-        logger.warning(
-            "semantic_anchor_check: coord (%d, %d) is %.1f px from nearest element "
-            "'%s' (%s) — intercepting and requesting re-perceive",
-            action.x, action.y, min_dist,
-            nearest_elem.primary_name, nearest_elem.element_id,
-        )
-
-        state.force_fresh_perception = True
-        return PolicyDecision(
-            action=AgentAction(action_type=ActionType.WAIT, wait_ms=300),
-            rationale=anchor_hint,
-            confidence=0.99,
-            active_subgoal=f"anchor_recheck:({action.x},{action.y})→{nearest_elem.element_id}",
-            rule_name="_semantic_anchor_check",
-        )
 
     async def _confirm_success(
         self,
@@ -254,6 +177,21 @@ class PolicyCoordinator(PolicyService):
         disagrees. Falls back to rule_stop on any LLM error so a transient API
         failure never blocks task completion.
         """
+        resample = getattr(self.delegate, "supports_resampling", None)
+        if resample is not None and not resample(state.run_id):
+            # The delegate's decision for this screen was made in perceive() and it
+            # cannot be asked again (Computer Use): that independent decision is
+            # the confirmation. A queued question would only leak into next step.
+            try:
+                llm_decision = await self._ask_delegate(state, perception)
+            except Exception as exc:  # noqa: BLE001 - never block completion on it
+                logger.warning("Success confirmation failed (%s: %s) — accepting rule stop.", type(exc).__name__, exc)
+                return rule_stop
+            return rule_stop if llm_decision.action.action_type is ActionType.STOP else llm_decision
+        # Drop the decision perceive() cached so the question gets a fresh answer.
+        discard = getattr(self.delegate, "discard_cached_decision", None)
+        if discard is not None:
+            discard(state.run_id)
         hint = (
             "CONFIRMATION REQUIRED: The success-detection rule believes the task is "
             f"complete (page_hint={perception.page_hint.value!r}, "
@@ -311,6 +249,11 @@ class PolicyCoordinator(PolicyService):
         substantive = {
             ActionType.CLICK,
             ActionType.DOUBLE_CLICK,
+            ActionType.TRIPLE_CLICK,
+            ActionType.RIGHT_CLICK,
+            ActionType.UPLOAD_FILE,
+            ActionType.UPLOAD_FILE_NATIVE,
+            ActionType.WRITE_CLIPBOARD,
             ActionType.TYPE,
             ActionType.PRESS_KEY,
             ActionType.HOTKEY,
@@ -319,7 +262,8 @@ class PolicyCoordinator(PolicyService):
             ActionType.DRAG,
             ActionType.SELECT,
         }
-        actions_taken = [h.action.action_type for h in state.action_history]
+        # A batch's children count one by one (a run done in batches did work).
+        actions_taken = [leaf.action_type for h in state.action_history for leaf in _leaves(h.action)]
         if any(a in substantive for a in actions_taken):
             return decision
 
@@ -338,44 +282,6 @@ class PolicyCoordinator(PolicyService):
             self.delegate.add_advisory_hints([correction], source="validation", run_id=state.run_id)
 
         replanned = await self._ask_delegate(state, perception)
-        return replanned
-
-    async def _reject_hallucinated_target(
-        self,
-        state: AgentState,
-        perception: ScreenPerception,
-        decision: PolicyDecision,
-    ) -> PolicyDecision:
-        """Re-plan once if the LLM produced a target_element_id absent from perception."""
-        target_id = decision.action.target_element_id
-        if target_id is None:
-            return decision
-        known_ids = {e.element_id for e in perception.visible_elements}
-        if target_id in known_ids:
-            return decision
-
-        logger.warning(
-            "Policy hallucinated element_id %r (not in current perception). Re-planning.",
-            target_id,
-        )
-        known_list = ", ".join(sorted(known_ids)) if known_ids else "none"
-        correction = (
-            f"CORRECTION: element_id '{target_id}' does not exist on the current screen. "
-            f"You MUST use one of these actual element IDs: [{known_list}]. "
-            "Do not invent element IDs."
-        )
-        if hasattr(self.delegate, "add_advisory_hints"):
-            self.delegate.add_advisory_hints([correction], source="validation", run_id=state.run_id)
-
-        replanned = await self._ask_delegate(state, perception)
-        if (
-            replanned.action.target_element_id is not None
-            and replanned.action.target_element_id not in known_ids
-        ):
-            logger.warning(
-                "Re-planned policy still references unknown element_id %r. Proceeding anyway.",
-                replanned.action.target_element_id,
-            )
         return replanned
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
@@ -400,14 +306,12 @@ class PolicyCoordinator(PolicyService):
         perception: ScreenPerception,
         memory_hints: list[MemoryHint],
         decision: PolicyDecision,
-        selector_traces: list[SelectorTrace],
     ) -> ModelDebugArtifacts:
         step_dir = Path(perception.capture_artifact_path).resolve().parent
         step_dir.mkdir(parents=True, exist_ok=True)
         prompt_path = step_dir / "policy_prompt.txt"
         raw_path = step_dir / "policy_raw.txt"
         parsed_path = step_dir / "policy_decision.json"
-        selector_trace_path = self._write_selector_trace(step_dir, selector_traces)
         bg_writer.enqueue(prompt_path, self._render_rule_context(state, perception, memory_hints))
         bg_writer.enqueue(raw_path, json.dumps({
             "source": "rule",
@@ -419,7 +323,6 @@ class PolicyCoordinator(PolicyService):
             prompt_artifact_path=str(prompt_path),
             raw_response_artifact_path=str(raw_path),
             parsed_artifact_path=str(parsed_path),
-            selector_trace_artifact_path=str(selector_trace_path) if selector_trace_path is not None else None,
         )
 
     @staticmethod
@@ -441,28 +344,6 @@ class PolicyCoordinator(PolicyService):
             lines.extend(f"- {hint.key}: {hint.hint}" for hint in memory_hints)
         return "\n".join(lines)
 
-    @staticmethod
-    def _write_selector_trace(step_dir: Path, selector_traces: list[SelectorTrace]) -> Path | None:
-        if not selector_traces:
-            return None
-        path = step_dir / "selector_trace.json"
-        payload = [trace.model_dump(mode="json") for trace in selector_traces]
-        bg_writer.enqueue(path, json.dumps(payload))
-        return path
-
-    def _attach_selector_trace(
-        self,
-        perception: ScreenPerception,
-        debug_artifacts: ModelDebugArtifacts | None,
-        selector_traces: list[SelectorTrace],
-    ) -> ModelDebugArtifacts | None:
-        if debug_artifacts is None:
-            return None
-        selector_trace_path = self._write_selector_trace(Path(perception.capture_artifact_path).resolve().parent, selector_traces)
-        if selector_trace_path is None:
-            return debug_artifacts
-        return debug_artifacts.model_copy(update={"selector_trace_artifact_path": str(selector_trace_path)})
-
 
 def _is_rule_success_stop(decision: PolicyDecision) -> bool:
     """True when a rule engine decision is a success-flagged STOP needing LLM confirmation."""
@@ -480,3 +361,10 @@ def _describe(decision: PolicyDecision) -> str:
         what += f" at ({action.x}, {action.y})"
     by = f"rule {decision.rule_name}" if decision.rule_name else "a harness guard"
     return f"{what}, chosen by {by}"
+
+
+def _leaves(action: AgentAction) -> list[AgentAction]:
+    """A batch's leaf actions (nested batches flattened); any other action itself."""
+    if action.action_type is not ActionType.BATCH:
+        return [action]
+    return [leaf for child in action.actions or [] for leaf in _leaves(child)]

@@ -1,7 +1,6 @@
 """Tests for Human-in-the-Loop subsystem (hitl.py).
 
-Covers: generate_hitl_message, post_hitl_webhook, start_escalation_timer,
-and the HITL debounce inside PolicyRuleEngine._human_intervention_rule.
+Covers: generate_hitl_message, post_hitl_webhook, start_escalation_timer.
 
 Tier progression: SIMPLE → MODERATE → COMPLEX
 """
@@ -14,44 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from operon.agent.hitl import (
-    HITL_PAGE_HINT_KEYWORDS,
     generate_hitl_message,
     post_hitl_webhook,
     start_escalation_timer,
 )
-from operon.agent.policy.rules import PolicyRuleEngine
-from operon.models.common import RunStatus
-from operon.models.perception import ScreenPerception, UIElement, UIElementType
-from operon.models.state import AgentState
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _state(run_id: str = "run-1") -> AgentState:
-    return AgentState(run_id=run_id, intent="Fill out contact form", status=RunStatus.RUNNING)
-
-
-def _perception(page_hint: str = "captcha") -> ScreenPerception:
-    return ScreenPerception(
-        summary="A CAPTCHA is visible",
-        page_hint=page_hint,
-        capture_artifact_path="runs/test/step_1/before.png",
-        visible_elements=[
-            UIElement(
-                element_id="captcha-widget",
-                element_type=UIElementType.UNKNOWN,
-                label="I am not a robot",
-                x=300,
-                y=400,
-                width=200,
-                height=60,
-                is_interactable=True,
-                confidence=0.9,
-            )
-        ],
-    )
-
 
 # ===========================================================================
 # SIMPLE: generate_hitl_message
@@ -119,23 +84,6 @@ async def test_generate_hitl_message_uses_llm_response_when_valid() -> None:
         gemini_client=client,  # type: ignore[arg-type]
     )
     assert msg == expected
-
-
-# ===========================================================================
-# SIMPLE: HITL_PAGE_HINT_KEYWORDS coverage
-# ===========================================================================
-
-@pytest.mark.parametrize("keyword", [
-    "captcha", "recaptcha", "robot",
-    "login", "sign_in", "signin",
-    "cookie_consent", "gdpr",
-    "two_factor", "2fa", "mfa", "otp",
-    "payment", "checkout", "billing",
-    "blocked", "access_denied", "bot_detection",
-])
-def test_hitl_keywords_in_frozenset(keyword: str) -> None:
-    """Every documented HITL keyword must be in the frozenset."""
-    assert keyword in HITL_PAGE_HINT_KEYWORDS, f"{keyword!r} not in HITL_PAGE_HINT_KEYWORDS"
 
 
 # ===========================================================================
@@ -326,94 +274,3 @@ async def test_escalation_timer_handles_notify_exception() -> None:
         notify_fn=_bad_notify,
         intervals_seconds=(0, 0),
     )
-
-
-# ===========================================================================
-# COMPLEX: HITL debounce inside PolicyRuleEngine
-# ===========================================================================
-
-def _engine() -> PolicyRuleEngine:
-    return PolicyRuleEngine()
-
-
-def _captcha_perception() -> ScreenPerception:
-    return _perception("captcha_page")
-
-
-def _normal_perception() -> ScreenPerception:
-    return _perception("generic_page")
-
-
-def test_hitl_debounce_first_hit_returns_none() -> None:
-    """First HITL keyword match must NOT fire — debounce threshold is 2."""
-    engine = _engine()
-    state = _state("run-abc")
-    perception = _captcha_perception()
-
-    decision = engine.choose_action(state, perception, [])
-    assert decision is None, "Should NOT fire HITL on the first consecutive match"
-
-
-def test_hitl_debounce_second_consecutive_hit_fires() -> None:
-    """Second consecutive HITL keyword match MUST fire WAIT_FOR_USER."""
-    from operon.models.policy import ActionType
-    engine = _engine()
-    state = _state("run-abc")
-    perception = _captcha_perception()
-
-    engine.choose_action(state, perception, [])  # first hit — no fire
-    decision = engine.choose_action(state, perception, [])  # second hit — fire
-
-    assert decision is not None, "Should fire HITL on second consecutive match"
-    assert decision.action.action_type == ActionType.WAIT_FOR_USER
-
-
-def test_hitl_debounce_resets_after_normal_page() -> None:
-    """Counter resets when a non-HITL page appears between matches."""
-    engine = _engine()
-    state = _state("run-reset")
-    captcha = _captcha_perception()
-    normal = _normal_perception()
-
-    engine.choose_action(state, captcha, [])  # hit 1
-    engine.choose_action(state, normal, [])   # reset
-    decision = engine.choose_action(state, captcha, [])  # hit 1 again
-
-    assert decision is None, "Counter should reset; one match is not enough"
-
-
-def test_hitl_debounce_tracked_per_run_id() -> None:
-    """Debounce counters for different run IDs must not interfere."""
-    from operon.models.policy import ActionType
-    engine = _engine()
-    state_a = _state("run-aaa")
-    state_b = _state("run-bbb")
-    perception = _captcha_perception()
-
-    # run-aaa: hit 1, then hit 2 → should fire
-    engine.choose_action(state_a, perception, [])
-    decision_a = engine.choose_action(state_a, perception, [])
-
-    # run-bbb: only hit 1 → should NOT fire
-    decision_b = engine.choose_action(state_b, perception, [])
-
-    assert decision_a is not None and decision_a.action.action_type == ActionType.WAIT_FOR_USER
-    assert decision_b is None
-
-
-def test_hitl_fires_for_multiple_keyword_variants() -> None:
-    """Each HITL keyword variant triggers the debounce path."""
-    from operon.models.policy import ActionType
-    for keyword in ["login_wall", "recaptcha_v3", "2fa_code", "gdpr_banner"]:
-        engine = _engine()
-        state = _state(f"run-{keyword}")
-        perc = ScreenPerception(
-            summary=f"Page with {keyword}",
-            page_hint=keyword,
-            capture_artifact_path="runs/test/step_1/before.png",
-            visible_elements=[],
-        )
-        engine.choose_action(state, perc, [])          # hit 1
-        decision = engine.choose_action(state, perc, [])  # hit 2 → fire
-        assert decision is not None, f"HITL should fire for keyword variant {keyword!r}"
-        assert decision.action.action_type == ActionType.WAIT_FOR_USER

@@ -17,6 +17,7 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
+from operon.browser.keys import normalize_key
 from operon.core.paths import browser_artifacts_dir
 from operon.executor.browser import Executor
 from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
@@ -38,35 +39,8 @@ logger = logging.getLogger(__name__)
 _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
-# Playwright expects PascalCase key names. Normalise common variants the LLM may emit.
-_PLAYWRIGHT_KEY_MAP: dict[str, str] = {
-    "escape": "Escape",
-    "esc": "Escape",
-    "enter": "Enter",
-    "return": "Enter",
-    "backspace": "Backspace",
-    "delete": "Delete",
-    "del": "Delete",
-    "tab": "Tab",
-    "space": "Space",
-    "arrowup": "ArrowUp",
-    "up": "ArrowUp",
-    "arrowdown": "ArrowDown",
-    "down": "ArrowDown",
-    "arrowleft": "ArrowLeft",
-    "left": "ArrowLeft",
-    "arrowright": "ArrowRight",
-    "right": "ArrowRight",
-    "pageup": "PageUp",
-    "pagedown": "PageDown",
-    "home": "Home",
-    "end": "End",
-    "insert": "Insert",
-}
-
-
 def _normalize_key_playwright(key: str) -> str:
-    return _PLAYWRIGHT_KEY_MAP.get(key.lower(), key)
+    return normalize_key(key)
 
 
 @dataclass(slots=True)
@@ -323,7 +297,7 @@ class NativeBrowserExecutor(Executor):
                 elif normalized == "alt+right":
                     await page.go_forward()
                 else:
-                    await page.keyboard.press("+".join(k.strip() for k in action.key.split("+")))
+                    await page.keyboard.press(_normalize_key_playwright(action.key))
             elif at is ActionType.SCROLL:
                 page = await self._current_page()
                 amount = action.scroll_amount or 800
@@ -353,11 +327,16 @@ class NativeBrowserExecutor(Executor):
                     return self._fail(action, "upload_file requires text (file path)", FailureCategory.EXECUTION_ERROR)
                 page = await self._current_page()
                 point = self._action_point(action)
+                if point is None:
+                    # Vision-only: the upload control is clicked where perception saw
+                    # it, never found through the DOM.
+                    return self._fail(
+                        action,
+                        "upload_file requires x/y of the upload control",
+                        FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+                    )
                 async with page.expect_file_chooser(timeout=8000) as fc_info:
-                    if point is not None:
-                        await page.mouse.click(*point)
-                    else:
-                        await page.locator("input[type=file]").first.click(force=True)
+                    await page.mouse.click(*point)
                 file_chooser = await fc_info.value
                 await file_chooser.set_files(file_path)
             elif at is ActionType.READ_TEXT:
@@ -450,7 +429,12 @@ class NativeBrowserExecutor(Executor):
                 return self._fail(action, f"Action '{at}' is not supported on native browser executor", FailureCategory.EXECUTION_ERROR)
             # Only wait for page load after actions that can trigger navigation.
             if at in {ActionType.NAVIGATE, ActionType.CLICK, ActionType.DOUBLE_CLICK, ActionType.PRESS_KEY, ActionType.HOTKEY}:
-                await page.wait_for_load_state(timeout=5000)
+                try:
+                    await page.wait_for_load_state(timeout=5000)
+                except Exception as exc:  # noqa: BLE001 - the action already ran
+                    # A slow page (or a popup that closed itself) is not a failed
+                    # click: the verifier judges the outcome from the screen.
+                    logger.debug("wait_for_load_state after %s did not finish: %s", at.value, exc)
             await asyncio.sleep(self._action_delay(at))
             after_path = await self._capture_after()
             return self._ok(action, f"Executed {at.value}", after_path)

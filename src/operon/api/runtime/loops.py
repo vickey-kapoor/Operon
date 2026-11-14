@@ -132,7 +132,7 @@ def get_agent_loop() -> AgentLoop:
         browser_config = browser_mode_config()
         executor = _build_browser_executor()
         services = build_browser_services(executor)
-        run_store = FileBackedRunStore()
+        run_store = FileBackedRunStore(environment="browser")
         memory_store = FileBackedMemoryStore()
         _agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
@@ -163,7 +163,7 @@ def get_desktop_agent_loop() -> AgentLoop:
         services = build_desktop_services()
         # KAN-80: the environment provider owns the machine and builds its executor.
         executor = desktop_provider().build_executor()
-        run_store = FileBackedRunStore()
+        run_store = FileBackedRunStore(environment="desktop")
         memory_store = FileBackedMemoryStore()
         _desktop_agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),

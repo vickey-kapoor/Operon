@@ -23,21 +23,6 @@ logger = logging.getLogger(__name__)
 # (creationflags is ignored outside win32).
 _NO_CONSOLE = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-# -------------------------------------------------------------------
-# Page-hint keywords that require a human to unblock the agent.
-# These are matched as substrings of the page_hint value.
-# -------------------------------------------------------------------
-HITL_PAGE_HINT_KEYWORDS: frozenset[str] = frozenset({
-    "captcha", "recaptcha", "robot",
-    "login", "sign_in", "signin",
-    "cookie_consent", "cookie_banner", "gdpr", "consent",
-    "age_verification", "age_gate",
-    "two_factor", "2fa", "mfa", "otp", "verification_code",
-    "terms_and_conditions", "terms_of_service",
-    "payment", "checkout", "billing",
-    "blocked", "access_denied", "forbidden", "bot_detection",
-})
-
 _CONTEXT_PROMPT = """\
 You are an assistant explaining to a human why an automated agent needs their help.
 

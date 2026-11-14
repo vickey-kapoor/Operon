@@ -424,6 +424,14 @@ def test_a_gate_on_run_is_flagged_so_it_is_never_a_baseline() -> None:
     assert "trust_gate" not in prepare(_report(), {})["config"]  # older reports: unrecorded, ran with it off
 
 
+
+def test_a_tools_on_run_is_flagged_so_it_is_never_a_baseline() -> None:
+    config = prepare(_report(tools="read_file,run_shell"), {})["config"]
+    assert config["tools"] == "read_file,run_shell"
+    assert config["flagged"].startswith("tools on (read_file,run_shell)")
+    off = prepare(_report(tools="off"), {})["config"]
+    assert "tools" not in off and "flagged" not in off
+
 class _CellConn:
     """Answers the previous-cell query with ``previous`` and each run's task rows from ``tasks``."""
 

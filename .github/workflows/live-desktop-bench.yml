@@ -45,6 +45,9 @@ on:
       critic:
         description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
         default: ""
+      tools:
+        description: "OPERON_TOOLS (RFC 0002): off, on, all, or tool names; file tools may use the Documents folder"
+        default: "off"
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
@@ -63,6 +66,7 @@ on:
       desktop_backend: {type: string, default: "computer_use"}
       harness_profile: {type: string, default: "full"}
       critic: {type: string, default: ""}
+      tools: {type: string, default: "off"}
       desktop_model: {type: string, default: ""}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
@@ -142,6 +146,8 @@ jobs:
       OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_CRITIC: ${{ inputs.critic }}
+      # Tools next to screen actions (RFC 0002); off unless the run asks for them.
+      OPERON_TOOLS: ${{ inputs.tools || 'off' }}
       # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
       OPERON_TRUST_GATE: "off"
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
@@ -246,6 +252,11 @@ jobs:
           SUITE: ${{ inputs.suite }}
           EXTRA_ARGS: ${{ inputs.args }}
         run: |
+          if ($env:OPERON_TOOLS -and $env:OPERON_TOOLS -ne "off") {
+            # The file tools may use the task folders (Documents\OperonDesk, OperonFiles); the file guard
+            # pauses on any other path.
+            $env:OPERON_ALLOWED_FILE_ROOTS = [Environment]::GetFolderPath("MyDocuments")
+          }
           Start-Process -FilePath uv -WindowStyle Hidden `
             -ArgumentList "run", "python", "-m", "uvicorn", "operon.api.server:app", "--host", "127.0.0.1", "--port", "8080" `
             -RedirectStandardOutput uvicorn.log -RedirectStandardError uvicorn.err.log

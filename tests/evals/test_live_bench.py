@@ -528,6 +528,23 @@ def test_previous_report_only_compares_the_same_trust_gate(tmp_path) -> None:
     assert live_bench._previous_report(tmp_path, "smoke", trust_gate="on")["started_at"] == "2"
 
 
+
+def test_previous_report_only_compares_the_same_tools(tmp_path) -> None:
+    for stamp, tools in (("1", None), ("2", "read_file,run_shell")):
+        report = {"model_profile": None, "budget_stop": None, "started_at": stamp}
+        if tools:
+            report["tools"] = tools
+        (tmp_path / f"smoke-{stamp}.json").write_text(json.dumps(report))
+    assert live_bench._previous_report(tmp_path, "smoke")["started_at"] == "1"  # unrecorded = off
+    assert live_bench._previous_report(tmp_path, "smoke", tools="read_file,run_shell")["started_at"] == "2"
+
+
+def test_tools_label_reads_the_server_env(monkeypatch) -> None:
+    monkeypatch.setattr(live_bench, "_server_env", lambda: {"OPERON_TOOLS": "all"})
+    assert live_bench.tools_label() == "read_file,list_dir,write_file,run_shell,http_get"
+    monkeypatch.setattr(live_bench, "_server_env", lambda: {})
+    assert live_bench.tools_label() == "off"
+
 async def test_the_report_takes_the_trust_gate_from_the_server(tmp_path, monkeypatch, capsys) -> None:
     async def fake_run_task(client, task, judge, **kwargs):
         return _costly(task.name, 0.1)

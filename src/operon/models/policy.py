@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import Field, model_validator
 
@@ -58,6 +59,9 @@ class ActionType(StrEnum):
     UPLOAD_FILE = "upload_file"
     UPLOAD_FILE_NATIVE = "upload_file_native"
     READ_TEXT = "read_text"
+    # A call to one of Operon's tools (RFC 0002): ``tool`` names it, ``tool_args`` holds
+    # its arguments, ``text`` a short summary the gates judge, ``url`` an http_get's URL.
+    TOOL = "tool"
 
 
 class AgentAction(StrictModel):
@@ -81,6 +85,8 @@ class AgentAction(StrictModel):
     # (positive = up).
     horizontal: bool | None = None
     actions: list["AgentAction"] | None = None
+    tool: str | None = Field(default=None, min_length=1)
+    tool_args: dict[str, Any] | None = None
     target_context: TargetSelectionContext | None = None
     # Internal servo flag: skip variance check for known blank-but-valid input regions
     # (e.g. Notepad text area). Set by the loop after target element type lookup.
@@ -93,6 +99,20 @@ class AgentAction(StrictModel):
         _typing_flags = (self.clear_before_typing, self.press_enter)
         if self.horizontal is not None and self.action_type is not ActionType.SCROLL:
             raise ValueError("horizontal is only valid on scroll")
+        if self.action_type is ActionType.TOOL:
+            if self.tool is None:
+                raise ValueError("tool requires the tool's name")
+            if any(
+                value is not None
+                for value in (
+                    self.selector, self.target_element_id, self.key, self.wait_ms, self.x, self.y,
+                    self.actions, self.target_context, *_new_fields, *_typing_flags,
+                )
+            ):
+                raise ValueError("tool cannot include fields other than tool, tool_args, text and url")
+            return self
+        if self.tool is not None or self.tool_args is not None:
+            raise ValueError("tool and tool_args are only valid on a tool action")
 
         if self.action_type is ActionType.BATCH:
             if not self.actions:

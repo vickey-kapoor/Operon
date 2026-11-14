@@ -18,6 +18,7 @@ from operon.agent.policy.thin import (
     harness_profile,
 )
 from operon.agent.policy.verifier import DeterministicVerifierService
+from operon.agent.tools import enabled_tools
 from operon.api import ws_stream as _ws_stream
 from operon.api.runtime.services import (
     build_browser_services,
@@ -52,6 +53,17 @@ def _build_browser_executor():
     if NativeBrowserExecutor is None:
         NativeBrowserExecutor = importlib.import_module("operon.executor.browser_native").NativeBrowserExecutor
     return NativeBrowserExecutor()
+
+
+def _with_tools(executor, config):
+    """The executor plus Operon's tools when ``OPERON_TOOLS`` turns them on (RFC 0002).
+    Only the Gemini computer-use backend declares tools, so only its runs get them."""
+    tools = enabled_tools()
+    if not tools or config.backend != "computer_use":
+        return executor
+    from operon.executor.tools import ToolExecutor
+
+    return ToolExecutor(executor, tools)
 
 
 def _loop_layers(*, config, services, memory_store, desktop: bool = False) -> dict:
@@ -89,7 +101,7 @@ def get_agent_loop() -> AgentLoop:
             capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
             perception_service=services.perception_service,
             run_store=run_store,
-            executor=executor,
+            executor=_with_tools(executor, browser_config),
             memory_store=memory_store,
             environment=UnifiedEnvironment.BROWSER,
             **_loop_layers(config=browser_config, services=services, memory_store=memory_store, desktop=False),
@@ -129,7 +141,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
             perception_service=services.perception_service,
             run_store=run_store,
-            executor=executor,
+            executor=_with_tools(executor, desktop_config),
             memory_store=memory_store,
             environment=UnifiedEnvironment.DESKTOP,
             **_loop_layers(config=desktop_config, services=services, memory_store=memory_store, desktop=True),

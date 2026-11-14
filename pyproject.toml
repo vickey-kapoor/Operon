@@ -67,12 +67,13 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
+    "desktop_container: end-to-end desktop tests on the Linux desktop container (needs Docker; opt in with -m desktop_container, KAN-166)",
     "asyncio: mark a test as using asyncio",
     "live_server: requires a running uvicorn server at localhost:8080 (opt-in via OPERON_RUN_LIVE_SERVER_TESTS=true)",
 ]
 # CI runs only fast/safe tests by default. Use `pytest -m live_server` to opt into
 # the server-required suites (or set OPERON_RUN_LIVE_SERVER_TESTS=true).
-addopts = "-m 'not live_server'"
+addopts = "-m 'not live_server and not desktop_container'"
 filterwarnings = [
     # starlette 1.2.x emits this purely on importing TestClient. We can't act on
     # it without migrating off httpx (which FastAPI's TestClient still requires),

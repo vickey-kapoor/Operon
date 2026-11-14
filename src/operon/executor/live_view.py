@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import io
 import time
+from typing import TYPE_CHECKING
 
 from operon.executor import desktop as _desktop
 
@@ -24,6 +25,9 @@ class LiveViewMixin:
     """``live_frame_png`` and ``user_input`` for a ``DesktopExecutor``."""
 
     _current_run_id: str | None
+    if TYPE_CHECKING:
+        # Provided by DesktopExecutor (the class this mixin is combined with).
+        async def _enter_text(self, text: str) -> None: ...
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -90,9 +94,9 @@ class LiveViewMixin:
         elif input_type == "dblclick":
             await asyncio.to_thread(gui.doubleClick, x, y)
         elif input_type == "type":
-            # Paste, like the agent's TYPE: key-by-key typing drops non-ASCII characters.
-            await asyncio.to_thread(_desktop.pyperclip.copy, text)
-            await asyncio.to_thread(gui.hotkey, "ctrl", "v")
+            # The same way the agent's TYPE enters text (pasted, or typed key by key
+            # where the platform needs it).
+            await self._enter_text(text)
         elif input_type == "key":
             keys = [_desktop._normalize_key_pyautogui(k.strip()) for k in key.split("+") if k.strip()]
             unknown = _desktop._unknown_keys(keys)

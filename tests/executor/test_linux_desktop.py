@@ -133,6 +133,35 @@ async def test_takeover_input_maps_page_ratios_to_screen_pixels(executor, gui, m
     gui.hotkey.assert_called_with("ctrl", "v")
 
 
+async def test_ascii_text_is_typed_key_by_key_so_terminals_get_it(executor, gui, monkeypatch) -> None:
+    """KAN-166: a terminal ignores ctrl+v, so plain ASCII is typed, not pasted."""
+    copied: list[str] = []
+    monkeypatch.setattr(_desktop.pyperclip, "copy", copied.append)
+    action = AgentAction(action_type=ActionType.TYPE, x=100, y=100, text="echo $HOME > /tmp/x", press_enter=True)
+    result = await executor.execute(action)
+    assert result.success
+    gui.write.assert_called_once_with("echo $HOME > /tmp/x", 0.01)
+    assert copied == []
+    gui.press.assert_called_with("enter")
+
+    assert await executor.user_input("run-1", input_type="type", text="ls -la")
+    gui.write.assert_called_with("ls -la", 0.01)
+    assert copied == []
+
+
+@pytest.mark.parametrize("text", ["a\tb", "line one\nline two", "x" * 501])
+async def test_control_characters_and_long_text_are_pasted(executor, gui, monkeypatch, text) -> None:
+    """A tab or newline typed as a key would move focus or submit; a long text typed
+    key by key would outlast the guest's request timeout. Both are pasted."""
+    copied: list[str] = []
+    monkeypatch.setattr(_desktop.pyperclip, "copy", copied.append)
+    result = await executor.execute(AgentAction(action_type=ActionType.TYPE, x=100, y=100, text=text))
+    assert result.success
+    gui.write.assert_not_called()
+    assert copied == [text]
+    gui.hotkey.assert_called_with("ctrl", "v")
+
+
 async def test_takeover_input_rejects_other_runs_and_unknown_keys(executor, gui) -> None:
     assert not await executor.user_input("run-2", input_type="click")
     with pytest.raises(ValueError):

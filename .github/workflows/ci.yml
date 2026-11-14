@@ -80,6 +80,36 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  desktop:
+    # KAN-166: the real loop clicks and types on a real XFCE desktop (the KAN-80 Linux
+    # desktop container) with a scripted model instead of Gemini, so it costs nothing.
+    # Graded from the machine's own state; tests/desktop_e2e.
+    name: Desktop (Linux container)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      UV_PYTHON: "3.14"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Run the desktop tests (builds the desktop image first, a few minutes)
+        env:
+          GEMINI_API_KEY: fake-test-key
+          OPERON_E2E_REQUIRE_DESKTOP: "true"
+        run: uv run pytest tests/desktop_e2e -m desktop_container -o addopts="" -v --tb=short
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

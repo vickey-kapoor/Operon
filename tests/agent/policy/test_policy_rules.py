@@ -194,7 +194,8 @@ async def test_type_action_reaches_executor_without_rule_interception() -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_query_rule_clicks_search_input_before_typing() -> None:
+async def test_search_query_rule_types_into_an_unfocused_search_input_in_one_action() -> None:
+    """Atomic TYPE: no separate focus click; the coordinates focus it (KAN-154)."""
     root = _local_test_dir("test-policy-coordinator-search-click")
     client = StubGeminiClient(
         response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
@@ -212,8 +213,10 @@ async def test_search_query_rule_clicks_search_input_before_typing() -> None:
 
     decision = await coordinator.choose_action(state, _search_perception(root))
 
-    assert decision.action.action_type is ActionType.CLICK
+    assert decision.action.action_type is ActionType.TYPE
     assert decision.action.target_element_id == "search-input"
+    assert decision.action.x is not None and decision.action.y is not None
+    assert decision.action.text == "Operon"
     assert client.calls == 0
 
 
@@ -533,7 +536,7 @@ async def test_a_rule_action_is_reported_to_the_delegate_as_replacing_its_own() 
     decision = await coordinator.choose_action(state, _search_perception(root))
     assert decision.rule_name and delegate.replaced
     run_id, action = delegate.replaced[0]
-    assert run_id == "run-1" and action.startswith("click") and f"rule {decision.rule_name}" in action
+    assert run_id == "run-1" and action.startswith("type") and f"rule {decision.rule_name}" in action
 
 
 @pytest.mark.asyncio

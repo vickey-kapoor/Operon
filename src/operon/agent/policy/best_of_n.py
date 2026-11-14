@@ -81,6 +81,13 @@ def _same_action(a: AgentAction, b: AgentAction) -> bool:
         and a.target_element_id == b.target_element_id
         and a.text == b.text
         and a.key == b.key
+        and a.url == b.url
+        and a.scroll_amount == b.scroll_amount
+        and a.horizontal == b.horizontal
+        and a.x_end == b.x_end
+        and a.y_end == b.y_end
+        and len(a.actions or []) == len(b.actions or [])
+        and all(_same_action(x, y) for x, y in zip(a.actions or [], b.actions or []))
     )
 
 
@@ -149,9 +156,15 @@ class HeuristicCritic:
     def _element_under(self, x: int, y: int, elements: list) -> object | None:
         """Return the perceived element whose center is within ``hit_radius`` of
         (x, y), or None. On overlap, prefer the higher-confidence element."""
+        # Elements are boxes (x, y = top-left): a click inside one hits it, and so
+        # does a near miss within ``hit_radius`` of its centre.
         hits = [
             el for el in elements
-            if abs(el.x - x) <= self._hit_radius and abs(el.y - y) <= self._hit_radius
+            if (el.x <= x <= el.x + _w(el) and el.y <= y <= el.y + _h(el))
+            or (
+                abs(el.x + _w(el) / 2 - x) <= self._hit_radius
+                and abs(el.y + _h(el) / 2 - y) <= self._hit_radius
+            )
         ]
         if not hits:
             return None
@@ -197,3 +210,11 @@ async def select_best_of_n(
 
     best_index = max(range(len(candidates)), key=lambda i: candidates[i].score)
     return candidates[best_index].decision, candidates
+
+
+def _w(element: object) -> float:
+    return float(getattr(element, "width", 0) or 0)
+
+
+def _h(element: object) -> float:
+    return float(getattr(element, "height", 0) or 0)

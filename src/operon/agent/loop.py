@@ -687,9 +687,9 @@ class AgentLoop:
                         update={"summary": (perception.summary or "") + f" {_dialog_msg}"}
                     )
                     if state.observation_history:
-                        _obs = list(state.observation_history)
-                        _obs[-1] = perception
-                        state = state.model_copy(update={"observation_history": _obs})
+                        # In place: ``state`` is the stored record, and a copy would
+                        # drop this step's stop reason and recovery flags.
+                        state.observation_history[-1] = perception
 
             _trace("  5 VERIFY", "DeterministicVerifierService checking outcome")
             _t0 = time.perf_counter()
@@ -1926,7 +1926,9 @@ class AgentLoop:
         # Grounder refinement runs in perception-local space (same frame as
         # visible_elements), before the monitor-origin transform below. No-op for
         # the default deterministic grounder.
-        normalized_action = self._refine_with_grounder(normalized_action, perception)
+        if not self.thin_harness:
+            # The thin harness never moves the model's click.
+            normalized_action = self._refine_with_grounder(normalized_action, perception)
         # Apply monitor origin: perception coords are monitor-local; pyautogui needs
         # virtual-desktop coords. This is the single transform point — perception
         # and policy layers stay in monitor-local space throughout.

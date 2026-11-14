@@ -613,13 +613,9 @@ class PolicyRuleEngine:
                     active_subgoal=f"navigate to search results for {query}",
                 )
 
-            if perception.focused_element_id != search_input.element_id:
-                return _click_decision(
-                    search_input,
-                    f"Focus {search_input.primary_name} so the search query can be entered.",
-                )
-            # Include coordinates so the executor clicks the input to guarantee
-            # focus before typing — prevents keyboard events going to document body.
+            # Atomic TYPE: no separate focus click first. The coordinates make the
+            # executor click the input and type in one call, so keyboard events
+            # never go to the document body.
             return PolicyDecision(
                 action=AgentAction(
                     action_type=ActionType.TYPE,
@@ -805,8 +801,7 @@ class PolicyRuleEngine:
                 # that validate all filled fields, causing unexpected form behavior.
                 _intent_wants_message = bool(re.search(r"\bmessage\b", intent, re.IGNORECASE))
                 _text_fields_partial_done = (name is None or "name" in _fields_filled) and (email is None or "email" in _fields_filled or "password" in _fields_filled)
-                _msg_match = re.search(r"message(?:\s+as)?\s+['\"]([^'\"]+)['\"]", intent, re.IGNORECASE)
-                _msg_text = _msg_match.group(1) if _msg_match else "Hello, I am filling out this form."
+                _msg_text = _form_message_text(intent) or "Hello, I am filling out this form."
                 if "message" in label and _intent_wants_message and _text_fields_partial_done and (name or email) and "message" not in _fields_filled:
                     _fields_filled.add("message")
                     return PolicyDecision(
@@ -899,13 +894,16 @@ class PolicyRuleEngine:
             # elements. Quoted strings in intent like "Jane Doe" / "jane@example.com"
             # are text values, not selectable options — they must not block submit.
             interactable_elements = [el for el in perception.visible_elements if el.is_interactable]
+            message_value = _form_message_text(intent)
             clickable_options = [
                 opt for opt in intent_options
-                if "@" not in opt and opt != name and opt != email
+                if "@" not in opt and opt != name and opt != email and opt != message_value
             ]
             # An option is handled if its label was recorded in _clicked_labels (survives
             # page scrolls) OR if a coord-proximate click exists in history.
-            all_options_handled = bool(clickable_options) and all(
+            # No options to pick (only text values were quoted): nothing to scroll
+            # for, so go on to submit instead of scrolling up forever.
+            all_options_handled = not clickable_options or all(
                 opt.lower() in _clicked_labels or any(
                     opt.lower() in el.primary_name.lower() and _coord_already_clicked(
                         el.x + max(1, el.width // 2), el.y + max(1, el.height // 2)
@@ -1189,6 +1187,12 @@ def _input_target_intent(subgoal: str | None, target_element_id: str | None) -> 
         expected_element_types=[UIElementType.INPUT],
         expected_section=expected_section,
     )
+
+
+def _form_message_text(intent: str) -> str | None:
+    """The quoted message an intent asks to type into a form, if any."""
+    match = re.search(r"message(?:\s+as)?\s+['\"]([^'\"]+)['\"]", intent, re.IGNORECASE)
+    return match.group(1) if match else None
 
 
 def _submit_button(perception: ScreenPerception) -> UIElement | None:

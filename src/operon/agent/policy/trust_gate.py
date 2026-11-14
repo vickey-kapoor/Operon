@@ -109,6 +109,9 @@ class TrustGate:
         url = getattr(action, "url", None)
         if url:
             parts.append(str(url))
+        key = getattr(action, "key", None)
+        if key:
+            parts.append(str(key))
         ctx = getattr(action, "target_context", None)
         original = getattr(ctx, "original_target", None) if ctx is not None else None
         name = getattr(original, "primary_name", None) if original is not None else None

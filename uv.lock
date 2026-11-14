@@ -385,8 +385,8 @@ wheels = [
 ]
 
 [[package]]
-name = "operon"
-version = "0.1.0"
+name = "operon-agent"
+version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

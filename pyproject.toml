@@ -3,12 +3,21 @@ requires = ["setuptools>=84.2.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "operon"
-version = "0.1.0"
+name = "operon-agent"
+version = "0.1.0a1"
 description = "Vision-driven computer-use engine for UI-native automation."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.14"
+keywords = ["computer-use", "agent", "automation", "gemini", "vision"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = [
     "fastapi>=0.162.3,<1.0.0",
     "pydantic>=2.14.3,<3.0.0",
@@ -24,6 +33,11 @@ dependencies = [
     "playwright>=1.65.0,<2.0.0",
     "pyyaml>=6.0.3,<7.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/vickey-kapoor/Operon"
+Documentation = "https://github.com/vickey-kapoor/Operon/tree/main/docs"
+Issues = "https://github.com/vickey-kapoor/Operon/issues"
 
 [project.scripts]
 operon = "operon.cli:main"

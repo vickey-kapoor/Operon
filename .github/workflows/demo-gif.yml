@@ -1,0 +1,87 @@
+name: Record demo GIF
+run-name: Gemini · demo GIF (KAN-141)
+
+# One short real task with `operon run`, then its screenshots stitched into a GIF
+# (evals/demo_gif.py) and uploaded as an artifact to look at before it goes in the
+# README. Spends a few cents of Gemini calls (at most --max-steps model steps).
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: What Operon should do
+        default: Find the population of Paris on Wikipedia
+      url:
+        description: Page to open first
+        default: https://en.wikipedia.org
+      max_steps:
+        description: Step budget (bounds the cost)
+        default: "15"
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    name: Run one task and make the GIF
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: "3.14"
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPERON_RUNS_ROOT: ${{ github.workspace }}/demo-runs
+      TASK: ${{ inputs.task }}
+      START_URL: ${{ inputs.url }}
+      MAX_STEPS: ${{ inputs.max_steps }}
+    steps:
+      - name: Check the secrets
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::Missing repository secret GEMINI_API_KEY."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Self-check
+        run: uv run operon setup --check
+
+      - name: Run the task
+        # The GIF is still made when the task fails, so a bad run can be looked at too.
+        run: |
+          set -o pipefail
+          uv run operon run "$TASK" --url "$START_URL" --mode auto --headless --max-steps "$MAX_STEPS" < /dev/null | tee run.txt
+
+      - name: Make the GIF
+        if: always()
+        run: uv run python -m evals.demo_gif --latest --out demo/demo.gif
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '## Demo run'
+            echo '```'
+            cat run.txt 2>/dev/null || echo "no output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the GIF
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: demo-gif
+          path: |
+            demo/
+            run.txt
+          retention-days: 14

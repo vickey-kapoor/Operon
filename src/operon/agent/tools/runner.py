@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -117,21 +118,27 @@ class ToolRunner:
             ]
         else:
             argv = ["bash", "-c", command]
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=str(Path.home()),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            raise ToolError(f"timed out after {timeout} seconds and was stopped") from None
-        out = _cut(stdout.decode("utf-8", errors="replace"), STREAM_LIMIT)
-        err = _cut(stderr.decode("utf-8", errors="replace"), STREAM_LIMIT)
+        # Output goes to temporary files, not pipes: a program the command leaves running
+        # (``start file.svg`` opens a viewer) inherits the shell's output handles, and
+        # reading a pipe would then wait for that program to close, not for the shell.
+        with tempfile.TemporaryFile() as out_file, tempfile.TemporaryFile() as err_file:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(Path.home()),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=out_file,
+                stderr=err_file,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout)
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+                raise ToolError(f"timed out after {timeout} seconds and was stopped") from None
+            out_file.seek(0)
+            err_file.seek(0)
+            out = _cut(out_file.read().decode("utf-8", errors="replace"), STREAM_LIMIT)
+            err = _cut(err_file.read().decode("utf-8", errors="replace"), STREAM_LIMIT)
         return f"exit code: {process.returncode}\nstdout:\n{out}\nstderr:\n{err}"
 
     async def _http_get(self, args: dict[str, Any]) -> str:

@@ -1,5 +1,6 @@
 """The ``operon`` command (KAN-89).
 
+    operon setup                    first time: save the Gemini key, install the browser, self-check
     operon run "task"               run a task here, in this process, and print a report
     operon run --request "task"     send the task to a running API and follow it
     operon serve                    start the API and print the task page's link
@@ -78,6 +79,19 @@ class LocalClient:
                 await aclose()
             except Exception:  # noqa: BLE001 - exiting anyway
                 pass
+        await settle_subprocess_pipes()
+
+
+async def settle_subprocess_pipes(delay_s: float = 0.25) -> None:
+    """Give Windows a moment to close Playwright's driver pipes before the event loop ends.
+
+    On Windows the proactor loop closes a stopped subprocess's pipes a few ticks later.
+    When ``asyncio.run`` closes the loop first, their ``__del__`` prints a scary
+    "Exception ignored ... I/O operation on closed pipe" traceback after an otherwise
+    clean run. Other platforms close them at once, so this is a no-op there.
+    """
+    if sys.platform == "win32":
+        await asyncio.sleep(delay_s)
 
 
 class RemoteClient:
@@ -233,7 +247,11 @@ async def _answer(client, run_id: str, waiting: dict[str, Any], ask, out) -> dic
 def _load_env() -> None:
     from dotenv import find_dotenv, load_dotenv
 
+    from operon.core.paths import load_user_env, remember_shell_env
+
+    remember_shell_env()
     load_dotenv(find_dotenv(usecwd=True), override=False)
+    load_user_env()  # the key `operon setup` saved, for a pip install with no .env here
 
 
 def _payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -299,7 +317,10 @@ def _serve(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from operon import __version__
+
     parser = argparse.ArgumentParser(prog="operon", description="Operon, a vision-first computer-use agent.")
+    parser.add_argument("--version", action="version", version=f"operon {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run a task and print a report")
@@ -319,8 +340,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)
 
-    from operon import cloud
+    from operon import cloud, setup_command
 
+    setup_command.add_parser(sub)
     cloud.add_parser(sub)
     return parser
 

@@ -31,6 +31,7 @@ onboarding ([roadmap](roadmap.md)).
 | Variable | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | unset | Gemini API key (Gemini Computer Use reads `GEMINI_API_KEY` only) |
+| `OPERON_CONFIG_DIR` | `~/.operon` | Per-user folder for `operon.env`, where `operon setup` saves the key. Every `operon` command and the API read it after `.env`; a value in `.env` or the environment wins. |
 | `GEMINI_API_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/models` | Base URL for Gemini calls, e.g. a proxy. The Gemini Computer Use client always uses it; the JSON Gemini client ignores it when `OPERON_USE_VERTEX=true` and calls Vertex AI instead. |
 | `API_KEYS` | unset | Comma-separated API keys. Every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires it as an `x-api-key` subprotocol (`["x-api-key", "<key>"]`). Unset = the server generates one key on first start in `.var/api-key` (mode 0600), which the benchmark harness reads. |
 | `OPERON_ALLOW_UNAUTHENTICATED` | `false` | With `API_KEYS` unset, `true` turns authentication off. Only safe on a throwaway machine, since the API can drive a real browser/desktop. |
@@ -49,7 +50,7 @@ onboarding ([roadmap](roadmap.md)).
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |
 | `BROWSER_HEIGHT` | `1080` | Browser viewport height |
-| `OPERON_RUNTIME_ROOT` | `.var` | Root for generated runtime artifacts |
+| `OPERON_RUNTIME_ROOT` | `.var` (checkout) or `~/.operon` (pip install) | Root for generated runtime artifacts: runs, screenshots, the local API key. A source checkout uses its `.var/`; a pip install uses `OPERON_CONFIG_DIR` |
 | `OPERON_RUNS_ROOT` | `.var/runs` | Override run state and step artifact storage |
 | `OPERON_BROWSER_ARTIFACTS_ROOT` | `.var/browser-artifacts` | Override browser recording/session artifacts |
 | `OPERON_DESKTOP_ARTIFACTS_ROOT` | `.var/desktop-artifacts` | Override desktop recording/session artifacts |

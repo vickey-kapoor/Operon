@@ -39,24 +39,48 @@ flowchart LR
 One loop serves both environments. The API drives it one step at a time, so a run can be
 paused, resumed or handed to a human between steps. See [architecture](docs/architecture.md).
 
-## Quick start
+## Quick start (5 minutes)
 
-Requires Python 3.14+ and Chromium.
+You need Python 3.14+ and a free [Gemini API key](https://aistudio.google.com/apikey).
+
+**1. Install** (about a minute):
 
 ```bash
+git clone https://github.com/vickey-kapoor/Operon && cd Operon
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-playwright install chromium
-cp .env.example .env    # then set GEMINI_API_KEY
-python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
+pip install -e .
 ```
 
-Or start it with the task page: `operon serve` prints a link (with the key) to a local page
-where you type a task, watch it live, approve risky steps, take over, and get a short report.
-From a terminal, `operon run "task"` runs one here, and `operon run --request "task"` sends it
-to the running API ([details](docs/api.md#task-page-and-operon-run)).
+**2. Set up** (about two minutes): paste your key when asked. `operon setup` checks it with
+Gemini, saves it to `~/.operon` (readable only by you), installs Chromium and runs a self-check.
 
-Or give it a task over HTTP:
+```bash
+operon setup
+```
+
+It ends with `Ready.` If a line says `FAIL`, it tells you what to fix; run `operon setup` again.
+
+**3. Run a task** (about a minute):
+
+```bash
+operon run "Find the population of Paris on Wikipedia" --url https://en.wikipedia.org
+```
+
+A browser window opens and Operon works through the task from screenshots alone, printing each
+step. Before a risky action (placing an order, a payment, deleting an account), it stops and asks:
+`y` to approve, `n` to decline, `t` to take over. Ctrl+C takes over at any time. It ends with a
+short report of what it did.
+
+![Operon finding the population of Paris on Wikipedia, from screenshots only](docs/assets/demo.gif)
+
+That run took 2 model steps and 23 seconds. A task like this costs a few cents of Gemini calls on your key.
+
+**Next:** `operon serve` prints a link to a local task page, where you type tasks, watch them
+live, approve steps and take over with your own mouse. Add `--desktop` to `operon run` to drive
+Windows apps instead of the browser (it moves your real mouse and keyboard). More in the
+[API and task page guide](docs/api.md#task-page-and-operon-run).
+
+Or, with `operon serve` running, give it a task over HTTP:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/run-task \
@@ -99,6 +123,7 @@ See the [roadmap](docs/roadmap.md) for what has been built, where things stand a
 ## Development
 
 ```bash
+pip install -e ".[dev]"                                   # editable install with test tools
 GEMINI_API_KEY=fake-test-key python -m pytest tests -q   # offline, no browser, under a minute
 ruff check src tests evals --select E,F,W,I --ignore E501
 ```

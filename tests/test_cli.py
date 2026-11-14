@@ -213,3 +213,18 @@ def test_serve_prints_the_page_link_with_the_key_in_the_fragment(monkeypatch, ca
 
     assert cli.main(["serve", "--port", "9000"]) == 0
     assert capsys.readouterr().out.strip() == "Task page: http://127.0.0.1:9000/app#key=k1"
+
+
+async def test_settle_subprocess_pipes_waits_only_on_windows(monkeypatch) -> None:
+    slept: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        slept.append(delay)
+
+    monkeypatch.setattr(cli.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    await cli.settle_subprocess_pipes()
+    assert slept == []
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    await cli.settle_subprocess_pipes()
+    assert slept == [0.25]

@@ -13,6 +13,8 @@ os.environ.setdefault("OPERON_ALLOWED_HOSTS", "testserver,test")
 # Offline tests call the API without a key; importing the server must not write
 # .var/api-key. Auth tests turn this off to check the default.
 os.environ.setdefault("OPERON_ALLOW_UNAUTHENTICATED", "true")
+# Never read (or let `operon setup` tests write) the developer's real ~/.operon key file.
+os.environ["OPERON_CONFIG_DIR"] = os.path.join(os.path.dirname(__file__), "..", ".var", "test-user-config")
 
 # Pre-import modules that test stubs (test_phase4_integration.py) replace via
 # sys.modules.setdefault — ensures the real implementations are loaded first so

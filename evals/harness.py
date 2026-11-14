@@ -141,6 +141,8 @@ class Scenario:
     expected: Outcome | tuple[Outcome, ...] = "success"
     known_issue: str | None = None
     description: str = ""
+    # Environment the run sees, e.g. an experimental flag turned on for this scenario.
+    env: dict[str, str] = field(default_factory=dict)
 
     def screen(self, screen_id: str) -> Screen:
         return next(s for s in self.screens if s.screen_id == screen_id)
@@ -180,6 +182,10 @@ def presses(key: str) -> ActionMatcher:
 
 def waits() -> ActionMatcher:
     return lambda a: a.action_type is ActionType.WAIT
+
+
+def launches(app: str) -> ActionMatcher:
+    return lambda a: a.action_type is ActionType.LAUNCH_APP and (a.text or "").lower() == app.lower()
 
 
 # ── Scripted replies ──────────────────────────────────────────────────────
@@ -490,7 +496,7 @@ async def run_scenario(scenario: Scenario) -> RunResult:
     with tempfile.TemporaryDirectory(prefix=f"operon-eval-{scenario.name}-") as tmp, ExitStack() as stack:
         root = Path(tmp)
         (root / "frames").mkdir()
-        stack.enter_context(patch.dict(os.environ, {"OPERON_TEST_SAFE_MODE": "true"}))
+        stack.enter_context(patch.dict(os.environ, {"OPERON_TEST_SAFE_MODE": "true", **scenario.env}))
         # The loop's settle/backoff waits are wall-clock sleeps; the fake screen
         # never animates, so skip them.
         stack.enter_context(patch("operon.agent.loop.asyncio.sleep", _no_sleep))

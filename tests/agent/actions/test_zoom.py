@@ -284,3 +284,48 @@ def test_backend_counts_a_zoom_that_proposed_nothing(monkeypatch):
     decision = _decide(backend, frame)
     assert decision.action.x == pytest.approx(2001.5, abs=1)
     assert backend.latest_debug_artifacts().usage.estimated_cost_usd == pytest.approx(0.014)
+
+
+def test_a_confirmation_asked_for_on_the_zoomed_look_is_kept():
+    frame = _screen(4000, 2000)
+    decision = {"decision": "require_confirmation", "explanation": "Buys the item"}
+    client = ZoomClient(turn={}, zoomed=_reply("click_at", 500, 500, safety_decision=decision))
+    result = _refine(client, frame, [{"name": "click_at", "args": {"x": 500, "y": 500}}])
+    assert result.zoomed
+    assert result.function_calls[0]["args"]["safety_decision"] == decision
+
+
+def test_backend_pauses_when_the_zoomed_click_needs_confirmation(monkeypatch):
+    frame = _screen(4000, 2000)
+    decision = {"decision": "require_confirmation", "explanation": "Buys the item"}
+    client = ZoomClient(turn=_reply("click_at", 500, 500), zoomed=_reply("click_at", 999, 0, safety_decision=decision))
+    backend = _backend(client, monkeypatch, "dense")
+    _decide(backend, frame)
+    assert backend.has_held_actions("zoom-run")
+
+
+class UnparsableZoomClient(ZoomClient):
+    """The zoom request is billed (usage recorded), then its reply cannot be parsed."""
+
+    async def run_step(self, *, prompt: str, screenshot_path: str) -> dict:
+        self._usage = _usage(0.004, 400)
+        raise RuntimeError("response did not include any candidates")
+
+
+def test_backend_keeps_the_turn_usage_when_the_zoom_reply_fails_to_parse(monkeypatch):
+    frame = _screen(4000, 2000)
+    client = UnparsableZoomClient(turn=_reply("click_at", 500, 500))
+    backend = _backend(client, monkeypatch, "dense")
+    decision = _decide(backend, frame)
+    assert decision.action.x == pytest.approx(2001.5, abs=1)
+    usage = backend.latest_debug_artifacts().usage
+    assert usage.estimated_cost_usd == pytest.approx(0.014)
+    assert usage.input_tokens == 1400
+
+
+def test_backend_keeps_the_turn_usage_when_the_zoom_request_never_answered(monkeypatch):
+    frame = _screen(4000, 2000)
+    client = ZoomClient(turn=_reply("click_at", 500, 500), zoomed=RuntimeError("HTTP 500"))
+    backend = _backend(client, monkeypatch, "dense")
+    _decide(backend, frame)
+    assert backend.latest_debug_artifacts().usage.estimated_cost_usd == pytest.approx(0.01)

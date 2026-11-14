@@ -137,11 +137,12 @@ def first_pointing_call(function_calls: list[dict]) -> int | None:
     return None
 
 
-def _point(response: dict) -> tuple[float, float] | None:
+def _point(response: dict) -> tuple[float, float, dict] | None:
+    """The zoomed reply's first point, and the args of the call that gave it."""
     for call in response.get("function_calls") or []:
         args = call.get("args") or {}
         try:
-            return float(args["x"]), float(args["y"])
+            return float(args["x"]), float(args["y"]), args
         except (KeyError, TypeError, ValueError):
             continue
     return None
@@ -171,6 +172,8 @@ class ZoomResult:
     zoomed: bool
     usage: ModelUsage | None = None
     detail: str = ""
+    # A zoom request was sent (it may have failed): the client's latest usage may be its.
+    requested: bool = False
 
 
 async def refine_click(
@@ -224,15 +227,20 @@ async def refine_click(
         response = await client.run_step(prompt=prompt, screenshot_path=str(crop_path))
     except Exception as exc:  # noqa: BLE001 - a failed zoom keeps the original click
         logger.warning("zoom request failed: %s", exc)
-        return ZoomResult(function_calls, zoomed=False, detail=f"zoom request failed: {exc}")
+        return ZoomResult(function_calls, zoomed=False, detail=f"zoom request failed: {exc}", requested=True)
     usage = client.latest_usage() if hasattr(client, "latest_usage") else None
     usage = usage if isinstance(usage, ModelUsage) else None
     point = _point(response)
     if point is None:
-        return ZoomResult(function_calls, zoomed=False, usage=usage, detail="zoom proposed no point")
+        return ZoomResult(function_calls, zoomed=False, usage=usage, detail="zoom proposed no point", requested=True)
     sx, sy = crop_grid_to_screen_grid(point[0], point[1], box, width, height)
+    new_args = {**args, "x": sx, "y": sy}
+    if "safety_decision" in point[2]:
+        # The zoomed look flagged the click for confirmation: keep that, so the run
+        # still pauses for the user before it clicks.
+        new_args["safety_decision"] = point[2]["safety_decision"]
     refined = [dict(c) for c in function_calls]
-    refined[index] = {**call, "args": {**args, "x": sx, "y": sy}}
+    refined[index] = {**call, "args": new_args}
     detail = f"zoom {call.get('name')} ({gx:g}, {gy:g}) -> ({sx:g}, {sy:g}) via crop {box}"
     logger.debug(detail)
-    return ZoomResult(refined, zoomed=True, usage=usage, detail=detail)
+    return ZoomResult(refined, zoomed=True, usage=usage, detail=detail, requested=True)

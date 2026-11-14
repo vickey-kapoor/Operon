@@ -349,9 +349,15 @@ class BrowserComputerUseBackend(AgentBackend):
         )
         if result.detail:
             logger.info("%s", result.detail)
-        made_request = result.zoomed or result.usage is not None
+        zoom_usage = result.usage
+        if result.requested and zoom_usage is None and hasattr(self.client, "latest_usage"):
+            # The zoom request failed after the client recorded its usage (for example a
+            # reply it could not parse): count that, and never lose the turn's own usage.
+            latest = self.client.latest_usage()
+            zoom_usage = latest if latest is not turn_usage else None
+        usages = (turn_usage, zoom_usage) if result.requested else None
         if not result.zoomed:
-            return response_payload, ((turn_usage, result.usage) if made_request else None)
+            return response_payload, usages
         return (
             {
                 **response_payload,
@@ -359,7 +365,7 @@ class BrowserComputerUseBackend(AgentBackend):
                 "function_calls": result.function_calls,
                 "zoom": result.detail,
             },
-            (turn_usage, result.usage),
+            usages,
         )
 
     async def _run_with_retry(

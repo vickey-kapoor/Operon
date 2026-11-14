@@ -190,3 +190,39 @@ def test_the_stagnation_hint_is_full_harness_only_and_scoped_to_its_run(tmp_path
 def test_the_profile_reaches_the_loop() -> None:
     assert _loop(THIN).thin_harness is True
     assert _loop(FULL).thin_harness is False
+
+
+@pytest.mark.asyncio
+async def test_full_loop_execution_retry_stays_in_the_same_step(tmp_path) -> None:
+    """KAN-150: the retry's re-look is recorded on the run without counting a new
+    step (it used to bump step_count and write into the next step's folder)."""
+    from operon.models.capture import CaptureFrame
+
+    loop = _loop(FULL)
+    action = AgentAction(action_type=ActionType.CLICK, x=10, y=20)
+    failed = _executed(action, success=False, detail="target moved").model_copy(
+        update={"failure_category": FailureCategory.CLICK_NO_EFFECT}
+    )
+    loop.executor_adapter = Mock(execute=AsyncMock(return_value=failed))
+    loop._persist_execution_trace = lambda run_id, step, executed: executed
+    loop.capture_service.capture = AsyncMock(
+        return_value=CaptureFrame(artifact_path=str(tmp_path / "retry.png"), width=100, height=100)
+    )
+    loop.perception_service.perceive = AsyncMock(
+        return_value=ScreenPerception(
+            summary="again", page_hint="unknown", visible_elements=[], capture_artifact_path=str(tmp_path / "retry.png")
+        )
+    )
+    loop.run_store.update_state = AsyncMock()
+    loop.run_store.get_run = AsyncMock(return_value=None)
+    state = _state(tmp_path)
+    steps, seen = state.step_count, len(state.observation_history)
+
+    await loop._execute_with_hardening(
+        record=state, state=state, perception=state.observation_history[-1],
+        decision_action=action, step_index=1, use_unified_executor=True,
+    )
+
+    loop.run_store.update_state.assert_not_awaited()
+    assert state.step_count == steps
+    assert len(state.observation_history) == seen + 1

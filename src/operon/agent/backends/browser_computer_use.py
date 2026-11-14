@@ -50,6 +50,16 @@ class _ConversationState:
     # those calls ran: a batch that failed part-way, or calls dropped by a re-look,
     # must not leave a key held that the model never got to press.
     pending_hold: KeyHold | None = None
+    # The calls of the model's latest turn, until they run or are set aside: a gate
+    # pause holds them so the person's approval runs exactly what the model asked.
+    last_calls: list[dict] = field(default_factory=list)
+    # Why the open calls did not run when Operon set them aside without asking the
+    # person (a rule ran something else, or a guard rejected the call); the next
+    # answer reports it instead of an outcome.
+    not_run_reason: str | None = None
+    # Why the last attempt failed when it never reached the action history (an
+    # in-step retry asks the model again before the step is recorded).
+    attempt_error: str | None = None
 
 
 def _requires_confirmation(call: dict) -> bool:
@@ -93,7 +103,8 @@ class BrowserComputerUseBackend(AgentBackend):
         self.tools = tuple(tools)
         self._prompt_template = prompt_path.read_text(encoding="utf-8")
         self._skill_text = _tools.skill_text(self.tools)
-        self._cached_decision: PolicyDecision | None = None
+        self._cached_decisions: dict[str, PolicyDecision] = {}
+        self._perception_only = False
         self._last_frames: dict[str, CaptureFrame] = {}
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
@@ -107,24 +118,39 @@ class BrowserComputerUseBackend(AgentBackend):
         raw_path = step_dir / "computer_use_raw.json"
         parsed_path = step_dir / "computer_use_parsed.json"
 
-        prompt = self._render_prompt(state)
-        bg_writer.enqueue(prompt_path, prompt)
+        if self._perception_only:
+            # A mid-step re-look (an execution retry, a page-load wait): the screen
+            # is all the loop needs. A model turn here would answer the open call
+            # before it was recorded and replace the step's decision.
+            return self._build_perception(payload={}, screenshot_path=screenshot.artifact_path)
 
         conversation = self._conversations.get(state.run_id)
         if conversation is not None and conversation.held_calls:
-            # The run paused for confirmation and the user resumed it: run the held
-            # call now, and acknowledge the safety decision when answering it.
-            function_calls = [_without_safety_decision(call) for call in conversation.held_calls]
+            # The run paused before these calls ran (the model's require_confirmation,
+            # or an Operon gate) and the person approved: run them now, with no
+            # model turn. Queued hints stay queued for the next turn.
+            bg_writer.enqueue(prompt_path, "No model call: running the calls the person approved.\n")
+            held = conversation.held_calls
+            function_calls = [_without_safety_decision(call) for call in held]
             conversation.held_calls = []
-            conversation.acknowledge_safety = True
+            conversation.last_calls = list(held)
+            # The API rejects the answer to a require_confirmation call unless it
+            # acknowledges the decision, and only those calls carry one.
+            conversation.acknowledge_safety = any(_requires_confirmation(call) for call in held)
             response_payload = {
                 "function_call": function_calls[0],
                 "function_calls": function_calls,
                 "rationale": "Running the action the user confirmed.",
             }
         else:
-            response_payload = await self._run_with_retry(prompt=prompt, screenshot=screenshot, state=state)
+            hints = self._take_hints(state)
+            prompt = self._render_prompt(state, hints)
+            bg_writer.enqueue(prompt_path, prompt)
+            response_payload = await self._run_with_retry(
+                prompt=prompt, screenshot=screenshot, state=state, hints=hints
+            )
             function_calls = response_payload.get("function_calls") or []
+            self._conversations[state.run_id].last_calls = list(function_calls)
             if any(_requires_confirmation(call) for call in function_calls):
                 self._conversations[state.run_id].held_calls = function_calls
 
@@ -159,13 +185,14 @@ class BrowserComputerUseBackend(AgentBackend):
                 "action": {"action_type": ActionType.STOP.value},
                 "active_subgoal": "complete task",
             }
-        self._cached_decision = build_policy_decision(response_payload)
+        decision = build_policy_decision(response_payload)
+        self._cached_decisions[state.run_id] = decision
         bg_writer.enqueue(
             parsed_path,
             json.dumps(
                 {
                     "perception": perception.model_dump(mode="json"),
-                    "decision": self._cached_decision.model_dump(mode="json"),
+                    "decision": decision.model_dump(mode="json"),
                 }
             ),
         )
@@ -183,7 +210,7 @@ class BrowserComputerUseBackend(AgentBackend):
         state: AgentState,
         perception: ScreenPerception,
     ) -> PolicyDecision:
-        if self._cached_decision is None:
+        if state.run_id not in self._cached_decisions:
             # perceive() was skipped (the loop reused a prior perception) or the
             # coordinator is asking for a second decision this step: take a fresh
             # turn on the current screenshot rather than failing the step.
@@ -191,9 +218,7 @@ class BrowserComputerUseBackend(AgentBackend):
             if frame is None or not perception.capture_artifact_path:
                 raise RuntimeError("No cached computer-use decision available")
             await self.perceive(frame.model_copy(update={"artifact_path": perception.capture_artifact_path}), state)
-        decision = self._cached_decision
-        self._cached_decision = None
-        return decision
+        return self._cached_decisions.pop(state.run_id)
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
@@ -207,8 +232,52 @@ class BrowserComputerUseBackend(AgentBackend):
         if conversation is None or not conversation.held_calls:
             return
         conversation.held_calls = []
+        conversation.last_calls = []
         conversation.acknowledge_safety = False
         conversation.declined_reason = reason
+
+    def note_not_executed(self, run_id: str, reason: str) -> None:
+        """An Operon gate paused the run before the model's calls ran. Hold them:
+        the person's approval runs exactly these calls, and a correction declines
+        them (``discard_held_actions``), so the model never hears them reported as
+        done. Calls already set aside (a rule ran something else) are not held."""
+        conversation = self._conversations.get(run_id)
+        if conversation is None or not conversation.pending_function_names:
+            return
+        if conversation.held_calls:
+            return  # Already held for the model's own confirmation request.
+        if conversation.last_calls and conversation.not_run_reason is None:
+            conversation.held_calls = list(conversation.last_calls)
+            return
+        conversation.not_run_reason = f"Not executed: {reason}"
+
+    def note_replaced(self, run_id: str, action: str) -> None:
+        """Operon's harness ran ``action`` instead of the model's calls."""
+        self._set_not_run(run_id, f"Not executed: Operon ran {action} instead.")
+
+    def note_rejected(self, run_id: str, reason: str) -> None:
+        """Operon's harness dropped the model's calls without running them."""
+        self._set_not_run(run_id, f"Not executed: {reason}.")
+
+    def note_attempt_failed(self, run_id: str, detail: str) -> None:
+        """The step's attempt failed before it was recorded; the next answer to the
+        model's calls reports it."""
+        conversation = self._conversations.get(run_id)
+        if conversation is not None and detail:
+            conversation.attempt_error = detail
+
+    def set_perception_only(self, value: bool) -> None:
+        """When True, perceive() only wraps the screenshot: no model turn, and the
+        conversation and the step's decision are left as they are."""
+        self._perception_only = value
+
+    def _set_not_run(self, run_id: str, reason: str) -> None:
+        conversation = self._conversations.get(run_id)
+        if conversation is None or not conversation.pending_function_names:
+            return
+        conversation.not_run_reason = reason
+        conversation.last_calls = []
+        conversation.pending_hold = None
 
     def supports_resampling(self, run_id: str = "") -> bool:
         # The decision is a function call in a stateful Computer Use conversation;
@@ -232,9 +301,11 @@ class BrowserComputerUseBackend(AgentBackend):
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._advisory_hints.pop(run_id, None)
 
-    async def _run_with_retry(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
+    async def _run_with_retry(
+        self, *, prompt: str, screenshot: CaptureFrame, state: AgentState, hints: list[tuple[str, str]] | None = None
+    ) -> dict:
         try:
-            response_payload = await self._run_turn(prompt=prompt, screenshot=screenshot, state=state)
+            response_payload = await self._run_turn(prompt=prompt, screenshot=screenshot, state=state, hints=hints)
         except (GeminiComputerUseError, BackendCompatibilityError) as exc:
             raise BackendCompatibilityError(str(exc)) from exc
 
@@ -272,7 +343,9 @@ class BrowserComputerUseBackend(AgentBackend):
             self._conversations[state.run_id] = conversation
         return retry_payload if not self._needs_stronger_retry(retry_payload) else response_payload
 
-    async def _run_turn(self, *, prompt: str, screenshot: CaptureFrame, state: AgentState) -> dict:
+    async def _run_turn(
+        self, *, prompt: str, screenshot: CaptureFrame, state: AgentState, hints: list[tuple[str, str]] | None = None
+    ) -> dict:
         conversation = self._conversations.setdefault(state.run_id, _ConversationState())
         if conversation.pending_function_names:
             # Always answer the model's open tool call before asking again: the API
@@ -285,15 +358,23 @@ class BrowserComputerUseBackend(AgentBackend):
             error = None
             tool_outputs: list[ToolOutput] = []
             declined = conversation.declined_reason is not None
+            not_run = conversation.not_run_reason
+            conversation.not_run_reason = None
+            attempt_error, conversation.attempt_error = conversation.attempt_error, None
             if declined:
                 error = conversation.declined_reason
                 conversation.declined_reason = None
+            elif not_run is not None:
+                error = not_run
+            elif attempt_error is not None and len(state.action_history) <= conversation.acknowledged_actions:
+                error = attempt_error
             elif len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
                 error = state.action_history[-1].detail
-            if not declined and len(state.action_history) > conversation.acknowledged_actions:
+            if not declined and not_run is None and len(state.action_history) > conversation.acknowledged_actions:
                 tool_outputs = list(state.action_history[-1].tool_outputs or [])
             ran = (
                 not declined
+                and not_run is None
                 and len(state.action_history) > conversation.acknowledged_actions
                 and state.action_history[-1].success
             )
@@ -323,9 +404,15 @@ class BrowserComputerUseBackend(AgentBackend):
                 # The user resumed with a correction instead: send it with the
                 # decline, since this turn is otherwise only the function response.
                 function_response["parts"].append({"text": prompt})
+            elif hints:
+                # Operon's notes for this step (the person's override or hand-back
+                # note, memory, a stagnation hint) ride along with the answer; the
+                # full prompt went out on the first turn.
+                function_response["parts"].append({"text": self._hint_text(hints)})
             conversation.contents.append(function_response)
             conversation.acknowledged_actions = len(state.action_history)
             conversation.pending_function_names = []
+            conversation.last_calls = []
         elif not conversation.contents or (
             not conversation.pending_function_names and conversation.contents[-1].get("role") == "model"
         ):
@@ -350,14 +437,22 @@ class BrowserComputerUseBackend(AgentBackend):
             ]
         return response_payload
 
-    def _render_prompt(self, state: AgentState) -> str:
-        hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None)
+    def _take_hints(self, state: AgentState) -> list[tuple[str, str]]:
+        """Pop the hints queued for this run (or the shared test bucket)."""
+        hints = self._advisory_hints.pop(state.run_id, None) or self._advisory_hints.pop("", None) or []
         if hints:
             _counts: dict[str, int] = {}
             for _, _src in hints:
                 _label = _src or "unknown"
                 _counts[_label] = _counts.get(_label, 0) + 1
             logger.debug("hints consumed (%s): [%s]", self.__class__.__name__, ", ".join(f"{k}:{v}" for k, v in _counts.items()))
+        return hints
+
+    @staticmethod
+    def _hint_text(hints: list[tuple[str, str]]) -> str:
+        return "Notes from Operon for this step:\n" + "\n".join(f"- {h}" for h, _ in hints)
+
+    def _render_prompt(self, state: AgentState, hints: list[tuple[str, str]] | None = None) -> str:
         hint_block = "\n".join(f"- {h}" for h, _ in hints) if hints else "none"
         return self._prompt_template.format(
             intent=state.intent,

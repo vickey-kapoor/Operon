@@ -56,6 +56,14 @@ class PolicyService(ABC):
         if note is not None:
             note(run_id, reason)
 
+    def note_attempt_failed(self, run_id: str, detail: str) -> None:
+        """The step's attempt failed before it was recorded and the harness is
+        asking again in the same step. Wrappers pass it on; a backend that answers
+        the model's tool calls reports the failure."""
+        note = getattr(getattr(self, "delegate", None), "note_attempt_failed", None)
+        if note is not None:
+            note(run_id, detail)
+
     def has_held_actions(self, run_id: str) -> bool:
         """Whether the delegate holds calls the model asked the user to confirm."""
         held = getattr(getattr(self, "delegate", None), "has_held_actions", None)

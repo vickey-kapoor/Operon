@@ -859,6 +859,29 @@ def save_final_screens(results: list[TaskResult], target: Path) -> None:
             shutil.copytree(_run_dir(r.run_id), target / name, dirs_exist_ok=True)
 
 
+def save_recordings(results: list[TaskResult], target: Path, *, mode: str) -> int:
+    """Write each thin-harness Gemini run as a replayable recording (KAN-167,
+    ``evals/replay.py``) to ``target/<task>.json``. Runs that cannot replay (the full
+    harness) are left out. Returns how many were written."""
+    from evals.replay import RecordingError, record_run
+
+    written = 0
+    for r in results:
+        if not r.run_id or not _run_dir(r.run_id).is_dir():
+            continue
+        name = r.task if r.attempt == 1 else f"{r.task}-try{r.attempt}"
+        try:
+            recording = record_run(_run_dir(r.run_id), task=r.task, mode="browser" if mode == "browser" else "desktop",
+                                   outcome=r.outcome)
+        except (RecordingError, OSError, ValueError) as exc:
+            print(f"  {name}: no recording ({exc})", file=sys.stderr)
+            continue
+        target.mkdir(parents=True, exist_ok=True)
+        (target / f"{name}.json").write_text(json.dumps(recording, indent=2) + "\n", encoding="utf-8")
+        written += 1
+    return written
+
+
 DEFAULT_TIMEOUT_S = 420.0
 DEFAULT_PAUSES = 2
 LONG_PAUSES = 10
@@ -1124,6 +1147,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     if args.keep_screens:
         # Held-out tasks' screens and run folders stay out of the artifact.
         save_final_screens(shown, bench_dir / Path(name).stem)
+        save_recordings(shown, bench_dir / Path(name).stem / "recordings", mode=args.mode)
 
     if args.json:
         print(json.dumps(report, indent=2))

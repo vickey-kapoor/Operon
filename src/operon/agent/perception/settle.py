@@ -103,6 +103,7 @@ async def wait_until_settled(
     *,
     min_s: float = MIN_WAIT_S,
     max_s: float = 3.0,
+    fail_wait_s: float | None = None,
     interval_s: float = SAMPLE_INTERVAL_S,
     quiet_frames: int = QUIET_FRAMES,
     threshold: float = QUIET_THRESHOLD,
@@ -113,14 +114,23 @@ async def wait_until_settled(
     """Sample frames until the screen is quiet for ``quiet_frames`` in a row.
 
     Returns after at least ``min_s`` and at most ``max_s``. If a frame cannot be grabbed
-    the wait falls back to the plain ``min_s`` sleep, so a broken grab never makes an
-    action slower or fail.
+    (it fails, or takes longer than the time left) the wait falls back to a plain sleep
+    of ``fail_wait_s`` in total (default ``min_s``): with no evidence the screen settled,
+    the caller's old fixed delay is the safe wait. A broken grab never fails an action,
+    and no grab can hold one past ``max_s``.
     """
     start = clock()
-    previous = await grab()
+    fail_wait = min_s if fail_wait_s is None else fail_wait_s
+
+    async def fall_back(frames: int, max_change: float) -> SettleResult:
+        remaining = fail_wait - (clock() - start)
+        if remaining > 0:
+            await sleep(remaining)
+        return SettleResult(False, clock() - start, frames, max_change)
+
+    previous = await _bounded_grab(grab, max_s)
     if previous is None:
-        await sleep(min_s)
-        return SettleResult(False, clock() - start, 0, 0.0)
+        return await fall_back(0, 0.0)
 
     frames = 1
     quiet = 0
@@ -133,12 +143,9 @@ async def wait_until_settled(
         if elapsed >= max_s:
             return SettleResult(False, elapsed, frames, max_change)
         await sleep(min(interval_s, max(0.0, max_s - elapsed)))
-        current = await grab()
+        current = await _bounded_grab(grab, max(0.0, max_s - (clock() - start)))
         if current is None:
-            remaining = min_s - (clock() - start)
-            if remaining > 0:
-                await sleep(remaining)
-            return SettleResult(False, clock() - start, frames, max_change)
+            return await fall_back(frames, max_change)
         change = change_ratio(previous, current)
         max_change = max(max_change, change)
         for observer in observers:
@@ -149,6 +156,15 @@ async def wait_until_settled(
         elapsed = clock() - start
         if quiet >= quiet_frames and elapsed >= min_s:
             return SettleResult(True, elapsed, frames, max_change)
+
+
+async def _bounded_grab(grab: FrameGrab, timeout_s: float) -> bytes | None:
+    """One grab, given up on (None) if it fails or outlasts ``timeout_s``."""
+    try:
+        return await asyncio.wait_for(grab(), timeout=max(timeout_s, 0.05))
+    except Exception:  # noqa: BLE001 - includes TimeoutError: a slow grab counts as a failed one
+        logger.debug("settle: frame grab failed or timed out", exc_info=True)
+        return None
 
 
 def _notify(observer: FrameObserver, index: int, signature: bytes, change: float | None) -> None:
@@ -179,6 +195,7 @@ async def settle_after_action(
         grab,
         min_s=min(fallback_delay, MIN_WAIT_S),
         max_s=max(settings.settle_max_s, fallback_delay),
+        fail_wait_s=fallback_delay,
         observers=observers,
     )
     logger.debug(

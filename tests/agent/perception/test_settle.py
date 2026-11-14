@@ -115,6 +115,34 @@ async def test_a_failed_first_grab_falls_back_to_the_plain_floor() -> None:
     assert clock.sleeps == [0.15]
 
 
+async def test_a_failed_grab_waits_out_the_callers_old_delay() -> None:
+    """No evidence the screen settled: the old fixed delay is the safe wait (not just the floor)."""
+    clock = FakeClock()
+    result = await _settle([None], clock, min_s=0.15, fail_wait_s=1.0)
+    assert not result.settled
+    assert result.waited_s == pytest.approx(1.0)
+
+    clock = FakeClock()
+    result = await _settle([_STILL, None], clock, min_s=0.15, fail_wait_s=1.0)
+    assert not result.settled
+    assert result.waited_s == pytest.approx(1.0)  # 0.1 s sampling, then the rest of the 1.0 s
+
+
+async def test_a_stalled_grab_cannot_hold_the_action_past_the_cap() -> None:
+    clock = FakeClock()
+
+    async def stalled() -> bytes | None:
+        await asyncio.sleep(30)
+        return _STILL
+
+    import time as _time
+
+    started = _time.monotonic()
+    result = await wait_until_settled(stalled, max_s=0.2, sleep=clock.sleep, clock=clock.time)
+    assert not result.settled and result.frames == 0
+    assert _time.monotonic() - started < 2.0  # gave up after the cap, not after 30 s
+
+
 async def test_a_grab_that_fails_midway_still_waits_out_the_floor() -> None:
     clock = FakeClock()
     result = await _settle([_STILL, None], clock, min_s=0.5)

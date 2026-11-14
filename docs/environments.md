@@ -20,6 +20,7 @@ Code: `src/operon/environments/` (`base.py` is the interface, `registry.py` the 
 | `OPERON_ENVIRONMENT=<name>` in `.env` | Every desktop run on this API uses it |
 | `operon run --desktop --env <name> "task"` | One local run uses it (not with `--request`: the API you send to uses its own setting) |
 | `operon envs` | Lists every environment, whether it is ready here, and which one is selected |
+| `operon envs --try <name>` | Free smoke test: starts it, takes one screenshot through it (saved under `.var/env-try/`), closes it. No model calls |
 
 An unknown name is refused at startup, and a provider whose `check()` fails stops the
 desktop loop from being built, with the missing pieces in the error.

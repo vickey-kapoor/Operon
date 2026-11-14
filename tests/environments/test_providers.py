@@ -247,3 +247,76 @@ def test_run_env_flag_is_refused_with_request():
 
     args = cli.build_parser().parse_args(["run", "--request", "--env", "live", "task"])
     assert asyncio.run(cli._run(args)) == 2
+
+
+# ── operon envs --try ───────────────────────────────────────────
+
+
+def test_try_environment_starts_screenshots_and_stops(monkeypatch, tmp_path, capsys):
+    from operon.environments import cli as env_cli
+    from operon.models.capture import CaptureFrame
+
+    shot = tmp_path / "frame.png"
+    shot.write_bytes(b"png")
+    closed = []
+
+    class _Exec:
+        async def capture(self):
+            return CaptureFrame(artifact_path=str(shot), width=1024, height=768)
+
+        async def aclose(self):
+            closed.append(True)
+
+    fake = _FakeProvider()
+    fake.executor = _Exec()
+    monkeypatch.setattr(env_cli, "get_provider", lambda name: fake)
+    assert env_cli.try_environment("fake", out_dir=tmp_path / "out") == 0
+    out = capsys.readouterr().out
+    assert "1024x768" in out
+    saved = list((tmp_path / "out").glob("fake-*.png"))
+    assert len(saved) == 1 and saved[0].read_bytes() == b"png"
+    assert fake.calls == ["check", "start", "build_executor", "stop"]
+    assert closed == [True]
+
+
+def test_try_environment_reports_a_failed_start_and_still_stops(monkeypatch, capsys):
+    from operon.environments import cli as env_cli
+
+    fake = _FakeProvider()
+
+    def boom():
+        fake.calls.append("start")
+        raise RuntimeError("guest did not start; Guest log: ImportError")
+
+    fake.start = boom  # type: ignore[method-assign]
+    monkeypatch.setattr(env_cli, "get_provider", lambda name: fake)
+    assert env_cli.try_environment("fake") == 1
+    assert "ImportError" in capsys.readouterr().out
+    assert fake.calls[-1] == "stop"
+
+
+def test_try_environment_that_is_not_ready_never_starts(monkeypatch, capsys):
+    from operon.environments import cli as env_cli
+
+    fake = _FakeProvider(ok=False)
+    monkeypatch.setattr(env_cli, "get_provider", lambda name: fake)
+    assert env_cli.try_environment("fake") == 1
+    assert fake.calls == ["check"]
+    assert "Docker is not running" in capsys.readouterr().out
+
+
+def test_try_unknown_environment(capsys):
+    from operon.environments import cli as env_cli
+
+    assert env_cli.try_environment("moon") == 2
+
+
+def test_envs_try_flag_routes_to_the_smoke_test(monkeypatch):
+    from operon import cli
+    from operon.environments import cli as env_cli
+
+    seen = []
+    monkeypatch.setattr(env_cli, "try_environment", lambda name: seen.append(name) or 0)
+    monkeypatch.setattr(cli, "_load_env", lambda: None)
+    assert cli.main(["envs", "--try", "live"]) == 0
+    assert seen == ["live"]

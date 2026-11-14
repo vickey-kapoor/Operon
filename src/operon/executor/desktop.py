@@ -909,10 +909,7 @@ class DesktopExecutor(Executor):
             if action.clear_before_typing:
                 await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'a')
                 await asyncio.sleep(0.05)
-            # Clipboard-paste avoids character-ordering issues with pyautogui.write()
-            # when typing long strings or strings containing special characters like $
-            await asyncio.to_thread(pyperclip.copy, action.text)
-            await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'v')
+            await self._enter_text(action.text)
             if action.press_enter:
                 await asyncio.sleep(0.05)
                 await asyncio.to_thread(pyautogui.press, 'enter')
@@ -921,6 +918,13 @@ class DesktopExecutor(Executor):
             return self._ok(action, f"Typed '{action.text}'", after_path)
         except Exception as exc:
             return self._fail(action, f"Type failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
+    async def _enter_text(self, text: str) -> None:
+        """Put ``text`` into the focused field. Clipboard-paste avoids character-ordering
+        issues with pyautogui.write() when typing long strings or strings containing
+        special characters like $."""
+        await asyncio.to_thread(pyperclip.copy, text)
+        await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'v')
 
     def _sample_region(self, x: int, y: int, radius: int = 30) -> bytes:
         """Capture a small pixel region around (x, y) for focus-change detection."""

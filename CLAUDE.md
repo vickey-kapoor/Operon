@@ -34,6 +34,10 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 # Offline test suite (no network, no browser)
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests -q
 
+# Free desktop end-to-end (KAN-166; CI job "Desktop (Linux container)"): real loop + real XFCE desktop
+# in Docker, scripted model ($0). Needs Docker; deselected by default.
+$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desktop_e2e -m desktop_container -o addopts=""
+
 # Offline eval: scripted scenarios through the real loop (evals/); report table
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 

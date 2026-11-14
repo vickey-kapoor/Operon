@@ -45,6 +45,17 @@ class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
             logger.debug("reset_desktop: ctrl+alt+d failed, continuing anyway", exc_info=True)
             await asyncio.sleep(0.5)
 
+    # ── typing ───────────────────────────────────────────────────
+
+    async def _enter_text(self, text: str) -> None:
+        """Plain ASCII is typed key by key: a terminal does not paste on ctrl+v (it
+        wants ctrl+shift+v), so the clipboard would drop the text there (KAN-166).
+        Anything else (accents, emoji) has no key, so it is pasted."""
+        if text.isascii():
+            await asyncio.to_thread(_desktop.pyautogui.write, text, 0.01)
+        else:
+            await super()._enter_text(text)
+
     # ── apps ─────────────────────────────────────────────────────
 
     async def _exec_launch_app(self, action: AgentAction) -> ExecutedAction:

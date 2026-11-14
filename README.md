@@ -47,14 +47,14 @@ You need Python 3.14+ and a free [Gemini API key](https://aistudio.google.com/ap
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
-pip install --pre operon-agent
+pip install operon-agent
 ```
 
-`--pre` picks the current alpha. To work on Operon itself, clone the repo and `pip install -e .` instead.
+To work on Operon itself, clone the repo and `pip install -e .` instead.
 
 > [!TIP]
 > If Windows blocks `operon.exe` or `pip.exe` (Smart App Control), run the same commands through
-> Python: `python -m pip install --pre operon-agent`, then `python -m operon.cli setup` and
+> Python: `python -m pip install operon-agent`, then `python -m operon.cli setup` and
 > `python -m operon.cli run "..."`.
 
 **2. Set up** (about two minutes): paste your key when asked. `operon setup` checks it with

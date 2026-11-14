@@ -132,20 +132,18 @@ There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`,
 - memory hint lookup from `FileBackedMemoryStore`
 - `PolicyRuleEngine`
 - the configured policy delegate
-- post-LLM guards such as `_semantic_anchor_check`
+- the post-LLM guard `_reject_premature_stop` (re-plans a STOP made before any real action)
 
 Earlier benchmark-plugin registration scaffolding has been removed from `PolicyRuleEngine`; benchmark-specific behavior must not be hardcoded into core policy rules.
 
-Current built-in policy rules include:
-- human intervention detection
-- task-success stop
-- desktop app launch preference
-- visible form field fill
-- dropdown selection
-- identical type retry avoidance
-- no-progress recovery
-- blocking overlay dismissal
-- search query handling
+Current built-in policy rules:
+- task-success stop (a success phrase in the model's own text; the model confirms it first)
+- desktop app launch preference (Desktop and Hybrid only)
+
+Gemini Computer Use reports no element list and no page type, so rules that needed either
+could never fire. KAN-161 removed them (form fill, dropdown selection, overlay dismissal,
+search query, no-progress recovery, identical type retry, page-type human intervention) along
+with the element-based guards `_semantic_anchor_check` and `_reject_hallucinated_target`.
 
 ## Verification
 

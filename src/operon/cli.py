@@ -1,5 +1,6 @@
 """The ``operon`` command (KAN-89).
 
+    operon setup                    first time: save the Gemini key, install the browser, self-check
     operon run "task"               run a task here, in this process, and print a report
     operon run --request "task"     send the task to a running API and follow it
     operon serve                    start the API and print the task page's link
@@ -233,7 +234,10 @@ async def _answer(client, run_id: str, waiting: dict[str, Any], ask, out) -> dic
 def _load_env() -> None:
     from dotenv import find_dotenv, load_dotenv
 
+    from operon.core.paths import load_user_env
+
     load_dotenv(find_dotenv(usecwd=True), override=False)
+    load_user_env()  # the key `operon setup` saved, for a pip install with no .env here
 
 
 def _payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -319,8 +323,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)
 
-    from operon import cloud
+    from operon import cloud, setup_command
 
+    setup_command.add_parser(sub)
     cloud.add_parser(sub)
     return parser
 

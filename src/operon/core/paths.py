@@ -25,6 +25,34 @@ def project_root() -> Path:
     return current.parents[3]
 
 
+def user_config_dir() -> Path:
+    """Return the per-user settings folder (``~/.operon``) that ``operon setup`` writes.
+
+    It holds ``operon.env``, so a pip-installed Operon finds its key from any folder.
+    """
+    return _env_path("OPERON_CONFIG_DIR", Path.home() / ".operon")
+
+
+def user_env_file() -> Path:
+    """Return the per-user settings file that ``operon setup`` writes the model key to."""
+    return user_config_dir() / "operon.env"
+
+
+def load_user_env() -> bool:
+    """Load ``user_env_file()`` into the environment without overriding anything already set.
+
+    Call it after the working folder's ``.env``, so a value there (or in the real
+    environment) wins over the per-user file. Returns whether the file existed.
+    """
+    path = user_env_file()
+    if not path.is_file():
+        return False
+    from dotenv import load_dotenv
+
+    load_dotenv(path, override=False)
+    return True
+
+
 def prompts_dir() -> Path:
     """Return the prompts directory shipped inside the ``operon`` package."""
     return Path(__file__).resolve().parents[1] / "prompts"

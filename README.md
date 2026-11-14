@@ -46,8 +46,7 @@ Requires Python 3.14+ and Chromium.
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-playwright install chromium
-cp .env.example .env    # then set GEMINI_API_KEY
+operon setup            # saves your Gemini key, installs Chromium, runs a self-check
 python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 ```
 

@@ -26,6 +26,7 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 # Run the API
 .venv\Scripts\python -m uvicorn operon.api.server:app --host 127.0.0.1 --port 8080
 # Front door (KAN-89): API + task page link (/app#key=...); one task here, or sent to a running API
+.venv\Scripts\operon setup     # KAN-140: save Gemini key to ~/.operon, install Chromium, self-check (--check only checks)
 .venv\Scripts\operon serve
 .venv\Scripts\operon run "task" [--desktop] [--url URL] [--mode ask|risky|auto]
 .venv\Scripts\operon run --request "task"

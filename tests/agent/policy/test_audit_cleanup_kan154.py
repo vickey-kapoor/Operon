@@ -149,3 +149,26 @@ def test_a_form_with_only_text_values_submits_instead_of_scrolling_up_forever(tm
     assert decision is not None
     assert decision.action.action_type is ActionType.CLICK
     assert decision.action.target_element_id == "submit"
+
+
+def test_a_click_the_model_says_places_an_order_asks_for_approval() -> None:
+    """KAN-153: a Computer Use click has no element name; the model's own words do."""
+    gate = TrustGate(enabled=True, confirm=("place order",))
+
+    said = gate.evaluate(_click(5, 5), stated_reason="I'll click Place order to finish checkout.")
+    quiet = gate.evaluate(_click(5, 5), stated_reason="I'll open the cart.")
+    typed = gate.evaluate(
+        AgentAction(action_type=ActionType.TYPE, text="hello", x=1, y=1), stated_reason="before I place order"
+    )
+
+    assert said.verdict is TrustVerdict.CONFIRM and said.matched == "place order"
+    assert quiet.verdict is TrustVerdict.ALLOW
+    assert typed.verdict is TrustVerdict.ALLOW  # typed text is judged by itself
+
+
+def test_the_models_words_never_block_a_step_on_their_own() -> None:
+    gate = TrustGate(enabled=True, deny=("delete account",))
+
+    result = gate.evaluate(_click(5, 5), stated_reason="This will delete account data.")
+
+    assert result.verdict is TrustVerdict.CONFIRM

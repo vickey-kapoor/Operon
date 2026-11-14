@@ -150,7 +150,13 @@ class TrustGate:
             return None
         return self._host_blocked(current_url)
 
-    def evaluate(self, action: object, current_url: str | None = None) -> TrustResult:
+    def evaluate(
+        self, action: object, current_url: str | None = None, *, stated_reason: str | None = None
+    ) -> TrustResult:
+        """``stated_reason`` is the model's own words for the step (KAN-153). Under
+        Computer Use a click has coordinates but no element name, so "I'll click
+        Place order" is the only text naming what it hits. It can only ask for
+        approval: the model's prose never blocks a step on its own."""
         if not self.enabled:
             return TrustResult(TrustVerdict.ALLOW)
         description = self.describe(action)
@@ -173,7 +179,26 @@ class TrustGate:
             # No path or domain rule can judge what a command does: a person approves
             # it (``auto`` mode skips this, deny rules above still block).
             return TrustResult(TrustVerdict.CONFIRM, "shell commands need approval", "run_shell")
+        reason = (stated_reason or "").lower()
+        if reason and _names_no_target(action):
+            for keyword in (*self.deny, *self.confirm):
+                if keyword in reason:
+                    return TrustResult(TrustVerdict.CONFIRM, "the model says this step does a high-risk action", keyword)
         return TrustResult(TrustVerdict.ALLOW)
+
+
+# Actions that act on whatever is under the pointer or has focus: without a
+# resolved target name the gate cannot tell what they press.
+_POINTER_ACTIONS = frozenset({"click", "double_click", "triple_click", "right_click", "press_key", "hotkey", "drag"})
+
+
+def _names_no_target(action: object) -> bool:
+    action_type = getattr(getattr(action, "action_type", None), "value", None)
+    if action_type not in _POINTER_ACTIONS:
+        return False
+    ctx = getattr(action, "target_context", None)
+    original = getattr(ctx, "original_target", None) if ctx is not None else None
+    return not getattr(original, "primary_name", None)
 
 
 def make_trust_gate() -> TrustGate:

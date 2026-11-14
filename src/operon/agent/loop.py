@@ -1032,7 +1032,11 @@ class AgentLoop:
                 (
                     leaf,
                     apply_permission_mode(
-                        self._trust_gate.evaluate(leaf, current_url=current_url), leaf, permission_mode
+                        self._trust_gate.evaluate(
+                            leaf, current_url=current_url, stated_reason=decision.rationale
+                        ),
+                        leaf,
+                        permission_mode,
                     ),
                 )
                 for leaf in leaves

@@ -125,32 +125,6 @@ def test_memory_hints_and_rule_trace_are_queued_once_per_step(tmp_path: Path) ->
     assert delegate.hints.count("rule X fired") == 1
 
 
-def test_a_form_with_only_text_values_submits_instead_of_scrolling_up_forever(tmp_path: Path) -> None:
-    from operon.agent.policy.rules import PolicyRuleEngine
-
-    engine = PolicyRuleEngine()
-    state = AgentState(
-        run_id="r",
-        intent='Fill the contact form with name "Jane Doe", email "jane@example.com" and message "Hi there", then submit',
-        status=RunStatus.RUNNING,
-    )
-    engine._form_fields_filled["r"] = {"name", "email", "message"}
-    submit = UIElement(
-        element_id="submit", element_type=UIElementType.BUTTON, label="Submit",
-        x=300, y=400, width=100, height=30, is_interactable=True, confidence=0.9,
-    )
-    perception = ScreenPerception(
-        summary="Contact form", page_hint=PageHint.FORM_PAGE, visible_elements=[submit],
-        capture_artifact_path=str(tmp_path / "before.png"),
-    )
-
-    decision = engine._form_visible_field_fill_rule(state, perception)
-
-    assert decision is not None
-    assert decision.action.action_type is ActionType.CLICK
-    assert decision.action.target_element_id == "submit"
-
-
 def test_a_click_the_model_says_places_an_order_asks_for_approval() -> None:
     """KAN-153: a Computer Use click has no element name; the model's own words do."""
     gate = TrustGate(enabled=True, confirm=("place order",))

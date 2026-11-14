@@ -7,16 +7,10 @@ from pathlib import Path
 import pytest
 
 from operon.agent.policy.coordinator import PolicyCoordinator
-from operon.models.common import FailureCategory, LoopStage, RunStatus
-from operon.models.execution import ExecutedAction
+from operon.models.common import RunStatus
 from operon.models.perception import ScreenPerception, UIElement, UIElementType
-from operon.models.policy import ActionType, AgentAction
+from operon.models.policy import ActionType
 from operon.models.state import AgentState
-from operon.models.verification import (
-    VerificationFailureType,
-    VerificationResult,
-    VerificationStatus,
-)
 from operon.store.memory import FileBackedMemoryStore
 from tests.fixtures.paths import unique_artifact_dir
 from tests.fixtures.policy import PromptPolicyStub
@@ -89,31 +83,6 @@ def _form_perception(root: Path, page_hint: str = "form_page", focused_element_i
         focused_element_id=focused_element_id,
         capture_artifact_path=str(path),
         confidence=0.9,
-    )
-
-
-def _search_perception(root: Path, *, focused_element_id: str | None = None) -> ScreenPerception:
-    path = root / "run-1" / "step_1" / "before.png"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return ScreenPerception(
-        summary="Search page with a single search input.",
-        page_hint="form_page",
-        visible_elements=[
-            UIElement(
-                element_id="search-input",
-                element_type=UIElementType.INPUT,
-                label="Search or jump to...",
-                x=700,
-                y=40,
-                width=220,
-                height=30,
-                is_interactable=True,
-                confidence=0.95,
-            )
-        ],
-        focused_element_id=focused_element_id,
-        capture_artifact_path=str(path),
-        confidence=0.95,
     )
 
 
@@ -191,159 +160,6 @@ async def test_type_action_reaches_executor_without_rule_interception() -> None:
     assert decision.action.target_element_id == "name-input"
     assert decision.action.text == "Alice"
     assert client.calls == 1
-
-
-@pytest.mark.asyncio
-async def test_search_query_rule_types_into_an_unfocused_search_input_in_one_action() -> None:
-    """Atomic TYPE: no separate focus click; the coordinates focus it (KAN-154)."""
-    root = _local_test_dir("test-policy-coordinator-search-click")
-    client = StubGeminiClient(
-        response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
-    )
-    coordinator = PolicyCoordinator(
-        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
-        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
-    )
-    state = AgentState(
-        run_id="run-1",
-        intent="Open Chrome, navigate to github.com, and search for Operon",
-        status=RunStatus.RUNNING,
-        current_subgoal="search",
-    )
-
-    decision = await coordinator.choose_action(state, _search_perception(root))
-
-    assert decision.action.action_type is ActionType.TYPE
-    assert decision.action.target_element_id == "search-input"
-    assert decision.action.x is not None and decision.action.y is not None
-    assert decision.action.text == "Operon"
-    assert client.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_search_query_rule_types_and_submits_when_search_input_focused() -> None:
-    root = _local_test_dir("test-policy-coordinator-search-type")
-    client = StubGeminiClient(
-        response='{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
-    )
-    coordinator = PolicyCoordinator(
-        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
-        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
-    )
-    state = AgentState(
-        run_id="run-1",
-        intent="Open Chrome, navigate to github.com, and search for Operon",
-        status=RunStatus.RUNNING,
-        current_subgoal="search",
-    )
-
-    decision = await coordinator.choose_action(
-        state,
-        _search_perception(root, focused_element_id="search-input"),
-    )
-
-    assert decision.action.action_type is ActionType.TYPE
-    assert decision.action.target_element_id == "search-input"
-    assert decision.action.text == "Operon"
-    assert decision.action.press_enter is True
-    assert client.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_no_identical_type_retry_is_enforced_after_failed_type() -> None:
-    root = _local_test_dir("test-policy-coordinator-no-identical-retry")
-    client = StubGeminiClient(
-        response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Retry name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
-    )
-    coordinator = PolicyCoordinator(
-        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
-        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
-    )
-    prior_type = AgentAction(action_type=ActionType.TYPE, target_element_id="name-input", text="Alice")
-    state = AgentState(
-        run_id="run-1",
-        intent="Complete the auth-free form and submit it successfully.",
-        status=RunStatus.RUNNING,
-        current_subgoal="fill_name",
-        action_history=[
-            ExecutedAction(
-                action=prior_type,
-                success=False,
-                detail="Execution failed: target not editable.",
-                failure_category=FailureCategory.EXECUTION_TARGET_NOT_EDITABLE,
-                failure_stage=LoopStage.EXECUTE,
-            )
-        ],
-        verification_history=[
-            VerificationResult(
-                status=VerificationStatus.FAILURE,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason="Type failed.",
-                failure_type=VerificationFailureType.ACTION_FAILED,
-                failure_category=FailureCategory.EXECUTION_TARGET_NOT_EDITABLE,
-                failure_stage=LoopStage.EXECUTE,
-            )
-        ],
-        retry_counts={"fill_name:action_failed": 1},
-        target_failure_counts={
-            f"type:name-input:{FailureCategory.EXECUTION_TARGET_NOT_EDITABLE.value}": 1,
-        },
-    )
-
-    decision = await coordinator.choose_action(state, _form_perception(root))
-
-    assert decision.action.action_type is ActionType.CLICK
-    assert decision.action.target_element_id == "name-input"
-    assert client.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_failed_type_target_not_found_forces_click_on_next_step() -> None:
-    root = _local_test_dir("test-policy-coordinator-target-not-found-click")
-    client = StubGeminiClient(
-        response='{"action":{"action_type":"type","target_element_id":"name-input","text":"Alice"},"rationale":"Retry name.","confidence":0.8,"active_subgoal":"fill_name","expected_change":"focus"}'
-    )
-    coordinator = PolicyCoordinator(
-        delegate=PromptPolicyStub(gemini_client=client, prompt_path=_prompt_path(root)),
-        memory_store=FileBackedMemoryStore(root_dir=root / "runs"),
-    )
-    prior_type = AgentAction(action_type=ActionType.TYPE, target_element_id="name-input", text="Alice")
-    state = AgentState(
-        run_id="run-1",
-        intent="Complete the auth-free form and submit it successfully.",
-        status=RunStatus.RUNNING,
-        current_subgoal="focus name-input",
-        action_history=[
-            ExecutedAction(
-                action=prior_type,
-                success=False,
-                detail="Execution failed: target not found.",
-                failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND,
-                failure_stage=LoopStage.EXECUTE,
-            )
-        ],
-        verification_history=[
-            VerificationResult(
-                status=VerificationStatus.FAILURE,
-                expected_outcome_met=False,
-                stop_condition_met=False,
-                reason="Type failed.",
-                failure_type=VerificationFailureType.ACTION_FAILED,
-                failure_category=FailureCategory.EXECUTION_TARGET_NOT_FOUND,
-                failure_stage=LoopStage.EXECUTE,
-            )
-        ],
-        target_failure_counts={
-            f"type:name-input:{FailureCategory.EXECUTION_TARGET_NOT_FOUND.value}": 1,
-        },
-    )
-
-    decision = await coordinator.choose_action(state, _form_perception(root))
-
-    assert decision.action.action_type is ActionType.CLICK
-    assert decision.action.target_element_id == "name-input"
-    assert client.calls == 0
 
 
 @pytest.mark.asyncio
@@ -450,15 +266,11 @@ async def test_reset_run_context_clears_hint_cache() -> None:
     # — we only assert the fields are cleared back to None / empty.
     coordinator._cached_hints = []
     coordinator._cached_hints_key = ("benchmark-prior", "form_page", None, None)
-    coordinator.rule_engine._form_options_clicked["run-prior"] = {"x"}
-    coordinator.rule_engine._form_fields_filled["run-prior"] = {"y"}
 
     coordinator.reset_run_context("run-prior")
 
     assert coordinator._cached_hints is None
     assert coordinator._cached_hints_key is None
-    assert "run-prior" not in coordinator.rule_engine._form_options_clicked
-    assert "run-prior" not in coordinator.rule_engine._form_fields_filled
 
 
 @pytest.mark.asyncio
@@ -531,12 +343,12 @@ async def test_a_rule_action_is_reported_to_the_delegate_as_replacing_its_own() 
     coordinator, delegate = _recording_coordinator(
         root, '{"action":{"action_type":"click","target_element_id":"irrelevant"},"rationale":"unused.","confidence":0.1,"active_subgoal":"unused","expected_change":"none"}'
     )
-    state = AgentState(run_id="run-1", intent="Open Chrome, navigate to github.com, and search for Operon",
-                       status=RunStatus.RUNNING, current_subgoal="search")
-    decision = await coordinator.choose_action(state, _search_perception(root))
-    assert decision.rule_name and delegate.replaced
+    state = AgentState(run_id="run-1", intent="Open Notepad and write hello",
+                       status=RunStatus.RUNNING)
+    decision = await coordinator.choose_action(state, _computer_use_perception(root))
+    assert decision.rule_name == "_prefer_launch_app_rule" and delegate.replaced
     run_id, action = delegate.replaced[0]
-    assert run_id == "run-1" and action.startswith("type") and f"rule {decision.rule_name}" in action
+    assert run_id == "run-1" and action.startswith("launch_app") and f"rule {decision.rule_name}" in action
 
 
 @pytest.mark.asyncio
@@ -620,38 +432,30 @@ async def test_asking_the_model_again_tells_it_the_last_proposal_did_not_run(mon
     assert delegate.replaced == []
 
 
+def _computer_use_perception(root: Path, summary: str = "A desktop with a taskbar.") -> ScreenPerception:
+    """What Gemini Computer Use gives the harness: no elements and no page type."""
+    return ScreenPerception(summary=summary, page_hint="unknown",
+                            capture_artifact_path=str(root / "step_1" / "before.png"), visible_elements=[],
+                            elements_reported=False)
 
 
-def _after_search_state(start_url: str | None) -> AgentState:
-    typed = AgentAction(action_type=ActionType.TYPE, text="Alan Turing", press_enter=True, x=10, y=10)
-    return AgentState(
-        run_id="run-turing",
-        intent="On wikipedia.org, search for Alan Turing and tell me the year he was born",
-        status=RunStatus.RUNNING,
-        start_url=start_url,
-        action_history=[ExecutedAction(action=typed, success=True, detail="Executed type")],
-    )
-
-
-def _page(page_hint: str) -> ScreenPerception:
-    return ScreenPerception(summary="Alan Turing was born in 1912.", page_hint=page_hint,
-                            capture_artifact_path="runs/x/step_3/before.png", visible_elements=[])
-
-
-def test_search_fallback_leaves_an_unknown_page_to_the_model() -> None:
-    """Gemini computer use never sets a page hint. A Vickey run (2026-11-11) sat on the
-    article with the answer, and the rule forced 'navigate search?q=...' three times."""
+def test_engine_keeps_only_rules_that_fire_under_computer_use() -> None:
+    """KAN-161: rules that need an element list or a page type never fired under
+    Gemini Computer Use and were removed. The two left work from the task text and
+    the model's own words."""
     from operon.agent.policy.rules import PolicyRuleEngine
 
-    rule = PolicyRuleEngine()._search_query_rule
-    assert rule(_after_search_state(None), _page("unknown")) is None
-    assert rule(_after_search_state("https://www.wikipedia.org"), _page("unknown")) is None
+    root = _local_test_dir("test-policy-rules-computer-use")
+    engine = PolicyRuleEngine(launch_apps=False)
+    plain = AgentState(run_id="run-cu", intent="Search for Operon on github.com", status=RunStatus.RUNNING)
+    assert engine.choose_action(plain, _computer_use_perception(root), []) is None
 
+    done = engine.choose_action(plain, _computer_use_perception(root, "Message sent to Dana."), [])
+    assert done is not None and done.action.action_type is ActionType.STOP
+    assert engine.last_fired_rule_name() == "_task_success_stop_rule"
 
-def test_search_fallback_never_navigates_to_a_relative_url() -> None:
-    from operon.agent.policy.rules import PolicyRuleEngine
-
-    rule = PolicyRuleEngine()._search_query_rule
-    assert rule(_after_search_state(None), _page("form_page")) is None
-    decision = rule(_after_search_state("https://example.com/"), _page("form_page"))
-    assert decision.action.url == "https://example.com/search?q=Alan+Turing"
+    desktop = PolicyRuleEngine(launch_apps=True)
+    launch_state = AgentState(run_id="run-cu", intent="Open Notepad and write hello", status=RunStatus.RUNNING)
+    launch = desktop.choose_action(launch_state, _computer_use_perception(root), [])
+    assert launch is not None and launch.action.action_type is ActionType.LAUNCH_APP
+    assert desktop.last_fired_rule_name() == "_prefer_launch_app_rule"

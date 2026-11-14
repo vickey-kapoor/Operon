@@ -23,6 +23,9 @@ async def _run_all() -> list[tuple[object, RunResult]]:
 
 def main(argv: list[str]) -> int:
     os.environ.setdefault("GEMINI_API_KEY", "offline-eval")
+    # KAN-158: a bug at one of the loop's recovery sites crashes the scenario instead
+    # of passing as a recovery.
+    os.environ.setdefault("OPERON_STRICT_ERRORS", "true")
     logging.disable(logging.WARNING)
     results = asyncio.run(_run_all())
     if "--json" in argv:
@@ -37,6 +40,8 @@ def main(argv: list[str]) -> int:
     for scenario, result in results:
         ok = "yes" if scenario.accepts(result.outcome) else "NO"
         note = f"known: {scenario.known_issue[:60]}..." if scenario.known_issue else ""
+        if result.recovered_errors:
+            note = f"recovered x{sum(result.recovered_errors.values())} " + note
         print(
             f"{result.scenario:30} {result.outcome:14} {ok:4} {result.steps:>5} {result.pauses:>6} "
             f"{result.model_calls:>5}  {note}"

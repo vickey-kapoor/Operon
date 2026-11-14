@@ -64,9 +64,13 @@ One control loop serves both environments:
 capture -> perceive -> decide -> execute -> verify -> recover
 ```
 
-`AgentLoop` (`src/operon/agent/loop.py`, ~1800 lines) is the orchestrator. Each
+`AgentLoop` (`src/operon/agent/loop.py`, ~2300 lines) is the orchestrator. Each
 `step_run()` call is one iteration; the API drives it, so runs are resumable and
-pausable between steps. Wiring is assembled in `src/operon/api/runtime/services.py`
+pausable between steps. A step is a chain of stage methods (`_perceive_stage`,
+`_decide_stage`, `_gate_stage`, `_execute_and_verify_stage`, `_recover_stage`, ...)
+over a typed `StepContext` (`agent/step_context.py`, KAN-155). Broad `except` blocks in the
+loop go through `AgentLoop._recovered()`, which logs and counts them per run
+(`recovered_errors`); `OPERON_STRICT_ERRORS` (on in tests) re-raises bugs (KAN-158). Wiring is assembled in `src/operon/api/runtime/services.py`
 (`build_browser_services` / `build_desktop_services`) — that is where backends,
 executors, verifiers, and stores are chosen per environment. `src/operon/core/paths.py`
 resolves every artifact directory and honors the `OPERON_*_ROOT` env overrides.
@@ -86,7 +90,8 @@ These are load-bearing — violating them silently breaks the agent.
   bad targeting.
 - **Rules before LLM (full harness).** Anything decidable deterministically belongs in
   `PolicyRuleEngine` (`agent/policy/rules.py`). Post-LLM guards (e.g.
-  `_semantic_anchor_check`) live on `PolicyCoordinator`. The thin harness
+  `_reject_premature_stop`) live on `PolicyCoordinator`. Gemini Computer Use reports no
+  element list or page type, so a rule must work without them or it never fires (KAN-161). The thin harness
   (`agent/policy/thin.py`, opt in with `OPERON_HARNESS_PROFILE=thin`) runs none of them: the model's
   action is never replaced, retried or reset by the loop; fix failures there by
   improving what the model sees or the executor, not by adding rules.

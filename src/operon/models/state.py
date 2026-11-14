@@ -27,6 +27,9 @@ class AgentState(StrictModel):
     action_history: list[ExecutedAction] = Field(default_factory=list)
     verification_history: list[VerificationResult] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
+    # KAN-158: errors the loop caught and carried on from, by site (see
+    # AgentLoop._recovered); reported per task by the live benchmarks.
+    recovered_errors: dict[str, int] = Field(default_factory=dict)
     target_failure_counts: dict[str, int] = Field(default_factory=dict)
     progress_state: ProgressState = Field(default_factory=ProgressState)
     artifact_paths: list[str] = Field(default_factory=list)
@@ -36,10 +39,6 @@ class AgentState(StrictModel):
     # Carries the outcome of the most recent deterministic rule that fired.
     # Injected into the next LLM prompt so the planner knows what the rule tried and whether it worked.
     last_rule_trace: str | None = None
-    # Set to True by the loop when a native desktop menu was explicitly opened
-    # (e.g. after a successful right-click or menu-bar click). Guards the
-    # _dropdown_menu_select_rule from misfiring on desktop app toolbars.
-    menu_is_active: bool = False
     # Signals whether this run originated from an observable client
     # ("observable") or was launched programmatically/via benchmark ("batch").
     # Observable clients use this to decide whether to auto-attach the live CDP view.

@@ -29,7 +29,7 @@ CI runs the offline suite on Python 3.11 and 3.14 plus ruff. It does not run the
 ## Reporting bugs
 
 Agent failures are hard to debug from a description alone. Operon writes
-everything needed to `.var/runs/<run_id>/` — screenshots, model I/O, policy
+everything needed to `.var/runs/<run_id>/` (`~/.operon/runs/<run_id>/` when installed with pip) — screenshots, model I/O, policy
 decisions, execution traces. Please include:
 
 - The instruction you gave and the environment (browser or desktop)

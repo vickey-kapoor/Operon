@@ -42,7 +42,7 @@ and every paid benchmark run needs its own cost approval.
   type a task, watch it, approve risky steps and see the result, later the first app screens (#245,
   KAN-106).
 - **Season 2** (#237, KAN-78): harder 10-task core sets per category on new local apps (Finance,
-  People, Rooms), frozen on 2026-11-11. Calibration runs are under way (KAN-87).
+  People, Rooms), frozen on 2026-11-11 and calibrated with Gemini (KAN-87).
 - **Tool action channel** (#254, KAN-79, [RFC 0002](rfcs/0002-tool-action-channel.md)): typed
   `read_file`, `list_dir`, `write_file`, `http_get` and, opt-in, `run_shell` beside the GUI, behind
   `OPERON_TOOLS`, on by default since 2026-11-14 (files and web; shell stays opt-in) after Desktop
@@ -52,6 +52,11 @@ and every paid benchmark run needs its own cost approval.
 - **Whole-repo review fixes** (#212 to #220, KAN-46 to KAN-51), a monthly budget on the dashboard's
   Cost tab (#208), a redesigned dashboard (#210) that reads through a read-only database role
   (#234, KAN-28), and the Azure desktop runner logging in with OIDC (KAN-27).
+- **Stage 1, installable** (#255, #265, #267, #269; KAN-140, KAN-141, KAN-147, KAN-36):
+  `pip install operon-agent` from PyPI (0.1.0, published from a tag by `release.yml`), `operon
+  setup` (saves the Gemini key to `~/.operon`, installs Chromium, runs a self-check), a per-user
+  data folder for runs installed with pip, a 5-minute README quick start with a demo GIF, and a
+  [step-by-step first run](first-run.md) for new users.
 - **Removed**: the Command Center UI (#206), which was unused, and, on 2026-11-11, every model
   but Gemini (Claude, GPT and the cross-model adapter), so that model onboarding can be rebuilt
   clean and simple. Their earlier benchmark data stays on the dashboard.
@@ -78,20 +83,23 @@ What this tells us:
 ### In progress
 
 - **Gemini only.** Operon runs Gemini 3.5 Flash for every run; other models come back in stage 4.
-- **Season 2 calibration** (KAN-87): Gemini on the Season 2 core sets (the tools on/off
-  comparison is done: tools are on by default).
+- **Stranger test** (KAN-142), the stage 1 finish test: Vickey's own fresh installs from PyPI
+  pass in about 5 minutes; a run by someone new to Operon is next.
+- **Season 2 calibration is done** (KAN-87): Browser and Hybrid Thin land at 6/10, in the
+  40-70% target. Desktop Thin stays above it even on a harder set (KAN-104, 9/10), so it still
+  needs harder tasks. With tools on, Desktop Thin went from 8/10 to 10/10, so tools are on by default.
 
 ## Next: scaling Operon in six stages
 
 **Get real users first, then build what they need.** Each stage ends with a test you can check,
 and the engine stays the same throughout: what changes is the form Operon ships in and who can
-use it. Today Operon is a repo you clone.
+use it. Today Operon installs from PyPI, and stage 1 waits only on the stranger test.
 
 | Stage | What it includes | Done when | Operon becomes |
 |---|---|---|---|
 | 1. Installable | PyPI alpha (`pip install operon-agent`), a one-step setup command, 5-minute quickstart and demo GIF | A stranger finishes a task in 5 minutes | PyPI package (alpha) |
 | 2. First 10 users | Soft launch, an opt-in way to see how people use it (nothing sent by default) | 10 people ran it and 3 came back | Tool with real users |
-| 3. Reliable | Season 2 calibration, the tool channel on by default, safety (KAN-103), verify before done (KAN-102), perception work (epic KAN-113) | Season 2 scores climb | Beta |
+| 3. Reliable | Harder Season 2 Desktop tasks, safety (KAN-103), verify before done (KAN-102), perception work (epic KAN-113) | Season 2 scores climb | Beta |
 | 4. Builders | Model onboarding beyond Gemini, local MCP server and Claude plugin (KAN-96), Docker (KAN-40), task files and replay cache (KAN-86) | An outside project builds on Operon | Platform |
 | 5. Public launch | Show HN, demo video, docs (KAN-37), launch post (KAN-39), a decision on publishing the benchmark grid | Stars become weekly installs | 1.0 project |
 | 6. Scale | Python SDK (KAN-35), the Windows desktop app (epics KAN-122 and KAN-94, including the bookkeeping pilot), parallel runs (KAN-80, KAN-81), hosted runs (KAN-107 to KAN-109) | Teams run it on a schedule | SDK + app + cloud |
@@ -102,7 +110,7 @@ Notes on the order:
   repo is hardened first (KAN-34), and the big announcement waits for stage 5.
 - **The first users are developers** installing from PyPI. The bookkeeping design partner pilot
   (KAN-100) moves to stage 6, once the Windows app exists.
-- **Architecture work from epic KAN-77 not named above** (grounder slot and zoom KAN-82/KAN-88,
+- **Architecture work from epic KAN-77 not named above** (zoom KAN-82/KAN-88, a decision on a swappable grounder slot KAN-148,
   best-of-N KAN-84, step efficiency KAN-85, Windows risks KAN-90 to KAN-93) belongs to stage 3 when
   it improves reliability on what users try, and to stage 6 when it is about scale.
 - **Every workstream ships behind a flag that defaults to off** and is compared on the grid before

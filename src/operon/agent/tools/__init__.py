@@ -1,10 +1,11 @@
 """Operon's tool action channel (RFC 0002, KAN-79): tools the model may call next to its
 clicks and key presses.
 
-Off by default. ``OPERON_TOOLS`` turns it on:
+On by default since 2026-11-14 (KAN-87: Desktop Season 2 scored 10/10 with ``on``
+against 8/10 off). ``OPERON_TOOLS`` sets it:
 
-- ``off`` (default): no tools.
-- ``on``: ``read_file``, ``list_dir``, ``write_file`` and ``http_get``.
+- ``off``: no tools.
+- ``on`` (default): ``read_file``, ``list_dir``, ``write_file`` and ``http_get``.
 - ``all``: those and ``run_shell``.
 - a comma list of tool names, e.g. ``read_file,list_dir``.
 
@@ -42,7 +43,7 @@ _ON = {"on", "true", "1", "yes"}
 
 def enabled_tools(setting: str | None = None) -> tuple[str, ...]:
     """The tools ``OPERON_TOOLS`` (or ``setting``) turns on, in a fixed order; empty when off."""
-    raw = (os.getenv("OPERON_TOOLS", "off") if setting is None else setting).strip().lower()
+    raw = (os.getenv("OPERON_TOOLS", "on") if setting is None else setting).strip().lower()
     if raw in _OFF:
         return ()
     if raw in _ON:

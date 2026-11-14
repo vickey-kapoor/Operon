@@ -57,6 +57,7 @@ onboarding ([roadmap](roadmap.md)).
 | `OPERON_TEST_ARTIFACTS_ROOT` | `.var/test-artifacts` | Override test artifact output |
 | `OPERON_TRACE` | unset | Set `1` for loop trace logging |
 | `OPERON_TEST_SAFE_MODE` | `false` | Skips display baseline and servo calibration in tests |
+| `OPERON_STRICT_ERRORS` | `false` | Re-raise bugs (`AttributeError`, `NameError`, `AssertionError`, `ImportError`) at the agent loop's recovery sites instead of carrying on; on in the offline test suite. Off, every recovery is logged with its traceback and counted in the run's `recovered_errors` (KAN-158) |
 | `OPERON_BESTOFN_N` | `1` | Experimental (RFC 0001 Move 3): sample N candidate actions at uncertain steps and execute the best-scored one. `1` disables (default). |
 | `OPERON_BESTOFN_CONFIDENCE` | `1.0` | Experimental: only sample when a step's policy confidence is below this ceiling (lower to restrict Best-of-N to uncertain steps). |
 | `OPERON_GROUNDER` | `deterministic` | Experimental (RFC 0001 Move 2): grounder backend. `deterministic` (default, baseline) or `snap` (snap a near-miss raw coordinate onto the nearest interactable element). |

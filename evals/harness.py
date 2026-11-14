@@ -431,6 +431,8 @@ class RunResult:
     error: str | None = None
     actions: list[str] = field(default_factory=list)
     model_requests: list[Any] = field(default_factory=list)
+    # Errors the loop caught and carried on from, by site (KAN-158).
+    recovered_errors: dict[str, int] = field(default_factory=dict)
 
     def summary(self) -> str:
         return (
@@ -551,4 +553,5 @@ async def run_scenario(scenario: Scenario) -> RunResult:
             error=error,
             actions=[a.action_type.value for a in executor.actions],
             model_requests=requests,
+            recovered_errors=dict(state.recovered_errors) if state is not None else {},
         )

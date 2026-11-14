@@ -64,9 +64,13 @@ One control loop serves both environments:
 capture -> perceive -> decide -> execute -> verify -> recover
 ```
 
-`AgentLoop` (`src/operon/agent/loop.py`, ~1800 lines) is the orchestrator. Each
+`AgentLoop` (`src/operon/agent/loop.py`, ~2300 lines) is the orchestrator. Each
 `step_run()` call is one iteration; the API drives it, so runs are resumable and
-pausable between steps. Wiring is assembled in `src/operon/api/runtime/services.py`
+pausable between steps. A step is a chain of stage methods (`_perceive_stage`,
+`_decide_stage`, `_gate_stage`, `_execute_and_verify_stage`, `_recover_stage`, ...)
+over a typed `StepContext` (`agent/step_context.py`, KAN-155). Broad `except` blocks in the
+loop go through `AgentLoop._recovered()`, which logs and counts them per run
+(`recovered_errors`); `OPERON_STRICT_ERRORS` (on in tests) re-raises bugs (KAN-158). Wiring is assembled in `src/operon/api/runtime/services.py`
 (`build_browser_services` / `build_desktop_services`) — that is where backends,
 executors, verifiers, and stores are chosen per environment. `src/operon/core/paths.py`
 resolves every artifact directory and honors the `OPERON_*_ROOT` env overrides.

@@ -27,6 +27,9 @@ class AgentState(StrictModel):
     action_history: list[ExecutedAction] = Field(default_factory=list)
     verification_history: list[VerificationResult] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
+    # KAN-158: errors the loop caught and carried on from, by site (see
+    # AgentLoop._recovered); reported per task by the live benchmarks.
+    recovered_errors: dict[str, int] = Field(default_factory=dict)
     target_failure_counts: dict[str, int] = Field(default_factory=dict)
     progress_state: ProgressState = Field(default_factory=ProgressState)
     artifact_paths: list[str] = Field(default_factory=list)

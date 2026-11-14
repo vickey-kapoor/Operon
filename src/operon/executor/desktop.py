@@ -20,6 +20,7 @@ import pyperclip
 
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.core.paths import desktop_artifacts_dir
+from operon.core.settings import get_settings
 
 try:
     import pyautogui
@@ -378,7 +379,7 @@ class DesktopExecutor(Executor):
         self._work_windows: dict[str, int] = {}
 
         _set_dpi_awareness()
-        if os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() != "true":
+        if not get_settings().test_safe_mode:
             validate_display_baseline()
             self._noise_floor, self._servo_threshold = self._calibrate_servo_threshold()
         else:

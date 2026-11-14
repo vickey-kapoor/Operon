@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 
+from operon.core.settings import get_settings
 from operon.environments.base import EnvironmentProvider
 
 DEFAULT_ENVIRONMENT = "live"
@@ -36,7 +36,7 @@ def provider_names() -> list[str]:
 
 def environment_name() -> str:
     """``OPERON_ENVIRONMENT``, lower-cased; ``live`` when unset or blank."""
-    return (os.getenv("OPERON_ENVIRONMENT") or "").strip().lower() or DEFAULT_ENVIRONMENT
+    return get_settings().environment
 
 
 def get_provider(name: str | None = None) -> EnvironmentProvider:

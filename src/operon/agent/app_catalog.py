@@ -89,9 +89,9 @@ LINUX = "linux"
 def desktop_platform() -> str:
     """``OPERON_DESKTOP_PLATFORM``: ``linux`` drives a Linux (X11) desktop; anything
     else, the default, is the Windows desktop."""
-    import os
+    from operon.core.settings import get_settings
 
-    return LINUX if (os.getenv("OPERON_DESKTOP_PLATFORM") or "").strip().lower() == LINUX else WINDOWS
+    return get_settings().desktop_platform
 
 
 def launch_targets() -> dict[str, str]:

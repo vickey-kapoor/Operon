@@ -42,7 +42,7 @@ and every paid benchmark run needs its own cost approval.
   type a task, watch it, approve risky steps and see the result, later the first app screens (#245,
   KAN-106).
 - **Season 2** (#237, KAN-78): harder 10-task core sets per category on new local apps (Finance,
-  People, Rooms), frozen on 2026-11-11. Calibration runs are under way (KAN-87).
+  People, Rooms), frozen on 2026-11-11 and calibrated with Gemini (KAN-87).
 - **Tool action channel** (#254, KAN-79, [RFC 0002](rfcs/0002-tool-action-channel.md)): typed
   `read_file`, `list_dir`, `write_file`, `http_get` and, opt-in, `run_shell` beside the GUI, behind
   `OPERON_TOOLS`, on by default since 2026-11-14 (files and web; shell stays opt-in) after Desktop
@@ -86,8 +86,8 @@ What this tells us:
 - **Stranger test** (KAN-142), the stage 1 finish test: Vickey's own fresh installs from PyPI
   pass in about 5 minutes; a run by someone new to Operon is next.
 - **Season 2 calibration is done** (KAN-87): Browser and Hybrid Thin land at 6/10, in the
-  40-70% target, while Desktop Thin scores 10/10 and needs harder tasks. With tools on, Desktop
-  Thin went from 8/10 to 10/10, so tools are on by default.
+  40-70% target. Desktop Thin stays above it even on a harder set (KAN-104, 9/10), so it still
+  needs harder tasks. With tools on, Desktop Thin went from 8/10 to 10/10, so tools are on by default.
 
 ## Next: scaling Operon in six stages
 

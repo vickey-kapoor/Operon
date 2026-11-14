@@ -12,6 +12,8 @@ comparable). When ``on``:
 - **deny** rules block the action — it is never executed autonomously; the run
   pauses for a human (override or stop).
 - **confirm** rules (high-risk) pause for explicit human approval before running.
+- a ``run_shell`` tool call (RFC 0002) always needs approval, since no rule can
+  judge what a command does.
 
 Rules are case-insensitive substrings matched against a description built from
 the action's ``text``, target ``url``, and resolved target-element name. Deny
@@ -155,13 +157,19 @@ class TrustGate:
         blocked_host = self._domain_blocked(action)
         if blocked_host is not None:
             return TrustResult(TrustVerdict.DENY, "domain not in allowlist", blocked_host)
-        if getattr(action, "url", None) is None:
+        is_tool = getattr(getattr(action, "action_type", None), "value", None) == "tool"
+        # A tool call (RFC 0002) doesn't act on the page, so the page's own host doesn't block it.
+        if getattr(action, "url", None) is None and not is_tool:
             blocked_page = self._page_blocked(current_url)
             if blocked_page is not None:
                 return TrustResult(TrustVerdict.DENY, "current page not in allowlist", blocked_page)
         for keyword in self.confirm:
             if keyword in description:
                 return TrustResult(TrustVerdict.CONFIRM, "matched high-risk rule", keyword)
+        if is_tool and getattr(action, "tool", None) == "run_shell":
+            # No path or domain rule can judge what a command does: a person approves
+            # it (``auto`` mode skips this, deny rules above still block).
+            return TrustResult(TrustVerdict.CONFIRM, "shell commands need approval", "run_shell")
         return TrustResult(TrustVerdict.ALLOW)
 
 

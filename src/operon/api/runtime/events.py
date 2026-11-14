@@ -28,7 +28,7 @@ def _action_target(action: dict) -> tuple[str, str | None]:
         return action.get("selector") or action.get("target_element_id") or "", action.get("text")
     if action_type in ("press_key", "hotkey"):
         return action.get("key") or "", None
-    if action_type == "launch_app":
+    if action_type in ("launch_app", "tool"):
         return action.get("text") or "", None
     if action_type == "scroll":
         amount = action.get("scroll_amount", 0) or 0

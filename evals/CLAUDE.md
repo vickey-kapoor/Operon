@@ -46,7 +46,7 @@ Operon's only model for now; other models come back later.
 .venv\Scripts\python -m evals.live_hybrid_bench [--suite core|smoke|full] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [azure] [season=<n>]
+#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>]
 #   (category, then harness: one grid cell; core and full are the defaults; hybrid runs on the desktop workflow)
 #   /bench grounding
 #   /bench batch  (then one cell per line, e.g. "desktop thin season=2 pr=242 cap=1.5"): the day's approved

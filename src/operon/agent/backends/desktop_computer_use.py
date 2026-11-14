@@ -54,7 +54,7 @@ class DesktopComputerUseBackend(BrowserComputerUseBackend):
         "- Take one concrete action: launch_app to open the app the task needs, or click in its window.\n"
     )
 
-    def __init__(self, *, client: GeminiComputerUseClient, prompt_path: Path) -> None:
+    def __init__(self, *, client: GeminiComputerUseClient, prompt_path: Path, tools: tuple[str, ...] = ()) -> None:
         environment = getattr(client, "environment", DESKTOP_ENVIRONMENT)
         declared = {tool.get("name") for tool in getattr(client, "function_declarations", [GEMINI_LAUNCH_APP_FUNCTION])}
         if environment != DESKTOP_ENVIRONMENT or "launch_app" not in declared:
@@ -62,4 +62,4 @@ class DesktopComputerUseBackend(BrowserComputerUseBackend):
                 "DesktopComputerUseBackend needs a client with environment=ENVIRONMENT_DESKTOP "
                 "and the launch_app function declared"
             )
-        super().__init__(client=client, prompt_path=prompt_path, browser_runtime=None)
+        super().__init__(client=client, prompt_path=prompt_path, browser_runtime=None, tools=tools)

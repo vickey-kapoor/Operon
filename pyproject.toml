@@ -44,7 +44,7 @@ where = ["src"]
 include = ["operon*"]
 
 [tool.setuptools.package-data]
-operon = ["prompts/*.txt", "api/static/*.html"]
+operon = ["prompts/*.txt", "prompts/tools/*.md", "api/static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from operon.agent import tools as _tools
 from operon.agent.backends.fallback import BackendCompatibilityError
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
 
@@ -195,6 +196,11 @@ def normalize_computer_use_function_call(
         return _scroll_payload(
             direction, magnitude, _scale_grid_coord(args["x"], screen_width), _scale_grid_coord(args["y"], screen_height)
         )
+    if name in _tools.TOOL_NAMES:
+        # A call to one of Operon's tools (RFC 0002): run by the ToolExecutor, and its
+        # output goes back to the model as the answer to this call.
+        tool_args = {key: value for key, value in args.items() if key != "safety_decision"}
+        return {"action_type": "tool", "tool": name, "tool_args": tool_args}
     raise BackendCompatibilityError(f"Unsupported Computer Use function call: {name}")
 
 
@@ -353,6 +359,18 @@ def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction
         return AgentAction(
             action_type=ActionType.NAVIGATE,
             url=action_payload["url"],
+        )
+
+    if action_type == "tool":
+        name = action_payload["tool"]
+        tool_args = dict(action_payload.get("tool_args") or {})
+        url = tool_args.get("url") if name == _tools.HTTP_GET else None
+        return AgentAction(
+            action_type=ActionType.TOOL,
+            tool=name,
+            tool_args=tool_args,
+            text=_tools.summary(name, tool_args),
+            url=url if isinstance(url, str) and url.strip() else None,
         )
 
     if action_type == "wait_for_user":

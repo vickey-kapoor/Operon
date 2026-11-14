@@ -124,7 +124,7 @@ Repository owners, members and collaborators can comment on a PR to benchmark it
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [azure] [season=<n>]
+/bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>]
 /bench grounding
 ```
 
@@ -132,7 +132,9 @@ The first word is the category and the second the harness: one cell of the grid.
 browser, the full harness, the category's core set. Every run uses Gemini computer use
 (`gemini-3.5-flash`). A thin run ends on Gemini's own "done", with no completion check. `season=<n>` runs
 the frozen season's tasks (`--season`), which is what the Leaderboard tab's grid counts.
-`same-critic` makes a full run's step critic the acting model. Examples:
+`same-critic` makes a full run's step critic the acting model. `tools` turns on Operon's tools next to
+screen actions (`OPERON_TOOLS=all`, [RFC 0002](rfcs/0002-tool-action-channel.md)); file tools may use the
+Documents folder, and the report and dashboard mark the run as not comparable with tools-off runs. Examples:
 
 | Comment | Runs |
 |---|---|
@@ -154,6 +156,7 @@ the frozen season's tasks (`--season`), which is what the Leaderboard tab's grid
 | `/bench hybrid full azure season=1` | Gemini · Hybrid · Full on Season 1, on the Azure VM (run `scripts/edge-policies.ps1` on the VM once first; [azure-desktop-runner.md](azure-desktop-runner.md)) |
 | `/bench hybrid smoke` | Hybrid smoke (2 tasks) on GitHub's hosted Windows runner |
 | `/bench long same-critic` | Long suite in the full harness, with Gemini as its own step critic |
+| `/bench desktop thin season=2 tools` | Desktop · Thin on Season 2 with tools on (the A/B arm for the tools-off run) |
 
 The **Browser benchmark**, **Desktop and Hybrid benchmark** and **Grounding benchmark** workflows can also be started by hand,
 with inputs for harness profile, suite and cost cap (`max_cost_usd`).

@@ -20,6 +20,7 @@ from operon.agent.backends.fallback import FallbackBackend
 from operon.agent.perception import PerceptionService
 from operon.agent.policy import PolicyService
 from operon.agent.policy.thin import THIN, harness_profile
+from operon.agent.tools import enabled_tools, function_declarations
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.clients.gemini import GeminiHttpClient
 from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
@@ -77,13 +78,16 @@ def build_browser_services(executor) -> RuntimeServices:
         )
         return RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend == "computer_use":
+        tools = enabled_tools()
         primary = BrowserComputerUseBackend(
             client=GeminiComputerUseHttpClient(
                 model=config.primary_model,
                 thinking_level=config.thinking,
+                function_declarations=function_declarations(tools),
             ),
             prompt_path=_PROMPTS_DIR / "browser_computer_use_prompt.txt",
             browser_runtime=executor,
+            tools=tools,
         )
         if harness_profile(config.backend) == THIN:
             # The loop's policy, verifier and recovery are fixed for the profile when it
@@ -113,14 +117,16 @@ def desktop_prompt_name() -> str:
 def build_desktop_services() -> RuntimeServices:
     config = desktop_mode_config()
     if config.backend == "computer_use":
+        tools = enabled_tools()
         backend = DesktopComputerUseBackend(
             client=GeminiComputerUseHttpClient(
                 model=config.primary_model,
                 thinking_level=config.thinking,
                 environment=DESKTOP_ENVIRONMENT,
-                function_declarations=[launch_app_function()],
+                function_declarations=[launch_app_function(), *function_declarations(tools)],
             ),
             prompt_path=_PROMPTS_DIR / desktop_prompt_name(),
+            tools=tools,
         )
         return RuntimeServices(perception_service=backend, policy_delegate=backend)
     if config.backend != "json":

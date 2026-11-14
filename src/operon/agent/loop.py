@@ -99,6 +99,16 @@ _LIVENESS_RETRY_SLEEP_S = 1.5         # subsequent retries give slower loads mor
 # In-step adaptation retries after a hard verification FAILURE (see _prepare_adaptation_retry).
 _MAX_ADAPTATION_RETRIES = 3
 
+# KAN-158: exception types that mean a bug in Operon, not a flaky screen, model or
+# executor. With OPERON_STRICT_ERRORS on (the offline test suite turns it on), a
+# recovery site re-raises them instead of carrying on, so a bug fails a test
+# rather than looking like an ordinary recovery.
+_BUG_EXCEPTIONS: tuple[type[BaseException], ...] = (AssertionError, AttributeError, ImportError, NameError)
+
+
+def _strict_errors() -> bool:
+    return os.getenv("OPERON_STRICT_ERRORS", "").strip().lower() in {"1", "true", "yes", "on"}
+
 
 def _trace(stage: str, detail: str = "") -> None:
     if not _TRACE:
@@ -215,6 +225,10 @@ class AgentLoop:
         # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
         self._pause_requests: set[str] = set()
         self._approved_gate_actions: dict[str, tuple[str, frozenset[str]]] = {}
+        # KAN-158: errors the loop recovered from, per run and site, not yet saved
+        # into the run's state (``AgentState.recovered_errors``). Drained by
+        # ``_flush_recovered_errors`` when a step, start or resume ends.
+        self._recovered_errors: dict[str, dict[str, int]] = {}
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -273,12 +287,13 @@ class AgentLoop:
                 try:
                     await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
                 except Exception as exc:
-                    logger.warning("start_run_recording failed for %s: %s", record.run_id, exc)
+                    self._recovered(record.run_id, "start_run_recording", exc)
             if request.start_url:
                 _trace("START_RUN -> NAVIGATE", request.start_url)
                 await self.executor.execute(
                     AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
                 )
+        await self._flush_recovered_errors(record.run_id)
         return RunResponse(
             run_id=record.run_id,
             status=record.status,
@@ -462,7 +477,8 @@ class AgentLoop:
                 async with self._executor_lock:
                     await self.executor.restore_work_window(run_id)
             except Exception as exc:
-                logger.warning("restore_work_window failed for %s: %s", run_id, exc)
+                self._recovered(run_id, "restore_work_window", exc)
+        await self._flush_recovered_errors(run_id)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -481,7 +497,49 @@ class AgentLoop:
             async with self._executor_lock:
                 if hasattr(self.executor, "set_current_run_id"):
                     self.executor.set_current_run_id(request.run_id)
-                return await self._step_run_locked(request)
+                try:
+                    return await self._step_run_locked(request)
+                finally:
+                    await self._flush_recovered_errors(request.run_id)
+
+    def _recovered(
+        self, run_id: str | None, site: str, exc: BaseException, *, level: int = logging.WARNING
+    ) -> None:
+        """Record that the loop carried on after ``exc`` at ``site`` (KAN-158).
+
+        Logs it with its traceback and counts it for the run, so recoveries show
+        up in the run's state (``recovered_errors``) and in benchmark reports
+        instead of passing silently. In strict mode (``OPERON_STRICT_ERRORS``) a
+        bug (``_BUG_EXCEPTIONS``) is re-raised instead. Call it from the except block.
+        """
+        if _strict_errors() and isinstance(exc, _BUG_EXCEPTIONS):
+            raise exc
+        logger.log(
+            level,
+            "recovered at %s (run %s): %s: %s",
+            site,
+            (run_id or "-")[:8],
+            type(exc).__name__,
+            exc,
+            exc_info=exc,
+        )
+        if run_id:
+            counts = self._recovered_errors.setdefault(run_id, {})
+            counts[site] = counts.get(site, 0) + 1
+
+    async def _flush_recovered_errors(self, run_id: str) -> None:
+        """Save the run's pending recovery counts into its state (``recovered_errors``)."""
+        pending = self._recovered_errors.pop(run_id, None)
+        if not pending:
+            return
+        record = await self.run_store.get_run(run_id)
+        if record is None:
+            return
+        merged = dict(record.recovered_errors)
+        for site, count in pending.items():
+            merged[site] = merged.get(site, 0) + count
+        record.recovered_errors = merged
+        await self.run_store.save_state(record)
 
     async def _step_run_locked(self, request: StepRequest) -> RunResponse:
         """Run one step as a sequence of stages over a typed ``StepContext`` (KAN-155).
@@ -529,7 +587,7 @@ class AgentLoop:
             try:
                 await self._cleanup_completed_run(record.run_id)
             except Exception as exc:
-                logger.warning("cleanup after max_steps failed: %s", exc)
+                self._recovered(record.run_id, "cleanup_after_max_steps", exc)
             return RunResponse(
                 run_id=updated.run_id,
                 status=updated.status,
@@ -608,6 +666,10 @@ class AgentLoop:
         try:
             perception = await self._perceive_with_liveness_retry(record, ctx.frame)
         except Exception as exc:
+            # The run fails with the error recorded (pre-step failure log); a bug
+            # still re-raises in strict mode.
+            if _strict_errors() and isinstance(exc, _BUG_EXCEPTIONS):
+                raise
             _trace("  2 PERCEIVE FAIL", str(exc))
             return await self._record_pre_step_perception_failure(
                 record=record,
@@ -1005,7 +1067,7 @@ class AgentLoop:
             try:
                 await self._cleanup_completed_run(run_id)
             except Exception as exc:
-                logger.warning("cleanup after %s failed, continuing: %s", final_status.value, exc)
+                self._recovered(run_id, f"cleanup_after_{final_status.value}", exc)
 
         # Persist per-stage durations for tail-latency analysis. Best-effort —
         # the step has already completed by this point.
@@ -1044,8 +1106,8 @@ class AgentLoop:
             return None
         try:
             return await self.executor.current_url_for_run(run_id)
-        except Exception:
-            logger.debug("trust gate: current_url_for_run failed", exc_info=True)
+        except Exception as exc:
+            self._recovered(run_id, "trust_gate_current_url", exc, level=logging.DEBUG)
             return None
 
     def _pre_execution_gate_text(
@@ -1247,7 +1309,7 @@ class AgentLoop:
         try:
             note(run_id, reason)
         except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
-            logger.warning("note_not_executed failed for run %s: %s", run_id[:8], exc)
+            self._recovered(run_id, "note_not_executed", exc)
 
     def _has_held_actions(self, run_id: str) -> bool:
         for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():
@@ -1256,7 +1318,7 @@ class AgentLoop:
                 if held is not None and held(run_id):
                     return True
             except Exception as exc:  # noqa: BLE001 - only feeds a counter
-                logger.warning("has_held_actions failed for run %s: %s", run_id[:8], exc)
+                self._recovered(run_id, "has_held_actions", exc)
         return False
 
     def _discard_held_actions(self, run_id: str, reason: str) -> None:
@@ -1267,7 +1329,7 @@ class AgentLoop:
             try:
                 discard(run_id, reason)
             except Exception as exc:  # noqa: BLE001 - never block a resume on it
-                logger.warning("discard_held_actions failed for run %s: %s", run_id[:8], exc)
+                self._recovered(run_id, "discard_held_actions", exc)
 
     async def _pause_for_user(
         self,
@@ -1438,8 +1500,8 @@ class AgentLoop:
                             confidence=0.0,
                             is_empty_frame=False,
                         )
-                except Exception:
-                    logger.debug("liveness_retry: current_url_for_run failed", exc_info=True)
+                except Exception as exc:
+                    self._recovered(state.run_id, "liveness_current_url", exc, level=logging.DEBUG)
 
             if attempt == _LIVENESS_RETRY_MAX:
                 logger.error(
@@ -1512,7 +1574,7 @@ class AgentLoop:
         try:
             await self._cleanup_completed_run(record.run_id)
         except Exception as exc:
-            logger.warning("cleanup after pre-step failure: %s", exc)
+            self._recovered(record.run_id, "cleanup_after_pre_step_failure", exc)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -1598,7 +1660,7 @@ class AgentLoop:
         except Exception as exc:
             # Fall through and verify the original after-frame rather than
             # inventing an UNCERTAIN verdict.
-            logger.warning("stable_wait: re-capture failed, verifying original frame: %s", exc)
+            self._recovered(record.run_id, "stable_wait_capture", exc)
             frame = None
 
         if frame is not None:
@@ -1651,7 +1713,7 @@ class AgentLoop:
                 logger.info("patience_retry=%d: perception still blank after liveness retries", retries)
                 continue
             except Exception as exc:
-                logger.warning("_wait_for_page_load: perception error: %s", exc)
+                self._recovered(record.run_id, "page_load_perceive", exc)
                 continue
 
             if fresh_perception.is_empty_frame:
@@ -1717,13 +1779,13 @@ class AgentLoop:
             try:
                 await self.executor.context_reset()
             except Exception as exc:
-                logger.warning("context_reset executor call failed: %s", exc)
+                self._recovered(state.run_id, "context_reset", exc)
         elif strategy is RecoveryStrategy.SESSION_RESET:
             _trace("  7b SESSION_RESET", f"start_url={state.start_url!r}")
             try:
                 await self.executor.session_reset(state.start_url)
             except Exception as exc:
-                logger.warning("session_reset executor call failed: %s", exc)
+                self._recovered(state.run_id, "session_reset", exc)
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
         self._release_backend_run_state(run_id)
@@ -1731,14 +1793,14 @@ class AgentLoop:
             try:
                 await self.executor.stop_run_recording(run_id)
             except Exception as exc:
-                logger.warning("stop_run_recording failed for %s: %s", run_id, exc)
+                self._recovered(run_id, "stop_run_recording", exc)
         if not hasattr(self.executor, "aclose_run"):
             await self._persist_cleanup_artifacts(run_id)
             return
         try:
             await self.executor.aclose_run(run_id)
         except Exception as exc:
-            logger.warning("cleanup_completed_run: aclose_run failed for %s: %s", run_id, exc)
+            self._recovered(run_id, "aclose_run", exc)
         await self._persist_cleanup_artifacts(run_id)
 
     def _release_backend_run_state(self, run_id: str) -> None:
@@ -1753,14 +1815,15 @@ class AgentLoop:
                 try:
                     release(run_id)
                 except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
-                    logger.warning("release_run failed for run %s: %s", run_id[:8], exc)
+                    self._recovered(run_id, "release_run", exc)
 
     async def _persist_cleanup_artifacts(self, run_id: str) -> None:
         if not hasattr(self.executor, "recorded_video_path_for_run"):
             return
         try:
             video_path = self.executor.recorded_video_path_for_run(run_id)
-        except Exception:
+        except Exception as exc:
+            self._recovered(run_id, "recorded_video_path", exc)
             return
         if video_path is None:
             return
@@ -1827,7 +1890,9 @@ class AgentLoop:
             )
             retry_action = resolution.action
             target_reresolved = resolution.trace is not None and resolution.trace.succeeded
-        except Exception:
+        except Exception as exc:
+            # Keep the failed first attempt; the retry could not be prepared.
+            self._recovered(record.run_id, "execution_retry_reperceive", exc)
             return state, self._persist_execution_trace(record.run_id, step_index, executed_action)
         finally:
             if hasattr(self.perception_service, "set_perception_only"):
@@ -1942,7 +2007,8 @@ class AgentLoop:
                 ],
             }
             bg_writer.enqueue(step_dir / "bestofn.json", json.dumps(payload, indent=2))
-        except Exception as exc:
+        except (OSError, TypeError, ValueError) as exc:
+            # Writing or serializing the artifact; never a loop decision.
             logger.debug("best_of_n artifact persist skipped: %s", exc)
 
     def _refine_with_grounder(self, action: AgentAction, perception) -> AgentAction:

@@ -161,6 +161,9 @@ class TaskResult:
     attempt: int = 1
     # The task's length ("short" / "long") and "safety" if it is one (evals/categories.py).
     tags: list = field(default_factory=list)
+    # Errors the agent loop caught and carried on from, by site (KAN-158; the run's
+    # state.json "recovered_errors"). A pass with recoveries may hide a bug.
+    recovered_errors: dict = field(default_factory=dict)
 
 
 def classify(status: str, goal_visible: bool | None) -> str:
@@ -377,12 +380,22 @@ def _final_screenshot(run_id: str) -> str | None:
     return str(frames[-1]) if frames else None
 
 
-def _stop_reason(run_id: str) -> str:
+def _run_state(run_id: str) -> dict:
     try:
         state = json.loads((_run_dir(run_id) / "state.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return "-"
-    return state.get("stop_reason") or "-"
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def _stop_reason(run_id: str) -> str:
+    return _run_state(run_id).get("stop_reason") or "-"
+
+
+def _recovered_errors(run_id: str) -> dict:
+    """The loop's recovery counts for this run, by site (KAN-158)."""
+    counts = _run_state(run_id).get("recovered_errors") or {}
+    return {str(site): int(n) for site, n in counts.items()} if isinstance(counts, dict) else {}
 
 
 def _save_state(run_id: str, snapshot: dict) -> None:
@@ -577,6 +590,7 @@ async def run_task(
         unpriced_calls=usage.get("unpriced_calls", 0) + len(judge_unpriced),
         unpriced_models=sorted({*usage.get("unpriced_models", []), *judge_unpriced}),
         tags=tags_of(task),
+        recovered_errors=_recovered_errors(run_id) if run_id else {},
     )
 
 
@@ -628,6 +642,8 @@ def summarize(results: list[TaskResult]) -> dict:
         "fallback_steps": sum(r.other_steps for r in results),
         "pauses": sum(r.pauses for r in results),
         "paused_tasks": sum(1 for r in results if r.pauses),
+        "recovered_errors": sum(sum(r.recovered_errors.values()) for r in results),
+        "recovered_tasks": sum(1 for r in results if r.recovered_errors),
         **cost_summary(results, counts["success"]),
         **({"repeat": repeat_summary(results)} if any(r.attempt > 1 for r in results) else {}),
         **({"by_tag": tag_summary(results)} if any(r.tags for r in results) else {}),
@@ -769,6 +785,8 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         if r.task in before and before[r.task] != r.outcome:
             change = f"(was {before[r.task]}) "
         note = change + (f"paused x{r.pauses} " if r.pauses else "") + (f"fallback x{r.other_steps} " if r.other_steps else "")
+        if r.recovered_errors:
+            note += f"recovered x{sum(r.recovered_errors.values())} "
         if r.outcome != "success":
             note += r.judge_reason
         label = r.task if r.attempt == 1 else f"{r.task} #{r.attempt}"
@@ -787,6 +805,11 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         f"mean {summary['mean_steps']} steps, {summary['mean_seconds']} s per task, "
         f"{summary['seconds_per_step']} s per step · {summary['fallback_steps']} fallback steps"
         f" · {summary.get('pauses', 0)} pauses approved in {summary.get('paused_tasks', 0)} tasks"
+        + (
+            f" · {summary['recovered_errors']} loop recoveries in {summary['recovered_tasks']} tasks"
+            if summary.get("recovered_errors")
+            else ""
+        )
     )
     if "cost_usd" in summary:
         per_success = summary["cost_per_success_usd"]

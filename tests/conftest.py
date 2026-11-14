@@ -8,6 +8,9 @@ import pytest
 # Prevent any AgentLoop from calling reset_desktop() (Win+D) or other
 # real desktop side-effects during the test suite.
 os.environ.setdefault("OPERON_TEST_SAFE_MODE", "true")
+# KAN-158: a bug (AttributeError, NameError, ...) caught by one of the agent loop's
+# recovery sites re-raises in tests instead of passing as an ordinary recovery.
+os.environ.setdefault("OPERON_STRICT_ERRORS", "true")
 # Starlette's TestClient and httpx test transports send Host: testserver / test.
 os.environ.setdefault("OPERON_ALLOWED_HOSTS", "testserver,test")
 # Offline tests call the API without a key; importing the server must not write

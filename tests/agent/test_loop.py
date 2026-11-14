@@ -337,6 +337,7 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
     executor = Mock()
     executor.reset_desktop = AsyncMock()
     executor.configure_run = Mock()
+    executor.start_run_recording = AsyncMock()
 
     loop = AgentLoop(
         capture_service=Mock(),
@@ -376,6 +377,7 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_test_safe_mode(
     executor = Mock()
     executor.reset_desktop = AsyncMock()
     executor.configure_run = Mock()
+    executor.start_run_recording = AsyncMock()
 
     loop = AgentLoop(
         capture_service=Mock(),
@@ -409,6 +411,7 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_browser_mode() -> Non
     executor = Mock()
     executor.reset_desktop = AsyncMock()
     executor.configure_run = Mock()
+    executor.start_run_recording = AsyncMock()
 
     loop = AgentLoop(
         capture_service=Mock(),
@@ -447,6 +450,7 @@ async def test_agent_loop_start_run_runs_reset_desktop_in_desktop_mode(
     executor = Mock()
     executor.reset_desktop = AsyncMock()
     executor.configure_run = Mock()
+    executor.start_run_recording = AsyncMock()
 
     loop = AgentLoop(
         capture_service=Mock(),
@@ -526,6 +530,8 @@ async def test_agent_loop_marks_benchmark_precondition_stop_as_failed() -> None:
     executor = Mock()
     executor.execute = AsyncMock(return_value=executed)
     executor.recorded_video_path_for_run = Mock(return_value=None)
+    executor.stop_run_recording = AsyncMock()
+    executor.aclose_run = AsyncMock()
     verifier_service = Mock()
     verifier_service.verify = AsyncMock(return_value=verification)
     verifier_service.latest_debug_artifacts = Mock(

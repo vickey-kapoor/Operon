@@ -3,6 +3,7 @@ executor wrapper, the gates, and how the model gets each tool's output back."""
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -151,6 +152,17 @@ async def test_run_shell_returns_exit_code_and_output_and_stops_at_the_timeout(h
     slow = await runner.run("run_shell", {"command": "sleep 5", "timeout_seconds": 1})
     assert not slow.ok and "timed out after 1 seconds" in slow.output
 
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the test command is bash")
+async def test_run_shell_returns_when_the_command_leaves_a_program_running(home: Path) -> None:
+    # "start file.svg" on Windows leaves the viewer running with the shell's output
+    # handles; the call must return once the shell itself exits, not when the viewer does.
+    runner = ToolRunner(("run_shell",))
+    result = await asyncio.wait_for(
+        runner.run("run_shell", {"command": "sleep 20 & echo started", "timeout_seconds": 10}), 5
+    )
+    assert result.ok and result.output.startswith("exit code: 0\nstdout:\nstarted\n")
 
 async def test_http_get_returns_status_and_body_and_does_not_follow_redirects(monkeypatch, home) -> None:
     def handler(request: httpx.Request) -> httpx.Response:

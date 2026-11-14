@@ -27,6 +27,10 @@ class EnvironmentProvider(ABC):
     name: str = ""
     #: One plain sentence for listings (``operon envs``).
     summary: str = ""
+    #: True when the executor acts on the machine Operon itself runs on. False for a
+    #: machine reached through the guest agent: then Operon's tools (files, web) must
+    #: run inside it too, never on the host (``guest_tools_setting``).
+    runs_on_host: bool = True
 
     @abstractmethod
     def platform(self) -> str:
@@ -45,3 +49,16 @@ class EnvironmentProvider(ABC):
 
     def stop(self) -> None:
         """Release the machine (close the sandbox, stop the container). No-op by default."""
+
+
+def guest_tools_setting() -> str:
+    """The ``OPERON_TOOLS`` value a guest machine should run with, so the tools the
+    model is offered (declared on the host) are the ones the guest executes.
+    Only the Gemini computer-use backend declares tools; any other backend: ``off``."""
+    import os
+
+    from operon.api.runtime_config import desktop_mode_config
+
+    if desktop_mode_config().backend != "computer_use":
+        return "off"
+    return (os.getenv("OPERON_TOOLS") or "").strip()

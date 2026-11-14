@@ -82,20 +82,30 @@ def _read_b64(path: str | None) -> str | None:
 
 
 def build_guest_executor():
-    """This machine's desktop executor, with the live view (the person is not here)."""
+    """This machine's desktop executor, with the live view (the person is not here),
+    plus Operon's tools when ``OPERON_TOOLS`` (passed on by the host) turns them on:
+    tools run here, so they act on this machine, never on the host."""
     from operon.agent.app_catalog import LINUX, desktop_platform
+    from operon.agent.tools import enabled_tools
 
     if desktop_platform() == LINUX:
         from operon.executor.linux_desktop import LinuxDesktopExecutor
 
-        return LinuxDesktopExecutor()
-    from operon.executor.desktop import DesktopExecutor
-    from operon.executor.live_view import LiveViewMixin
+        executor = LinuxDesktopExecutor()
+    else:
+        from operon.executor.desktop import DesktopExecutor
+        from operon.executor.live_view import LiveViewMixin
 
-    class GuestWindowsExecutor(LiveViewMixin, DesktopExecutor):
-        pass
+        class GuestWindowsExecutor(LiveViewMixin, DesktopExecutor):
+            pass
 
-    return GuestWindowsExecutor()
+        executor = GuestWindowsExecutor()
+    tools = enabled_tools()
+    if not tools:
+        return executor
+    from operon.executor.tools import ToolExecutor
+
+    return ToolExecutor(executor, tools)
 
 
 def create_guest_app(executor: Any, token: str) -> FastAPI:

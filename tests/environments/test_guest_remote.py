@@ -241,3 +241,97 @@ def test_local_ip_is_an_address():
 def test_png_round_trip_is_byte_exact(remote):
     frame = asyncio.run(remote.capture())
     assert base64.b64encode(Path(frame.artifact_path).read_bytes()) == base64.b64encode(PNG)
+
+
+# ── batches are split on the host (Codex P1 on #272) ────────────
+
+
+def _batch(*children):
+    return AgentAction(action_type=ActionType.BATCH, actions=list(children))
+
+
+def _click(x):
+    return AgentAction(action_type=ActionType.CLICK, x=x, y=1)
+
+
+def test_a_blocked_batch_child_never_reaches_the_guest(remote, guest):
+    seen = []
+
+    async def check(child):
+        seen.append(child.x)
+        return "run stopped" if child.x == 2 else None
+
+    remote.batch_child_check = check
+    result = asyncio.run(remote.execute(_batch(_click(1), _click(2), _click(3))))
+    assert not result.success
+    assert result.batch_failed_index == 1
+    assert "Batch stopped before click: run stopped" in result.detail
+    assert guest.calls == [("execute", "click")]  # only the first child ran
+    assert seen == [2]  # never checked before the first child
+
+
+def test_a_whole_batch_runs_child_by_child(remote, guest):
+    result = asyncio.run(remote.execute(_batch(_click(1), _click(2))))
+    assert result.success and result.detail == "Executed batch: click:ok, click:ok"
+    assert guest.calls == [("execute", "click"), ("execute", "click")]
+    assert result.artifact_path and Path(result.artifact_path).exists()
+
+
+def test_a_failed_child_stops_the_batch(remote, guest):
+    async def fail_second(action):
+        guest.calls.append(("execute", action.action_type.value))
+        ok = len([c for c in guest.calls if c[0] == "execute"]) == 1
+        return ExecutedAction(
+            action=action, success=ok, detail="ok" if ok else "missed",
+            failure_category=None if ok else FailureCategory.EXECUTION_ERROR,
+        )
+
+    guest.execute = fail_second
+    result = asyncio.run(remote.execute(_batch(_click(1), _click(2), _click(3))))
+    assert not result.success and result.batch_failed_index == 1
+    assert "Batch failed on click: missed" in result.detail
+    assert len(guest.calls) == 2
+
+
+def test_batch_tool_outputs_come_back_together(remote, guest):
+    from operon.models.execution import ToolOutput
+
+    async def tool_result(action):
+        guest.calls.append(("execute", action.action_type.value))
+        return ExecutedAction(
+            action=action, success=True, detail="ran", tool_outputs=[ToolOutput(tool="read_file", ok=True, output="x")]
+        )
+
+    guest.execute = tool_result
+    result = asyncio.run(remote.execute(_batch(_click(1), _click(2))))
+    assert [o.output for o in result.tool_outputs] == ["x", "x"]
+
+
+# ── closing a run's apps reaches the guest (Codex P2 on #272) ───
+
+
+def test_close_apps_when_done_is_passed_on_when_the_run_ends(remote, guest):
+    asked = []
+    guest.close_apps_when_done = lambda run_id: asked.append(run_id)
+    remote.close_apps_when_done("run-1")
+    assert asked == []  # nothing until the run ends
+    closed = asyncio.run(remote.aclose_run("run-1"))
+    assert asked == ["run-1"] and closed == 2
+    asyncio.run(remote.aclose_run("run-1"))
+    assert asked == ["run-1"]  # once per request
+
+
+# ── the guest runs the tools itself ─────────────────────────────
+
+
+def test_guest_executor_carries_the_tools_the_host_asked_for(monkeypatch):
+    from operon.environments import guest as guest_mod
+    from operon.executor.tools import ToolExecutor
+
+    monkeypatch.setenv("OPERON_DESKTOP_PLATFORM", "linux")
+    monkeypatch.setattr("operon.executor.linux_desktop.LinuxDesktopExecutor", lambda: "x11")
+    monkeypatch.setenv("OPERON_TOOLS", "on")
+    wrapped = guest_mod.build_guest_executor()
+    assert isinstance(wrapped, ToolExecutor) and wrapped.inner == "x11"
+    monkeypatch.setenv("OPERON_TOOLS", "off")
+    assert guest_mod.build_guest_executor() == "x11"

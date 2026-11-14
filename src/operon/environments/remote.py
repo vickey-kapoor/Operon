@@ -21,9 +21,9 @@ import httpx
 from operon.core.paths import desktop_artifacts_dir
 from operon.environments.guest import FILE_FIELDS
 from operon.models.capture import CaptureFrame
-from operon.models.common import FailureCategory
-from operon.models.execution import ExecutedAction
-from operon.models.policy import AgentAction
+from operon.models.common import FailureCategory, LoopStage
+from operon.models.execution import ExecutedAction, ToolOutput
+from operon.models.policy import ActionType, AgentAction
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,11 @@ class RemoteDesktopExecutor:
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self._client: httpx.AsyncClient | None = None
         self._current_run_id: str | None = None
+        self._close_when_done: set[str] = set()
+        # Set by the loop around a batch: checked before each child after the first
+        # (a stop, a trust gate). A callable cannot cross to the guest, so batches are
+        # split here and each child goes to the guest on its own.
+        self.batch_child_check = None
 
     # ── transport ────────────────────────────────────────────────
 
@@ -93,6 +98,42 @@ class RemoteDesktopExecutor:
         return frame.model_copy(update={"artifact_path": local})
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
+        if action.action_type is ActionType.BATCH:
+            return await self._execute_batch(action)
+        return await self._execute_one(action)
+
+    async def _execute_batch(self, action: AgentAction) -> ExecutedAction:
+        """A turn's calls in order, stopping at the first failure or a blocked child,
+        as the local desktop and tool executors do."""
+        outputs: list[ToolOutput] = []
+        done: list[str] = []
+        artifact_path: str | None = None
+        for index, child in enumerate(action.actions or []):
+            check = self.batch_child_check
+            if index > 0 and check is not None:
+                blocked = await check(child)
+                if blocked is not None:
+                    return _batch_failed(
+                        action, index, f"Batch stopped before {child.action_type.value}: {blocked}", outputs, artifact_path
+                    )
+            result = await self._execute_one(child)
+            outputs.extend(result.tool_outputs or [])
+            artifact_path = result.artifact_path or artifact_path
+            done.append(f"{child.action_type.value}:{'ok' if result.success else 'failed'}")
+            if not result.success:
+                return _batch_failed(
+                    action, index, f"Batch failed on {child.action_type.value}: {result.detail}", outputs,
+                    artifact_path, result,
+                )
+        return ExecutedAction(
+            action=action,
+            success=True,
+            detail=f"Executed batch: {', '.join(done)}",
+            artifact_path=artifact_path,
+            tool_outputs=outputs or None,
+        )
+
+    async def _execute_one(self, action: AgentAction) -> ExecutedAction:
         try:
             data = (await self._post("/execute", {"action": action.model_dump(mode="json")})).json()
         except (GuestUnavailableError, httpx.HTTPStatusError) as exc:
@@ -130,7 +171,14 @@ class RemoteDesktopExecutor:
     async def session_reset(self, start_url: str | None = None) -> None:
         await self._call("session_reset", start_url=start_url)
 
+    def close_apps_when_done(self, run_id: str) -> None:
+        # Remembered here and passed on when the run ends (aclose_run), in order.
+        self._close_when_done.add(run_id)
+
     async def aclose_run(self, run_id: str) -> int:
+        if run_id in self._close_when_done:
+            self._close_when_done.discard(run_id)
+            await self._call("close_apps_when_done", run_id=run_id)
         return int(await self._call("aclose_run", run_id=run_id) or 0)
 
     async def live_frame_png(self, run_id: str) -> bytes | None:
@@ -159,6 +207,27 @@ class RemoteDesktopExecutor:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+
+def _batch_failed(
+    action: AgentAction,
+    index: int,
+    detail: str,
+    outputs: list[ToolOutput],
+    artifact_path: str | None,
+    result: ExecutedAction | None = None,
+) -> ExecutedAction:
+    return ExecutedAction(
+        action=action,
+        success=False,
+        detail=detail,
+        artifact_path=artifact_path,
+        execution_trace=result.execution_trace if result else None,
+        failure_category=(result.failure_category if result else None) or FailureCategory.EXECUTION_ERROR,
+        failure_stage=(result.failure_stage if result else None) or LoopStage.EXECUTE,
+        batch_failed_index=index,
+        tool_outputs=outputs or None,
+    )
 
 
 def _log_task_error(task: asyncio.Task) -> None:

@@ -320,3 +320,56 @@ def test_envs_try_flag_routes_to_the_smoke_test(monkeypatch):
     monkeypatch.setattr(cli, "_load_env", lambda: None)
     assert cli.main(["envs", "--try", "live"]) == 0
     assert seen == ["live"]
+
+
+# ── tools stay inside a guest machine (Codex P1 on #272) ────────
+
+
+def _build_desktop_loop_with(monkeypatch, provider):
+    monkeypatch.setattr(loops, "get_provider", lambda: provider)
+    built = {}
+
+    class _Loop:
+        def __init__(self, **kwargs):
+            built.update(kwargs)
+            self.executor = kwargs["executor"]
+
+    with (
+        patch.object(loops, "build_desktop_services", return_value=SimpleNamespace(perception_service="p", policy_delegate="d")),
+        patch.object(loops, "_loop_layers", return_value={}),
+        patch.object(loops, "_with_tools", side_effect=lambda executor, config: ("tools", executor)),
+        patch.object(loops, "FileBackedRunStore", return_value=SimpleNamespace(root_dir="/tmp/x")),
+        patch.object(loops, "FileBackedMemoryStore"),
+        patch.object(loops, "ScreenCaptureService"),
+        patch.object(loops, "AgentLoop", _Loop),
+        patch.object(loops._ws_stream, "set_desktop_executor"),
+    ):
+        loops.get_desktop_agent_loop()
+    return built["executor"]
+
+
+def test_host_tools_wrap_a_machine_on_the_host(monkeypatch):
+    fake = _FakeProvider()
+    assert _build_desktop_loop_with(monkeypatch, fake) == ("tools", fake.executor)
+
+
+def test_host_tools_never_wrap_a_guest_machine(monkeypatch):
+    fake = _FakeProvider()
+    fake.runs_on_host = False
+    assert _build_desktop_loop_with(monkeypatch, fake) is fake.executor
+
+
+def test_guest_tools_setting_follows_the_host(monkeypatch):
+    from operon.api.runtime_config import RuntimeModeConfig
+    from operon.environments import base
+
+    cu = RuntimeModeConfig(backend="computer_use", primary_model="gemini-3.5-flash")
+    js = RuntimeModeConfig(backend="json", primary_model="gemini-3.5-flash")
+    monkeypatch.setattr("operon.api.runtime_config.desktop_mode_config", lambda: cu)
+    monkeypatch.setenv("OPERON_TOOLS", " all ")
+    assert base.guest_tools_setting() == "all"
+    monkeypatch.delenv("OPERON_TOOLS")
+    assert base.guest_tools_setting() == ""  # the guest's default is the host's default
+    monkeypatch.setattr("operon.api.runtime_config.desktop_mode_config", lambda: js)
+    monkeypatch.setenv("OPERON_TOOLS", "on")
+    assert base.guest_tools_setting() == "off"  # only computer use declares tools

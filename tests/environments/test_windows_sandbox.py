@@ -199,3 +199,14 @@ def test_stop_closes_the_sandbox_once(provider, monkeypatch):
 
 def test_stop_before_start_does_nothing(provider):
     provider.stop()
+
+
+def test_guest_command_passes_the_hosts_tool_setting(provider, monkeypatch):
+    monkeypatch.setattr(ws, "guest_tools_setting", lambda: "all")
+    assert "set OPERON_TOOLS=all" in provider.guest_command()
+    monkeypatch.setattr(ws, "guest_tools_setting", lambda: "")
+    assert "OPERON_TOOLS" not in provider.guest_command()
+
+
+def test_sandbox_tools_never_run_on_the_host():
+    assert WindowsSandboxProvider.runs_on_host is False

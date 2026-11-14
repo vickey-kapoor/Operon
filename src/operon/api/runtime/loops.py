@@ -162,14 +162,17 @@ def get_desktop_agent_loop() -> AgentLoop:
         desktop_config = desktop_mode_config()
         services = build_desktop_services()
         # KAN-80: the environment provider owns the machine and builds its executor.
-        executor = desktop_provider().build_executor()
+        provider = desktop_provider()
+        executor = provider.build_executor()
         run_store = FileBackedRunStore(environment="desktop")
         memory_store = FileBackedMemoryStore()
         _desktop_agent_loop = AgentLoop(
             capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
             perception_service=services.perception_service,
             run_store=run_store,
-            executor=_with_tools(executor, desktop_config),
+            # A machine reached through the guest agent runs the tools itself (guest.py),
+            # so they act inside it, never on this host.
+            executor=_with_tools(executor, desktop_config) if provider.runs_on_host else executor,
             memory_store=memory_store,
             environment=UnifiedEnvironment.DESKTOP,
             **_loop_layers(config=desktop_config, services=services, memory_store=memory_store, desktop=True),

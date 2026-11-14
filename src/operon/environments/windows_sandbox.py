@@ -27,7 +27,11 @@ from xml.sax.saxutils import escape
 
 import operon
 from operon.core.paths import user_config_dir
-from operon.environments.base import EnvironmentProvider, ProviderCheck
+from operon.environments.base import (
+    EnvironmentProvider,
+    ProviderCheck,
+    guest_tools_setting,
+)
 from operon.environments.guest import DEFAULT_GUEST_PORT, new_token
 
 logger = logging.getLogger(__name__)
@@ -83,6 +87,7 @@ def guest_python() -> Path:
 class WindowsSandboxProvider(EnvironmentProvider):
     name = "windows-sandbox"
     summary = "A clean, throwaway Windows on this PC (Windows Sandbox), wiped when it closes."
+    runs_on_host = False
 
     def __init__(self, *, work_dir: Path | None = None) -> None:
         self.work_dir = work_dir or (user_config_dir() / "windows-sandbox")
@@ -121,6 +126,7 @@ class WindowsSandboxProvider(EnvironmentProvider):
         """The batch file the sandbox runs at logon."""
         ex = self.exchange
         python = guest_python()
+        tools = guest_tools_setting()
         return "\r\n".join(
             [
                 "@echo off",
@@ -129,6 +135,7 @@ class WindowsSandboxProvider(EnvironmentProvider):
                 f"set OPERON_RUNTIME_ROOT={_GUEST_RUNTIME}",
                 f"set OPERON_CONFIG_DIR={_GUEST_RUNTIME}",
                 f'set PYTHONPATH={source_dir()}',
+                *([f"set OPERON_TOOLS={tools}"] if tools else []),
                 f'"{python}" -m operon.cli guest --port {self.port} --token-file "{ex / "token.txt"}" '
                 f'--ready-file "{ex / "ready.json"}" --log-file "{ex / "guest.log"}"',
                 "",

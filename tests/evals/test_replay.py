@@ -221,3 +221,40 @@ def test_the_run_permission_mode_is_restored(tmp_path):
     recording = _record(tmp_path, TURNS, permission_mode="ask")
     assert recording["permission_mode"] == "ask"
     _replays(recording)
+
+
+def test_the_trust_gate_sees_the_pages_it_saw(tmp_path):
+    """With a domain allowlist, an action on an off-list page pauses; the replay must show
+    the gate the same page, or the pause turns into an executed click."""
+    turns = [call("click_at", x=300, y=300), call("click_at", x=310, y=310), done()]
+    recording = _record(tmp_path, turns, settings={"OPERON_TRUST_GATE": "on", "OPERON_TRUST_ALLOW_DOMAINS": "example.com"},
+                        gate_urls=["https://example.com/", "https://evil.test/login"])
+    assert recording["gate_urls"][:2] == ["https://example.com/", "https://evil.test/login"]
+    assert [s["action"]["action_type"] for s in recording["steps"]][:2] == ["click", "wait_for_user"]
+    _replays(recording)
+    blind = asyncio.run(rp.replay({**recording, "gate_urls": []}))  # the gate never sees the page
+    assert not blind.ok and "step 2" in blind.message
+
+
+def test_a_run_from_another_os_judges_file_paths_its_way(tmp_path):
+    """A Windows run's Documents root authorizes C:\\...\\report.txt; replayed on Linux too."""
+    host = {"os": "nt", "home": r"C:\Users\runner"}
+    turns = [call("read_file", path=r"C:\Users\runner\Documents\report.txt"), done()]
+    settings = {"OPERON_ALLOWED_FILE_ROOTS": r"C:\Users\runner\Documents"}
+    with rp.recorded_path_rules(host):  # the guard as it ran on Windows
+        recording = _record(tmp_path, turns, settings=settings)
+    recording["host"] = host
+    assert recording["steps"][0]["action"]["action_type"] == "tool"
+    _replays(recording)
+    as_linux = asyncio.run(rp.replay({**recording, "host": {"os": "posix", "home": "/root"}}))
+    assert not as_linux.ok and "step 1" in as_linux.message
+
+    from operon.agent.policy.file_guard import blocked_file_path
+    from operon.models.policy import ActionType, AgentAction
+
+    outside = AgentAction(action_type=ActionType.TOOL, tool="read_file", tool_args={"path": r"C:\Windows\secret.txt"},
+                          text="read_file: secret")
+    with rp.loop_environment(settings), rp.recorded_path_rules(host):
+        assert blocked_file_path(outside, intent="task", run_dir=tmp_path) == r"C:\Windows\secret.txt"
+        inside = outside.model_copy(update={"tool_args": {"path": r"documents\report.txt"}})
+        assert blocked_file_path(inside, intent="task", run_dir=tmp_path) is None

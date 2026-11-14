@@ -509,3 +509,48 @@ def test_desktop_run_task_refuses_a_blocked_start_url(client: TestClient) -> Non
 
     assert resp.status_code == 400
     assert "blocked" in resp.json()["detail"]
+
+
+def test_desktop_stop_unknown_run_is_404(client: TestClient) -> None:
+    mock_loop = SimpleNamespace(run_store=SimpleNamespace(get_run=AsyncMock(return_value=None)))
+
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop", return_value=mock_loop):
+        resp = client.post("/desktop/stop", json={"run_id": "nope"})
+
+    assert resp.status_code == 404
+
+
+def test_desktop_stop_still_cancels_when_cleanup_fails(client: TestClient) -> None:
+    from operon.models.state import AgentState
+
+    running = AgentState(run_id="test-run-1", intent="Open Calculator", status=RunStatus.RUNNING)
+    mock_loop = SimpleNamespace(
+        run_store=SimpleNamespace(
+            get_run=AsyncMock(return_value=running),
+            set_status=AsyncMock(return_value=running.model_copy(update={"status": RunStatus.CANCELLED})),
+        ),
+        _cleanup_completed_run=AsyncMock(side_effect=RuntimeError("app would not close")),
+    )
+
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop", return_value=mock_loop):
+        resp = client.post("/desktop/stop", json={"run_id": "test-run-1"})
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+
+def test_desktop_stop_leaves_a_finished_run_alone(client: TestClient) -> None:
+    from operon.models.state import AgentState
+
+    done = AgentState(run_id="test-run-1", intent="Open Calculator", status=RunStatus.SUCCEEDED)
+    mock_loop = SimpleNamespace(
+        run_store=SimpleNamespace(get_run=AsyncMock(return_value=done), set_status=AsyncMock()),
+        _cleanup_completed_run=AsyncMock(),
+    )
+
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop", return_value=mock_loop):
+        resp = client.post("/desktop/stop", json={"run_id": "test-run-1"})
+
+    assert resp.json()["status"] == "succeeded"
+    mock_loop.run_store.set_status.assert_not_awaited()
+    mock_loop._cleanup_completed_run.assert_not_awaited()

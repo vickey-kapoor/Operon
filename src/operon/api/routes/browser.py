@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, status
+from pydantic import ValidationError
 
 from operon.agent.loop import StartUrlBlockedError
 from operon.api import ws_stream as _ws_stream
@@ -70,13 +71,18 @@ async def step_run(request: StepRequest) -> RunResponse:
         await publish_step_outcome(loop, response)
         return response
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        # A missing run is a ValueError; a pydantic ValidationError is one too, but
+        # that is a crash mid-step and must fail the run like any other.
+        if not isinstance(exc, ValidationError):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        crash: Exception = exc
     except Exception as exc:
-        logger.exception("unhandled exception in step_run for %s: %s", request.run_id, exc)
-        failed = await mark_run_failed(get_agent_loop(), request.run_id)
-        if failed is not None:
-            return failed
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        crash = exc
+    logger.error("unhandled exception in step_run for %s: %s", request.run_id, crash, exc_info=crash)
+    failed = await mark_run_failed(get_agent_loop(), request.run_id)
+    if failed is not None:
+        return failed
+    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(crash)) from crash
 
 
 @router.post("/resume", response_model=RunResponse)

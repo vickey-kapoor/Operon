@@ -224,3 +224,82 @@ async def test_fallback_backend_clears_only_inactive_hints_for_current_run() -> 
     await backend.perceive(frame, state)
 
     assert secondary.scoped_hints == {"run-1": ["run-1 hint"]}
+
+
+class _HookBackend:
+    """Records the optional hooks the fallback forwards to the run's active backend."""
+
+    def __init__(self, name: str, *, held: bool = False, resample: bool = True, fail: bool = False) -> None:
+        self.name = name
+        self.held = held
+        self.resample = resample
+        self.fail = fail
+        self.calls: list[tuple] = []
+
+    async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        if self.fail:
+            raise BackendCompatibilityError(f"{self.name} unavailable")
+        return ScreenPerception(
+            summary=self.name, page_hint="unknown", visible_elements=[],
+            capture_artifact_path=screenshot.artifact_path, confidence=0.9,
+        )
+
+    async def choose_action(self, state, perception):
+        raise AssertionError("not used")
+
+    def latest_debug_artifacts(self):
+        return f"artifacts:{self.name}"
+
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        pass
+
+    def note_not_executed(self, run_id: str, reason: str) -> None:
+        self.calls.append(("note_not_executed", run_id, reason))
+
+    def has_held_actions(self, run_id: str) -> bool:
+        return self.held
+
+    def discard_held_actions(self, run_id: str, reason: str) -> None:
+        self.calls.append(("discard_held_actions", run_id, reason))
+
+    def supports_resampling(self, run_id: str = "") -> bool:
+        return self.resample
+
+
+def _frame() -> CaptureFrame:
+    return CaptureFrame(artifact_path="frame.png", width=10, height=10, mime_type="image/png")
+
+
+@pytest.mark.asyncio
+async def test_fallback_backend_reraises_when_the_secondary_is_incompatible_too() -> None:
+    secondary = _HookBackend("s")
+    backend = FallbackBackend(primary=_HookBackend("p", fail=True), secondary=secondary)
+    state = AgentState(run_id="run-1", intent="x", status=RunStatus.RUNNING)
+
+    await backend.perceive(_frame(), state)  # switches the run to the secondary
+    secondary.fail = True
+    with pytest.raises(BackendCompatibilityError, match="s unavailable"):
+        await backend.perceive(_frame(), state)
+
+
+@pytest.mark.asyncio
+async def test_fallback_backend_forwards_run_hooks_to_the_run_s_active_backend() -> None:
+    primary = _HookBackend("p", fail=True, held=False, resample=True)
+    secondary = _HookBackend("s", held=True, resample=False)
+    backend = FallbackBackend(primary=primary, secondary=secondary)
+
+    # Before the switch, hooks go to the primary.
+    assert backend.has_held_actions("run-1") is False
+    assert backend.supports_resampling("run-1") is True
+
+    await backend.perceive(_frame(), AgentState(run_id="run-1", intent="x", status=RunStatus.RUNNING))
+    assert backend.latest_debug_artifacts() == "artifacts:s"
+
+    backend.note_not_executed("run-1", "gate")
+    backend.discard_held_actions("run-1", "correction")
+    assert backend.has_held_actions("run-1") is True
+    assert backend.supports_resampling("run-1") is False
+    assert secondary.calls == [("note_not_executed", "run-1", "gate"), ("discard_held_actions", "run-1", "correction")]
+    assert primary.calls == []
+    # Other runs still use the primary.
+    assert backend.has_held_actions("run-2") is False

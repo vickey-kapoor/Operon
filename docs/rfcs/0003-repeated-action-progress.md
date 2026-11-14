@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | Proposed; first calibration pass done (§6) |
+| **Status** | Implemented behind `OPERON_PROGRESS_REVISIT` (off by default), PR #266; benchmarks (§6 item 4) still to run before default-on |
 | **Created** | 2026-11-13 |
 | **Story** | — |
-| **Related** | [`../architecture.md`](../architecture.md), PR #263 (the `xfail` test that shows the gap) |
+| **Related** | [`../architecture.md`](../architecture.md), PR #263 (the `xfail` test that shows the gap), PR #266 (the implementation) |
 
 > RFCs are design proposals, not implementation truth. The code and
 > [`../architecture.md`](../architecture.md) stay authoritative.
@@ -19,8 +19,9 @@ relaunching Notepad never trips a guard and runs to `max_steps`.
 
 Proposal: when an action repeats, compare the screen it produced with the screens the same
 action produced earlier in the run. A new screen is progress (scrolling, paging with
-Next); a screen the action already produced is not (the fifth Notepad launch). Ships behind
-`OPERON_PROGRESS_REVISIT`, off by default.
+Next); a screen the action already produced is not (the fifth Notepad launch). Merged in
+PR #266 behind `OPERON_PROGRESS_REVISIT`, off by default; §4 describes the rule as it
+shipped.
 
 ## 2. Motivation
 
@@ -77,23 +78,36 @@ backend.
 
 ### The rule
 
-In `ProgressTracker.update_progress_state`, after the existing checks:
+As merged (PR #266), in `ProgressTracker.update_progress_state`, after the existing checks
+and only when `OPERON_PROGRESS_REVISIT` is on:
 
 1. Keep, per action signature, the after-screenshot paths of its recent successful runs:
-   `ProgressState.action_outcomes: dict[str, list[str]]` — paths only, at most 3 per
-   action and 20 actions, oldest dropped. **Not cleared on progress** (that is the bug).
-2. When the action's signature already has outcomes, compare this step's after-screenshot
-   with each with `compute_screen_change_ratio`. If any is below
-   `REVISIT_SAME_SCREEN_THRESHOLD`, the action reached a screen it already produced:
-   **not progress**.
-3. Otherwise fall through to today's rule unchanged.
+   `ProgressState.action_outcomes: dict[str, list[str]]`, paths only, at most 3 per
+   action (`REVISIT_OUTCOMES_PER_ACTION`) and 20 actions (`REVISIT_MAX_ACTIONS`), least
+   recently used dropped. Every successful step is recorded, whatever its verdict, and the
+   map is **not cleared on progress** (that is the bug).
+2. **A repeat that reaches a screen it already produced is not progress.** When today's
+   rule says progress, compare this step's after-screenshot with each earlier outcome of
+   the same action using `compute_screen_change_ratio`. If any is below
+   `REVISIT_SAME_SCREEN_THRESHOLD` (1%), the step is not progress and its trace records
+   `revisited_screen=True`.
+3. **A repeat that reaches a new screen counts again.** When today's rule says no progress
+   only because the action is already counted as a repeat (not novel), but the screen
+   changed (at least the 0.2% progress threshold) and the after-screen differs from every
+   earlier outcome of that action, the step is progress. Without this, one revisit would
+   block a legitimate repeat for the rest of the run: a scroll that goes A, B, A, C must
+   count again at C.
+4. Otherwise today's verdict stands, including when there is nothing to compare (no
+   earlier outcome, or a screenshot is missing).
 
-The stop condition and a subgoal change still count first, exactly as now.
+The stop condition and a subgoal change still count first, exactly as before; the check
+only runs for successful steps that neither met the stop condition nor changed subgoal.
 
 With the rule, five Notepad launches go: step 1 progress (new subgoal); step 2 same screen
 as step 1, so no progress, streak 1; step 3 streak 2, repeat count 2; step 4 is blocked by
 the existing repeat guard. Scrolling compares each new screen with the earlier scroll
-results, finds them different, and keeps counting.
+results, finds them different, and keeps counting, even after a scroll that revisited a
+screen.
 
 ### Failing open
 
@@ -105,9 +119,9 @@ results, finds them different, and keeps counting.
 
 ### Wiring
 
-`update_progress_state` gains an `after_artifact_path` argument; the loop already has it
-(`_after_artifact_path`). Cost: up to 3 extra 480×270 grayscale compares, only on steps
-whose action repeats.
+No new argument was needed: the after-screenshot is read from the executed action's
+`artifact_path`, which the loop already sets. Cost: up to 3 extra 480×270 grayscale
+compares, only on steps whose action already has recorded outcomes.
 
 ## 5. Risks
 
@@ -122,17 +136,19 @@ whose action repeats.
 
 ## 6. Measurement before default-on
 
-1. **Offline unit tests**: flip PR #263's `xfail` to a pass under the flag; add a scroll
-   test (repeat with new screens keeps progressing) and a missing-screenshot test (falls
-   back).
+1. **Offline unit tests** (done, PR #266): PR #263's `xfail` passes under the flag; a
+   scroll test (repeat with new screens keeps progressing, including after a revisit) and a
+   missing-screenshot test (falls back) are in `tests/agent/policy/test_progress_tracker.py`.
 2. **Threshold calibration from saved runs** (`.var/runs/*/step_*` before/after
    screenshots, no API cost): for repeated actions, histogram the ratio between their
    after-screens, labelled by hand as "same screen" vs "new screen". Pick the threshold
    that separates them; record it in this RFC. First pass done; see below.
-3. **A scripted runaway** (offline eval harness, no API cost): a scenario whose model
-   relaunches the same app with the same arguments five times. Confirms the "same screen"
-   side of the threshold, which saved runs don't yet cover.
-4. **Benchmarks** (cost real credits; only when asked): Browser Full core and Desktop Full
+3. **A scripted runaway** (done, PR #266; offline eval harness, no API cost):
+   `cu_relaunch_runaway` relaunches the browser with the same call; with the flag off it
+   runs to its step budget (known issue), and `cu_relaunch_runaway_revisit` with the flag
+   on is stopped as a loop. `cu_scroll_twice_revisit` checks a legitimate repeat still
+   succeeds with the flag on.
+4. **Benchmarks** (not yet run; cost real credits; only when asked): Browser Full core and Desktop Full
    core, flag off vs on, once each. Ship default-on only if pass rate does not drop and at
    least one runaway run ends earlier.
 

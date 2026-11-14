@@ -19,6 +19,7 @@ import mss.tools
 import pyperclip
 
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
+from operon.agent.perception.settle import settle_after_action, signature_from_rgb
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
 
@@ -623,6 +624,24 @@ class DesktopExecutor(Executor):
             except Exception:
                 logger.debug("aclose: cleanup_run failed for %s", run_id, exc_info=True)
 
+    async def settle_now(self, fallback_delay: float) -> None:
+        """Wait for the screen to settle (OPERON_SETTLE_DETECT), else sleep ``fallback_delay``."""
+        await settle_after_action(self._grab_signature, fallback_delay)
+
+    async def _grab_signature(self) -> bytes | None:
+        """One small grayscale frame of the screen, for settle detection."""
+        return await asyncio.to_thread(self._grab_signature_sync)
+
+    def _grab_signature_sync(self) -> bytes | None:
+        try:
+            with _mss() as sct:
+                monitor = _foreground_monitor() or sct.monitors[1]
+                shot = sct.grab(monitor)
+                return signature_from_rgb(bytes(shot.rgb), shot.size)
+        except Exception as exc:  # noqa: BLE001 - settle falls back to a plain sleep
+            logger.debug("settle: screen grab failed: %s", exc)
+            return None
+
     async def capture(self) -> CaptureFrame:
         """Take a 3-frame burst screenshot and return the last frame with visual velocity."""
         frame, velocity = await asyncio.to_thread(self._capture_burst_sync)
@@ -819,7 +838,7 @@ class DesktopExecutor(Executor):
             return gate
         try:
             await asyncio.to_thread(pyautogui.click, action.x, action.y)
-            await asyncio.sleep(self._post_action_delay)
+            await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
         except Exception as exc:
@@ -831,7 +850,7 @@ class DesktopExecutor(Executor):
             return gate
         try:
             await asyncio.to_thread(pyautogui.doubleClick, action.x, action.y)
-            await asyncio.sleep(self._post_action_delay)
+            await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Double-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
         except Exception as exc:
@@ -843,7 +862,7 @@ class DesktopExecutor(Executor):
             return gate
         try:
             await asyncio.to_thread(pyautogui.click, action.x, action.y, clicks=3, interval=0.05)
-            await asyncio.sleep(self._post_action_delay)
+            await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Triple-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
         except Exception as exc:
@@ -855,7 +874,7 @@ class DesktopExecutor(Executor):
             return gate
         try:
             await asyncio.to_thread(pyautogui.rightClick, action.x, action.y)
-            await asyncio.sleep(self._post_action_delay)
+            await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Right-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
         except Exception as exc:
@@ -913,7 +932,7 @@ class DesktopExecutor(Executor):
             if action.press_enter:
                 await asyncio.sleep(0.05)
                 await asyncio.to_thread(pyautogui.press, 'enter')
-            await asyncio.sleep(self._post_action_delay)
+            await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Typed '{action.text}'", after_path)
         except Exception as exc:
@@ -939,7 +958,7 @@ class DesktopExecutor(Executor):
             return self._fail(action, f"Unknown key name '{action.key}'; nothing was pressed", FailureCategory.EXECUTION_ERROR)
         try:
             await asyncio.to_thread(pyautogui.press, key)
-            await asyncio.sleep(self._post_action_delay)
+            await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Pressed key '{key}'", after_path)
         except Exception as exc:
@@ -964,7 +983,7 @@ class DesktopExecutor(Executor):
             )
         try:
             await asyncio.to_thread(pyautogui.hotkey, *keys)
-            await asyncio.sleep(self._post_action_delay)
+            await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Pressed hotkey '{action.key}'", after_path)
         except Exception as exc:
@@ -1021,7 +1040,7 @@ class DesktopExecutor(Executor):
             # where the launcher process exits but the app keeps running)
             if self._current_run_id is not None:
                 self._launched_app_names.setdefault(self._current_run_id, []).append(exe_name)
-            await asyncio.sleep(self._post_launch_delay)
+            await self.settle_now(self._post_launch_delay)
             if self._current_run_id is not None and before is not None:
                 after = await asyncio.to_thread(_image_pids, exe_name)
                 if after is not None:
@@ -1073,7 +1092,7 @@ class DesktopExecutor(Executor):
             else:
                 await asyncio.to_thread(pyautogui.scroll, action.scroll_amount, x=action.x, y=action.y)
                 direction = "up" if action.scroll_amount > 0 else "down"
-            await asyncio.sleep(self._post_action_delay)
+            await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(
                 action,

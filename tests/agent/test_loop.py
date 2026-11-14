@@ -1837,3 +1837,30 @@ def test_adopt_settle_frame_never_moves_protected_before_frame(tmp_path: Path) -
     assert swapped is False
     assert before.exists()
     assert _pixel(after) == (255, 255, 255)
+
+
+@pytest.mark.asyncio
+async def test_consume_force_fresh_perception_uses_the_executor_settle_wait() -> None:
+    """KAN-110: an executor with settle_now does the waiting (it sleeps itself when
+    OPERON_SETTLE_DETECT is off), and the flag is still reset after it."""
+    from unittest.mock import patch as _patch
+
+    from operon.core.contracts.perception import Environment as UnifiedEnvironment
+
+    calls: list[float] = []
+
+    class SettlingExecutor:
+        async def settle_now(self, fallback_delay: float) -> None:
+            calls.append(fallback_delay)
+
+    desktop_loop = _loop()
+    desktop_loop.environment = UnifiedEnvironment.DESKTOP
+    desktop_loop.executor = SettlingExecutor()
+    state = AgentState(run_id="r1", intent="x", status=RunStatus.RUNNING, force_fresh_perception=True)
+
+    with _patch("operon.agent.loop.asyncio.sleep") as mock_sleep:
+        await desktop_loop._consume_force_fresh_perception(state)
+
+    assert calls == [0.5]
+    mock_sleep.assert_not_called()
+    assert state.force_fresh_perception is False

@@ -17,8 +17,8 @@ the loop and apply to every profile.
 from __future__ import annotations
 
 import logging
-import os
 
+from operon.core.settings import get_settings
 from operon.models.common import StopReason
 from operon.models.execution import ExecutedAction
 from operon.models.logs import ModelDebugArtifacts
@@ -46,7 +46,7 @@ def harness_profile(backend: str) -> str:
     """The harness profile for a backend. Gemini computer use runs full unless
     ``OPERON_HARNESS_PROFILE=thin`` asks for the thin harness; the json backend always
     runs full, since its decisions still need the rules and the critic."""
-    requested = (os.getenv("OPERON_HARNESS_PROFILE") or "").strip().lower()
+    requested = get_settings().harness_profile
     if backend == GEMINI_COMPUTER_USE:
         return THIN if requested == THIN else FULL
     if requested == THIN:

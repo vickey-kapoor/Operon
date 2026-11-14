@@ -22,11 +22,11 @@ Config:
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from operon.core.settings import get_settings
 from operon.models.perception import ScreenPerception
 from operon.models.policy import AgentAction, PolicyDecision
 from operon.models.state import AgentState
@@ -54,10 +54,7 @@ class ScoredCandidate:
 
 def best_of_n_count() -> int:
     """N from ``OPERON_BESTOFN_N`` (default 1 = disabled). Clamps to >= 1."""
-    try:
-        return max(1, int(os.getenv("OPERON_BESTOFN_N", "1")))
-    except ValueError:
-        return 1
+    return get_settings().bestofn_n
 
 
 def best_of_n_confidence_ceiling() -> float:
@@ -65,10 +62,7 @@ def best_of_n_confidence_ceiling() -> float:
 
     Default 1.0 ⇒ fires whenever Best-of-N is enabled (confidence is in [0, 1]).
     """
-    try:
-        return float(os.getenv("OPERON_BESTOFN_CONFIDENCE", "1.0"))
-    except ValueError:
-        return 1.0
+    return get_settings().bestofn_confidence
 
 
 def _same_action(a: AgentAction, b: AgentAction) -> bool:

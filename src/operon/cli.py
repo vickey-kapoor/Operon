@@ -24,6 +24,8 @@ import signal
 import sys
 from typing import Any, Callable
 
+from operon.core.settings import get_settings
+
 _DEFAULT_API = "http://127.0.0.1:8080"
 _EXIT = {"succeeded": 0, "failed": 1, "cancelled": 1}
 
@@ -274,9 +276,11 @@ async def _run(args: argparse.Namespace) -> int:
 
         client = RemoteClient(args.api, args.api_key or client_api_key())
     else:
-        from operon.api.runtime_config import validate_modes
+        from operon.core.settings import startup_problems
 
-        errors = validate_modes()
+        errors, warnings = startup_problems()
+        for warning in warnings:
+            print(f"operon run: setting ignored: {warning}", file=sys.stderr)
         if errors:
             print("Invalid Operon configuration:\n  - " + "\n  - ".join(errors), file=sys.stderr)
             return 1
@@ -306,7 +310,7 @@ def _serve(args: argparse.Namespace) -> int:
 
     from operon.api.auth import auth_disabled, local_api_key
 
-    keys = [k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
+    keys = list(get_settings().api_keys)
     key = keys[0] if keys else (None if auth_disabled() else local_api_key())
     url = f"http://{'127.0.0.1' if args.host in {'0.0.0.0', '::'} else args.host}:{args.port}/app"
     # The key goes in the fragment, which the browser never sends to the server.
@@ -325,7 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="run a task and print a report")
     run.add_argument("task", help="what Operon should do, in plain words")
     run.add_argument("--request", action="store_true", help="send the task to a running API instead of running it here")
-    run.add_argument("--api", default=os.getenv("OPERON_API_URL", _DEFAULT_API), help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
+    run.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
     run.add_argument("--desktop", action="store_true", help="run on the desktop instead of in the browser")
     run.add_argument("--env", default=None, help="desktop run environment (default $OPERON_ENVIRONMENT, else live; see `operon envs`)")

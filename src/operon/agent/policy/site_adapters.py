@@ -14,11 +14,12 @@ names, or ``all``) to load the built-ins at import time.
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Iterable
 from typing import Protocol
 from urllib.parse import quote_plus, urljoin, urlparse
+
+from operon.core.settings import get_settings
 
 
 class SiteAdapter(Protocol):
@@ -131,7 +132,7 @@ def resolve_search_url(query: str, base_url: str) -> str:
 
 
 def _load_from_env() -> None:
-    raw = os.getenv("OPERON_SITE_ADAPTERS", "").strip()
+    raw = get_settings().site_adapters
     if not raw:
         return
     if raw.lower() == "all":

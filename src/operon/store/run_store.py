@@ -9,6 +9,7 @@ from typing import Dict
 from uuid import uuid4
 
 from operon.core.paths import runs_dir
+from operon.core.settings import get_settings
 from operon.models.common import RunStatus
 from operon.models.perception import ScreenPerception
 from operon.models.state import AgentState
@@ -89,6 +90,7 @@ class FileBackedRunStore(RunStore):
         # Writing the initial state synchronously avoids a race where
         # /observer/api/run/{run_id} reads before bg_writer flushes state.json.
         self._write_state_sync(record)
+        self._write_settings(run_id)
         return record
 
     def holds_run(self, run_id: str) -> bool:
@@ -172,6 +174,11 @@ class FileBackedRunStore(RunStore):
         path = self._ensure_run_dir(run_id) / f"step_{step_index}"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def _write_settings(self, run_id: str) -> None:
+        """Record the settings this run started with (KAN-157), secrets left out."""
+        path = self._ensure_run_dir(run_id) / "settings.json"
+        path.write_text(json.dumps(get_settings().effective(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _state_path(self, run_id: str) -> Path:
         return self._ensure_run_dir(run_id) / "state.json"

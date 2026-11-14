@@ -25,7 +25,6 @@ stands unchanged. Each zoom costs one extra model call on that step.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -77,20 +76,10 @@ class ZoomSettings:
 
 def zoom_settings() -> ZoomSettings:
     """``OPERON_ZOOM*`` from the environment; anything unrecognised means off."""
-    mode = (os.getenv("OPERON_ZOOM") or OFF).strip().lower()
-    if mode in {"on", "true", "1", "yes"}:
-        mode = DENSE
-    if mode not in MODES:
-        mode = OFF
-    try:
-        min_side = max(1, int(os.getenv("OPERON_ZOOM_MIN_SIDE", str(DEFAULT_MIN_SIDE))))
-    except ValueError:
-        min_side = DEFAULT_MIN_SIDE
-    try:
-        factor = float(os.getenv("OPERON_ZOOM_FACTOR", str(DEFAULT_FACTOR)))
-    except ValueError:
-        factor = DEFAULT_FACTOR
-    return ZoomSettings(mode=mode, min_side=min_side, factor=min(6.0, max(1.5, factor)))
+    from operon.core.settings import get_settings
+
+    settings = get_settings()
+    return ZoomSettings(mode=settings.zoom, min_side=settings.zoom_min_side, factor=settings.zoom_factor)
 
 
 @dataclass(frozen=True)

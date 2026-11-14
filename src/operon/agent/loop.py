@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 import shutil
 import time
 import weakref
@@ -51,6 +50,7 @@ from operon.agent.policy.verifier import VerifierService
 from operon.agent.step_context import StepContext
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
+from operon.core.settings import get_settings
 from operon.executor.browser import Executor
 from operon.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
 from operon.executor.desktop_adapter import DesktopExecutor as UnifiedDesktopExecutor
@@ -92,7 +92,6 @@ from operon.store.run_store import RunStore
 
 logger = logging.getLogger(__name__)
 
-_TRACE = os.getenv("OPERON_TRACE", "").lower() in {"1", "true", "yes"}
 
 _LIVENESS_RETRY_MAX = 3
 _LIVENESS_RETRY_FIRST_SLEEP_S = 0.5   # fast recovery for brief UI transitions (e.g. search overlay animating in)
@@ -108,11 +107,11 @@ _BUG_EXCEPTIONS: tuple[type[BaseException], ...] = (AssertionError, AttributeErr
 
 
 def _strict_errors() -> bool:
-    return os.getenv("OPERON_STRICT_ERRORS", "").strip().lower() in {"1", "true", "yes", "on"}
+    return get_settings().strict_errors
 
 
 def _trace(stage: str, detail: str = "") -> None:
-    if not _TRACE:
+    if not get_settings().trace:
         return
     suffix = f"  {detail}" if detail else ""
     msg = f"[TRACE] {stage}{suffix}"
@@ -304,7 +303,7 @@ class AgentLoop:
 
     @staticmethod
     def _test_safe_mode_enabled() -> bool:
-        return os.getenv("OPERON_TEST_SAFE_MODE", "false").lower() == "true"
+        return get_settings().test_safe_mode
 
     async def _run_cancelled(self, run_id: str) -> bool:
         """Whether the run was stopped (e.g. ``/desktop/stop``) since its step began."""

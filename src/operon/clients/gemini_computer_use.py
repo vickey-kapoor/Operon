@@ -5,13 +5,13 @@ import base64
 import json
 import logging
 import mimetypes
-import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from operon.core.settings import get_settings
 from operon.models.usage import ModelUsage, estimate_usage_cost
 
 logger = logging.getLogger(__name__)
@@ -63,10 +63,7 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         # Gemini 3 thinking level ("minimal", "low", "high"); None keeps the model default.
         self.thinking_level = thinking_level
         self.api_key = api_key
-        self.api_base_url = api_base_url or os.getenv(
-            "GEMINI_API_BASE_URL",
-            "https://generativelanguage.googleapis.com/v1beta/models",
-        )
+        self.api_base_url = api_base_url or get_settings().gemini_api_base_url
         self.timeout_seconds = timeout_seconds
         self.max_retries = max(0, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
@@ -176,7 +173,7 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         }
 
     async def _post_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        api_key = self.api_key or os.getenv("GEMINI_API_KEY")
+        api_key = self.api_key or get_settings().gemini_api_key
         if not api_key:
             raise GeminiComputerUseError("GEMINI_API_KEY is not configured.")
 

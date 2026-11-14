@@ -23,10 +23,10 @@ follow-up increment.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from operon.core.settings import get_settings
 from operon.models.perception import ScreenPerception
 from operon.models.selector import TargetIntent, TargetSelectionContext
 
@@ -162,7 +162,7 @@ class SnapToInteractableGrounder(DeterministicGrounder):
 def make_grounder(target_selector) -> Grounder:
     """Build the configured grounder. ``OPERON_GROUNDER`` selects the backend
     (default ``deterministic``); ``snap`` enables :class:`SnapToInteractableGrounder`."""
-    name = os.getenv("OPERON_GROUNDER", "deterministic").strip().lower()
+    name = get_settings().grounder
     if name == "snap":
         return SnapToInteractableGrounder(target_selector)
     return DeterministicGrounder(target_selector)

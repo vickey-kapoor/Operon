@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import os
 import sys
 from dataclasses import asdict, dataclass
+
+from operon.core.settings import Settings, get_settings
 
 # Gemini is Operon's only model: computer_use (Gemini computer use, the default) or
 # json (the older Gemini JSON path).
@@ -23,41 +24,44 @@ class RuntimeModeConfig:
     verifier_thinking: str | None = None
 
 
-def desktop_mode_config() -> RuntimeModeConfig:
+def desktop_mode_config(settings: Settings | None = None) -> RuntimeModeConfig:
+    s = settings or get_settings()
     return RuntimeModeConfig(
-        backend=(os.getenv("OPERON_DESKTOP_BACKEND") or "").strip() or "computer_use",
-        primary_model=os.getenv("OPERON_DESKTOP_MODEL") or _DEFAULT_MODEL,
-        thinking=os.getenv("OPERON_DESKTOP_THINKING", "low") or None,
-        fallback_model=os.getenv("OPERON_DESKTOP_FALLBACK_MODEL") or _DEFAULT_MODEL,
-        verifier_model=os.getenv("OPERON_DESKTOP_VERIFIER_MODEL") or _DEFAULT_MODEL,
-        verifier_thinking=os.getenv("OPERON_DESKTOP_VERIFIER_THINKING", "low") or None,
+        backend=s.desktop_backend,
+        primary_model=s.desktop_model,
+        thinking=s.desktop_thinking,
+        fallback_model=s.desktop_fallback_model,
+        verifier_model=s.desktop_verifier_model,
+        verifier_thinking=s.desktop_verifier_thinking,
     )
 
 
-def browser_mode_config() -> RuntimeModeConfig:
+def browser_mode_config(settings: Settings | None = None) -> RuntimeModeConfig:
+    s = settings or get_settings()
     return RuntimeModeConfig(
-        backend=(os.getenv("OPERON_BROWSER_BACKEND") or "").strip() or "computer_use",
-        primary_model=os.getenv("OPERON_BROWSER_MODEL") or _DEFAULT_MODEL,
-        fallback_backend=os.getenv("OPERON_BROWSER_FALLBACK_BACKEND", "json"),
-        fallback_model=os.getenv("OPERON_BROWSER_FALLBACK_MODEL") or _DEFAULT_MODEL,
-        verifier_model=os.getenv("OPERON_BROWSER_VERIFIER_MODEL") or _DEFAULT_MODEL,
-        thinking=os.getenv("OPERON_BROWSER_THINKING", "low") or None,
-        verifier_thinking=os.getenv("OPERON_BROWSER_VERIFIER_THINKING", "low") or None,
+        backend=s.browser_backend,
+        primary_model=s.browser_model,
+        fallback_backend=s.browser_fallback_backend,
+        fallback_model=s.browser_fallback_model,
+        verifier_model=s.browser_verifier_model,
+        thinking=s.browser_thinking,
+        verifier_thinking=s.browser_verifier_thinking,
     )
 
 
-def validate_modes() -> list[str]:
+def validate_modes(settings: Settings | None = None) -> list[str]:
     """Validate mode configs at startup. Returns a list of human-readable errors
     (empty when configuration is valid). Caller decides whether to raise."""
     errors: list[str] = []
-    desktop = desktop_mode_config()
-    browser = browser_mode_config()
+    settings = settings or get_settings()
+    desktop = desktop_mode_config(settings)
+    browser = browser_mode_config(settings)
 
-    from operon.environments import environment_name, provider_names
+    from operon.environments import provider_names
 
-    if environment_name() not in provider_names():
+    if settings.environment not in provider_names():
         errors.append(
-            f"OPERON_ENVIRONMENT={environment_name()!r} is not one of {provider_names()}"
+            f"OPERON_ENVIRONMENT={settings.environment!r} is not one of {provider_names()}"
         )
     if desktop.backend not in _VALID_DESKTOP_BACKENDS:
         errors.append(
@@ -102,7 +106,11 @@ def main() -> int:
     print("Browser:")
     for k, v in asdict(browser).items():
         print(f"  {k:24s} = {v}")
-    errors = validate_modes()
+    from operon.core.settings import startup_problems
+
+    errors, warnings = startup_problems()
+    for warning in warnings:
+        print(f"  ? {warning} (ignored)")
     if errors:
         print("-" * 40)
         print("VALIDATION ERRORS:")

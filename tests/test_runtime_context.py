@@ -109,3 +109,46 @@ def test_reset_runtime_starts_empty(monkeypatch) -> None:
         assert fresh.peek_run("kept") is None and fresh.browser_loop is None
     finally:
         monkeypatch.setattr(runtime_mod, "_runtime", previous)
+
+
+async def test_a_run_that_ends_through_auto_run_is_marked_finished_and_prunable(fresh_runtime, monkeypatch) -> None:
+    """A run driven only by /run-task (no front-door status read) must still become prunable."""
+    from types import SimpleNamespace
+
+    from operon.api.runtime import tasks
+    from operon.models.common import RunStatus
+
+    monkeypatch.setattr(runtime_mod, "MAX_FINISHED_RUNS", 0)
+
+    class _Store:
+        def __init__(self, status):
+            self.status = status
+
+        async def get_run(self, run_id):
+            return SimpleNamespace(status=self.status, step_count=0, max_steps=5)
+
+    done = tasks.schedule_auto_run(SimpleNamespace(run_store=_Store(RunStatus.SUCCEEDED)), "done", 5)
+    paused = tasks.schedule_auto_run(SimpleNamespace(run_store=_Store(RunStatus.WAITING_FOR_USER)), "paused", 5)
+    await asyncio.gather(done, paused)
+    await asyncio.sleep(0)
+
+    assert fresh_runtime.peek_run("done").finished_at is not None
+    assert fresh_runtime.peek_run("paused").finished_at is None  # a pause is resumed later
+    fresh_runtime.run("next")  # adding a run prunes
+    assert fresh_runtime.peek_run("done") is None
+    assert fresh_runtime.peek_run("paused") is not None
+
+
+async def test_stopping_a_run_marks_it_finished(fresh_runtime) -> None:
+    from types import SimpleNamespace
+
+    from operon.api.runtime import tasks
+
+    async def _cleanup(run_id):
+        return None
+
+    fresh_runtime.run("r1")
+    await tasks.cleanup_cancelled_run(SimpleNamespace(_cleanup_completed_run=_cleanup), "r1")
+    assert fresh_runtime.peek_run("r1").finished_at is not None
+    tasks.current_runtime().finish_run("unknown")  # never creates a context
+    assert fresh_runtime.peek_run("unknown") is None

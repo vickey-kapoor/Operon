@@ -36,6 +36,7 @@ def _clear_auto_run_task(run_id: str, task: asyncio.Task | None = None) -> async
 
 
 async def cleanup_cancelled_run(loop: AgentLoop, run_id: str) -> None:
+    current_runtime().finish_run(run_id)
     try:
         await loop._cleanup_completed_run(run_id)
     except Exception as exc:
@@ -107,6 +108,7 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
         state = await loop.run_store.get_run(run_id)
         if state is None:
             logger.warning("[loop] run %s disappeared from store", run_id)
+            current_runtime().finish_run(run_id)
             break
         if state.status in {
             RunStatus.SUCCEEDED,
@@ -115,6 +117,8 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
             RunStatus.CANCELLED,
         }:
             logger.info("[loop] run %s terminal: %s", run_id, state.status.value)
+            if state.status is not RunStatus.WAITING_FOR_USER:  # a pause resumes later
+                current_runtime().finish_run(run_id)
             break
         if state.step_count >= max_steps:
             logger.warning("[loop] run %s hit max_steps=%d; stopping", run_id, max_steps)
@@ -125,6 +129,7 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
                 await loop._cleanup_completed_run(run_id)
             except Exception as exc:
                 logger.warning("[loop] cleanup after max_steps failed: %s", exc)
+            current_runtime().finish_run(run_id)
             break
         logger.info("[loop] run %s entering step %d", run_id, state.step_count + 1)
         try:
@@ -135,6 +140,7 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
             # Without this the task dies and the run is stuck in RUNNING forever.
             logger.exception("[loop] run %s step crashed; marking failed", run_id)
             await mark_run_failed(loop, run_id)
+            current_runtime().finish_run(run_id)
             break
         await publish_step_outcome(loop, response)
 

@@ -23,6 +23,7 @@ browser and API layers can all use it without importing each other.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
@@ -104,6 +105,14 @@ class OperonRuntime:
     def peek_run(self, run_id: str) -> RunContext | None:
         """The context of ``run_id`` if it has one; never creates it."""
         return self.runs.get(run_id)
+
+    def finish_run(self, run_id: str) -> None:
+        """Note that ``run_id`` ended (succeeded, failed, cancelled or crashed), so its
+        context can be pruned once its task is done. Keeps the first time noted; never
+        creates a context for a run that has none."""
+        context = self.runs.get(run_id)
+        if context is not None and context.finished_at is None:
+            context.finished_at = time.time()
 
     def forget_run(self, run_id: str) -> None:
         self.runs.pop(run_id, None)

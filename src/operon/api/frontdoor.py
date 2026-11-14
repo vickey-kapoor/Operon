@@ -22,6 +22,7 @@ from operon.agent.policy.trust_gate import resolve_permission_mode
 from operon.api import ws_stream as _ws_stream
 from operon.api.runtime import loops as _loops
 from operon.api.runtime import tasks as _tasks
+from operon.core.runtime import current_runtime
 from operon.models.common import RunStatus, RunTaskRequest, StrictModel
 from operon.models.logs import StepLog
 from operon.store.replay import load_run_replay
@@ -32,9 +33,8 @@ logger = logging.getLogger(__name__)
 TERMINAL = frozenset({RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED})
 ENVIRONMENTS = ("browser", "desktop")
 
-# Wall-clock bounds of runs started here, for the report's duration.
-_started_at: dict[str, float] = {}
-_finished_at: dict[str, float] = {}
+# Wall-clock bounds of runs started here, for the report's duration, live on each
+# run's context (``RunContext.started_at`` / ``finished_at``, KAN-156).
 
 
 class FrontDoorTask(StrictModel):
@@ -101,7 +101,7 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
     if close_apps is not None:
         # A desktop task leaves the screen as it found it: the apps it opened close when it ends.
         close_apps(response.run_id)
-    _started_at[response.run_id] = time.time()
+    current_runtime().run(response.run_id).started_at = time.time()
     _ws_stream.set_active_run(response.run_id, loop=loop)
     _ws_stream.publish_event({
         "type": "run_started",
@@ -198,11 +198,19 @@ def _waiting(loop, record) -> dict[str, Any] | None:
     return {"kind": "approval" if gate is not None else "needs_you", "gate": gate, "reason": reason}
 
 
+def _mark_finished(run_id: str) -> float:
+    """The run's finish time, noted now the first time it is seen finished."""
+    context = current_runtime().run(run_id)
+    if context.finished_at is None:
+        context.finished_at = time.time()
+    return context.finished_at
+
+
 async def run_status(run_id: str, *, recent: int = 8) -> dict[str, Any]:
     loop, record = await _require_run(run_id)
     steps = _steps(loop, run_id)
     if record.status in TERMINAL:
-        _finished_at.setdefault(run_id, time.time())
+        _mark_finished(run_id)
     latest = steps[-1]["screenshot"] if steps else None
     environment = _environment_of(run_id)
     return {
@@ -394,10 +402,11 @@ async def build_report(run_id: str) -> dict[str, Any]:
     steps = _steps(loop, run_id)
     status = record.status
     stop_reason = record.stop_reason.value if record.stop_reason is not None else None
-    started = _started_at.get(run_id)
-    finished = _finished_at.get(run_id) if status in TERMINAL else None
+    context = current_runtime().peek_run(run_id)
+    started = context.started_at if context is not None else None
+    finished = context.finished_at if context is not None and status in TERMINAL else None
     if started is not None and status in TERMINAL and finished is None:
-        finished = _finished_at.setdefault(run_id, time.time())
+        finished = _mark_finished(run_id)
     duration = round(finished - started, 1) if started is not None and finished is not None else None
     # Rows for actions retried within a step are extras: a step counts once, by its final action.
     final_rows = [step for step in steps if step["checked_by"] != "retried"]

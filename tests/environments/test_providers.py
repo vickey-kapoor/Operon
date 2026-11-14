@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from operon.api.runtime import loops
+from operon.core.runtime import current_runtime
 from operon.environments import (
     DEFAULT_ENVIRONMENT,
     EnvironmentProvider,
@@ -50,9 +51,9 @@ class _FakeProvider(EnvironmentProvider):
 
 @pytest.fixture(autouse=True)
 def _no_built_runtime(monkeypatch):
-    monkeypatch.setattr(loops, "_desktop_provider", None)
-    monkeypatch.setattr(loops, "_desktop_agent_loop", None)
-    monkeypatch.setattr(loops, "_agent_loop", None)
+    monkeypatch.setattr(current_runtime(), "desktop_provider", None)
+    monkeypatch.setattr(current_runtime(), "desktop_loop", None)
+    monkeypatch.setattr(current_runtime(), "browser_loop", None)
 
 
 # ── registry ────────────────────────────────────────────────────
@@ -144,7 +145,7 @@ def test_desktop_provider_that_cannot_run_is_refused_and_not_started(monkeypatch
     with pytest.raises(RuntimeError, match="'fake' cannot run here: Docker is not running."):
         loops.desktop_provider()
     assert fake.calls == ["check"]
-    assert loops._desktop_provider is None
+    assert current_runtime().desktop_provider is None
 
 
 def test_desktop_loop_runs_on_the_providers_executor(monkeypatch):
@@ -183,8 +184,8 @@ def test_close_built_runtime_closes_executors_then_stops_the_provider(monkeypatc
 
     fake = _FakeProvider()
     fake.stop = lambda: order.append("stop")  # type: ignore[method-assign]
-    monkeypatch.setattr(loops, "_desktop_agent_loop", SimpleNamespace(executor=_Exec()))
-    monkeypatch.setattr(loops, "_desktop_provider", fake)
+    monkeypatch.setattr(current_runtime(), "desktop_loop", SimpleNamespace(executor=_Exec()))
+    monkeypatch.setattr(current_runtime(), "desktop_provider", fake)
     asyncio.run(loops.close_built_runtime())
     assert order == ["aclose", "stop"]
 
@@ -196,7 +197,7 @@ def test_close_built_runtime_survives_a_failing_stop(monkeypatch, caplog):
         raise OSError("sandbox already gone")
 
     fake.stop = boom  # type: ignore[method-assign]
-    monkeypatch.setattr(loops, "_desktop_provider", fake)
+    monkeypatch.setattr(current_runtime(), "desktop_provider", fake)
     asyncio.run(loops.close_built_runtime())
     assert "sandbox already gone" in caplog.text
 

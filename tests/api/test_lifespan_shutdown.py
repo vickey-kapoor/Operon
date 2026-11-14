@@ -3,8 +3,8 @@
 import asyncio
 from types import SimpleNamespace
 
-from operon.api.runtime import loops
 from operon.api.server import _lifespan, app
+from operon.core.runtime import current_runtime
 
 
 def _drive_lifespan() -> None:
@@ -27,8 +27,8 @@ def test_lifespan_acloses_built_executors_on_shutdown(monkeypatch) -> None:
             calls.append(self._tag)
 
     # Stand in two "built" agent loops (browser + desktop), each exposing .executor.
-    monkeypatch.setattr(loops, "_agent_loop", SimpleNamespace(executor=_FakeExecutor("browser")))
-    monkeypatch.setattr(loops, "_desktop_agent_loop", SimpleNamespace(executor=_FakeExecutor("desktop")))
+    monkeypatch.setattr(current_runtime(), "browser_loop", SimpleNamespace(executor=_FakeExecutor("browser")))
+    monkeypatch.setattr(current_runtime(), "desktop_loop", SimpleNamespace(executor=_FakeExecutor("desktop")))
 
     _drive_lifespan()
 
@@ -43,8 +43,8 @@ def test_lifespan_skips_unbuilt_loops_and_missing_aclose(monkeypatch) -> None:
         """No aclose() — shutdown must skip it without raising."""
 
     # Browser loop never built (None); desktop executor lacks aclose().
-    monkeypatch.setattr(loops, "_agent_loop", None)
-    monkeypatch.setattr(loops, "_desktop_agent_loop", SimpleNamespace(executor=_LegacyExecutor()))
+    monkeypatch.setattr(current_runtime(), "browser_loop", None)
+    monkeypatch.setattr(current_runtime(), "desktop_loop", SimpleNamespace(executor=_LegacyExecutor()))
 
     _drive_lifespan()  # must not raise
 
@@ -64,8 +64,8 @@ def test_lifespan_swallows_aclose_errors(monkeypatch) -> None:
             reached.append("ok")
 
     # A failing teardown must not prevent the next executor from closing.
-    monkeypatch.setattr(loops, "_agent_loop", SimpleNamespace(executor=_BoomExecutor()))
-    monkeypatch.setattr(loops, "_desktop_agent_loop", SimpleNamespace(executor=_OkExecutor()))
+    monkeypatch.setattr(current_runtime(), "browser_loop", SimpleNamespace(executor=_BoomExecutor()))
+    monkeypatch.setattr(current_runtime(), "desktop_loop", SimpleNamespace(executor=_OkExecutor()))
 
     _drive_lifespan()  # must not raise
 

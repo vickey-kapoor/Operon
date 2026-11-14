@@ -13,6 +13,7 @@ import pytest
 
 from operon.agent import control
 from operon.api import ws_stream
+from operon.core.runtime import current_runtime
 from operon.models.common import RunStatus
 from operon.store.cleanup import cleanup_old_runs
 from operon.store.memory import FileBackedMemoryStore
@@ -106,7 +107,7 @@ def test_cleanup_never_deletes_the_memory_folder(tmp_path: Path) -> None:
 async def test_ws_control_goes_to_the_loop_that_owns_the_active_run(monkeypatch: pytest.MonkeyPatch) -> None:
     browser_loop = SimpleNamespace(pause_run=AsyncMock())
     desktop_loop = SimpleNamespace(pause_run=AsyncMock(return_value=SimpleNamespace(status=RunStatus.WAITING_FOR_USER)))
-    monkeypatch.setattr(ws_stream, "_agent_loop", browser_loop)
+    monkeypatch.setattr(current_runtime(), "browser_loop", browser_loop)
     monkeypatch.setattr(ws_stream, "publish_event", lambda event: None)
     ws_stream.set_active_run("run-d", loop=desktop_loop)
     try:
@@ -123,7 +124,7 @@ async def test_ws_input_is_refused_while_a_run_drives_the_browser(monkeypatch: p
     loop = SimpleNamespace(run_store=SimpleNamespace(get_run=AsyncMock(return_value=record)))
     manager = SimpleNamespace(inject_input=AsyncMock())
     events: list[dict] = []
-    monkeypatch.setattr(ws_stream, "_browser_manager", manager)
+    monkeypatch.setattr(current_runtime().stream, "browser_manager", manager)
     monkeypatch.setattr(ws_stream, "publish_event", events.append)
     ws_stream.set_active_run("run-1", loop=loop)
     try:
@@ -139,7 +140,7 @@ async def test_ws_input_is_refused_while_a_run_drives_the_browser(monkeypatch: p
 
 
 async def test_a_nan_confidence_threshold_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(control, "_confidence_threshold", 0.3)
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.3)
     events: list[dict] = []
     monkeypatch.setattr(ws_stream, "publish_event", events.append)
 

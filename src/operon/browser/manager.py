@@ -32,11 +32,6 @@ def _ws_stream():
     return _ws_stream_module
 
 
-# Module-level singleton so NativeBrowserExecutor can discover the active CDP
-# connection without importing from operon.api (which would invert the dependency).
-_active_manager: "BrowserManager | None" = None
-
-
 async def _target_id(page: Any) -> str | None:
     """The CDP target id of a Playwright page, or None if it can't be read."""
     try:
@@ -51,14 +46,20 @@ async def _target_id(page: Any) -> str | None:
 
 
 def get_active_manager() -> "BrowserManager | None":
-    """Return the currently connected BrowserManager, or None."""
-    return _active_manager
+    """Return the currently connected BrowserManager, or None.
+
+    It lives on the process runtime (KAN-156), so NativeBrowserExecutor can discover
+    the active CDP connection without importing from operon.api."""
+    from operon.core.runtime import current_runtime
+
+    return current_runtime().active_browser_manager
 
 
 def set_active_manager(manager: "BrowserManager | None") -> None:
     """Register (or clear) the active BrowserManager singleton."""
-    global _active_manager
-    _active_manager = manager
+    from operon.core.runtime import current_runtime
+
+    current_runtime().active_browser_manager = manager
 
 
 class BrowserManager:

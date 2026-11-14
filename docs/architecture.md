@@ -21,7 +21,7 @@ FastAPI app
   -> FileBackedRunStore
 ```
 
-Browser and desktop runs share `operon.agent.loop.AgentLoop`. The API creates one lazy singleton for browser runs and one for desktop runs.
+Browser and desktop runs share `operon.agent.loop.AgentLoop`. The API builds one loop for browser runs and one for desktop runs on first use, and keeps both on the process runtime (`operon.core.runtime.OperonRuntime`, KAN-156). The runtime also holds a `RunContext` per run for state that belongs to that run: its pending override hint, its auto-run task, and its start and finish times.
 
 ## Package Layout
 

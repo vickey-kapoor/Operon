@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from operon.api.server import app
+from operon.core.runtime import current_runtime
 from operon.models.common import FailureCategory, LoopStage, RunStatus, StopReason
 from operon.models.execution import (
     ExecutedAction,
@@ -925,9 +926,9 @@ def test_observer_leaves_a_live_desktop_run_running(monkeypatch) -> None:
 def test_desktop_loop_holds_run_never_builds_the_desktop_loop(monkeypatch) -> None:
     from operon.api.runtime import loops
 
-    monkeypatch.setattr(loops, "_desktop_agent_loop", None)
+    monkeypatch.setattr(current_runtime(), "desktop_loop", None)
     assert loops.desktop_loop_holds_run("anything") is False
-    assert loops._desktop_agent_loop is None
+    assert current_runtime().desktop_loop is None
 
 
 def test_observer_settings_reports_the_trust_gate(monkeypatch) -> None:

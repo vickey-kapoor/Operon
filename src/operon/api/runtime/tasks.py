@@ -11,14 +11,32 @@ from operon.api.runtime.events import (
     publish_run_completed,
     publish_step_outcome,
 )
+from operon.core.runtime import current_runtime
 from operon.models.common import RunResponse, RunStatus, StepRequest, StopReason
 
 logger = logging.getLogger(__name__)
 
-_auto_run_tasks: dict[str, asyncio.Task] = {}
+
+
+def auto_run_task(run_id: str) -> asyncio.Task | None:
+    """The task stepping ``run_id``, kept on its run context (KAN-156)."""
+    context = current_runtime().peek_run(run_id)
+    return context.auto_run_task if context is not None else None
+
+
+def _clear_auto_run_task(run_id: str, task: asyncio.Task | None = None) -> asyncio.Task | None:
+    """Drop ``run_id``'s task (only if it is ``task``, when given) and return what was there."""
+    context = current_runtime().peek_run(run_id)
+    if context is None or context.auto_run_task is None:
+        return None
+    if task is not None and context.auto_run_task is not task:
+        return None
+    held, context.auto_run_task = context.auto_run_task, None
+    return held
 
 
 async def cleanup_cancelled_run(loop: AgentLoop, run_id: str) -> None:
+    current_runtime().finish_run(run_id)
     try:
         await loop._cleanup_completed_run(run_id)
     except Exception as exc:
@@ -27,8 +45,7 @@ async def cleanup_cancelled_run(loop: AgentLoop, run_id: str) -> None:
 
 def _auto_run_done_callback(run_id: str):
     def _callback(task: asyncio.Task) -> None:
-        if _auto_run_tasks.get(run_id) is task:
-            _auto_run_tasks.pop(run_id, None)
+        _clear_auto_run_task(run_id, task)
         if task.cancelled():
             logger.info("[loop] run %s auto-run task cancelled", run_id)
             return
@@ -40,15 +57,16 @@ def _auto_run_done_callback(run_id: str):
 
 
 def schedule_auto_run(loop: AgentLoop, run_id: str, max_steps: int) -> asyncio.Task:
-    existing = _auto_run_tasks.get(run_id)
+    context = current_runtime().run(run_id)
+    existing = context.auto_run_task
     if existing is not None:
         if not existing.done():
             logger.info("[loop] run %s auto-run already scheduled", run_id)
             return existing
-        _auto_run_tasks.pop(run_id, None)
+        context.auto_run_task = None
 
     task = asyncio.create_task(auto_run_loop(loop, run_id, max_steps))
-    _auto_run_tasks[run_id] = task
+    context.auto_run_task = task
     task.add_done_callback(_auto_run_done_callback(run_id))
     logger.info("[loop] run %s auto-run scheduled (max_steps=%d)", run_id, max_steps)
     return task
@@ -71,7 +89,7 @@ async def resume_and_schedule(loop: AgentLoop, run_id: str, *, approve_gated_act
 
 
 async def cancel_auto_run(run_id: str) -> None:
-    task = _auto_run_tasks.pop(run_id, None)
+    task = _clear_auto_run_task(run_id)
     if task is None or task.done():
         return
     task.cancel()
@@ -90,6 +108,7 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
         state = await loop.run_store.get_run(run_id)
         if state is None:
             logger.warning("[loop] run %s disappeared from store", run_id)
+            current_runtime().finish_run(run_id)
             break
         if state.status in {
             RunStatus.SUCCEEDED,
@@ -98,6 +117,8 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
             RunStatus.CANCELLED,
         }:
             logger.info("[loop] run %s terminal: %s", run_id, state.status.value)
+            if state.status is not RunStatus.WAITING_FOR_USER:  # a pause resumes later
+                current_runtime().finish_run(run_id)
             break
         if state.step_count >= max_steps:
             logger.warning("[loop] run %s hit max_steps=%d; stopping", run_id, max_steps)
@@ -108,6 +129,7 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
                 await loop._cleanup_completed_run(run_id)
             except Exception as exc:
                 logger.warning("[loop] cleanup after max_steps failed: %s", exc)
+            current_runtime().finish_run(run_id)
             break
         logger.info("[loop] run %s entering step %d", run_id, state.step_count + 1)
         try:
@@ -118,6 +140,7 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
             # Without this the task dies and the run is stuck in RUNNING forever.
             logger.exception("[loop] run %s step crashed; marking failed", run_id)
             await mark_run_failed(loop, run_id)
+            current_runtime().finish_run(run_id)
             break
         await publish_step_outcome(loop, response)
 

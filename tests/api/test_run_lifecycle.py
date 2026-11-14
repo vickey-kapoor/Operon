@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from operon.agent import control
 from operon.api import ws_stream
 from operon.api.runtime import tasks
+from operon.core.runtime import current_runtime
 from operon.models.common import RunResponse, RunStatus
 
 
@@ -75,7 +77,7 @@ async def test_auto_run_publishes_step_and_completion_events(tmp_path, events) -
 
     assert [e["type"] for e in events] == ["step", "step", "run_completed"]
     assert events[-1]["status"] == "succeeded"
-    assert ws_stream._active_run_id is None
+    assert current_runtime().stream.active_run_id is None
 
 
 async def test_auto_run_publishes_hitl_required_when_run_pauses(tmp_path, events) -> None:
@@ -106,9 +108,9 @@ async def test_ws_resume_and_override_reschedule_auto_run(
     loop = _FakeLoop(store, [])
     scheduled: list[tuple[str, int]] = []
     monkeypatch.setattr(tasks, "schedule_auto_run", lambda _loop, run_id, max_steps: scheduled.append((run_id, max_steps)))
-    monkeypatch.setattr(ws_stream, "_agent_loop", loop)
-    monkeypatch.setattr(ws_stream, "_active_run_id", "run-1")
-    monkeypatch.setattr(control, "_override_hints", {})
+    monkeypatch.setattr(current_runtime(), "browser_loop", loop)
+    monkeypatch.setattr(current_runtime().stream, "active_run_id", "run-1")
+    monkeypatch.setattr(current_runtime(), "runs", OrderedDict())
 
     await ws_stream._handle_control(message)
 
@@ -137,9 +139,9 @@ def test_http_resume_reschedules_with_run_max_steps(tmp_path, monkeypatch: pytes
 
 
 async def test_override_hint_is_scoped_to_the_run_it_was_sent_for(monkeypatch: pytest.MonkeyPatch, events) -> None:
-    monkeypatch.setattr(ws_stream, "_agent_loop", None)  # store the hint only; no resume
-    monkeypatch.setattr(ws_stream, "_active_run_id", "run-a")
-    monkeypatch.setattr(control, "_override_hints", {})
+    monkeypatch.setattr(current_runtime(), "browser_loop", None)  # store the hint only; no resume
+    monkeypatch.setattr(current_runtime().stream, "active_run_id", "run-a")
+    monkeypatch.setattr(current_runtime(), "runs", OrderedDict())
 
     await ws_stream._handle_control({"type": "override", "hint": "click Next"})
 
@@ -149,9 +151,10 @@ async def test_override_hint_is_scoped_to_the_run_it_was_sent_for(monkeypatch: p
 
 
 async def test_empty_override_clears_a_pending_hint(monkeypatch: pytest.MonkeyPatch, events) -> None:
-    monkeypatch.setattr(ws_stream, "_agent_loop", None)
-    monkeypatch.setattr(ws_stream, "_active_run_id", "run-a")
-    monkeypatch.setattr(control, "_override_hints", {"run-a": "old hint"})
+    monkeypatch.setattr(current_runtime(), "browser_loop", None)
+    monkeypatch.setattr(current_runtime().stream, "active_run_id", "run-a")
+    monkeypatch.setattr(current_runtime(), "runs", OrderedDict())
+    control.set_override_hint("run-a", "old hint")
 
     await ws_stream._handle_control({"type": "override", "hint": "  "})
 

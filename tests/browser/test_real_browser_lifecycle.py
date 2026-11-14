@@ -17,6 +17,7 @@ from playwright.async_api import async_playwright
 
 from operon.api import ws_stream
 from operon.browser.manager import BrowserManager
+from operon.core.runtime import current_runtime
 from operon.executor.browser_native import NativeBrowserExecutor
 from operon.models.policy import AgentAction
 
@@ -59,13 +60,13 @@ async def connected_browser():
         await page.screenshot()
         manager = BrowserManager()
         queue = asyncio.Queue()
-        ws_stream._subscribers.append(queue)
+        current_runtime().stream.subscribers.append(queue)
         try:
             await manager.connect(port)
             yield browser, page, manager, queue, port
         finally:
             await manager.disconnect()
-            ws_stream._subscribers.remove(queue)
+            current_runtime().stream.subscribers.remove(queue)
             await browser.close()
 
 
@@ -214,7 +215,7 @@ async def test_browser_websocket_clients_receive_static_frame_and_reconnect(
     sock.listen(128)
     ws_port = sock.getsockname()[1]
     server_task = asyncio.create_task(server.serve(sockets=[sock]))
-    prior_manager = ws_stream._browser_manager
+    prior_manager = current_runtime().stream.browser_manager
     ws_stream.set_browser_manager(manager)
     clients = await browser.new_context()
     try:
@@ -256,7 +257,7 @@ async def test_browser_websocket_clients_receive_static_frame_and_reconnect(
             )
             await client.close()
         async with asyncio.timeout(3):
-            while len(ws_stream._subscribers) != 1:
+            while len(current_runtime().stream.subscribers) != 1:
                 await asyncio.sleep(0.02)
     finally:
         await clients.close()

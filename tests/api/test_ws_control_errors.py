@@ -8,17 +8,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from operon.agent import control
 from operon.api import ws_stream
+from operon.core.runtime import current_runtime
 
 
 def test_malformed_control_message_is_logged_and_connection_survives(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.delenv("API_KEYS", raising=False)
-    monkeypatch.setattr(ws_stream, "_browser_manager", None)
-    monkeypatch.setattr(ws_stream, "_subscribers", [])
-    monkeypatch.setattr(control, "_confidence_threshold", 0.0)
+    monkeypatch.setattr(current_runtime().stream, "browser_manager", None)
+    monkeypatch.setattr(current_runtime().stream, "subscribers", [])
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.0)
     app = FastAPI()
     app.include_router(ws_stream.router)
 
@@ -39,8 +39,8 @@ async def test_pause_message_pauses_the_active_run(monkeypatch: pytest.MonkeyPat
 
     events: list[dict] = []
     loop = SimpleNamespace(pause_run=AsyncMock(return_value=SimpleNamespace(status=RunStatus.WAITING_FOR_USER)))
-    monkeypatch.setattr(ws_stream, "_agent_loop", loop)
-    monkeypatch.setattr(ws_stream, "_active_run_id", "run-1")
+    monkeypatch.setattr(current_runtime(), "browser_loop", loop)
+    monkeypatch.setattr(current_runtime().stream, "active_run_id", "run-1")
     monkeypatch.setattr(ws_stream, "publish_event", events.append)
 
     await ws_stream._handle_control({"type": "pause"})

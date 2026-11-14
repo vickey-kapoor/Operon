@@ -11,6 +11,7 @@ import pytest
 
 from operon.agent.loop import AgentLoop
 from operon.agent.policy.trust_gate import TrustGate
+from operon.core.runtime import current_runtime
 from operon.models.capture import CaptureFrame
 from operon.models.execution import ExecutedAction
 from operon.models.logs import ModelDebugArtifacts
@@ -66,12 +67,12 @@ def build_loop(
     *,
     gate: TrustGate | None = None,
 ) -> tuple[AgentLoop, RecordingExecutor]:
-    from operon.agent import control, hitl
+    from operon.agent import hitl
 
     monkeypatch.setattr(hitl, "notify_desktop", lambda *a, **k: None)
     monkeypatch.setattr(hitl, "post_hitl_webhook", AsyncMock())
     monkeypatch.setattr(hitl, "start_escalation_timer", AsyncMock())
-    monkeypatch.setattr(control, "_confidence_threshold", 0.0)
+    monkeypatch.setattr(current_runtime().control, "confidence_threshold", 0.0)
 
     executor = RecordingExecutor()
     frame = CaptureFrame(artifact_path=str(root / "f.png"), width=10, height=10, mime_type="image/png")

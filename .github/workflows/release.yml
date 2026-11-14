@@ -1,0 +1,88 @@
+name: Release to PyPI
+run-name: Release ${{ github.ref_name }}
+
+# Publishes operon-agent to PyPI (KAN-36). Pushing a tag `v<version>` that matches
+# pyproject.toml builds, checks and uploads it. Running it by hand (workflow_dispatch)
+# only builds and checks: nothing is uploaded. Uploading cannot be undone, and a
+# version number can never be reused on PyPI, even after deleting it.
+#
+# No token: PyPI trusts this workflow (trusted publisher: repo vickey-kapoor/Operon,
+# workflow release.yml, environment pypi) through GitHub's OIDC id-token.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.14"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Tag matches the version in pyproject.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(uv run --no-project python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match pyproject.toml version $version."
+            exit 1
+          fi
+
+      - name: README links point at GitHub (PyPI shows the README on its own)
+        run: uv run --no-project python scripts/pypi_readme.py README.md --ref "${GITHUB_REF_NAME}"
+
+      - name: Build the wheel and sdist
+        run: uv build
+
+      - name: Check the package metadata
+        run: uvx twine check --strict dist/*
+
+      - name: Install the wheel in a clean venv and run it
+        run: |
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke dist/*.whl
+          cd /tmp
+          /tmp/smoke/bin/operon --version
+          /tmp/smoke/bin/operon --help > /dev/null
+          /tmp/smoke/bin/python -c "from operon.core.paths import prompts_dir, source_checkout; assert source_checkout() is None; assert any(prompts_dir().glob('*'))"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dist
+          path: dist/
+          retention-days: 30
+
+  publish:
+    name: Upload to PyPI
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/operon-agent/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Upload
+        run: uv publish --trusted-publishing always dist/*

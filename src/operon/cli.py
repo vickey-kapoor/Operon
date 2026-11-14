@@ -317,7 +317,10 @@ def _serve(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from operon import __version__
+
     parser = argparse.ArgumentParser(prog="operon", description="Operon, a vision-first computer-use agent.")
+    parser.add_argument("--version", action="version", version=f"operon {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run a task and print a report")

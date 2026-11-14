@@ -30,6 +30,7 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 .venv\Scripts\operon serve
 .venv\Scripts\operon run "task" [--desktop] [--url URL] [--mode ask|risky|auto]
 .venv\Scripts\operon run --request "task"
+# Release (KAN-36): push tag v<version> matching pyproject.toml; release.yml uploads operon-agent to PyPI (docs/releasing.md)
 
 # Offline test suite (~860 tests, ~45s, no network, no browser)
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests -q

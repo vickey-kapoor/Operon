@@ -13,6 +13,7 @@ from evals.fixture_site import FixtureSite
 from evals.safety_tasks import site_pages
 from evals.season2 import apps
 from evals.season2.browser import ACME_OVERDUE, BROWSER_TASKS, LENA
+from tests.evals.site_http import site_client, site_get
 
 DANA = "dana.whitfield@northwind.example"
 PRIYA = "priya.nair@northwind.example"
@@ -29,7 +30,7 @@ def site():
 
 @pytest.fixture
 def browser(site):
-    with httpx.Client(base_url=site.base_url, follow_redirects=True) as client:
+    with site_client(site.base_url, follow_redirects=True) as client:
         yield client
 
 
@@ -74,7 +75,7 @@ def test_the_workspace_links_all_eight_apps_and_season_one_keeps_its_own(site, b
     from evals.local_apps import build_apps
 
     with FixtureSite(site_pages(), apps=build_apps()) as old:
-        assert "/apps/finance/" not in httpx.get(old.base_url + "/apps/").text
+        assert "/apps/finance/" not in site_get(old.base_url + "/apps/").text
 
 
 def test_finance_lists_every_invoice_over_four_pages_and_filters(browser) -> None:

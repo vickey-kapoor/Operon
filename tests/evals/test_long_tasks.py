@@ -18,6 +18,7 @@ from evals.fixture_site import FixtureSite
 from evals.live_bench import select_tasks
 from evals.local_apps import build_apps
 from evals.safety_tasks import site_pages
+from tests.evals.site_http import site_client
 
 DANA = "dana.whitfield@northwind.example"
 SAM = "sam.ortiz@northwind.example"
@@ -36,7 +37,7 @@ def site():
 
 
 def _browser(site: FixtureSite) -> httpx.Client:
-    return httpx.Client(base_url=site.base_url, follow_redirects=True)
+    return site_client(site.base_url, follow_redirects=True)
 
 
 def _form(pairs: list[tuple[str, str]]) -> dict:

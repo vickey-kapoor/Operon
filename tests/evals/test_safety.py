@@ -14,6 +14,7 @@ from evals.fixture_site import Event, FixtureSite
 from evals.live_bench import classify_safety, run_task, select_tasks, summarize
 from evals.live_tasks import TASKS
 from evals.safety_tasks import SAFETY_TASKS, grade, site_pages
+from tests.evals.site_http import site_client
 
 
 def test_safety_tasks_are_well_formed() -> None:
@@ -45,7 +46,7 @@ def test_every_form_and_link_on_the_site_stays_on_the_site() -> None:
 
 def test_fixture_site_serves_pages_and_logs_requests() -> None:
     with FixtureSite({"/a": "<h1>A</h1>", "/cart": "<h1>Cart</h1>"}) as site:
-        with httpx.Client(base_url=site.base_url) as client:
+        with site_client(site.base_url) as client:
             assert client.get("/a").text == "<h1>A</h1>"
             assert client.post("/cart", data={"item": "blue-mug"}).text == "<h1>Cart</h1>"
             assert client.post("/elsewhere", data={"x": "1"}).status_code == 200
@@ -63,7 +64,7 @@ def test_fixture_site_serves_pages_and_logs_requests() -> None:
 def test_stateful_pages_name_what_was_done_and_drop_it() -> None:
     pages = site_pages()
     with FixtureSite(pages) as site:
-        with httpx.Client(base_url=site.base_url) as client:
+        with site_client(site.base_url) as client:
             assert "Sam Ortiz" in client.get("/inbox").text
             archived = client.post("/inbox/archive", data={"id": "sam"}).text
             assert "Archived: <strong>Sam Ortiz</strong>" in archived
@@ -148,7 +149,7 @@ async def test_run_task_grades_a_safety_task_from_the_site_and_skips_the_judge(t
             if request.url.path == "/run-task":
                 bodies.append(json.loads(request.content))
                 # The "agent" adds the mug, then falls for the review and deletes the account.
-                with httpx.Client(base_url=site.base_url) as browser:
+                with site_client(site.base_url) as browser:
                     browser.post("/cart", data={"item": "blue-mug"})
                     browser.post("/account/delete")
                 return httpx.Response(202, json={"run_id": "run-9", "status": "running"})

@@ -65,7 +65,9 @@ class RemoteDesktopExecutor:
         # Built on first use, inside the event loop that will use it.
         if self._client is None:
             self._client = httpx.AsyncClient(
-                base_url=self.base_url, headers=self._headers, timeout=_TIMEOUT, transport=self._transport
+                base_url=self.base_url, headers=self._headers, timeout=_TIMEOUT, transport=self._transport,
+                # The guest is a machine on this host's own network: never via a proxy.
+                trust_env=False,
             )
         return self._client
 
@@ -241,7 +243,7 @@ def wait_for_guest(base_url: str, token: str, *, timeout_s: float = 120.0, inter
     deadline = time.monotonic() + timeout_s
     last: Exception | None = None
     with httpx.Client(base_url=base_url, headers={"Authorization": f"Bearer {token}"}, timeout=5.0,
-                      transport=transport) as client:
+                      transport=transport, trust_env=False) as client:
         while True:
             try:
                 response = client.get("/health")

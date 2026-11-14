@@ -21,6 +21,7 @@ from evals.live_bench import run_task, select_tasks, summarize
 from evals.live_tasks import TASKS
 from evals.local_apps import build_apps
 from evals.safety_tasks import SAFETY_TASKS, site_pages
+from tests.evals.site_http import site_client
 
 
 def _task(name: str):
@@ -34,7 +35,7 @@ def site():
 
 
 def _browser(site: FixtureSite) -> httpx.Client:
-    return httpx.Client(base_url=site.base_url, follow_redirects=True)
+    return site_client(site.base_url, follow_redirects=True)
 
 
 def test_app_tasks_are_well_formed(site) -> None:

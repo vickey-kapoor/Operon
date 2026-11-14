@@ -14,6 +14,7 @@ from evals.safety_tasks import site_pages
 from evals.season2 import apps
 from evals.season2 import hybrid as s2
 from evals.season2.hybrid import grade
+from tests.evals.site_http import site_client
 
 DANA = "dana.whitfield@northwind.example"
 BY_NAME = {t.name: t for t in s2.HYBRID_TASKS}
@@ -27,7 +28,7 @@ def site():
 
 @pytest.fixture
 def browser(site):
-    with httpx.Client(base_url=site.base_url, follow_redirects=True) as client:
+    with site_client(site.base_url, follow_redirects=True) as client:
         yield client
 
 

@@ -79,6 +79,21 @@ class FallbackBackend(AgentBackend):
     def has_held_actions(self, run_id: str) -> bool:
         return self._backend_for_run(run_id).has_held_actions(run_id)
 
+    def note_replaced(self, run_id: str, action: str) -> None:
+        self._backend_for_run(run_id).note_replaced(run_id, action)
+
+    def note_rejected(self, run_id: str, reason: str) -> None:
+        self._backend_for_run(run_id).note_rejected(run_id, reason)
+
+    def note_attempt_failed(self, run_id: str, detail: str) -> None:
+        self._backend_for_run(run_id).note_attempt_failed(run_id, detail)
+
+    def set_perception_only(self, value: bool) -> None:
+        for backend in (self.primary, self.secondary):
+            setter = getattr(backend, "set_perception_only", None)
+            if setter is not None:
+                setter(value)
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         self._backend_for_run(run_id).discard_held_actions(run_id, reason)
 

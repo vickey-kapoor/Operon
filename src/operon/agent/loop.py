@@ -1,6 +1,7 @@
 """Agent loop orchestrator for the vision-driven automation workflow."""
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -451,9 +452,15 @@ class AgentLoop:
             self._discard_held_actions(
                 run_id, "Not executed: the user declined this action and sent a correction."
             )
-        if approve_gated_action and self._has_held_actions(run_id) and hasattr(record, "approval_count"):
+        if (
+            approve_gated_action
+            and run_id not in self._pending_gate_approvals
+            and self._has_held_actions(run_id)
+            and hasattr(record, "approval_count")
+        ):
             # The model asked to confirm its action (Gemini's require_confirmation)
-            # and the person said yes: that is an approval like a gate's.
+            # and the person said yes: that is an approval like a gate's. A gate
+            # pause also holds the calls; its approval is counted below, once.
             record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
         if approve_gated_action and pending is not None:
@@ -791,9 +798,9 @@ class AgentLoop:
             update={"summary": (ctx.perception.summary or "") + f" {dialog_msg}"}
         )
         if ctx.state.observation_history:
-            _obs = list(ctx.state.observation_history)
-            _obs[-1] = ctx.perception
-            ctx.state = ctx.state.model_copy(update={"observation_history": _obs})
+            # In place: ``ctx.state`` is the stored record, and a copy would drop
+            # this step's stop reason and recovery flags.
+            ctx.state.observation_history[-1] = ctx.perception
 
     async def _verify_attempt(self, ctx: StepContext) -> None:
         executed_action = ctx.last_attempt
@@ -875,11 +882,21 @@ class AgentLoop:
         _trace("  RETRY_LOOP -> retry", f"retries_used={ctx.retries_used}  strategy={strategy!r}")
 
         state = ctx.state
-        frame = await self.capture_service.capture(state)
-        if hasattr(self.policy_service, "prepare_hints"):
-            self.policy_service.prepare_hints(state, None)
-        self._inject_stagnation_hint(state)
-        perception = await self._perceive_with_liveness_retry(state, frame)
+        # The failed attempt is not in the action history yet: tell a backend
+        # that answers the model's tool calls, so it reports the failure.
+        self._note_attempt_failed(
+            ctx.run_id, executed_action.detail or verification.reason or "the action did not work"
+        )
+        try:
+            frame = await self.capture_service.capture(state)
+            if hasattr(self.policy_service, "prepare_hints"):
+                self.policy_service.prepare_hints(state, None)
+            self._inject_stagnation_hint(state)
+            perception = await self._perceive_with_liveness_retry(state, frame)
+        except Exception as exc:
+            # Keep the attempt that ran; it is recorded as the step's action.
+            self._recovered(ctx.run_id, "adaptation_retry_perceive", exc)
+            return False
         perception = self._infer_focused_element(state, perception)
         perception = self._with_capture_origin(perception, frame)
         ctx.frame = frame
@@ -1163,7 +1180,11 @@ class AgentLoop:
                 (
                     leaf,
                     apply_permission_mode(
-                        self._trust_gate.evaluate(leaf, current_url=current_url), leaf, permission_mode
+                        self._trust_gate.evaluate(
+                            leaf, current_url=current_url, stated_reason=decision.rationale
+                        ),
+                        leaf,
+                        permission_mode,
                     ),
                 )
                 for leaf in leaves
@@ -1299,6 +1320,29 @@ class AgentLoop:
             return None
 
         self.executor.batch_child_check = check
+
+    @contextlib.contextmanager
+    def _perception_only(self):
+        """Perceive without a new policy turn (see ``set_perception_only``)."""
+        setter = getattr(self.perception_service, "set_perception_only", None)
+        if setter is not None:
+            setter(True)
+        try:
+            yield
+        finally:
+            if setter is not None:
+                setter(False)
+
+    def _note_attempt_failed(self, run_id: str, detail: str) -> None:
+        for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():
+            note = getattr(service, "note_attempt_failed", None)
+            if note is None:
+                continue
+            try:
+                note(run_id, detail)
+                return
+            except Exception as exc:  # noqa: BLE001 - a courtesy to the backend
+                logger.warning("note_attempt_failed failed for run %s: %s", run_id[:8], exc)
 
     def _note_not_executed(self, run_id: str, reason: str) -> None:
         """Tell the policy a gate stopped its decision before it ran, so a backend
@@ -1707,7 +1751,10 @@ class AgentLoop:
             await asyncio.sleep(delay)
             try:
                 frame = await self.capture_service.capture(record)
-                fresh_perception = await self._perceive_with_liveness_retry(record, frame)
+                # A re-look at the screen, not a new turn for the model: its open
+                # call has not been recorded yet.
+                with self._perception_only():
+                    fresh_perception = await self._perceive_with_liveness_retry(record, frame)
             except PerceptionLowQualityError:
                 # Zero-element liveness retries exhausted — page still blank; keep waiting.
                 logger.info("patience_retry=%d: perception still blank after liveness retries", retries)
@@ -1882,7 +1929,10 @@ class AgentLoop:
             if hasattr(self.perception_service, "set_perception_only"):
                 self.perception_service.set_perception_only(True)
             refreshed_perception = await self.perception_service.perceive(frame, record)
-            retry_state = await self.run_store.update_state(record.run_id, refreshed_perception)
+            refreshed_perception = self._with_capture_origin(refreshed_perception, frame)
+            # Same step: record the re-look without counting a new step.
+            record.observation_history.append(refreshed_perception)
+            retry_state = record
             resolution = self._resolve_retry_action(
                 action=decision_action,
                 perception=refreshed_perception,
@@ -1890,6 +1940,10 @@ class AgentLoop:
             )
             retry_action = resolution.action
             target_reresolved = resolution.trace is not None and resolution.trace.succeeded
+            if target_reresolved and retry_action is not None:
+                # Re-resolved from this perception: monitor-local, like the first
+                # resolution before its origin transform (secondary monitors).
+                retry_action = self._apply_monitor_origin(retry_action, refreshed_perception)
         except Exception as exc:
             # Keep the failed first attempt; the retry could not be prepared.
             self._recovered(record.run_id, "execution_retry_reperceive", exc)
@@ -2028,7 +2082,9 @@ class AgentLoop:
         # Grounder refinement runs in perception-local space (same frame as
         # visible_elements), before the monitor-origin transform below. No-op for
         # the default deterministic grounder.
-        normalized_action = self._refine_with_grounder(normalized_action, perception)
+        if not self.thin_harness:
+            # The thin harness never moves the model's click.
+            normalized_action = self._refine_with_grounder(normalized_action, perception)
         # Apply monitor origin: perception coords are monitor-local; pyautogui needs
         # virtual-desktop coords. This is the single transform point — perception
         # and policy layers stay in monitor-local space throughout.
@@ -2098,6 +2154,7 @@ class AgentLoop:
         if action.action_type in {
             ActionType.CLICK,
             ActionType.HOVER,
+            ActionType.UPLOAD_FILE,
             ActionType.UPLOAD_FILE_NATIVE,
             ActionType.TYPE,
         }:

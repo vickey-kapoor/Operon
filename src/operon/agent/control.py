@@ -25,7 +25,10 @@ def get_confidence_threshold() -> float:
 def set_confidence_threshold(value: float) -> float:
     """Clamp to [0, 1], store, and return the stored value."""
     global _confidence_threshold
-    _confidence_threshold = max(0.0, min(1.0, float(value)))
+    value = float(value)
+    if value != value:  # NaN: clamping would turn it into 1.0 (every action gated)
+        return _confidence_threshold
+    _confidence_threshold = max(0.0, min(1.0, value))
     return _confidence_threshold
 
 

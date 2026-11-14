@@ -325,6 +325,7 @@ def translate_computer_use_action(action_payload: dict[str, Any]) -> AgentAction
             x=action_payload["x"],
             y=action_payload["y"],
             scroll_amount=action_payload["scroll_amount"],
+            horizontal=action_payload.get("horizontal"),
         )
 
     if action_type == "drag":

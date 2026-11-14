@@ -12,7 +12,7 @@ from operon.models.common import FailureCategory
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.memory import MemoryHint
 from operon.models.perception import ScreenPerception
-from operon.models.policy import ActionType, PolicyDecision
+from operon.models.policy import ActionType, AgentAction, PolicyDecision
 from operon.models.state import AgentState
 from operon.store.background_writer import bg_writer
 from operon.store.memory import MemoryStore
@@ -37,6 +37,7 @@ class PolicyCoordinator(PolicyService):
         # Single-step hint cache: avoids re-loading memory JSONL twice per step.
         self._cached_hints: list[MemoryHint] | None = None
         self._cached_hints_key: tuple | None = None
+        self._hints_prepared_for: str | None = None
 
     def _get_hints(self, state: AgentState, perception: ScreenPerception | None) -> list[MemoryHint]:
         """Fetch hints, using a single-step in-memory cache to avoid double JSONL reads."""
@@ -86,6 +87,11 @@ class PolicyCoordinator(PolicyService):
         memory_hints = self._get_hints(state, perception)
         if hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
+            # The rule trace goes in now too: perceive() is this step's model call,
+            # so a trace added after it would reach the model a step late.
+            if state.last_rule_trace:
+                self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
+        self._hints_prepared_for = state.run_id
 
     async def choose_action(
         self,
@@ -140,13 +146,17 @@ class PolicyCoordinator(PolicyService):
             self._last_debug_artifacts = self._write_rule_debug_artifacts(state, perception, memory_hints, decision)
             return decision
 
-        if hasattr(self.delegate, "add_advisory_hints"):
+        # prepare_hints() already queued this step's memory hints and rule trace
+        # before perceive(); queueing them again would repeat them next step.
+        prepared = getattr(self, "_hints_prepared_for", None) == state.run_id
+        self._hints_prepared_for = None
+        if not prepared and hasattr(self.delegate, "add_advisory_hints"):
             self.delegate.add_advisory_hints([hint.hint for hint in memory_hints], source="memory", run_id=state.run_id)
 
-        # Rule-Augmented Generation: if a rule fired last step, inject its outcome
-        # so the LLM planner knows what was tried and whether it succeeded.
-        if state.last_rule_trace and hasattr(self.delegate, "add_advisory_hints"):
-            self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
+            # Rule-Augmented Generation: if a rule fired last step, inject its outcome
+            # so the LLM planner knows what was tried and whether it succeeded.
+            if state.last_rule_trace:
+                self.delegate.add_advisory_hints([state.last_rule_trace], source="rule_trace", run_id=state.run_id)
 
         decision = await self._ask_delegate(state, perception)
         decision = await self._reject_premature_stop(state, perception, decision)
@@ -167,6 +177,21 @@ class PolicyCoordinator(PolicyService):
         disagrees. Falls back to rule_stop on any LLM error so a transient API
         failure never blocks task completion.
         """
+        resample = getattr(self.delegate, "supports_resampling", None)
+        if resample is not None and not resample(state.run_id):
+            # The delegate's decision for this screen was made in perceive() and it
+            # cannot be asked again (Computer Use): that independent decision is
+            # the confirmation. A queued question would only leak into next step.
+            try:
+                llm_decision = await self._ask_delegate(state, perception)
+            except Exception as exc:  # noqa: BLE001 - never block completion on it
+                logger.warning("Success confirmation failed (%s: %s) — accepting rule stop.", type(exc).__name__, exc)
+                return rule_stop
+            return rule_stop if llm_decision.action.action_type is ActionType.STOP else llm_decision
+        # Drop the decision perceive() cached so the question gets a fresh answer.
+        discard = getattr(self.delegate, "discard_cached_decision", None)
+        if discard is not None:
+            discard(state.run_id)
         hint = (
             "CONFIRMATION REQUIRED: The success-detection rule believes the task is "
             f"complete (page_hint={perception.page_hint.value!r}, "
@@ -224,6 +249,11 @@ class PolicyCoordinator(PolicyService):
         substantive = {
             ActionType.CLICK,
             ActionType.DOUBLE_CLICK,
+            ActionType.TRIPLE_CLICK,
+            ActionType.RIGHT_CLICK,
+            ActionType.UPLOAD_FILE,
+            ActionType.UPLOAD_FILE_NATIVE,
+            ActionType.WRITE_CLIPBOARD,
             ActionType.TYPE,
             ActionType.PRESS_KEY,
             ActionType.HOTKEY,
@@ -232,7 +262,8 @@ class PolicyCoordinator(PolicyService):
             ActionType.DRAG,
             ActionType.SELECT,
         }
-        actions_taken = [h.action.action_type for h in state.action_history]
+        # A batch's children count one by one (a run done in batches did work).
+        actions_taken = [leaf.action_type for h in state.action_history for leaf in _leaves(h.action)]
         if any(a in substantive for a in actions_taken):
             return decision
 
@@ -330,3 +361,10 @@ def _describe(decision: PolicyDecision) -> str:
         what += f" at ({action.x}, {action.y})"
     by = f"rule {decision.rule_name}" if decision.rule_name else "a harness guard"
     return f"{what}, chosen by {by}"
+
+
+def _leaves(action: AgentAction) -> list[AgentAction]:
+    """A batch's leaf actions (nested batches flattened); any other action itself."""
+    if action.action_type is not ActionType.BATCH:
+        return [action]
+    return [leaf for child in action.actions or [] for leaf in _leaves(child)]

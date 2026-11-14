@@ -92,7 +92,9 @@ class DeterministicVerifierService(VerifierService):
         # Terminal-state check: look for visual evidence of the goal before checking
         # action success. This means the loop ends as soon as the goal is visible —
         # even if the triggering action was a WAIT or a mid-task CLICK.
-        if latest_perception is not None:
+        # Not after a failed action: the goal "seen" then is the pre-action screen
+        # matched by a broad keyword, not something this step achieved.
+        if latest_perception is not None and executed_action.success:
             terminal = self.check_terminal_state(state, latest_perception)
             if terminal is not None:
                 return terminal

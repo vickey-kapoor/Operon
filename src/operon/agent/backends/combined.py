@@ -202,6 +202,10 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._advisory_hints.pop(run_id, None)
 
+    def discard_cached_decision(self, run_id: str) -> None:
+        """Forget the decision perceive() cached, so choose_action asks again."""
+        self._cached_decision.pop(run_id, None)
+
     def set_perception_only(self, value: bool) -> None:
         """When True, perceive() won't overwrite the cached policy decision."""
         self._perception_only = value

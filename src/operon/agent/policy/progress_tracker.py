@@ -62,6 +62,10 @@ def target_signature(action: AgentAction) -> str | None:
 
 
 def action_signature(action: AgentAction) -> str:
+    if action.action_type is ActionType.BATCH:
+        # Two different batches are different actions: sign by their children.
+        children = ";".join(action_signature(child) for child in action.actions or [])
+        return f"{action.action_type.value}|[{children}]"
     target = target_signature(action) or "no_target"
     payload = action.text or action.key or action.url or (str(action.wait_ms) if action.wait_ms is not None else "")
     return f"{action.action_type.value}|{target}|{payload.strip().lower()}"

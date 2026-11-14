@@ -44,6 +44,9 @@ class AgentState(StrictModel):
     # Observable clients use this to decide whether to auto-attach the live CDP view.
     # Only observable runs open the CDP debug port (9222); batch browsers never do.
     mode: str = Field(default="batch", pattern=r"^(observable|batch)$")
+    # Which loop drives the run. Saved so a restarted server (or /app) routes the run
+    # to the right loop; None on runs saved before the field existed.
+    environment: str | None = Field(default=None, pattern=r"^(browser|desktop)$")
     # Front door (KAN-89). The run's permission mode (ask | risky | auto); None means
     # the server default (OPERON_PERMISSION_MODE).
     permission_mode: str | None = Field(default=None, pattern=r"^(ask|risky|auto)$")

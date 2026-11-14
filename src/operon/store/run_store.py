@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict
@@ -50,8 +51,11 @@ class RunStore(ABC):
 class FileBackedRunStore(RunStore):
     """Local file-backed run store using one directory per run."""
 
-    def __init__(self, root_dir: str | Path | None = None) -> None:
+    def __init__(self, root_dir: str | Path | None = None, *, environment: str | None = None) -> None:
         self.root_dir = Path(root_dir) if root_dir is not None else runs_dir()
+        # The loop this store serves ("browser" / "desktop"): new runs are stamped
+        # with it, and a run saved by the other loop is never loaded here.
+        self.environment = environment
         self.root_dir.mkdir(parents=True, exist_ok=True)
         self._resolved_root = self.root_dir.resolve()
         self._runs: Dict[str, AgentState] = {}
@@ -77,6 +81,7 @@ class FileBackedRunStore(RunStore):
             mode=mode,
             max_steps=max_steps,
             status=RunStatus.PENDING,
+            environment=self.environment,
         )
         self._runs[run_id] = record
         self._ensure_run_dir(run_id)
@@ -102,6 +107,9 @@ class FileBackedRunStore(RunStore):
             return None
 
         record = AgentState.model_validate_json(state_path.read_text(encoding="utf-8"))
+        if self.environment is not None and record.environment not in (None, self.environment):
+            # The other loop's run: loading it here would let this loop step it.
+            return None
         self._runs[run_id] = record
         return record
 
@@ -191,3 +199,14 @@ class FileBackedRunStore(RunStore):
         path = self._state_path(state.run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(state.model_dump_json(), encoding="utf-8")
+
+
+def stored_environment(run_id: str, root_dir: str | Path | None = None) -> str | None:
+    """The environment saved in a run's state.json, or None (unknown run, or a run
+    saved before the field existed). Reads the file only; loads no loop."""
+    path = (Path(root_dir) if root_dir is not None else runs_dir()) / run_id / "state.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get("environment")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if value in {"browser", "desktop"} else None

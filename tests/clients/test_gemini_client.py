@@ -166,3 +166,24 @@ async def test_generate_verification_sends_the_screenshot_and_thinking_setting(t
     assert parts[0]["text"] == "judge this"
     assert parts[1]["inline_data"]["mime_type"] == "image/jpeg"
     assert sent["generationConfig"].get("thinkingConfig") == expected
+
+
+@pytest.mark.asyncio
+async def test_post_json_payload_retries_a_dropped_connection() -> None:
+    """An HTTP/2 reset on a pooled connection is retried, not raised raw (KAN-151)."""
+    client = GeminiHttpClient(api_key="test-key", timeout_seconds=1.5, max_retries=1, retry_backoff_seconds=0.0)
+    attempts = {"count": 0}
+
+    async def fake_post(url, *, content=None, json=None, headers=None, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise httpx.RemoteProtocolError("connection reset")
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "{}"}]}}]})
+
+    mock_client = AsyncMock()
+    mock_client.post = fake_post
+    mock_client.is_closed = False
+    client._client = mock_client
+
+    assert await client._post_json_payload(GeminiHttpClient._build_text_payload(prompt="x"), request_kind="text") == "{}"
+    assert attempts["count"] == 2

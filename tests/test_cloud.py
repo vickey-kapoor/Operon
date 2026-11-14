@@ -132,6 +132,163 @@ def test_set_key_deallocates_when_the_start_fails(monkeypatch) -> None:
     assert run.verbs()[-1] == "az vm deallocate"
 
 
+def test_run_command_returns_stdout_and_raises_with_stderr(monkeypatch) -> None:
+    import subprocess
+
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        code = 0 if argv[1] == "ok" else 3
+        return subprocess.CompletedProcess(argv, code, stdout="out\n", stderr="boom")
+
+    monkeypatch.setattr(cloud.shutil, "which", lambda name: f"/bin/{name}.cmd")
+    monkeypatch.setattr(cloud.subprocess, "run", fake_run)
+
+    assert cloud.run_command(["az", "ok"]) == "out\n"
+    with pytest.raises(RuntimeError, match="az bad failed: boom"):
+        cloud.run_command(["az", "bad"])
+    assert seen[0][0] == "/bin/az.cmd"  # az resolves to az.cmd on Windows
+
+
+def test_read_api_key_refuses_an_empty_key() -> None:
+    class Empty(FakeRunner):
+        def __call__(self, argv, input_text=None) -> str:
+            return ""
+
+    with pytest.raises(RuntimeError, match="no API key"):
+        cloud.read_api_key(CFG, "20.1.2.3", Empty())
+
+
+def test_wait_for_ssh_gives_up_after_its_timeout(monkeypatch) -> None:
+    clock = iter([0.0, 100.0, 400.0])
+    monkeypatch.setattr(cloud.time, "monotonic", lambda: next(clock))
+    run = FakeRunner(fail_ssh=99)
+
+    with pytest.raises(RuntimeError, match="within 300 s"):
+        cloud.wait_for_ssh(CFG, "20.1.2.3", run, sleep=lambda s: None)
+    assert len(run.calls) == 2
+
+
+def test_wait_for_api_returns_once_health_answers(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    attempts: list[str] = []
+
+    def urlopen(url, timeout):
+        attempts.append(url)
+        if len(attempts) < 3:
+            raise OSError("connection refused")
+        return Response()
+
+    monkeypatch.setattr(cloud.urllib.request, "urlopen", urlopen)
+    cloud.wait_for_api(8090, sleep=lambda s: None)
+    assert attempts == ["http://127.0.0.1:8090/health"] * 3
+
+
+def test_wait_for_api_gives_up_after_its_timeout(monkeypatch) -> None:
+    clock = iter([0.0, 200.0])
+    monkeypatch.setattr(cloud.time, "monotonic", lambda: next(clock))
+
+    def refuse(url, timeout):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(cloud.urllib.request, "urlopen", refuse)
+    with pytest.raises(RuntimeError, match="did not answer"):
+        cloud.wait_for_api(8090, sleep=lambda s: None)
+
+
+def test_a_busy_local_port_fails_before_the_vm_starts(monkeypatch) -> None:
+    monkeypatch.setattr(cloud, "_port_free", lambda port: False)
+    run = FakeRunner()
+
+    with pytest.raises(RuntimeError, match="port 8090 is in use"):
+        with cloud._Session(CFG, run, out=lambda *_: None):
+            pass
+    assert run.calls == []  # nothing started, so nothing billed
+
+
+def test_exit_kills_a_tunnel_that_will_not_stop() -> None:
+    import subprocess
+
+    class StuckTunnel:
+        killed = False
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("ssh", timeout)
+
+        def kill(self) -> None:
+            self.killed = True
+
+    run = FakeRunner()
+    session = cloud._Session(CFG, run, out=lambda *_: None)
+    tunnel = session.tunnel = StuckTunnel()
+    session.__exit__(None, None, None)
+
+    assert tunnel.killed and session.tunnel is None
+    assert run.verbs() == ["az vm deallocate"]
+
+
+def test_set_key_with_no_key_starts_nothing(monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(cloud.getpass, "getpass", lambda prompt: "  ")
+    run = FakeRunner()
+
+    assert cloud.cmd_set_key(argparse.Namespace(keep=False), CFG, run, out=lambda *_: None) == 1
+    assert run.calls == []
+
+
+def test_set_key_with_keep_leaves_the_vm_running(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "gem-secret")
+    run = FakeRunner()
+
+    assert cloud.cmd_set_key(argparse.Namespace(keep=True), CFG, run, out=lambda *_: None) == 0
+    assert "az vm deallocate" not in run.verbs()
+
+
+@pytest.mark.parametrize(
+    ("browser", "mode", "expected"),
+    [
+        (False, None, {"intent": "t", "environment": "desktop", "max_steps": 7}),
+        (True, "ask", {"intent": "t", "environment": "browser", "max_steps": 7, "permission_mode": "ask"}),
+    ],
+)
+def test_run_sends_the_task_through_the_session(monkeypatch, browser, mode, expected) -> None:
+    import contextlib
+
+    from operon import cli
+
+    sessions: list[bool] = []
+
+    @contextlib.contextmanager
+    def fake_session(cfg, run, *, keep=False, out=print):
+        sessions.append(keep)
+        yield argparse.Namespace(base_url="http://127.0.0.1:8090", api_key="k3y")
+
+    sent: list[dict] = []
+
+    async def fake_drive(client, payload, **kwargs):
+        sent.append(payload)
+        return 0, None
+
+    monkeypatch.setattr(cloud, "_Session", fake_session)
+    monkeypatch.setattr(cli, "drive", fake_drive)
+    args = argparse.Namespace(task="t", browser=browser, mode=mode, max_steps=7, keep=False)
+
+    assert cloud.cmd_run(args, CFG, FakeRunner(), out=lambda *_: None) == 0
+    assert sent == [expected] and sessions == [False]
+
+
 async def test_run_prints_a_link_to_the_started_run() -> None:
     import httpx
 

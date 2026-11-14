@@ -45,10 +45,36 @@ def test_ttl_is_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
     assert stream_tokens.token_ttl_s() == 600
 
 
+def test_ttl_has_a_one_day_ceiling_and_a_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPERON_STREAM_TOKEN_TTL_S", "999999")
+    assert stream_tokens.token_ttl_s() == 86400
+    monkeypatch.delenv("OPERON_STREAM_TOKEN_TTL_S")
+    assert stream_tokens.token_ttl_s() == 600
+
+
 def test_the_table_does_not_grow_without_bound() -> None:
     for _ in range(stream_tokens._MAX_TOKENS + 50):
         stream_tokens.mint("view")
     assert len(stream_tokens._tokens) <= stream_tokens._MAX_TOKENS + 1
+
+
+def test_a_full_table_drops_the_oldest_tokens_and_keeps_the_newest() -> None:
+    # Spaced 1 s apart so expiry order is mint order; all still live at the end.
+    minted = [stream_tokens.mint("view", now=1000.0 + i).token for i in range(stream_tokens._MAX_TOKENS + 2)]
+    now = 1000.0 + len(minted)
+
+    assert stream_tokens.check(minted[0], now=now) is None
+    assert stream_tokens.check(minted[-1], now=now) == "view"
+
+
+def test_revoke_all_invalidates_live_tokens() -> None:
+    token = stream_tokens.mint("control").token
+    stream_tokens.revoke_all()
+    assert stream_tokens.check(token) is None
+
+
+def test_tokens_are_unique() -> None:
+    assert len({stream_tokens.mint("view").token for _ in range(50)}) == 50
 
 
 def test_stream_token_route_needs_the_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,6 +85,24 @@ def test_stream_token_route_needs_the_api_key(monkeypatch: pytest.MonkeyPatch) -
     response = client.post("/app/api/stream-token", json={"scope": "view"}, headers={"X-API-Key": "s3cret"})
     assert response.status_code == 200
     assert response.json()["scope"] == "view"
+
+
+def test_stream_token_route_defaults_to_control_and_returns_a_live_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_KEYS", "s3cret")
+    response = TestClient(app).post("/app/api/stream-token", headers={"X-API-Key": "s3cret"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scope"] == "control"
+    assert stream_tokens.check(body["token"]) == "control"
+
+
+def test_stream_token_route_refuses_an_unknown_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_KEYS", "s3cret")
+    response = TestClient(app).post("/app/api/stream-token", json={"scope": "admin"}, headers={"X-API-Key": "s3cret"})
+
+    assert response.status_code == 422
+    assert stream_tokens._tokens == {}
 
 
 def test_a_token_opens_the_stream_without_the_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

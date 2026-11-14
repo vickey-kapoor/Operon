@@ -8,6 +8,9 @@ an explicit argument — no hidden coupling to a god-object self.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from operon.agent.actions.subgoal_utils import wrap_subgoal
 from operon.models.common import FailureCategory, LoopStage, StopReason
 from operon.models.execution import ExecutedAction
@@ -19,6 +22,15 @@ from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 # alternating period-2/3 loops but not so large that one bad page early in a
 # run permanently colors loop detection.
 RECENT_WINDOW_SIZE = 6
+
+# RFC 0003: after-screenshots kept per action signature, and how many signatures.
+REVISIT_OUTCOMES_PER_ACTION = 3
+REVISIT_MAX_ACTIONS = 20
+
+
+def progress_revisit_enabled() -> bool:
+    """``OPERON_PROGRESS_REVISIT`` (RFC 0003): off unless set to on/true/1/yes."""
+    return os.getenv("OPERON_PROGRESS_REVISIT", "off").strip().lower() in {"on", "true", "1", "yes"}
 
 
 # --- pure signature helpers ---------------------------------------------------
@@ -209,6 +221,11 @@ class ProgressTracker:
     # 0.2% progress threshold — catches "screen essentially static after action".
     STALL_SCREEN_CHANGE_THRESHOLD = 0.01
 
+    # RFC 0003: a repeated action whose after-screen is within this ratio of an
+    # after-screen it produced before reached a screen it already reached. Calibrated
+    # on saved runs: legitimate repeats (scroll, switching back to an app) differ by 3%+.
+    REVISIT_SAME_SCREEN_THRESHOLD = 0.01
+
     def sync_with_perception(self, state, perception) -> None:
         page_sig = page_signature(perception)
         progress_state = state.progress_state
@@ -362,6 +379,22 @@ class ProgressTracker:
             is_novel_action=is_novel_action,
         )
 
+        # RFC 0003: a repeat that lands on a screen it already produced is not progress.
+        # The stop condition and a subgoal change still count first, as above.
+        revisited_screen = False
+        if progress_revisit_enabled():
+            after_path = getattr(executed_action, "artifact_path", None)
+            if (
+                progress_made
+                and executed_action.success
+                and not verification.stop_condition_met
+                and not subgoal_changed
+            ):
+                revisited_screen = self._revisits_known_screen(progress_state, action_sig, after_path)
+                progress_made = not revisited_screen
+            if executed_action.success:
+                self._remember_outcome(progress_state, action_sig, after_path)
+
         progress_state.recent_actions = append_window(progress_state.recent_actions, action_sig)
         loop_failure_category = None
         loop_pattern = None
@@ -418,11 +451,37 @@ class ProgressTracker:
             else None,
             loop_pattern_detected=loop_pattern,
             progress_made=progress_made,
+            revisited_screen=revisited_screen,
             screen_change_ratio=screen_change_ratio,
             no_progress_streak=progress_state.no_progress_streak,
             final_failure_category=loop_failure_category,
             final_stop_reason=stop_reason_for_failure(loop_failure_category),
         )
+
+    def _revisits_known_screen(self, progress_state, action_sig: str, after_path: str | None) -> bool:
+        """True when this action produced a near-identical screen earlier in the run.
+
+        Fails open: a missing screenshot (now or before) never counts as the same screen,
+        since ``compute_screen_change_ratio`` reports 0.0 (identical) for a missing file."""
+        earlier = progress_state.action_outcomes.get(action_sig) or []
+        if not earlier or not after_path or not Path(after_path).exists():
+            return False
+        from operon.agent.perception.screen_diff import compute_screen_change_ratio
+
+        return any(
+            Path(path).exists() and compute_screen_change_ratio(path, after_path) < self.REVISIT_SAME_SCREEN_THRESHOLD
+            for path in earlier
+        )
+
+    @staticmethod
+    def _remember_outcome(progress_state, action_sig: str, after_path: str | None) -> None:
+        if not after_path:
+            return
+        outcomes = progress_state.action_outcomes
+        paths = [*outcomes.pop(action_sig, []), after_path][-REVISIT_OUTCOMES_PER_ACTION:]
+        outcomes[action_sig] = paths  # re-inserted last: most recently used
+        while len(outcomes) > REVISIT_MAX_ACTIONS:
+            del outcomes[next(iter(outcomes))]
 
     def detect_loop_failure(
         self,

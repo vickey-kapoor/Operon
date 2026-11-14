@@ -19,6 +19,7 @@ from evals.harness import (
     cu_text,
     hovers,
     json_reply,
+    launches,
     presses,
     scrolls,
     types,
@@ -447,6 +448,50 @@ def cu_scroll_twice() -> Scenario:
     )
 
 
+def cu_relaunch_runaway() -> Scenario:
+    desktop = Screen("desktop", "Desktop with a taskbar", ())
+    window_a = Screen("window_a", "Browser window on a new tab page", (SEARCH,))
+    window_b = Screen("window_b", "A second browser window, cascaded over the first", (SEARCH, CART))
+    products = Screen("products", "Products page", (PLAN, CART), goal=True)
+    return Scenario(
+        name="cu_relaunch_runaway",
+        description=(
+            "RFC 0003: the model keeps relaunching the browser with the same call. Each launch "
+            "changes the screen (window A, B, A, B), so today every step counts as progress and "
+            "no guard fires; the run should be stopped as a loop, not left to its step budget."
+        ),
+        intent="Open the browser and go to the Products page",
+        backend="computer_use",
+        screens=[desktop, window_a, window_b, products],
+        transitions=[
+            Transition("desktop", launches("browser"), "window_a"),
+            Transition("window_a", launches("browser"), "window_b"),
+            Transition("window_b", launches("browser"), "window_a"),
+        ],
+        model={screen: cu_call("open_web_browser") for screen in ("desktop", "window_a", "window_b")},
+        expected="failure",
+        known_issue="RFC 0003: a repeated action that changes the screen always counts as progress (fixed under OPERON_PROGRESS_REVISIT)",
+        env={"OPERON_PROGRESS_REVISIT": "off"},
+    )
+
+
+def cu_relaunch_runaway_revisit() -> Scenario:
+    scenario = cu_relaunch_runaway()
+    scenario.name = "cu_relaunch_runaway_revisit"
+    scenario.description = "The same runaway with OPERON_PROGRESS_REVISIT on: stopped as a loop."
+    scenario.known_issue = None
+    scenario.env = {"OPERON_PROGRESS_REVISIT": "on"}
+    return scenario
+
+
+def cu_scroll_twice_revisit() -> Scenario:
+    scenario = cu_scroll_twice()
+    scenario.name = "cu_scroll_twice_revisit"
+    scenario.description = "A legitimate repeat (the same scroll twice, new screens) with OPERON_PROGRESS_REVISIT on."
+    scenario.env = {"OPERON_PROGRESS_REVISIT": "on"}
+    return scenario
+
+
 SCENARIOS = [
     form_submit,
     hover_then_click,
@@ -468,4 +513,7 @@ SCENARIOS = [
     cu_go_back,
     cu_done_without_effect,
     cu_done_before_acting,
+    cu_relaunch_runaway,
+    cu_relaunch_runaway_revisit,
+    cu_scroll_twice_revisit,
 ]

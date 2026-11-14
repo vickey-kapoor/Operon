@@ -54,6 +54,15 @@ def _executed(action: AgentAction, success: bool = True, *, no_progress: bool | 
     return ExecutedAction(action=action, success=success, detail="ok" if success else "failed", execution_trace=trace)
 
 
+def _screen(tmp_path, name: str, color: tuple[int, int, int]) -> str:
+    """A real after-screenshot on disk: a solid colour, so two colours differ completely."""
+    from PIL import Image
+
+    path = tmp_path / f"{name}.png"
+    Image.new("RGB", (480, 270), color).save(path)
+    return str(path)
+
+
 def _verification(stop: bool = False) -> VerificationResult:
     return VerificationResult(
         status=VerificationStatus.SUCCESS if stop else VerificationStatus.UNCERTAIN,
@@ -150,13 +159,14 @@ def test_progress_needs_a_screen_change_and_a_new_action(success, stop, subgoal_
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Known gap: meaningful_progress's docstring says a repeated action that changes the screen "
-        "(launch_app Notepad 5x) is not progress, but novelty is read from repeated_action_count, which "
-        "every progress step clears, so each repeat looks new and counts. Fixing it must keep legitimate "
-        "repeats (scrolling, paging with Next) counting as progress."
+        "Known gap with OPERON_PROGRESS_REVISIT off (the default): meaningful_progress's docstring says a "
+        "repeated action that changes the screen (launch_app Notepad 5x) is not progress, but novelty is read "
+        "from repeated_action_count, which every progress step clears, so each repeat looks new and counts. "
+        "RFC 0003's flag closes it; see the revisit tests below."
     ),
 )
-def test_repeating_an_action_that_changes_the_screen_still_builds_a_no_progress_streak() -> None:
+def test_repeating_an_action_that_changes_the_screen_still_builds_a_no_progress_streak(monkeypatch) -> None:
+    monkeypatch.delenv("OPERON_PROGRESS_REVISIT", raising=False)
     tracker = pt.ProgressTracker()
     state = _state()
     action = AgentAction(action_type=ActionType.LAUNCH_APP, text="notepad")
@@ -174,6 +184,124 @@ def test_repeating_an_action_that_changes_the_screen_still_builds_a_no_progress_
     assert [t.progress_made for t in traces] == [True, False, False]
     assert state.progress_state.no_progress_streak == 2
     assert state.progress_state.last_screen_change_ratio == 0.3
+
+
+# --- RFC 0003: OPERON_PROGRESS_REVISIT ----------------------------------------------
+
+# Greys far apart: the screen diff compares grayscale with a 30-level per-pixel threshold.
+WINDOW_A, WINDOW_B, PAGE_1, PAGE_2, PAGE_3 = (230, 230, 230), (40, 40, 40), (10, 10, 10), (120, 120, 120), (240, 240, 240)
+_LAUNCH = AgentAction(action_type=ActionType.LAUNCH_APP, text="notepad")
+_SCROLL = AgentAction(action_type=ActionType.SCROLL, x=600, y=500, scroll_amount=-300)
+
+
+def _run(tracker, state, action, after_paths, *, subgoal="open notepad", stop_on=None, ratio=0.3):
+    decision = PolicyDecision(action=action, rationale="r", confidence=0.8, active_subgoal=subgoal)
+    traces = []
+    for i, after in enumerate(after_paths, start=1):
+        executed = _executed(action).model_copy(update={"artifact_path": after})
+        traces.append(
+            tracker.update_progress_state(
+                state=state, decision=decision, executed_action=executed, verification=_verification(stop=i == stop_on),
+                recovery=_recovery(), step_index=i, screen_change_ratio=ratio,
+            )
+        )
+    return traces
+
+
+@pytest.fixture
+def revisit_on(monkeypatch):
+    monkeypatch.setenv("OPERON_PROGRESS_REVISIT", "on")
+
+
+@pytest.mark.parametrize(("value", "on"), [(None, False), ("off", False), ("on", True), ("TRUE", True), ("1", True), ("nope", False)])
+def test_the_revisit_flag_is_off_unless_turned_on(monkeypatch, value, on) -> None:
+    if value is None:
+        monkeypatch.delenv("OPERON_PROGRESS_REVISIT", raising=False)
+    else:
+        monkeypatch.setenv("OPERON_PROGRESS_REVISIT", value)
+    assert pt.progress_revisit_enabled() is on
+
+
+def test_a_relaunch_that_lands_on_a_screen_it_already_produced_is_not_progress(tmp_path, revisit_on) -> None:
+    # Each relaunch flips between two windows: the screen changes every step, but the
+    # screens it lands on repeat (A, B, A, B), which is the runaway RFC 0003 targets.
+    a, b = _screen(tmp_path, "a", WINDOW_A), _screen(tmp_path, "b", WINDOW_B)
+    state = _state()
+
+    traces = _run(pt.ProgressTracker(), state, _LAUNCH, [a, b, a, b])
+
+    assert [t.progress_made for t in traces] == [True, True, False, False]
+    # Step 3 is where the revisit overturns "progress"; by step 4 the relaunch is
+    # already a counted repeat, so today's rule says no progress on its own.
+    assert [t.revisited_screen for t in traces] == [False, False, True, False]
+    assert state.progress_state.no_progress_streak == 2
+    # ...so the existing repeat guard now blocks the next relaunch.
+    blocked = pt.ProgressTracker().block_redundant_action(state, _LAUNCH, 5, LOG)
+    assert blocked is not None and blocked.failure_category is FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS
+
+
+def test_a_repeat_that_reaches_new_screens_keeps_counting(tmp_path, revisit_on) -> None:
+    pages = [_screen(tmp_path, f"p{i}", c) for i, c in enumerate((PAGE_1, PAGE_2, PAGE_3))]
+    state = _state()
+
+    traces = _run(pt.ProgressTracker(), state, _SCROLL, pages, subgoal="scroll to the footer")
+
+    assert [t.progress_made for t in traces] == [True, True, True]
+    assert not any(t.revisited_screen for t in traces)
+    assert state.progress_state.no_progress_streak == 0
+
+
+def test_a_missing_screenshot_never_counts_as_the_same_screen(tmp_path, revisit_on) -> None:
+    a = _screen(tmp_path, "a", WINDOW_A)
+    gone = str(tmp_path / "deleted.png")
+    state = _state()
+
+    # Earlier screen missing, then this screen missing: both fall back to today's rule.
+    traces = _run(pt.ProgressTracker(), state, _LAUNCH, [gone, a, gone])
+
+    assert [t.progress_made for t in traces] == [True, True, True]
+    assert not any(t.revisited_screen for t in traces)
+
+
+def test_the_stop_condition_still_counts_on_a_revisited_screen(tmp_path, revisit_on) -> None:
+    a = _screen(tmp_path, "a", WINDOW_A)
+
+    traces = _run(pt.ProgressTracker(), _state(), _LAUNCH, [a, a], stop_on=2)
+
+    assert traces[1].progress_made and not traces[1].revisited_screen
+
+
+def test_a_new_subgoal_still_counts_on_a_revisited_screen(tmp_path, revisit_on) -> None:
+    a = _screen(tmp_path, "a", WINDOW_A)
+    tracker, state = pt.ProgressTracker(), _state()
+    _run(tracker, state, _LAUNCH, [a], subgoal="open notepad")
+
+    [trace] = _run(tracker, state, _LAUNCH, [a], subgoal="open notepad for the answer")
+
+    assert trace.progress_made and not trace.revisited_screen
+
+
+def test_with_the_flag_off_nothing_is_remembered(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("OPERON_PROGRESS_REVISIT", raising=False)
+    a, b = _screen(tmp_path, "a", WINDOW_A), _screen(tmp_path, "b", WINDOW_B)
+    state = _state()
+
+    traces = _run(pt.ProgressTracker(), state, _LAUNCH, [a, b, a, b])
+
+    assert all(t.progress_made for t in traces)  # today's behaviour, the gap above
+    assert state.progress_state.action_outcomes == {}
+
+
+def test_remembered_outcomes_are_bounded() -> None:
+    progress = ProgressState()
+    for i in range(5):
+        pt.ProgressTracker._remember_outcome(progress, "launch", f"shot{i}.png")
+    assert progress.action_outcomes["launch"] == ["shot2.png", "shot3.png", "shot4.png"]
+
+    for i in range(pt.REVISIT_MAX_ACTIONS + 5):
+        pt.ProgressTracker._remember_outcome(progress, f"action{i}", "x.png")
+    assert len(progress.action_outcomes) == pt.REVISIT_MAX_ACTIONS
+    assert "launch" not in progress.action_outcomes  # the least recently used went first
 
 
 # --- the stall reset ---------------------------------------------------------------

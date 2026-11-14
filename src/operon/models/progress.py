@@ -28,6 +28,10 @@ class ProgressState(StrictModel):
     latest_subgoal_signature: str | None = Field(default=None, min_length=1)
     target_completion_page_signatures: dict[str, str] = Field(default_factory=dict)
     subgoal_completion_page_signatures: dict[str, str] = Field(default_factory=dict)
+    # RFC 0003 (OPERON_PROGRESS_REVISIT): per action signature, the after-screenshot
+    # paths of its recent successful runs. Unlike the repeat counters it is not
+    # cleared on progress, so a repeat can be compared with what it produced before.
+    action_outcomes: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ProgressTrace(StrictModel):
@@ -43,6 +47,10 @@ class ProgressTrace(StrictModel):
     redundancy_reason: FailureCategory | None = None
     loop_pattern_detected: str | None = Field(default=None, min_length=1)
     progress_made: bool = False
+    # RFC 0003: this step would have counted as progress, but the action reached a
+    # screen it had already produced, so it did not. False when today's rule already
+    # said no progress (the revisit check only runs to overturn a "progress").
+    revisited_screen: bool = False
     screen_change_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
     no_progress_streak: int = Field(default=0, ge=0)
     final_failure_category: FailureCategory | None = None

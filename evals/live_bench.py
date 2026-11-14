@@ -304,7 +304,7 @@ def tools_label() -> str:
     their names joined by commas, or ``off``. Only a fallback: ``server_tools`` asks the server."""
     from operon.agent.tools import enabled_tools
 
-    return ",".join(enabled_tools(_server_env().get("OPERON_TOOLS") or "off")) or "off"
+    return ",".join(enabled_tools(_server_env().get("OPERON_TOOLS") or "on")) or "off"
 
 
 async def server_tools(client: httpx.AsyncClient) -> str:

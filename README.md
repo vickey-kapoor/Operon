@@ -42,14 +42,22 @@ paused, resumed or handed to a human between steps. See [architecture](docs/arch
 ## Quick start (5 minutes)
 
 You need Python 3.14+ and a free [Gemini API key](https://aistudio.google.com/apikey).
+New to Python or the terminal? Follow [First run, step by step](docs/first-run.md), which
+explains every command.
 
-**1. Install** (about a minute):
+**1. Install** (about a minute) from [PyPI](https://pypi.org/project/operon-agent/):
 
 ```bash
-git clone https://github.com/vickey-kapoor/Operon && cd Operon
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
-pip install -e .
+pip install operon-agent
 ```
+
+To work on Operon itself, clone the repo and `pip install -e .` instead.
+
+> [!TIP]
+> If Windows blocks `operon.exe` or `pip.exe` (Smart App Control), run the same commands through
+> Python: `python -m pip install operon-agent`, then `python -m operon.cli setup` and
+> `python -m operon.cli run "..."`.
 
 **2. Set up** (about two minutes): paste your key when asked. `operon setup` checks it with
 Gemini, saves it to `~/.operon` (readable only by you), installs Chromium and runs a self-check.
@@ -73,7 +81,7 @@ short report of what it did.
 
 ![Operon finding the population of Paris on Wikipedia, from screenshots only](docs/assets/demo.gif)
 
-That run took 2 model steps and 23 seconds. A task like this costs a few cents of Gemini calls on your key.
+That run took 2 model steps and 23 seconds; a fresh PyPI install on Windows did it in 5 steps and 88 seconds. A task like this costs a few cents of Gemini calls on your key.
 
 **Next:** `operon serve` prints a link to a local task page, where you type tasks, watch them
 live, approve steps and take over with your own mouse. Add `--desktop` to `operon run` to drive
@@ -85,7 +93,7 @@ Or, with `operon serve` running, give it a task over HTTP:
 ```bash
 curl -X POST http://127.0.0.1:8080/run-task \
   -H 'Content-Type: application/json' \
-  -H "X-API-Key: $(cat .var/api-key)" \
+  -H "X-API-Key: $(cat ~/.operon/api-key)"   # .var/api-key in a source checkout \
   -d '{"intent": "Search Wikipedia for Alan Turing and open his article", "start_url": "https://www.wikipedia.org"}'
 ```
 
@@ -94,7 +102,7 @@ curl -X POST http://127.0.0.1:8080/run-task \
 > The trust gate (`OPERON_TRUST_GATE`, on by default) pauses for approval before risky actions;
 > set `OPERON_TRUST_ALLOW_DOMAINS` to pin browser runs to the sites you expect
 > ([configuration](docs/configuration.md)). The API requires the key it generates in
-> `.var/api-key` (or one from `API_KEYS`).
+> `~/.operon/api-key` (`.var/api-key` in a source checkout), or one from `API_KEYS`.
 
 ## Status and roadmap
 

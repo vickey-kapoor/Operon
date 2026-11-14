@@ -45,7 +45,8 @@ and every paid benchmark run needs its own cost approval.
   People, Rooms), frozen on 2026-11-11. Calibration runs are under way (KAN-87).
 - **Tool action channel** (#254, KAN-79, [RFC 0002](rfcs/0002-tool-action-channel.md)): typed
   `read_file`, `list_dir`, `write_file`, `http_get` and, opt-in, `run_shell` beside the GUI, behind
-  `OPERON_TOOLS` (off by default until the on/off comparison holds the score).
+  `OPERON_TOOLS`, on by default since 2026-11-14 (files and web; shell stays opt-in) after Desktop
+  Season 2 scored 10/10 with tools against 8/10 without (KAN-87).
 - **Trust gate on by default** (#232, KAN-15): risky actions pause for a human's approval.
   Benchmarks turn it off.
 - **Whole-repo review fixes** (#212 to #220, KAN-46 to KAN-51), a monthly budget on the dashboard's
@@ -77,8 +78,8 @@ What this tells us:
 ### In progress
 
 - **Gemini only.** Operon runs Gemini 3.5 Flash for every run; other models come back in stage 4.
-- **Season 2 calibration** (KAN-87): Gemini on the Season 2 core sets, then the tools on/off
-  comparison that decides whether `OPERON_TOOLS=on` becomes the default.
+- **Season 2 calibration** (KAN-87): Gemini on the Season 2 core sets (the tools on/off
+  comparison is done: tools are on by default).
 
 ## Next: scaling Operon in six stages
 

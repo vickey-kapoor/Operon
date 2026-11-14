@@ -138,6 +138,10 @@ class Settings(BaseModel):
     desktop_platform: str = _env_field("OPERON_DESKTOP_PLATFORM", "windows")
     sandbox_memory_mb: int = _env_field("OPERON_SANDBOX_MEMORY_MB", 4096)
     sandbox_start_timeout: int = _env_field("OPERON_SANDBOX_START_TIMEOUT", 240)
+    # "" : the image built from this checkout.
+    container_image: str = _env_field("OPERON_CONTAINER_IMAGE", "")
+    container_start_timeout: int = _env_field("OPERON_CONTAINER_START_TIMEOUT", 120)
+    container_ca_bundle: str = _env_field("OPERON_CONTAINER_CA_BUNDLE", "")
     browser_width: int = _env_field("BROWSER_WIDTH", 1920)
     browser_height: int = _env_field("BROWSER_HEIGHT", 1080)
     browser_headless: bool = _env_field("BROWSER_HEADLESS", False)
@@ -314,6 +318,9 @@ class _Parser:
             desktop_platform=platform,
             sandbox_memory_mb=sandbox_int("OPERON_SANDBOX_MEMORY_MB", 4096),
             sandbox_start_timeout=sandbox_int("OPERON_SANDBOX_START_TIMEOUT", 240),
+            container_image=self.text("OPERON_CONTAINER_IMAGE").strip(),
+            container_start_timeout=sandbox_int("OPERON_CONTAINER_START_TIMEOUT", 120),
+            container_ca_bundle=self.text("OPERON_CONTAINER_CA_BUNDLE").strip(),
             browser_width=self.number("BROWSER_WIDTH", "1920", int, fatal=True),
             browser_height=self.number("BROWSER_HEIGHT", "1080", int, fatal=True),
             browser_headless=self.text("BROWSER_HEADLESS", "false").lower() == "true",

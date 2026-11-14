@@ -24,6 +24,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from operon.core.paths import source_checkout
+from operon.core.settings import get_settings
 from operon.environments.base import (
     EnvironmentProvider,
     ProviderCheck,
@@ -38,13 +39,6 @@ DOCKERFILE = Path("docker") / "linux-desktop" / "Dockerfile"
 _HASHED_FILES = (DOCKERFILE, Path("docker") / "linux-desktop" / "entrypoint.sh", Path("pyproject.toml"))
 
 Runner = Callable[..., subprocess.CompletedProcess]
-
-
-def _int_env(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name) or default)
-    except ValueError:
-        return default
 
 
 def image_tag(root: Path) -> str:
@@ -65,10 +59,9 @@ class LinuxContainerProvider(EnvironmentProvider):
     def __init__(self, *, runner: Runner | None = None, root: Path | None = None) -> None:
         self._run = runner or subprocess.run
         self.root = root if root is not None else source_checkout()
-        self.image = os.getenv("OPERON_CONTAINER_IMAGE", "").strip() or (
-            image_tag(self.root) if self.root is not None else ""
-        )
-        self.start_timeout_s = _int_env("OPERON_CONTAINER_START_TIMEOUT", 120)
+        settings = get_settings()
+        self.image = settings.container_image or (image_tag(self.root) if self.root is not None else "")
+        self.start_timeout_s = settings.container_start_timeout
         self.container: str | None = None
         self._token: str | None = None
         self._endpoint: str | None = None
@@ -121,7 +114,7 @@ class LinuxContainerProvider(EnvironmentProvider):
         print(f"linux-container: building the desktop image {self.image} (first time only, a few minutes)...",
               flush=True)
         args = ["build", "-f", str(self.root / DOCKERFILE), "-t", self.image]
-        ca_bundle = os.getenv("OPERON_CONTAINER_CA_BUNDLE", "").strip()
+        ca_bundle = get_settings().container_ca_bundle
         if ca_bundle:  # behind a TLS-inspecting proxy: pip in the build trusts this CA
             args += ["--secret", f"id=ca_bundle,src={ca_bundle}"]
         result = self._docker([*args, str(self.root)], timeout=1800, capture=False)

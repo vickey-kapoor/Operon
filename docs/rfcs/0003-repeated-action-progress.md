@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed |
+| **Status** | Proposed; first calibration pass done (§6) |
 | **Created** | 2026-11-13 |
 | **Story** | — |
 | **Related** | [`../architecture.md`](../architecture.md), PR #263 (the `xfail` test that shows the gap) |
@@ -57,9 +57,12 @@ relaunch passes.
 
 - The thin harness. It records progress traces but never blocks or stops on them; it is
   untouched.
-- A model that varies its subgoal text on every repeat ("open notepad", "open notepad
-  again"). A new subgoal counts as progress before the screen is looked at; that is a
-  separate rule and stays as it is.
+- The subgoal shortcut. A new subgoal counts as progress before the screen is looked at,
+  and on the Computer Use backend the subgoal is the call plus its arguments
+  (`_subgoal_for_calls`), so any change in arguments is a "new subgoal". That shortcut is
+  load-bearing today: replaying saved runs without it stops 2 of 8 successful runs (§6).
+  It stays as it is. On that backend this RFC's rule therefore only sees exact repeats
+  (same call, same arguments), which is the runaway it targets.
 - Changing the existing thresholds or guard counts.
 
 ## 4. Design
@@ -125,10 +128,45 @@ whose action repeats.
 2. **Threshold calibration from saved runs** (`.var/runs/*/step_*` before/after
    screenshots, no API cost): for repeated actions, histogram the ratio between their
    after-screens, labelled by hand as "same screen" vs "new screen". Pick the threshold
-   that separates them; record it in this RFC.
-3. **Benchmarks** (cost real credits; only when asked): Browser Full core and Desktop Full
+   that separates them; record it in this RFC. First pass done; see below.
+3. **A scripted runaway** (offline eval harness, no API cost): a scenario whose model
+   relaunches the same app with the same arguments five times. Confirms the "same screen"
+   side of the threshold, which saved runs don't yet cover.
+4. **Benchmarks** (cost real credits; only when asked): Browser Full core and Desktop Full
    core, flag off vs on, once each. Ship default-on only if pass rate does not drop and at
    least one runaway run ends earlier.
+
+### Calibration, first pass (2026-11-13)
+
+Data: the 9 local runs (of 144) that kept their step screenshots and progress traces; 8
+succeeded, 1 failed. Screenshots from the offline test suite (`.var/test-artifacts`) are
+synthetic and were excluded.
+
+**After-screen vs. after-screen, for actions repeated within a run:**
+
+| Repeated action | Pairs | Ratio between after-screens | Correct verdict |
+|---|---|---|---|
+| `scroll` (Settings page) | 6 | 3.0 – 4.4% | new screen |
+| `launch_app notepad`, after switching to Calculator and back | 1 | 12.7% | new screen (a legitimate switch back) |
+| `type 2148`, into Calculator then into Notepad | 1 | 6.9% | new screen |
+| `navigate` to the same search URL | 3 | no after-screen saved | — (falls back to today's rule) |
+
+Every legitimate repeat is at least 3× above **1%**, so 1% stays the starting threshold.
+Replaying all 9 runs' traces under this RFC's rule changes no step's verdict. No saved run
+contains a real runaway, so the "same screen" side is unmeasured; item 3 above covers it.
+
+**Dropping the subgoal shortcut** (counting progress only by screen change and novelty) was
+replayed on the same traces and **rejected**: it stops 2 of the 8 successful runs.
+
+| Successful run | What would have fired |
+|---|---|
+| Settings lookup | loop stop at step 5: three steps at 0.0% change while the page loaded |
+| Notepad shopping list | stall reset and loop stop at step 4: typing changed 0.03 – 0.08% of the screen |
+
+The cause is the screen diff, not the guards: at 480×270 grayscale, a few typed characters
+fall under the 0.2% progress threshold, and the subgoal shortcut is what currently keeps
+such runs alive. A finer change measure (around the action point, or at higher resolution)
+would be needed before the shortcut could be narrowed; that is a separate proposal.
 
 ## 7. Alternatives considered
 
@@ -137,5 +175,10 @@ whose action repeats.
 - **Novelty against `recent_actions`** (the 6-entry window, not cleared on progress). Same
   problem as above: it can't tell a fifth Notepad launch from a fifth scroll.
 - **Key on `page_signature`.** Breaks on the Computer Use backend (§4).
+- **Ignore call-derived subgoals in the progress rule** (or strip arguments from the
+  Computer Use subgoal). Closes the wider gap where any change in arguments counts as
+  progress, but replayed on saved runs it stops 2 of 8 successful runs (§6); stripping the
+  arguments also brings back the bug `_subgoal_for_calls` exists to prevent (a form's
+  second `type_text_at` blocked as an already-completed subgoal).
 - **A per-app "already launched" rule.** Fixes Notepad only; this is the general case and
   per-app rules belong in site adapters.

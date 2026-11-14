@@ -24,6 +24,7 @@ _PATH_FIELDS = {
     "OPERON_RUNTIME_ROOT": "runtime_root",
     "OPERON_RUNS_ROOT": "runs_root",
     "OPERON_BROWSER_ARTIFACTS_ROOT": "browser_artifacts_root",
+    "OPERON_BROWSER_PROFILE_DIR": "browser_profile_dir",
     "OPERON_DESKTOP_ARTIFACTS_ROOT": "desktop_artifacts_root",
     "OPERON_TEST_ARTIFACTS_ROOT": "test_artifacts_root",
 }
@@ -59,6 +60,11 @@ def user_config_dir() -> Path:
     It holds ``operon.env``, so a pip-installed Operon finds its key from any folder.
     """
     return _env_path("OPERON_CONFIG_DIR", Path.home() / ".operon")
+
+
+def browser_profile_dir() -> Path:
+    """Return the built-in browser's saved profile (cookies, sign-ins); stays on this computer."""
+    return _env_path("OPERON_BROWSER_PROFILE_DIR", user_config_dir() / "browser-profile")
 
 
 def user_env_file() -> Path:

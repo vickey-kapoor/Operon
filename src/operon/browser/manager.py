@@ -351,7 +351,7 @@ class BrowserManager:
         Args:
             x_ratio: Horizontal position as a fraction of viewport width (0.0–1.0).
             y_ratio: Vertical position as a fraction of viewport height (0.0–1.0).
-            input_type: "click" | "dblclick" | "type" | "scroll" | "key" | "hover"
+            input_type: "click" | "dblclick" | "type" | "text" | "scroll" | "key" | "hover"
             **kwargs:
                 text (str)     — for input_type=="type"
                 key (str)      — for input_type=="key" (Playwright key name)
@@ -383,6 +383,11 @@ class BrowserManager:
                 await self._page.mouse.click(page_x, page_y)
                 await asyncio.sleep(0.05)
                 await self._page.keyboard.type(text)
+
+            elif input_type == "text":
+                # Keys into whatever has focus: no click first (the Browser tab, where the
+                # user clicked a field a moment ago and now types).
+                await self._page.keyboard.type(kwargs.get("text", ""))
 
             elif input_type == "scroll":
                 delta_y = int(kwargs.get("delta_y", 300))

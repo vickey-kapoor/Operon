@@ -62,6 +62,12 @@ async def close_built_runtime() -> None:
             await aclose()
         except Exception as exc:  # noqa: BLE001 - shutdown cleanup must not raise
             logger.warning("executor shutdown cleanup skipped: %s", exc)
+    try:
+        from operon.browser.builtin import close_builtin_browser
+
+        await close_builtin_browser()
+    except Exception as exc:  # noqa: BLE001 - shutdown cleanup must not raise
+        logger.warning("built-in browser shutdown cleanup skipped: %s", exc)
     provider = current_runtime().desktop_provider
     if provider is not None:
         try:

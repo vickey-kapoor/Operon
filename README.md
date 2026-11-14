@@ -42,6 +42,8 @@ paused, resumed or handed to a human between steps. See [architecture](docs/arch
 ## Quick start (5 minutes)
 
 You need Python 3.14+ and a free [Gemini API key](https://aistudio.google.com/apikey).
+New to Python or the terminal? Follow [First run, step by step](docs/first-run.md), which
+explains every command.
 
 **1. Install** (about a minute) from [PyPI](https://pypi.org/project/operon-agent/):
 

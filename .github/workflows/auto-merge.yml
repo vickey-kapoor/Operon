@@ -1,0 +1,41 @@
+name: Auto-merge
+run-name: Turn on auto-merge for PR #${{ github.event.pull_request.number }}
+
+# Turns on GitHub auto-merge (squash) as soon as a PR is opened or marked ready, so GitHub
+# merges it once the required checks pass; nobody merges by hand. Only PRs from the repo
+# owner or the Actions bot, never drafts, and never PRs that change .github/ (workflows,
+# permissions), which wait for the owner to merge. Runs from main via pull_request_target
+# and never checks out the PR's code.
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable:
+    name: Enable auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      !github.event.pull_request.draft &&
+      (github.event.pull_request.user.login == 'vickey-kapoor' ||
+       github.event.pull_request.user.login == 'github-actions[bot]')
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Skip PRs that change .github/
+        id: guard
+        run: |
+          if gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' | grep -q '^\.github/'; then
+            echo "PR #$PR changes .github/: leaving it for the owner to merge."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enable auto-merge
+        if: steps.guard.outputs.skip != 'true'
+        run: gh pr merge "$PR" --repo "$REPO" --auto --squash

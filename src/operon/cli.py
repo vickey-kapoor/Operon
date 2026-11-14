@@ -347,9 +347,39 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def quiet_closed_pipe_noise() -> None:
+    """Drop the "I/O operation on closed pipe" noise Windows prints at exit after a clean run.
+
+    Playwright's driver pipes can outlive the event loop on Windows; when Python later
+    garbage-collects their transports, ``__del__`` tries to print the closed pipe and
+    raises, and Python reports it as "Exception ignored ...". Nothing is lost, so only
+    that one message is dropped; every other unraisable error still prints.
+    """
+    previous = sys.unraisablehook
+
+    def hook(unraisable) -> None:
+        exc = unraisable.exc_value
+        if isinstance(exc, ValueError) and "closed pipe" in str(exc):
+            return
+        previous(unraisable)
+
+    sys.unraisablehook = hook
+
+
+def _console_logging(command: str) -> None:
+    """Keep library log lines out of `operon run` output: errors only, unless logging is set up."""
+    import logging
+
+    if command != "serve" and not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(name)s: %(message)s")
+
+
 def main(argv: list[str] | None = None) -> int:
     _load_env()
+    if sys.platform == "win32":
+        quiet_closed_pipe_noise()
     args = build_parser().parse_args(argv)
+    _console_logging(args.command)
     try:
         return int(args.func(args) or 0)
     except KeyboardInterrupt:

@@ -228,3 +228,36 @@ async def test_settle_subprocess_pipes_waits_only_on_windows(monkeypatch) -> Non
     monkeypatch.setattr(cli.sys, "platform", "win32")
     await cli.settle_subprocess_pipes()
     assert slept == [0.25]
+
+
+def test_closed_pipe_noise_is_dropped_but_other_errors_still_print(monkeypatch) -> None:
+    seen: list[BaseException] = []
+    monkeypatch.setattr(cli.sys, "unraisablehook", lambda u: seen.append(u.exc_value))
+    cli.quiet_closed_pipe_noise()
+
+    class Unraisable:
+        def __init__(self, exc: BaseException) -> None:
+            self.exc_value = exc
+
+    cli.sys.unraisablehook(Unraisable(ValueError("I/O operation on closed pipe")))
+    other = ValueError("something else")
+    cli.sys.unraisablehook(Unraisable(other))
+    cli.sys.unraisablehook(Unraisable(OSError("closed pipe")))
+    assert seen[0] is other and isinstance(seen[1], OSError) and len(seen) == 2
+
+
+def test_run_output_keeps_library_warnings_out(monkeypatch) -> None:
+    import logging
+
+    root = logging.getLogger()
+    monkeypatch.setattr(root, "handlers", [])
+    monkeypatch.setattr(root, "level", logging.WARNING)
+    cli._console_logging("run")
+    try:
+        assert root.level == logging.ERROR and root.handlers
+    finally:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+
+    cli._console_logging("serve")
+    assert root.handlers == []

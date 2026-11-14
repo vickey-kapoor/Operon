@@ -53,14 +53,14 @@ def _tool(name: str, **args) -> AgentAction:
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        (None, ()),
+        (None, ("read_file", "list_dir", "write_file", "http_get")),
         ("off", ()),
         ("on", ("read_file", "list_dir", "write_file", "http_get")),
         ("all", ("read_file", "list_dir", "write_file", "run_shell", "http_get")),
         ("list_dir, read_file, nope", ("read_file", "list_dir")),
     ],
 )
-def test_operon_tools_turns_on_the_named_tools_and_is_off_by_default(monkeypatch, value, expected) -> None:
+def test_operon_tools_turns_on_the_named_tools_and_is_on_without_the_shell_by_default(monkeypatch, value, expected) -> None:
     if value is None:
         monkeypatch.delenv("OPERON_TOOLS", raising=False)
     else:

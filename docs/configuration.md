@@ -50,7 +50,7 @@ onboarding ([roadmap](roadmap.md)).
 | `BROWSER_HEADLESS` | `false` | Browser headed/headless behavior |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |
 | `BROWSER_HEIGHT` | `1080` | Browser viewport height |
-| `OPERON_RUNTIME_ROOT` | `.var` | Root for generated runtime artifacts |
+| `OPERON_RUNTIME_ROOT` | `.var` (checkout) or `~/.operon` (pip install) | Root for generated runtime artifacts: runs, screenshots, the local API key. A source checkout uses its `.var/`; a pip install uses `OPERON_CONFIG_DIR` |
 | `OPERON_RUNS_ROOT` | `.var/runs` | Override run state and step artifact storage |
 | `OPERON_BROWSER_ARTIFACTS_ROOT` | `.var/browser-artifacts` | Override browser recording/session artifacts |
 | `OPERON_DESKTOP_ARTIFACTS_ROOT` | `.var/desktop-artifacts` | Override desktop recording/session artifacts |

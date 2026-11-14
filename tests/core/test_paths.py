@@ -56,3 +56,46 @@ def test_blank_override_falls_back_to_default(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setenv("OPERON_RUNS_ROOT", "  ")
 
     assert paths.runs_dir() == tmp_path / "runtime" / "runs"
+
+
+def test_source_checkout_is_this_repo() -> None:
+    assert paths.source_checkout() == paths.project_root()
+
+
+def _fake_install(monkeypatch, tmp_path: Path, package_parent: Path) -> None:
+    fake = package_parent / "operon" / "core" / "paths.py"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("", encoding="utf-8")
+    monkeypatch.setattr(paths, "__file__", str(fake))
+    for name in ("OPERON_RUNTIME_ROOT", "OPERON_RUNS_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPERON_CONFIG_DIR", str(tmp_path / "home" / ".operon"))
+
+
+def test_pip_install_writes_runs_to_the_user_folder(monkeypatch, tmp_path: Path) -> None:
+    # A venv inside someone else's project: their pyproject.toml must not pull runs there.
+    project = tmp_path / "their-project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname = 'theirs'\n", encoding="utf-8")
+    _fake_install(monkeypatch, tmp_path, project / ".venv" / "lib" / "python3.14" / "site-packages")
+
+    assert paths.source_checkout() is None
+    assert paths.runtime_dir() == tmp_path / "home" / ".operon"
+    assert paths.runs_dir() == tmp_path / "home" / ".operon" / "runs"
+
+
+def test_pip_install_still_honours_runtime_overrides(monkeypatch, tmp_path: Path) -> None:
+    _fake_install(monkeypatch, tmp_path, tmp_path / "site-packages")
+    monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path / "custom"))
+
+    assert paths.runs_dir() == tmp_path / "custom" / "runs"
+
+
+def test_checkout_layout_keeps_the_var_folder(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path / "Operon"
+    (repo / "src").mkdir(parents=True)
+    (repo / "pyproject.toml").write_text("[project]\nname = 'operon-agent'\n", encoding="utf-8")
+    _fake_install(monkeypatch, tmp_path, repo / "src")
+
+    assert paths.source_checkout() == repo
+    assert paths.runtime_dir() == repo / ".var"

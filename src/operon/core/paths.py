@@ -25,6 +25,21 @@ def project_root() -> Path:
     return current.parents[3]
 
 
+def source_checkout() -> Path | None:
+    """Return the repository root when Operon runs from a source checkout, else ``None``.
+
+    A checkout (or an editable install of one) has this file at
+    ``<root>/src/operon/core/paths.py`` next to ``<root>/pyproject.toml``. A pip install
+    keeps it under ``site-packages``, where any ``pyproject.toml`` further up belongs to
+    someone else's project, so it does not count.
+    """
+    package = Path(__file__).resolve().parents[1]
+    root = package.parents[1]
+    if package.parent.name == "src" and (root / "pyproject.toml").is_file():
+        return root
+    return None
+
+
 def user_config_dir() -> Path:
     """Return the per-user settings folder (``~/.operon``) that ``operon setup`` writes.
 
@@ -36,6 +51,24 @@ def user_config_dir() -> Path:
 def user_env_file() -> Path:
     """Return the per-user settings file that ``operon setup`` writes the model key to."""
     return user_config_dir() / "operon.env"
+
+
+_shell_env: dict[str, str] | None = None
+
+
+def remember_shell_env() -> None:
+    """Note the environment as the shell gave it, before any ``.env`` file is loaded.
+
+    ``operon setup`` uses it to tell a key set in the shell from one read out of a file.
+    """
+    global _shell_env
+    if _shell_env is None:
+        _shell_env = dict(os.environ)
+
+
+def shell_env() -> dict[str, str]:
+    """The environment from before ``.env`` files were loaded (now, if never noted)."""
+    return dict(_shell_env) if _shell_env is not None else dict(os.environ)
 
 
 def load_user_env() -> bool:
@@ -59,8 +92,13 @@ def prompts_dir() -> Path:
 
 
 def runtime_dir() -> Path:
-    """Return the root for generated runtime artifacts."""
-    return _env_path("OPERON_RUNTIME_ROOT", project_root() / ".var")
+    """Return the root for generated runtime artifacts (runs, screenshots, the local API key).
+
+    ``<checkout>/.var`` in a source checkout; otherwise the per-user folder
+    (``~/.operon``), so a pip install never writes inside Python's own folders.
+    """
+    checkout = source_checkout()
+    return _env_path("OPERON_RUNTIME_ROOT", checkout / ".var" if checkout else user_config_dir())
 
 
 def runs_dir() -> Path:

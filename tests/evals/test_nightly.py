@@ -51,6 +51,13 @@ def test_a_line_runs_once_and_old_lines_are_skipped() -> None:
     assert plan_night(entries, {entries[0].key}, TODAY, 0).tonight == []
 
 
+def test_cells_the_batch_would_refuse_wait_for_another_night() -> None:
+    entries = _entries("2026-11-14 browser thin cap=1\n2026-11-13 browser thin cap=1  # again\n2026-11-14 desktop thin cap=1\n")
+    plan = plan_night(entries, set(), TODAY, 0)
+    assert [e.cell.category for e in plan.tonight] == ["browser", "desktop"]
+    assert len(plan.waiting) == 1
+
+
 def test_future_dated_lines_wait() -> None:
     plan = plan_night(_entries("2026-11-20 browser thin\n"), set(), TODAY, 0)
     assert plan.tonight == [] and len(plan.waiting) == 1

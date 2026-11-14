@@ -122,7 +122,7 @@ jobs:
         run: |
           for run_id in $RUN_IDS; do
             read -r run_url event head_sha workflow < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha,workflowName --jq '[.url, .event, .headSha, .workflowName] | @tsv')
-            { [ "$event" = "issue_comment" ] || [ "$workflow" = "Benchmark batch" ]; } && head_sha=""
+            { [ "$event" = "issue_comment" ] || [ "$workflow" = "Benchmark batch" ] || [ "$workflow" = "Nightly benchmark run" ]; } && head_sha=""
             gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$run_id"
             python3 -m evals.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
           done

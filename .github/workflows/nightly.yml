@@ -50,15 +50,19 @@ jobs:
         run: python3 -m pip install --quiet "psycopg[binary]==3.2.9"
 
       - name: Get the list of lines already run
+        # Stops the night (nothing is charged) if the history can't be read: a missing list would run old cells again.
         run: |
+          set -euo pipefail
           mkdir -p state
-          for id in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow nightly.yml --limit 15 --json databaseId --jq '.[].databaseId'); do
-            if gh run download "$id" --repo "$GITHUB_REPOSITORY" --name nightly-state --dir prev 2>/dev/null; then
-              cp prev/done.txt state/done.txt
-              echo "Using the list from run $id."
-              break
-            fi
-          done
+          info=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=nightly-state&per_page=1" --jq '[.total_count, (.artifacts[0].id // "")] | @tsv')
+          read -r count id <<< "$info"
+          if [ "$count" = "0" ]; then
+            echo "No earlier nightly list: this is the first run."
+          else
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > state.zip
+            unzip -o state.zip -d state
+            echo "Using the list from artifact $id."
+          fi
 
       - id: plan
         run: |

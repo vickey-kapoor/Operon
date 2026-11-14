@@ -16,7 +16,8 @@ Every night this module picks the lines to run:
   again, add a new line (a new date or note makes it new);
 - lines queued more than ``--max-age-days`` ago (default 7) are skipped, so a lost
   run list never re-runs old work;
-- lines are taken in queue order while their caps fit tonight's budget: the nightly cap
+- lines are taken in queue order while their caps fit tonight's budget and the batch accepts them
+  (a cell already chosen tonight with the same settings waits for another night): the nightly cap
   ($5, Vickey's choice) or what is left of the monthly budget ($100), whichever is less.
   A line that does not fit waits for the next night.
 
@@ -37,7 +38,7 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from evals.bench_batch import BatchError, Cell, parse_line
+from evals.bench_batch import BatchError, Cell, parse_batch, parse_line
 
 CHICAGO = ZoneInfo("America/Chicago")
 NIGHTLY_CAP_USD = 5.0
@@ -127,10 +128,15 @@ def plan_night(
         if entry.queued > today:
             plan.waiting.append(entry)  # dated in the future: waits for its night
             continue
-        if plan.total_cap + entry.cell.cap <= plan.budget + 1e-9:
-            plan.tonight.append(entry)
-        else:
+        if plan.total_cap + entry.cell.cap > plan.budget + 1e-9:
             plan.waiting.append(entry)
+            continue
+        try:  # the batch's own rules (no repeated cell, at most MAX_CELLS), so a chosen set is never refused
+            parse_batch("\n".join([e.cells_text for e in plan.tonight] + [entry.cells_text]), 0)
+        except BatchError:
+            plan.waiting.append(entry)
+            continue
+        plan.tonight.append(entry)
     return plan
 
 

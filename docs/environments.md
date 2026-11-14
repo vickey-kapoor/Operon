@@ -31,7 +31,7 @@ desktop loop from being built, with the missing pieces in the error.
 |---|---|---|
 | `live` | built | This machine's own screen, mouse and keyboard (today's behavior and the default). `OPERON_DESKTOP_PLATFORM=linux` still switches it to an X11 Linux desktop such as the Azure Linux computer. |
 | `windows-sandbox` | built, being tried on a real PC | A clean, throwaway Windows on a Windows 10/11 Pro PC, wiped on close (below) |
-| Linux desktop container | planned | An Xvfb desktop in Docker Desktop on the PC |
+| `linux-container` | built, being tried on a real PC | A Linux (XFCE) desktop in a Docker container on this machine (below) |
 | Azure VM | planned | The Azure VMs Operon already uses (`operon cloud`, the Desktop bench runner) |
 | dockur/windows | planned | Windows inside Docker on a Linux host with KVM |
 | Windows 365 for Agents | planned | Microsoft's Cloud PCs for agents |
@@ -80,9 +80,41 @@ Limits: one sandbox at a time (a Windows rule); the Microsoft Store Python canno
 so use Python from python.org; screen recordings stay inside the sandbox. Settings:
 `OPERON_SANDBOX_MEMORY_MB` (4096), `OPERON_SANDBOX_START_TIMEOUT` (240 seconds).
 
+## Linux desktop container (`linux-container`)
+
+Needs Docker Desktop (or any Docker engine) running. `operon envs` shows `linux-container  ready`
+once Docker answers.
+
+The first start builds the image from `docker/linux-desktop/Dockerfile` (Debian trixie with
+Python 3.14, Xvfb, XFCE, Mousepad, Galculator, Thunar, Ristretto, Chromium, Firefox ESR, and
+Operon's dependencies), which takes a few minutes. Later starts take seconds. The image tag
+is a hash of the Dockerfile, the entrypoint and `pyproject.toml`, so a dependency change
+builds a new image by itself. Each start runs one fresh container (`docker run --rm`):
+
+- the guest port is published on `127.0.0.1` only, at a port Docker picks;
+- the guest token goes in through the `docker` client's environment, not its command line;
+- the host's `src` folder is mounted read-only over the image's copy, so code changes need no rebuild;
+- not `.env`, not `~/.operon`: the Gemini key stays on the host.
+
+`stop()` removes the container, so every run starts from a clean desktop. The screen is
+1280x800. LibreOffice is not in the image (it would add about 600 MB), so the `spreadsheet`
+and `document` apps cannot be launched there.
+
+Settings: `OPERON_CONTAINER_IMAGE` (use a prebuilt image), `OPERON_CONTAINER_START_TIMEOUT`
+(120 seconds), `OPERON_CONTAINER_CA_BUNDLE` (a CA bundle for pip during the build, behind a
+TLS-inspecting proxy).
+
+## Tools inside a guest machine
+
+The model's tools (`OPERON_TOOLS`: files, web) run where the desktop is. For `windows-sandbox`
+and `linux-container`, the host does not wrap the executor with its own tools. It passes its
+tool setting to the guest instead, and the guest runs the tools inside the machine, so a
+file a task writes lands in the sandbox or container, never on the host. A batch of actions
+is split on the host, so a stop or a trust-gate block between two actions still holds.
+
 ## Writing a provider
 
-Subclass `EnvironmentProvider`, set `name` and `summary`, implement `platform()`
+Subclass `EnvironmentProvider`, set `name` and `summary` (and `runs_on_host = False` for a machine reached through the guest agent), implement `platform()`
 (`windows` or `linux`) and `build_executor()`, and override `check()`, `start()` and
 `stop()` when the machine needs them (`start` and `stop` must be safe to call twice).
 Register it in `registry._PROVIDERS` with a factory that imports lazily, so an unused

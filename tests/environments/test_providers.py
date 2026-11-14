@@ -76,7 +76,7 @@ def test_environment_name_is_case_insensitive(monkeypatch):
 
 def test_unknown_environment_is_refused_with_the_known_names(monkeypatch):
     monkeypatch.setenv("OPERON_ENVIRONMENT", "moon")
-    with pytest.raises(ValueError, match=r"'moon'.*\['live'"):
+    with pytest.raises(ValueError, match=r"'moon'.*'live'"):
         get_provider()
 
 

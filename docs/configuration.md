@@ -40,8 +40,9 @@ onboarding ([roadmap](roadmap.md)).
 | `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `json` (Gemini JSON) |
 | `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Browser fallback backend. Ignored under the thin harness |
 | `OPERON_DESKTOP_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `json` (the older Gemini JSON path) |
-| `OPERON_ENVIRONMENT` | `live` | Where desktop runs happen (KAN-80). `live` is this machine's own screen; `operon envs` lists every environment and whether it can run here, and `operon run --env NAME` picks one for a single local run. `windows-sandbox` runs desktop tasks in a throwaway Windows Sandbox. See [environments.md](environments.md). |
+| `OPERON_ENVIRONMENT` | `live` | Where desktop runs happen (KAN-80). `live` is this machine's own screen; `operon envs` lists every environment and whether it can run here, and `operon run --env NAME` picks one for a single local run. `windows-sandbox` runs desktop tasks in a throwaway Windows Sandbox, `linux-container` in a Linux desktop in Docker. See [environments.md](environments.md). |
 | `OPERON_SANDBOX_MEMORY_MB` / `OPERON_SANDBOX_START_TIMEOUT` | `4096` / `240` | Windows Sandbox memory, and seconds to wait for its guest agent to start |
+| `OPERON_CONTAINER_IMAGE` / `OPERON_CONTAINER_START_TIMEOUT` / `OPERON_CONTAINER_CA_BUNDLE` | built from `docker/linux-desktop` / `120` / unset | Linux container: a prebuilt image instead of building one, seconds to wait for it, and a CA bundle for pip during the build behind a TLS-inspecting proxy |
 | `OPERON_GUEST_TOKEN` | unset | Inside a run environment only: the token `operon guest` requires (else `--token-file`) |
 | `OPERON_BROWSER_MODEL` / `OPERON_DESKTOP_MODEL` | `gemini-3.5-flash` | Primary model |
 | `OPERON_BROWSER_FALLBACK_MODEL` / `OPERON_DESKTOP_FALLBACK_MODEL` | `gemini-3.5-flash` | Fallback (JSON) model |

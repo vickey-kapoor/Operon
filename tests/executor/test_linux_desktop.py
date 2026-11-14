@@ -149,6 +149,19 @@ async def test_ascii_text_is_typed_key_by_key_so_terminals_get_it(executor, gui,
     assert copied == []
 
 
+@pytest.mark.parametrize("text", ["a\tb", "line one\nline two", "x" * 501])
+async def test_control_characters_and_long_text_are_pasted(executor, gui, monkeypatch, text) -> None:
+    """A tab or newline typed as a key would move focus or submit; a long text typed
+    key by key would outlast the guest's request timeout. Both are pasted."""
+    copied: list[str] = []
+    monkeypatch.setattr(_desktop.pyperclip, "copy", copied.append)
+    result = await executor.execute(AgentAction(action_type=ActionType.TYPE, x=100, y=100, text=text))
+    assert result.success
+    gui.write.assert_not_called()
+    assert copied == [text]
+    gui.hotkey.assert_called_with("ctrl", "v")
+
+
 async def test_takeover_input_rejects_other_runs_and_unknown_keys(executor, gui) -> None:
     assert not await executor.user_input("run-2", input_type="click")
     with pytest.raises(ValueError):

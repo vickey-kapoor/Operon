@@ -30,6 +30,9 @@ from operon.models.policy import AgentAction
 
 logger = logging.getLogger(__name__)
 
+# Typed key by key at 10 ms a key: at most about 5 s, well inside the guest timeout.
+_MAX_KEYED_CHARS = 500
+
 
 class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
     """Desktop executor for an X11 Linux desktop (XFCE on the Azure VM)."""
@@ -48,10 +51,12 @@ class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
     # ── typing ───────────────────────────────────────────────────
 
     async def _enter_text(self, text: str) -> None:
-        """Plain ASCII is typed key by key: a terminal does not paste on ctrl+v (it
-        wants ctrl+shift+v), so the clipboard would drop the text there (KAN-166).
-        Anything else (accents, emoji) has no key, so it is pasted."""
-        if text.isascii():
+        """Short, printable ASCII is typed key by key: a terminal does not paste on
+        ctrl+v (it wants ctrl+shift+v), so the clipboard would drop the text there
+        (KAN-166). Anything else is pasted: accents and emoji have no key, a tab or
+        newline typed as a key would move focus or submit, and a long text typed key
+        by key would outlast the guest's request timeout."""
+        if text.isascii() and text.isprintable() and len(text) <= _MAX_KEYED_CHARS:
             await asyncio.to_thread(_desktop.pyautogui.write, text, 0.01)
         else:
             await super()._enter_text(text)

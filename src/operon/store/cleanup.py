@@ -14,9 +14,11 @@ import shutil
 from datetime import date, timedelta
 from pathlib import Path
 
+from operon.core.paths import runs_dir
+
 
 def cleanup_old_runs(
-    root_dir: str | Path = "runs",
+    root_dir: str | Path | None = None,
     keep_days: int = 0,
     delete: bool = False,
 ) -> tuple[list[Path], int]:
@@ -27,7 +29,7 @@ def cleanup_old_runs(
         keep_days: Keep runs modified within this many days (0 = today only).
         delete: If False, dry-run only.
     """
-    root = Path(root_dir)
+    root = Path(root_dir) if root_dir is not None else runs_dir()
     if not root.exists():
         return [], 0
 
@@ -37,10 +39,12 @@ def cleanup_old_runs(
     for run_dir in sorted(root.iterdir()):
         if not run_dir.is_dir():
             continue
-        # Use state.json mtime when available for accuracy; fall back to dir mtime.
+        # Only run directories (they all have a state.json): never memory/ or any
+        # other store kept beside the runs.
         state_json = run_dir / "state.json"
-        ref = state_json if state_json.exists() else run_dir
-        run_date = date.fromtimestamp(ref.stat().st_mtime)
+        if not state_json.exists():
+            continue
+        run_date = date.fromtimestamp(state_json.stat().st_mtime)
         if run_date < cutoff:
             to_delete.append(run_dir)
 
@@ -77,9 +81,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--runs-dir",
-        default="runs",
+        default=None,
         metavar="PATH",
-        help="Root runs directory (default: runs).",
+        help="Root runs directory (default: the API's runs directory, OPERON_RUNS_ROOT).",
     )
     args = parser.parse_args()
 

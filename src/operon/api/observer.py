@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from operon.core.paths import browser_artifacts_dir, runs_dir
+from operon.core.paths import browser_artifacts_dir, desktop_artifacts_dir, runs_dir
 from operon.models.common import RunStatus, StopReason
 from operon.models.logs import PreStepFailureLog, StepLog
 from operon.models.state import AgentState
@@ -117,13 +117,14 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
 
 def artifact_path_for_request(path_value: str) -> Path:
     """Resolve and validate an artifact path for local observer access."""
-    allowed_roots = [runs_root(), browser_artifacts_root()]
+    allowed_roots = [runs_root(), browser_artifacts_root(), desktop_artifacts_dir().resolve()]
     requested = Path(path_value)
     candidate = requested if requested.is_absolute() else (Path.cwd() / requested)
     resolved = candidate.resolve()
     if not any(root == resolved or root in resolved.parents for root in allowed_roots):
         raise ValueError("Artifact path is outside the allowed artifact roots")
-    if not resolved.exists():
+    if not resolved.is_file():
+        # A directory (or nothing) is not an artifact to serve.
         raise FileNotFoundError(f"Artifact not found: {resolved}")
     return resolved
 

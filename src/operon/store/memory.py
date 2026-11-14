@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from operon.core.paths import runs_dir
 from operon.models.common import FailureCategory, LoopStage
 from operon.models.execution import ExecutedAction
 from operon.models.memory import MemoryHint, MemoryOutcome, MemoryRecord
@@ -52,11 +54,12 @@ class MemoryStore(ABC):
 class FileBackedMemoryStore(MemoryStore):
     """Append-only local advisory memory stored as compact JSONL records."""
 
-    def __init__(self, root_dir: str | Path = "runs") -> None:
-        self.root_dir = Path(root_dir)
+    def __init__(self, root_dir: str | Path | None = None) -> None:
+        self.root_dir = Path(root_dir) if root_dir is not None else runs_dir()
         self.memory_dir = self.root_dir / "memory"
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_path = self.memory_dir / "memory.jsonl"
+        self._adopt_legacy_memory()
         self._cached_records: list[MemoryRecord] | None = None
         self._cached_mtime: float = 0.0
         self._seeded_guardrail_keys: set[str] = set()
@@ -64,6 +67,22 @@ class FileBackedMemoryStore(MemoryStore):
 
     _WEIGHT_PRUNE_THRESHOLD = 0.1
 
+
+    # Before KAN-152 the API loops kept memory under ./runs (the working directory),
+    # not under runs_dir(). Carry that file over once so nothing learned is lost.
+    _LEGACY_MEMORY_PATH = Path("runs") / "memory" / "memory.jsonl"
+
+    def _adopt_legacy_memory(self) -> None:
+        legacy = self._LEGACY_MEMORY_PATH
+        try:
+            if self.memory_path.exists() or not legacy.is_file():
+                return
+            if legacy.resolve() == self.memory_path.resolve():
+                return
+            shutil.copyfile(legacy, self.memory_path)
+            logger.info("memory: copied legacy %s to %s", legacy, self.memory_path)
+        except OSError as exc:
+            logger.warning("memory: could not copy legacy %s: %s", legacy, exc)
     def get_hints(
         self,
         *,

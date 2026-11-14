@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from contextlib import suppress
 from typing import Any
 
@@ -63,9 +64,35 @@ def set_desktop_executor(executor: Any) -> None:
     _desktop_executor = executor
 
 
-def set_active_run(run_id: str | None) -> None:
-    global _active_run_id
+# The loop that owns the active run (browser or desktop). Control messages go to
+# it; ``_agent_loop`` (the browser loop) is only the fallback for callers that
+# don't say which loop started the run.
+_active_loop: Any = None
+
+
+def set_active_run(run_id: str | None, loop: Any = None) -> None:
+    global _active_run_id, _active_loop
     _active_run_id = run_id
+    _active_loop = loop if run_id is not None else None
+
+
+def _control_loop() -> Any:
+    return _active_loop if _active_loop is not None else _agent_loop
+
+
+async def _active_run_in_takeover() -> bool:
+    """Whether the active run (if any) is under the person's control."""
+    loop = _control_loop()
+    if _active_run_id is None or loop is None:
+        return True  # No run to fight with: the live view is just a browser.
+    try:
+        record = await loop.run_store.get_run(_active_run_id)
+    except Exception:  # noqa: BLE001 - refuse on doubt
+        return False
+    return record is None or bool(getattr(record, "in_takeover", False)) or record.status.value not in {
+        "pending",
+        "running",
+    }
 
 
 def set_browser_manager(manager: Any) -> None:
@@ -131,14 +158,19 @@ async def _receiver(ws: WebSocket, scope: str = "control") -> None:
 async def _resume_active_run(*, approve_gated_action: bool = True) -> None:
     # Local import: runtime.tasks imports this module at load time.
     from operon.api.runtime.tasks import resume_and_schedule
-    await resume_and_schedule(_agent_loop, _active_run_id, approve_gated_action=approve_gated_action)
+    await resume_and_schedule(_control_loop(), _active_run_id, approve_gated_action=approve_gated_action)
 
 
 async def _handle_control(msg: dict) -> None:
     msg_type = msg.get("type")
 
     if msg_type == "inject_input":
-        # Frontend → real browser input via BrowserManager.
+        # Frontend → real browser input via BrowserManager. While a run is steering
+        # the browser, only a person who took control may type into it (as on the
+        # HTTP input route).
+        if not await _active_run_in_takeover():
+            publish_event({"type": "control_ack", "action": "inject_input", "error": "take control of the run first"})
+            return
         if _browser_manager is not None:
             await _browser_manager.inject_input(
                 x_ratio=float(msg.get("x_ratio", 0.0)),
@@ -151,17 +183,21 @@ async def _handle_control(msg: dict) -> None:
             )
 
     elif msg_type == "set_confidence_threshold":
-        threshold = set_confidence_threshold(float(msg.get("threshold", 0.0)))
+        raw = float(msg.get("threshold", 0.0))
+        if not math.isfinite(raw):
+            publish_event({"type": "control_ack", "action": "set_confidence_threshold", "error": "threshold must be a number"})
+            return
+        threshold = set_confidence_threshold(raw)
         publish_event({"type": "control_ack", "action": "set_confidence_threshold", "threshold": threshold})
 
     elif msg_type == "pause":
         # Pause the active run for real: the auto-run loop stops at the next step
         # boundary, and a step in flight ends paused instead of RUNNING.
-        if _agent_loop is None or _active_run_id is None:
+        if _control_loop() is None or _active_run_id is None:
             publish_event({"type": "control_ack", "action": "pause", "error": "no active run"})
             return
         try:
-            run = await _agent_loop.pause_run(_active_run_id)
+            run = await _control_loop().pause_run(_active_run_id)
         except Exception as exc:
             publish_event({"type": "control_ack", "action": "pause", "error": str(exc)})
             return
@@ -169,7 +205,7 @@ async def _handle_control(msg: dict) -> None:
 
     elif msg_type == "resume":
         # Resume a HITL-paused run from the UI "Proceed" button.
-        if _agent_loop is not None and _active_run_id is not None:
+        if _control_loop() is not None and _active_run_id is not None:
             try:
                 await _resume_active_run()
                 publish_event({"type": "control_ack", "action": "resume"})
@@ -188,7 +224,7 @@ async def _handle_control(msg: dict) -> None:
         hint = msg.get("hint", "").strip()
         if _active_run_id is not None:
             _control.set_override_hint(_active_run_id, hint)
-        if _agent_loop is not None and _active_run_id is not None:
+        if _control_loop() is not None and _active_run_id is not None:
             try:
                 # A correction, not an approval: the paused action stays gated.
                 await _resume_active_run(approve_gated_action=False)

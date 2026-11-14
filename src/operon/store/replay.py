@@ -7,12 +7,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from operon.core.paths import runs_dir
 from operon.models.logs import PreStepFailureLog, RunLogEntry, StepLog
 
 
-def load_run_replay(run_id: str, root_dir: str | Path = "runs") -> list[RunLogEntry]:
+def load_run_replay(run_id: str, root_dir: str | Path | None = None) -> list[RunLogEntry]:
     """Load all step logs for a run from the local JSONL file."""
-    log_path = Path(root_dir) / run_id / "run.jsonl"
+    log_path = (Path(root_dir) if root_dir is not None else runs_dir()) / run_id / "run.jsonl"
     if not log_path.exists():
         raise FileNotFoundError(f"Run log not found: {log_path}")
 
@@ -23,7 +24,7 @@ def load_run_replay(run_id: str, root_dir: str | Path = "runs") -> list[RunLogEn
     return entries
 
 
-def render_run_replay(run_id: str, root_dir: str | Path = "runs") -> str:
+def render_run_replay(run_id: str, root_dir: str | Path | None = None) -> str:
     """Render a simple CLI-friendly replay summary for one run."""
     entries = load_run_replay(run_id, root_dir=root_dir)
     completed_steps = [entry for entry in entries if isinstance(entry, StepLog)]
@@ -97,7 +98,7 @@ def main() -> None:
     """Replay one stored run to stdout."""
     parser = argparse.ArgumentParser(description="Inspect a local run replay from run.jsonl")
     parser.add_argument("run_id", help="Run identifier under runs/<run_id>/run.jsonl")
-    parser.add_argument("--root-dir", default="runs", help="Root directory containing run logs")
+    parser.add_argument("--root-dir", default=None, help="Root directory containing run logs (default: OPERON_RUNS_ROOT)")
     args = parser.parse_args()
     print(render_run_replay(args.run_id, root_dir=args.root_dir))
 

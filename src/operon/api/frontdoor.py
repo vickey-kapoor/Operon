@@ -25,6 +25,7 @@ from operon.api.runtime import tasks as _tasks
 from operon.models.common import RunStatus, RunTaskRequest, StrictModel
 from operon.models.logs import StepLog
 from operon.store.replay import load_run_replay
+from operon.store.run_store import stored_environment
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,10 @@ def _loop_for_environment(environment: str):
 
 
 def _environment_of(run_id: str) -> str:
-    return "desktop" if _loops.desktop_loop_holds_run(run_id) else "browser"
+    if _loops.desktop_loop_holds_run(run_id):
+        return "desktop"
+    # Not loaded since the server started: the run says which loop it belongs to.
+    return stored_environment(run_id) or "browser"
 
 
 def _loop_of(run_id: str):
@@ -98,7 +102,7 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
         # A desktop task leaves the screen as it found it: the apps it opened close when it ends.
         close_apps(response.run_id)
     _started_at[response.run_id] = time.time()
-    _ws_stream.set_active_run(response.run_id)
+    _ws_stream.set_active_run(response.run_id, loop=loop)
     _ws_stream.publish_event({
         "type": "run_started",
         "run_id": response.run_id,

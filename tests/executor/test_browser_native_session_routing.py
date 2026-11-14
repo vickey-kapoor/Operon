@@ -237,6 +237,7 @@ def _session(page):
     session = _BrowserSession.__new__(_BrowserSession)
     session.page = page
     session.context = MagicMock(pages=[page])
+    session.run_id = None
     return session
 
 

@@ -283,7 +283,12 @@ class AgentLoop:
             if hasattr(self.executor, "set_current_run_id"):
                 self.executor.set_current_run_id(record.run_id)
             if hasattr(self.executor, "configure_run"):
-                self.executor.configure_run(record.run_id, headless=request.headless, mode=record.mode)
+                self.executor.configure_run(
+                    record.run_id,
+                    headless=request.headless,
+                    mode=record.mode,
+                    start_url=request.start_url,
+                )
             if hasattr(self.executor, "start_run_recording"):
                 try:
                     await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)

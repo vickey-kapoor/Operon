@@ -154,6 +154,24 @@
   tr.sel td { background: var(--raised); color: var(--ink); }
   td.why { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.no { color: var(--bad); }
+
+  /* ---- browser tab (KAN-138) ---- */
+  .btoolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btoolbar button { width: 44px; padding: 0; font-size: 18px; }
+  .btoolbar input { flex: 999 1 240px; }
+  .btabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .btab { display: flex; align-items: center; max-width: 240px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .btab[aria-current="true"] { border-color: var(--accent); background: var(--raised); }
+  .btab button { border: 0; background: transparent; height: 36px; padding: 0 10px; font-size: 13px; }
+  .btab .pick { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .btab .x { width: 32px; flex: none; }
+  .screen.browser { aspect-ratio: 16 / 9; }
+  .screen.browser img { cursor: crosshair; }
+  .screen.browser:focus-within, .screen.browser:focus { border-color: var(--accent); outline: none; }
+  .sitelist { display: flex; flex-direction: column; }
+  .sitelist div { display: flex; align-items: center; gap: 8px; padding: 8px 20px; border-top: 1px solid var(--line); font-size: 14px; }
+  .sitelist .h { flex-grow: 1; min-width: 0; overflow-wrap: anywhere; }
+  .sitelist button { height: 36px; padding: 0 12px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -165,6 +183,7 @@
   <nav aria-label="Main">
     <a href="#home" id="nav-home">Home</a>
     <a href="#history" id="nav-history">History</a>
+    <a href="#browser" id="nav-browser" class="hidden">Browser</a>
   </nav>
   <div class="spacer"></div>
   <div class="conn" role="status"><span class="dot off" id="conn-dot" aria-hidden="true"></span><span id="conn">Running on this PC</span></div>
@@ -359,6 +378,52 @@
   </section>
 </main>
 
+<!-- ===== Browser (KAN-138): Operon's own browser with a saved profile ===== -->
+<main id="view-browser" class="wrap hidden">
+  <div class="title-row">
+    <div class="titles">
+      <h1>Browser</h1>
+      <p class="note">Operon's own browser. Sign in to your sites here once; tasks reuse those sign-ins. Passwords stay in this browser on your PC. Click the picture to use it.</p>
+    </div>
+  </div>
+  <div class="row-split">
+    <div class="main-col">
+      <div class="btabs" id="btabs" aria-label="Tabs"></div>
+      <form class="btoolbar" id="bform">
+        <button type="button" id="b-back" aria-label="Back">&larr;</button>
+        <button type="button" id="b-forward" aria-label="Forward">&rarr;</button>
+        <button type="button" id="b-reload" aria-label="Reload">&#8635;</button>
+        <label for="b-address" class="sr-only">Address or search</label>
+        <input type="text" id="b-address" placeholder="Search or type an address" autocomplete="off" spellcheck="false">
+        <button type="button" id="b-newtab" aria-label="New tab">+</button>
+      </form>
+      <div class="screen browser" id="bscreen" tabindex="0" aria-label="Browser. Click, then type to use it.">
+        <img id="bframe" class="hidden" alt="The built-in browser">
+        <div class="empty" id="bscreen-empty"><span>Opening the browser...</span></div>
+      </div>
+      <p class="err" id="b-err" role="alert"></p>
+    </div>
+    <div class="side-col">
+      <section class="panel card-ask hidden" id="b-ask" aria-live="polite">
+        <h2 id="b-ask-title">Let Operon open this site?</h2>
+        <p>A task wants to open it. Your answer applies to the site and its subdomains.</p>
+        <button class="primary" id="b-ask-once">Allow once</button>
+        <button id="b-ask-always">Always allow</button>
+        <button class="ghost" id="b-ask-no">No</button>
+      </section>
+      <section class="panel" aria-labelledby="sites-h">
+        <h2 class="eyebrow" id="sites-h">Sites Operon may open</h2>
+        <div class="sitelist" id="b-sites"><div><span class="h note">None yet. A task asks the first time it needs a site.</span></div></div>
+      </section>
+      <section class="panel" style="padding: 18px 20px; gap: 12px">
+        <h2 style="font-size:18px">Sign out everywhere</h2>
+        <p class="note">Closes this browser and deletes its saved profile: every sign-in and every approved site.</p>
+        <button class="danger" id="b-signout">Sign out everywhere</button>
+      </section>
+    </div>
+  </div>
+</main>
+
 <script>
 (() => {
   "use strict";
@@ -464,7 +529,7 @@
 
   // ---- views ----
   let view = null, runId = null, status = null, report = null, polling = null, ws = null, frameUrl = null, wsFrames = false, lastShot = null;
-  const VIEWS = ["home", "history", "run", "recording"];
+  const VIEWS = ["home", "history", "run", "recording", "browser"];
 
   function route() {
     const p = new URLSearchParams(location.hash.slice(1));
@@ -472,19 +537,22 @@
     if (p.get("run")) { next = "run"; id = p.get("run"); }
     else if (p.get("recording")) { next = "recording"; id = p.get("recording"); }
     else if (location.hash === "#history") next = "history";
+    else if (location.hash === "#browser" && browserOn) next = "browser";
     show(next, id);
   }
 
   function show(next, id) {
     stopPolling();
-    if (next !== "run") closeStream();
+    if (next !== "run" && next !== "browser") closeStream();
     view = next;
     for (const v of VIEWS) $("view-" + v).classList.toggle("hidden", v !== next);
     setCurrent("nav-home", next === "home");
     setCurrent("nav-history", next === "history" || next === "recording");
+    setCurrent("nav-browser", next === "browser");
     if (next === "home") { loadRuns("recent", 6); polling = setInterval(() => loadRuns("recent", 6), 5000); }
     else if (next === "history") loadRuns("history", 100);
     else if (next === "run") openRun(id);
+    else if (next === "browser") openBrowser();
     else if (next === "recording") openRecording(id);
     window.scrollTo(0, 0);
   }
@@ -808,14 +876,140 @@
     } catch (e) { $("rec-err").textContent = e.message; }
   };
 
+  // ---- browser tab (KAN-138) ----
+  // Off unless the server runs with OPERON_BUILTIN_BROWSER=true: the nav link stays hidden.
+  let browserOn = false, bState = null, bFrame = null;
+
+  async function checkBrowser() {
+    try { browserOn = !!(await api("GET", "/app/api/browser")).enabled; } catch { browserOn = false; }
+    $("nav-browser").classList.toggle("hidden", !browserOn);
+    if (browserOn && location.hash === "#browser") route();
+  }
+
+  async function bCall(method, path, body) {
+    $("b-err").textContent = "";
+    try { bState = await api(method, "/app/api/browser" + path, body); renderBrowser(); }
+    catch (e) { $("b-err").textContent = e.message; }
+  }
+
+  async function openBrowser() {
+    $("bscreen-empty").classList.toggle("hidden", !!bFrame);
+    await bCall("POST", "/open");
+    connectBrowserStream();
+    polling = setInterval(() => { if (view === "browser") bCall("GET", ""); }, 4000);
+  }
+
+  async function connectBrowserStream() {
+    closeStream();
+    let token;
+    try { token = (await api("POST", "/app/api/stream-token", { scope: "control" })).token; }
+    catch (e) { setConn(false, "Live view unavailable"); return; }
+    if (view !== "browser") return;
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws/stream`, ["x-stream-token", token]);
+    ws.binaryType = "blob";
+    ws.onopen = () => setConn(true, "Running on this PC");
+    ws.onclose = () => { setConn(false, "Reconnecting..."); setTimeout(() => { if (view === "browser") connectBrowserStream(); }, 3000); };
+    ws.onmessage = (ev) => {
+      if (ev.data instanceof Blob) {
+        const url = URL.createObjectURL(ev.data);
+        $("bframe").src = url;
+        $("bframe").classList.remove("hidden");
+        $("bscreen").classList.add("has-frame");
+        $("bscreen-empty").classList.add("hidden");
+        if (bFrame) URL.revokeObjectURL(bFrame);
+        bFrame = url;
+        return;
+      }
+      try { if (JSON.parse(ev.data).type === "site_approval_needed") bCall("GET", ""); } catch {}
+    };
+  }
+
+  function renderBrowser() {
+    if (!bState || !bState.enabled) return;
+    const tabs = $("btabs");
+    tabs.replaceChildren();
+    for (const t of bState.tabs) {
+      const box = el("div", "btab");
+      box.setAttribute("aria-current", t.active ? "true" : "false");
+      const pick = el("button", "pick", t.title || t.url || "New tab");
+      pick.type = "button"; pick.title = t.url;
+      pick.onclick = () => bCall("POST", `/tabs/${t.id}/select`);
+      const x = el("button", "x", "\u00d7");
+      x.type = "button"; x.setAttribute("aria-label", "Close tab");
+      x.onclick = () => bCall("DELETE", `/tabs/${t.id}`);
+      box.append(pick, x);
+      tabs.append(box);
+      if (t.active && document.activeElement !== $("b-address")) $("b-address").value = t.url === "about:blank" ? "" : t.url;
+    }
+    const ask = bState.pending_sites[0];
+    $("b-ask").classList.toggle("hidden", !ask);
+    if (ask) $("b-ask-title").textContent = `Let Operon open ${ask.host}?`;
+    const sites = $("b-sites");
+    sites.replaceChildren();
+    if (!bState.approved_sites.length) {
+      const row = el("div"); row.append(el("span", "h note", "None yet. A task asks the first time it needs a site.")); sites.append(row);
+    }
+    for (const h of bState.approved_sites) {
+      const row = el("div");
+      const rm = el("button", "ghost", "Remove"); rm.type = "button";
+      rm.onclick = () => bCall("DELETE", `/sites/${encodeURIComponent(h)}`);
+      row.append(el("span", "h", h), rm);
+      sites.append(row);
+    }
+  }
+
+  $("bform").onsubmit = (ev) => { ev.preventDefault(); const a = $("b-address").value.trim(); if (a) bCall("POST", "/navigate", { address: a }); };
+  $("b-back").onclick = () => bCall("POST", "/back");
+  $("b-forward").onclick = () => bCall("POST", "/forward");
+  $("b-reload").onclick = () => bCall("POST", "/reload");
+  $("b-newtab").onclick = () => bCall("POST", "/tabs", {});
+  const answerSite = (answer) => { const a = bState && bState.pending_sites[0]; if (a) bCall("POST", "/sites", { host: a.host, answer }); };
+  $("b-ask-once").onclick = () => answerSite("once");
+  $("b-ask-always").onclick = () => answerSite("always");
+  $("b-ask-no").onclick = () => answerSite("no");
+  // Two presses, no browser dialog: the first arms it, the second does it.
+  let signoutArmed = null;
+  $("b-signout").onclick = () => {
+    if (!signoutArmed) {
+      $("b-signout").textContent = "Press again to sign out of everything";
+      signoutArmed = setTimeout(() => { signoutArmed = null; $("b-signout").textContent = "Sign out everywhere"; }, 5000);
+      return;
+    }
+    clearTimeout(signoutArmed); signoutArmed = null; $("b-signout").textContent = "Sign out everywhere";
+    bFrame = null; $("bframe").classList.add("hidden"); $("bscreen").classList.remove("has-frame"); $("bscreen-empty").classList.remove("hidden");
+    bCall("POST", "/sign-out");
+  };
+
+  // The user's mouse and keyboard go to the page in view.
+  async function bSend(body) {
+    try { await api("POST", "/app/api/browser/input", body); } catch (e) { $("b-err").textContent = e.message; }
+  }
+  const ratios = (ev) => { const r = $("bframe").getBoundingClientRect(); return { x_ratio: (ev.clientX - r.left) / r.width, y_ratio: (ev.clientY - r.top) / r.height }; };
+  $("bframe").addEventListener("click", (ev) => { $("bscreen").focus(); bSend({ input_type: "click", ...ratios(ev) }); });
+  $("bframe").addEventListener("dblclick", (ev) => bSend({ input_type: "dblclick", ...ratios(ev) }));
+  $("bframe").addEventListener("wheel", (ev) => { ev.preventDefault(); bSend({ input_type: "scroll", ...ratios(ev), delta_y: Math.round(ev.deltaY) }); }, { passive: false });
+  const SPECIAL = new Set(["Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+  $("bscreen").addEventListener("keydown", (ev) => {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;  // paste is handled below; other shortcuts stay with this page
+    if (SPECIAL.has(ev.key)) { ev.preventDefault(); bSend({ input_type: "key", key: ev.key }); }
+    else if (ev.key.length === 1) { ev.preventDefault(); bSend({ input_type: "text", text: ev.key }); }
+  });
+  $("bscreen").addEventListener("paste", (ev) => {
+    const text = ev.clipboardData && ev.clipboardData.getData("text");
+    if (text) { ev.preventDefault(); bSend({ input_type: "text", text: text.slice(0, 2000) }); }
+  });
+
   $("key-save").onclick = () => {
     apiKey = $("key").value.trim(); store.set("operon-key", apiKey); $("key").value = "";
     $("key-panel").classList.add("hidden");
     route();
+    checkBrowser();
   };
 
   window.addEventListener("hashchange", route);
   route();
+  checkBrowser();
 })();
 </script>
 </body>

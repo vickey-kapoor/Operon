@@ -89,6 +89,8 @@ class OperonRuntime:
     desktop_provider: Any = None
     # The connected CDP browser manager the browser executor attaches to.
     active_browser_manager: Any = None
+    # The built-in browser with the saved profile (KAN-138), started on first use.
+    builtin_browser: Any = None
     control: ControlSettings = field(default_factory=ControlSettings)
     stream: StreamState = field(default_factory=StreamState)
     runs: OrderedDict[str, RunContext] = field(default_factory=OrderedDict)

@@ -164,7 +164,7 @@ def deallocate_vm(cfg: CloudConfig, run: Runner, out=print) -> None:
     out("Deallocated: no compute billing until the next start.")
 
 
-def wait_for_ssh(cfg: CloudConfig, ip: str, run: Runner, *, timeout_s: float = 300.0, sleep=time.sleep) -> None:
+def wait_for_ssh(cfg: CloudConfig, ip: str, run: Runner, *, timeout_s: float = 300.0, sleep=None) -> None:
     deadline = time.monotonic() + timeout_s
     while True:
         try:
@@ -173,7 +173,7 @@ def wait_for_ssh(cfg: CloudConfig, ip: str, run: Runner, *, timeout_s: float = 3
         except RuntimeError:
             if time.monotonic() > deadline:
                 raise RuntimeError(f"{cfg.vm} did not finish setting up within {int(timeout_s)} s") from None
-            sleep(5)
+            (sleep or time.sleep)(5)  # looked up per call so tests can patch time.sleep
 
 
 def read_api_key(cfg: CloudConfig, ip: str, run: Runner) -> str:
@@ -183,7 +183,7 @@ def read_api_key(cfg: CloudConfig, ip: str, run: Runner) -> str:
     return key
 
 
-def wait_for_api(port: int, *, timeout_s: float = 120.0, sleep=time.sleep) -> None:
+def wait_for_api(port: int, *, timeout_s: float = 120.0, sleep=None) -> None:
     deadline = time.monotonic() + timeout_s
     url = f"http://127.0.0.1:{port}/health"
     while True:
@@ -195,7 +195,7 @@ def wait_for_api(port: int, *, timeout_s: float = 120.0, sleep=time.sleep) -> No
             pass
         if time.monotonic() > deadline:
             raise RuntimeError("the Operon API on the VM did not answer through the tunnel")
-        sleep(2)
+        (sleep or time.sleep)(2)
 
 
 def _port_free(port: int) -> bool:

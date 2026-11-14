@@ -83,6 +83,11 @@ class _BrowserSession:
 class NativeBrowserExecutor(Executor):
     """Browser executor backed by a controlled Playwright Chromium session."""
 
+    # Pause after raising a headed window so the first screenshot sees it in front, and the gap
+    # between focus attempts. Class attributes so tests with fake browsers can set them to 0.
+    _foreground_settle_s = 1.5
+    _focus_retry_s = 0.2
+
     def __init__(
         self,
         *,
@@ -781,7 +786,7 @@ class NativeBrowserExecutor(Executor):
         self._fresh_session_run_id = run_id
         if not launch_headless and foreground:
             await self._bring_browser_to_foreground(session.browser_pid)
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(self._foreground_settle_s)
         return session
 
     async def _attach_live_view(self, page: object, port: int) -> None:
@@ -891,7 +896,7 @@ class NativeBrowserExecutor(Executor):
         for _ in range(8):
             if self._focus_browser_window(browser_pid):
                 return
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(self._focus_retry_s)
         self._app_activate_browser_window(browser_pid)
 
     @staticmethod

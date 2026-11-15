@@ -59,12 +59,29 @@ def run_cost(run_id: str | None) -> float:
     return float(run_usage(run_id).get("cost_usd") or 0.0)
 
 
+def wait_for_desktop(url: str, *, min_bytes: int = 200_000, timeout_s: float = 150.0) -> bool:
+    """Block until the VM's screenshot is a drawn desktop: the first frames after boot are a
+    ~9 KB blank screen. Returns False on timeout (the task still runs)."""
+    import httpx
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            response = httpx.get(f"{url}/screenshot", timeout=15, trust_env=False)
+            if response.status_code == 200 and len(response.content) >= min_bytes:
+                return True
+        except httpx.HTTPError:
+            pass
+        time.sleep(3)
+    return False
+
+
 def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
     started = time.monotonic()
     env.reset(task_config=config)
-    time.sleep(5)  # OSWorld's own pause so the setup settles before the first screenshot
     url = f"http://{env.vm_ip}:{env.server_port}"
+    wait_for_desktop(url)
     run_id, note = None, ""
     try:
         done = run(operon_command(task["instruction"], max_steps), env=operon_env(url), capture_output=True,

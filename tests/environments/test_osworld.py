@@ -116,7 +116,7 @@ def test_parse_run_id():
 
 
 def test_run_one_scores_with_osworld_not_operon(monkeypatch):
-    monkeypatch.setattr(osworld.time, "sleep", lambda s: None)
+    monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
     monkeypatch.setattr(osworld, "run_cost", lambda run_id: 0.12)
     env = SimpleNamespace(vm_ip="10.1.1.1", server_port=5000, reset=lambda task_config: None, evaluate=lambda: 1.0)
     calls = {}
@@ -139,3 +139,11 @@ def test_summarize():
         {"domain": "vlc", "passed": True, "cost_usd": 0.0},
     ])
     assert s["passed"] == 2 and s["by_domain"] == {"os": "1/2", "vlc": "1/1"} and s["cost_usd"] == 0.3
+
+
+def test_wait_for_desktop_polls_until_drawn(monkeypatch):
+    sizes = iter([9_000, 9_000, 1_600_000])
+    monkeypatch.setattr(osworld.time, "sleep", lambda s: None)
+    monkeypatch.setattr(osworld.httpx if hasattr(osworld, "httpx") else __import__("httpx"), "get",
+                        lambda *a, **k: SimpleNamespace(status_code=200, content=b"x" * next(sizes)))
+    assert osworld.wait_for_desktop("http://vm:5000")

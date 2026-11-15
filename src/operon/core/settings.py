@@ -137,7 +137,7 @@ class Settings(BaseModel):
     allowed_file_roots: tuple[str, ...] = _env_field("OPERON_ALLOWED_FILE_ROOTS", ())
     # None: unset (the tool list's own default, "on").
     tools: str | None = _env_field("OPERON_TOOLS")
-    zoom: str = _env_field("OPERON_ZOOM", "off")
+    zoom: str = _env_field("OPERON_ZOOM", "dense")
     zoom_min_side: int = _env_field("OPERON_ZOOM_MIN_SIDE", 2000)
     zoom_factor: float = _env_field("OPERON_ZOOM_FACTOR", 2.0)
 
@@ -252,10 +252,10 @@ class _Parser:
     def build(self) -> Settings:
         from operon.agent.actions import zoom as zoom_mod
 
-        zoom_mode = (self.raw("OPERON_ZOOM") or zoom_mod.OFF).strip().lower()
+        zoom_mode = (self.raw("OPERON_ZOOM") or zoom_mod.DENSE).strip().lower()
         if zoom_mode in _TRUE:
             zoom_mode = zoom_mod.DENSE
-        zoom_mode = self.choice("OPERON_ZOOM", zoom_mode, set(zoom_mod.MODES), zoom_mod.OFF)
+        zoom_mode = self.choice("OPERON_ZOOM", zoom_mode, set(zoom_mod.MODES), zoom_mod.DENSE)
 
         permission = self.text("OPERON_PERMISSION_MODE").strip().lower()
         permission = self.choice("OPERON_PERMISSION_MODE", permission, {"ask", "risky", "auto"}, "")

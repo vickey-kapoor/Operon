@@ -45,6 +45,7 @@ class UsageAggregate(StrictModel):
 # bills thinking tokens as output. Checked 2026-10-24; update when prices change.
 _GEMINI_PRICES: dict[str, tuple[float, float, float]] = {
     "gemini-3.5-flash": (1.50, 9.00, 0.15),
+    "gemini-3.5-flash-lite": (0.30, 2.50, 0.03),
     "gemini-3-flash-preview": (0.50, 3.00, 0.05),
     "gemini-2.5-flash": (0.30, 2.50, 0.03),
     "gemini-2.5-computer-use-preview-10-2025": (1.25, 10.00, 0.125),

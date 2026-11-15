@@ -246,7 +246,7 @@ USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_wri
 
 
 def run_usage(run_id: str) -> dict:
-    """Tokens and estimated USD of every model call a run saved (``step_*/*_usage.json``).
+    """Tokens and estimated USD of every model call a run saved (``step_*/*_usage.json``, and ``planner_usage.json``).
 
     A call that used tokens but has no estimated cost is counted in ``unpriced_calls``:
     its model is missing from the price table, so it would otherwise add $0 silently.
@@ -255,7 +255,11 @@ def run_usage(run_id: str) -> dict:
     by_model: dict[str, dict] = {}
     unpriced = 0
     unpriced_models: set[str] = set()
-    for path in sorted(_run_dir(run_id).glob("step_*/*_usage.json")):
+    usage_files = sorted(_run_dir(run_id).glob("step_*/*_usage.json"))
+    planner_file = _run_dir(run_id) / "planner_usage.json"  # the one-shot planner's call (KAN-112)
+    if planner_file.exists():
+        usage_files.append(planner_file)
+    for path in usage_files:
         try:
             usage = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):

@@ -26,7 +26,12 @@ from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
-from operon.agent.planner import make_plan, plan_hint
+from operon.agent.planner import (
+    PLANNER_DEADLINE_S,
+    PLANNER_USAGE_FILE,
+    make_plan,
+    plan_hint,
+)
 from operon.agent.policy import PolicyService
 from operon.agent.policy.best_of_n import (
     Critic,
@@ -326,8 +331,19 @@ class AgentLoop:
             if client is None:
                 from operon.clients.gemini import GeminiHttpClient
 
-                client = GeminiHttpClient(model=settings.planner_model, timeout_seconds=30.0, max_retries=1)
-            steps, usage = await make_plan(client, record.intent)
+                client = GeminiHttpClient(model=settings.planner_model, timeout_seconds=8.0, max_retries=0)
+            # The run's start waits on this (the remote CLI gives start 30 s), so planning
+            # gets a short overall deadline and then the run goes on without a plan.
+            try:
+                steps, usage = await asyncio.wait_for(make_plan(client, record.intent), timeout=PLANNER_DEADLINE_S)
+            except TimeoutError:
+                logger.warning("planner: no answer in %.0fs, running without a plan", PLANNER_DEADLINE_S)
+                return
+            run_dir = Path(self.run_store.root_dir) / record.run_id
+            if usage is not None:
+                # Where run-cost accounting looks (evals run_usage, observer summaries).
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (run_dir / PLANNER_USAGE_FILE).write_text(usage.model_dump_json(indent=2), encoding="utf-8")
             if not steps:
                 return
             add_hints = getattr(self.perception_service, "add_advisory_hints", None)
@@ -338,7 +354,6 @@ class AgentLoop:
                 "steps": steps,
                 "usage": usage.model_dump(mode="json") if usage is not None else None,
             }
-            run_dir = Path(self.run_store.root_dir) / record.run_id
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "plan.json").write_text(json.dumps(saved, indent=2), encoding="utf-8")
         except Exception as exc:  # noqa: BLE001 - a planner problem must never fail a run

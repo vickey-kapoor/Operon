@@ -630,6 +630,10 @@ def summarize_run_usage(run_id: str) -> UsageAggregate:
         latest_logged_step_index = max(latest_logged_step_index, entry.step_index)
         for usage in _entry_usages(entry):
             _merge_usage(aggregate, usage)
+    # The one-shot planner's call belongs to no step (KAN-112).
+    planner_usage = _usage_from_path(run_dir / "planner_usage.json") if run_dir.exists() else None
+    if planner_usage is not None:
+        _merge_usage(aggregate, planner_usage)
     step_dir = _latest_step_dir(run_dir) if run_dir.exists() else None
     if step_dir is not None:
         step_index = int(step_dir.name.split("_", 1)[1])

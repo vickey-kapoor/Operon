@@ -95,3 +95,48 @@ def test_write_plan_failure_never_raises(monkeypatch, tmp_path):
     loop = _loop(tmp_path, FakeClient(error=RuntimeError("down")))
     asyncio.run(loop._write_plan(SimpleNamespace(run_id="r1", intent="t")))
     loop.perception_service.add_advisory_hints.assert_not_called()
+
+
+def test_flash_lite_default_is_priced():
+    from operon.models.usage import estimate_usage_cost
+
+    _, _, total = estimate_usage_cost(
+        provider="gemini", model="gemini-3.5-flash-lite", input_tokens=1000, output_tokens=200
+    )
+    assert total is not None and total > 0
+
+
+def test_write_plan_slow_model_times_out_without_failing(monkeypatch, tmp_path):
+    import operon.agent.loop as loop_mod
+
+    _flag(monkeypatch, True)
+    monkeypatch.setattr(loop_mod, "PLANNER_DEADLINE_S", 0.05)
+
+    class Slow(FakeClient):
+        async def generate_policy(self, prompt):
+            await asyncio.sleep(5)
+
+    loop = _loop(tmp_path, Slow("{}"))
+    asyncio.run(loop._write_plan(SimpleNamespace(run_id="r1", intent="t")))
+    loop.perception_service.add_advisory_hints.assert_not_called()
+    loop._recovered.assert_not_called()
+
+
+def test_planner_usage_is_counted_in_run_cost(monkeypatch, tmp_path):
+    from operon.models.usage import ModelUsage
+
+    class Priced(FakeClient):
+        def latest_usage(self):
+            return ModelUsage(provider="gemini", model="gemini-3.5-flash-lite", request_kind="text", input_tokens=100,
+                              output_tokens=20, estimated_cost_usd=0.001)
+
+    _flag(monkeypatch, True)
+    loop = _loop(tmp_path, Priced(json.dumps({"steps": ["a", "b"]})))
+    asyncio.run(loop._write_plan(SimpleNamespace(run_id="r1", intent="t")))
+    assert (tmp_path / "r1" / "planner_usage.json").exists()
+
+    import evals.live_bench as lb
+
+    monkeypatch.setattr(lb, "_run_dir", lambda run_id: tmp_path / run_id)
+    usage = lb.run_usage("r1")
+    assert usage["input_tokens"] == 100 and usage["cost_usd"] == 0.001

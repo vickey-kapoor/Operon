@@ -161,11 +161,11 @@ def test_read_api_key_refuses_an_empty_key() -> None:
 
 
 def test_wait_for_ssh_gives_up_after_its_timeout(monkeypatch) -> None:
-    clock = iter([0.0, 100.0, 400.0])
+    clock = iter([0.0, 100.0, 2000.0])
     monkeypatch.setattr(cloud.time, "monotonic", lambda: next(clock))
     run = FakeRunner(fail_ssh=99)
 
-    with pytest.raises(RuntimeError, match="within 300 s"):
+    with pytest.raises(RuntimeError, match="within 1800 s"):
         cloud.wait_for_ssh(CFG, "20.1.2.3", run, sleep=lambda s: None)
     assert len(run.calls) == 2
 
@@ -271,7 +271,7 @@ def test_run_sends_the_task_through_the_session(monkeypatch, browser, mode, expe
     sessions: list[bool] = []
 
     @contextlib.contextmanager
-    def fake_session(cfg, run, *, keep=False, out=print):
+    def fake_session(cfg, run, *, keep=False, update=False, out=print):
         sessions.append(keep)
         yield argparse.Namespace(base_url="http://127.0.0.1:8090", api_key="k3y")
 
@@ -313,3 +313,31 @@ def test_cloud_init_installs_what_playwright_needs_and_can_rerun() -> None:
     assert "- libatomic1" in text
     assert "[ -x .venv/bin/python ] ||" in text
     assert "touch .Xauthority" in text  # pyautogui does not load without it
+
+
+def test_open_update_runs_the_update_before_the_tunnel(monkeypatch) -> None:
+    monkeypatch.setattr(cloud, "_port_free", lambda port: True)
+    monkeypatch.setattr(cloud, "wait_for_api", lambda port, **kw: None)
+    started: list[list[str]] = []
+
+    class FakeTunnel:
+        def terminate(self) -> None: ...
+        def wait(self, timeout=None) -> int: return 0
+
+    monkeypatch.setattr(cloud.subprocess, "Popen", lambda argv, **kw: started.append(argv) or FakeTunnel())
+    run = FakeRunner()
+    with cloud._Session(CFG, run, update=True, out=lambda *_: None):
+        updates = [i for i, (argv, _) in enumerate(run.calls) if cloud.UPDATE_SCRIPT in argv]
+        assert len(updates) == 1 and started  # updated, and the tunnel opened afterwards
+    assert run.verbs()[-1] == "az vm deallocate"
+
+
+def test_the_update_script_fixes_xauthority_and_restarts_the_api() -> None:
+    script = cloud.UPDATE_SCRIPT
+    assert "touch /home/operon/.Xauthority" in script
+    assert "git pull -q --ff-only" in script and "systemctl restart operon-api" in script
+
+
+def test_the_cli_accepts_update_on_open_and_run() -> None:
+    assert build_parser().parse_args(["cloud", "open", "--update"]).update
+    assert build_parser().parse_args(["cloud", "run", "x", "--update"]).update

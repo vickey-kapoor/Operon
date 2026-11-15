@@ -183,6 +183,22 @@ def wait_for_ssh(cfg: CloudConfig, ip: str, run: Runner, *, timeout_s: float = 1
             (sleep or time.sleep)(5)  # looked up per call so tests can patch time.sleep
 
 
+# Run on the VM as its admin: bring Operon to the latest main and restart it. Also creates the
+# empty ~/.Xauthority that python-xlib (pyautogui's X11 backend) will not load without; VMs
+# created before the setup script did that need it. Safe to repeat.
+UPDATE_SCRIPT = (
+    "sudo -u operon -H bash -lc '"
+    "cd /home/operon/Operon && touch /home/operon/.Xauthority && git pull -q --ff-only "
+    "&& ~/.local/bin/uv pip install -q --python .venv/bin/python -e .' "
+    "&& sudo systemctl restart operon-api"
+)
+
+
+def update_vm(cfg: CloudConfig, ip: str, run: Runner, out=print) -> None:
+    out("Updating Operon on the VM (git pull, reinstall, restart)...")
+    run([*ssh_base(cfg, ip), UPDATE_SCRIPT])
+
+
 def read_api_key(cfg: CloudConfig, ip: str, run: Runner) -> str:
     key = run([*ssh_base(cfg, ip), "cat /etc/operon/api-key"]).strip()
     if not key:
@@ -213,8 +229,10 @@ def _port_free(port: int) -> bool:
 class _Session:
     """Start the VM and open the tunnel; always deallocate on exit unless ``keep``."""
 
-    def __init__(self, cfg: CloudConfig, run: Runner, *, keep: bool = False, out=print) -> None:
-        self.cfg, self.run, self.keep, self.out = cfg, run, keep, out
+    def __init__(
+        self, cfg: CloudConfig, run: Runner, *, keep: bool = False, update: bool = False, out=print
+    ) -> None:
+        self.cfg, self.run, self.keep, self.update, self.out = cfg, run, keep, update, out
         self.tunnel: subprocess.Popen | None = None
         self.api_key = ""
 
@@ -225,6 +243,8 @@ class _Session:
             ip = start_vm(self.cfg, self.run, self.out)
             self.out(f"Waiting for {ip} to be ready...")
             wait_for_ssh(self.cfg, ip, self.run)
+            if self.update:
+                update_vm(self.cfg, ip, self.run, self.out)
             self.api_key = read_api_key(self.cfg, ip, self.run)
             argv = ssh_tunnel(self.cfg, ip)
             self.tunnel = subprocess.Popen([shutil.which(argv[0]) or argv[0], *argv[1:]])
@@ -294,7 +314,7 @@ def cmd_set_key(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_co
 
 
 def cmd_open(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_command, out=print) -> int:
-    with _Session(cfg, run, keep=args.keep, out=out) as session:
+    with _Session(cfg, run, keep=args.keep, update=getattr(args, "update", False), out=out) as session:
         out(f"Task page: {session.base_url}/app#key={session.api_key}")
         out("Pick Desktop to use the VM's own desktop. Press Ctrl+C here when you are done.")
         try:
@@ -312,7 +332,7 @@ def cmd_run(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_comman
     payload = {"intent": args.task, "environment": "browser" if args.browser else "desktop", "max_steps": args.max_steps}
     if args.mode:
         payload["permission_mode"] = args.mode
-    with _Session(cfg, run, keep=args.keep, out=out) as session:
+    with _Session(cfg, run, keep=args.keep, update=getattr(args, "update", False), out=out) as session:
         async def go() -> int:
             client = _LinkingClient(session.base_url, session.api_key, out=out)
             try:
@@ -362,6 +382,7 @@ def add_parser(sub) -> None:
 
     open_ = cs.add_parser("open", help="start the VM and open the task page; deallocate on Ctrl+C")
     open_.add_argument("--keep", action="store_true", help="leave the VM running afterwards")
+    open_.add_argument("--update", action="store_true", help="first bring Operon on the VM to the latest main")
     open_.set_defaults(func=lambda a: cmd_open(a, CloudConfig.from_env()))
 
     run = cs.add_parser("run", help="start the VM, run one task, deallocate")
@@ -370,6 +391,7 @@ def add_parser(sub) -> None:
     run.add_argument("--mode", choices=["ask", "risky", "auto"], default=None)
     run.add_argument("--max-steps", type=int, default=25)
     run.add_argument("--keep", action="store_true", help="leave the VM running afterwards")
+    run.add_argument("--update", action="store_true", help="first bring Operon on the VM to the latest main")
     run.set_defaults(func=lambda a: cmd_run(a, CloudConfig.from_env()))
 
     stop = cs.add_parser("stop", help="deallocate the VM now")

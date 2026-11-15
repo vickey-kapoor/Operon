@@ -103,3 +103,22 @@ def test_buffer_on_collects_and_pops_once(monkeypatch):
     note = buf.pop()
     assert note and "top right" in note
     assert buf.pop() is None
+
+
+def test_buffer_keeps_only_newest_notes(monkeypatch):
+    monkeypatch.setattr("operon.agent.perception.change_note.get_settings", lambda: _settings(True))
+    monkeypatch.setattr("operon.agent.perception.settle.get_settings", lambda: _settings(True))
+
+    async def many():
+        buf = ChangeNoteBuffer()
+        for _ in range(6):
+            seq = iter([frame(), frame(TOP_RIGHT), frame(), frame(), frame(), frame()])
+
+            async def grab():
+                return next(seq, frame())
+
+            await buf.settle(grab, 0.0)
+        return buf.pop()
+
+    note = asyncio.run(many())
+    assert note is not None and note.count("Screen activity") == 3

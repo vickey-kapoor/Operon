@@ -42,6 +42,10 @@ WHOLE_SCREEN_SHARE = 0.5
 MAX_REGIONS_PER_KIND = 2
 MAX_NOTE_CHARS = 300
 
+# A batch of actions settles once per action; keep only the newest notes so one step can
+# never carry a wall of text, and an executor nobody pops from cannot grow without bound.
+MAX_PENDING_NOTES = 3
+
 _CELL_W = SIGNATURE_SIZE[0] // GRID_COLS
 _CELL_H = SIGNATURE_SIZE[1] // GRID_ROWS
 
@@ -171,6 +175,7 @@ class ChangeNoteBuffer:
         note = watcher.note()
         if note:
             self._notes.append(note)
+            del self._notes[:-MAX_PENDING_NOTES]
         return result
 
     def pop(self) -> str | None:

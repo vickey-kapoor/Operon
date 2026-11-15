@@ -3,8 +3,8 @@ run-name: Weekly research scan (new arXiv papers)
 
 # Every Monday: look for new arXiv papers on computer-use agents (grounding, agent designs,
 # world models, benchmarks, safety), add them under "Weekly scans" on the Confluence page
-# "Research: reading list and paper notes" and in docs/research/reading-list.md (a PR with
-# auto-merge). Free: arXiv's public API only, no model call. Nothing happens in a week with
+# "Research: reading list and paper notes" and in docs/research/reading-list.md (a PR the
+# owner merges). Free: arXiv's public API only, no model call. Nothing happens in a week with
 # no new papers. Run it by hand to scan a different window (days input).
 #
 # Secrets (repository settings): CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN (an Atlassian API
@@ -54,7 +54,6 @@ jobs:
           git add docs/research
           git commit -m "Docs: weekly research scan $(date -u +%Y-%m-%d)"
           git push origin "$branch"
-          url=$(gh pr create --base main --head "$branch" \
+          gh pr create --base main --head "$branch" \
             --title "Docs: weekly research scan $(date -u +%Y-%m-%d)" \
-            --body "New arXiv papers added to docs/research/reading-list.md by the weekly scan (abstract excerpts, not reviewed). Same list is added to the Confluence page when its secrets are set.")
-          gh pr merge "$url" --auto --squash || echo "::warning::Could not turn on auto-merge for $url"
+            --body "New arXiv papers added to docs/research/reading-list.md by the weekly scan (abstract excerpts, not reviewed). Same list is added to the Confluence page when its secrets are set."

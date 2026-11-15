@@ -1,0 +1,403 @@
+{
+  "format": 1,
+  "task": "dyn_search_open",
+  "mode": "browser",
+  "intent": "Find the document called Quarterly plan and open it.",
+  "outcome": "success",
+  "status": "succeeded",
+  "stop_reason": "task_completed",
+  "max_steps": 18,
+  "permission_mode": null,
+  "screen": {
+    "width": 1920,
+    "height": 1080
+  },
+  "settings": {
+    "BROWSER_HEADLESS": "true",
+    "BROWSER_HEIGHT": "1080",
+    "BROWSER_WIDTH": "1920",
+    "GEMINI_MODEL": "gemini-3.5-flash",
+    "OPERON_ALLOWED_FILE_ROOTS": "",
+    "OPERON_BESTOFN_CONFIDENCE": "1.0",
+    "OPERON_BESTOFN_N": "1",
+    "OPERON_BROWSER_BACKEND": "computer_use",
+    "OPERON_BROWSER_FALLBACK_BACKEND": "json",
+    "OPERON_BROWSER_FALLBACK_MODEL": "gemini-3.5-flash",
+    "OPERON_BROWSER_MODEL": "gemini-3.5-flash",
+    "OPERON_BROWSER_THINKING": "low",
+    "OPERON_BROWSER_VERIFIER_MODEL": "gemini-3.5-flash",
+    "OPERON_BROWSER_VERIFIER_THINKING": "low",
+    "OPERON_BUILTIN_BROWSER": "false",
+    "OPERON_CHANGE_NOTE": "false",
+    "OPERON_CRITIC": "",
+    "OPERON_DESKTOP_BACKEND": "computer_use",
+    "OPERON_DESKTOP_FALLBACK_MODEL": "gemini-3.5-flash",
+    "OPERON_DESKTOP_MODEL": "gemini-3.5-flash",
+    "OPERON_DESKTOP_PLATFORM": "windows",
+    "OPERON_DESKTOP_THINKING": "low",
+    "OPERON_DESKTOP_VERIFIER_MODEL": "gemini-3.5-flash",
+    "OPERON_DESKTOP_VERIFIER_THINKING": "low",
+    "OPERON_GROUNDER": "deterministic",
+    "OPERON_HARNESS_PROFILE": "thin",
+    "OPERON_PERMISSION_MODE": "",
+    "OPERON_PLANNER": "false",
+    "OPERON_PLANNER_MODEL": "gemini-3.5-flash-lite",
+    "OPERON_PROGRESS_REVISIT": "false",
+    "OPERON_SANDBOX_MEMORY_MB": "4096",
+    "OPERON_SETTLE_DETECT": "false",
+    "OPERON_SETTLE_MAX_S": "3.0",
+    "OPERON_SITE_ADAPTERS": "",
+    "OPERON_TOOLS": "off",
+    "OPERON_TRUST_ALLOW_DOMAINS": "",
+    "OPERON_TRUST_CONFIRM": "",
+    "OPERON_TRUST_DENY": "",
+    "OPERON_TRUST_GATE": "false",
+    "OPERON_ZOOM": "off",
+    "OPERON_ZOOM_FACTOR": "2.0",
+    "OPERON_ZOOM_MIN_SIDE": "2000"
+  },
+  "host": {
+    "os": "posix",
+    "home": "/home/runner",
+    "cwd": "/home/runner/work/Operon/Operon"
+  },
+  "gate_urls": [],
+  "turns": [
+    {
+      "perception": {
+        "summary": "Computer Use step evaluated. Tool call: click.",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "click",
+        "args": {
+          "x": 365,
+          "y": 175,
+          "intent": "Click on the search input box to type the document name."
+        },
+        "id": "call_13398161393366341299"
+      },
+      "function_calls": [
+        {
+          "name": "click",
+          "args": {
+            "x": 365,
+            "y": 175,
+            "intent": "Click on the search input box to type the document name."
+          },
+          "id": "call_13398161393366341299"
+        }
+      ],
+      "rationale": "Computer Use step evaluated.",
+      "confidence": 0.7,
+      "active_subgoal": "click",
+      "model_content": {
+        "parts": [
+          {
+            "functionCall": {
+              "name": "click",
+              "args": {
+                "x": 365,
+                "y": 175,
+                "intent": "Click on the search input box to type the document name."
+              },
+              "id": "call_13398161393366341299"
+            },
+            "thoughtSignature": "EpIDCo8DAWkUfRNI30AtrG52l5bZQmq2cNf4q4X1Uyuie5/TcxIk+iHEr1R4Eud21F+X2OoDfNjqUPxBXibmMr8HQq9J0Al/HYbhXnk66QrATL66Evr6SZJc8akL4Tz+4pVEbaGu5PFZibDZBgo3akFF+ua9BTn+mXcZXiXUWnV9GfyCczlBzKuAvB/zd8Q/2D+W20Nm6StkxAO/P6PXSnp20FibhIIb8TLWbd+unXpqXOqiPSxczrmvyHPW1jLRPYvOKJkqnQ6Ph1bJNcJWtiqWYjerw0R1zV8zh/V2vqRE8pBbI/46pjlb6+o6Nl9K0MovQztZqbCPcKlu//ZjCHxeUiaDx0alrceT709ZRqg5yX0Ttg8yhPJqenIBIDWF+fbZUOpzFoLKQLEqLZo6ee8PkRg0YIOn9CDOrBm3Mdv0ocoNQh3mRQayStxWnRsugGg3D9b7pV+otNKJu59iyM6xdUs42MWRcpIb4C/YZLR9hCDOxyMEdHg3XlJ8ljNJKoscSyRqCOVNhHRZyRGsxoY+3xe9"
+          }
+        ],
+        "role": "model"
+      },
+      "raw_candidate": {
+        "finish_reason": "STOP",
+        "text_parts": [],
+        "had_function_call": true,
+        "function_name": "click",
+        "function_names": [
+          "click"
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "Computer Use step evaluated. Tool call: type.",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "type",
+        "args": {
+          "press_enter": true,
+          "text": "Quarterly plan",
+          "intent": "Type 'Quarterly plan' into the search input and submit."
+        },
+        "id": "call_1091228575026922184"
+      },
+      "function_calls": [
+        {
+          "name": "type",
+          "args": {
+            "press_enter": true,
+            "text": "Quarterly plan",
+            "intent": "Type 'Quarterly plan' into the search input and submit."
+          },
+          "id": "call_1091228575026922184"
+        }
+      ],
+      "rationale": "Computer Use step evaluated.",
+      "confidence": 0.7,
+      "active_subgoal": "type",
+      "model_content": {
+        "parts": [
+          {
+            "functionCall": {
+              "name": "type",
+              "args": {
+                "press_enter": true,
+                "text": "Quarterly plan",
+                "intent": "Type 'Quarterly plan' into the search input and submit."
+              },
+              "id": "call_1091228575026922184"
+            },
+            "thoughtSignature": "EpQBCpEBAWkUfRMzcx9GYWmJsc5u2NC52RTAZEXYHwQjwpiCjULMb8vuAnm60LKtbXmGiGJBGU48USMwgjEbTaoasaWKpdzjTik45tRm7aPPx0dSLlESDU1Gw9iCs12zhMAmzbVa9ffTwxmP78JzQ+lOnFiCoc4ES9yaoNRRj+DnwX2ZStfObxq1IeMSE38xrQwK3vuPkg=="
+          }
+        ],
+        "role": "model"
+      },
+      "raw_candidate": {
+        "finish_reason": "STOP",
+        "text_parts": [],
+        "had_function_call": true,
+        "function_name": "type",
+        "function_names": [
+          "type"
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "Computer Use step evaluated. Tool call: wait.",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "wait",
+        "args": {
+          "intent": "Wait for search results to load.",
+          "seconds": 5
+        },
+        "id": "call_10001599262608727935"
+      },
+      "function_calls": [
+        {
+          "name": "wait",
+          "args": {
+            "intent": "Wait for search results to load.",
+            "seconds": 5
+          },
+          "id": "call_10001599262608727935"
+        }
+      ],
+      "rationale": "Computer Use step evaluated.",
+      "confidence": 0.7,
+      "active_subgoal": "wait",
+      "model_content": {
+        "parts": [
+          {
+            "functionCall": {
+              "name": "wait",
+              "args": {
+                "intent": "Wait for search results to load.",
+                "seconds": 5
+              },
+              "id": "call_10001599262608727935"
+            },
+            "thoughtSignature": "ErkBCrYBAWkUfRPciggTsTfqR4sJPTxCYwMyWHoJC3RgA+R9jZv4UZn1zMcVL+D/jfbcqDiq5OVqgY4WHv5DGwe9ieRWgaYnDmczAMHDJO3BXCYl8qMJ8mGGsSRwNllv8xq6eBIfko6rRS3b0jGDnZzr96jVz3k31Zel1RUXQ9eu7EBDswjWWAD1E4k/86v8G7BJhCCUxpx+IiHHADOLAhZOq/ZwzYCiHrV/QSvJ7b0QmMKAgrZj9QQxU8M="
+          }
+        ],
+        "role": "model"
+      },
+      "raw_candidate": {
+        "finish_reason": "STOP",
+        "text_parts": [],
+        "had_function_call": true,
+        "function_name": "wait",
+        "function_names": [
+          "wait"
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "Computer Use step evaluated. Tool call: click.",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "click",
+        "args": {
+          "intent": "Click on the Quarterly plan document link to open it.",
+          "x": 340,
+          "y": 222
+        },
+        "id": "call_7644367732162393385"
+      },
+      "function_calls": [
+        {
+          "name": "click",
+          "args": {
+            "intent": "Click on the Quarterly plan document link to open it.",
+            "x": 340,
+            "y": 222
+          },
+          "id": "call_7644367732162393385"
+        }
+      ],
+      "rationale": "Computer Use step evaluated.",
+      "confidence": 0.7,
+      "active_subgoal": "click",
+      "model_content": {
+        "parts": [
+          {
+            "functionCall": {
+              "name": "click",
+              "args": {
+                "intent": "Click on the Quarterly plan document link to open it.",
+                "x": 340,
+                "y": 222
+              },
+              "id": "call_7644367732162393385"
+            },
+            "thoughtSignature": "EtkBCtYBAWkUfROv2uu4/ha9NTXcd/NsAn/VhEVrqL9iw1MwmUkfwLrmj+O01LUhqqXrOpX+EMx6xwCaF8TykcRhzLkk8rAqZ5vvdCxYmLDk7cgkFcfrkO5w7F2bJozT2zsqnNawCr9ZMHoSaAUgzAJJbl4N4aDAlLcgxWqTTucOvr/CaJSD9pd36mALokt89nN7OtsQZTDI+k4eOQYVTWPutMtAkHjXpg8hlyM6QLFYqT9agHM5vHazaYkRZxLtu62srWUf+tdR9Q5Akqlur6AcQb/XdaTFPIK6iw=="
+          }
+        ],
+        "role": "model"
+      },
+      "raw_candidate": {
+        "finish_reason": "STOP",
+        "text_parts": [],
+        "had_function_call": true,
+        "function_name": "click",
+        "function_names": [
+          "click"
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "I have found and opened the document called \"Quarterly plan\".",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "action": {
+        "action_type": "wait",
+        "wait_ms": 1000
+      },
+      "rationale": "I have found and opened the document called \"Quarterly plan\".",
+      "confidence": 0.4,
+      "active_subgoal": "gather more browser context",
+      "model_content": {
+        "parts": [
+          {
+            "text": "I have found and opened the document called \"Quarterly plan\".",
+            "thoughtSignature": "EqACCp0CAWkUfRNrOqRJYuL/G4jPJ22Cih4Fga4xyh2SUYezldEwKlG5kcz4F5WlmHzx6jToFdyb7eKKTSE+N+SfiArj/p2V7N05MAcDZmdPEAClDvtj2pRY0AlkT57WF12RfXJl6i2Wm2STWr3uG2aJBLc7s6Rd2JPJnmwAiXf9VpTSbE3ynV0n1WvfrManDHRGjuJpn5DGlb2cTm2J3Bx7fW3NHgp8s+oSVbiscSiMM30CxXObv3Zpvy99mucn1ZQ+YKMkAZTWGtwTyNYuTybSZ3VJO/GEe5lIpeVNTXM7OD3QnqbY5Zq8k4Sa74fJW8RMtWvbfx1QV4E8Qon9e/+7w+QyD+6PQMDQorkEe+4y+Y1IvTMSAUp2U3zyrFvpZNX2"
+          }
+        ],
+        "role": "model"
+      },
+      "raw_candidate": {
+        "finish_reason": "STOP",
+        "text_parts": [
+          "I have found and opened the document called \"Quarterly plan\"."
+        ],
+        "had_function_call": false
+      }
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "action": {
+        "action_type": "click",
+        "x": 701,
+        "y": 189
+      },
+      "success": true,
+      "detail": "Executed click",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 2,
+      "action": {
+        "action_type": "type",
+        "text": "Quarterly plan",
+        "press_enter": true,
+        "clear_before_typing": false
+      },
+      "success": true,
+      "detail": "Executed type",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 3,
+      "action": {
+        "action_type": "wait",
+        "wait_ms": 5000
+      },
+      "success": true,
+      "detail": "Executed wait",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 4,
+      "action": {
+        "action_type": "click",
+        "x": 653,
+        "y": 240
+      },
+      "success": true,
+      "detail": "Executed click",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 5,
+      "action": {
+        "action_type": "stop"
+      },
+      "success": true,
+      "detail": "Acknowledged stop",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    }
+  ]
+}

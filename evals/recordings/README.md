@@ -9,3 +9,6 @@ To add one: open a nightly or `/bench` artifact, take `<report>/recordings/<task
 read it (it holds the model's own words about the screen, nothing else), and copy it
 here. If a deliberate change alters what the loop does, re-record from the next
 nightly run instead of editing the expected actions by hand.
+
+Current recordings: `dyn_save_theme` (13 steps), `dyn_waitlist` (8) and `dyn_search_open` (5),
+from the Browser Thin dynamic suite (KAN-114) in nightly run 43714855920 on 2026-11-15.

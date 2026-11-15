@@ -53,6 +53,7 @@ onboarding ([roadmap](roadmap.md)).
 | `OPERON_ENVIRONMENT` | `live` | Where desktop runs happen (KAN-80). `live` is this machine's own screen; `operon envs` lists every environment and whether it can run here, and `operon run --env NAME` picks one for a single local run. `windows-sandbox` runs desktop tasks in a throwaway Windows Sandbox, `linux-container` in a Linux desktop in Docker. See [environments.md](environments.md). |
 | `OPERON_SANDBOX_MEMORY_MB` / `OPERON_SANDBOX_START_TIMEOUT` | `4096` / `240` | Windows Sandbox memory, and seconds to wait for its guest agent to start |
 | `OPERON_CONTAINER_IMAGE` / `OPERON_CONTAINER_START_TIMEOUT` / `OPERON_CONTAINER_CA_BUNDLE` | built from `docker/linux-desktop` / `120` / unset | Linux container: a prebuilt image instead of building one, seconds to wait for it, and a CA bundle for pip during the build behind a TLS-inspecting proxy |
+| `OPERON_OSWORLD_URL` | unset | OSWorld run environment: the task VM's server, e.g. `http://127.0.0.1:5000` (KAN-169) |
 | `OPERON_GUEST_TOKEN` | unset | Inside a run environment only: the token `operon guest` requires (else `--token-file`) |
 | `OPERON_BROWSER_MODEL` / `OPERON_DESKTOP_MODEL` | `gemini-3.5-flash` | Primary model |
 | `OPERON_BROWSER_FALLBACK_MODEL` / `OPERON_DESKTOP_FALLBACK_MODEL` | `gemini-3.5-flash` | Fallback (JSON) model |
@@ -77,6 +78,7 @@ onboarding ([roadmap](roadmap.md)).
 | `OPERON_BESTOFN_N` | `1` | Experimental (RFC 0001 Move 3): sample N candidate actions at uncertain steps and execute the best-scored one. `1` disables (default). |
 | `OPERON_BESTOFN_CONFIDENCE` | `1.0` | Experimental: only sample when a step's policy confidence is below this ceiling (lower to restrict Best-of-N to uncertain steps). |
 | `OPERON_SETTLE_DETECT` | `off` | Experimental (KAN-110): after each action, watch small local frames until the screen stops changing instead of sleeping a fixed time. No model call. `on` enables. |
+| `OPERON_AUTO_CONFIRM` | `off` | Benchmark runs only (KAN-169): `operon run` answers the model's own "require confirmation" pause yes (at most 10 per run), since nobody can click Resume. Trust-gate approvals are never answered. `evals/osworld.py` sets it for its runs; report scores as run with it. |
 | `OPERON_SETTLE_MAX_S` | `3.0` | Longest a settle wait may run, in seconds (clamped to 0.5 to 15). Only read when settle detection is on. |
 | `OPERON_CHANGE_NOTE` | `off` | Experimental (KAN-111): while the screen settles after an action, write one line of text about what appeared and went away, or is still changing, and send it to the model as a "Note from Operon" with the next screenshot. Text only (no extra images), no model call. Needs the same frame sampling as `OPERON_SETTLE_DETECT`, so `on` turns that on too. |
 | `OPERON_PLANNER` | `off` | Experimental (KAN-112): at task start a cheaper model writes a short plan (2 to 8 steps) from the task text alone, and the acting model gets it as a "Note from Operon" on its first step. One extra text-only call per run, no re-planning; the plan and its cost are saved as `plan.json` in the run folder. Any failure means no plan. |

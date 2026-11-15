@@ -28,12 +28,19 @@ def _linux_container() -> EnvironmentProvider:
     return LinuxContainerProvider()
 
 
+def _osworld() -> EnvironmentProvider:
+    from operon.environments.osworld import OSWorldProvider
+
+    return OSWorldProvider()
+
+
 # Name -> factory. Factories import lazily so an unused provider's dependencies
 # (pyautogui, docker, az) are never loaded.
 _PROVIDERS: dict[str, Callable[[], EnvironmentProvider]] = {
     "live": _live,
     "windows-sandbox": _windows_sandbox,
     "linux-container": _linux_container,
+    "osworld": _osworld,
 }
 
 

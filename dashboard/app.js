@@ -5,12 +5,18 @@
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const BACKEND_NAMES = { computer_use: "Gemini", json: "Gemini" };
-// Operon runs Gemini only. Runs of other models from before that stay in the database;
-// they count toward spend on the Cost tab and are left out everywhere else.
+// Gemini plus one model per other provider (KAN-168): the Claude and GPT profiles of
+// evals/models.yaml run on the same nightly cells as Gemini, so they sit side by side.
+// Runs of any other model stay in the database; they count toward spend on the Cost tab
+// and are left out everywhere else.
 const OTHER_MODEL = "Other model (earlier runs)";
+const PROFILE_NAMES = { "claude-sonnet-5-5": "Claude Sonnet 5.5", "openai-computer-use": "GPT" };
 // Colors follow the configuration, never its rank: known ones get fixed slots,
 // anything new takes the next free slot in order of first appearance.
-const FIXED_SLOTS = { "Gemini": 1, "Gemini · thin, own done": 2 };
+const FIXED_SLOTS = {
+  "Gemini": 1, "Gemini · thin, own done": 2,
+  "Claude Sonnet 5.5 · thin, own done": 3, "GPT · thin, own done": 4,
+};
 const MAX_SLOTS = 6;
 const OUTCOME_LABELS = {
   success: "pass", false_success: "false pass", missed: "missed",
@@ -108,22 +114,29 @@ function harnessSuffix(name, harness) {
   return (harness || "full") === "thin" ? `${name} · thin` : name;
 }
 
-// A Gemini run: no registry profile and a Gemini backend. Older reports may hold another model.
+// A run the dashboard shows: a Gemini run (no registry profile and a Gemini backend), or a
+// run of one of the PROFILE_NAMES models. Older reports may hold another model.
 // A run with no recorded backend used the server default, which is Gemini computer use.
-function isGeminiRun(run) {
+function isShownRun(run) {
   const c = run.config || {};
-  return !c.model_profile && (!c.backend || Object.hasOwn(BACKEND_NAMES, c.backend));
+  if (c.model_profile) return Object.hasOwn(PROFILE_NAMES, c.model_profile);
+  return !c.backend || Object.hasOwn(BACKEND_NAMES, c.backend);
+}
+
+function familyName(run) {
+  const c = run.config || {};
+  if (c.model_profile) return PROFILE_NAMES[c.model_profile];
+  return BACKEND_NAMES[c.backend || "computer_use"] || c.backend;
 }
 
 function baseLabel(run) {
   const c = run.config || {};
-  const name = BACKEND_NAMES[c.backend || "computer_use"] || c.backend;
-  return harnessSuffix(name, c.harness_profile);
+  return harnessSuffix(familyName(run), c.harness_profile);
 }
 
 function configLabel(run) {
   const c = run.config || {};
-  if (!isGeminiRun(run)) return OTHER_MODEL;
+  if (!isShownRun(run)) return OTHER_MODEL;
   const base = baseLabel(run);
   // Only where one backend ran several models, so history from before the model
   // was recorded (and single-model configs) keeps its label and colour.
@@ -134,7 +147,7 @@ function noteModels(runs) {
   const models = new Map();
   for (const run of runs) {
     const c = run.config || {};
-    if (!isGeminiRun(run) || !c.model) continue;
+    if (!isShownRun(run) || !c.model) continue;
     const base = baseLabel(run);
     if (!models.has(base)) models.set(base, new Set());
     models.get(base).add(c.model);
@@ -1488,7 +1501,7 @@ async function selectCostRun(run) {
 
 function modelLabel(run) {
   const c = run.config || {};
-  const name = c.model || BACKEND_NAMES[c.backend] || c.backend || "unknown";
+  const name = c.model_profile ? familyName(run) : c.model || BACKEND_NAMES[c.backend] || c.backend || "unknown";
   return harnessSuffix(name, c.harness_profile);
 }
 
@@ -1641,11 +1654,13 @@ function renderLeaderboardBrief(data) {
     el("p", { class: "lede" }, "Ranked by pass rate over each configuration's latest unflagged run per suite."));
 }
 
-// ---------- run plan: Gemini's Browser / Desktop / Hybrid x Thin / Full grid ----------
-// Operon runs Gemini only (Nov 11); other models come back later through model onboarding.
-// `needs` names the story that builds a harness the model can't run yet.
+// ---------- run plan: the Browser / Desktop / Hybrid x Thin / Full grid, one row per model ----------
+// Gemini plus one model per other provider (KAN-168). Claude and GPT run thin only (their
+// full cells stay "not run yet"). `needs` names the story that builds a harness a model can't run yet.
 const RUN_PLAN = [
   { family: "Gemini", story: "KAN-66", needs: {} },
+  { family: "Claude Sonnet 5.5", story: "KAN-168", needs: {} },
+  { family: "GPT", story: "KAN-168", needs: {} },
 ];
 // The season the plan runs on, and each category's core set as suiteId gives it (KAN-72,
 // evals/categories.py). A category with `needs` has no tasks until that story merges.
@@ -1656,9 +1671,9 @@ const PLAN_CATEGORIES = [
   { id: "desktop", name: "Desktop", suite: "desktop|core" },
   { id: "hybrid", name: "Hybrid", suite: "hybrid|core" },
 ];
-// The plan row a run belongs to: Gemini, or null for an earlier run of another model.
+// The plan row a run belongs to: its model, or null for an earlier run of another model.
 function modelFamily(run) {
-  return isGeminiRun(run) ? "Gemini" : null;
+  return isShownRun(run) ? familyName(run) : null;
 }
 
 function harnessMode(run) {
@@ -1959,7 +1974,7 @@ async function main() {
   try {
     const index = await getJson("api/runs");
     state.allRuns = index.runs || [];
-    state.runs = state.allRuns.filter(isGeminiRun);
+    state.runs = state.allRuns.filter(isShownRun);
     state.budget = index.budget_usd || null;
     noteModels(state.runs);
     assignSlots(state.allRuns);

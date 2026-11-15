@@ -13,8 +13,8 @@ import pytest
 
 from tests.evals.test_dashboard_brief import APP_JS, _constant_source, _function_source
 
-FUNCTIONS = ("isGeminiRun", "suiteId", "hasCost", "listedSpend", "modelFamily", "harnessMode", "planCell", "harnessDelta", "planGrid")
-CONSTANTS = ("BACKEND_NAMES", "RUN_PLAN", "PLAN_SEASON", "PLAN_CATEGORIES")
+FUNCTIONS = ("isShownRun", "familyName", "suiteId", "hasCost", "listedSpend", "modelFamily", "harnessMode", "planCell", "harnessDelta", "planGrid")
+CONSTANTS = ("BACKEND_NAMES", "PROFILE_NAMES", "RUN_PLAN", "PLAN_SEASON", "PLAN_CATEGORIES")
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="needs Node")
 
@@ -48,12 +48,14 @@ def _both(model: str, category: str, rate_thin: tuple[int, int], rate_full: tupl
 def test_an_empty_grid_has_a_gemini_row_per_category_and_says_why_each_cell_is_empty() -> None:
     rows = _run("planGrid([])")
     assert [(r["family"], r["category"]) for r in rows] == [
-        ("Gemini", category) for category in ("browser", "desktop", "hybrid")
+        (model, category)
+        for model in ("Gemini", "Claude Sonnet 5.5", "GPT")
+        for category in ("browser", "desktop", "hybrid")
     ]
     by = _rows("")
     assert by[("Gemini", "browser")]["thinWhy"] == by[("Gemini", "desktop")]["fullWhy"] == "not run yet"
     assert by[("Gemini", "hybrid")]["thinWhy"] == "not run yet"  # Hybrid has tasks since KAN-73
-    assert [r["first"] for r in rows] == [True, False, False]  # step and model span the model's rows
+    assert [r["first"] for r in rows] == [True, False, False] * 3  # step and model span the model's rows
 
 
 def test_a_cell_is_the_core_run_with_its_tags_broken_out() -> None:
@@ -100,8 +102,19 @@ def test_full_minus_thin_per_category() -> None:
 def test_earlier_runs_of_other_models_are_left_out_of_the_grid() -> None:
     rows = _rows("""
         run('20261110T000000Z', 'browser', 'core', { backend: 'claude_computer_use', harness_profile: 'thin' }, 9, 10),
-        run('20261110T000000Z', 'browser', 'core', { backend: 'model', model_profile: 'gpt-cu', harness_profile: 'thin' }, 5, 10)""")
+        run('20261110T000000Z', 'browser', 'core', { backend: 'model', model_profile: 'qwen3-vl-32b', harness_profile: 'thin' }, 5, 10)""")
     assert all(rows[("Gemini", "browser")][h] is None for h in ("thin", "full"))
+    assert all(rows[("GPT", "browser")][h] is None for h in ("thin", "full"))
+
+
+def test_claude_and_gpt_fill_their_own_rows_next_to_gemini() -> None:
+    rows = _rows("""
+        run('20261110T000000Z', 'browser', 'core', { ...gemini('thin-own') }, 9, 10),
+        run('20261110T000000Z', 'browser', 'core', { backend: 'model', model_profile: 'claude-sonnet-5-5', harness_profile: 'thin-own' }, 8, 10),
+        run('20261110T000000Z', 'browser', 'core', { backend: 'model', model_profile: 'openai-computer-use', harness_profile: 'thin-own' }, 7, 10)""")
+    assert rows[("Gemini", "browser")]["thin"]["success"] == 9
+    assert rows[("Claude Sonnet 5.5", "browser")]["thin"]["success"] == 8
+    assert rows[("GPT", "browser")]["thin"]["success"] == 7
 
 
 def test_a_cell_carries_held_out_counts_and_the_working_only_flag() -> None:

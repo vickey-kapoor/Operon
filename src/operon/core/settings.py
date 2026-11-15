@@ -55,7 +55,9 @@ DIRECT_READS: dict[str, str] = {
 }
 
 # Values never written to a run's settings.json or a log.
-SECRET_VARIABLES = frozenset({"API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY", "HITL_WEBHOOK_URL"})
+SECRET_VARIABLES = frozenset(
+    {"API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY", "HITL_WEBHOOK_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+)
 
 
 def _env_field(env: str, default: Any = None, **kwargs: Any) -> Any:
@@ -95,6 +97,15 @@ class Settings(BaseModel):
     use_vertex: bool = _env_field("OPERON_USE_VERTEX", False)
     vertex_project: str | None = _env_field("VERTEX_PROJECT")
     vertex_location: str = _env_field("VERTEX_LOCATION", "us-central1")
+
+    # --- Other models, side by side with Gemini (KAN-168): backend=model + a profile ---
+    model_profile: str = _env_field("OPERON_MODEL_PROFILE", "")
+    model_registry: str = _env_field("OPERON_MODEL_REGISTRY", "")
+    anthropic_api_key: str | None = _env_field("ANTHROPIC_API_KEY")
+    anthropic_api_base_url: str = _env_field("ANTHROPIC_API_BASE_URL", "https://api.anthropic.com/v1/messages")
+    claude_zoom: bool = _env_field("OPERON_CLAUDE_ZOOM", False)
+    openai_api_key: str | None = _env_field("OPENAI_API_KEY")
+    openai_api_base_url: str = _env_field("OPENAI_API_BASE_URL", "")
 
     # --- Per-environment models (None for thinking: the model's own default) --------
     desktop_backend: str = _env_field("OPERON_DESKTOP_BACKEND", "computer_use")
@@ -296,6 +307,13 @@ class _Parser:
             use_vertex=self.text("OPERON_USE_VERTEX").lower() in {"1", "true", "yes"},
             vertex_project=self.raw("VERTEX_PROJECT"),
             vertex_location=self.text("VERTEX_LOCATION", "us-central1"),
+            model_profile=self.stripped("OPERON_MODEL_PROFILE"),
+            model_registry=self.stripped("OPERON_MODEL_REGISTRY"),
+            anthropic_api_key=self.raw("ANTHROPIC_API_KEY"),
+            anthropic_api_base_url=self.or_default("ANTHROPIC_API_BASE_URL", "https://api.anthropic.com/v1/messages"),
+            claude_zoom=self.flag("OPERON_CLAUDE_ZOOM"),
+            openai_api_key=self.raw("OPENAI_API_KEY"),
+            openai_api_base_url=self.stripped("OPENAI_API_BASE_URL"),
             desktop_backend=self.stripped("OPERON_DESKTOP_BACKEND", "computer_use"),
             desktop_model=self.or_default("OPERON_DESKTOP_MODEL", "gemini-3.5-flash"),
             desktop_thinking=thinking("OPERON_DESKTOP_THINKING"),

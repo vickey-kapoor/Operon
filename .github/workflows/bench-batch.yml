@@ -42,6 +42,8 @@ on:
       max_total_usd: {type: string, default: "10"}
     secrets:
       GEMINI_API_KEY: {required: false}
+      ANTHROPIC_API_KEY: {required: false}
+      OPENAI_API_KEY: {required: false}
       AZURE_CREDENTIALS: {required: false}
 
 permissions:
@@ -127,6 +129,7 @@ jobs:
       tools: ${{ matrix.tools }}
       zoom: ${{ matrix.zoom }}
       features: ${{ matrix.features }}
+      model: ${{ matrix.model }}
       suite: ${{ matrix.suite }}
       args: ${{ matrix.extra }}
       max_cost_usd: ${{ matrix.cap }}
@@ -135,6 +138,8 @@ jobs:
     # Named, not inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets.
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   # One cell at a time on the VM this batch started; the called workflow neither starts nor deallocates it.
   desktop:
@@ -158,6 +163,7 @@ jobs:
       critic: ${{ matrix.critic }}
       tools: ${{ matrix.tools }}
       zoom: ${{ matrix.zoom }}
+      model: ${{ matrix.model }}
       suite: ${{ matrix.suite }}
       args: ${{ matrix.extra }}
       max_cost_usd: ${{ matrix.cap }}
@@ -165,6 +171,8 @@ jobs:
       ref: ${{ matrix.ref }}
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   stop-vm:
     name: Deallocate the Azure VM

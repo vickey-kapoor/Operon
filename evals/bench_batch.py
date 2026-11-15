@@ -15,7 +15,7 @@ cost cap::
 
 Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
 ``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``, ``settle|note|planner`` (KAN-115: perception experiments, browser only)
-(KAN-82: OPERON_ZOOM dense or always), ``season=<n>``, ``pr=<number>`` (that PR's head) or
+(KAN-82: OPERON_ZOOM dense or always), ``model=<profile>`` (KAN-168: run Claude or GPT on the same cell, thin with the model's own done; the profile is a key of ``evals/models.yaml``, browser and desktop only), ``season=<n>``, ``pr=<number>`` (that PR's head) or
 ``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
 cell's cost cap, default 3, repeats included). ``azure`` and ``gemini`` are accepted and change nothing: batch
 Desktop and Hybrid cells always run on the Azure VM. Blank lines and ``#`` comments are
@@ -53,6 +53,12 @@ _PR = re.compile(r"^[1-9][0-9]{0,6}$")
 # Branch, tag or commit: git ref characters only, no leading dash (it would read as an option).
 _REF = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$")
 # Per-cell switches for the perception experiments (KAN-115): word -> the env flag it turns on.
+# Models a cell may name with model=<profile>: one per provider, picked by Vickey (KAN-168).
+# Other registry profiles are not set up for nightly runs.
+MODEL_CELLS = {
+    "claude-sonnet-5-5": "Claude Sonnet 5.5",
+    "openai-computer-use": "GPT",
+}
 FEATURES = {"settle": "OPERON_SETTLE_DETECT", "note": "OPERON_CHANGE_NOTE", "planner": "OPERON_PLANNER"}
 
 _CAP = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,2})?$")
@@ -71,6 +77,7 @@ class Cell:
     critic: str = ""
     tools: str = "off"
     zoom: str = "off"
+    model: str = ""  # KAN-168: a registry profile (MODEL_CELLS); empty is Gemini computer use
     features: tuple[str, ...] = ()  # KAN-115: settle, note, planner (the perception flags, off by default)
     season: str = ""
     pr: str = ""
@@ -96,7 +103,7 @@ class Cell:
     @property
     def label(self) -> str:
         """The cell's name the way runs are named in chat: "Gemini · Browser · Thin"."""
-        label = f"Gemini · {self.category.capitalize()} · {self.profile.capitalize()}"
+        label = f"{MODEL_CELLS.get(self.model, 'Gemini')} · {self.category.capitalize()} · {self.profile.capitalize()}"
         if self.suite != "core":
             label += f" · {self.suite}"
         if self.season:
@@ -147,6 +154,10 @@ def parse_line(line: str, number: int) -> Cell | None:
             cell.tools = "all"
         elif word in ("zoom", "zoom=dense", "zoom=always"):
             cell.zoom = "always" if word == "zoom=always" else "dense"
+        elif word.startswith("model="):
+            cell.model = word.removeprefix("model=")
+            if cell.model not in MODEL_CELLS:
+                raise BatchError(f"{where}: model= needs one of {', '.join(MODEL_CELLS)}.")
         elif word in FEATURES:
             if word not in cell.features:
                 cell.features = tuple(f for f in FEATURES if f in (*cell.features, word))
@@ -180,6 +191,14 @@ def parse_line(line: str, number: int) -> Cell | None:
         raise BatchError(f"{where}: Hybrid has no {cell.suite} suite; use core, smoke or all.")
     if cell.features and category != "browser":
         raise BatchError(f"{where}: settle, note and planner are browser only for now.")
+    if cell.model:
+        if category == "hybrid":
+            raise BatchError(f"{where}: model= runs in the browser and on the desktop; Hybrid is Gemini only for now.")
+        if cell.profile == "full" and "full" in text.split():
+            raise BatchError(f"{where}: a model= cell runs thin with the model's own done; drop full.")
+        if cell.critic or cell.features or cell.zoom != "off" or cell.tools != "off":
+            raise BatchError(f"{where}: model= cells take no same-critic, tools, zoom, settle, note or planner.")
+        cell.profile = "thin"
     if cell.critic == "same" and cell.profile != "full":
         raise BatchError(f"{where}: same-critic picks the full harness's step critic; drop thin.")
     return cell
@@ -196,7 +215,7 @@ def parse_batch(text: str, max_total_usd: float = DEFAULT_MAX_TOTAL_USD) -> list
         raise BatchError(f"The batch has {len(cells)} cells; the most is {MAX_CELLS}.")
     seen: set[tuple] = set()
     for cell in cells:
-        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.critic, cell.tools, cell.zoom, cell.features, cell.season, cell.pr, cell.ref)
+        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.critic, cell.tools, cell.zoom, cell.features, cell.season, cell.pr, cell.ref, cell.model)
         if key in seen:
             raise BatchError(f"{cell.label} is in the batch twice.")
         seen.add(key)
@@ -250,6 +269,7 @@ def matrices(cells: list[Cell]) -> dict:
             "tools": cell.tools,
             "zoom": cell.zoom,
             "features": ",".join(cell.features),
+            "model": cell.model,
             "extra": cell.extra,
             "ref": cell.ref,
             "cap": cell.run_cap,

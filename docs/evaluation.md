@@ -13,8 +13,10 @@ that follows from it is in the [roadmap](roadmap.md).
 |---|---|---|---|---|---|---|
 | Gemini 3.5 Flash | 10/10 | 10/10 | 9/10 | 10/10 | 9/10 | 7/10 |
 
-Operon runs Gemini only for now. Earlier runs of other models stay in the dashboard's database
-and in [reports/](reports/), and come back when those models are onboarded again.
+Gemini is the default model. Claude Sonnet 5.5 and GPT run on the same cells next to it (queue a
+cell with `model=claude-sonnet-5-5` or `model=openai-computer-use`, KAN-168), thin with their own
+done; the dashboard shows them as their own rows. Earlier runs of other models stay in the
+dashboard's database and in [reports/](reports/).
 
 Earlier results, before the grid:
 

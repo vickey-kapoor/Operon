@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import logging
 
+from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.coordinator import PolicyCoordinator
@@ -115,7 +116,7 @@ def _loop_layers(*, config, services, memory_store, desktop: bool = False) -> di
     if profile == THIN:
         return {
             "policy_service": ThinPolicy(services.policy_delegate),
-            "verifier_service": OwnDoneVerifier(),
+            "verifier_service": OwnDoneVerifier(gave_up_prefix=GAVE_UP_PREFIX),
             "recovery_manager": ThinRecovery(),
             "harness_profile": profile,
         }

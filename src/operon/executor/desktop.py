@@ -319,7 +319,7 @@ _PYAUTOGUI_KEY_MAP: dict[str, str] = {
     "home": "home",
     "end": "end",
     "insert": "insert",
-    # Modifier aliases (Playwright-style names).
+    # Modifiers as Claude computer use names them (via Playwright-style names).
     "control": "ctrl",
     "meta": "win",
     "super": "win",

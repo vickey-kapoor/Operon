@@ -265,4 +265,6 @@ jobs:
       cells: ${{ needs.parse.outputs.cells }}
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}

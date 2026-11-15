@@ -1,7 +1,9 @@
 # Benchmarks and eval tools
 
-Benchmarks cost real credits: run only when asked. Every run uses Gemini (gemini-3.5-flash),
-Operon's only model for now; other models come back later.
+Benchmarks cost real credits: run only when asked. Runs use Gemini (gemini-3.5-flash) unless a
+cell names a model: `model=claude-sonnet-5-5` or `model=openai-computer-use` (KAN-168) runs that
+model on the same cell, thin with its own done, so the results sit next to Gemini's. One model per
+provider; Claude and GPT run on 2 nights a week to keep the extra cost to about $25-30 a month.
 
 ```powershell
 # Benchmarks are grouped by category (Browser, Desktop, Hybrid) x harness (thin, full): a 3x2 grid per

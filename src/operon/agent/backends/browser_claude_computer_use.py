@@ -1,0 +1,523 @@
+"""Browser backend for Claude's computer use toolset (``OPERON_BROWSER_BACKEND=claude_computer_use``)."""
+
+from __future__ import annotations
+
+import base64
+import io
+import json
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from operon.agent.actions.translation import (
+    CLAUDE_COMPUTER_CALLS,
+    build_policy_decision,
+    translate_claude_computer_calls,
+)
+from operon.agent.backends.base import AgentBackend
+from operon.agent.backends.fallback import BackendCompatibilityError
+from operon.clients.anthropic import AnthropicClientError
+from operon.clients.anthropic_computer_use import (
+    TOOLSET_NAME,
+    AnthropicComputerUseHttpClient,
+)
+from operon.models.capture import CaptureFrame
+from operon.models.logs import ModelDebugArtifacts
+from operon.models.perception import PageHint, ScreenPerception
+from operon.models.policy import ActionType, PolicyDecision
+from operon.models.state import AgentState
+from operon.models.usage import ModelUsage
+from operon.store.background_writer import bg_writer
+
+logger = logging.getLogger(__name__)
+
+_SYSTEM_PROMPT = "You are a browser automation agent. You see the browser through screenshots and act with the tools."
+
+# Screenshots are downscaled so their long edge fits this; Claude's coordinates are
+# scaled back up. Smaller images cost fewer tokens and the docs advise web
+# resolutions around 1280x800.
+_MAX_LONG_EDGE = 1280
+
+_NOT_EXECUTED = "Not executed: an earlier computer action in this turn failed."
+# Zoom turns answered within one step before the step goes on without them.
+_MAX_ZOOMS = 3
+_ZOOM_NOT_RUN = (
+    "Error: zoom was not run. Call zoom on its own, with no other actions in the turn, "
+    f"and at most {_MAX_ZOOMS} times in a row."
+)
+_CONTINUE = "Continue with the task using the tools. If it is already done, say so in one sentence."
+
+
+@dataclass(slots=True)
+class _ConversationState:
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    # tool_use blocks of the last assistant turn that still need a tool_result.
+    pending_calls: list[dict[str, Any]] = field(default_factory=list)
+    # Per runnable pending call, by id: the half-open range of batch actions it maps to.
+    call_spans: dict[str, tuple[int, int]] = field(default_factory=dict)
+    acknowledged_actions: int = 0
+    # Action types Claude's open calls translate to (a batch and its members). A
+    # deterministic rule can run something else in their place; Claude must hear
+    # that its calls did not run.
+    proposed_action_types: frozenset[ActionType] = frozenset()
+    # Open calls naming a tool the executor doesn't have: answered with an error, never run.
+    unknown_call_ids: frozenset[str] = frozenset()
+    # Set when a gate paused the run before the open calls ran: the next answer
+    # reports them as not executed instead of "OK".
+    not_executed_reason: str | None = None
+
+
+def encode_screenshot(path: Path, max_long_edge: int = _MAX_LONG_EDGE) -> tuple[str, str, int, int]:
+    """Return (base64 data, media type, width, height) of the image Claude is sent."""
+    raw = path.read_bytes()
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(raw)) as image:
+            width, height = image.size
+            ratio = min(1.0, max_long_edge / max(width, height))
+            if ratio < 1.0:
+                width, height = max(1, round(width * ratio)), max(1, round(height * ratio))
+                image = image.resize((width, height), Image.Resampling.LANCZOS)
+            buffer = io.BytesIO()
+            image.convert("RGB").save(buffer, format="JPEG", quality=85)
+        return base64.b64encode(buffer.getvalue()).decode("ascii"), "image/jpeg", width, height
+    except Exception:  # noqa: BLE001 - an unreadable image is sent as-is
+        logger.debug("Could not decode screenshot %s; sending raw bytes", path)
+        return base64.b64encode(raw).decode("ascii"), "image/png", 0, 0
+
+
+class BrowserClaudeComputerUseBackend(AgentBackend):
+    """Drives the browser with Claude's ``computer_toolset_20260801``.
+
+    One Messages API conversation per run: each step answers the previous turn's
+    tool calls with the new screenshot and asks for the next ones. API failures
+    and refusals surface as compatibility errors so the configured fallback
+    backend can take over.
+    """
+
+    system_prompt = _SYSTEM_PROMPT
+    # Custom tools answered alongside the computer toolset's members.
+    custom_tool_names: frozenset[str] = frozenset({"navigate"})
+    screen_name = "Browser"
+
+    def __init__(
+        self,
+        *,
+        client: AnthropicComputerUseHttpClient,
+        prompt_path: Path,
+        browser_runtime=None,
+    ) -> None:
+        self.client = client
+        self.prompt_path = prompt_path
+        self.browser_runtime = browser_runtime
+        self._prompt_template = prompt_path.read_text(encoding="utf-8")
+        self._cached_decision: PolicyDecision | None = None
+        self._last_frames: dict[str, CaptureFrame] = {}
+        self._last_debug_artifacts: ModelDebugArtifacts | None = None
+        self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
+        self._conversations: dict[str, _ConversationState] = {}
+
+    async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        self._last_frames[state.run_id] = screenshot
+        step_dir = Path(screenshot.artifact_path).resolve().parent
+        step_dir.mkdir(parents=True, exist_ok=True)
+        prompt_path = step_dir / "computer_use_prompt.txt"
+        raw_path = step_dir / "computer_use_raw.json"
+        parsed_path = step_dir / "computer_use_parsed.json"
+
+        conversation = self._conversations.setdefault(state.run_id, _ConversationState())
+        open_calls, acknowledged = list(conversation.pending_calls), conversation.acknowledged_actions
+        history_length = len(conversation.messages)
+        open_spans, open_unknown = dict(conversation.call_spans), conversation.unknown_call_ids
+        not_executed_reason = conversation.not_executed_reason
+        image, media_type, sent_width, sent_height = encode_screenshot(Path(screenshot.artifact_path))
+        user_message = await self._next_user_message(
+            conversation, state=state, image=image, media_type=media_type
+        )
+        bg_writer.enqueue(prompt_path, json.dumps(_without_images(user_message), indent=2))
+        conversation.messages.append(user_message)
+
+        usages: list[ModelUsage] = []
+        zooms = 0
+        while True:
+            try:
+                response = await self.client.generate_turn(system=self.system_prompt, messages=conversation.messages)
+            except AnthropicClientError as exc:
+                # Leave the conversation as it was so a later turn can answer the same calls.
+                del conversation.messages[history_length:]
+                conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
+                conversation.call_spans, conversation.unknown_call_ids = open_spans, open_unknown
+                conversation.not_executed_reason = not_executed_reason
+                raise BackendCompatibilityError(str(exc)) from exc
+            if isinstance(usage := self.client.latest_usage(), ModelUsage):
+                usages.append(usage)
+            bg_writer.enqueue(raw_path, json.dumps(response, indent=2))
+
+            if response.get("stop_reason") == "refusal":
+                del conversation.messages[history_length:]
+                conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
+                conversation.call_spans, conversation.unknown_call_ids = open_spans, open_unknown
+                conversation.not_executed_reason = not_executed_reason
+                details = response.get("stop_details") or {}
+                raise BackendCompatibilityError(f"Claude declined the turn ({details.get('category') or 'refusal'}).")
+
+            content = response["content"]
+            # Pass every block back unchanged, thinking blocks included.
+            conversation.messages.append({"role": "assistant", "content": content})
+            calls = [
+                block for block in content
+                if block.get("type") == "tool_use"
+                and (block.get("toolset_name") == TOOLSET_NAME or block.get("name") in self.custom_tool_names)
+            ]
+            # A turn of only zooms is answered here with crops of this screenshot, and
+            # Claude goes on in the same step; nothing on the screen changes meanwhile.
+            if not (
+                getattr(self.client, "zoom", False) is True
+                and calls
+                and all(call.get("name") == "zoom" for call in calls)
+                and zooms < _MAX_ZOOMS
+            ):
+                break
+            zooms += 1
+            conversation.messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        _zoom_result(call, Path(screenshot.artifact_path), sent_width, sent_height)
+                        for call in calls
+                    ],
+                }
+            )
+        conversation.pending_calls = calls
+        # A call to a tool that doesn't exist (Claude sometimes invents one) is
+        # answered with an error next turn; the rest of its batch still runs.
+        runnable = [call for call in calls if call.get("name") in CLAUDE_COMPUTER_CALLS]
+        conversation.unknown_call_ids = frozenset(call["id"] for call in calls if call not in runnable)
+        conversation.call_spans = {}
+        text = " ".join(
+            block["text"].strip() for block in content if block.get("type") == "text" and block.get("text", "").strip()
+        )
+
+        perception = ScreenPerception(
+            summary=text or self._describe(calls) or f"{self.screen_name} screen observed",
+            page_hint=PageHint.UNKNOWN,
+            visible_elements=[],
+            capture_artifact_path=screenshot.artifact_path,
+            confidence=0.5,
+            elements_reported=False,
+        )
+        if runnable:
+            scale_x = screenshot.width / sent_width if sent_width else 1.0
+            scale_y = screenshot.height / sent_height if sent_height else 1.0
+            action, spans = translate_claude_computer_calls(
+                [{"name": call.get("name"), "input": call.get("input") or {}} for call in runnable],
+                scale_x=scale_x,
+                scale_y=scale_y,
+                screen_width=screenshot.width,
+                screen_height=screenshot.height,
+            )
+            conversation.call_spans = {call["id"]: span for call, span in zip(runnable, spans, strict=True)}
+            decision_payload = {
+                "action": action,
+                "rationale": text or "computer_use",
+                "confidence": 0.7,
+                "active_subgoal": self._describe(calls),
+            }
+        elif not calls and self._has_acted(state):
+            # A reply without tool calls after acting is Claude saying the task is
+            # done. Surface it as STOP so the verifier judges the claim.
+            decision_payload = {
+                "action": {"action_type": ActionType.STOP.value},
+                "rationale": text or "Task complete.",
+                "confidence": 0.7,
+                "active_subgoal": "complete task",
+            }
+        else:
+            decision_payload = {
+                "action": {"action_type": "wait", "wait_ms": 1000},
+                "rationale": text or "No action proposed.",
+                "confidence": 0.4,
+                "active_subgoal": f"gather more {self.screen_name.lower()} context",
+            }
+        self._cached_decision = build_policy_decision(decision_payload)
+        proposed = self._cached_decision.action
+        conversation.proposed_action_types = (
+            frozenset({proposed.action_type, *(child.action_type for child in proposed.actions or [])})
+            if runnable
+            else frozenset()
+        )
+        bg_writer.enqueue(
+            parsed_path,
+            json.dumps(
+                {
+                    "perception": perception.model_dump(mode="json"),
+                    "decision": self._cached_decision.model_dump(mode="json"),
+                }
+            ),
+        )
+        self._last_debug_artifacts = ModelDebugArtifacts(
+            prompt_artifact_path=str(prompt_path),
+            raw_response_artifact_path=str(raw_path),
+            parsed_artifact_path=str(parsed_path),
+            usage_artifact_path=str(step_dir / "computer_use_usage.json"),
+            usage=_record_usage(usages, step_dir / "computer_use_usage.json"),
+        )
+        return perception
+
+    async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
+        if self._cached_decision is None:
+            # perceive() was skipped or a second decision is asked for this step:
+            # take a fresh turn on the current screenshot.
+            frame = self._last_frames.get(state.run_id)
+            if frame is None or not perception.capture_artifact_path:
+                raise RuntimeError("No cached computer-use decision available")
+            await self.perceive(frame.model_copy(update={"artifact_path": perception.capture_artifact_path}), state)
+        decision = self._cached_decision
+        self._cached_decision = None
+        return decision
+
+    def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
+        return self._last_debug_artifacts
+
+    def supports_resampling(self, run_id: str = "") -> bool:
+        # Each decision is a turn in one stateful conversation; there is no second sample.
+        return False
+
+    def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
+        """Reset hints to a known state. Test use only."""
+        self._advisory_hints = {"": [(h, "") for h in hints if h]}
+
+    def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
+        self._advisory_hints.setdefault(run_id, []).extend((h, source) for h in hints if h)
+
+    def clear_advisory_hints(self, run_id: str = "") -> None:
+        self._advisory_hints.pop(run_id, None)
+
+    def note_not_executed(self, run_id: str, reason: str) -> None:
+        conversation = self._conversations.get(run_id)
+        if conversation is not None and conversation.pending_calls:
+            conversation.not_executed_reason = reason.strip()[:300] or "blocked by a gate"
+
+    async def _next_user_message(
+        self,
+        conversation: _ConversationState,
+        *,
+        state: AgentState,
+        image: str,
+        media_type: str,
+    ) -> dict[str, Any]:
+        image_block = {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image}}
+        hints = self._take_hints(state.run_id)
+        if not conversation.messages:
+            prompt = self._prompt_template.format(
+                intent=state.intent,
+                current_subgoal=state.current_subgoal or "not set",
+                step_count=state.step_count,
+                previous_summary=state.observation_history[-1].summary if state.observation_history else "none",
+                retry_counts=json.dumps(state.retry_counts, sort_keys=True),
+                advisory_hints="\n".join(f"- {h}" for h in hints) if hints else "none",
+            )
+            return {"role": "user", "content": [{"type": "text", "text": prompt}, image_block]}
+
+        if not conversation.pending_calls:
+            # The last turn had no tool call: show the current screen and nudge on.
+            text = _CONTINUE + _hint_text(hints)
+            return {"role": "user", "content": [{"type": "text", "text": text}, image_block]}
+
+        # Answer every open call. A mid-step re-look (an execution or adaptation
+        # retry) arrives before the action is recorded, so it reports success
+        # with the current screen.
+        error = None
+        # Index of the batch action a failed batch stopped on, when the calls can be
+        # matched to the batch's actions: then each call is answered for itself.
+        failed_at: int | None = None
+        gated = conversation.not_executed_reason is not None
+        if gated:
+            # A gate paused the run before these calls ran. Say so, so Claude proposes
+            # the action again once the human has looked; an approval then lets it run.
+            error = (
+                f"Not executed: the run paused for a human before this action ran "
+                f"({conversation.not_executed_reason}). Check the screen and propose the next action again."
+            )
+            conversation.not_executed_reason = None
+        elif len(state.action_history) > conversation.acknowledged_actions:
+            executed = state.action_history[-1]
+            ran = executed.action.action_type
+            if conversation.proposed_action_types and ran not in conversation.proposed_action_types:
+                detail = f" ({executed.detail})" if executed.detail else ""
+                error = f"Not executed: the agent ran {ran.value}{detail} instead. Check the screen before going on."
+            elif not executed.success:
+                error = executed.detail or "The action failed."
+                if executed.batch_failed_index is not None and conversation.call_spans:
+                    failed_at = executed.batch_failed_index
+        conversation.acknowledged_actions = len(state.action_history)
+
+        results: list[dict[str, Any]] = []
+        runnable_ids = [call["id"] for call in conversation.pending_calls if call["id"] not in conversation.unknown_call_ids]
+        for call in conversation.pending_calls:
+            result: dict[str, Any] = {"type": "tool_result", "tool_use_id": call["id"]}
+            if call.get("toolset_name") == TOOLSET_NAME:
+                result["toolset_name"] = TOOLSET_NAME
+            if call["id"] in conversation.unknown_call_ids:
+                result["is_error"] = True
+                if call.get("name") == "zoom" and getattr(self.client, "zoom", False) is True:
+                    result["content"] = _ZOOM_NOT_RUN
+                else:
+                    result["content"] = f"Error: there is no {call.get('name')} tool, so this call was not run."
+            elif failed_at is not None:
+                # Answer each call by where the batch stopped: calls whose actions all
+                # ran are OK, the call on the failing action gets the error, and the
+                # rest did not run. A wrong "did not run" makes Claude repeat a step.
+                start, end = conversation.call_spans[call["id"]]
+                if end <= failed_at:
+                    result["content"] = [{"type": "text", "text": "OK"}]
+                elif start <= failed_at:
+                    result["is_error"] = True
+                    result["content"] = f"Error: {error}"
+                else:
+                    result["is_error"] = True
+                    result["content"] = _NOT_EXECUTED
+            elif error is not None:
+                # The calls cannot be matched to the batch's actions: report the
+                # failure on the first call and mark the rest as skipped.
+                result["is_error"] = True
+                result["content"] = f"Error: {error}" if gated or call["id"] == runnable_ids[0] else _NOT_EXECUTED
+            elif call.get("name") == "screenshot":
+                result["content"] = [image_block]
+            else:
+                result["content"] = [{"type": "text", "text": "OK"}]
+            results.append(result)
+        conversation.pending_calls = []
+        conversation.unknown_call_ids = frozenset()
+        conversation.call_spans = {}
+
+        extra: list[dict[str, Any]] = []
+        answered_with_image = error is None and any(r.get("content") == [image_block] for r in results)
+        if not answered_with_image:
+            if error is None and not results[-1].get("is_error"):
+                results[-1]["content"] = [*results[-1]["content"], image_block]
+            else:
+                extra.append(image_block)
+        current_url = await self._current_url()
+        note = (f"Current URL: {current_url}" if current_url else "") + _hint_text(hints)
+        if note.strip():
+            extra.append({"type": "text", "text": note.strip()})
+        return {"role": "user", "content": [*results, *extra]}
+
+    async def _current_url(self) -> str | None:
+        if self.browser_runtime is not None and hasattr(self.browser_runtime, "get_current_url"):
+            try:
+                return await self.browser_runtime.get_current_url()
+            except Exception:  # noqa: BLE001 - the URL is a courtesy, never a blocker
+                return None
+        return None
+
+    def _take_hints(self, run_id: str) -> list[str]:
+        hints = self._advisory_hints.pop(run_id, None) or self._advisory_hints.pop("", None) or []
+        return [h for h, _ in hints]
+
+    @staticmethod
+    def _has_acted(state: AgentState) -> bool:
+        # A step reported as failed still counts: it may have done its job (a
+        # submit that navigated away mid-batch), and Claude, who sees the screen,
+        # is the one saying the task is done. The verifier judges that claim;
+        # treating it as a wait instead loops on the "say so" nudge until max_steps.
+        return any(
+            executed.action.action_type not in {ActionType.WAIT, ActionType.STOP, ActionType.WAIT_FOR_USER}
+            for executed in state.action_history
+        )
+
+    @staticmethod
+    def _describe(calls: list[dict[str, Any]]) -> str:
+        """Name the step by the call and its arguments, so two different steps on
+        the same page never share a subgoal (see BrowserComputerUseBackend)."""
+        described = []
+        for call in calls:
+            args = call.get("input") or {}
+            details = " ".join(f"{key}={args[key]}" for key in sorted(args))
+            described.append(f"{call.get('name', 'browser step')} {details}".strip())
+        return "; ".join(described)
+
+
+def _zoom_result(call: dict[str, Any], screenshot: Path, sent_width: int, sent_height: int) -> dict[str, Any]:
+    """Answer a zoom call with the asked region of the full-resolution screenshot.
+
+    ``region`` is ``[x0, y0, x1, y1]`` in the pixel space of the screenshots Claude is
+    sent; the crop comes from the original capture, so it holds detail the downscaled
+    screenshot lost, and is enlarged to fit ``_MAX_LONG_EDGE``."""
+    result: dict[str, Any] = {"type": "tool_result", "tool_use_id": call["id"], "toolset_name": TOOLSET_NAME}
+    region = (call.get("input") or {}).get("region")
+    try:
+        from PIL import Image
+
+        x0, y0, x1, y1 = (float(value) for value in region)
+        with Image.open(screenshot) as image:
+            width, height = image.size
+            scale_x = width / sent_width if sent_width else 1.0
+            scale_y = height / sent_height if sent_height else 1.0
+            box = (
+                max(0, round(min(x0, x1) * scale_x)),
+                max(0, round(min(y0, y1) * scale_y)),
+                min(width, round(max(x0, x1) * scale_x)),
+                min(height, round(max(y0, y1) * scale_y)),
+            )
+            if box[2] - box[0] < 2 or box[3] - box[1] < 2:
+                raise ValueError("empty region")
+            crop = image.crop(box).convert("RGB")
+        ratio = _MAX_LONG_EDGE / max(crop.size)
+        crop = crop.resize(
+            (max(1, round(crop.width * ratio)), max(1, round(crop.height * ratio))), Image.Resampling.LANCZOS
+        )
+        buffer = io.BytesIO()
+        crop.save(buffer, format="JPEG", quality=85)
+    except Exception:  # noqa: BLE001 - a bad region is Claude's to fix, never a crash
+        result["is_error"] = True
+        result["content"] = "Error: zoom needs region [x0, y0, x1, y1] inside the screenshot."
+        return result
+    data = base64.b64encode(buffer.getvalue()).decode("ascii")
+    result["content"] = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}}]
+    return result
+
+
+def _record_usage(usages: list[ModelUsage], path: Path) -> ModelUsage | None:
+    """The step's usage: one request's, or the sum when zoom turns added more."""
+    if not usages:
+        return None
+    if len(usages) == 1:
+        total = usages[0]
+    else:
+        fields = (
+            "input_tokens", "output_tokens", "total_tokens", "cache_creation_input_tokens",
+            "cache_read_input_tokens", "thoughts_tokens", "input_cost_usd", "output_cost_usd",
+            "estimated_cost_usd",
+        )
+        summed = {}
+        for name in fields:
+            values = [getattr(usage, name) for usage in usages if getattr(usage, name) is not None]
+            summed[name] = sum(values) if values else None
+        total = usages[-1].model_copy(update=summed)
+    bg_writer.enqueue(path, total.model_dump_json(indent=2))
+    return total
+
+
+def _hint_text(hints: list[str]) -> str:
+    if not hints:
+        return ""
+    return "\nAdvisory hints:\n" + "\n".join(f"- {h}" for h in hints)
+
+
+def _without_images(message: dict[str, Any]) -> dict[str, Any]:
+    """The user turn as written to disk, with image data elided."""
+
+    def strip(block: Any) -> Any:
+        if isinstance(block, dict):
+            if block.get("type") == "image":
+                return {"type": "image", "source": "<screenshot>"}
+            return {key: strip(value) for key, value in block.items()}
+        if isinstance(block, list):
+            return [strip(item) for item in block]
+        return block
+
+    return strip(message)

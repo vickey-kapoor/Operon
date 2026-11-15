@@ -24,6 +24,9 @@ from pathlib import Path
 from typing import Any
 
 SUBSET_FILE = Path(__file__).with_name("osworld_subset.json")
+# OSWorld's own runner waits 20 s before evaluating (lib_run_single.py): Chrome saves preference
+# changes to disk with a delay, and file-based checkers read the stale value if we score at once.
+EVALUATE_SETTLE_S = 20.0
 RUN_ID_RE = re.compile(r"Run ([0-9a-f]{8}-[0-9a-f-]{27}|[0-9a-f]{8,}) started")
 
 
@@ -97,7 +100,7 @@ def wait_for_desktop(url: str, *, min_bytes: int = 200_000, timeout_s: float = 1
 
 
 def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
-            python: str | None = None, runs_root: str | None = None,
+            python: str | None = None, runs_root: str | None = None, settle_s: float = EVALUATE_SETTLE_S,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
     started = time.monotonic()
     wall_started = time.time()
@@ -115,6 +118,7 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
         run_id = parse_run_id("".join(partial))
         note = f"operon timed out after {timeout_s:.0f}s"
     run_id = run_id or find_run_since(runs_root, wall_started)
+    time.sleep(settle_s)  # let the apps flush their state to disk before the checker reads it
     score = float(env.evaluate())  # OSWorld's evaluator decides
     return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0,
             "run_id": run_id, "cost_usd": round(run_cost(run_id, runs_root), 4), "seconds": round(time.monotonic() - started),

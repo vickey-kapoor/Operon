@@ -14,7 +14,7 @@ cost cap::
     hybrid full ref=main
 
 Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
-``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``
+``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``, ``settle|note|planner`` (KAN-115: perception experiments, browser only)
 (KAN-82: OPERON_ZOOM dense or always), ``season=<n>``, ``pr=<number>`` (that PR's head) or
 ``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
 cell's cost cap, default 3, repeats included). ``azure`` and ``gemini`` are accepted and change nothing: batch
@@ -52,6 +52,9 @@ _SEASON = re.compile(r"^[1-9][0-9]{0,2}$")
 _PR = re.compile(r"^[1-9][0-9]{0,6}$")
 # Branch, tag or commit: git ref characters only, no leading dash (it would read as an option).
 _REF = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$")
+# Per-cell switches for the perception experiments (KAN-115): word -> the env flag it turns on.
+FEATURES = {"settle": "OPERON_SETTLE_DETECT", "note": "OPERON_CHANGE_NOTE", "planner": "OPERON_PLANNER"}
+
 _CAP = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,2})?$")
 
 
@@ -68,6 +71,7 @@ class Cell:
     critic: str = ""
     tools: str = "off"
     zoom: str = "off"
+    features: tuple[str, ...] = ()  # KAN-115: settle, note, planner (the perception flags, off by default)
     season: str = ""
     pr: str = ""
     ref: str = ""
@@ -105,6 +109,8 @@ class Cell:
             label += " · tools"
         if self.zoom != "off":
             label += f" · zoom {self.zoom}"
+        if self.features:
+            label += " · " + "+".join(self.features)
         if self.pr:
             label += f" · PR #{self.pr}"
         elif self.ref:
@@ -141,6 +147,9 @@ def parse_line(line: str, number: int) -> Cell | None:
             cell.tools = "all"
         elif word in ("zoom", "zoom=dense", "zoom=always"):
             cell.zoom = "always" if word == "zoom=always" else "dense"
+        elif word in FEATURES:
+            if word not in cell.features:
+                cell.features = tuple(f for f in FEATURES if f in (*cell.features, word))
         elif word.startswith("season="):
             cell.season = word.removeprefix("season=")
             if not _SEASON.match(cell.season):
@@ -169,6 +178,8 @@ def parse_line(line: str, number: int) -> Cell | None:
         raise BatchError(f"{where}: the {cell.suite} suite is browser only.")
     if category == "hybrid" and cell.suite not in HYBRID_SUITES:
         raise BatchError(f"{where}: Hybrid has no {cell.suite} suite; use core, smoke or all.")
+    if cell.features and category != "browser":
+        raise BatchError(f"{where}: settle, note and planner are browser only for now.")
     if cell.critic == "same" and cell.profile != "full":
         raise BatchError(f"{where}: same-critic picks the full harness's step critic; drop thin.")
     return cell
@@ -185,7 +196,7 @@ def parse_batch(text: str, max_total_usd: float = DEFAULT_MAX_TOTAL_USD) -> list
         raise BatchError(f"The batch has {len(cells)} cells; the most is {MAX_CELLS}.")
     seen: set[tuple] = set()
     for cell in cells:
-        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.critic, cell.tools, cell.zoom, cell.season, cell.pr, cell.ref)
+        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.critic, cell.tools, cell.zoom, cell.features, cell.season, cell.pr, cell.ref)
         if key in seen:
             raise BatchError(f"{cell.label} is in the batch twice.")
         seen.add(key)
@@ -238,6 +249,7 @@ def matrices(cells: list[Cell]) -> dict:
             "critic": cell.critic,
             "tools": cell.tools,
             "zoom": cell.zoom,
+            "features": ",".join(cell.features),
             "extra": cell.extra,
             "ref": cell.ref,
             "cap": cell.run_cap,

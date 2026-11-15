@@ -113,7 +113,7 @@ def test_matrices_split_browser_from_the_vm_and_give_unique_artifact_names() -> 
     (browser,) = out["browser"]["include"]
     assert browser == {
         "label": "Gemini · Browser · Thin · x2", "category": "browser", "profile": "thin", "suite": "core",
-        "critic": "", "tools": "off", "zoom": "off", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
+        "critic": "", "tools": "off", "zoom": "off", "features": "", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
     }
     desktop = out["desktop"]["include"]
     assert [(d["category"], d["cap"], d["suffix"]) for d in desktop] == [("desktop", "1.5", "-cell1"), ("hybrid", "3", "-cell3")]
@@ -156,3 +156,15 @@ def test_cap_is_the_whole_cell_limit_with_repeats(line: str, run_cap: str) -> No
     cell = parse_line(line, 1)
     assert cell.run_cap == run_cap
     assert float(run_cap) * cell.repeat <= cell.cap
+
+
+def test_feature_words_switch_on_perception_flags_per_cell() -> None:
+    cells = parse_batch("browser thin dynamic\nbrowser thin dynamic note settle\nbrowser thin dynamic planner")
+    assert [c.features for c in cells] == [(), ("settle", "note"), ("planner",)]
+    assert cells[1].label == "Gemini · Browser · Thin · dynamic · settle+note"
+    assert [e["features"] for e in matrices(cells)["browser"]["include"]] == ["", "settle,note", "planner"]
+
+
+def test_feature_words_are_browser_only() -> None:
+    with pytest.raises(BatchError, match="browser only"):
+        parse_batch("desktop thin settle")

@@ -1,0 +1,128 @@
+# OSWorld-Verified subset (KAN-169): Operon on 25 fixed OSWorld tasks, scored by OSWorld itself.
+#
+# Manual only (Actions > OSWorld benchmark > Run workflow). It spends model credits, so nothing
+# starts it for you: you pick how many tasks and the cost cap. Steps: start the Linux VM
+# operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
+# docs/osworld-runner.md), upload the report, deallocate the VM.
+#
+# Needs repo secret GEMINI_API_KEY and the Azure OIDC variables the desktop bench already uses.
+# Cost: about $0.06 a task (the 5-task pilot was $0.31). The cap stops starting tasks past it.
+name: OSWorld benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Run the first N of the 25 tasks (5 = the pilot, 25 = all). 0 = all"
+        default: "5"
+      only:
+        description: "Run only the task whose id starts with this (optional, overrides limit)"
+        default: ""
+      max_cost_usd:
+        description: "Stop starting tasks once this much is spent (full 25: about $3-6, use 8)"
+        default: "2"
+      max_steps:
+        description: "Step cap per task"
+        default: "50"
+
+permissions:
+  contents: read
+
+# One run on the VM at a time: a finished run deallocates it.
+concurrency:
+  group: azure-osworld-vm
+  cancel-in-progress: false
+
+jobs:
+  start-vm:
+    name: Start the Azure VM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
+      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-linux' }}
+    steps:
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+
+  bench:
+    name: OSWorld subset
+    needs: start-vm
+    if: ${{ !cancelled() && needs.start-vm.result == 'success' }}
+    # The runner on operon-linux (docs/osworld-runner.md). It comes online a minute or two after the VM boots.
+    runs-on: [self-hosted, linux, operon-osworld]
+    timeout-minutes: 240
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPERON_TEST_SAFE_MODE: "false"
+      LIMIT: ${{ inputs.limit }}
+      ONLY: ${{ inputs.only }}
+      MAX_COST: ${{ inputs.max_cost_usd }}
+      MAX_STEPS: ${{ inputs.max_steps }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the inputs
+        run: |
+          case "$LIMIT$MAX_STEPS" in (*[!0-9]*) echo "::error::limit and max_steps must be whole numbers"; exit 1;; esac
+          case "$MAX_COST" in (*[!0-9.]*|"") echo "::error::max_cost_usd must be a number"; exit 1;; esac
+          case "$ONLY" in (*[!0-9a-fA-F-]*) echo "::error::only must be the start of a task id"; exit 1;; esac
+      - name: Set up the VM (idempotent)
+        run: scripts/osworld-vm/setup.sh "$GITHUB_WORKSPACE"
+      - name: Run the tasks
+        run: |
+          ln -sfn "$HOME/osworld-data" docker_vm_data   # OSWorld caches its image under ./docker_vm_data
+          args=(--osworld-repo "$HOME/OSWorld" --max-cost-usd "$MAX_COST" --max-steps "$MAX_STEPS"
+                --operon-python "$HOME/operon-venv/bin/python" --out "$PWD/.var/bench")
+          if [ -n "$ONLY" ]; then args+=(--only "$ONLY"); elif [ "$LIMIT" != "0" ]; then args+=(--limit "$LIMIT"); fi
+          OPERON_DESKTOP_PLATFORM=linux "$HOME/osw-venv/bin/python" -m evals.osworld "${args[@]}" | tee osworld.log
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### OSWorld-Verified subset"
+            echo
+            echo '```'
+            tail -n 25 osworld.log 2>/dev/null || echo "no log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: osworld-report
+          path: |
+            osworld.log
+            .var/bench/osworld-*.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Close any task machine left running
+        if: always()
+        run: docker ps -q --filter "ancestor=happysixd/osworld-docker" | xargs -r docker rm -f
+
+  stop-vm:
+    name: Deallocate the Azure VM
+    needs: [start-vm, bench]
+    if: ${{ always() && needs.start-vm.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
+      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-linux' }}
+    steps:
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # Deallocated, not just stopped: a stopped VM still bills for compute.
+      - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"

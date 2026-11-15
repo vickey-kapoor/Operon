@@ -157,6 +157,9 @@ class _Interrupts:
             raise KeyboardInterrupt
 
 
+_MAX_AUTO_CONFIRMS = 10  # per run, so a model that keeps asking cannot loop forever
+
+
 async def drive(
     client,
     payload: dict[str, Any],
@@ -176,6 +179,7 @@ async def drive(
     run_id = status["run_id"]
     out(f"Run {run_id} started: {status['environment']}, {status['permission_mode']} mode. Ctrl+C to take over.")
     printed = 0
+    auto_confirmed = 0
     while True:
         for step in status.get("recent_steps", []):
             if step["step"] > printed:
@@ -189,6 +193,14 @@ async def drive(
             status = await client.take_over(run_id)
             continue
         waiting = status.get("waiting")
+        if (waiting is not None and waiting["kind"] == "needs_you" and auto_confirmed < _MAX_AUTO_CONFIRMS
+                and get_settings().auto_confirm):
+            # OPERON_AUTO_CONFIRM (benchmark runs, nobody can click Resume): the model's own
+            # "require confirmation" pause is answered yes. Gates ("approval") are never answered here.
+            auto_confirmed += 1
+            out(f"Auto-confirming (OPERON_AUTO_CONFIRM): {waiting['reason']}")
+            status = await client.approve(run_id)
+            continue
         if waiting is not None:
             if not interactive:
                 if leave_paused:

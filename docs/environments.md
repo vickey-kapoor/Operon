@@ -32,6 +32,7 @@ desktop loop from being built, with the missing pieces in the error.
 | `live` | built | This machine's own screen, mouse and keyboard (today's behavior and the default). `OPERON_DESKTOP_PLATFORM=linux` still switches it to an X11 Linux desktop such as the Azure Linux computer. |
 | `windows-sandbox` | built, being tried on a real PC | A clean, throwaway Windows on a Windows 10/11 Pro PC, wiped on close (below) |
 | `linux-container` | built, being tried on a real PC | A Linux (XFCE) desktop in a Docker container on this machine (below) |
+| `osworld` | built (KAN-169) | An OSWorld task VM reached at `OPERON_OSWORLD_URL`; used by `python -m evals.osworld` and the "OSWorld benchmark" workflow, see `docs/osworld-runner.md` (25 fixed OSWorld-Verified tasks, scored by OSWorld). Vision-only: screenshots in, pyautogui input out |
 | Azure VM | planned | The Azure VMs Operon already uses (`operon cloud`, the Desktop bench runner) |
 | dockur/windows | planned | Windows inside Docker on a Linux host with KVM |
 | Windows 365 for Agents | planned | Microsoft's Cloud PCs for agents |

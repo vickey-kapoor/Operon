@@ -261,3 +261,48 @@ def test_run_output_keeps_library_warnings_out(monkeypatch) -> None:
 
     cli._console_logging("serve")
     assert root.handlers == []
+
+
+class _FakeClient:
+    """A run that pauses on the model's own confirmation (needs_you), then finishes."""
+
+    def __init__(self, kind: str = "needs_you") -> None:
+        self.kind, self.approved = kind, 0
+
+    async def start(self, payload):
+        return {"run_id": "r1", "environment": "desktop", "permission_mode": "auto", "recent_steps": [],
+                "done": False, "in_takeover": False,
+                "waiting": {"kind": self.kind, "gate": None, "reason": "Confirm the change"}}
+
+    async def approve(self, run_id):
+        self.approved += 1
+        return {"run_id": run_id, "recent_steps": [], "done": True, "in_takeover": False, "waiting": None}
+
+    async def stop(self, run_id):
+        return {"run_id": run_id, "recent_steps": [], "done": True, "in_takeover": False, "waiting": None}
+
+    async def report(self, run_id):
+        return {"status": "succeeded"}
+
+    def format_report(self, report):
+        return "report"
+
+
+async def test_auto_confirm_answers_the_models_pause_when_on(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_AUTO_CONFIRM", "on")
+    client, lines = _FakeClient(), []
+    code, _ = await cli.drive(client, {"intent": "x"}, ask=lambda _: "n", out=lines.append,
+                              interactive=False, poll_s=0.01)
+    assert code == 0 and client.approved == 1
+    assert any("Auto-confirming" in line for line in lines)
+
+
+async def test_auto_confirm_is_off_by_default_and_never_answers_gates(monkeypatch) -> None:
+    monkeypatch.delenv("OPERON_AUTO_CONFIRM", raising=False)
+    off = _FakeClient()
+    await cli.drive(off, {"intent": "x"}, ask=lambda _: "n", out=lambda _: None, interactive=False, poll_s=0.01)
+    assert off.approved == 0  # no terminal: stopped, not approved
+    monkeypatch.setenv("OPERON_AUTO_CONFIRM", "on")
+    gate = _FakeClient(kind="approval")
+    await cli.drive(gate, {"intent": "x"}, ask=lambda _: "n", out=lambda _: None, interactive=False, poll_s=0.01)
+    assert gate.approved == 0

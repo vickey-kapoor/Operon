@@ -36,6 +36,8 @@ browser: http://127.0.0.1:8090/app#key=...
 | `operon cloud run "task"` | Starts the VM, runs one desktop task (link printed so you can watch), then deallocates. Add `--browser` to use the VM's browser instead. |
 | `operon cloud stop` | Deallocates the VM now. |
 
+`operon cloud open --update` (also on `run`) first brings Operon on the VM to the latest main (`git pull`, reinstall, restart; it also creates the empty `~/.Xauthority` that older VMs lack). Use it after Operon changes, instead of recreating the VM.
+
 All of them accept `--keep` to leave the VM running. Settings: `OPERON_CLOUD_*` in `.env.example`.
 
 ## The Linux desktop

@@ -26,6 +26,11 @@ from operon.models.usage import ModelUsage
 logger = logging.getLogger(__name__)
 
 MAX_STEPS = 8
+
+# The run's start waits on the plan, so it gets a short overall deadline (seconds) and
+# its cost is saved under this name where the run-cost accounting reads it.
+PLANNER_DEADLINE_S = 10.0
+PLANNER_USAGE_FILE = "planner_usage.json"
 MAX_STEP_CHARS = 160
 
 PLAN_PROMPT = """You plan tasks for a computer-use agent that sees the screen and acts with

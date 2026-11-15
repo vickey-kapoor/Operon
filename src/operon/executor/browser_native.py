@@ -17,7 +17,8 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
-from operon.agent.perception.settle import frame_signature, settle_after_action
+from operon.agent.perception.change_note import ChangeNoteBuffer
+from operon.agent.perception.settle import frame_signature
 from operon.browser.builtin import (
     CDP_PORT,
     builtin_browser_enabled,
@@ -92,6 +93,7 @@ class NativeBrowserExecutor(Executor):
             record_video = True
         self._record_video = record_video
         self._post_action_delay = post_action_delay
+        self._change_notes = ChangeNoteBuffer()
         self._current_run_id: str | None = None
         # Set by the loop for one step: called before each child of a batch runs,
         # returns why that child must not run (e.g. the page left the allowed
@@ -601,7 +603,11 @@ class NativeBrowserExecutor(Executor):
 
     async def settle_now(self, fallback_delay: float) -> None:
         """Wait for the page to settle (OPERON_SETTLE_DETECT), else sleep ``fallback_delay``."""
-        await settle_after_action(self._grab_signature, fallback_delay)
+        await self._change_notes.settle(self._grab_signature, fallback_delay)
+
+    def pop_change_note(self) -> str | None:
+        """The change notes collected since the last call (OPERON_CHANGE_NOTE), or None."""
+        return self._change_notes.pop()
 
     async def _grab_signature(self) -> bytes | None:
         """One small grayscale frame of the page, for settle detection."""

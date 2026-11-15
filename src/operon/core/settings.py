@@ -122,6 +122,8 @@ class Settings(BaseModel):
     # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
     settle_detect: bool = _env_field("OPERON_SETTLE_DETECT", False)
     settle_max_s: float = _env_field("OPERON_SETTLE_MAX_S", 3.0)
+    # One line of text about what flashed past while the screen settled (KAN-111).
+    change_note: bool = _env_field("OPERON_CHANGE_NOTE", False)
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)
     trust_deny: tuple[str, ...] = _env_field("OPERON_TRUST_DENY", ())
     # Empty: the gate's built-in confirm list.
@@ -313,6 +315,7 @@ class _Parser:
             bestofn_confidence=self.number("OPERON_BESTOFN_CONFIDENCE", "1.0", float, fatal=False),
             settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),
+            change_note=self.flag("OPERON_CHANGE_NOTE", "off"),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),
             trust_confirm=_split(self.text("OPERON_TRUST_CONFIRM"), lower=True),

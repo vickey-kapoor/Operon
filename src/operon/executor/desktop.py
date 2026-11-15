@@ -19,7 +19,8 @@ import mss.tools
 import pyperclip
 
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
-from operon.agent.perception.settle import settle_after_action, signature_from_rgb
+from operon.agent.perception.change_note import ChangeNoteBuffer
+from operon.agent.perception.settle import signature_from_rgb
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
 
@@ -360,6 +361,7 @@ class DesktopExecutor(Executor):
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self._type_interval = type_interval
         self._post_action_delay = post_action_delay
+        self._change_notes = ChangeNoteBuffer()
         self._post_launch_delay = post_launch_delay
         self._current_run_id: str | None = None
         self._launched_processes: dict[str, list[subprocess.Popen]] = {}
@@ -626,7 +628,11 @@ class DesktopExecutor(Executor):
 
     async def settle_now(self, fallback_delay: float) -> None:
         """Wait for the screen to settle (OPERON_SETTLE_DETECT), else sleep ``fallback_delay``."""
-        await settle_after_action(self._grab_signature, fallback_delay)
+        await self._change_notes.settle(self._grab_signature, fallback_delay)
+
+    def pop_change_note(self) -> str | None:
+        """The change notes collected since the last call (OPERON_CHANGE_NOTE), or None."""
+        return self._change_notes.pop()
 
     async def _grab_signature(self) -> bytes | None:
         """One small grayscale frame of the screen, for settle detection."""

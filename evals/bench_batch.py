@@ -13,7 +13,7 @@ cost cap::
     desktop thin season=2 pr=242 cap=1.5
     hybrid full ref=main
 
-Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long``,
+Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
 ``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``
 (KAN-82: OPERON_ZOOM dense or always), ``season=<n>``, ``pr=<number>`` (that PR's head) or
 ``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
@@ -41,8 +41,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 CATEGORIES = ("browser", "desktop", "hybrid")
-SUITES = {"core": "core", "smoke": "smoke", "all": "full", "safety": "safety", "apps": "apps", "hard": "hard", "long": "long"}
-BROWSER_ONLY_SUITES = {"apps", "hard"}
+SUITES = {"core": "core", "smoke": "smoke", "all": "full", "safety": "safety", "apps": "apps", "hard": "hard", "long": "long", "dynamic": "dynamic"}
+BROWSER_ONLY_SUITES = {"apps", "hard", "dynamic"}
 HYBRID_SUITES = {"core", "smoke", "full"}
 DEFAULT_CAP_USD = 3.0
 DEFAULT_MAX_TOTAL_USD = 10.0

@@ -1,7 +1,7 @@
 """Plan the nightly paid run (KAN-165): which queued cells run tonight, within the budget.
 
 Paid benchmark runs happen once a day, at 2 AM Chicago, in one scheduled run of
-``.github/workflows/nightly.yml``. Threads queue what they need by adding a line to
+``.github/workflows/benchmark.yml`` (its schedule). Threads queue what they need by adding a line to
 ``evals/nightly-queue.txt`` on main (any PR; it auto-merges once checks pass)::
 
     2026-11-14 desktop thin season=2 zoom=always cap=2.5   # KAN-82: zoom on whole tasks

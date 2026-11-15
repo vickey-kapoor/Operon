@@ -164,8 +164,8 @@ with inputs for harness profile, suite and cost cap (`max_cost_usd`).
 ## Daily benchmark batch
 
 Paid runs are batched (KAN-105): during the day, the cells that need running go into a queue,
-and once a day the whole queue is sent for one cost approval and run as one **Benchmark batch**
-workflow run. Start it from the Actions tab (Benchmark batch > Run workflow, cells separated by
+and once a day the whole queue is sent for one cost approval and run as one **Benchmark**
+workflow run (`benchmark.yml`). Start it from the Actions tab (Benchmark > Run workflow, cells separated by
 `;`) or with one PR comment, one cell per line after the first:
 
 ```text
@@ -186,7 +186,7 @@ report goes to the dashboard, and a `/bench batch` comment gets one results tabl
 
 ### Nightly run (KAN-165)
 
-The batch also runs by itself: **Nightly benchmark run** (`nightly.yml`) fires at about 2:25 AM Chicago
+The batch also runs by itself: the same **Benchmark** workflow (`benchmark.yml`) fires at about 2:25 AM Chicago
 (cron `23 8 * * *`, 3:25 AM in summer time) and runs the cells queued in `evals/nightly-queue.txt`.
 Threads queue a cell by adding a line in any PR: `2026-11-14 desktop thin season=2 cap=2.5  # note`
 (the date, the cell words above, an optional note). Each night `evals/nightly.py` takes the queued
@@ -194,8 +194,8 @@ lines, oldest first, while their caps fit the budget: **$10 a night**, or what i
 **$100 for the month** (from the dashboard database), whichever is less. Lines that don't fit wait
 for the next night; a line runs once (run lines are kept in the `nightly-state` artifact, marked
 before the run so a failed cell isn't paid for twice); lines older than 7 days are skipped. If the
-month's spend can't be read, nothing runs. Run it by hand with `dry_run` to see the plan for free.
-Results reach the dashboard and the 8 AM Slack summary.
+month's spend can't be read, nothing runs. Run Benchmark by hand with no cells and `dry_run` on to see the plan for free.
+Results reach the dashboard and the daily Slack summary.
 
 ## Adding models later
 

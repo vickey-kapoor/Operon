@@ -83,7 +83,7 @@ Grounding evals (`evals.grounding`) are stored as runs with mode and suite
 Leaderboard leave them out.
 
 The **Send results to dashboard** workflow (`.github/workflows/dashboard-data.yml`) runs after
-every "Browser benchmark", "Desktop and Hybrid benchmark", "Benchmark from PR comment" or "Grounding benchmark"
+every "Benchmark" (nightly, manual batch or `/bench` comment), "Browser benchmark", "Desktop and Hybrid benchmark" or "Grounding benchmark"
 run, cancelled ones included, and writes its reports to the database, using the
 `DATABASE_URL` repository secret. Importing a report again replaces it. Run the workflow by hand to import older workflow runs
 (`run_ids`) or reports committed at a git ref (`backfill_ref`).

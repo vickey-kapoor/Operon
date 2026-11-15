@@ -23,7 +23,7 @@ on:
         type: choice
         options: ["off", "dense", "always"]
         default: "off"
-  # Called by bench-command.yml for /bench grounding.
+  # Called by benchmark.yml for /bench grounding.
   workflow_call:
     inputs:
       model: {type: string, default: ""}

@@ -6,7 +6,7 @@ run-name: Nightly benchmark run (${{ github.event_name == 'schedule' && '2 AM' |
 # a night, and nothing once this month's spend (from the dashboard database) reaches $100.
 # If the month's spend can't be read, nothing runs. Lines that already ran are remembered
 # in the "nightly-state" artifact, so a line runs once. Results go to the dashboard and the
-# 8 AM daily summary on Slack. Run it by hand with dry_run to see the plan (free).
+# daily summary on Slack (posted by the dashboard import after this run). Run it by hand with dry_run to see the plan (free).
 on:
   schedule:
     - cron: "23 8 * * *"  # about 2:25 AM Chicago in winter (CST), 3:25 AM in summer (CDT); off the top of the hour, when GitHub delays or drops scheduled runs

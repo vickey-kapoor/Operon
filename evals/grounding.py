@@ -513,7 +513,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--zoom", choices=("off", "dense", "always"),
-        help="refine each click on a zoomed crop (KAN-82; sets OPERON_ZOOM, default: $OPERON_ZOOM or off)",
+        help="refine each click on a zoomed crop (KAN-82; sets OPERON_ZOOM, default: $OPERON_ZOOM or dense)",
     )
     parser.add_argument("--list", action="store_true", help="list the selected samples and exit (no model calls)")
     parser.add_argument("--json", action="store_true")

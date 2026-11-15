@@ -1,4 +1,4 @@
-"""Zoom in before clicking on dense screens (KAN-82). Opt in with ``OPERON_ZOOM``.
+"""Zoom in before clicking on dense screens (KAN-82). On by default for dense screens only.
 
 On a high-resolution screen the model sees a downscaled image where small targets
 are a few pixels wide, so its click can land next to the target. When zoom is on,
@@ -9,7 +9,7 @@ model still picks the target; zoom only lets it look closer (vision-only, no DOM
 
 Settings (all read when the backend is built):
 
-    OPERON_ZOOM            off (default) | dense | always
+    OPERON_ZOOM            dense (default) | off | always
                            dense: only on screens whose longer side is at least
                            OPERON_ZOOM_MIN_SIDE pixels, the cheap uncertainty signal
                            (that is where the downscaled view loses detail).
@@ -58,7 +58,7 @@ ZOOM_PROMPT = (
 
 @dataclass(frozen=True)
 class ZoomSettings:
-    mode: str = OFF
+    mode: str = DENSE
     min_side: int = DEFAULT_MIN_SIDE
     factor: float = DEFAULT_FACTOR
 
@@ -75,7 +75,7 @@ class ZoomSettings:
 
 
 def zoom_settings() -> ZoomSettings:
-    """``OPERON_ZOOM*`` from the environment; anything unrecognised means off."""
+    """``OPERON_ZOOM*`` from the environment; unset or unrecognised means dense."""
     from operon.core.settings import get_settings
 
     settings = get_settings()

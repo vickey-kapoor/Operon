@@ -50,7 +50,7 @@ def test_defaults_match_the_old_call_sites() -> None:
     assert s.browser_thinking == "low" and s.browser_fallback_backend == "json"
     assert s.trust_gate is True and s.trust_confirm == ()
     assert s.permission_mode == "" and s.tools is None
-    assert (s.zoom, s.zoom_min_side, s.zoom_factor) == ("off", 2000, 2.0)
+    assert (s.zoom, s.zoom_min_side, s.zoom_factor) == ("dense", 2000, 2.0)
     assert (s.browser_width, s.browser_height, s.browser_headless) == (1920, 1080, False)
     assert s.runs_retain_days == 14 and s.stream_token_ttl_s == 600
     assert s.environment == "live" and s.desktop_platform == "windows"
@@ -94,7 +94,7 @@ def test_values_parse_as_before() -> None:
 
 def test_unusable_values_fall_back_with_a_warning() -> None:
     s = Settings.from_env({"OPERON_ZOOM": "maybe", "OPERON_ZOOM_MIN_SIDE": "big", "OPERON_PERMISSION_MODE": "yolo"})
-    assert s.zoom == "off" and s.zoom_min_side == 2000 and s.permission_mode == ""
+    assert s.zoom == "dense" and s.zoom_min_side == 2000 and s.permission_mode == ""
     assert s.errors == ()
     assert len(s.warnings) == 3
     assert any("OPERON_ZOOM='maybe'" in w for w in s.warnings)

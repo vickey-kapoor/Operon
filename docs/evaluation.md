@@ -190,7 +190,7 @@ The batch also runs by itself: **Nightly benchmark run** (`nightly.yml`) fires a
 (cron `0 8 * * *`, 3 AM in summer time) and runs the cells queued in `evals/nightly-queue.txt`.
 Threads queue a cell by adding a line in any PR: `2026-11-14 desktop thin season=2 cap=2.5  # note`
 (the date, the cell words above, an optional note). Each night `evals/nightly.py` takes the queued
-lines, oldest first, while their caps fit the budget: **$5 a night**, or what is left of
+lines, oldest first, while their caps fit the budget: **$10 a night**, or what is left of
 **$100 for the month** (from the dashboard database), whichever is less. Lines that don't fit wait
 for the next night; a line runs once (run lines are kept in the `nightly-state` artifact, marked
 before the run so a failed cell isn't paid for twice); lines older than 7 days are skipped. If the

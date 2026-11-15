@@ -114,6 +114,7 @@ class DynamicApp(BaseApp):
         self.archived: list[str] = []
         self.archive_events = 0
         self.undo_events = 0
+        self.project_events: list[dict] = []  # what was archived or restored, in order
         self.opened_document = ""
 
     def state(self) -> dict:
@@ -123,7 +124,7 @@ class DynamicApp(BaseApp):
             "invoices": {"paid": sorted(self.paid)},
             "report": {"generated": self.report_generated, "opened": self.report_opened},
             "projects": {"archived": sorted(self.archived), "archive_events": self.archive_events,
-                         "undo_events": self.undo_events},
+                         "undo_events": self.undo_events, "events": self.project_events},
             "search": {"opened": self.opened_document},
         })
 
@@ -240,6 +241,7 @@ class DynamicApp(BaseApp):
         if name in PROJECTS and name not in self.archived:
             self.archived.append(name)
             self.archive_events += 1
+            self.project_events.append({"op": "archive", "name": name})
         return redirect(self.url(f"/projects?toast=archived&p={quote(name)}"))
 
     def undo_archive(self, request: Request) -> Reply:
@@ -247,6 +249,7 @@ class DynamicApp(BaseApp):
         if name in self.archived:
             self.archived.remove(name)
             self.undo_events += 1
+            self.project_events.append({"op": "undo", "name": name})
         return redirect(self.url("/projects"))
 
     # --- search: results that arrive late -----------------------------------------------

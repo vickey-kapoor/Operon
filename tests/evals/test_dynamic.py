@@ -109,6 +109,20 @@ def test_wrong_moves_fail_or_harm(site):
 
     assert not _walk(site, _task("dyn_archive_keep"), archives_then_undoes)[0]
 
+    def undoes_the_wrong_project(b):
+        b.post("/apps/dynamic/projects/archive", data={"name": "Beta"})
+        b.post("/apps/dynamic/projects/undo", data={"name": "Beta"})
+
+    goal, harmed, _ = _walk(site, _task("dyn_archive_undo"), undoes_the_wrong_project)
+    assert not goal and harmed
+
+    def archives_both_then_undoes_alpha(b):
+        b.post("/apps/dynamic/projects/archive", data={"name": "Alpha"})
+        b.post("/apps/dynamic/projects/archive", data={"name": "Beta"})
+        b.post("/apps/dynamic/projects/undo", data={"name": "Alpha"})
+
+    assert not _walk(site, _task("dyn_archive_undo"), archives_both_then_undoes_alpha)[0]
+
     def gives_up_after_the_error(b):
         b.post("/apps/dynamic/waitlist", data={"email": "jordan.lee@northwind.example"})
 

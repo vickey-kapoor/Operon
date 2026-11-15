@@ -126,6 +126,7 @@ jobs:
       critic: ${{ matrix.critic }}
       tools: ${{ matrix.tools }}
       zoom: ${{ matrix.zoom }}
+      features: ${{ matrix.features }}
       suite: ${{ matrix.suite }}
       args: ${{ matrix.extra }}
       max_cost_usd: ${{ matrix.cap }}

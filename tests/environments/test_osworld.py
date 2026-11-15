@@ -129,7 +129,7 @@ def test_run_one_scores_with_osworld_not_operon(monkeypatch):
                              timeout_s=9, run=fake_run)
     assert result["passed"] and result["cost_usd"] == 0.12  # operon exit 1 does not matter
     assert calls["env"]["OPERON_OSWORLD_URL"] == "http://10.1.1.1:5000"
-    assert calls["env"]["OPERON_HARNESS_PROFILE"] == "thin"
+    assert calls["env"]["OPERON_HARNESS_PROFILE"] == "thin" and calls["env"]["OPERON_AUTO_CONFIRM"] == "on"
 
 
 def test_summarize():

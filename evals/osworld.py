@@ -48,7 +48,7 @@ def operon_command(instruction: str, max_steps: int, python: str | None = None) 
 
 def operon_env(server_url: str, runs_root: str | None = None) -> dict[str, str]:
     return {**os.environ, **({"OPERON_RUNS_ROOT": runs_root} if runs_root else {}), "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
-            "OPERON_HARNESS_PROFILE": "thin", "OPERON_DESKTOP_PLATFORM": "linux"}
+            "OPERON_HARNESS_PROFILE": "thin", "OPERON_AUTO_CONFIRM": "on", "OPERON_DESKTOP_PLATFORM": "linux"}
 
 
 def run_cost(run_id: str | None, runs_root: str | Path | None = None) -> float:

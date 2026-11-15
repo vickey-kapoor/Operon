@@ -150,6 +150,8 @@ class Settings(BaseModel):
     container_image: str = _env_field("OPERON_CONTAINER_IMAGE", "")
     container_start_timeout: int = _env_field("OPERON_CONTAINER_START_TIMEOUT", 120)
     container_ca_bundle: str = _env_field("OPERON_CONTAINER_CA_BUNDLE", "")
+    # "" : no OSWorld VM (KAN-169). Otherwise its server URL, e.g. http://127.0.0.1:5000.
+    osworld_url: str = _env_field("OPERON_OSWORLD_URL", "")
     browser_width: int = _env_field("BROWSER_WIDTH", 1920)
     browser_height: int = _env_field("BROWSER_HEIGHT", 1080)
     browser_headless: bool = _env_field("BROWSER_HEADLESS", False)
@@ -338,6 +340,7 @@ class _Parser:
             container_image=self.text("OPERON_CONTAINER_IMAGE").strip(),
             container_start_timeout=sandbox_int("OPERON_CONTAINER_START_TIMEOUT", 120),
             container_ca_bundle=self.text("OPERON_CONTAINER_CA_BUNDLE").strip(),
+            osworld_url=self.text("OPERON_OSWORLD_URL").strip(),
             browser_width=self.number("BROWSER_WIDTH", "1920", int, fatal=True),
             browser_height=self.number("BROWSER_HEIGHT", "1080", int, fatal=True),
             browser_headless=self.text("BROWSER_HEADLESS", "false").lower() == "true",

@@ -1,0 +1,157 @@
+"""OSWorld-Verified subset (KAN-169): Operon on OSWorld's own tasks, scored by OSWorld.
+
+    python -m evals.osworld --list
+    python -m evals.osworld --osworld-repo ~/OSWorld [--limit 5] [--max-cost-usd 8]
+
+Per task: OSWorld's ``DesktopEnv`` boots the Ubuntu task VM and sets the task up; Operon
+(``operon run --desktop --env osworld``, thin harness) drives that VM from screenshots;
+then OSWorld's own evaluator scores the end state. Operon's done-check is not the score.
+The task list is fixed in ``evals/osworld_subset.json`` (chosen before any run).
+Costs real credits: it goes through the nightly queue and needs Vickey's OK.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+SUBSET_FILE = Path(__file__).with_name("osworld_subset.json")
+RUN_ID_RE = re.compile(r"Run ([0-9a-f]{8}-[0-9a-f-]{27}|[0-9a-f]{8,}) started")
+
+
+def load_subset(path: Path = SUBSET_FILE) -> list[dict[str, str]]:
+    return json.loads(path.read_text(encoding="utf-8"))["tasks"]
+
+
+def parse_run_id(output: str) -> str | None:
+    match = RUN_ID_RE.search(output)
+    return match.group(1) if match else None
+
+
+def task_config(repo: Path, task: dict[str, str]) -> dict[str, Any]:
+    path = repo / "evaluation_examples" / "examples" / task["domain"] / f"{task['id']}.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def operon_command(instruction: str, max_steps: int) -> list[str]:
+    return [sys.executable, "-m", "operon.cli", "run", "--desktop", "--env", "osworld",
+            "--mode", "auto", "--max-steps", str(max_steps), instruction]
+
+
+def operon_env(server_url: str) -> dict[str, str]:
+    return {**os.environ, "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
+            "OPERON_HARNESS_PROFILE": "thin", "OPERON_DESKTOP_PLATFORM": "linux"}
+
+
+def run_cost(run_id: str | None) -> float:
+    if not run_id:
+        return 0.0
+    from evals.live_bench import run_usage
+
+    return float(run_usage(run_id).get("cost_usd") or 0.0)
+
+
+def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
+            run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
+    started = time.monotonic()
+    env.reset(task_config=config)
+    time.sleep(5)  # OSWorld's own pause so the setup settles before the first screenshot
+    url = f"http://{env.vm_ip}:{env.server_port}"
+    run_id, note = None, ""
+    try:
+        done = run(operon_command(task["instruction"], max_steps), env=operon_env(url), capture_output=True,
+                   text=True, timeout=timeout_s, check=False)
+        run_id = parse_run_id((done.stdout or "") + (done.stderr or ""))
+        note = f"operon exit {done.returncode}"
+    except subprocess.TimeoutExpired:
+        note = f"operon timed out after {timeout_s:.0f}s"
+    score = float(env.evaluate())  # OSWorld's evaluator decides
+    return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0,
+            "run_id": run_id, "cost_usd": round(run_cost(run_id), 4), "seconds": round(time.monotonic() - started),
+            "note": note}
+
+
+def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(results)
+    passed = sum(1 for r in results if r["passed"])
+    by_domain: dict[str, list[int]] = {}
+    for r in results:
+        row = by_domain.setdefault(r["domain"], [0, 0])
+        row[0] += int(r["passed"])
+        row[1] += 1
+    return {"tasks": n, "passed": passed, "success_rate": round(passed / n, 3) if n else 0.0,
+            "cost_usd": round(sum(r["cost_usd"] for r in results), 4),
+            "by_domain": {d: f"{p}/{t}" for d, (p, t) in sorted(by_domain.items())}}
+
+
+def make_env(repo: Path):  # pragma: no cover - needs OSWorld and a VM
+    sys.path.insert(0, str(repo))
+    from desktop_env.desktop_env import DesktopEnv
+
+    return DesktopEnv(provider_name="docker", action_space="pyautogui", screen_size=(1920, 1080),
+                      headless=True, os_type="Ubuntu", require_a11y_tree=False)
+
+
+def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = make_env,
+         run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> int:
+    parser = argparse.ArgumentParser(prog="evals.osworld", description=__doc__.split("\n")[0])
+    parser.add_argument("--list", action="store_true", help="print the fixed task list and exit (free)")
+    parser.add_argument("--osworld-repo", default=os.environ.get("OSWORLD_REPO", ""), help="path to an OSWorld checkout")
+    parser.add_argument("--limit", type=int, default=0, help="run only the first N tasks (the pilot uses 5)")
+    parser.add_argument("--only", default="", help="run only the task whose id starts with this")
+    parser.add_argument("--max-steps", type=int, default=50)
+    parser.add_argument("--task-timeout", type=float, default=1500.0, help="seconds per task")
+    parser.add_argument("--max-cost-usd", type=float, default=8.0, help="stop starting tasks past this spend")
+    parser.add_argument("--out", default=".var/bench")
+    args = parser.parse_args(argv)
+
+    tasks = load_subset()
+    if args.only:
+        tasks = [t for t in tasks if t["id"].startswith(args.only)]
+    if args.limit:
+        tasks = tasks[: args.limit]
+    if args.list:
+        for t in tasks:
+            print(f"{t['domain']:<20} {t['id']}  {t['instruction'][:80]}")
+        return 0
+    if not args.osworld_repo:
+        parser.error("--osworld-repo (or $OSWORLD_REPO) is required to run")
+    repo = Path(args.osworld_repo).expanduser()
+    env = env_factory(repo)
+    results: list[dict[str, Any]] = []
+    spent = 0.0
+    try:
+        for task in tasks:
+            if args.max_cost_usd and spent >= args.max_cost_usd:
+                print(f"cost cap ${args.max_cost_usd} reached; stopping before {task['id']}")
+                break
+            result = run_one(env, task, task_config(repo, task), max_steps=args.max_steps,
+                             timeout_s=args.task_timeout, run=run)
+            spent += result["cost_usd"]
+            results.append(result)
+            print(f"{'PASS' if result['passed'] else 'fail'} {task['domain']} {task['id'][:8]} "
+                  f"${result['cost_usd']:.3f} {result['seconds']}s")
+    finally:
+        close = getattr(env, "close", None)
+        if close:
+            close()
+    report = {"benchmark": "osworld-verified-subset", "harness": "thin", "summary": summarize(results),
+              "results": results}
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / f"osworld-{time.strftime('%Y%m%dT%H%M%S')}.json"
+    target.write_text(json.dumps(report, indent=1), encoding="utf-8")
+    print(json.dumps(report["summary"], indent=1), f"\nreport: {target}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

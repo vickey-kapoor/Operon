@@ -9,6 +9,7 @@ import shutil
 import time
 import weakref
 from pathlib import Path
+from typing import Any
 
 from operon.agent import control as run_control
 from operon.agent.actions.grounding import element_center, make_grounder
@@ -25,6 +26,7 @@ from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
+from operon.agent.planner import make_plan, plan_hint
 from operon.agent.policy import PolicyService
 from operon.agent.policy.best_of_n import (
     Critic,
@@ -179,6 +181,7 @@ class AgentLoop:
         recovery_manager: RecoveryManager,
         memory_store: MemoryStore | None = None,
         gemini_client: GeminiClient | None = None,
+        planner_client: Any = None,
         environment: UnifiedEnvironment = UnifiedEnvironment.BROWSER,
         harness_profile: str = "full",
     ) -> None:
@@ -191,6 +194,7 @@ class AgentLoop:
         self.recovery_manager = recovery_manager
         self.memory_store = memory_store
         self.gemini_client = gemini_client
+        self.planner_client = planner_client
         self.target_selector = DeterministicTargetSelector()
         self._retry = RetryHardening(self.target_selector)
         # RFC 0001 Move 2: configured grounder (OPERON_GROUNDER). Default is the
@@ -299,6 +303,7 @@ class AgentLoop:
                 await self.executor.execute(
                     AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
                 )
+        await self._write_plan(record)
         await self._flush_recovered_errors(record.run_id)
         return RunResponse(
             run_id=record.run_id,
@@ -306,6 +311,38 @@ class AgentLoop:
             intent=record.intent,
             step_count=record.step_count,
         )
+
+    async def _write_plan(self, record) -> None:
+        """One-shot planner (OPERON_PLANNER): a cheaper model plans once; the plan is a first-step hint.
+
+        Any failure means no plan, never a failed run. The plan and its cost are saved as
+        ``plan.json`` in the run folder so a benchmark can count them.
+        """
+        settings = get_settings()
+        if not settings.planner:
+            return
+        try:
+            client = self.planner_client
+            if client is None:
+                from operon.clients.gemini import GeminiHttpClient
+
+                client = GeminiHttpClient(model=settings.planner_model, timeout_seconds=30.0, max_retries=1)
+            steps, usage = await make_plan(client, record.intent)
+            if not steps:
+                return
+            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+            if callable(add_hints):
+                add_hints([plan_hint(steps)], source="planner", run_id=record.run_id)
+            saved = {
+                "model": settings.planner_model,
+                "steps": steps,
+                "usage": usage.model_dump(mode="json") if usage is not None else None,
+            }
+            run_dir = Path(self.run_store.root_dir) / record.run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "plan.json").write_text(json.dumps(saved, indent=2), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001 - a planner problem must never fail a run
+            self._recovered(record.run_id, "planner", exc)
 
     @staticmethod
     def _test_safe_mode_enabled() -> bool:

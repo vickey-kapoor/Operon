@@ -41,8 +41,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 CATEGORIES = ("browser", "desktop", "hybrid")
-SUITES = {"core": "core", "smoke": "smoke", "all": "full", "safety": "safety", "apps": "apps", "hard": "hard", "long": "long"}
-BROWSER_ONLY_SUITES = {"apps", "hard"}
+SUITES = {"core": "core", "smoke": "smoke", "all": "full", "safety": "safety", "apps": "apps", "hard": "hard", "long": "long", "dynamic": "dynamic"}
+BROWSER_ONLY_SUITES = {"apps", "hard", "dynamic"}
 HYBRID_SUITES = {"core", "smoke", "full"}
 DEFAULT_CAP_USD = 3.0
 DEFAULT_MAX_TOTAL_USD = 10.0

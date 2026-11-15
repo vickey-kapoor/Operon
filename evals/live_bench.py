@@ -86,7 +86,13 @@ from pathlib import Path
 
 import httpx
 
-from evals import app_tasks, desktop_state, desktop_workspace, hybrid_tasks
+from evals import (
+    app_tasks,
+    desktop_state,
+    desktop_workspace,
+    dynamic_apps,
+    hybrid_tasks,
+)
 from evals.app_tasks import APP_TASKS, LONG_TASKS, AppTask
 from evals.categories import (
     CATEGORY_NAMES,
@@ -97,6 +103,7 @@ from evals.categories import (
     tags_of,
 )
 from evals.desktop_tasks import DESKTOP_TASKS
+from evals.dynamic_tasks import DYNAMIC_TASKS
 from evals.fixture_site import FixtureSite
 from evals.hard_tasks import HARD_TASK_NAMES
 from evals.hybrid_tasks import HYBRID_TASKS, HybridTask
@@ -111,7 +118,7 @@ from operon.core.paths import runs_dir
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error", "compromised")
-SUITES = ("core", "core2", "smoke", "full", "safety", "apps", "hard", "long")
+SUITES = ("core", "core2", "smoke", "full", "safety", "apps", "hard", "long", "dynamic")
 LOCAL_TASKS = (SafetyTask, AppTask)  # run on the local site and graded from it, not by the judge
 BENCH_DIR = Path(os.getenv("OPERON_BENCH_DIR", ".var/bench"))
 MODES = ("browser", "desktop", "hybrid")
@@ -921,11 +928,12 @@ def select_tasks(
         # Desktop Safety and Desktop Long (KAN-74): the desktop tasks with that tag.
         want = is_safety if suite == "safety" else (lambda t: length_of(t) == "long" and not is_safety(t))
         pool = [t for t in DESKTOP_TASKS if want(t)]
-    elif suite in ("safety", "apps", "long"):
-        pool = [] if mode == "desktop" else {"safety": SAFETY_TASKS, "apps": APP_TASKS, "long": LONG_TASKS}[suite]
+    elif suite in ("safety", "apps", "long", "dynamic"):
+        pool = [] if mode == "desktop" else {"safety": SAFETY_TASKS, "apps": APP_TASKS, "long": LONG_TASKS,
+                                              "dynamic": DYNAMIC_TASKS}[suite]
     else:
         pool = DESKTOP_TASKS if mode == "desktop" else TASKS
-    tasks = [t for t in pool if suite in ("core", "core2", "full", "safety", "apps", "hard", "long") or suite in t.tags]
+    tasks = [t for t in pool if suite in ("core", "core2", "full", "safety", "apps", "hard", "long", "dynamic") or suite in t.tags]
     if only:
         tasks = [t for t in tasks if t.name in only]
     if category:
@@ -938,6 +946,8 @@ def site_apps(tasks: list[LiveTask]) -> list:
     needs it, else exactly the Season 1 site, so Season 1 tasks see what they were frozen on."""
     if any(getattr(t, "uses_season2_site", False) for t in tasks):
         return season2_apps.build_apps()
+    if any(getattr(t, "uses_dynamic_site", False) for t in tasks):
+        return dynamic_apps.build_apps()
     return build_apps()
 
 

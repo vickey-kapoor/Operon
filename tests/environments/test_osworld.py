@@ -276,7 +276,7 @@ def test_timeout_still_counts_the_spend(monkeypatch, tmp_path):
     def timing_out(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, 1, output=b"Run abc12345-0000-0000-0000-000000000000 started: x")
 
-    result = osworld.run_one(env, {"domain": "os", "id": "t", "instruction": "i"}, {}, max_steps=1, timeout_s=1,
+    result = osworld.run_one(env, {"domain": "os", "id": "t", "instruction": "i"}, {}, max_steps=1, timeout_s=1, settle_s=0,
                              runs_root=str(tmp_path / "runs"), run=timing_out)
     assert result["run_id"].startswith("abc12345") and result["cost_usd"] == 0.4
     # even when no start line was read, the newest run folder is found

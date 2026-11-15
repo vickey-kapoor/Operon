@@ -124,7 +124,7 @@ Repository owners, members and collaborators can comment on a PR to benchmark it
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>]
+/bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>]
 /bench grounding
 ```
 

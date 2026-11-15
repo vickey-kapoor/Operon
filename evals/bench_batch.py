@@ -13,7 +13,7 @@ cost cap::
     desktop thin season=2 pr=242 cap=1.5
     hybrid full ref=main
 
-Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long``,
+Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
 ``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``
 (KAN-82: OPERON_ZOOM dense or always), ``season=<n>``, ``pr=<number>`` (that PR's head) or
 ``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole

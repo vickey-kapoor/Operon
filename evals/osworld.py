@@ -41,22 +41,32 @@ def task_config(repo: Path, task: dict[str, str]) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def operon_command(instruction: str, max_steps: int) -> list[str]:
-    return [sys.executable, "-m", "operon.cli", "run", "--desktop", "--env", "osworld",
+def operon_command(instruction: str, max_steps: int, python: str | None = None) -> list[str]:
+    return [python or sys.executable, "-m", "operon.cli", "run", "--desktop", "--env", "osworld",
             "--mode", "auto", "--max-steps", str(max_steps), instruction]
 
 
-def operon_env(server_url: str) -> dict[str, str]:
-    return {**os.environ, "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
+def operon_env(server_url: str, runs_root: str | None = None) -> dict[str, str]:
+    return {**os.environ, **({"OPERON_RUNS_ROOT": runs_root} if runs_root else {}), "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
             "OPERON_HARNESS_PROFILE": "thin", "OPERON_DESKTOP_PLATFORM": "linux"}
 
 
-def run_cost(run_id: str | None) -> float:
-    if not run_id:
-        return 0.0
-    from evals.live_bench import run_usage
+def run_cost(run_id: str | None, runs_root: str | Path | None = None) -> float:
+    """USD of the model calls a run saved (``step_*/*_usage.json``, ``planner_usage.json``).
 
-    return float(run_usage(run_id).get("cost_usd") or 0.0)
+    Reads the files directly so this runner needs no Operon import: OSWorld's own
+    dependencies (torch pins) and Operon (Python 3.14) may live in different Pythons."""
+    if not run_id or runs_root is None:
+        return 0.0
+    run_dir = Path(runs_root) / run_id
+    files = sorted(run_dir.glob("step_*/*_usage.json")) + [run_dir / "planner_usage.json"]
+    total = 0.0
+    for path in files:
+        try:
+            total += float(json.loads(path.read_text(encoding="utf-8")).get("estimated_cost_usd") or 0.0)
+        except (OSError, ValueError, AttributeError):
+            continue
+    return total
 
 
 def wait_for_desktop(url: str, *, min_bytes: int = 200_000, timeout_s: float = 150.0) -> bool:
@@ -77,6 +87,7 @@ def wait_for_desktop(url: str, *, min_bytes: int = 200_000, timeout_s: float = 1
 
 
 def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
+            python: str | None = None, runs_root: str | None = None,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
     started = time.monotonic()
     env.reset(task_config=config)
@@ -84,7 +95,7 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
     wait_for_desktop(url)
     run_id, note = None, ""
     try:
-        done = run(operon_command(task["instruction"], max_steps), env=operon_env(url), capture_output=True,
+        done = run(operon_command(task["instruction"], max_steps, python), env=operon_env(url, runs_root), capture_output=True,
                    text=True, timeout=timeout_s, check=False)
         run_id = parse_run_id((done.stdout or "") + (done.stderr or ""))
         note = f"operon exit {done.returncode}"
@@ -92,7 +103,7 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
         note = f"operon timed out after {timeout_s:.0f}s"
     score = float(env.evaluate())  # OSWorld's evaluator decides
     return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0,
-            "run_id": run_id, "cost_usd": round(run_cost(run_id), 4), "seconds": round(time.monotonic() - started),
+            "run_id": run_id, "cost_usd": round(run_cost(run_id, runs_root), 4), "seconds": round(time.monotonic() - started),
             "note": note}
 
 
@@ -127,6 +138,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
     parser.add_argument("--max-steps", type=int, default=50)
     parser.add_argument("--task-timeout", type=float, default=1500.0, help="seconds per task")
     parser.add_argument("--max-cost-usd", type=float, default=8.0, help="stop starting tasks past this spend")
+    parser.add_argument("--operon-python", default=sys.executable,
+                        help="Python that has Operon installed (3.14); default: this one")
     parser.add_argument("--out", default=".var/bench")
     args = parser.parse_args(argv)
 
@@ -151,7 +164,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
                 print(f"cost cap ${args.max_cost_usd} reached; stopping before {task['id']}")
                 break
             result = run_one(env, task, task_config(repo, task), max_steps=args.max_steps,
-                             timeout_s=args.task_timeout, run=run)
+                             timeout_s=args.task_timeout, python=args.operon_python,
+                             runs_root=str(Path(args.out) / "osworld-runs"), run=run)
             spent += result["cost_usd"]
             results.append(result)
             print(f"{'PASS' if result['passed'] else 'fail'} {task['domain']} {task['id'][:8]} "

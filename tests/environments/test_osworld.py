@@ -117,7 +117,7 @@ def test_parse_run_id():
 
 def test_run_one_scores_with_osworld_not_operon(monkeypatch):
     monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
-    monkeypatch.setattr(osworld, "run_cost", lambda run_id: 0.12)
+    monkeypatch.setattr(osworld, "run_cost", lambda run_id, runs_root=None: 0.12)
     env = SimpleNamespace(vm_ip="10.1.1.1", server_port=5000, reset=lambda task_config: None, evaluate=lambda: 1.0)
     calls = {}
 
@@ -147,3 +147,16 @@ def test_wait_for_desktop_polls_until_drawn(monkeypatch):
     monkeypatch.setattr(osworld.httpx if hasattr(osworld, "httpx") else __import__("httpx"), "get",
                         lambda *a, **k: SimpleNamespace(status_code=200, content=b"x" * next(sizes)))
     assert osworld.wait_for_desktop("http://vm:5000")
+
+
+def test_run_cost_reads_usage_files_without_operon(tmp_path):
+    step = tmp_path / "r1" / "step_1"
+    step.mkdir(parents=True)
+    (step / "policy_usage.json").write_text('{"estimated_cost_usd": 0.05}')
+    (tmp_path / "r1" / "planner_usage.json").write_text('{"estimated_cost_usd": 0.02}')
+    assert osworld.run_cost("r1", tmp_path) == pytest.approx(0.07)
+    assert osworld.run_cost(None, tmp_path) == 0.0 and osworld.run_cost("missing", tmp_path) == 0.0
+
+
+def test_command_uses_given_python():
+    assert osworld.operon_command("x", 5, "/venv/bin/python")[0] == "/venv/bin/python"

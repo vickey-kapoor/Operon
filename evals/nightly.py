@@ -18,7 +18,7 @@ Every night this module picks the lines to run:
   run list never re-runs old work;
 - lines are taken in queue order while their caps fit tonight's budget and the batch accepts them
   (a cell already chosen tonight with the same settings waits for another night): the nightly cap
-  ($5, Vickey's choice) or what is left of the monthly budget ($100), whichever is less.
+  ($10, Vickey's choice) or what is left of the monthly budget ($100), whichever is less.
   A line that does not fit waits for the next night.
 
 When the month's spend can't be read (no database), nothing runs: the budget check
@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo
 from evals.bench_batch import BatchError, Cell, parse_batch, parse_line
 
 CHICAGO = ZoneInfo("America/Chicago")
-NIGHTLY_CAP_USD = 5.0
+NIGHTLY_CAP_USD = 10.0
 MONTH_CAP_USD = 100.0
 MAX_AGE_DAYS = 7
 QUEUE = Path(__file__).resolve().parent / "nightly-queue.txt"

@@ -52,7 +52,7 @@ Operon's only model for now; other models come back later.
 #   /bench batch  (then one cell per line, e.g. "desktop thin season=2 pr=242 cap=1.5"): the day's approved
 #   queue in one run, one Azure VM start, caps summed up front (KAN-105, bench-batch.yml, evals/bench_batch.py)
 #   Nightly (KAN-165): paid runs happen once a night at 2 AM Chicago from evals/nightly-queue.txt
-#   ("2026-11-14 desktop thin season=2 cap=2.5  # note"), $5 a night, stop at $100 a month (evals/nightly.py)
+#   ("2026-11-14 desktop thin season=2 cap=2.5  # note"), $10 a night, stop at $100 a month (evals/nightly.py)
 # Record and replay (KAN-167, evals/replay.py): --keep-screens also writes <report>/recordings/<task>.json for each
 # thin-harness run (Gemini's answers + the actions Operon ran). Copy one into evals/recordings/ and every PR
 # replays it through the real loop for $0 (tests/evals/test_replay.py); a changed action fails with the step.

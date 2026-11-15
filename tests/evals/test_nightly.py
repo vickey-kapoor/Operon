@@ -29,10 +29,10 @@ def test_queue_lines_need_a_date_and_a_valid_cell() -> None:
 
 
 def test_cells_run_in_order_while_caps_fit_the_budget() -> None:
-    entries = _entries("2026-11-14 desktop thin cap=2.5\n2026-11-14 hybrid full cap=3\n2026-11-14 browser thin cap=2\n")
+    entries = _entries("2026-11-14 desktop thin cap=2.5\n2026-11-14 hybrid full cap=9\n2026-11-14 browser thin cap=2\n")
     plan = plan_night(entries, set(), TODAY, month_spend=0)
-    assert plan.budget == 5
-    assert [e.cell.category for e in plan.tonight] == ["desktop", "browser"]  # hybrid ($3) waits, browser still fits
+    assert plan.budget == 10
+    assert [e.cell.category for e in plan.tonight] == ["desktop", "browser"]  # hybrid ($9) waits, browser still fits
     assert [e.cell.category for e in plan.waiting] == ["hybrid"]
     assert plan.total_cap == 4.5
 
@@ -80,7 +80,7 @@ def test_main_writes_outputs_and_marks_lines_as_run(tmp_path, monkeypatch) -> No
     assert not done.exists()
     assert nightly.main(args) == 0
     text = out.read_text(encoding="utf-8")
-    assert "run=true" in text and "budget=5" in text and "browser thin cap=2" in text
+    assert "run=true" in text and "budget=10" in text and "browser thin cap=2" in text
     assert len(done.read_text(encoding="utf-8").split()) == 1
     out.write_text("")
     nightly.main(args)  # second night: already run

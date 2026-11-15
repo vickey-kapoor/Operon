@@ -60,7 +60,7 @@ on:
       max_cost_usd:
         description: "Stop the run once it has spent this many USD (0: no cap)"
         default: "3"
-  # Called by bench-command.yml when someone comments /bench desktop on a PR.
+  # Called by benchmark.yml when someone comments /bench desktop on a PR.
   workflow_call:
     inputs:
       runner: {type: string, default: "github"}
@@ -74,7 +74,7 @@ on:
       desktop_model: {type: string, default: ""}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
-      # The batch workflow (bench-batch.yml) starts the Azure VM once for all its Desktop and
+      # The Benchmark workflow (benchmark.yml) starts the Azure VM once for all its Desktop and
       # Hybrid cells and deallocates it after the last one: it passes "false" here.
       manage_vm: {type: string, default: "true"}
       # Set by the batch workflow so its cells' artifacts don't share a name.

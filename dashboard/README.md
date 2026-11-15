@@ -83,7 +83,7 @@ Grounding evals (`evals.grounding`) are stored as runs with mode and suite
 Leaderboard leave them out.
 
 The **Send results to dashboard** workflow (`.github/workflows/dashboard-data.yml`) runs after
-every "Browser benchmark", "Desktop and Hybrid benchmark", "Benchmark from PR comment" or "Grounding benchmark"
+every "Benchmark" (nightly, manual batch or `/bench` comment), "Browser benchmark", "Desktop and Hybrid benchmark" or "Grounding benchmark"
 run, cancelled ones included, and writes its reports to the database, using the
 `DATABASE_URL` repository secret. Importing a report again replaces it. Run the workflow by hand to import older workflow runs
 (`run_ids`) or reports committed at a git ref (`backfill_ref`).
@@ -133,10 +133,10 @@ Critical alerts, right away, from the "Send results to dashboard" workflow:
 - a benchmark run failed (crashed or timed out; a run you cancel yourself sends nothing), or
 - the dashboard import itself failed.
 
-One daily summary at 8 AM Chicago (`daily-summary.yml`, `python -m evals.dashboard digest`):
+One daily summary, posted after the nightly run's import (the last step of `dashboard-data.yml`, `python -m evals.dashboard digest`):
 every run of the last 24 hours with its score, cost and change against the previous run of
 its cell (same mode, suite, backend, harness, model and season, not flagged), the day's total
-and this month's spend. Nothing is posted on a day with no runs; run the workflow by hand to
+and this month's spend. Nothing is posted on a day with no runs; run "Send results to dashboard" by hand with `post_summary` to
 post now, or `digest --dry-run` locally to print it.
 
 Without the secret, no alerts are sent.

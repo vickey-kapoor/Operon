@@ -127,3 +127,19 @@ def test_a_sideways_scroll_is_horizontal() -> None:
     payload = to_payload([NeutralAction("scroll", {"direction": "left", "amount": 2})], _mapper())
 
     assert payload == {"action_type": "scroll", "x": 640, "y": 400, "scroll_amount": -200, "horizontal": True}
+
+
+def test_scroll_notches_are_pixels_in_the_browser_and_wheel_notches_on_the_desktop() -> None:
+    from operon.agent.backends.model_adapter.actions import (
+        CoordinateMapper,
+        NeutralAction,
+        to_payload,
+    )
+
+    def scroll(step: int) -> int:
+        mapper = CoordinateMapper(space="pixels", sent_width=100, sent_height=100, screen_width=100, screen_height=100, scroll_step=step)
+        payload = to_payload([NeutralAction("scroll", {"x": 5, "y": 5, "direction": "down", "amount": 3})], mapper)
+        return payload["scroll_amount"]
+
+    assert scroll(100) == -300  # the browser executor scrolls in pixels
+    assert scroll(1) == -3  # pyautogui takes wheel notches

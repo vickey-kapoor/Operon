@@ -25,6 +25,7 @@ from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.agent.backends.base import AgentBackend
 from operon.agent.backends.fallback import BackendCompatibilityError
 from operon.agent.backends.model_adapter.actions import (
+    SCROLL_STEP_PX,
     CoordinateMapper,
     InvalidAction,
     NeutralAction,
@@ -233,6 +234,7 @@ class OpenAIComputerUseBackend(AgentBackend):
             sent_height=image.height,
             screen_width=screenshot.width or image.source_width,
             screen_height=screenshot.height or image.source_height,
+            scroll_step=1 if self.environment == "desktop" else SCROLL_STEP_PX,
         )
         input_items = await self._input(conv, state, image)
         tools = [{"type": "computer"}, *_custom_tools(self.environment)]

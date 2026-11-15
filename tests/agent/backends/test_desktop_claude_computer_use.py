@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from PIL import Image
 
 from operon.agent.actions.translation import normalize_claude_computer_calls
@@ -185,3 +186,29 @@ async def test_a_click_then_type_run_as_one_type_is_reported_ok(tmp_path: Path) 
 
     results = [b for b in client.requests[1][-1]["content"] if b["type"] == "tool_result"]
     assert [r.get("is_error") for r in results] == [None, None]
+
+
+def test_claude_scrolls_in_wheel_notches_on_the_desktop_and_pixels_in_the_browser() -> None:
+    from operon.agent.actions.translation import translate_claude_computer_calls
+    from operon.agent.backends.browser_claude_computer_use import (
+        BrowserClaudeComputerUseBackend,
+    )
+
+    call = [{"name": "scroll", "input": {"coordinate": [5, 5], "scroll_direction": "down", "scroll_amount": 3}}]
+    kwargs = {"scale_x": 1.0, "scale_y": 1.0, "screen_width": 100, "screen_height": 100}
+    browser, _ = translate_claude_computer_calls(call, scroll_step=BrowserClaudeComputerUseBackend.scroll_step, **kwargs)
+    desktop, _ = translate_claude_computer_calls(call, scroll_step=DesktopClaudeComputerUseBackend.scroll_step, **kwargs)
+    assert browser["scroll_amount"] == -300 and desktop["scroll_amount"] == -3
+
+
+def test_a_middle_click_is_refused_and_not_offered() -> None:
+    from operon.agent.actions.translation import translate_claude_computer_calls
+    from operon.agent.backends.fallback import BackendCompatibilityError
+    from operon.clients.anthropic_computer_use import COMPUTER_TOOLSET
+
+    assert COMPUTER_TOOLSET["configs"]["middle_click"] == {"enabled": False}
+    with pytest.raises(BackendCompatibilityError, match="middle"):
+        translate_claude_computer_calls(
+            [{"name": "middle_click", "input": {"coordinate": [1, 1]}}],
+            scale_x=1.0, scale_y=1.0, screen_width=10, screen_height=10,
+        )

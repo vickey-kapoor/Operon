@@ -21,4 +21,6 @@ class DesktopClaudeComputerUseBackend(BrowserClaudeComputerUseBackend):
         "You see the whole screen through screenshots and act with the tools."
     )
     custom_tool_names = frozenset({"launch_app"})
+    # pyautogui scrolls in wheel notches, not pixels.
+    scroll_step = 1
     screen_name = "Desktop"

@@ -18,6 +18,9 @@ _DISABLED_MEMBERS = (
     "left_mouse_up",
     "cursor_position",
     "hold_key",
+    # The executors have no middle button; a left click would do something else (open a
+    # link in the same tab instead of a new one).
+    "middle_click",
 )
 
 COMPUTER_TOOLSET: dict[str, Any] = {

@@ -101,6 +101,8 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
     # Custom tools answered alongside the computer toolset's members.
     custom_tool_names: frozenset[str] = frozenset({"navigate"})
     screen_name = "Browser"
+    # Scroll units per wheel notch: pixels for the browser executor.
+    scroll_step = 100
 
     def __init__(
         self,
@@ -217,6 +219,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 scale_y=scale_y,
                 screen_width=screenshot.width,
                 screen_height=screenshot.height,
+                scroll_step=self.scroll_step,
             )
             conversation.call_spans = {call["id"]: span for call, span in zip(runnable, spans, strict=True)}
             decision_payload = {

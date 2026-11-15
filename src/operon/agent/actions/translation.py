@@ -290,7 +290,9 @@ _CLAUDE_KEY_NAMES = {
     "insert": "Insert",
 }
 
-# Pixels per scroll-wheel click, as Chromium scrolls for one notch.
+# Pixels per scroll-wheel click, as Chromium scrolls for one notch. The browser executor
+# scrolls in pixels; the desktop executor passes the amount to pyautogui, which takes wheel
+# notches, so desktop backends translate with a step of 1.
 _CLAUDE_SCROLL_STEP_PX = 100
 
 
@@ -319,7 +321,7 @@ def key_action(text: str) -> dict[str, Any]:
 
 # Every call name ``normalize_claude_computer_calls`` translates.
 CLAUDE_COMPUTER_CALLS = frozenset({
-    "screenshot", "left_click", "middle_click", "double_click", "triple_click", "right_click", "mouse_move",
+    "screenshot", "left_click", "double_click", "triple_click", "right_click", "mouse_move",
     "left_click_drag", "type", "key", "scroll", "wait", "navigate", "launch_app",
 })
 
@@ -351,6 +353,7 @@ def translate_claude_computer_calls(
     scale_y: float,
     screen_width: int,
     screen_height: int,
+    scroll_step: int = _CLAUDE_SCROLL_STEP_PX,
 ) -> tuple[dict[str, Any], list[tuple[int, int]]]:
     """``normalize_claude_computer_calls`` plus, per call, the half-open range
     ``(start, end)`` of batch actions it maps to.
@@ -381,9 +384,11 @@ def translate_claude_computer_calls(
             # Runs nothing; it is answered once everything before it has run.
             spans.append((start, start))
             continue  # every answer already carries a fresh screenshot
-        if name in {"left_click", "middle_click", "double_click", "triple_click", "right_click"}:
+        if name == "middle_click":
+            raise BackendCompatibilityError("middle_click is not supported: the executors have no middle button.")
+        if name in {"left_click", "double_click", "triple_click", "right_click"}:
             x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
-            action_type = {"left_click": "click", "middle_click": "click"}.get(name, name)
+            action_type = {"left_click": "click"}.get(name, name)
             actions.append({"action_type": action_type, "x": x, "y": y})
         elif name == "mouse_move":
             x, y = point(args["coordinate"])
@@ -414,7 +419,7 @@ def translate_claude_computer_calls(
         elif name == "scroll":
             x, y = point(args["coordinate"]) if args.get("coordinate") else centre()
             direction = str(args.get("scroll_direction", "down")).lower()
-            magnitude = max(1, int(args.get("scroll_amount", 3) or 3)) * _CLAUDE_SCROLL_STEP_PX
+            magnitude = max(1, int(args.get("scroll_amount", 3) or 3)) * scroll_step
             actions.append(_scroll_payload(direction, magnitude, x, y))
         elif name == "wait":
             seconds = min(float(args.get("duration", 1) or 1), 30.0)

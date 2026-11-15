@@ -9,7 +9,7 @@ run-name: Nightly benchmark run (${{ github.event_name == 'schedule' && '2 AM' |
 # 8 AM daily summary on Slack. Run it by hand with dry_run to see the plan (free).
 on:
   schedule:
-    - cron: "0 8 * * *"  # 2 AM Chicago in winter (CST); 3 AM in summer (CDT)
+    - cron: "23 8 * * *"  # about 2:25 AM Chicago in winter (CST), 3:25 AM in summer (CDT); off the top of the hour, when GitHub delays or drops scheduled runs
   workflow_dispatch:
     inputs:
       dry_run:

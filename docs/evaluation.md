@@ -186,8 +186,8 @@ report goes to the dashboard, and a `/bench batch` comment gets one results tabl
 
 ### Nightly run (KAN-165)
 
-The batch also runs by itself: **Nightly benchmark run** (`nightly.yml`) fires at 2 AM Chicago
-(cron `0 8 * * *`, 3 AM in summer time) and runs the cells queued in `evals/nightly-queue.txt`.
+The batch also runs by itself: **Nightly benchmark run** (`nightly.yml`) fires at about 2:25 AM Chicago
+(cron `23 8 * * *`, 3:25 AM in summer time) and runs the cells queued in `evals/nightly-queue.txt`.
 Threads queue a cell by adding a line in any PR: `2026-11-14 desktop thin season=2 cap=2.5  # note`
 (the date, the cell words above, an optional note). Each night `evals/nightly.py` takes the queued
 lines, oldest first, while their caps fit the budget: **$10 a night**, or what is left of

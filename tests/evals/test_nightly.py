@@ -94,7 +94,7 @@ def test_the_real_queue_parses() -> None:
 
 def test_workflow_calls_the_batch_and_is_imported_by_the_dashboard() -> None:
     wf = yaml.safe_load((WORKFLOWS / "nightly.yml").read_text(encoding="utf-8"))
-    assert wf[True]["schedule"][0]["cron"] == "0 8 * * *"
+    assert wf[True]["schedule"][0]["cron"] == "23 8 * * *"
     batch_inputs = yaml.safe_load((WORKFLOWS / "bench-batch.yml").read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
     assert set(wf["jobs"]["batch"]["with"]) <= set(batch_inputs)
     dash = yaml.safe_load((WORKFLOWS / "dashboard-data.yml").read_text(encoding="utf-8"))

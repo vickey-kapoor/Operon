@@ -48,7 +48,8 @@ def operon_command(instruction: str, max_steps: int, python: str | None = None) 
 
 def operon_env(server_url: str, runs_root: str | None = None) -> dict[str, str]:
     return {**os.environ, **({"OPERON_RUNS_ROOT": runs_root} if runs_root else {}), "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
-            "OPERON_HARNESS_PROFILE": "thin", "OPERON_AUTO_CONFIRM": "on", "OPERON_DESKTOP_PLATFORM": "linux"}
+            "OPERON_HARNESS_PROFILE": "thin", "OPERON_AUTO_CONFIRM": "on", "OPERON_TOOLS": "off",
+            "PYTHONUNBUFFERED": "1", "OPERON_DESKTOP_PLATFORM": "linux"}
 
 
 def run_cost(run_id: str | None, runs_root: str | Path | None = None) -> float:
@@ -67,6 +68,15 @@ def run_cost(run_id: str | None, runs_root: str | Path | None = None) -> float:
         except (OSError, ValueError, AttributeError):
             continue
     return total
+
+
+def find_run_since(runs_root: str | Path | None, since: float) -> str | None:
+    """The newest run folder created at or after ``since`` (epoch seconds): the run whose id
+    never reached us, for example because the task timed out before the start line was read."""
+    if runs_root is None or not Path(runs_root).is_dir():
+        return None
+    runs = [p for p in Path(runs_root).iterdir() if p.is_dir() and p.stat().st_mtime >= since]
+    return max(runs, key=lambda p: p.stat().st_mtime).name if runs else None
 
 
 def wait_for_desktop(url: str, *, min_bytes: int = 200_000, timeout_s: float = 150.0) -> bool:
@@ -90,6 +100,7 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
             python: str | None = None, runs_root: str | None = None,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
     started = time.monotonic()
+    wall_started = time.time()
     env.reset(task_config=config)
     url = f"http://{env.vm_ip}:{env.server_port}"
     wait_for_desktop(url)
@@ -99,8 +110,11 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
                    text=True, timeout=timeout_s, check=False)
         run_id = parse_run_id((done.stdout or "") + (done.stderr or ""))
         note = f"operon exit {done.returncode}"
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        partial = [(x.decode("utf-8", "replace") if isinstance(x, bytes) else x or "") for x in (exc.stdout, exc.stderr)]
+        run_id = parse_run_id("".join(partial))
         note = f"operon timed out after {timeout_s:.0f}s"
+    run_id = run_id or find_run_since(runs_root, wall_started)
     score = float(env.evaluate())  # OSWorld's evaluator decides
     return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0,
             "run_id": run_id, "cost_usd": round(run_cost(run_id, runs_root), 4), "seconds": round(time.monotonic() - started),
@@ -158,6 +172,16 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
     env = env_factory(repo)
     results: list[dict[str, Any]] = []
     spent = 0.0
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / f"osworld-{time.strftime('%Y%m%dT%H%M%S')}.json"
+
+    def save() -> dict[str, Any]:
+        report = {"benchmark": "osworld-verified-subset", "harness": "thin", "auto_confirm": True,
+                  "summary": summarize(results), "results": results}
+        target.write_text(json.dumps(report, indent=1), encoding="utf-8")
+        return report
+
     try:
         for task in tasks:
             if args.max_cost_usd and spent >= args.max_cost_usd:
@@ -165,22 +189,18 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
                 break
             result = run_one(env, task, task_config(repo, task), max_steps=args.max_steps,
                              timeout_s=args.task_timeout, python=args.operon_python,
-                             runs_root=str(Path(args.out) / "osworld-runs"), run=run)
+                             runs_root=str(out / "osworld-runs"), run=run)
             spent += result["cost_usd"]
             results.append(result)
+            save()  # after every task: a later failure or Ctrl+C must not lose finished scores
             print(f"{'PASS' if result['passed'] else 'fail'} {task['domain']} {task['id'][:8]} "
                   f"${result['cost_usd']:.3f} {result['seconds']}s")
     finally:
+        save()
         close = getattr(env, "close", None)
         if close:
             close()
-    report = {"benchmark": "osworld-verified-subset", "harness": "thin", "summary": summarize(results),
-              "results": results}
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    target = out / f"osworld-{time.strftime('%Y%m%dT%H%M%S')}.json"
-    target.write_text(json.dumps(report, indent=1), encoding="utf-8")
-    print(json.dumps(report["summary"], indent=1), f"\nreport: {target}")
+    print(json.dumps(summarize(results), indent=1), f"\nreport: {target}")
     return 0
 
 

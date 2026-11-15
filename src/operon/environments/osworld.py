@@ -13,6 +13,7 @@ Vision-only: the executor takes a screenshot and turns each action into plain
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -28,7 +29,10 @@ from operon.models.common import FailureCategory
 from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
 
+logger = logging.getLogger(__name__)
 _TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+_SERVO_RADIUS = 50
+_SERVO_THRESHOLD = 20.0  # DesktopExecutor._SERVO_THRESHOLD_DEFAULT: the uncalibrated visual-servo variance gate
 _KEY_ALIASES = {
     "control": "ctrl", "return": "enter", "esc": "esc", "escape": "esc", "page_down": "pagedown",
     "page_up": "pageup", "pgdn": "pagedown", "pgup": "pageup", "del": "delete", "super": "win",
@@ -63,7 +67,16 @@ def pyautogui_snippet(action: AgentAction) -> str | None:
             lines.append(f"pyautogui.click({pos})")
         if action.clear_before_typing:
             lines.append("pyautogui.hotkey('ctrl', 'a'); pyautogui.press('delete')")
-        lines.append(f"pyautogui.write({action.text or ''!r}, interval=0.02)")
+        text = action.text or ""
+        if text.isascii():
+            lines.append(f"pyautogui.write({text!r}, interval=0.02)")
+        else:
+            # pyautogui.write drops characters X11 has no key for (cafe-with-accent -> caf):
+            # paste through the VM's clipboard instead, typing only if pyperclip is missing.
+            lines.append(
+                f"try:\n    import pyperclip; pyperclip.copy({text!r}); pyautogui.hotkey('ctrl', 'v')\n"
+                f"except Exception:\n    pyautogui.write({text!r}, interval=0.02)"
+            )
         if action.press_enter:
             lines.append("pyautogui.press('enter')")
         return "\n".join(lines)
@@ -85,7 +98,9 @@ def pyautogui_snippet(action: AgentAction) -> str | None:
 class OSWorldProvider(EnvironmentProvider):
     name = "osworld"
     summary = "An OSWorld task VM reached at OPERON_OSWORLD_URL (benchmark runs, KAN-169)."
-    runs_on_host = True
+    # Not the host: Operon's file and shell tools would act on the machine running Operon, not
+    # on the OSWorld VM, so the loop must never wrap this executor in the host ToolExecutor.
+    runs_on_host = False
 
     def __init__(self, *, url: str | None = None) -> None:
         self.url = (url if url is not None else get_settings().osworld_url).strip().rstrip("/")
@@ -94,6 +109,10 @@ class OSWorldProvider(EnvironmentProvider):
         return "linux"
 
     def check(self) -> ProviderCheck:
+        tools = (get_settings().tools or "").strip().lower()
+        if tools not in ("", "off"):
+            return ProviderCheck(False, ("OPERON_TOOLS must be off for the osworld environment: "
+                                         "the tools would run on this host, not on the OSWorld VM.",))
         if not self.url:
             return ProviderCheck(False, ("Set OPERON_OSWORLD_URL to the OSWorld VM's server, "
                                          "for example http://127.0.0.1:5000.",))
@@ -142,7 +161,15 @@ class OSWorldExecutor:
     async def execute(self, action: AgentAction) -> ExecutedAction:
         if action.action_type is ActionType.BATCH:
             detail: list[str] = []
-            for child in action.actions or []:
+            for index, child in enumerate(action.actions or []):
+                check = self.batch_child_check
+                if index > 0 and check is not None:
+                    blocked = await check(child)
+                    if blocked is not None:
+                        return ExecutedAction(
+                            action=action, success=False,
+                            detail=f"Batch stopped before {child.action_type.value}: {blocked}",
+                            failure_category=FailureCategory.EXECUTION_ERROR, batch_failed_index=index)
                 result = await self.execute(child)
                 detail.append(f"{child.action_type.value}:{'ok' if result.success else 'failed'}")
                 if not result.success:
@@ -159,13 +186,17 @@ class OSWorldExecutor:
                 await asyncio.sleep((action.wait_ms or 1000) / 1000)
                 return ExecutedAction(action=action, success=True, detail=f"Waited {action.wait_ms or 1000} ms")
             if t is ActionType.LAUNCH_APP:
-                from operon.agent.app_catalog import LINUX_APP_LAUNCH_TARGETS
+                from operon.agent.app_catalog import launch_targets
 
-                command = LINUX_APP_LAUNCH_TARGETS.get((action.text or "").strip().lower())
+                command = launch_targets().get((action.text or "").strip().lower())
                 if command is None:
                     return _failed(action, f"launch_app: '{action.text}' is not a catalog application")
                 await self._shell(["bash", "-c", f"DISPLAY=:0 nohup {command} >/dev/null 2>&1 &"])
                 return ExecutedAction(action=action, success=True, detail=f"Launched {action.text}")
+            if t in _SERVO_ACTIONS and action.x is not None and action.y is not None and not action.is_input_zone:
+                blank = await self._blank_target(action)
+                if blank is not None:
+                    return blank
             snippet = pyautogui_snippet(action)
             if snippet is None:
                 return _failed(action, f"{t.value} is not supported on an OSWorld machine")
@@ -176,6 +207,24 @@ class OSWorldExecutor:
             return ExecutedAction(action=action, success=True, detail=f"Executed {t.value} on the OSWorld VM")
         except httpx.HTTPError as exc:
             return _failed(action, f"OSWorld VM unreachable: {exc}")
+
+    async def _blank_target(self, action: AgentAction) -> ExecutedAction | None:
+        """Visual servo (an invariant: every click goes through it): refuse a click whose
+        target region of the VM's screen is uniform, so stale coordinates do not spend the action."""
+        try:
+            response = await self._http().get("/screenshot")
+            response.raise_for_status()
+            variance = region_variance(response.content, int(action.x or 0), int(action.y or 0))
+        except Exception:  # noqa: BLE001 - a screenshot that cannot be read must not block the action
+            logger.debug("OSWorld visual servo skipped", exc_info=True)
+            return None
+        if variance is None or variance > _SERVO_THRESHOLD:
+            return None
+        logger.warning("CoordDriftWarning: uniform region at (%s, %s)", action.x, action.y)
+        return _failed(
+            action, f"visual servo: blank region at ({action.x}, {action.y}); target may have shifted",
+            FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+        ).model_copy(update={"visual_variance": variance})
 
     # Surface the loop calls that has nothing to do on a task VM OSWorld resets itself.
     def set_current_run_id(self, run_id: str) -> None: ...
@@ -202,6 +251,24 @@ class OSWorldExecutor:
             self._client = None
 
 
-def _failed(action: AgentAction, detail: str) -> ExecutedAction:
-    return ExecutedAction(action=action, success=False, detail=detail,
-                          failure_category=FailureCategory.EXECUTION_ERROR)
+def _failed(action: AgentAction, detail: str,
+            category: FailureCategory = FailureCategory.EXECUTION_ERROR) -> ExecutedAction:
+    return ExecutedAction(action=action, success=False, detail=detail, failure_category=category)
+
+
+_SERVO_ACTIONS = {ActionType.CLICK, ActionType.DOUBLE_CLICK, ActionType.TRIPLE_CLICK, ActionType.RIGHT_CLICK,
+                  ActionType.TYPE}
+
+
+def region_variance(png: bytes, x: int, y: int, radius: int = _SERVO_RADIUS) -> float | None:
+    """Variance of the RGB bytes in the square around (x, y), as DesktopExecutor's servo measures it."""
+    import io
+
+    with Image.open(io.BytesIO(png)) as image:
+        rgb = image.convert("RGB")
+        box = (max(0, x - radius), max(0, y - radius), min(rgb.width, x + radius), min(rgb.height, y + radius))
+        if box[2] <= box[0] or box[3] <= box[1]:
+            return None
+        raw = rgb.crop(box).tobytes()
+    mean = sum(raw) / len(raw)
+    return sum((b - mean) ** 2 for b in raw) / len(raw)

@@ -160,3 +160,133 @@ def test_run_cost_reads_usage_files_without_operon(tmp_path):
 
 def test_command_uses_given_python():
     assert osworld.operon_command("x", 5, "/venv/bin/python")[0] == "/venv/bin/python"
+
+
+# ── Codex review findings (PR #299) ───────────────────────────────
+
+def _png(color=(255, 255, 255), noisy=False) -> bytes:
+    import io
+    import random
+
+    from PIL import Image
+
+    image = Image.new("RGB", (400, 300), color)
+    if noisy:
+        rnd = random.Random(1)
+        image.putdata([(rnd.randrange(256),) * 3 for _ in range(400 * 300)])
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def test_visual_servo_refuses_a_click_on_a_blank_region(tmp_path):
+    posted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=_png())
+        posted.append(1)
+        return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+    result = asyncio.run(_executor(handler, tmp_path).execute(AgentAction(action_type=ActionType.CLICK, x=200, y=150)))
+    assert not result.success and "visual servo" in result.detail and posted == []
+
+
+def test_visual_servo_allows_content_and_input_zones(tmp_path):
+    posted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=_png(noisy=True))
+        posted.append(1)
+        return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+    assert asyncio.run(_executor(handler, tmp_path).execute(
+        AgentAction(action_type=ActionType.CLICK, x=200, y=150))).success
+
+    blank = lambda request: (httpx.Response(200, content=_png()) if request.method == "GET"  # noqa: E731
+                             else httpx.Response(200, json={"status": "success", "returncode": 0}))
+    assert asyncio.run(_executor(blank, tmp_path).execute(
+        AgentAction(action_type=ActionType.CLICK, x=200, y=150, is_input_zone=True))).success
+
+
+def test_non_ascii_text_is_pasted_not_written():
+    snippet = pyautogui_snippet(AgentAction(action_type=ActionType.TYPE, text="café"))
+    assert "pyperclip.copy('café')" in snippet and "hotkey('ctrl', 'v')" in snippet
+
+
+def test_batch_stops_when_the_cancellation_check_blocks(tmp_path):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            calls.append(1)
+        return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+    executor = _executor(handler, tmp_path)
+
+    async def check(child):
+        return "run stopped"
+
+    executor.batch_child_check = check
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[
+        AgentAction(action_type=ActionType.PRESS_KEY, key="a"), AgentAction(action_type=ActionType.PRESS_KEY, key="b")])
+    result = asyncio.run(executor.execute(batch))
+    assert not result.success and result.batch_failed_index == 1 and len(calls) == 1
+
+
+def test_provider_keeps_host_tools_away(monkeypatch):
+    assert OSWorldProvider(url="http://x").runs_on_host is False
+    monkeypatch.setenv("OPERON_TOOLS", "on")
+    check = OSWorldProvider(url="http://x").check()
+    assert not check.ok and "OPERON_TOOLS" in check.problems[0]
+
+
+def test_launch_catalog_is_the_osworld_one(monkeypatch):
+    from operon.agent.app_catalog import launch_targets
+
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "osworld")
+    targets = launch_targets()
+    assert targets["browser"] == "google-chrome" and targets["settings"] == "gnome-control-center"
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "live")
+    assert launch_targets().get("browser") != "google-chrome"
+
+
+def test_timeout_still_counts_the_spend(monkeypatch, tmp_path):
+    import subprocess
+
+    monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
+    step = tmp_path / "runs" / "abc12345-0000-0000-0000-000000000000" / "step_1"
+    step.mkdir(parents=True)
+    (step / "policy_usage.json").write_text('{"estimated_cost_usd": 0.4}')
+    env = SimpleNamespace(vm_ip="v", server_port=5000, reset=lambda task_config: None, evaluate=lambda: 0.0)
+
+    def timing_out(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 1, output=b"Run abc12345-0000-0000-0000-000000000000 started: x")
+
+    result = osworld.run_one(env, {"domain": "os", "id": "t", "instruction": "i"}, {}, max_steps=1, timeout_s=1,
+                             runs_root=str(tmp_path / "runs"), run=timing_out)
+    assert result["run_id"].startswith("abc12345") and result["cost_usd"] == 0.4
+    # even when no start line was read, the newest run folder is found
+    assert osworld.find_run_since(tmp_path / "runs", 0).startswith("abc12345")
+
+
+def test_finished_scores_survive_a_later_failure(monkeypatch, tmp_path):
+    (tmp_path / "repo").mkdir()
+    monkeypatch.setattr(osworld, "load_subset", lambda: [{"domain": "os", "id": "a", "instruction": "i"},
+                                                           {"domain": "os", "id": "b", "instruction": "j"}])
+    monkeypatch.setattr(osworld, "task_config", lambda repo, task: {})
+    answers = iter([{"domain": "os", "id": "a", "passed": True, "cost_usd": 0.1, "score": 1.0, "seconds": 1}])
+
+    def fake_run_one(*a, **k):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise RuntimeError("VM died") from None
+
+    monkeypatch.setattr(osworld, "run_one", fake_run_one)
+    with pytest.raises(RuntimeError):
+        osworld.main(["--osworld-repo", str(tmp_path / "repo"), "--out", str(tmp_path / "out")],
+                     env_factory=lambda repo: SimpleNamespace(close=lambda: None))
+    saved = json.loads(next((tmp_path / "out").glob("osworld-*.json")).read_text())
+    assert saved["summary"]["passed"] == 1

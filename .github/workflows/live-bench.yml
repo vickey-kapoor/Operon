@@ -1,4 +1,4 @@
-name: Browser benchmark
+name: Run browser test tasks (engine)
 run-name: Gemini · Browser · ${{ inputs.harness_profile }} · ${{ inputs.suite }} (manual)
 
 # Runs the live web benchmark (evals/live_bench.py) against a real API

@@ -1,4 +1,4 @@
-name: Desktop and Hybrid benchmark
+name: Run desktop test tasks (engine)
 run-name: Gemini · ${{ inputs.category }} · ${{ inputs.harness_profile }} · ${{ inputs.suite }} on ${{ inputs.runner }} (manual)
 
 # Runs the live desktop benchmark (evals/live_desktop_bench.py), or with category

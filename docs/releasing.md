@@ -1,7 +1,7 @@
 # Releasing to PyPI
 
 Operon is published as `operon-agent` (the import and the command stay `operon`).
-The "Release to PyPI" workflow (`.github/workflows/release.yml`) does the work; nobody
+The "Publish release to PyPI" workflow (`.github/workflows/release.yml`) does the work; nobody
 needs a PyPI token, because PyPI trusts that workflow (trusted publisher: this repo,
 `release.yml`, environment `pypi`).
 

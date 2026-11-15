@@ -158,14 +158,14 @@ Documents folder, and the report and dashboard mark the run as not comparable wi
 | `/bench long same-critic` | Long suite in the full harness, with Gemini as its own step critic |
 | `/bench desktop thin season=2 tools` | Desktop · Thin on Season 2 with tools on (the A/B arm for the tools-off run) |
 
-The **Browser benchmark**, **Desktop and Hybrid benchmark** and **Grounding benchmark** workflows can also be started by hand,
+The **Run browser test tasks (engine)**, **Run desktop test tasks (engine)** and **Run click-accuracy test (engine)** workflows can also be started by hand,
 with inputs for harness profile, suite and cost cap (`max_cost_usd`).
 
 ## Daily benchmark batch
 
 Paid runs are batched (KAN-105): during the day, the cells that need running go into a queue,
-and once a day the whole queue is sent for one cost approval and run as one **Benchmark**
-workflow run (`benchmark.yml`). Start it from the Actions tab (Benchmark > Run workflow, cells separated by
+and once a day the whole queue is sent for one cost approval and run as one **Run Operon on test tasks (paid)**
+workflow run (`benchmark.yml`). Start it from the Actions tab (Run Operon on test tasks (paid) > Run workflow, cells separated by
 `;`) or with one PR comment, one cell per line after the first:
 
 ```text
@@ -186,7 +186,7 @@ report goes to the dashboard, and a `/bench batch` comment gets one results tabl
 
 ### Nightly run (KAN-165)
 
-The batch also runs by itself: the same **Benchmark** workflow (`benchmark.yml`) fires at about 2:25 AM Chicago
+The batch also runs by itself: the same **Run Operon on test tasks (paid)** workflow (`benchmark.yml`) fires at about 2:25 AM Chicago
 (cron `23 8 * * *`, 3:25 AM in summer time) and runs the cells queued in `evals/nightly-queue.txt`.
 Threads queue a cell by adding a line in any PR: `2026-11-14 desktop thin season=2 cap=2.5  # note`
 (the date, the cell words above, an optional note). Each night `evals/nightly.py` takes the queued
@@ -194,7 +194,7 @@ lines, oldest first, while their caps fit the budget: **$10 a night**, or what i
 **$100 for the month** (from the dashboard database), whichever is less. Lines that don't fit wait
 for the next night; a line runs once (run lines are kept in the `nightly-state` artifact, marked
 before the run so a failed cell isn't paid for twice); lines older than 7 days are skipped. If the
-month's spend can't be read, nothing runs. Run Benchmark by hand with no cells and `dry_run` on to see the plan for free.
+month's spend can't be read, nothing runs. Run that workflow by hand with no cells and `dry_run` on to see the plan for free.
 Results reach the dashboard and the daily Slack summary.
 
 ## Adding models later
@@ -229,7 +229,7 @@ After an Operon change, is a grid cell (model · category · harness, for exampl
 - **Score with a 95% range.** Every report's `summary.score_range` holds the pass rate and its
   bootstrapped 95% range over the run's tasks (a `--repeat` task scores its share of passed
   attempts). `live_bench` prints it under the results table.
-- **Change vs the previous run of the cell.** When the Send results to dashboard workflow imports a
+- **Change vs the previous run of the cell.** When the "Save run results to dashboard" workflow imports a
   run, it finds the latest earlier unflagged run with the same mode, suite, backend, harness,
   model and season, and stores `summary.change`: the paired difference on
   the tasks both ran, its corrected 95% range, the label (Improved / Regressed only when that
@@ -348,7 +348,7 @@ reads Season 1 until `PLAN_SEASON` in `dashboard/app.js` moves to 2.
 
 Results are published at **https://operon-evals.vercel.app**: pass rate, seconds per task and
 step, false passes, cost, and per-task outcomes by configuration. After every benchmark
-workflow, the **Send results to dashboard** workflow writes the reports to a Neon Postgres database,
+workflow, the **Save run results to dashboard** workflow writes the reports to a Neon Postgres database,
 uploads screenshots and traces to a private Vercel Blob store (the dashboard shows them for
 tasks that did not pass), adds each run's score range and change vs the previous run of its
 cell (see [Run-over-run changes](#run-over-run-changes-kan-60)), comments that table on the PR
@@ -374,7 +374,7 @@ that the workflow starts before the run and deallocates after. Setup is in
 | Name | Kind | Used by |
 |---|---|---|
 | `GEMINI_API_KEY` | secret | Every model call: backends, step critic and the benchmark judge |
-| `DATABASE_URL` | secret | Send results to dashboard import (also set in the Vercel project) |
+| `DATABASE_URL` | secret | Save run results to dashboard import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
 | `SLACK_WEBHOOK_URL` | secret | Critical alerts and the daily summary; optional |
 | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` | variables | Starting and stopping the Azure VM via OIDC (no stored secret) |

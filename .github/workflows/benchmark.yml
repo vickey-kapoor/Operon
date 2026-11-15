@@ -1,4 +1,4 @@
-name: Benchmark
+name: Run Operon on test tasks (paid)
 run-name: >-
   ${{ github.event_name == 'schedule' && 'Benchmark · nightly (2 AM)'
   || github.event_name == 'issue_comment' && format('Benchmark from a comment on PR #{0}', github.event.issue.number)
@@ -11,7 +11,7 @@ run-name: >-
 #    month's spend (from the dashboard database) reaches $100. If the month's spend can't be
 #    read, nothing runs. Lines that already ran are remembered in the "nightly-state" artifact,
 #    so a line runs once. Results go to the dashboard and the daily Slack summary.
-# 2. By hand (Actions > Benchmark > Run workflow): give cells to run a batch (KAN-105), or leave
+# 2. By hand (Actions > Run Operon on test tasks (paid) > Run workflow): give cells to run a batch (KAN-105), or leave
 #    them empty to print tonight's plan (free; dry_run) or run it (dry_run off).
 # 3. A comment on a pull request by someone with write access:
 #
@@ -212,7 +212,7 @@ jobs:
           fi
           echo "sha=$(gh api "$PR_URL" --jq '.head.sha')" >> "$GITHUB_OUTPUT"
 
-      # The "Send results to dashboard" workflow reads this after the run to post the results table
+      # The "Save run results to dashboard" workflow reads this after the run to post the results table
       # (score with its 95% range, change vs the previous run, flipped tasks) on the PR.
       - name: Record the pull request
         env:

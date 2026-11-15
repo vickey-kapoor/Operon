@@ -126,10 +126,22 @@ def test_run_one_scores_with_osworld_not_operon(monkeypatch):
         return SimpleNamespace(stdout="Run deadbeef0 started: x", stderr="", returncode=1)
 
     result = osworld.run_one(env, {"domain": "os", "id": "abc", "instruction": "do it"}, {}, max_steps=5,
-                             timeout_s=9, run=fake_run)
+                             timeout_s=9, settle_s=0, run=fake_run)
     assert result["passed"] and result["cost_usd"] == 0.12  # operon exit 1 does not matter
     assert calls["env"]["OPERON_OSWORLD_URL"] == "http://10.1.1.1:5000"
     assert calls["env"]["OPERON_HARNESS_PROFILE"] == "thin" and calls["env"]["OPERON_AUTO_CONFIRM"] == "on"
+
+
+def test_run_one_waits_for_apps_to_settle_before_the_checker_runs(monkeypatch):
+    monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
+    monkeypatch.setattr(osworld, "run_cost", lambda run_id, runs_root=None: 0.0)
+    order: list[object] = []
+    monkeypatch.setattr(osworld.time, "sleep", lambda s: order.append(("sleep", s)))
+    env = SimpleNamespace(vm_ip="10.1.1.1", server_port=5000, reset=lambda task_config: None,
+                          evaluate=lambda: order.append("evaluate") or 1.0)
+    osworld.run_one(env, {"domain": "chrome", "id": "abc", "instruction": "x"}, {}, max_steps=5, timeout_s=9,
+                    run=lambda *a, **k: SimpleNamespace(stdout="", stderr="", returncode=0))
+    assert order == [("sleep", osworld.EVALUATE_SETTLE_S), "evaluate"] and osworld.EVALUATE_SETTLE_S == 20.0
 
 
 def test_summarize():
@@ -264,7 +276,7 @@ def test_timeout_still_counts_the_spend(monkeypatch, tmp_path):
     def timing_out(cmd, **kw):
         raise subprocess.TimeoutExpired(cmd, 1, output=b"Run abc12345-0000-0000-0000-000000000000 started: x")
 
-    result = osworld.run_one(env, {"domain": "os", "id": "t", "instruction": "i"}, {}, max_steps=1, timeout_s=1,
+    result = osworld.run_one(env, {"domain": "os", "id": "t", "instruction": "i"}, {}, max_steps=1, timeout_s=1, settle_s=0,
                              runs_root=str(tmp_path / "runs"), run=timing_out)
     assert result["run_id"].startswith("abc12345") and result["cost_usd"] == 0.4
     # even when no start line was read, the newest run folder is found

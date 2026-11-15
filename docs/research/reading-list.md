@@ -1,8 +1,8 @@
 # Research: reading list and paper notes
 
 The git copy of the Confluence page "Research: reading list and paper notes" (space OPERON).
-A weekly GitHub job (`.github/workflows/research-weekly.yml`) adds new arXiv papers under
-"Weekly scans" at the bottom. Weekly entries are collected automatically from arXiv and are
+`scripts/research_scan.py` adds new arXiv papers under "Weekly scans" at the bottom when run
+by hand (the weekly GitHub job was removed). Scan entries are collected automatically from arXiv and are
 abstract excerpts, not reviewed notes; promote a paper into a section above once it has been read.
 
 **Purpose.** A running reading list of research papers that matter for Operon, each with a plain-language note on what it actually shows and what it means for us. Every paper in sections 1 to 5 was checked on arXiv (title and date) on 12 Nov 2026; notes are drawn from the abstracts unless marked otherwise, so numbers are the authors' own claims on their own setups.

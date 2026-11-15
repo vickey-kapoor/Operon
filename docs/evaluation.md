@@ -354,10 +354,10 @@ tasks that did not pass), adds each run's score range and change vs the previous
 cell (see [Run-over-run changes](#run-over-run-changes-kan-60)), comments that table on the PR
 for a `/bench` run, and posts a Slack alert only for critical problems: a run that hit its
 cost cap, a benchmark run that failed, or the import itself failing. Scores and cost go in
-one **Daily benchmark summary** post each morning (8 AM Chicago, `daily-summary.yml`): every run
+one **Daily benchmark summary** post each morning (after the nightly run's import, the last step of `dashboard-data.yml`): every run
 of the last 24 hours with its score, cost and change against the previous run of its cell, plus
 this month's spend; nothing is posted on a day with no runs.
-Run the workflow by hand to import older runs. The Cost tab shows this month's spend against
+Run the workflow by hand to import older runs (or `post_summary` to post the summary now). The Cost tab shows this month's spend against
 the `MONTHLY_BUDGET_USD` budget (Vercel env) and spend by month (UTC), counting every
 benchmark run (incomplete and partial ones too), grounding evals and judge checks. See
 [dashboard/README.md](../dashboard/README.md).

@@ -8,8 +8,8 @@ only: no model calls, no browser, nothing spent.
     .venv/bin/python -m evals.demo_gif --latest --out docs/assets/demo.gif
     .venv/bin/python -m evals.demo_gif --run .var/runs/<run_id> --out demo.gif
 
-The "Record demo GIF" workflow runs one short real task (a few cents of Gemini calls)
-and then this, and uploads the GIF to look at before it goes in the README.
+The GIF in the README was made by running one short real task (a few cents of Gemini calls)
+and then this; the "Record demo GIF" workflow that automated it was removed.
 """
 
 from __future__ import annotations

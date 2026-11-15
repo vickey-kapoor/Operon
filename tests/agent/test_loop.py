@@ -1864,3 +1864,24 @@ async def test_consume_force_fresh_perception_uses_the_executor_settle_wait() ->
     assert calls == [0.5]
     mock_sleep.assert_not_called()
     assert state.force_fresh_perception is False
+
+
+def test_pass_on_change_note_sends_hint_and_ignores_missing_executor_support():
+    from unittest.mock import MagicMock
+
+    from operon.agent.loop import AgentLoop
+
+    loop = AgentLoop.__new__(AgentLoop)
+    loop.executor = MagicMock()
+    loop.executor.pop_change_note.return_value = "Screen activity right after your last action: x."
+    loop.perception_service = MagicMock()
+    ctx = MagicMock()
+    ctx.run_id = "r1"
+    loop._pass_on_change_note(ctx)
+    loop.perception_service.add_advisory_hints.assert_called_once_with(
+        ["Screen activity right after your last action: x."], source="change_note", run_id="r1"
+    )
+    loop.executor.pop_change_note.return_value = None
+    loop.perception_service.reset_mock()
+    loop._pass_on_change_note(ctx)
+    loop.perception_service.add_advisory_hints.assert_not_called()

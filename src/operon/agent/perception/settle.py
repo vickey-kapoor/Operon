@@ -13,8 +13,8 @@ The loop is a small *frame stream*. Anything that wants the frames between steps
 subscribe as a :class:`FrameObserver`: the between-step change note (KAN-111) and a
 later UI detector (KAN-118) plug in here without changing the executors.
 
-Off by default: with ``OPERON_SETTLE_DETECT`` unset, :func:`settle_after_action` is
-exactly the old ``asyncio.sleep``.
+Off by default: with ``OPERON_SETTLE_DETECT`` (and ``OPERON_CHANGE_NOTE``, which needs the
+same frames) unset, :func:`settle_after_action` is exactly the old ``asyncio.sleep``.
 """
 
 from __future__ import annotations
@@ -188,7 +188,7 @@ async def settle_after_action(
     ``OPERON_SETTLE_MAX_S``.
     """
     settings = get_settings()
-    if not settings.settle_detect:
+    if not (settings.settle_detect or settings.change_note):
         await asyncio.sleep(fallback_delay)
         return None
     result = await wait_until_settled(

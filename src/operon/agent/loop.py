@@ -762,6 +762,7 @@ class AgentLoop:
                 ctx.earlier_attempts.append(ctx.executed_action)
             await self._execute_attempt(ctx)
             self._absorb_dialog_message(ctx)
+            self._pass_on_change_note(ctx)
             await self._verify_attempt(ctx)
             if not await self._prepare_adaptation_retry(ctx):
                 break
@@ -791,6 +792,22 @@ class AgentLoop:
             _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
             executed_action = blocked_action
         ctx.executed_action = self._relocate_after_artifact(executed_action, ctx.after_artifact_path)
+
+    def _pass_on_change_note(self, ctx: StepContext) -> None:
+        """Hand the model the executor's between-step change note, as text (KAN-111).
+
+        The executor wrote it while the screen settled (OPERON_CHANGE_NOTE). It goes out
+        as an advisory hint with the next step; no extra image, no model call.
+        """
+        pop = getattr(self.executor, "pop_change_note", None)
+        if not callable(pop):
+            return
+        note = pop()
+        if not isinstance(note, str) or not note:
+            return
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints([note], source="change_note", run_id=ctx.run_id)
 
     def _absorb_dialog_message(self, ctx: StepContext) -> None:
         """Fold a JS dialog the executor intercepted into this step's perception.

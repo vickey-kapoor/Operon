@@ -901,6 +901,9 @@ class AgentLoop:
                 return
             if ctx.dialog_captured or ctx.attempt_cancelled:
                 return
+            if ctx.attempt_index > 1:
+                # After a retry the screen change spans every attempt, not the last one's.
+                return
             ratio = ctx.screen_change_ratio
             if ratio is None:
                 return
@@ -911,7 +914,10 @@ class AgentLoop:
             if not (Path(ctx.before_artifact_path).exists() and Path(after_path).exists()):
                 return
             decision = ctx.decision
-            reliable = self._backend_reports_expected_change()
+            # A backend's NONE is a real "none" only when the model actually supplied the field.
+            reliable = self._backend_reports_expected_change() and "expected_change" in getattr(
+                decision, "model_fields_set", ()
+            )
             expectation = parse_expectation(
                 decision.rationale, decision.expected_change, field_is_reliable=reliable
             )

@@ -1909,6 +1909,7 @@ def _expect_ctx(rationale, ratio, *, success=True, action_type="click", expected
     ctx = MagicMock()
     ctx.run_id = "r1"
     ctx.step_index = 1
+    ctx.attempt_index = 1
     ctx.screen_change_ratio = ratio
     ctx.decision.rationale = rationale
     ctx.decision.expected_change = ExpectedChange(expected)
@@ -2030,8 +2031,10 @@ def test_expect_check_backend_that_reports_expected_change(monkeypatch, tmp_path
     loop.perception_service.reports_expected_change = True
     loop._send_expect_instruction("r1")
     loop.perception_service.add_advisory_hints.assert_not_called()
-    # Its NONE is a real "none": a full-screen change is a mismatch.
-    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "", 0.9, expected="none"))
+    # Its NONE is a real "none" when the model supplied it: a full-screen change is a mismatch.
+    ctx = _expect_ctx_with_files(tmp_path, "", 0.9, expected="none")
+    ctx.decision.model_fields_set = {"expected_change"}
+    loop._check_expected_change(ctx)
     assert loop.perception_service.add_advisory_hints.call_args.kwargs["source"] == "expect_check"
     # Without the capability the same step gives no expectation, only a (possible) reminder.
     loop.perception_service.reset_mock()
@@ -2091,3 +2094,23 @@ def test_start_run_sends_expect_instruction_after_planning():
 
     src = inspect.getsource(AgentLoop.start_run)
     assert src.index("_write_plan(record)") < src.index("_send_expect_instruction(record.run_id)")
+
+
+def test_expect_check_ignores_none_the_model_did_not_supply(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop.perception_service.reports_expected_change = True
+    ctx = _expect_ctx_with_files(tmp_path, "", 0.9, expected="none")
+    ctx.decision.model_fields_set = {"action"}
+    loop._check_expected_change(ctx)
+    loop.perception_service.add_advisory_hints.assert_not_called()
+
+
+def test_expect_check_skips_retried_steps(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    ctx = _expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0)
+    ctx.attempt_index = 2
+    loop._check_expected_change(ctx)
+    loop.perception_service.add_advisory_hints.assert_not_called()
+    assert not (tmp_path / "step_1" / "expect_check.json").exists()

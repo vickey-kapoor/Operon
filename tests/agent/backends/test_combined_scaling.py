@@ -159,3 +159,18 @@ def test_sent_image_size_matches_the_downscale() -> None:
     assert sent_image_size(1920, 1080) == (1280, 720)
     assert sent_image_size(2560, 1440) == (1280, 720)
     assert sent_image_size(1024, 768) == (1024, 768)
+
+
+def test_parse_forwards_expected_change_and_tracks_whether_it_was_supplied() -> None:
+    import json
+
+    from operon.models.policy import ExpectedChange
+
+    base = json.loads(_raw({"action_type": "click", "x": 400, "y": 40}))
+    _, missing = CombinedPerceptionPolicyService._parse_combined_output(json.dumps(base), "before.png")
+    assert missing.expected_change is ExpectedChange.NONE
+    assert "expected_change" not in missing.model_fields_set
+    base["expected_change"] = "navigation"
+    _, given = CombinedPerceptionPolicyService._parse_combined_output(json.dumps(base), "before.png", scale_ratio=0.5)
+    assert given.expected_change is ExpectedChange.NAVIGATION
+    assert "expected_change" in given.model_fields_set

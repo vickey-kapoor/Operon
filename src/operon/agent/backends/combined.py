@@ -306,6 +306,8 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
             "confidence": parsed.get("confidence", 0.5),
             "active_subgoal": parsed.get("active_subgoal", "combined step"),
         }
+        if "expected_change" in parsed:
+            decision_data["expected_change"] = parsed["expected_change"]
         decision = parse_policy_output(json.dumps(decision_data))
         if scale_ratio != 1.0:
             inverse = 1.0 / scale_ratio

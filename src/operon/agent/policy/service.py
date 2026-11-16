@@ -90,8 +90,8 @@ def parse_policy_output(raw_output: str) -> PolicyDecision:
     parsed = _normalize_policy_payload(parsed)
 
     if "expected_change" not in parsed:
-        logger.warning("[PLANNER] Response missing expected_change; defaulting to empty string")
-        parsed["expected_change"] = "none"
+        # The model default is NONE; leaving the key out keeps "was it supplied" in model_fields_set.
+        logger.warning("[PLANNER] Response missing expected_change; defaulting to none")
 
     try:
         return PolicyDecision.model_validate(parsed)

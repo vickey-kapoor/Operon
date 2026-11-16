@@ -92,7 +92,7 @@ run, cancelled ones included, and writes its reports to the database, using the
 From a terminal:
 
 ```bash
-pip install "psycopg[binary]"
+pip install -e ".[dashboard]"   # or: pip install "psycopg[binary]"
 export DATABASE_URL=postgres://...
 python -m evals.dashboard import .var/bench/full-20261024T012945Z.json
 python -m evals.dashboard import path/to/artifacts --backend json --flag "why it is not comparable"

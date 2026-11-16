@@ -71,7 +71,7 @@ provider; Claude and GPT run on 2 nights a week to keep the extra cost to about 
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard.
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
-# (the import needs `pip install "psycopg[binary]"`; the "Save run results to dashboard" workflow does it after each benchmark)
+# (the import needs `pip install -e ".[dashboard]"` or `pip install "psycopg[binary]"`; the "Save run results to dashboard" workflow does it after each benchmark)
 $env:DATABASE_URL = "postgres://..."; .venv\Scripts\python -m evals.dashboard import .var\bench\full-<stamp>.json
 cd dashboard; npm install; npm run dev   # page + API on :3000, reads $env:DATABASE_URL
 ```

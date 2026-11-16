@@ -223,7 +223,7 @@ def test_main_needs_a_database_url(tmp_path, monkeypatch, capsys) -> None:
     assert "DATABASE_URL" in capsys.readouterr().err
 
 
-# Runs against a real Postgres when one is given (CI has none):
+# Runs against a real Postgres when one is given (CI provides a Postgres service):
 # OPERON_TEST_DATABASE_URL=postgresql://... pytest tests/evals/test_dashboard.py
 @pytest.mark.skipif(not os.getenv("OPERON_TEST_DATABASE_URL"), reason="no test database")
 def test_import_writes_runs_and_replaces_them_on_reimport(tmp_path) -> None:

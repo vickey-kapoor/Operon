@@ -54,12 +54,7 @@ jobs:
         # --locked installs precisely what uv.lock pins (and fails if the lock is
         # stale vs pyproject.toml), so CI is reproducible and immune to upstream
         # dependency drift. Update deps deliberately via `uv lock --upgrade`.
-        run: uv sync --locked --extra dev
-
-      - name: Install the Postgres driver for the dashboard tests
-        # Same pin the benchmark and dashboard-data workflows use. Not a dev dependency
-        # (only CI and the dashboard importer need it), so it stays out of uv.lock.
-        run: uv pip install "psycopg[binary]==3.2.9"
+        run: uv sync --locked --extra dev --extra dashboard
 
       - name: Run tests
         env:

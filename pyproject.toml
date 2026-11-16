@@ -55,6 +55,9 @@ dev = [
 notifications = [
     "win11toast>=0.36.0",
 ]
+dashboard = [
+    "psycopg[binary]>=3.3",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

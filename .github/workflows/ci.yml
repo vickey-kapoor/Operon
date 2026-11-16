@@ -21,6 +21,24 @@ jobs:
       # uv resolves/builds the env for this Python; honored by sync and run.
       UV_PYTHON: "3.14"
 
+    services:
+      # The eval-dashboard importer tests (tests/evals/test_dashboard.py) run against a
+      # real Postgres; they skip when OPERON_TEST_DATABASE_URL is unset. They create and
+      # drop their own tables, so a bare database is enough.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: operon
+          POSTGRES_PASSWORD: operon
+          POSTGRES_DB: operon_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U operon -d operon_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,16 +56,24 @@ jobs:
         # dependency drift. Update deps deliberately via `uv lock --upgrade`.
         run: uv sync --locked --extra dev
 
+      - name: Install the Postgres driver for the dashboard tests
+        # Same pin the benchmark and dashboard-data workflows use. Not a dev dependency
+        # (only CI and the dashboard importer need it), so it stays out of uv.lock.
+        run: uv pip install "psycopg[binary]==3.2.9"
+
       - name: Run tests
         env:
           # The suite is offline: a fake key, so the real one never reaches test code.
           GEMINI_API_KEY: fake-test-key
           OPERON_TEST_SAFE_MODE: "true"
+          OPERON_TEST_DATABASE_URL: postgresql://operon:operon@localhost:5432/operon_test
         # Live-server suites are auto-deselected by the `live_server` marker
         # (configured via addopts in pyproject.toml).
-        # Coverage (KAN-159): line + branch coverage of src/operon, reported only (no
-        # minimum yet). The table goes to the job summary; coverage.xml is uploaded.
-        run: uv run pytest tests/ -v --tb=short --junitxml=test-results.xml --cov --cov-report=xml --cov-report=term:skip-covered
+        # Coverage (KAN-159): line + branch coverage of src/operon, failing under 80%
+        # (the total was 85% when the floor was set). The floor lives here, not in
+        # pyproject.toml, so local partial runs with --cov do not fail. The table goes to
+        # the job summary; coverage.xml is uploaded.
+        run: uv run pytest tests/ -v --tb=short --junitxml=test-results.xml --cov --cov-fail-under=80 --cov-report=xml --cov-report=term:skip-covered
 
       - name: Coverage summary
         if: always() && hashFiles('coverage.xml') != ''

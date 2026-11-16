@@ -63,6 +63,11 @@ after that ends as ``failure``. Every run's results are saved under
 ``.var/bench/`` and the report compares them with the previous saved run.
 The judge model is ``OPERON_BENCH_JUDGE_MODEL`` (default ``gemini-3.5-flash``).
 
+``--model PROFILE`` names the model registry profile (``evals/models.yaml``: Claude, GPT)
+the server runs (``OPERON_*_BACKEND=model``, ``OPERON_MODEL_PROFILE``; KAN-168). The
+report then records the profile; such a run is thin with the model's own "done", like
+Gemini's thin runs, so the two compare side by side.
+
 Spend is capped per benchmark run: after each task, the agent's and the judge's
 cost so far is checked against ``--max-cost-usd`` (``MAX_RUN_COST_USD``, default
 $3; 0 turns the cap off). With ``--repeat N`` the cap is N times that, since each
@@ -115,6 +120,7 @@ from evals.season2 import apps as season2_apps
 from evals.season2 import hybrid as season2_hybrid
 from operon.api.auth import client_api_key
 from operon.core.paths import runs_dir
+from operon.core.settings import get_settings
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error", "compromised")
@@ -242,7 +248,7 @@ def _run_dir(run_id: str) -> Path:
 
 def _backends_used(run_id: str) -> tuple[int, int]:
     steps = sorted(_run_dir(run_id).glob("step_*"))
-    cu = sum((step / "computer_use_raw.json").exists() for step in steps)
+    cu = sum((step / "computer_use_raw.json").exists() or (step / "model_raw.json").exists() for step in steps)
     return cu, len(steps) - cu
 
 
@@ -354,12 +360,12 @@ def server_mode(mode: str) -> str:
     return "desktop" if mode == "hybrid" else mode
 
 
-def critic_label(mode: str = "browser") -> str | None:
+def critic_label(mode: str = "browser", profile=None) -> str | None:
     """Which step critic a full run used, for the report: ``same:<model>`` with
     OPERON_CRITIC=same (KAN-68), else the verifier model; None for a thin run, which
     has no step critic. Defaults as in ``operon.api.runtime_config``."""
     mode = server_mode(mode)
-    if harness_label(mode) != "full":
+    if harness_label(mode, profile) != "full":
         return None
     env = _server_env()
     prefix = f"OPERON_{mode.upper()}_"
@@ -375,15 +381,44 @@ def _server_backend(env: dict[str, str], mode: str) -> str:
     return (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower() or "computer_use"
 
 
-def harness_label(mode: str = "browser") -> str:
+def harness_label(mode: str = "browser", profile=None) -> str:
     """The report's harness: ``full``, or ``thin-own`` for a thin run, which takes the
-    model's own "done". Read from the settings the server sees (shell plus ``.env``)."""
+    model's own "done". A registry model (``profile``) always runs thin with its own done.
+    Read from the settings the server sees (shell plus ``.env``)."""
+    if profile is not None:
+        return "thin-own"
     env = _server_env()
     requested = (env.get("OPERON_HARNESS_PROFILE") or "").strip().lower()
     if _server_backend(env, mode) == "computer_use" and requested == "thin":
         # Gemini computer use runs full unless thin is asked for (operon.agent.policy.thin).
         return "thin-own"
     return "full"
+
+
+def resolve_model_profile(name: str | None, mode: str):
+    """The registry profile ``--model`` names, checked against this shell's server
+    settings when they are visible here; None without ``--model``."""
+    if not name:
+        return None
+    mode = server_mode(mode)
+    from operon.agent.backends.model_adapter.registry import (
+        ModelRegistryError,
+        resolve_profile,
+    )
+
+    try:
+        profile = resolve_profile(name)
+    except ModelRegistryError as exc:
+        sys.exit(f"--model: {exc}")
+    if mode not in profile.environments:
+        sys.exit(f"--model: profile {name} does not support {mode}")
+    configured = get_settings().model_profile
+    backend = (os.getenv(f"OPERON_{mode.upper()}_BACKEND") or "").strip()
+    if configured and configured != name:
+        sys.exit(f"--model {name}, but OPERON_MODEL_PROFILE={configured}: the server runs another model")
+    if backend and backend != "model":
+        sys.exit(f"--model {name}, but OPERON_{mode.upper()}_BACKEND={backend}: start the server with backend=model")
+    return profile
 
 
 def _final_screenshot(run_id: str) -> str | None:
@@ -754,7 +789,7 @@ def budget_stop(results: list[TaskResult], planned: int, max_cost_usd: float) ->
 
 def _previous_report(
     bench_dir: Path, suite: str, harness_profile: str | None = None, trust_gate: str = "off",
-    season: int | None = None, tools: str = "off",
+    season: int | None = None, tools: str = "off", model_profile: str | None = None,
 ) -> dict | None:
     # A run stopped at the cost cap covers only some tasks, so it is no baseline; nor
     # is a run of another model (older reports), or one judged another way (thin vs thin-own).
@@ -765,7 +800,7 @@ def _previous_report(
         except (OSError, ValueError):
             continue
         # An incomplete report (the run died midway) is no baseline either.
-        if report.get("budget_stop") or report.get("complete") is False or not _gemini_report(report):
+        if report.get("budget_stop") or report.get("complete") is False or not _same_model(report, model_profile):
             continue
         # A gate-on run pauses before risky actions, so it is no baseline for a gate-off one (or
         # the reverse). Reports from before trust_gate was recorded ran with it off.
@@ -780,6 +815,14 @@ def _previous_report(
         if harness_profile is None or report.get("harness_profile") in {None, harness_profile}:
             return report
     return None
+
+
+def _same_model(report: dict, model_profile: str | None) -> bool:
+    """Whether a saved report is a run of the same model: the same registry profile, or
+    (without one) Gemini, since older reports may hold another model's run."""
+    if model_profile is not None:
+        return report.get("model_profile") == model_profile
+    return _gemini_report(report)
 
 
 def _gemini_report(report: dict) -> bool:
@@ -956,6 +999,7 @@ def build_report(
     started_at: str,
     results: list[TaskResult],
     *,
+    profile=None,
     repeat: int,
     planned: int,
     stopped: dict | None,
@@ -987,14 +1031,19 @@ def build_report(
         "mode": args.mode,
         # The grid cell this run fills: category x harness (evals/categories.py).
         "category": category_of(None, args.mode),
-        "cell": cell_name(args.mode, harness_label(args.mode)),
+        "cell": cell_name(args.mode, harness_label(args.mode, profile)),
         "started_at": started_at,
         # The effective model and backend: Gemini defaults when the env var is unset.
-        model_key: os.getenv(f"OPERON_{env_mode}_MODEL") or DEFAULT_MODEL,
+        model_key: profile.model if profile is not None else (os.getenv(f"OPERON_{env_mode}_MODEL") or DEFAULT_MODEL),
         "judge_model": args.judge_model,
         "backend": os.getenv(f"OPERON_{env_mode}_BACKEND") or "computer_use",
-        "harness_profile": harness_label(args.mode),
-        "critic": critic_label(args.mode),
+        "harness_profile": harness_label(args.mode, profile),
+        "critic": critic_label(args.mode, profile),
+        **(
+            {"model_profile": profile.name, "model_adapter": profile.adapter, "model_id": profile.model}
+            if profile is not None
+            else {}
+        ),
         "trust_gate": trust_gate or trust_gate_label(),
         "tools": tools or tools_label(),
         "repeat": repeat,
@@ -1062,6 +1111,7 @@ def report_name(args: argparse.Namespace, started_at: str) -> str:
 
 async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
     season_run = season_for(args)
+    profile = resolve_model_profile(getattr(args, "model", None), args.mode)
     tasks = season_run.tasks() if season_run else select_tasks(args.suite, args.only, args.category, args.mode)
     if not tasks:
         print("No tasks match.", file=sys.stderr)
@@ -1084,7 +1134,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
 
     def save(complete: bool) -> dict:
         report = build_report(
-            args, started_at, results, repeat=repeat, planned=len(planned), stopped=stopped, complete=complete,
+            args, started_at, results, profile=profile, repeat=repeat, planned=len(planned), stopped=stopped, complete=complete,
             season_run=season_run, trust_gate=trust_gate, tools=tools,
         )
         # Write then rename, so a run killed mid-write keeps its last good checkpoint.
@@ -1114,8 +1164,8 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
             # Found before this run's own report is first written below.
             if not (args.only or args.category):
                 previous = _previous_report(
-                    bench_dir, suite_name, harness_label(args.mode), trust_gate,
-                    season_run.season if season_run else None, tools,
+                    bench_dir, suite_name, harness_label(args.mode, profile), trust_gate,
+                    season_run.season if season_run else None, tools, profile.name if profile else None,
                 )
             for index, (attempt, task) in enumerate(planned, 1):
                 active = {"task": task, "attempt": attempt, "run_id": None, "started": time.monotonic()}
@@ -1203,6 +1253,10 @@ def build_parser(default_suite: str = "core", default_mode: str = "browser") -> 
     parser.add_argument(
         "--max-cost-usd", type=float, default=_max_cost_default(),
         help=f"stop once the run has spent this much on model calls (default $MAX_RUN_COST_USD or {DEFAULT_MAX_COST_USD:g}; 0: no cap)",
+    )
+    parser.add_argument(
+        "--model", default=get_settings().model_profile or None,
+        help="model registry profile the server runs (evals/models.yaml; default $OPERON_MODEL_PROFILE)",
     )
     parser.add_argument(
         "--season", type=int, default=None,

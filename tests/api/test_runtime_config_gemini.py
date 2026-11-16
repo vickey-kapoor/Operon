@@ -30,7 +30,7 @@ def test_the_desktop_json_backend_also_defaults_to_gemini_3_5_flash(monkeypatch)
     assert desktop_mode_config().primary_model == "gemini-3.5-flash"
 
 
-@pytest.mark.parametrize("backend", ["claude_computer_use", "model"])
+@pytest.mark.parametrize("backend", ["claude_computer_use", "gpt"])
 def test_other_model_backends_are_refused(monkeypatch, backend) -> None:
     monkeypatch.setenv("OPERON_BROWSER_BACKEND", backend)
     monkeypatch.setenv("OPERON_DESKTOP_BACKEND", backend)

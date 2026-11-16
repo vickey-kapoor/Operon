@@ -16,11 +16,19 @@ settings it started with in `settings.json` in its run folder, with keys shown o
 
 ## Model keys
 
-`GEMINI_API_KEY` runs Gemini, Operon's only model for now: the browser and desktop backends
+`GEMINI_API_KEY` runs Gemini, Operon's default model: the browser and desktop backends
 (Gemini computer use), the browser fallback (full harness only), the step critic and the
 benchmark judge. The Gemini JSON backends also accept `GOOGLE_API_KEY`; Gemini Computer Use
-reads `GEMINI_API_KEY` only. Other models will come back later through a simpler model
-onboarding ([roadmap](roadmap.md)).
+reads `GEMINI_API_KEY` only.
+
+### Other models, side by side with Gemini (KAN-168)
+
+Off by default. `OPERON_BROWSER_BACKEND=model` (or `OPERON_DESKTOP_BACKEND=model`) runs the
+profile named by `OPERON_MODEL_PROFILE`, a key of `evals/models.yaml`: `claude-sonnet-5-5`
+(needs `ANTHROPIC_API_KEY`) or `openai-computer-use` (needs `OPENAI_API_KEY`). A model run is
+always thin and the model's own "done" ends it, the same as Gemini's thin runs, so scores compare.
+The nightly queue and `/bench batch` take the cell word `model=<profile>`; the workflows give a
+cell only its own provider's key. Startup refuses a missing key or profile.
 
 ## Harness profiles
 

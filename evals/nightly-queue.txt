@@ -9,3 +9,5 @@
 2026-11-15 browser thin dynamic x3 settle ref=main cap=2.5  # KAN-115: settle
 2026-11-15 browser thin dynamic x3 settle note ref=main cap=2.5  # KAN-115: settle + change note
 2026-11-15 browser thin dynamic x3 planner ref=main cap=2.5  # KAN-115: planner
+# KAN-168: Claude and GPT on the same cells as Gemini, 2 nights a week (about $25-30 a month extra).
+# Not queued yet: wait for Vickey's cost OK for the first night (about $4: one browser and one desktop cell per model).

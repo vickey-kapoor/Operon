@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 APP_JS = Path(__file__).resolve().parents[2] / "dashboard" / "app.js"
-FUNCTIONS = ("isGeminiRun", "harnessSuffix", "baseLabel", "configLabel", "fmtUsd", "taskResults", "likelyCause", "runChanges",
+FUNCTIONS = ("isShownRun", "familyName", "harnessSuffix", "baseLabel", "configLabel", "fmtUsd", "taskResults", "likelyCause", "runChanges",
              "previousRun", "briefHeadline", "burnHeadline")
-CONSTANTS = ("BACKEND_NAMES", "OTHER_MODEL", "OUTCOME_LABELS", "fmtPct", "fmtSec")
+CONSTANTS = ("BACKEND_NAMES", "PROFILE_NAMES", "OTHER_MODEL", "OUTCOME_LABELS", "fmtPct", "fmtSec")
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="needs Node")
 
@@ -125,11 +125,20 @@ def test_previous_run_compares_like_models_when_one_backend_ran_several() -> Non
 
 
 def test_earlier_runs_of_other_models_get_one_label() -> None:
-    # Operon runs Gemini only; older runs of other models stay in the database for spend.
+    # Older runs of models that are not shown stay in the database for spend.
     other = "Other model (earlier runs)"
     assert _run("configLabel(run('a', 1, 1, { config: { backend: 'claude_computer_use' } }))") == other
-    assert _run("configLabel(run('a', 1, 1, { config: { backend: 'model', model_profile: 'openai-computer-use' } }))") == other
-    assert _run("isGeminiRun(run('a', 1, 1, { config: { backend: 'json' } }))") is True
+    assert _run("configLabel(run('a', 1, 1, { config: { backend: 'model', model_profile: 'qwen3-vl-32b' } }))") == other
+    assert _run("isShownRun(run('a', 1, 1, { config: { backend: 'json' } }))") is True
     # No recorded backend means the server default, Gemini computer use.
-    assert _run("isGeminiRun(run('a', 1, 1, { config: {} }))") is True
+    assert _run("isShownRun(run('a', 1, 1, { config: {} }))") is True
     assert _run("configLabel(run('a', 1, 1, { config: {} }))") == "Gemini"
+
+
+def test_claude_and_gpt_runs_are_shown_as_their_own_configurations() -> None:
+    claude = "{ backend: 'model', model_profile: 'claude-sonnet-5-5', harness_profile: 'thin-own' }"
+    gpt = "{ backend: 'model', model_profile: 'openai-computer-use', harness_profile: 'thin-own' }"
+    assert _run(f"isShownRun(run('a', 1, 1, {{ config: {claude} }}))") is True
+    assert _run(f"configLabel(run('a', 1, 1, {{ config: {claude} }}))") == "Claude Sonnet 5.5 · thin, own done"
+    assert _run(f"configLabel(run('a', 1, 1, {{ config: {gpt} }}))") == "GPT · thin, own done"
+    assert _run("configLabel(run('a', 1, 1, { config: { harness_profile: 'thin-own' } }))") == "Gemini · thin, own done"

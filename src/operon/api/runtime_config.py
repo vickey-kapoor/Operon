@@ -5,10 +5,11 @@ from dataclasses import asdict, dataclass
 
 from operon.core.settings import Settings, get_settings
 
-# Gemini is Operon's only model: computer_use (Gemini computer use, the default) or
-# json (the older Gemini JSON path).
-_VALID_DESKTOP_BACKENDS = frozenset({"json", "computer_use"})
-_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use"})
+# computer_use (Gemini computer use, the default), json (the older Gemini JSON path), or
+# "model": the registry profile named by OPERON_MODEL_PROFILE (Claude, GPT; evals/models.yaml),
+# used for side-by-side runs with Gemini (KAN-168). Off unless the backend is "model".
+_VALID_DESKTOP_BACKENDS = frozenset({"json", "computer_use", "model"})
+_VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "model"})
 _DEFAULT_MODEL = "gemini-3.5-flash"
 
 
@@ -78,6 +79,9 @@ def validate_modes(settings: Settings | None = None) -> list[str]:
     # Gemini only: a leftover Claude or GPT name from an old .env would fail on every call
     # (the critic quietly falls back to a guess), so refuse it at startup instead.
     for mode, cfg in (("DESKTOP", desktop), ("BROWSER", browser)):
+        if cfg.backend == "model":
+            errors.extend(f"{mode.lower()} backend=model: {problem}" for problem in _model_profile_problems(mode.lower()))
+            continue  # the acting model comes from the profile, not OPERON_*_MODEL
         for name, model in (
             ("MODEL", cfg.primary_model),
             ("FALLBACK_MODEL", cfg.fallback_model),
@@ -89,6 +93,41 @@ def validate_modes(settings: Settings | None = None) -> list[str]:
                     f"(remove it from .env to use {_DEFAULT_MODEL})"
                 )
     return errors
+
+
+def _model_profile_problems(environment: str) -> list[str]:
+    import os
+
+    from operon.agent.backends.model_adapter.registry import (
+        ModelRegistryError,
+        resolve_profile,
+    )
+
+    try:
+        profile = resolve_profile()
+    except ModelRegistryError as exc:
+        return [str(exc)]
+    problems = []
+    if environment not in profile.environments:
+        problems.append(f"profile {profile.name} does not support {environment}")
+    required_key = {
+        "claude_native": "ANTHROPIC_API_KEY",
+        "gemini_native": "GEMINI_API_KEY",
+        "openai_native": "OPENAI_API_KEY",
+    }.get(profile.adapter)
+    if required_key and not os.getenv(required_key):
+        problems.append(f"profile {profile.name} needs {required_key}")
+    if profile.adapter == "openai_native" and (
+        profile.pricing.input_per_mtok is None or profile.pricing.output_per_mtok is None
+    ):
+        # Without prices every step costs $0 and the run cost cap never stops a paid run.
+        problems.append(f"profile {profile.name} needs pricing (input_per_mtok and output_per_mtok)")
+    if profile.adapter == "openai_compat":
+        try:
+            profile.resolved_base_url()
+        except ModelRegistryError as exc:
+            problems.append(str(exc))
+    return problems
 
 
 def main() -> int:

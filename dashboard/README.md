@@ -17,8 +17,9 @@ monthly budget (used, left, per-day pace, month-end projection), spend by month,
 a running total, spend per run, spend by model per day, cache hit rate, the most
 expensive tasks, wasted spend, spend by suite, and each run's spend by model and by
 task. Spend is the agent's model calls, the judge and a self-hosted model's GPU
-time; months are calendar months in UTC. Operon runs Gemini only: the Evals tab and
-the Leaderboard show Gemini runs, and earlier runs of other models still in the
+time; months are calendar months in UTC. The Evals tab and the
+Leaderboard show Gemini runs and runs of Claude Sonnet 5.5 and GPT (KAN-168), each as its own
+configuration, side by side; earlier runs of any other model still in the
 database count only toward spend on the Cost tab. The Leaderboard's thin-against-full grid shows each cell's score with a 95% range and an Improved /
 Regressed / No clear change badge against the previous run of that cell; clicking a cell
 lists the tasks that flipped (`summary.score_range` and `summary.change`, written by the

@@ -113,7 +113,7 @@ def test_matrices_split_browser_from_the_vm_and_give_unique_artifact_names() -> 
     (browser,) = out["browser"]["include"]
     assert browser == {
         "label": "Gemini · Browser · Thin · x2", "category": "browser", "profile": "thin", "suite": "core",
-        "critic": "", "tools": "off", "zoom": "off", "features": "", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
+        "critic": "", "tools": "off", "zoom": "off", "features": "", "model": "", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
     }
     desktop = out["desktop"]["include"]
     assert [(d["category"], d["cap"], d["suffix"]) for d in desktop] == [("desktop", "1.5", "-cell1"), ("hybrid", "3", "-cell3")]

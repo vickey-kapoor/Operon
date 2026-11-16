@@ -41,12 +41,19 @@ FULL = "full"
 # so the benchmark can run the same model in both harnesses (KAN-67).
 GEMINI_COMPUTER_USE = "computer_use"
 
+# The model backend (OPERON_*_BACKEND=model) runs the registry model named by
+# OPERON_MODEL_PROFILE (Claude, GPT; evals/models.yaml). It always runs thin, so every
+# model in a side-by-side night is judged the same way: its own "done", graders decide.
+MODEL_BACKEND = "model"
+
 
 def harness_profile(backend: str) -> str:
     """The harness profile for a backend. Gemini computer use runs full unless
     ``OPERON_HARNESS_PROFILE=thin`` asks for the thin harness; the json backend always
     runs full, since its decisions still need the rules and the critic."""
     requested = get_settings().harness_profile
+    if backend == MODEL_BACKEND:
+        return THIN
     if backend == GEMINI_COMPUTER_USE:
         return THIN if requested == THIN else FULL
     if requested == THIN:
@@ -77,7 +84,11 @@ class OwnDoneVerifier(VerifierService):
     No second model judges the claim. The benchmark's graders (app state, request logs)
     decide success afterwards, which makes a false success a clean metric. Every other
     step passes through: a failed action is reported to the model as its tool result by
-    the backend, not retried here."""
+    the backend, not retried here. A ``fail`` (rationale starting with ``gave_up_prefix``)
+    ends the run as not done."""
+
+    def __init__(self, *, gave_up_prefix: str = "Model gave up: ") -> None:
+        self.gave_up_prefix = gave_up_prefix
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return None
@@ -91,6 +102,14 @@ class OwnDoneVerifier(VerifierService):
         allow_stable_wait: bool = True,
     ) -> VerificationResult:
         if decision.action.action_type is ActionType.STOP:
+            if (decision.rationale or "").startswith(self.gave_up_prefix):
+                return VerificationResult(
+                    status=VerificationStatus.FAILURE,
+                    expected_outcome_met=False,
+                    stop_condition_met=True,
+                    reason=decision.rationale,
+                    stop_reason=StopReason.COMPLETION_UNVERIFIED,
+                )
             return VerificationResult(
                 status=VerificationStatus.SUCCESS,
                 expected_outcome_met=True,

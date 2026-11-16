@@ -54,6 +54,9 @@ on:
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
+      model:
+        description: "Model registry profile (evals/models.yaml, KAN-168), e.g. claude-sonnet-5-5 or openai-computer-use; empty = Gemini computer use. Always thin."
+        default: ""
       args:
         description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"
         default: ""
@@ -72,6 +75,7 @@ on:
       tools: {type: string, default: "off"}
       zoom: {type: string, default: "off"}
       desktop_model: {type: string, default: ""}
+      model: {type: string, default: ""}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
       # The Benchmark workflow (benchmark.yml) starts the Azure VM once for all its Desktop and
@@ -86,6 +90,8 @@ on:
     # Only these secrets reach a /bench run; the caller passes them by name.
     secrets:
       GEMINI_API_KEY: {required: false}
+      ANTHROPIC_API_KEY: {required: false}
+      OPENAI_API_KEY: {required: false}
       AZURE_CREDENTIALS: {required: false}
 
 permissions:
@@ -147,7 +153,12 @@ jobs:
       UV_PYTHON: "3.14"
       PYTHONUTF8: "1"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      OPERON_DESKTOP_BACKEND: ${{ inputs.desktop_backend }}
+      OPERON_DESKTOP_BACKEND: ${{ inputs.model && 'model' || inputs.desktop_backend }}
+      # A registry model (KAN-168) acts through the model backend, always thin with its own done.
+      OPERON_MODEL_PROFILE: ${{ inputs.model }}
+      # Another provider's key reaches a cell only when that cell runs that provider's model.
+      ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}
+      OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}
       OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
       OPERON_CRITIC: ${{ inputs.critic }}
       # Tools next to screen actions (RFC 0002); off unless the run asks for them.

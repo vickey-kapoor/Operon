@@ -61,8 +61,8 @@ async def test_navigate_goes_to_url_and_waits_for_load(tmp_path: Path) -> None:
 
 
 def test_navigate_without_url_is_rejected_when_the_action_is_built() -> None:
-    # The executor's own "navigate requires url" guard is unreachable: ExecutedAction
-    # re-validates the action, so the model layer is the real gate.
+    # The executor's own "navigate requires url" guard is unreachable: the AgentAction
+    # validators reject a url-less navigate at construction, so that is the real gate.
     with pytest.raises(ValidationError, match="navigate requires url"):
         AgentAction(action_type=ActionType.NAVIGATE)
 
@@ -157,8 +157,8 @@ async def test_drag_presses_moves_and_releases_in_order(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("missing", ["x", "y", "x_end", "y_end"])
 def test_drag_with_a_missing_coordinate_is_rejected_when_the_action_is_built(missing: str) -> None:
-    coords = {"x": 10, "y": 20, "x_end": 30, "y_end": 40}
-    coords[missing] = None  # type: ignore[assignment]
+    coords: dict[str, int | None] = {"x": 10, "y": 20, "x_end": 30, "y_end": 40}
+    coords[missing] = None
 
     with pytest.raises(ValidationError, match="drag requires x, y, x_end, y_end"):
         AgentAction(action_type=ActionType.DRAG, **coords)

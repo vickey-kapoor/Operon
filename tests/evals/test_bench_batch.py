@@ -181,7 +181,7 @@ def test_benchmark_workflow_jobs_only_wait_on_jobs_that_exist() -> None:
     for job, called in (("browser", "live-bench.yml"), ("desktop", "live-desktop-bench.yml"), ("grounding", "grounding.yml")):
         inputs = yaml.safe_load((WORKFLOWS / called).read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
-    assert set(wf[True]) == {"schedule", "issue_comment", "workflow_dispatch"}
+    assert set(wf[True]) == {"issue_comment", "workflow_dispatch"}
 
 
 def test_the_old_benchmark_entry_points_are_gone() -> None:

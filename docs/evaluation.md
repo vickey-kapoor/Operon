@@ -188,7 +188,7 @@ report goes to the dashboard, and a `/bench batch` comment gets one results tabl
 
 ### Nightly run (KAN-165)
 
-The batch also runs by itself: the same **Run Operon on test tasks (paid)** workflow (`benchmark.yml`) fires at about 2:25 AM Chicago
+The batch can also run by itself (paused since 2026-11-16: start it by hand with an empty `cells`; uncomment the schedule in `benchmark.yml` to bring the nightly back): the same **Run Operon on test tasks (paid)** workflow (`benchmark.yml`) fires at about 2:25 AM Chicago
 (cron `23 8 * * *`, 3:25 AM in summer time) and runs the cells queued in `evals/nightly-queue.txt`.
 Threads queue a cell by adding a line in any PR: `2026-11-14 desktop thin season=2 cap=2.5  # note`
 (the date, the cell words above, an optional note). Each night `evals/nightly.py` takes the queued

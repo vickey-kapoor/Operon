@@ -3,7 +3,7 @@
 # then an optional "# note". Every night at 2 AM Chicago the cells that fit tonight's budget run
 # in one batch ($10 a night, and nothing once the month reaches $100). A line runs once; lines
 # older than 7 days are skipped. Queue a cell by adding a line here in any PR.
-# Paused: paid runs wait for the weekend of Nov 21-22 (Vickey, 2026-11-16). Lines dated in the future wait for their night.
+# Paused: the nightly schedule is off; start "Run Operon on test tasks (paid)" by hand with empty cells on Sat and Sun. Paid runs wait for the weekend of Nov 21-22 (Vickey, 2026-11-16). Lines dated in the future wait for their night.
 # Sat Nov 21 night, caps $9.50
 2026-11-21 desktop thin season=2 zoom=always ref=main cap=2.5  # KAN-82: zoom on whole tasks
 2026-11-21 hybrid full season=2 ref=main cap=2  # KAN-161: first Full score

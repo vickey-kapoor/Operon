@@ -129,6 +129,33 @@ These are load-bearing — violating them silently breaks the agent.
 - **`.env.example` is a contract.** Every variable in it must actually be read by
   code in `src/`, and new settings must be added there (and to `Settings`).
 
+## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
+
+For code work in Claude Code, the main session (Opus) runs this pipeline. The subagents are
+defined in `.claude/agents/` with their model pinned in frontmatter (scanner and verifier also have a
+restricted tool list).
+
+1. **Plan (main session, Opus, max effort).** Write the plan as a script: the question, the
+   files or areas to scan, and how each fix will be checked. The main session does not edit code.
+2. **Scan (`scanner`, Haiku, read-only).** Launch several in parallel, one per area, to find
+   candidates with file:line evidence. Scanners only read and search; they never edit.
+3. **Code (`coder`, Sonnet).** One coder per fix, each in its own isolated git worktree
+   (`isolation: worktree`). Coders write all code and tests and run the relevant tests.
+4. **Verify (`verifier`, Opus, independent).** Every finding and every fix gets a fresh verifier
+   that did not write it: confirm the issue is real, review the diff against the invariants
+   above, and run lint, type check and the relevant tests. Findings that fail verification
+   are dropped, not passed on.
+5. **Sign off (main session, Opus).** Review only verified findings and fixes, bring the
+   worktree changes onto the working branch, run the full offline suite once, and sign off
+   before anything is pushed. Codex reviews every PR; never merge until Vickey writes "merge"
+   for that PR.
+
+Worktrees have no `.venv` of their own and the editable install points at the main checkout's
+`src/`, so in a worktree run the main checkout's venv by absolute path, from the worktree root, with `PYTHONPATH=src` (PowerShell:
+`$env:PYTHONPATH = "src"`) so tests import the worktree's code.
+Coder worktrees branch from the default branch (`main`), not from the session's current branch, so for work on an
+unmerged branch tell the coder to check that branch out in its worktree first.
+
 ## Runtime artifacts
 
 Runs write to `.var/runs/<run_id>/` (`~/.operon/runs/<run_id>/` when installed with pip) (screenshots, model I/O, policy decisions,
@@ -136,7 +163,8 @@ execution traces, logs) — gitignored, and **screenshots capture the whole scre
 so review before sharing. Legacy `runs/`, `.browser-artifacts/`, `.desktop-artifacts/`
 paths still appear in old logs and tests.
 
-Never commit anything under `.claude/` — it is gitignored and personal.
+Never commit anything under `.claude/` except `.claude/agents/` (the shared subagent definitions, see Dev workflow) —
+the rest is gitignored and personal.
 
 ## Testing conventions
 

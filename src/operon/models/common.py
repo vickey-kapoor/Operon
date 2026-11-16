@@ -123,8 +123,12 @@ class ResumeRequest(StrictModel):
     run_id: str = Field(min_length=1)
 
 
+# Long enough for multi-step instructions such as OSWorld tasks (one is 736 characters).
+MAX_INTENT_CHARS = 2000
+
+
 class RunTaskRequest(StrictModel):
-    intent: str = Field(min_length=1, max_length=500)
+    intent: str = Field(min_length=1, max_length=MAX_INTENT_CHARS)
     start_url: str | None = Field(default=None, min_length=1)
     headless: bool | None = None
     benchmark: str | None = Field(default=None, min_length=1)

@@ -302,3 +302,14 @@ def test_finished_scores_survive_a_later_failure(monkeypatch, tmp_path):
                      env_factory=lambda repo: SimpleNamespace(close=lambda: None))
     saved = json.loads(next((tmp_path / "out").glob("osworld-*.json")).read_text())
     assert saved["summary"]["passed"] == 1
+
+
+def test_long_benchmark_instructions_are_accepted_by_the_run_request():
+    from operon.api.frontdoor import FrontDoorTask
+    from operon.models.common import MAX_INTENT_CHARS, RunTaskRequest
+
+    long_task = "x" * 736  # OSWorld multi_apps 2c1ebcd7 is 736 characters
+    assert FrontDoorTask(intent=long_task).intent == long_task
+    assert RunTaskRequest(intent=long_task).intent == long_task
+    with pytest.raises(ValueError):
+        RunTaskRequest(intent="x" * (MAX_INTENT_CHARS + 1))

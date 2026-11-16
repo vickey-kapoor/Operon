@@ -405,12 +405,12 @@ class TestFix5WhitespaceIntentRejected:
             f"REGRESSION: 500-char intent rejected with {resp.status_code}"
         )
 
-    def test_intent_501_chars_rejected_regardless_of_fix(self):
-        """max_length=500 should still apply independently of whitespace stripping."""
-        intent = "A" * 501
+    def test_intent_2001_chars_rejected_regardless_of_fix(self):
+        """the intent length limit should still apply independently of whitespace stripping."""
+        intent = "A" * 2001
         resp = post("/desktop/run-task", {"intent": intent})
         assert resp.status_code == 422, (
-            f"REGRESSION: 501-char intent should be 422, got {resp.status_code}"
+            f"REGRESSION: 2001-char intent should be 422, got {resp.status_code}"
         )
 
 

@@ -15,7 +15,7 @@ cost cap::
 
 Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
 ``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``, ``settle|note|planner`` (KAN-115: perception experiments, browser only)
-(KAN-82: OPERON_ZOOM dense or always), ``model=<profile>`` (KAN-168: run Claude or GPT on the same cell, thin with the model's own done; the profile is a key of ``evals/models.yaml``, browser and desktop only), ``season=<n>``, ``pr=<number>`` (that PR's head) or
+(KAN-82: OPERON_ZOOM dense or always), ``model=<profile>`` (KAN-168: run Claude or GPT on the same cell, thin with the model's own done; the profile is a key of ``src/operon/agent/backends/model_adapter/models.yaml``, browser and desktop only), ``season=<n>``, ``pr=<number>`` (that PR's head) or
 ``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
 cell's cost cap, default 3, repeats included). ``azure`` and ``gemini`` are accepted and change nothing: batch
 Desktop and Hybrid cells always run on the Azure VM. Blank lines and ``#`` comments are

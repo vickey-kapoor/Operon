@@ -55,7 +55,7 @@ on:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
       model:
-        description: "Model registry profile (evals/models.yaml, KAN-168), e.g. claude-sonnet-5-5 or openai-computer-use; empty = Gemini computer use. Always thin."
+        description: "Model registry profile (src/operon/agent/backends/model_adapter/models.yaml, KAN-168), e.g. claude-sonnet-5-5 or openai-computer-use; empty = Gemini computer use. Always thin."
         default: ""
       args:
         description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"

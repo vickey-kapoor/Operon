@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from operon.agent.app_catalog import APP_LAUNCH_TARGETS
+from operon.agent.app_catalog import APP_LAUNCH_TARGETS, launch_targets
 from operon.clients.anthropic import AnthropicClientError, AnthropicHttpClient
 from operon.core.settings import get_settings
 
@@ -57,22 +57,32 @@ NAVIGATE_TOOL: dict[str, Any] = {
 
 # On the desktop, opening an app by name beats hunting through the Start menu.
 # Only catalog apps can be launched; the executor refuses anything else.
-LAUNCH_APP_TOOL: dict[str, Any] = {
-    "name": "launch_app",
-    "description": (
-        "Open a desktop application by name. Use this instead of clicking the Start menu, "
-        "taskbar or desktop icons. Opening an app that is already running opens another window."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "app": {"type": "string", "enum": sorted(APP_LAUNCH_TARGETS), "description": "Application to open."},
+def launch_app_tool(targets: dict[str, str] | None = None) -> dict[str, Any]:
+    """The launch_app tool for ``targets`` (default: the configured platform's catalog)."""
+    return {
+        "name": "launch_app",
+        "description": (
+            "Open a desktop application by name. Use this instead of clicking the Start menu, "
+            "taskbar, panel or desktop icons. Opening an app that is already running opens another window."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "app": {
+                    "type": "string",
+                    "enum": sorted(launch_targets() if targets is None else targets),
+                    "description": "Application to open.",
+                },
+            },
+            "required": ["app"],
+            "additionalProperties": False,
         },
-        "required": ["app"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
+        "strict": True,
+    }
+
+
+# Windows catalog, kept for callers that name it directly.
+LAUNCH_APP_TOOL: dict[str, Any] = launch_app_tool(APP_LAUNCH_TARGETS)
 
 # Server-side refusal fallback: a declined turn is re-run on a fallback model in the same call.
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"

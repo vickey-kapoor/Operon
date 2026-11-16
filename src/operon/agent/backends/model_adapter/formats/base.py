@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from operon.agent.app_catalog import APP_LAUNCH_TARGETS
+from operon.agent.app_catalog import LINUX, desktop_platform, launch_targets
 from operon.agent.backends.model_adapter.actions import CoordinateMapper, NeutralAction
 from operon.agent.backends.model_adapter.images import SentImage
 
@@ -16,8 +16,8 @@ _BROWSER_RULES = (
     "the key alt+Left."
 )
 _DESKTOP_RULES = (
-    "You are driving a Windows desktop. Each screenshot shows the whole screen. Open an app with the "
-    "launch_app action instead of the Start menu. Apps you can launch: {apps}."
+    "You are driving a {platform} desktop. Each screenshot shows the whole screen. Open an app with the "
+    "launch_app action instead of the {menu}. Apps you can launch: {apps}."
 )
 
 
@@ -31,7 +31,12 @@ class PromptContext:
     @staticmethod
     def environment_rules(environment: str) -> str:
         if environment == "desktop":
-            return _DESKTOP_RULES.format(apps=", ".join(sorted(APP_LAUNCH_TARGETS)))
+            linux = desktop_platform() == LINUX
+            return _DESKTOP_RULES.format(
+                platform="Linux (XFCE)" if linux else "Windows",
+                menu="Applications menu or panel" if linux else "Start menu",
+                apps=", ".join(sorted(launch_targets())),
+            )
         return _BROWSER_RULES
 
 

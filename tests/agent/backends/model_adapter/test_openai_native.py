@@ -414,3 +414,36 @@ async def test_a_rejected_proposal_is_reported_as_not_run(frame) -> None:
     await _step(backend, frame, state(), "s1b")
     note = json.dumps(client.requests[1]["input_items"])
     assert "Not executed: Operon's harness rejected it and asked you again" in note
+
+
+async def test_the_loop_can_see_and_discard_a_held_action(frame) -> None:
+    # The loop counts a confirmation as an approval only if the backend says it holds calls,
+    # and drops them when the person answers with a correction.
+    checks = [{"id": "sc_1", "code": "malicious_instructions", "message": "Looks like an instruction."}]
+    client = ScriptedResponses([
+        _response("r1", _computer("c1", {"type": "click", "x": 10, "y": 10}, checks=checks)),
+        _response("r2", _message("Done.")),
+    ])
+    backend = _backend(client)
+    assert not backend.has_held_actions("run-1")
+    await _step(backend, frame, state(), "s1")
+    assert backend.has_held_actions("run-1")
+    backend.discard_held_actions("run-1", "Not executed: the user declined this action and sent a correction.")
+    assert not backend.has_held_actions("run-1")
+    await _step(backend, frame, state((ActionType.WAIT, True)), "s2")
+    assert len(client.requests) == 2  # the held click did not run
+    assert "the user declined this action and sent a correction" in json.dumps(client.requests[1]["input_items"])
+
+
+async def test_the_launch_tools_follow_the_desktop_platform(monkeypatch) -> None:
+    from operon.agent.app_catalog import LINUX_APP_LAUNCH_TARGETS
+    from operon.agent.backends.model_adapter.openai_native import _custom_tools
+    from operon.api.runtime.services import _claude_prompt_name
+    from operon.clients.anthropic_computer_use import launch_app_tool
+
+    monkeypatch.setenv("OPERON_DESKTOP_PLATFORM", "linux")
+    linux = sorted(LINUX_APP_LAUNCH_TARGETS)
+    assert _custom_tools("desktop")[0]["parameters"]["properties"]["app"]["enum"] == linux
+    assert launch_app_tool()["input_schema"]["properties"]["app"]["enum"] == linux
+    assert _claude_prompt_name("desktop") == "desktop_claude_computer_use_prompt_linux.txt"
+    assert _claude_prompt_name("browser") == "browser_claude_computer_use_prompt.txt"

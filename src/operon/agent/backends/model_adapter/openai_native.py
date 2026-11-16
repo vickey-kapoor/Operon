@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from operon.agent.actions.translation import build_policy_decision
-from operon.agent.app_catalog import APP_LAUNCH_TARGETS
+from operon.agent.app_catalog import launch_targets
 from operon.agent.backends.base import AgentBackend
 from operon.agent.backends.fallback import BackendCompatibilityError
 from operon.agent.backends.model_adapter.actions import (
@@ -64,10 +64,10 @@ def _custom_tools(environment: str) -> list[dict[str, Any]]:
         return [{
             "type": "function",
             "name": "launch_app",
-            "description": "Open a desktop application by name, instead of using the Start menu.",
+            "description": "Open a desktop application by name, instead of using the Start menu or panel.",
             "parameters": {
                 "type": "object",
-                "properties": {"app": {"type": "string", "enum": sorted(APP_LAUNCH_TARGETS)}},
+                "properties": {"app": {"type": "string", "enum": sorted(launch_targets())}},
                 "required": ["app"],
                 "additionalProperties": False,
             },
@@ -362,6 +362,19 @@ class OpenAIComputerUseBackend(AgentBackend):
 
     def supports_resampling(self, run_id: str = "") -> bool:
         return False
+
+    def has_held_actions(self, run_id: str) -> bool:
+        """Whether the run is paused on a call the model asked the user to confirm."""
+        conv = self._runs.get(run_id)
+        return bool(conv is not None and conv.held_payload is not None)
+
+    def discard_held_actions(self, run_id: str, reason: str) -> None:
+        """The user answered the confirmation with a correction: the held call never runs."""
+        conv = self._runs.get(run_id)
+        if conv is None or conv.held_payload is None:
+            return
+        conv.held_payload, conv.held_checks = None, []
+        conv.not_executed_reason = reason.removeprefix("Not executed: ").rstrip(".")
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         self._hints.setdefault(run_id, []).extend(h for h in hints if h)

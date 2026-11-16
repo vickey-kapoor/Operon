@@ -1,4 +1,4 @@
-"""Model registry: ``evals/models.yaml`` (or ``$OPERON_MODEL_REGISTRY``).
+"""Model registry: ``models.yaml`` next to this module (or ``$OPERON_MODEL_REGISTRY``).
 
 Each top-level key is a profile name; its value says how Operon talks to that model.
 A typo in a key fails loudly at load time rather than silently using a default.
@@ -14,7 +14,6 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from operon.core.paths import project_root
 from operon.core.settings import get_settings
 
 # Env vars an ``openai_compat`` profile reads unless it names others.
@@ -111,7 +110,7 @@ class ModelProfile(_Strict):
 
 def registry_path() -> Path:
     value = get_settings().model_registry
-    return Path(value) if value else project_root() / "evals" / "models.yaml"
+    return Path(value) if value else Path(__file__).with_name("models.yaml")
 
 
 def load_registry(path: Path | None = None) -> dict[str, ModelProfile]:

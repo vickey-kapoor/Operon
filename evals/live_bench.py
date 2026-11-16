@@ -63,7 +63,7 @@ after that ends as ``failure``. Every run's results are saved under
 ``.var/bench/`` and the report compares them with the previous saved run.
 The judge model is ``OPERON_BENCH_JUDGE_MODEL`` (default ``gemini-3.5-flash``).
 
-``--model PROFILE`` names the model registry profile (``evals/models.yaml``: Claude, GPT)
+``--model PROFILE`` names the model registry profile (``src/operon/agent/backends/model_adapter/models.yaml``: Claude, GPT)
 the server runs (``OPERON_*_BACKEND=model``, ``OPERON_MODEL_PROFILE``; KAN-168). The
 report then records the profile; such a run is thin with the model's own "done", like
 Gemini's thin runs, so the two compare side by side.
@@ -1256,7 +1256,7 @@ def build_parser(default_suite: str = "core", default_mode: str = "browser") -> 
     )
     parser.add_argument(
         "--model", default=get_settings().model_profile or None,
-        help="model registry profile the server runs (evals/models.yaml; default $OPERON_MODEL_PROFILE)",
+        help="model registry profile the server runs (src/operon/agent/backends/model_adapter/models.yaml; default $OPERON_MODEL_PROFILE)",
     )
     parser.add_argument(
         "--season", type=int, default=None,

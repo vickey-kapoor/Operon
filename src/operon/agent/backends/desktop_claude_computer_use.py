@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from operon.agent.app_catalog import LINUX, desktop_platform
 from operon.agent.backends.browser_claude_computer_use import (
     BrowserClaudeComputerUseBackend,
 )
@@ -16,10 +17,14 @@ class DesktopClaudeComputerUseBackend(BrowserClaudeComputerUseBackend):
     backend, so API failures surface to the loop as step errors.
     """
 
-    system_prompt = (
-        "You are a desktop automation agent on Windows. "
-        "You see the whole screen through screenshots and act with the tools."
-    )
+    @property
+    def system_prompt(self) -> str:  # type: ignore[override]
+        platform = "Linux" if desktop_platform() == LINUX else "Windows"
+        return (
+            f"You are a desktop automation agent on {platform}. "
+            "You see the whole screen through screenshots and act with the tools."
+        )
+
     custom_tool_names = frozenset({"launch_app"})
     # pyautogui scrolls in wheel notches, not pixels.
     scroll_step = 1

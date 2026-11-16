@@ -12,7 +12,7 @@ import re
 import uuid
 from typing import Any
 
-from operon.agent.app_catalog import APP_LAUNCH_TARGETS
+from operon.agent.app_catalog import launch_targets
 from operon.agent.backends.model_adapter.actions import TERMINAL_ACTIONS, NeutralAction
 from operon.agent.backends.model_adapter.formats.base import (
     ActionFormat,
@@ -82,7 +82,7 @@ def neutral_tools(environment: str) -> list[dict[str, Any]]:
             _fn(
                 "launch_app",
                 "Open a desktop application by name.",
-                {"app": {"type": "string", "enum": sorted(APP_LAUNCH_TARGETS)}},
+                {"app": {"type": "string", "enum": sorted(launch_targets())}},
                 ["app"],
             )
         )

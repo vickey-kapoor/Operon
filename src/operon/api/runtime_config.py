@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from operon.core.settings import Settings, get_settings
 
 # computer_use (Gemini computer use, the default), json (the older Gemini JSON path), or
-# "model": the registry profile named by OPERON_MODEL_PROFILE (Claude, GPT; evals/models.yaml),
+# "model": the registry profile named by OPERON_MODEL_PROFILE (Claude, GPT; src/operon/agent/backends/model_adapter/models.yaml),
 # used for side-by-side runs with Gemini (KAN-168). Off unless the backend is "model".
 _VALID_DESKTOP_BACKENDS = frozenset({"json", "computer_use", "model"})
 _VALID_BROWSER_BACKENDS = frozenset({"json", "computer_use", "model"})

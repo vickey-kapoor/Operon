@@ -20,6 +20,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 
 from operon.agent.app_catalog import LINUX_APP_LAUNCH_TARGETS
 from operon.executor import desktop as _desktop
@@ -98,6 +99,8 @@ class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
         procs = self._launched_processes.pop(run_id, [])
         self._launched_app_names.pop(run_id, None)
         self._owned_pids.pop(run_id, None)
+        if sys.platform == "win32":
+            return 0  # process groups are POSIX-only; this executor targets Linux
         closed = 0
         for proc in procs:
             try:

@@ -506,13 +506,13 @@ def loop_environment(settings: dict | None = None):
 
 @contextmanager
 def recorded_path_rules(host: dict | None):
-    """Judge file paths the way the recording's machine did. A Windows run replayed
-    elsewhere keeps its ``C:\\...`` paths and ``OPERON_ALLOWED_FILE_ROOTS``, which this
+    """Judge file paths the way the recording's machine did. A Windows run keeps its ``C:\\...`` paths and ``OPERON_ALLOWED_FILE_ROOTS``, which this
     machine's ``Path`` would resolve as unrelated relative paths, so the file guard
-    compares them as Windows paths (case-insensitive). As on that machine, a tool's
+    compares them as Windows paths (case-insensitive), also when replaying on Windows, so
+    the recorded home and working directory apply, not this machine's. As on that machine, a tool's
     relative path is under the home folder, and any other relative path (an allowed root,
     an upload) is under the working directory the run started in."""
-    if not host or host.get("os") != "nt" or os.name == "nt":
+    if not host or host.get("os") != "nt":
         yield
         return
     from operon.agent.policy import file_guard

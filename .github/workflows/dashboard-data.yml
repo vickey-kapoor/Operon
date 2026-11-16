@@ -1,5 +1,5 @@
-name: Send results to dashboard
-run-name: Send results to dashboard (${{ github.event.workflow_run.name || 'manual import' }})
+name: Save run results to dashboard
+run-name: Save run results to dashboard (${{ github.event.workflow_run.name || 'manual import' }})
 
 # After a live benchmark finishes, write its reports to the eval dashboard's
 # Postgres database (Neon, connected to the operon-evals Vercel project); the
@@ -21,7 +21,7 @@ run-name: Send results to dashboard (${{ github.event.workflow_run.name || 'manu
 
 on:
   workflow_run:
-    workflows: ["Benchmark", "Browser benchmark", "Desktop and Hybrid benchmark", "Grounding benchmark"]
+    workflows: ["Run Operon on test tasks (paid)", "Run browser test tasks (engine)", "Run desktop test tasks (engine)", "Run click-accuracy test (engine)"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -129,7 +129,7 @@ jobs:
         run: |
           for run_id in $RUN_IDS; do
             read -r run_url event head_sha workflow < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha,workflowName --jq '[.url, .event, .headSha, .workflowName] | @tsv')
-            { [ "$event" = "issue_comment" ] || [ "$workflow" = "Benchmark" ] || [ "$workflow" = "Benchmark batch" ] || [ "$workflow" = "Nightly benchmark run" ]; } && head_sha=""
+            { [ "$event" = "issue_comment" ] || [ "$workflow" = "Run Operon on test tasks (paid)" ] || [ "$workflow" = "Benchmark" ] || [ "$workflow" = "Benchmark batch" ] || [ "$workflow" = "Nightly benchmark run" ]; } && head_sha=""
             gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$run_id"
             python3 -m evals.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
           done

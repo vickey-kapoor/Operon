@@ -1,6 +1,6 @@
 # OSWorld benchmark runner (KAN-169)
 
-`Actions > OSWorld benchmark > Run workflow` runs Operon on a fixed 25-task subset of
+`Actions > Run OSWorld test tasks (own VM) > Run workflow` runs Operon on a fixed 25-task subset of
 OSWorld-Verified (`evals/osworld_subset.json`) and scores it with OSWorld's own checkers.
 It is manual only: it spends Gemini credits (about $0.06 a task; the 5-task pilot cost
 $0.31), so you pick how many tasks and the cost cap each time.

@@ -1,13 +1,13 @@
 # OSWorld-Verified subset (KAN-169): Operon on 25 fixed OSWorld tasks, scored by OSWorld itself.
 #
-# Manual only (Actions > OSWorld benchmark > Run workflow). It spends model credits, so nothing
+# Manual only (Actions > Run OSWorld test tasks (own VM) > Run workflow). It spends model credits, so nothing
 # starts it for you: you pick how many tasks and the cost cap. Steps: start the Linux VM
 # operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
 # docs/osworld-runner.md), upload the report, deallocate the VM.
 #
 # Needs repo secret GEMINI_API_KEY and the Azure OIDC variables the desktop bench already uses.
 # Cost: about $0.06 a task (the 5-task pilot was $0.31). The cap stops starting tasks past it.
-name: OSWorld benchmark
+name: Run OSWorld test tasks (own VM)
 
 on:
   workflow_dispatch:

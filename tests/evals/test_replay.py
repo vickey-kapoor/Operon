@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -259,8 +260,9 @@ def test_a_run_from_another_os_judges_file_paths_its_way(tmp_path):
     assert recording["host"] == host
     assert [s["action"]["action_type"] for s in recording["steps"]][:2] == ["tool", "tool"]
     _replays(recording)
-    as_linux = asyncio.run(rp.replay({**recording, "host": {"os": "posix", "home": "/root"}}))
-    assert not as_linux.ok and "step 1" in as_linux.message
+    if os.name != "nt":  # a posix host is not emulated, so on real Windows C:\... is native and passes
+        as_linux = asyncio.run(rp.replay({**recording, "host": {"os": "posix", "home": "/root"}}))
+        assert not as_linux.ok and "step 1" in as_linux.message
     other_home = asyncio.run(rp.replay({**recording, "host": {"os": "nt", "home": None}}))
     assert not other_home.ok and "step 2" in other_home.message
 

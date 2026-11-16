@@ -123,8 +123,14 @@ class ResumeRequest(StrictModel):
     run_id: str = Field(min_length=1)
 
 
+# Longest task text a run accepts. 500 rejected real tasks (an OSWorld task is 736 characters,
+# KAN-169), and the text is a few hundred tokens a step at most, so the cap is a guard against
+# absurd input, not a style limit.
+MAX_INTENT_CHARS = 4000
+
+
 class RunTaskRequest(StrictModel):
-    intent: str = Field(min_length=1, max_length=500)
+    intent: str = Field(min_length=1, max_length=MAX_INTENT_CHARS)
     start_url: str | None = Field(default=None, min_length=1)
     headless: bool | None = None
     benchmark: str | None = Field(default=None, min_length=1)

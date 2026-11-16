@@ -23,7 +23,12 @@ from operon.api import ws_stream as _ws_stream
 from operon.api.runtime import loops as _loops
 from operon.api.runtime import tasks as _tasks
 from operon.core.runtime import current_runtime
-from operon.models.common import RunStatus, RunTaskRequest, StrictModel
+from operon.models.common import (
+    MAX_INTENT_CHARS,
+    RunStatus,
+    RunTaskRequest,
+    StrictModel,
+)
 from operon.models.logs import StepLog
 from operon.store.replay import load_run_replay
 from operon.store.run_store import stored_environment
@@ -40,7 +45,7 @@ ENVIRONMENTS = ("browser", "desktop")
 class FrontDoorTask(StrictModel):
     """A task as the page and ``operon run`` send it."""
 
-    intent: str = Field(min_length=1, max_length=500)
+    intent: str = Field(min_length=1, max_length=MAX_INTENT_CHARS)
     environment: str = Field(default="browser", pattern=r"^(browser|desktop)$")
     start_url: str | None = Field(default=None, min_length=1)
     permission_mode: str | None = Field(default=None, pattern=r"^(ask|risky|auto)$")

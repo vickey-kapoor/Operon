@@ -397,20 +397,24 @@ class TestFix5WhitespaceIntentRejected:
                 f"REGRESSION: Normal intent '{intent}' rejected with {resp.status_code}"
             )
 
-    def test_intent_at_exactly_500_chars_after_trimming(self):
-        """A 500-char intent (no spaces to strip) should still be accepted."""
-        intent = "A" * 500
+    def test_intent_at_exactly_max_chars_after_trimming(self):
+        """An intent of MAX_INTENT_CHARS (no spaces to strip) should still be accepted."""
+        from operon.models.common import MAX_INTENT_CHARS
+
+        intent = "A" * MAX_INTENT_CHARS
         resp = post("/desktop/run-task", {"intent": intent})
         assert resp.status_code == 202, (
-            f"REGRESSION: 500-char intent rejected with {resp.status_code}"
+            f"REGRESSION: {MAX_INTENT_CHARS}-char intent rejected with {resp.status_code}"
         )
 
-    def test_intent_501_chars_rejected_regardless_of_fix(self):
-        """max_length=500 should still apply independently of whitespace stripping."""
-        intent = "A" * 501
+    def test_intent_one_over_max_chars_rejected_regardless_of_fix(self):
+        """The max length should still apply independently of whitespace stripping."""
+        from operon.models.common import MAX_INTENT_CHARS
+
+        intent = "A" * (MAX_INTENT_CHARS + 1)
         resp = post("/desktop/run-task", {"intent": intent})
         assert resp.status_code == 422, (
-            f"REGRESSION: 501-char intent should be 422, got {resp.status_code}"
+            f"REGRESSION: over-limit intent should be 422, got {resp.status_code}"
         )
 
 

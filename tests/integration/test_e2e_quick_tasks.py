@@ -201,16 +201,19 @@ class TestRunTaskInputValidation:
         assert resp.status_code == 422, "Extra fields should be rejected (extra=forbid)"
 
     def test_intent_at_max_length_accepted(self):
-        # max_length=500 per the model
-        long_intent = "A" * 500
+        from operon.models.common import MAX_INTENT_CHARS
+
+        long_intent = "A" * MAX_INTENT_CHARS
         resp = post("/desktop/run-task", {"intent": long_intent})
         # Should be 202 (accepted for processing) or at most fail at execution, not validation
-        assert resp.status_code in (202, 200, 500), f"500-char intent got unexpected status: {resp.status_code}"
+        assert resp.status_code in (202, 200, 500), f"max-length intent got unexpected status: {resp.status_code}"
 
     def test_intent_exceeding_max_length_rejected_with_422(self):
-        too_long = "A" * 501
+        from operon.models.common import MAX_INTENT_CHARS
+
+        too_long = "A" * (MAX_INTENT_CHARS + 1)
         resp = post("/desktop/run-task", {"intent": too_long})
-        assert resp.status_code == 422, f"501-char intent should be 422, got {resp.status_code}"
+        assert resp.status_code == 422, f"over-limit intent should be 422, got {resp.status_code}"
 
     def test_intent_with_xss_payload_rejected_or_sanitized(self):
         xss = '<script>alert("xss")</script>'

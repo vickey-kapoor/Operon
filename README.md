@@ -116,8 +116,8 @@ model credits.
 - **Settings.** Gemini computer use (`gemini-3.5-flash`, the default), thin harness, tools off,
   auto-confirm on, 50-step cap per task, one full run (no best-of-N).
 - **Caveats.** A single run on a small subset, so treat it as a snapshot rather than a
-  leaderboard entry. In an earlier one-task test run a Chrome task scored 0 because we
-  checked its result before Chrome had saved its settings; we then added OSWorld's own 20-second
+  leaderboard entry. In an earlier one-task test run a Chrome task scored 0, most likely because
+  we checked its result before Chrome had saved its settings; we then added OSWorld's own 20-second
   wait before scoring. The 21 of 25 is from one full run with that wait in place, with no
   re-scoring. Four tasks failed: one Chrome, one Calc, one Impress and one multi-app task (the
   last never started because its instruction was over our old task-text limit, since raised).

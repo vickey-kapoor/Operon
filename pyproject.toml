@@ -55,6 +55,9 @@ dev = [
 notifications = [
     "win11toast>=0.36.0",
 ]
+dashboard = [
+    "psycopg[binary]>=3.3",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -70,6 +73,8 @@ asyncio_mode = "auto"
 markers = [
     "desktop_container: end-to-end desktop tests on the Linux desktop container (needs Docker; opt in with -m desktop_container, KAN-166)",
     "asyncio: mark a test as using asyncio",
+    "windows_only: needs Windows; skipped elsewhere by tests/conftest.py",
+    "linux_only: needs Linux; skipped elsewhere by tests/conftest.py",
     "live_server: requires a running uvicorn server at localhost:8080 (opt-in via OPERON_RUN_LIVE_SERVER_TESTS=true)",
 ]
 # CI runs only fast/safe tests by default. Use `pytest -m live_server` to opt into

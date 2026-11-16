@@ -116,7 +116,8 @@ These are load-bearing — violating them silently breaks the agent.
   in core policy. Site-specific behavior belongs in `agent/policy/site_adapters.py`.
 - **Atomic TYPE.** The executor merges focus+type into one call. Policy must never
   emit a CLICK immediately followed by a TYPE on the same element.
-- **Visual servo.** `_region_has_content()` runs before every click with an
+- **Visual servo.** On the desktop executors (`DesktopExecutor` and `LinuxDesktopExecutor`;
+  the browser executor has none; OSWorld runs its own fixed-threshold check), `_region_has_content()` runs before every click with an
   adaptively calibrated threshold. Never bypass it.
 - **Verification states.** SUCCESS / FAILURE / UNCERTAIN / PENDING /
   PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify;

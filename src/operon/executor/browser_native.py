@@ -213,7 +213,7 @@ class NativeBrowserExecutor(Executor):
         Coordinates are fractions of the viewport so the page's scaled image maps
         back to real pixels. Returns False when the run has no browser session.
         This is the person's own input, not the agent's, so it bypasses the policy
-        path entirely (and the visual servo, which guards the agent's clicks).
+        path entirely, so none of the agent-side click guards apply to it.
         """
         session = self._sessions.get(run_id)
         if session is None:

@@ -160,3 +160,91 @@ def test_each_run_records_its_settings(tmp_path, monkeypatch) -> None:
 def test_settings_module_has_no_import_time_reads() -> None:
     # The cache is filled lazily, so importing operon never freezes the environment.
     assert settings_mod._ENV_NAMES and "OPERON_ZOOM" in settings_mod._ENV_NAMES
+
+
+# --- Experimental flags default to off (CLAUDE.md invariant) ------------------------------
+# Settings.from_env({}) reads only the dict it is given, so this is a clean environment.
+# Every Settings field must be in exactly one list below, so adding a setting forces a
+# conscious choice: experimental (off), plain switch (off), graduated (on), or plain config.
+_EXPERIMENTAL_OFF = [
+    ("claude_zoom", False),
+    ("progress_revisit", False),
+    ("settle_detect", False),
+    ("change_note", False),
+    ("planner", False),
+    ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
+    ("critic", ""),
+    ("site_adapters", ""),
+    ("model_profile", ""),
+    ("grounder", "deterministic"),
+    ("bestofn_n", 1),
+    ("bestofn_confidence", 1.0),
+]
+# Boolean switches that are off by default but not experimental features.
+_PLAIN_SWITCHES_OFF = [
+    "auto_confirm",
+    "builtin_browser",
+    "use_vertex",
+    "allow_unauthenticated",
+    "browser_headless",
+    "test_safe_mode",
+    "strict_errors",
+    "trace",
+]
+# Graduated: on by default on purpose. (`tools` is unset by default and resolves to on.)
+_GRADUATED_ON = [("trust_gate", True), ("zoom", "dense")]
+_GRADUATED_RESOLVED = ["tools"]
+# Plain configuration: models, paths, hosts, keys, timeouts and sizes; no feature to turn on.
+_PLAIN_CONFIG = {
+    "api_keys", "cors_origins", "allowed_hosts", "api_url", "runs_retain_days", "stream_token_ttl_s",
+    "hitl_webhook_url", "config_dir", "runtime_root", "runs_root", "browser_artifacts_root",
+    "desktop_artifacts_root", "test_artifacts_root", "gemini_api_key", "google_api_key", "gemini_model",
+    "gemini_api_base_url", "vertex_project", "vertex_location", "model_registry", "anthropic_api_key",
+    "anthropic_api_base_url", "openai_api_key", "openai_api_base_url", "desktop_backend", "desktop_model",
+    "desktop_thinking", "desktop_fallback_model", "desktop_verifier_model", "desktop_verifier_thinking",
+    "browser_backend", "browser_model", "browser_thinking", "browser_fallback_backend",
+    "browser_fallback_model", "browser_verifier_model", "browser_verifier_thinking", "settle_max_s",
+    "planner_model", "trust_deny", "trust_confirm", "trust_allow_domains", "permission_mode",
+    "allowed_file_roots", "zoom_min_side", "zoom_factor", "environment", "desktop_platform",
+    "sandbox_memory_mb", "sandbox_start_timeout", "container_image", "container_start_timeout",
+    "container_ca_bundle", "osworld_url", "browser_width", "browser_height", "browser_profile_dir",
+}
+
+
+@pytest.mark.parametrize(("field", "default"), _EXPERIMENTAL_OFF)
+def test_experimental_flags_default_off(field: str, default: object) -> None:
+    assert getattr(Settings.from_env({}), field) == default
+
+
+@pytest.mark.parametrize("field", _PLAIN_SWITCHES_OFF)
+def test_plain_switches_default_off(field: str) -> None:
+    assert getattr(Settings.from_env({}), field) is False
+
+
+@pytest.mark.parametrize(("field", "default"), _GRADUATED_ON)
+def test_graduated_flags_default_on(field: str, default: object) -> None:
+    assert getattr(Settings.from_env({}), field) == default
+
+
+def test_tools_are_on_by_default() -> None:
+    from operon.agent.tools import DEFAULT_TOOLS, enabled_tools
+
+    assert DEFAULT_TOOLS
+    assert enabled_tools(Settings.from_env({}).tools) == DEFAULT_TOOLS
+
+
+def test_every_setting_is_classified() -> None:
+    fields = set(Settings.model_fields) - {"errors", "warnings"}
+    groups = [
+        {f for f, _ in _EXPERIMENTAL_OFF},
+        set(_PLAIN_SWITCHES_OFF),
+        {f for f, _ in _GRADUATED_ON},
+        set(_GRADUATED_RESOLVED),
+        _PLAIN_CONFIG,
+    ]
+    classified = set().union(*groups)
+    assert sum(len(g) for g in groups) == len(classified), "a setting is in more than one list"
+    assert fields == classified, (
+        "classify new settings as experimental (off), plain switch (off), graduated (on) or plain config: "
+        f"{sorted(fields ^ classified)}"
+    )

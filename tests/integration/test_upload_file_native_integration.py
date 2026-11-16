@@ -77,6 +77,7 @@ def _open_windows_file_dialog_async() -> None:
 # 1. os_picker_macro against a real Windows file dialog
 # ---------------------------------------------------------------------------
 
+@pytest.mark.windows_only
 @requires_headed_integration
 def test_os_picker_macro_against_real_windows_open_dialog() -> None:
     """Macro must type a path and close a real Windows Open dialog."""

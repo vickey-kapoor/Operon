@@ -47,4 +47,4 @@ Live-server and real-environment tests are opt-in and excluded from the default 
 Recent commits use short imperative subjects with prefixes like `Fix:`, `Docs:`, `CI:`, `Chore:`, `Refactor:`, and `Feat:`. Keep commit titles specific and one line. PRs should summarize the behavioral change, list validation performed, link related issues, and include screenshots only for UI or desktop-behavior changes.
 
 ## Configuration & Security Tips
-Store secrets in `.env` and keep `.env.example` in sync when adding new settings. Review `.var/runs/`, `.var/browser-artifacts/`, and `.var/desktop-artifacts/` before sharing logs because they may contain screenshots, prompts, and execution traces. Never commit anything under `.claude/`; it is gitignored and personal.
+Store secrets in `.env` and keep `.env.example` in sync when adding new settings. Review `.var/runs/`, `.var/browser-artifacts/`, and `.var/desktop-artifacts/` before sharing logs because they may contain screenshots, prompts, and execution traces. Never commit anything under `.claude/` except `.claude/agents/` (the shared subagent definitions); the rest is gitignored and personal.

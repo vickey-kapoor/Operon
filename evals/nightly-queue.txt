@@ -1,4 +1,4 @@
-# The nightly paid run's queue (KAN-165, evals/nightly.py, .github/workflows/nightly.yml).
+# The nightly paid run's queue (KAN-165, evals/nightly.py, .github/workflows/benchmark.yml).
 # One line per benchmark cell: the date you queued it, the cell words (see evals/bench_batch.py),
 # then an optional "# note". Every night at 2 AM Chicago the cells that fit tonight's budget run
 # in one batch ($10 a night, and nothing once the month reaches $100). A line runs once; lines

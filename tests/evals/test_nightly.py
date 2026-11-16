@@ -93,9 +93,11 @@ def test_the_real_queue_parses() -> None:
 
 
 def test_workflow_calls_the_batch_and_is_imported_by_the_dashboard() -> None:
-    wf = yaml.safe_load((WORKFLOWS / "nightly.yml").read_text(encoding="utf-8"))
-    assert wf[True]["schedule"][0]["cron"] == "0 8 * * *"
-    batch_inputs = yaml.safe_load((WORKFLOWS / "bench-batch.yml").read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
-    assert set(wf["jobs"]["batch"]["with"]) <= set(batch_inputs)
+    wf = yaml.safe_load((WORKFLOWS / "benchmark.yml").read_text(encoding="utf-8"))
+    assert wf[True]["schedule"][0]["cron"] == "23 8 * * *"
+    # The queue job feeds the batch: its outputs are what the plan job reads.
+    assert {"run", "budget", "cells"} <= set(wf["jobs"]["queue"]["outputs"])
+    assert "needs.queue.outputs.cells" in wf["jobs"]["plan"]["steps"][1]["env"]["CELLS"]
+    assert "needs.queue.outputs.budget" in wf["jobs"]["plan"]["steps"][1]["env"]["MAX_TOTAL_USD"]
     dash = yaml.safe_load((WORKFLOWS / "dashboard-data.yml").read_text(encoding="utf-8"))
     assert wf["name"] in dash[True]["workflow_run"]["workflows"]

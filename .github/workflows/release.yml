@@ -1,4 +1,4 @@
-name: Release to PyPI
+name: Publish release to PyPI
 run-name: Release ${{ github.ref_name }}
 
 # Publishes operon-agent to PyPI (KAN-36). Pushing a tag `v<version>` that matches

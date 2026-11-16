@@ -1,4 +1,4 @@
-name: Grounding benchmark
+name: Run click-accuracy test (engine)
 run-name: Gemini · Grounding (manual)
 
 # Runs the ScreenSpot grounding eval (evals/grounding.py): one model call per
@@ -23,7 +23,7 @@ on:
         type: choice
         options: ["off", "dense", "always"]
         default: "off"
-  # Called by bench-command.yml for /bench grounding.
+  # Called by benchmark.yml for /bench grounding.
   workflow_call:
     inputs:
       model: {type: string, default: ""}
@@ -90,7 +90,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          # Not bench-*: the Send results to dashboard workflow imports those as benchmark runs.
+          # Not bench-*: the "Save run results to dashboard" workflow imports those as benchmark runs.
           name: grounding-computer_use
           path: |
             grounding.txt

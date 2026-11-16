@@ -85,6 +85,35 @@ LINUX_APP_LAUNCH_TARGETS: dict[str, str] = {
 WINDOWS = "windows"
 LINUX = "linux"
 
+# OSWorld task machine (KAN-169): stock Ubuntu 22.04 GNOME with Google Chrome, LibreOffice,
+# GIMP, VLC and VS Code, not Operon's Debian/XFCE desktop. Same rule: fixed argv strings.
+OSWORLD_APP_LAUNCH_TARGETS: dict[str, str] = {
+    "browser": "google-chrome",
+    "chrome": "google-chrome",
+    "google chrome": "google-chrome",
+    "settings": "gnome-control-center",
+    "terminal": "gnome-terminal",
+    "files": "nautilus",
+    "file manager": "nautilus",
+    "text editor": "gedit",
+    "notepad": "gedit",
+    "calculator": "gnome-calculator",
+    "calc": "libreoffice --calc",
+    "libreoffice calc": "libreoffice --calc",
+    "excel": "libreoffice --calc",
+    "writer": "libreoffice --writer",
+    "libreoffice writer": "libreoffice --writer",
+    "word": "libreoffice --writer",
+    "impress": "libreoffice --impress",
+    "libreoffice impress": "libreoffice --impress",
+    "powerpoint": "libreoffice --impress",
+    "gimp": "gimp",
+    "vlc": "vlc",
+    "vs code": "code",
+    "vscode": "code",
+    "visual studio code": "code",
+}
+
 
 def desktop_platform() -> str:
     """``OPERON_DESKTOP_PLATFORM``: ``linux`` drives a Linux (X11) desktop; anything
@@ -95,5 +124,9 @@ def desktop_platform() -> str:
 
 
 def launch_targets() -> dict[str, str]:
-    """The launch catalog for the configured desktop platform."""
+    """The launch catalog for the configured desktop platform (and the OSWorld machine)."""
+    from operon.core.settings import get_settings
+
+    if get_settings().environment == "osworld":
+        return OSWORLD_APP_LAUNCH_TARGETS
     return LINUX_APP_LAUNCH_TARGETS if desktop_platform() == LINUX else APP_LAUNCH_TARGETS

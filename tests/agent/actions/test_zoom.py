@@ -92,7 +92,7 @@ def _state() -> AgentState:
 
 @pytest.mark.parametrize(
     ("value", "mode"),
-    [(None, "off"), ("", "off"), ("off", "off"), ("dense", "dense"), ("ALWAYS", "always"), ("on", "dense"), ("bogus", "off")],
+    [(None, "dense"), ("", "dense"), ("off", "off"), ("dense", "dense"), ("ALWAYS", "always"), ("on", "dense"), ("bogus", "dense")],
 )
 def test_mode_from_env(monkeypatch, value, mode):
     if value is None:
@@ -102,12 +102,15 @@ def test_mode_from_env(monkeypatch, value, mode):
     assert zoom.zoom_settings().mode == mode
 
 
-def test_off_by_default(monkeypatch):
+def test_dense_by_default(monkeypatch):
     for name in ("OPERON_ZOOM", "OPERON_ZOOM_MIN_SIDE", "OPERON_ZOOM_FACTOR"):
         monkeypatch.delenv(name, raising=False)
     settings = zoom.zoom_settings()
-    assert settings == zoom.ZoomSettings(mode="off", min_side=2000, factor=2.0)
-    assert not settings.enabled
+    assert settings == zoom.ZoomSettings(mode="dense", min_side=2000, factor=2.0)
+    assert settings.enabled
+    # ...so a normal 1920x1080 screen is not zoomed, and a 4K one is.
+    assert not settings.applies_to(1920, 1080)
+    assert settings.applies_to(3840, 2160)
 
 
 def test_factor_is_clamped_and_bad_numbers_fall_back(monkeypatch):
@@ -123,7 +126,7 @@ def test_dense_gate_uses_the_longer_side():
     assert DENSE.applies_to(1440, 2560)
     assert not DENSE.applies_to(1920, 1080)
     assert zoom.ZoomSettings(mode="always").applies_to(800, 600)
-    assert not zoom.ZoomSettings().applies_to(4000, 3000)
+    assert not zoom.ZoomSettings(mode="off").applies_to(4000, 3000)
 
 
 # ---------- geometry ----------
@@ -217,7 +220,7 @@ def test_only_the_first_pointing_call_is_refined():
     [
         ((1920, 1080), [{"name": "click_at", "args": {"x": 1, "y": 1}}], DENSE),  # not dense
         ((4000, 2000), [{"name": "scroll_document", "args": {"direction": "down"}}], DENSE),  # no point
-        ((4000, 2000), [{"name": "click_at", "args": {"x": 1, "y": 1}}], zoom.ZoomSettings()),  # off
+        ((4000, 2000), [{"name": "click_at", "args": {"x": 1, "y": 1}}], zoom.ZoomSettings(mode="off")),  # off
     ],
 )
 def test_no_zoom_request_when_it_does_not_apply(size, calls, settings):

@@ -1,4 +1,4 @@
-name: Browser benchmark
+name: Run browser test tasks (engine)
 run-name: Gemini · Browser · ${{ inputs.harness_profile }} · ${{ inputs.suite }} (manual)
 
 # Runs the live web benchmark (evals/live_bench.py) against a real API
@@ -43,7 +43,7 @@ on:
       max_cost_usd:
         description: "Stop a backend's run once it has spent this many USD (0: no cap)"
         default: "3"
-  # Called by bench-command.yml when someone comments /bench on a PR.
+  # Called by benchmark.yml when someone comments /bench on a PR.
   workflow_call:
     inputs:
       backends: {type: string, default: "computer_use"}
@@ -56,7 +56,7 @@ on:
       suite: {type: string, default: "core"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
-      # Set by the batch workflow (bench-batch.yml) so its cells' artifacts don't share a name.
+      # Set by the Benchmark workflow (benchmark.yml) so its cells' artifacts don't share a name.
       artifact_suffix: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"

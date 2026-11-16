@@ -132,6 +132,8 @@ class Settings(BaseModel):
     bestofn_confidence: float = _env_field("OPERON_BESTOFN_CONFIDENCE", 1.0)
     # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
     settle_detect: bool = _env_field("OPERON_SETTLE_DETECT", False)
+    # Benchmark runs only (KAN-169): answer the model's own "require confirmation" pauses yes.
+    auto_confirm: bool = _env_field("OPERON_AUTO_CONFIRM", False)
     settle_max_s: float = _env_field("OPERON_SETTLE_MAX_S", 3.0)
     # One line of text about what flashed past while the screen settled (KAN-111).
     change_note: bool = _env_field("OPERON_CHANGE_NOTE", False)
@@ -148,7 +150,7 @@ class Settings(BaseModel):
     allowed_file_roots: tuple[str, ...] = _env_field("OPERON_ALLOWED_FILE_ROOTS", ())
     # None: unset (the tool list's own default, "on").
     tools: str | None = _env_field("OPERON_TOOLS")
-    zoom: str = _env_field("OPERON_ZOOM", "off")
+    zoom: str = _env_field("OPERON_ZOOM", "dense")
     zoom_min_side: int = _env_field("OPERON_ZOOM_MIN_SIDE", 2000)
     zoom_factor: float = _env_field("OPERON_ZOOM_FACTOR", 2.0)
 
@@ -161,6 +163,8 @@ class Settings(BaseModel):
     container_image: str = _env_field("OPERON_CONTAINER_IMAGE", "")
     container_start_timeout: int = _env_field("OPERON_CONTAINER_START_TIMEOUT", 120)
     container_ca_bundle: str = _env_field("OPERON_CONTAINER_CA_BUNDLE", "")
+    # "" : no OSWorld VM (KAN-169). Otherwise its server URL, e.g. http://127.0.0.1:5000.
+    osworld_url: str = _env_field("OPERON_OSWORLD_URL", "")
     browser_width: int = _env_field("BROWSER_WIDTH", 1920)
     browser_height: int = _env_field("BROWSER_HEIGHT", 1080)
     browser_headless: bool = _env_field("BROWSER_HEADLESS", False)
@@ -263,10 +267,10 @@ class _Parser:
     def build(self) -> Settings:
         from operon.agent.actions import zoom as zoom_mod
 
-        zoom_mode = (self.raw("OPERON_ZOOM") or zoom_mod.OFF).strip().lower()
+        zoom_mode = (self.raw("OPERON_ZOOM") or zoom_mod.DENSE).strip().lower()
         if zoom_mode in _TRUE:
             zoom_mode = zoom_mod.DENSE
-        zoom_mode = self.choice("OPERON_ZOOM", zoom_mode, set(zoom_mod.MODES), zoom_mod.OFF)
+        zoom_mode = self.choice("OPERON_ZOOM", zoom_mode, set(zoom_mod.MODES), zoom_mod.DENSE)
 
         permission = self.text("OPERON_PERMISSION_MODE").strip().lower()
         permission = self.choice("OPERON_PERMISSION_MODE", permission, {"ask", "risky", "auto"}, "")
@@ -335,6 +339,7 @@ class _Parser:
             bestofn_n=max(1, self.number("OPERON_BESTOFN_N", "1", int, fatal=False)),
             bestofn_confidence=self.number("OPERON_BESTOFN_CONFIDENCE", "1.0", float, fatal=False),
             settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
+            auto_confirm=self.flag("OPERON_AUTO_CONFIRM", "off"),
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),
             change_note=self.flag("OPERON_CHANGE_NOTE", "off"),
             planner=self.flag("OPERON_PLANNER", "off"),
@@ -356,6 +361,7 @@ class _Parser:
             container_image=self.text("OPERON_CONTAINER_IMAGE").strip(),
             container_start_timeout=sandbox_int("OPERON_CONTAINER_START_TIMEOUT", 120),
             container_ca_bundle=self.text("OPERON_CONTAINER_CA_BUNDLE").strip(),
+            osworld_url=self.text("OPERON_OSWORLD_URL").strip(),
             browser_width=self.number("BROWSER_WIDTH", "1920", int, fatal=True),
             browser_height=self.number("BROWSER_HEIGHT", "1080", int, fatal=True),
             browser_headless=self.text("BROWSER_HEADLESS", "false").lower() == "true",

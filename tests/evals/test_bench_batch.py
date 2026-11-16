@@ -137,15 +137,15 @@ def test_main_refuses_a_bad_batch(monkeypatch, capsys) -> None:
 
 
 def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() -> None:
-    batch = yaml.safe_load((WORKFLOWS / "bench-batch.yml").read_text(encoding="utf-8"))
+    batch = yaml.safe_load((WORKFLOWS / "benchmark.yml").read_text(encoding="utf-8"))
     jobs = batch["jobs"]
-    assert jobs["desktop"]["strategy"]["max-parallel"] == 1
-    assert jobs["desktop"]["with"]["manage_vm"] == "false"
-    for job, called in (("browser", "live-bench.yml"), ("desktop", "live-desktop-bench.yml")):
+    assert jobs["batch-desktop"]["strategy"]["max-parallel"] == 1
+    assert jobs["batch-desktop"]["with"]["manage_vm"] == "false"
+    for job, called in (("batch-browser", "live-bench.yml"), ("batch-desktop", "live-desktop-bench.yml")):
         inputs = yaml.safe_load((WORKFLOWS / called).read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
         assert jobs[job]["with"]["artifact_suffix"] == "${{ matrix.suffix }}"
-    # The dashboard import listens for the batch by its name.
+    # The dashboard import listens for the Benchmark workflow (nightly, manual and /bench runs) by its name.
     dashboard = yaml.safe_load((WORKFLOWS / "dashboard-data.yml").read_text(encoding="utf-8"))
     assert batch["name"] in dashboard[True]["workflow_run"]["workflows"]
 
@@ -168,3 +168,22 @@ def test_feature_words_switch_on_perception_flags_per_cell() -> None:
 def test_feature_words_are_browser_only() -> None:
     with pytest.raises(BatchError, match="browser only"):
         parse_batch("desktop thin settle")
+
+
+def test_benchmark_workflow_jobs_only_wait_on_jobs_that_exist() -> None:
+    wf = yaml.safe_load((WORKFLOWS / "benchmark.yml").read_text(encoding="utf-8"))
+    jobs = wf["jobs"]
+    for name, job in jobs.items():
+        needs = job.get("needs", [])
+        for need in [needs] if isinstance(needs, str) else needs:
+            assert need in jobs, f"{name} waits on {need}, which is not a job"
+    # Every called engine input exists, for the single /bench comment jobs too.
+    for job, called in (("browser", "live-bench.yml"), ("desktop", "live-desktop-bench.yml"), ("grounding", "grounding.yml")):
+        inputs = yaml.safe_load((WORKFLOWS / called).read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
+        assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
+    assert set(wf[True]) == {"schedule", "issue_comment", "workflow_dispatch"}
+
+
+def test_the_old_benchmark_entry_points_are_gone() -> None:
+    for old in ("bench-batch.yml", "bench-command.yml", "nightly.yml"):
+        assert not (WORKFLOWS / old).exists(), f"{old} was merged into benchmark.yml"

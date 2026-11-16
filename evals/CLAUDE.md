@@ -59,9 +59,9 @@ provider; Claude and GPT run on 2 nights a week to keep the extra cost to about 
 #   (category, then harness: one grid cell; core and full are the defaults; hybrid runs on the desktop workflow)
 #   /bench grounding [zoom|zoom=always]   (zoom: OPERON_ZOOM=dense, KAN-82)
 #   /bench batch  (then one cell per line, e.g. "desktop thin season=2 pr=242 cap=1.5"): the day's approved
-#   queue in one run, one Azure VM start, caps summed up front (KAN-105, bench-batch.yml, evals/bench_batch.py)
+#   queue in one run, one Azure VM start, caps summed up front (KAN-105, benchmark.yml, evals/bench_batch.py)
 #   Nightly (KAN-165): paid runs happen once a night at 2 AM Chicago from evals/nightly-queue.txt
-#   ("2026-11-14 desktop thin season=2 cap=2.5  # note"), $10 a night, stop at $100 a month (evals/nightly.py)
+#   ("2026-11-14 desktop thin season=2 cap=2.5  # note"), $10 a night, stop at $100 a month (evals/nightly.py, run by benchmark.yml)
 # Record and replay (KAN-167, evals/replay.py): --keep-screens also writes <report>/recordings/<task>.json for each
 # thin-harness run (Gemini's answers + the actions Operon ran). Copy one into evals/recordings/ and every PR
 # replays it through the real loop for $0 (tests/evals/test_replay.py); a changed action fails with the step.
@@ -71,7 +71,7 @@ provider; Claude and GPT run on 2 nights a week to keep the extra cost to about 
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard.
 
 # Eval dashboard (dashboard/, Vercel + Neon Postgres): write reports to the DB, then serve locally
-# (the import needs `pip install "psycopg[binary]"`; the "Send results to dashboard" workflow does it after each benchmark)
+# (the import needs `pip install "psycopg[binary]"`; the "Save run results to dashboard" workflow does it after each benchmark)
 $env:DATABASE_URL = "postgres://..."; .venv\Scripts\python -m evals.dashboard import .var\bench\full-<stamp>.json
 cd dashboard; npm install; npm run dev   # page + API on :3000, reads $env:DATABASE_URL
 ```

@@ -83,8 +83,8 @@ Grounding evals (`evals.grounding`) are stored as runs with mode and suite
 `grounding` and no task rows: the Cost tab counts them, the Evals tab and the
 Leaderboard leave them out.
 
-The **Send results to dashboard** workflow (`.github/workflows/dashboard-data.yml`) runs after
-every "Browser benchmark", "Desktop and Hybrid benchmark", "Benchmark from PR comment" or "Grounding benchmark"
+The **Save run results to dashboard** workflow (`.github/workflows/dashboard-data.yml`) runs after
+every "Run Operon on test tasks (paid)" run (nightly, manual batch or `/bench` comment), and every engine run started by hand ("Run browser test tasks (engine)", "Run desktop test tasks (engine)", "Run click-accuracy test (engine)")
 run, cancelled ones included, and writes its reports to the database, using the
 `DATABASE_URL` repository secret. Importing a report again replaces it. Run the workflow by hand to import older workflow runs
 (`run_ids`) or reports committed at a git ref (`backfill_ref`).
@@ -128,16 +128,16 @@ Without the secret, results are imported without screenshots.
 
 Slack (`SLACK_WEBHOOK_URL` repository secret) gets two kinds of posts.
 
-Critical alerts, right away, from the "Send results to dashboard" workflow:
+Critical alerts, right away, from the "Save run results to dashboard" workflow:
 
 - a run stopped at its cost cap (`MAX_RUN_COST_USD`, the workflows' `max_cost_usd` input),
 - a benchmark run failed (crashed or timed out; a run you cancel yourself sends nothing), or
 - the dashboard import itself failed.
 
-One daily summary at 8 AM Chicago (`daily-summary.yml`, `python -m evals.dashboard digest`):
+One daily summary, posted after the nightly run's import (the last step of `dashboard-data.yml`, `python -m evals.dashboard digest`):
 every run of the last 24 hours with its score, cost and change against the previous run of
 its cell (same mode, suite, backend, harness, model and season, not flagged), the day's total
-and this month's spend. Nothing is posted on a day with no runs; run the workflow by hand to
+and this month's spend. Nothing is posted on a day with no runs; run "Save run results to dashboard" by hand with `post_summary` to
 post now, or `digest --dry-run` locally to print it.
 
 Without the secret, no alerts are sent.

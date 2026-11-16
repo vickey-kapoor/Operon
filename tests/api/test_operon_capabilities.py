@@ -791,7 +791,9 @@ def test_get_run_rejects_malformed_run_ids(bad_run_id: str) -> None:
 
 
 def test_intent_too_long_rejected() -> None:
-    """Intents longer than 500 characters must be rejected."""
+    """Intents longer than MAX_INTENT_CHARS must be rejected."""
+    from operon.models.common import MAX_INTENT_CHARS
+
     client = TestClient(app)
-    resp = client.post("/run-task", json={"intent": "x" * 501})
+    resp = client.post("/run-task", json={"intent": "x" * (MAX_INTENT_CHARS + 1)})
     assert resp.status_code == 422

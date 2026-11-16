@@ -1,7 +1,7 @@
 """Read a benchmark batch: many grid cells, one GitHub Actions run (KAN-105).
 
 Paid runs are queued during the day and run together once Vickey approves the batch.
-The batch workflow (``.github/workflows/bench-batch.yml``, or a ``/bench batch`` PR
+The batch workflow (``.github/workflows/benchmark.yml``: the nightly run, a manual run, or a ``/bench batch`` PR
 comment) passes its cell list here; this module checks every line and turns it into
 the job matrices the workflow runs: Browser cells side by side on hosted runners,
 Desktop and Hybrid cells one after another on a single start of the Azure VM.

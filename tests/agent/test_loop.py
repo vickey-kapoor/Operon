@@ -1937,7 +1937,7 @@ def test_expect_check_mismatch_sends_hint_and_saves_json(monkeypatch, tmp_path):
 
     monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
     loop = _expect_loop(tmp_path)
-    loop._check_expected_change(_expect_ctx("Expect: content - list shows", 0.0))
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "Expect: content - list shows", 0.0))
     (call,) = loop.perception_service.add_advisory_hints.call_args_list
     assert call.kwargs == {"source": "expect_check", "run_id": "r1"}
     assert "expected content" in call.args[0][0]
@@ -1948,7 +1948,7 @@ def test_expect_check_mismatch_sends_hint_and_saves_json(monkeypatch, tmp_path):
 def test_expect_check_match_sends_no_hint_but_saves(monkeypatch, tmp_path):
     monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
     loop = _expect_loop(tmp_path)
-    loop._check_expected_change(_expect_ctx("Expect: content - list shows", 0.2))
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "Expect: content - list shows", 0.2))
     loop.perception_service.add_advisory_hints.assert_not_called()
     assert (tmp_path / "step_1" / "expect_check.json").exists()
 
@@ -1966,10 +1966,10 @@ def test_expect_check_skips_failed_and_non_screen_actions_and_missing_ratio(monk
 def test_expect_check_uses_decision_field_and_reminds_at_most_every_three_steps(monkeypatch, tmp_path):
     monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
     loop = _expect_loop(tmp_path)
-    loop._check_expected_change(_expect_ctx("no line", 0.0, expected="navigation"))
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "no line", 0.0, expected="navigation"))
     assert loop.perception_service.add_advisory_hints.call_args.kwargs["source"] == "expect_check"
     # No Expect line and no field: quiet right after the instruction, a reminder three steps later.
-    ctx = _expect_ctx("no line", 0.0)
+    ctx = _expect_ctx_with_files(tmp_path, "no line", 0.0)
     loop._send_expect_instruction("r1", 0)
     loop.perception_service.reset_mock()
     for step in (1, 2):
@@ -1988,6 +1988,106 @@ def test_expect_check_errors_are_recovered_not_raised(monkeypatch, tmp_path):
     loop = _expect_loop(tmp_path)
     loop.perception_service.add_advisory_hints.side_effect = RuntimeError("boom")
     loop._recovered = MagicMock()
-    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0))
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0))
     loop._recovered.assert_called_once()
     assert loop._recovered.call_args.args[:2] == ("r1", "expect_check")
+
+
+def _expect_ctx_with_files(tmp_path, rationale, ratio, **kw):
+    before = tmp_path / "before.png"
+    after = tmp_path / "after.png"
+    before.write_bytes(b"x")
+    after.write_bytes(b"x")
+    ctx = _expect_ctx(rationale, ratio, **kw)
+    ctx.before_artifact_path = str(before)
+    ctx.executed_action.artifact_path = str(after)
+    ctx.dialog_captured = False
+    ctx.attempt_cancelled = False
+    return ctx
+
+
+def test_expect_check_skips_dialog_cancel_and_missing_screenshots(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    ctx = _expect_ctx_with_files(tmp_path, "Expect: dialog - modal", 0.0)
+    ctx.dialog_captured = True
+    loop._check_expected_change(ctx)
+    ctx = _expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0)
+    ctx.attempt_cancelled = True
+    loop._check_expected_change(ctx)
+    ctx = _expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0)
+    ctx.executed_action.artifact_path = str(tmp_path / "gone.png")
+    loop._check_expected_change(ctx)
+    loop.perception_service.add_advisory_hints.assert_not_called()
+    # Control: with both files present and nothing else in the way, the hint goes out.
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0))
+    loop.perception_service.add_advisory_hints.assert_called_once()
+
+
+def test_expect_check_backend_that_reports_expected_change(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop.perception_service.reports_expected_change = True
+    loop._send_expect_instruction("r1")
+    loop.perception_service.add_advisory_hints.assert_not_called()
+    # Its NONE is a real "none": a full-screen change is a mismatch.
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "", 0.9, expected="none"))
+    assert loop.perception_service.add_advisory_hints.call_args.kwargs["source"] == "expect_check"
+    # Without the capability the same step gives no expectation, only a (possible) reminder.
+    loop.perception_service.reset_mock()
+    loop.perception_service.reports_expected_change = False
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "", 0.9, expected="none"))
+    assert all(c.kwargs["source"] != "expect_check" for c in loop.perception_service.add_advisory_hints.call_args_list)
+
+
+def test_fallback_backend_forwards_reports_expected_change():
+    from unittest.mock import MagicMock
+
+    from operon.agent.backends.combined import CombinedPerceptionPolicyService
+    from operon.agent.backends.fallback import FallbackBackend
+
+    assert CombinedPerceptionPolicyService.reports_expected_change is True
+    both = FallbackBackend(primary=MagicMock(reports_expected_change=True), secondary=MagicMock(reports_expected_change=True))
+    one = FallbackBackend(primary=MagicMock(reports_expected_change=True), secondary=MagicMock(spec=[]))
+    assert both.reports_expected_change is True
+    assert one.reports_expected_change is False
+
+
+def test_release_backend_run_state_forgets_expect_reminder(tmp_path):
+    from unittest.mock import MagicMock
+
+    loop = _expect_loop(tmp_path)
+    loop.policy_service = MagicMock()
+    loop._expect_reminded["r1"] = 4
+    loop._release_backend_run_state("r1")
+    assert "r1" not in loop._expect_reminded
+
+
+@pytest.mark.asyncio
+async def test_execute_and_verify_stage_checks_expected_change_once_after_retries(tmp_path):
+    from unittest.mock import AsyncMock, MagicMock
+
+    loop = _expect_loop(tmp_path)
+    loop.executor = MagicMock(spec=[])
+    ctx = MagicMock()
+    ctx.attempt_index = 1
+    loop._run_cancelled = AsyncMock(return_value=False)
+    loop._execute_attempt = AsyncMock()
+    loop._absorb_dialog_message = MagicMock()
+    loop._pass_on_change_note = MagicMock()
+    loop._verify_attempt = AsyncMock()
+    loop._prepare_adaptation_retry = AsyncMock(side_effect=[True, True, False])
+    loop._check_expected_change = MagicMock()
+    await loop._execute_and_verify_stage(ctx)
+    assert loop._execute_attempt.await_count == 3
+    loop._check_expected_change.assert_called_once_with(ctx)
+
+
+def test_start_run_sends_expect_instruction_after_planning():
+    # Minimal offline call-site check: start_run asks for the instruction right after the plan.
+    import inspect
+
+    from operon.agent.loop import AgentLoop
+
+    src = inspect.getsource(AgentLoop.start_run)
+    assert src.index("_write_plan(record)") < src.index("_send_expect_instruction(record.run_id)")

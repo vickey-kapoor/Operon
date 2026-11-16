@@ -57,6 +57,14 @@ class FallbackBackend(AgentBackend):
         self.primary._reset_advisory_hints_for_test(hints)
         self.secondary._reset_advisory_hints_for_test(hints)
 
+    @property
+    def reports_expected_change(self) -> bool:
+        """True only when both sides report it, since either may answer a run."""
+        return bool(
+            getattr(self.primary, "reports_expected_change", False)
+            and getattr(self.secondary, "reports_expected_change", False)
+        )
+
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         """Append hints on both backends without discarding existing ones."""
         self.primary.add_advisory_hints(hints, source=source, run_id=run_id)

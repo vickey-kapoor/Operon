@@ -189,6 +189,10 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         """Reset hints to a known state. Test use only."""
         self._advisory_hints = {"": [(h, "") for h in hints if h]}
 
+    # The model's JSON answer carries expected_change itself (NONE is a real "none"), so the
+    # free-text "Expect:" instruction is not sent (KAN-116).
+    reports_expected_change = True
+
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         """Append hints scoped to run_id so concurrent runs don't cross-contaminate."""
         incoming = [(h, source) for h in hints if h]

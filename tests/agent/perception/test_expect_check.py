@@ -87,3 +87,35 @@ def test_mismatch_note_text_and_cap():
     assert "the screen did not visibly change" in note
     long = Expectation(ExpectedChange.CONTENT, "y" * 120, "model_text")
     assert len(mismatch_note(long, "z" * 500)) == NOTE_CAP
+
+
+@pytest.mark.parametrize(
+    ("line", "kind", "text"),
+    [
+        ("**Expect:** content - list", ExpectedChange.CONTENT, "list"),
+        ("Expect: **content** - list", ExpectedChange.CONTENT, "list"),
+        ("`Expect: focus`", ExpectedChange.FOCUS, ""),
+        ("- Expect: dialog - a **modal** opens", ExpectedChange.DIALOG, "a modal opens"),
+        ("> 1. Expected: navigation - `/cart` loads", ExpectedChange.NAVIGATION, "/cart loads"),
+    ],
+)
+def test_parse_markdown_wrapped_lines(line, kind, text):
+    result = parse_expectation(line)
+    assert result is not None and result.kind is kind and result.text == text
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "This was unexpected: none of the buttons work",
+        "as expected: content loaded fine",
+        "I did not expect: content here",
+    ],
+)
+def test_parse_ignores_prose_that_only_contains_the_word(line):
+    assert parse_expectation(line) is None
+
+
+def test_reliable_field_makes_none_a_real_expectation():
+    result = parse_expectation("no line", ExpectedChange.NONE, field_is_reliable=True)
+    assert result == Expectation(ExpectedChange.NONE, "", "decision_field")

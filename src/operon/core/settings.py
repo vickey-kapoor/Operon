@@ -137,8 +137,9 @@ class Settings(BaseModel):
     settle_max_s: float = _env_field("OPERON_SETTLE_MAX_S", 3.0)
     # One line of text about what flashed past while the screen settled (KAN-111).
     change_note: bool = _env_field("OPERON_CHANGE_NOTE", False)
-    # A cheaper model writes a short plan once at task start (KAN-112).
+    # The model says what it expects after each action; a mismatch with the screen is a hint (KAN-116).
     expect_check: bool = _env_field("OPERON_EXPECT_CHECK", False)
+    # A cheaper model writes a short plan once at task start (KAN-112).
     planner: bool = _env_field("OPERON_PLANNER", False)
     planner_model: str = _env_field("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite")
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)

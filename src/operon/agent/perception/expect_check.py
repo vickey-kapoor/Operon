@@ -45,10 +45,13 @@ EXPECT_INSTRUCTION = (
     "<what you expect to see after it>."
 )
 
+# The line starts with the word (after list or markdown markers), so "unexpected: none of..."
+# and "as expected: content loaded" are not expectations.
 _EXPECT_LINE = re.compile(
-    r"expect(?:ed)?\s*:\s*(none|focus|content|navigation|dialog)\b[\s:\-\u2013\u2014]*(.*)",
+    r"^[\s>*_`#\-\d.)]*expect(?:ed)?[*_`\s]*:[*_`\s]*(none|focus|content|navigation|dialog)\b[*_`\s:\-\u2013\u2014]*(.*)$",
     re.IGNORECASE,
 )
+_MARKDOWN = re.compile(r"[*_`]+")
 
 
 @dataclass(frozen=True)
@@ -58,15 +61,24 @@ class Expectation:
     source: str  # "model_text" (an Expect line) or "decision_field" (PolicyDecision.expected_change)
 
 
-def parse_expectation(rationale: str | None, fallback: ExpectedChange = ExpectedChange.NONE) -> Expectation | None:
-    """The model's expectation: its last ``Expect:`` line, else the decision field when set."""
+def parse_expectation(
+    rationale: str | None,
+    fallback: ExpectedChange = ExpectedChange.NONE,
+    *,
+    field_is_reliable: bool = False,
+) -> Expectation | None:
+    """The model's expectation: its last ``Expect:`` line, else the decision field.
+
+    The field counts when it is not NONE, or always when ``field_is_reliable`` (a backend that
+    reports it, where NONE is a real "none").
+    """
     if rationale:
         for line in reversed(rationale.splitlines()):
-            match = _EXPECT_LINE.search(line)
+            match = _EXPECT_LINE.match(line.strip())
             if match:
-                text = match.group(2).strip()[:EXPECTATION_TEXT_CAP].strip()
+                text = _MARKDOWN.sub("", match.group(2)).strip()[:EXPECTATION_TEXT_CAP].strip()
                 return Expectation(ExpectedChange(match.group(1).lower()), text, "model_text")
-    if fallback is not ExpectedChange.NONE:
+    if field_is_reliable or fallback is not ExpectedChange.NONE:
         return Expectation(fallback, "", "decision_field")
     return None
 

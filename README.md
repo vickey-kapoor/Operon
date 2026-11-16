@@ -104,6 +104,30 @@ curl -X POST http://127.0.0.1:8080/run-task \
 > ([configuration](docs/configuration.md)). The API requires the key it generates in
 > `~/.operon/api-key` (`.var/api-key` in a source checkout), or one from `API_KEYS`.
 
+## OSWorld result
+
+On a fixed 25-task subset of [OSWorld-Verified](https://os-world.github.io/), Operon completed
+**21 of 25 (84%)**, scored by OSWorld's own checkers rather than by Operon, for about $3 of
+model credits.
+
+- **Subset rule.** 25 tasks drawn from the OSWorld-Verified task list with seed `20261115`,
+  stratified by domain, skipping proxy, Google-account, infeasible and Thunderbird tasks. The
+  list was fixed before any run ([`evals/osworld_subset.json`](evals/osworld_subset.json)).
+- **Settings.** Gemini computer use (`gemini-3.5-flash`, the default), thin harness, tools off,
+  auto-confirm on, 50-step cap per task, one full run (no best-of-N).
+- **Caveats.** A single run on a small subset, so treat it as a snapshot rather than a
+  leaderboard entry. In an earlier 5-task pilot one Chrome task scored 0 because we checked its
+  result before Chrome had saved its settings; we then added OSWorld's own 20-second wait before
+  scoring. The 21 of 25 is from one full run with that wait in place, with no re-scoring.
+- **Reproduce.** On a Linux machine with Docker and an [OSWorld](https://github.com/xlang-ai/OSWorld)
+  checkout (setup in [docs/osworld-runner.md](docs/osworld-runner.md)):
+
+  ```bash
+  python -m evals.osworld --osworld-repo ~/OSWorld --max-cost-usd 8
+  ```
+
+  Or run the **OSWorld benchmark** workflow from the Actions tab.
+
 ## Status and roadmap
 
 Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Gemini computer use.

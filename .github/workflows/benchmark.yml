@@ -52,8 +52,9 @@ run-name: >-
 # startable by hand. PRs from forks are refused: the run has the repository's API key.
 
 on:
-  schedule:
-    - cron: "23 8 * * *"  # about 2:25 AM Chicago in winter (CST), 3:25 AM in summer (CDT); off the top of the hour, when GitHub delays or drops scheduled runs
+  # PAUSED (Vickey, 2026-11-16): runs are started by hand for now. To bring the nightly back, uncomment:
+  # schedule:
+  #   - cron: "23 8 * * *"  # about 2:25 AM Chicago in winter (CST), 3:25 AM in summer (CDT); off the top of the hour, when GitHub delays or drops scheduled runs
   issue_comment:
     types: [created]
   workflow_dispatch:

@@ -160,3 +160,65 @@ def test_each_run_records_its_settings(tmp_path, monkeypatch) -> None:
 def test_settings_module_has_no_import_time_reads() -> None:
     # The cache is filled lazily, so importing operon never freezes the environment.
     assert settings_mod._ENV_NAMES and "OPERON_ZOOM" in settings_mod._ENV_NAMES
+
+
+# --- Experimental flags default to off (CLAUDE.md invariant) ------------------------------
+# Settings.from_env({}) reads only the dict it is given, so this is a clean environment.
+# A new experimental flag must be added to _EXPERIMENTAL_OFF, a graduated one to _GRADUATED_ON,
+# and a plain boolean switch to _PLAIN_SWITCHES_OFF, or the guard test below fails.
+_EXPERIMENTAL_OFF = [
+    ("claude_zoom", False),
+    ("progress_revisit", False),
+    ("settle_detect", False),
+    ("auto_confirm", False),
+    ("change_note", False),
+    ("planner", False),
+    ("builtin_browser", False),
+    ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
+    ("critic", ""),
+    ("site_adapters", ""),
+    ("model_profile", ""),
+    ("grounder", "deterministic"),
+    ("bestofn_n", 1),
+    ("bestofn_confidence", 1.0),
+    ("tools", None),  # unset: the tool list's own default
+]
+# Boolean settings that are neither experimental nor graduated: plain switches, off by default.
+_PLAIN_SWITCHES_OFF = [
+    "use_vertex",
+    "allow_unauthenticated",
+    "browser_headless",
+    "test_safe_mode",
+    "strict_errors",
+    "trace",
+]
+# Graduated: on by default on purpose.
+_GRADUATED_ON = [("trust_gate", True), ("zoom", "dense")]
+
+
+@pytest.mark.parametrize(("field", "default"), _EXPERIMENTAL_OFF)
+def test_experimental_flags_default_off(field: str, default: object) -> None:
+    assert getattr(Settings.from_env({}), field) == default
+
+
+@pytest.mark.parametrize("field", _PLAIN_SWITCHES_OFF)
+def test_plain_switches_default_off(field: str) -> None:
+    assert getattr(Settings.from_env({}), field) is False
+
+
+@pytest.mark.parametrize(("field", "default"), _GRADUATED_ON)
+def test_graduated_flags_default_on(field: str, default: object) -> None:
+    assert getattr(Settings.from_env({}), field) == default
+
+
+def test_every_boolean_setting_is_classified() -> None:
+    bools = {name for name, f in Settings.model_fields.items() if f.annotation is bool}
+    classified = (
+        {f for f, d in _EXPERIMENTAL_OFF if d is False}
+        | set(_PLAIN_SWITCHES_OFF)
+        | {f for f, d in _GRADUATED_ON if d is True}
+    )
+    assert bools == classified, (
+        "classify new boolean settings as experimental (default off), plain switch or graduated: "
+        f"{sorted(bools ^ classified)}"
+    )

@@ -58,7 +58,7 @@ def test_parse_policy_output_rejects_schema_invalid_action() -> None:
 
 def test_parse_policy_output_defaults_expected_change_when_missing(caplog) -> None:
     # Planners that don't include expected_change
-    # should get a silent default of "" and a WARNING log rather than a hard crash.
+    # should get the default NONE (left unset) and a WARNING log rather than a hard crash.
     raw_output = """
     {
       "action": {
@@ -76,6 +76,7 @@ def test_parse_policy_output_defaults_expected_change_when_missing(caplog) -> No
 
     assert decision.action.action_type.value == "click"
     assert decision.expected_change == "none"
+    assert "expected_change" not in decision.model_fields_set
     assert any("[PLANNER] Response missing expected_change" in r.message for r in caplog.records)
 
 

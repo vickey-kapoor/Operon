@@ -23,7 +23,7 @@ from operon.core.paths import prompts_dir
 from operon.models.capture import CaptureFrame
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import ScreenPerception
-from operon.models.policy import PolicyDecision
+from operon.models.policy import ExpectedChange, PolicyDecision
 from operon.models.state import AgentState
 from operon.store.background_writer import bg_writer
 
@@ -306,8 +306,14 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
             "confidence": parsed.get("confidence", 0.5),
             "active_subgoal": parsed.get("active_subgoal", "combined step"),
         }
-        if "expected_change" in parsed:
-            decision_data["expected_change"] = parsed["expected_change"]
+        # Only a value ExpectedChange accepts is forwarded; null, a template echo or garbage
+        # stays unset, so it never fails the step's strict validation.
+        raw_expected = parsed.get("expected_change")
+        if isinstance(raw_expected, str):
+            try:
+                decision_data["expected_change"] = ExpectedChange(raw_expected.strip().lower()).value
+            except ValueError:
+                pass
         decision = parse_policy_output(json.dumps(decision_data))
         if scale_ratio != 1.0:
             inverse = 1.0 / scale_ratio

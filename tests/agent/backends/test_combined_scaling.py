@@ -174,3 +174,24 @@ def test_parse_forwards_expected_change_and_tracks_whether_it_was_supplied() -> 
     _, given = CombinedPerceptionPolicyService._parse_combined_output(json.dumps(base), "before.png", scale_ratio=0.5)
     assert given.expected_change is ExpectedChange.NAVIGATION
     assert "expected_change" in given.model_fields_set
+
+
+@pytest.mark.parametrize(
+    ("value", "expected", "supplied"),
+    [
+        (None, "none", False),
+        ("Navigation", "navigation", True),
+        (" DIALOG ", "dialog", True),
+        ("none|focus|content|navigation|dialog", "none", False),
+        ("garbage", "none", False),
+        (5, "none", False),
+    ],
+)
+def test_parse_tolerates_malformed_expected_change(value, expected, supplied) -> None:
+    import json
+
+    base = json.loads(_raw({"action_type": "click", "x": 400, "y": 40}))
+    base["expected_change"] = value
+    _, decision = CombinedPerceptionPolicyService._parse_combined_output(json.dumps(base), "before.png")
+    assert decision.expected_change.value == expected
+    assert ("expected_change" in decision.model_fields_set) is supplied

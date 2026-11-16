@@ -791,7 +791,7 @@ def test_get_run_rejects_malformed_run_ids(bad_run_id: str) -> None:
 
 
 def test_intent_too_long_rejected() -> None:
-    """Intents longer than 500 characters must be rejected."""
+    """Intents longer than 2000 characters must be rejected."""
     client = TestClient(app)
-    resp = client.post("/run-task", json={"intent": "x" * 501})
+    resp = client.post("/run-task", json={"intent": "x" * 2001})
     assert resp.status_code == 422

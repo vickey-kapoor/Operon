@@ -42,7 +42,7 @@ FULL = "full"
 GEMINI_COMPUTER_USE = "computer_use"
 
 # The model backend (OPERON_*_BACKEND=model) runs the registry model named by
-# OPERON_MODEL_PROFILE (Claude, GPT; evals/models.yaml). It always runs thin, so every
+# OPERON_MODEL_PROFILE (Claude, GPT; src/operon/agent/backends/model_adapter/models.yaml). It always runs thin, so every
 # model in a side-by-side night is judged the same way: its own "done", graders decide.
 MODEL_BACKEND = "model"
 

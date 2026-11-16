@@ -1,4 +1,4 @@
-"""Model registry: the shipped evals/models.yaml loads, and bad profiles fail loudly."""
+"""Model registry: the shipped src/operon/agent/backends/model_adapter/models.yaml loads, and bad profiles fail loudly."""
 
 from __future__ import annotations
 
@@ -62,3 +62,10 @@ def test_base_url_comes_from_the_named_env(tmp_path: Path, monkeypatch: pytest.M
         profile.resolved_base_url()
     monkeypatch.setenv("MY_URL", "http://gpu:8000/v1/")
     assert profile.resolved_base_url() == "http://gpu:8000/v1"
+
+
+def test_the_default_registry_ships_inside_the_package() -> None:
+    from operon.agent.backends.model_adapter.registry import registry_path
+
+    assert registry_path().parent.name == "model_adapter" and registry_path().name == "models.yaml"
+    assert registry_path().is_file()

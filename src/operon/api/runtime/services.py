@@ -40,8 +40,8 @@ from operon.agent.tools import enabled_tools, function_declarations
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.clients.anthropic import AnthropicHttpClient
 from operon.clients.anthropic_computer_use import (
-    LAUNCH_APP_TOOL,
     AnthropicComputerUseHttpClient,
+    launch_app_tool,
 )
 from operon.clients.gemini import GeminiHttpClient
 from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
@@ -96,6 +96,12 @@ def build_critic_client(*, config):
     return GeminiHttpClient(model=config.primary_model, timeout_seconds=120.0, thinking=config.thinking)
 
 
+def _claude_prompt_name(environment: str) -> str:
+    if environment == "desktop" and desktop_platform() == LINUX:
+        return "desktop_claude_computer_use_prompt_linux.txt"
+    return f"{environment}_claude_computer_use_prompt.txt"
+
+
 def build_model_backend(
     environment: str, *, executor=None, profile: ModelProfile | None = None, client=None
 ) -> AgentBackend:
@@ -112,9 +118,9 @@ def build_model_backend(
             or AnthropicComputerUseHttpClient(
                 model=profile.model,
                 effort=profile.effort,
-                **({"custom_tools": (LAUNCH_APP_TOOL,)} if environment == "desktop" else {}),
+                **({"custom_tools": (launch_app_tool(),)} if environment == "desktop" else {}),
             ),
-            prompt_path=_PROMPTS_DIR / f"{environment}_claude_computer_use_prompt.txt",
+            prompt_path=_PROMPTS_DIR / _claude_prompt_name(environment),
             **({"browser_runtime": executor} if environment == "browser" else {}),
         )
     if profile.adapter == "openai_compat":

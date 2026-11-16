@@ -27,7 +27,7 @@ on:
         description: "OPERON_ZOOM (KAN-82): off, dense or always"
         default: "off"
       model:
-        description: "Model registry profile (evals/models.yaml, KAN-168), e.g. claude-sonnet-5-5 or openai-computer-use; empty = Gemini computer use. Always thin."
+        description: "Model registry profile (src/operon/agent/backends/model_adapter/models.yaml, KAN-168), e.g. claude-sonnet-5-5 or openai-computer-use; empty = Gemini computer use. Always thin."
         default: ""
       features:
         description: "Perception experiments to switch on (KAN-115), comma separated: settle, note, planner"

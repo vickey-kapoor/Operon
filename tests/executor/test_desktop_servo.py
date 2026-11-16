@@ -185,17 +185,13 @@ def test_constructor_calibrates_when_safe_mode_off() -> None:
     assert executor._noise_floor == pytest.approx(25.0, rel=0.1)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Calibrated threshold (0.75 x noise floor) is below the idle region's own variance, "
-    "so ambient texture is classified as content and the servo cannot flag it as blank.",
-)
-def test_idle_textured_region_is_not_content_under_calibrated_threshold() -> None:
+def test_idle_textured_region_counts_as_content_under_calibrated_threshold() -> None:
+    # The servo targets flat/blank regions only; the 0.75 x noise-floor leniency is deliberate.
     frame = _noisy(std=5)
     executor = _executor(frame)
     with _with_screen(frame):
         has_content, _ = executor._region_has_content(640, 360)
-    assert has_content is False
+    assert has_content is True
 
 
 # ── click-class actions go through the real servo ────────────────

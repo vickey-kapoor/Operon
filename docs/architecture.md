@@ -276,7 +276,7 @@ Important variables:
 - Policy and perception must remain vision-first.
 - Deterministic rules run before LLM fallback.
 - TYPE remains atomic at the executor level.
-- Desktop clicks (`DesktopExecutor`, `LinuxDesktopExecutor`) use visual servo checks before input injection; the browser executor has none.
+- Desktop clicks (`DesktopExecutor`, `LinuxDesktopExecutor`) use visual servo checks before input injection; the browser executor has none, and OSWorld runs its own fixed-threshold check (`environments/osworld.py`).
 - Rolling element memory is cleared on high visual velocity.
 - Benchmark-specific behavior must not be hardcoded into core policy rules.
 

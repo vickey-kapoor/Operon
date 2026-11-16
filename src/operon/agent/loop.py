@@ -26,6 +26,14 @@ from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
+from operon.agent.perception.expect_check import (
+    EXPECT_INSTRUCTION,
+    EXPECT_REMINDER_EVERY,
+    NO_SCREEN_EFFECT_ACTIONS,
+    compare,
+    mismatch_note,
+    parse_expectation,
+)
 from operon.agent.planner import (
     PLANNER_DEADLINE_S,
     PLANNER_USAGE_FILE,
@@ -239,6 +247,8 @@ class AgentLoop:
         # into the run's state (``AgentState.recovered_errors``). Drained by
         # ``_flush_recovered_errors`` when a step, start or resume ends.
         self._recovered_errors: dict[str, dict[str, int]] = {}
+        # KAN-116: per run, the last step that got the "write an Expect line" reminder.
+        self._expect_reminded: dict[str, int] = {}
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -309,6 +319,7 @@ class AgentLoop:
                     AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
                 )
         await self._write_plan(record)
+        self._send_expect_instruction(record.run_id)
         await self._flush_recovered_errors(record.run_id)
         return RunResponse(
             run_id=record.run_id,
@@ -819,6 +830,8 @@ class AgentLoop:
             if not await self._prepare_adaptation_retry(ctx):
                 break
             ctx.attempt_index += 1
+        # Once per step, on the attempt the step ends with.
+        self._check_expected_change(ctx)
 
     async def _execute_attempt(self, ctx: StepContext) -> None:
         decision = ctx.decision
@@ -860,6 +873,62 @@ class AgentLoop:
         add_hints = getattr(self.perception_service, "add_advisory_hints", None)
         if callable(add_hints):
             add_hints([note], source="change_note", run_id=ctx.run_id)
+
+    def _send_expect_instruction(self, run_id: str, step_index: int = 0) -> None:
+        """Ask the model to write an ``Expect:`` line before each action (OPERON_EXPECT_CHECK)."""
+        if not get_settings().expect_check:
+            return
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints([EXPECT_INSTRUCTION], source="expect_instruction", run_id=run_id)
+            self._expect_reminded[run_id] = step_index
+
+    def _check_expected_change(self, ctx: StepContext) -> None:
+        """Compare the model's expectation with the screen change; hint on a mismatch (KAN-116).
+
+        Advisory only: never touches the verification result, retries or the action.
+        """
+        if not get_settings().expect_check:
+            return
+        try:
+            executed = ctx.executed_action
+            if executed is None or not executed.success or executed.action.action_type in NO_SCREEN_EFFECT_ACTIONS:
+                return
+            ratio = ctx.screen_change_ratio
+            if ratio is None:
+                return
+            decision = ctx.decision
+            expectation = parse_expectation(decision.rationale, decision.expected_change)
+            if expectation is None:
+                # The model did not say what it expects: remind it now and then.
+                if ctx.step_index - self._expect_reminded.get(ctx.run_id, 0) >= EXPECT_REMINDER_EVERY:
+                    self._send_expect_instruction(ctx.run_id, ctx.step_index)
+                return
+            observation = compare(expectation, ratio)
+            note = mismatch_note(expectation, observation) if observation else None
+            if note:
+                add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+                if callable(add_hints):
+                    add_hints([note], source="expect_check", run_id=ctx.run_id)
+            step_dir = Path(self._artifacts.before_path(ctx.run_id, ctx.step_index)).resolve().parent
+            step_dir.mkdir(parents=True, exist_ok=True)
+            (step_dir / "expect_check.json").write_text(
+                json.dumps(
+                    {
+                        "step_index": ctx.step_index,
+                        "kind": expectation.kind.value,
+                        "text": expectation.text,
+                        "source": expectation.source,
+                        "change_ratio": round(ratio, 5),
+                        "mismatch": note is not None,
+                        "note": note,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as exc:  # noqa: BLE001 - an advisory check must never fail a step
+            self._recovered(ctx.run_id, "expect_check", exc)
 
     def _absorb_dialog_message(self, ctx: StepContext) -> None:
         """Fold a JS dialog the executor intercepted into this step's perception.

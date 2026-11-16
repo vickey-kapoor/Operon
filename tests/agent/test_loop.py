@@ -1885,3 +1885,109 @@ def test_pass_on_change_note_sends_hint_and_ignores_missing_executor_support():
     loop.perception_service.reset_mock()
     loop._pass_on_change_note(ctx)
     loop.perception_service.add_advisory_hints.assert_not_called()
+
+
+def _expect_loop(tmp_path):
+    from unittest.mock import MagicMock
+
+    from operon.agent.loop import AgentLoop
+
+    loop = AgentLoop.__new__(AgentLoop)
+    loop.perception_service = MagicMock()
+    loop._recovered_errors = {}
+    loop._expect_reminded = {}
+    loop._artifacts = MagicMock()
+    loop._artifacts.before_path.return_value = str(tmp_path / "step_1" / "before.png")
+    return loop
+
+
+def _expect_ctx(rationale, ratio, *, success=True, action_type="click", expected="none"):
+    from unittest.mock import MagicMock
+
+    from operon.models.policy import ActionType, ExpectedChange
+
+    ctx = MagicMock()
+    ctx.run_id = "r1"
+    ctx.step_index = 1
+    ctx.screen_change_ratio = ratio
+    ctx.decision.rationale = rationale
+    ctx.decision.expected_change = ExpectedChange(expected)
+    ctx.executed_action.success = success
+    ctx.executed_action.action.action_type = ActionType(action_type)
+    return ctx
+
+
+def test_expect_check_off_sends_nothing(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPERON_EXPECT_CHECK", raising=False)
+    loop = _expect_loop(tmp_path)
+    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0))
+    loop._send_expect_instruction("r1")
+    loop.perception_service.add_advisory_hints.assert_not_called()
+
+
+def test_expect_check_instruction_sent_when_on(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop._send_expect_instruction("r1")
+    assert loop.perception_service.add_advisory_hints.call_args.kwargs["source"] == "expect_instruction"
+
+
+def test_expect_check_mismatch_sends_hint_and_saves_json(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop._check_expected_change(_expect_ctx("Expect: content - list shows", 0.0))
+    (call,) = loop.perception_service.add_advisory_hints.call_args_list
+    assert call.kwargs == {"source": "expect_check", "run_id": "r1"}
+    assert "expected content" in call.args[0][0]
+    saved = json.loads((tmp_path / "step_1" / "expect_check.json").read_text())
+    assert saved["mismatch"] is True and saved["kind"] == "content" and saved["source"] == "model_text"
+
+
+def test_expect_check_match_sends_no_hint_but_saves(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop._check_expected_change(_expect_ctx("Expect: content - list shows", 0.2))
+    loop.perception_service.add_advisory_hints.assert_not_called()
+    assert (tmp_path / "step_1" / "expect_check.json").exists()
+
+
+def test_expect_check_skips_failed_and_non_screen_actions_and_missing_ratio(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0, success=False))
+    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0, action_type="wait"))
+    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0, action_type="stop"))
+    loop._check_expected_change(_expect_ctx("Expect: content - x", None))
+    loop.perception_service.add_advisory_hints.assert_not_called()
+
+
+def test_expect_check_uses_decision_field_and_reminds_at_most_every_three_steps(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop._check_expected_change(_expect_ctx("no line", 0.0, expected="navigation"))
+    assert loop.perception_service.add_advisory_hints.call_args.kwargs["source"] == "expect_check"
+    # No Expect line and no field: quiet right after the instruction, a reminder three steps later.
+    ctx = _expect_ctx("no line", 0.0)
+    loop._send_expect_instruction("r1", 0)
+    loop.perception_service.reset_mock()
+    for step in (1, 2):
+        ctx.step_index = step
+        loop._check_expected_change(ctx)
+    loop.perception_service.add_advisory_hints.assert_not_called()
+    ctx.step_index = 3
+    loop._check_expected_change(ctx)
+    assert loop.perception_service.add_advisory_hints.call_args.kwargs["source"] == "expect_instruction"
+
+
+def test_expect_check_errors_are_recovered_not_raised(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop.perception_service.add_advisory_hints.side_effect = RuntimeError("boom")
+    loop._recovered = MagicMock()
+    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0))
+    loop._recovered.assert_called_once()
+    assert loop._recovered.call_args.args[:2] == ("r1", "expect_check")

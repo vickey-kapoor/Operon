@@ -160,3 +160,10 @@ def test_each_run_records_its_settings(tmp_path, monkeypatch) -> None:
 def test_settings_module_has_no_import_time_reads() -> None:
     # The cache is filled lazily, so importing operon never freezes the environment.
     assert settings_mod._ENV_NAMES and "OPERON_ZOOM" in settings_mod._ENV_NAMES
+
+
+def test_expect_check_flag_defaults_off_and_parses_on():
+    from operon.core.settings import Settings
+
+    assert Settings.from_env({}).expect_check is False
+    assert Settings.from_env({"OPERON_EXPECT_CHECK": "on"}).expect_check is True

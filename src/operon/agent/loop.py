@@ -8,6 +8,7 @@ import logging
 import shutil
 import time
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -739,7 +740,9 @@ class AgentLoop:
         _trace("  2 PERCEIVE", f"sending screenshot to Gemini  backend={type(self.perception_service).__name__}")
         _t0 = time.perf_counter()
         try:
-            perception = await self._perceive_with_liveness_retry(record, ctx.frame)
+            perception = await self._perceive_with_liveness_retry(
+                record, ctx.frame, on_recapture=lambda fresh: setattr(ctx, "frame", fresh)
+            )
         except Exception as exc:
             # The run fails with the error recorded (pre-step failure log); a bug
             # still re-raises in strict mode.
@@ -791,6 +794,11 @@ class AgentLoop:
         # action never runs; the run pauses for a human instead.
         pause_decision = await self._gate_pause_decision(ctx.record, ctx.state, ctx.decision, frame=ctx.frame)
         if pause_decision is None:
+            # Reading the click text (KAN-163) waits on OCR: a stop that came in
+            # meanwhile must still keep this action from running.
+            if getattr(self, "_click_reader", None) is not None and await self._run_cancelled(ctx.run_id):
+                _trace("  3 POLICY -> CANCELLED", "run was stopped while the gate read the click text")
+                return self._cancelled_response(ctx.record)
             return None
         return await self._pause_for_user(
             record=ctx.record,
@@ -977,7 +985,9 @@ class AgentLoop:
             if hasattr(self.policy_service, "prepare_hints"):
                 self.policy_service.prepare_hints(state, None)
             self._inject_stagnation_hint(state)
-            perception = await self._perceive_with_liveness_retry(state, frame)
+            seen = [frame]
+            perception = await self._perceive_with_liveness_retry(state, frame, on_recapture=seen.append)
+            frame = seen[-1]
         except Exception as exc:
             # Keep the attempt that ran; it is recorded as the step's action.
             self._recovered(ctx.run_id, "adaptation_retry_perceive", exc)
@@ -1228,11 +1238,13 @@ class AgentLoop:
             or resolve_permission_mode(permission_mode) is PermissionMode.AUTO
         ):
             return None
+        # The action is already in virtual-desktop coordinates (_apply_monitor_origin);
+        # the screenshot is the one monitor, so take its origin back off.
         text = await asyncio.to_thread(
             read_click_text,
             frame.artifact_path,
-            action.x,
-            action.y,
+            action.x - frame.monitor_left,
+            action.y - frame.monitor_top,
             (frame.width, frame.height),
             reader=reader,
         )
@@ -1646,14 +1658,22 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
-    async def _perceive_with_liveness_retry(self, state, initial_frame: CaptureFrame):
+    async def _perceive_with_liveness_retry(
+        self,
+        state,
+        initial_frame: CaptureFrame,
+        *,
+        on_recapture: Callable[[CaptureFrame], None] | None = None,
+    ):
         """Perceive with flag-based liveness retries for transient zero-element frames.
 
         When perception returns is_empty_frame=True (blank/loading screen), re-capture
         and retry up to _LIVENESS_RETRY_MAX times before raising PerceptionLowQualityError.
         Other quality failures (unlabeled elements, etc.) propagate immediately.
         The liveness_retries count is stamped onto the returned ScreenPerception so it
-        appears in run.jsonl for observability.
+        appears in run.jsonl for observability. ``on_recapture`` gets each new frame,
+        so a caller can keep the screenshot the returned perception came from (the
+        trust gate reads the click text from it, KAN-163).
         """
         # Stable-frame perception bypass: when the previous action was WAIT (idempotent),
         # the screen hasn't moved at all (visual_velocity exactly 0), and verification
@@ -1716,6 +1736,8 @@ class AgentLoop:
             )
             await asyncio.sleep(_sleep_s)
             frame = await self.capture_service.capture(state)
+            if on_recapture is not None:
+                on_recapture(frame)
         raise PerceptionLowQualityError("no visible elements after all liveness retries")  # pragma: no cover
 
     async def _record_pre_step_perception_failure(

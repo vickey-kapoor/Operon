@@ -205,3 +205,60 @@ def test_gate_stage_wiring_pauses_on_the_frame_text(tmp_path: Path, monkeypatch:
     assert paused is not None and paused.action.action_type is ActionType.WAIT_FOR_USER
     assert "place order" in (paused.action.text or "")
     assert asyncio.run(loop._gate_pause_decision(record, state, decision, frame=None)) is None
+
+
+def test_loop_takes_the_monitor_origin_off_before_cropping(tmp_path: Path) -> None:
+    # A secondary monitor at x=1920: the action is in virtual-desktop coordinates
+    # (local 600 + 1920), the screenshot is the monitor alone.
+    frame = CaptureFrame(
+        artifact_path=_screen(tmp_path / "s.png"), width=1280, height=720, monitor_left=1920, monitor_top=0
+    )
+    seen: list[tuple[int, int]] = []
+
+    def reader(image: Image.Image) -> list[str]:
+        seen.append(image.size)
+        return ["Place order"]
+
+    loop = _loop_with(reader)
+    action = AgentAction(action_type=ActionType.CLICK, x=600 + 1920, y=355)
+    assert asyncio.run(loop._click_text_for_gate(action, frame)) == "place order"
+    assert seen == [(2 * CROP_HALF_WIDTH, 2 * CROP_HALF_HEIGHT)]
+
+
+def test_liveness_retry_reports_the_frame_it_perceived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from operon.agent import loop as loop_mod
+
+    first = CaptureFrame(artifact_path=_screen(tmp_path / "a.png"), width=1280, height=720)
+    second = CaptureFrame(artifact_path=_screen(tmp_path / "b.png"), width=1280, height=720)
+    loop = _loop_with(None)
+    blank = SimpleNamespace(is_empty_frame=True)
+    good = Mock(is_empty_frame=False)
+    good.model_copy.return_value = good
+    loop.perception_service = SimpleNamespace(perceive=AsyncMock(side_effect=[blank, good]))
+    loop.capture_service = SimpleNamespace(capture=AsyncMock(return_value=second))
+    loop.executor = SimpleNamespace()  # no current_url_for_run
+    loop._maybe_reuse_prior_perception = lambda state, frame: None
+    seen: list[CaptureFrame] = []
+    monkeypatch.setattr(loop_mod, "_LIVENESS_RETRY_FIRST_SLEEP_S", 0.0)
+    result = asyncio.run(loop._perceive_with_liveness_retry(SimpleNamespace(run_id="r"), first, on_recapture=seen.append))
+    assert result is good
+    assert seen == [second]
+
+
+def test_gate_stage_rechecks_a_stop_that_came_in_during_ocr(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from operon.models.common import RunStatus
+
+    loop = _loop_with(_Recorder(["cancel"]))
+    loop._run_cancelled = AsyncMock(side_effect=[False, True])  # stopped while OCR ran
+    loop._gate_pause_decision = AsyncMock(return_value=None)
+    ctx = SimpleNamespace(
+        run_id="r", record=SimpleNamespace(run_id="r", intent="x", step_count=1), state=None, decision=None, frame=None
+    )
+    response = asyncio.run(loop._gate_stage(ctx))
+    assert response is not None and response.status is RunStatus.CANCELLED

@@ -3,6 +3,7 @@
     operon setup                    first time: save the Gemini key, install the browser, self-check
     operon run "task"               run a task here, in this process, and print a report
     operon run --request "task"     send the task to a running API and follow it
+    operon mcp                      serve Operon to MCP clients over stdio (needs operon-agent[mcp])
     operon serve                    start the API and print the task page's link
     operon cloud ...                Operon's own computer on an Azure Linux VM (see operon.cloud)
 
@@ -346,6 +347,12 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mcp(args: argparse.Namespace) -> int:  # noqa: ARG001 - subcommand signature
+    from operon import mcp_server
+
+    return mcp_server.main()
+
+
 def build_parser() -> argparse.ArgumentParser:
     from operon import __version__
 
@@ -374,6 +381,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)
+
+    mcp = sub.add_parser("mcp", help="serve Operon to MCP clients (Claude Code, Claude Desktop) over stdio")
+    mcp.set_defaults(func=_mcp)
 
     from operon import cloud, setup_command
     from operon.environments import cli as environments_cli

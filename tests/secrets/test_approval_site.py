@@ -194,3 +194,97 @@ def test_batch_stops_when_no_host_was_known_at_approval() -> None:
     loop._install_batch_child_check("r", batch)
     index, blocked = asyncio.run(browser.run(batch))
     assert index == 1 and browser.typed == [] and blocked
+
+
+# --- desktop batches, DENY override, redirect while waiting for approval ---
+
+
+class _DesktopBatch:
+    """No page URL; runs a batch with the loop's child check like the desktop executor."""
+
+    def __init__(self) -> None:
+        self.batch_child_check = None
+        self.typed: list[str] = []
+
+    async def run(self, batch: AgentAction):
+        for index, child in enumerate(batch.actions):
+            if index > 0 and self.batch_child_check is not None:
+                blocked = await self.batch_child_check(child)
+                if blocked is not None:
+                    return index, blocked
+            if child.action_type is ActionType.TYPE:
+                self.typed.append(child.text)
+        return None, None
+
+
+def _decision(action: AgentAction) -> PolicyDecision:
+    return PolicyDecision(action=action, rationale="log in", confidence=0.9, active_subgoal="s")
+
+
+async def _alive(run_id: str) -> bool:
+    return False
+
+
+def test_approved_desktop_batch_types_the_secret() -> None:
+    desktop = _DesktopBatch()
+    loop = _loop(desktop, TrustGate(enabled=True))
+    loop._run_cancelled = _alive  # type: ignore[method-assign]
+    batch = _batch(
+        AgentAction(action_type=ActionType.TYPE, text="alice"),
+        AgentAction(action_type=ActionType.PRESS_KEY, key="tab"),
+        TYPE,
+    )
+    text = loop._pre_execution_gate_text(_decision(batch), intent="x", run_id="r")
+    assert text is not None and "{{secret:pw}}" in text and "site" not in text
+    loop._approved_gate_actions["r"] = (loop._gate_fingerprint(batch), frozenset({"trust"}))
+    assert loop._pre_execution_gate_text(_decision(batch), intent="x", run_id="r") is None
+    loop._install_batch_child_check("r", batch)
+    assert asyncio.run(desktop.run(batch)) == (None, None)
+    assert desktop.typed == ["alice", "{{secret:pw}}"]
+
+
+def test_stale_host_does_not_authorise_a_deny_override() -> None:
+    gate = TrustGate(enabled=True, deny=("delete",))
+    loop = _loop(_BatchBrowser("https://other.test/"), gate)
+    loop._secret_site_approved["r"] = "other.test"  # approved earlier, for another action
+    batch = _batch(_nav("https://bank.example/delete-account"), TYPE)
+    text = loop._pre_execution_gate_text(
+        _decision(batch), intent="x", run_id="r", current_url="https://bank.example/"
+    )
+    assert text is not None and text.startswith("Blocked by policy")
+    assert "{{secret:pw}}" in text and "bank.example" in text and VALUE not in text
+    assert loop._secret_site_approved["r"] == "bank.example"
+
+
+def test_stale_host_cleared_when_gate_runs_unapproved_without_secret() -> None:
+    loop = _loop(_BatchBrowser("https://a.test/"), TrustGate(enabled=True, confirm=("purchase",)))
+    loop._secret_site_approved["r"] = "a.test"
+    buy = AgentAction(action_type=ActionType.TYPE, x=1, y=1, text="purchase")
+    assert loop._pre_execution_gate_text(_decision(buy), intent="x", run_id="r") is not None
+    assert "r" not in loop._secret_site_approved
+
+
+def test_redirect_after_approval_repauses_naming_the_new_host() -> None:
+    loop = _loop(_BatchBrowser("https://a.example/"), TrustGate(enabled=True))
+    first = loop._pre_execution_gate_text(
+        _decision(TYPE), intent="x", run_id="r", current_url="https://a.example/login"
+    )
+    assert first is not None and "on a.example" in first
+    loop._approved_gate_actions["r"] = (loop._gate_fingerprint(TYPE), frozenset({"trust"}))
+    ok = loop._pre_execution_gate_text(_decision(TYPE), intent="x", run_id="r", current_url="https://a.example/x")
+    assert ok is None  # still on A: runs
+    loop._approved_gate_actions["r"] = (loop._gate_fingerprint(TYPE), frozenset({"trust"}))
+    again = loop._pre_execution_gate_text(
+        _decision(TYPE), intent="x", run_id="r", current_url="https://b.example/login"
+    )
+    assert again is not None and "on b.example" in again and "page changed" in again
+    assert VALUE not in again
+    assert loop._approved_gate_actions.get("r") is None  # the old approval no longer covers it
+    assert loop._secret_site_approved["r"] == "b.example"
+
+
+def test_release_run_state_drops_the_approved_host() -> None:
+    loop = _loop(_BatchBrowser(None), TrustGate(enabled=True))
+    loop._secret_site_approved["r"] = "a.test"
+    loop._release_backend_run_state("r")
+    assert "r" not in loop._secret_site_approved

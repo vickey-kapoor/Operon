@@ -1554,6 +1554,20 @@ class AgentLoop:
             self._log_trust_gate_url(run_id, url)
         return url
 
+    def _secret_host_changed(self, run_id: str, leaf: AgentAction, current_url: str | None) -> bool:
+        """True when ``leaf`` types a secret in the browser, the gate would still ask for it, and
+        the page's host is not the one the person approved (None counts as a host: "unknown").
+        Desktop (no page URL) is never judged."""
+        if not (self._trust_gate.enabled and action_uses_secret(leaf)):
+            return False
+        if not hasattr(self.executor, "current_url_for_run"):
+            return False
+        result = self._trust_gate.evaluate(leaf, current_url=current_url)
+        if not (result.verdict is TrustVerdict.CONFIRM and result.always):
+            return False
+        host = (urlparse(current_url).hostname or None) if current_url else None
+        return host != self._secret_site_approved.get(run_id)
+
     def _secret_site_suffix(
         self, leaf: AgentAction, current_url: str | None, whole: AgentAction | None = None
     ) -> str:
@@ -1631,6 +1645,8 @@ class AgentLoop:
         # trust gate and file guard judge every one of them, not the container.
         leaves = _leaf_actions(action)
         if "trust" not in approved:
+            # A host approved earlier must not authorise this action's secret (KAN-103).
+            self._secret_site_approved.pop(run_id, None)
             verdicts = [
                 (
                     leaf,
@@ -1660,16 +1676,23 @@ class AgentLoop:
                 self._pending_gate_approvals[run_id] = (
                     fingerprint, "trust", trust.category, trust.verdict.value
                 )
+                if action_uses_secret(action):
+                    # What the person approves: the secret may only be typed on this host.
+                    self._secret_site_approved[run_id] = (urlparse(current_url).hostname or None) if current_url else None
                 if trust.verdict is TrustVerdict.DENY:
+                    secret_leaf = next((item for item in leaves if action_uses_secret(item)), None)
+                    secret_note = (
+                        f" It also types {_describe_for_approval(secret_leaf)}"
+                        f"{self._secret_site_suffix(secret_leaf, current_url, action)}."
+                        if secret_leaf is not None
+                        else ""
+                    )
                     return (
                         f"Blocked by policy: {leaf.action_type.value} action "
-                        f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
+                        f"({trust.reason}: '{trust.matched}').{secret_note} It will not run autonomously — "
                         "review and resume to override, or stop the run."
                     )
                 site = self._secret_site_suffix(leaf, current_url, action)
-                if action_uses_secret(leaf):
-                    # What the person approved: the secret may only be typed on this host.
-                    self._secret_site_approved[run_id] = (urlparse(current_url).hostname or None) if current_url else None
                 if resolve_permission_mode(permission_mode).value == "ask" and trust.reason.startswith("ask mode"):
                     return (
                         f"Approval needed (ask mode): {_describe_for_approval(leaf)}{site}. "
@@ -1685,6 +1708,19 @@ class AgentLoop:
                     f"High-risk action needs approval: {leaf.action_type.value} "
                     f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
                 )
+
+        elif leaves and self._secret_host_changed(run_id, leaves[0], current_url):
+            # Approved on one site, but the page is on another now (a redirect while the run
+            # waited): ask again, naming the site it is on now (KAN-103).
+            self._approved_gate_actions.pop(run_id, None)
+            self._trust_approved[run_id] = False
+            self._secret_site_approved[run_id] = (urlparse(current_url).hostname or None) if current_url else None
+            self._pending_gate_approvals[run_id] = (fingerprint, "trust", "account", TrustVerdict.CONFIRM.value)
+            return (
+                f"Account: approve {_describe_for_approval(leaves[0])}"
+                f"{self._secret_site_suffix(leaves[0], current_url)}? "
+                "(the page changed since you approved). Resume to approve, or correct/stop."
+            )
 
         for leaf in leaves:
             if leaf.action_type not in FILE_PATH_ACTIONS:
@@ -1800,12 +1836,16 @@ class AgentLoop:
             result = self._trust_gate.evaluate(leaf, current_url=current_url)
             if result.verdict is TrustVerdict.DENY:
                 return f"blocked by policy ({result.reason}: '{result.matched}')"
-            if secret and result.verdict is TrustVerdict.CONFIRM and result.always:
+            if secret and hasattr(self.executor, "current_url_for_run"):
                 # A secret goes only to the site the person approved (KAN-103); an earlier
                 # step of the batch may have moved the page. The step then fails before
                 # anything is typed and the secret type is gated again on its own.
                 host = (urlparse(current_url).hostname or None) if current_url else None
-                if host is None or host != self._secret_site_approved.get(run_id):
+                if (
+                    result.verdict is TrustVerdict.CONFIRM
+                    and result.always
+                    and (host is None or host != self._secret_site_approved.get(run_id))
+                ):
                     return "the page is not the site approved for typing a secret; nothing was typed"
             return None
 
@@ -2385,6 +2425,7 @@ class AgentLoop:
         """Drop the finished run's conversation and last screenshot from the backends,
         which otherwise keep them for the life of the server."""
         self._expect_reminded.pop(run_id, None)
+        self._secret_site_approved.pop(run_id, None)
         services = {id(s): s for s in (self.perception_service, self.policy_service)}.values()
         for service in services:
             for target in (service, getattr(service, "delegate", None)):
@@ -2545,7 +2586,11 @@ class AgentLoop:
             )
             if trust.verdict is TrustVerdict.ALLOW:
                 continue
-            if approved_same and trust.verdict is TrustVerdict.CONFIRM:
+            if (
+                approved_same
+                and trust.verdict is TrustVerdict.CONFIRM
+                and not self._secret_host_changed(run_id, leaf, current_url)
+            ):
                 continue
             return (
                 f"Retry not executed: the re-grounded {leaf.action_type.value} needs the trust "

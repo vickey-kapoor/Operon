@@ -28,6 +28,7 @@ from xml.sax.saxutils import escape
 import operon
 from operon.core.paths import user_config_dir
 from operon.core.settings import get_settings
+from operon.core.vault import private_ip_literal
 from operon.environments.base import (
     EnvironmentProvider,
     ProviderCheck,
@@ -294,7 +295,10 @@ class WindowsSandboxProvider(EnvironmentProvider):
             time.sleep(interval_s)
         info = json.loads(ready.read_text(encoding="utf-8"))
         self._endpoint = f"http://{info['host']}:{info['port']}"
-        self._guest_host = str(info["host"])
+        # The guest wrote this file: a secret goes to its address only when that is an IP literal
+        # on this machine's own networks. Anything else leaves it unset and secrets fail closed.
+        host = str(info["host"])
+        self._guest_host = host if private_ip_literal(host) else None
         remaining = max(5.0, deadline - time.monotonic())
         return wait_for_guest(self._endpoint, self._token or "", timeout_s=remaining, interval_s=interval_s)
 

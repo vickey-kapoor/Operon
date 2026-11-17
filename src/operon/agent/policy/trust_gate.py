@@ -271,9 +271,9 @@ class TrustGate:
         if get_settings().secrets and action_uses_secret(action) and not self._page_allows_secrets(current_url):
             # KAN-103: typing a stored secret always needs a person, in every permission mode,
             # unless the page is on a domain the operator put on OPERON_TRUST_ALLOW_DOMAINS.
-            return TrustResult(
-                TrustVerdict.CONFIRM, "typing a secret needs approval", "secret", "account", always=True
-            )
+            host = (urlparse(current_url).hostname or "") if current_url else ""
+            reason = "typing a secret needs approval" + (f" (page: {host})" if host else "")
+            return TrustResult(TrustVerdict.CONFIRM, reason, "secret", "account", always=True)
         for keyword in self.confirm:
             if keyword in description:
                 return TrustResult(TrustVerdict.CONFIRM, "matched high-risk rule", keyword)

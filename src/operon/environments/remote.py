@@ -10,18 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import ipaddress
 import logging
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
 
 from operon.core.paths import desktop_artifacts_dir
-from operon.core.vault import SecretError, redact, resolve_text
+from operon.core.vault import SecretError, redact, resolve_text, secret_endpoint_ok
 from operon.environments.guest import FILE_FIELDS
 from operon.models.capture import CaptureFrame
 from operon.models.common import FailureCategory, LoopStage
@@ -145,13 +143,7 @@ class RemoteDesktopExecutor:
     def _local_endpoint(self) -> bool:
         """True when the guest is on loopback, or at exactly the address the provider reported.
         A secret is never sent anywhere else (no general private ranges)."""
-        host = urlparse(self.base_url).hostname or ""
-        if host == "localhost" or (self._trusted_host is not None and host == self._trusted_host):
-            return True
-        try:
-            return ipaddress.ip_address(host).is_loopback
-        except ValueError:
-            return False
+        return secret_endpoint_ok(self.base_url, self._trusted_host)
 
     async def _execute_one(self, action: AgentAction) -> ExecutedAction:
         # KAN-103: the guest has no vault, so a {{secret:NAME}} placeholder is filled in here,

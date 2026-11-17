@@ -169,6 +169,7 @@ def test_an_allowlisted_page_does_not_need_approval(monkeypatch) -> None:
     # Off the list the gate denies the page outright; with no page (a desktop app) it confirms.
     assert gate.evaluate(_typed(), current_url="https://evil.example/").verdict is TrustVerdict.DENY
     assert gate.evaluate(_typed(), current_url=None).verdict is TrustVerdict.CONFIRM
+    assert "page:" not in gate.evaluate(_typed(), current_url=None).reason
     assert gate.evaluate(_typed(), current_url="about:blank").verdict is TrustVerdict.CONFIRM
     # No allowlist configured: an https page does not help.
     open_gate = TrustGate(enabled=True)
@@ -191,3 +192,10 @@ def test_with_the_trust_gate_off_a_secret_type_fails(vault_dir, monkeypatch) -> 
 
 def test_no_hint_when_the_vault_is_empty(vault_dir) -> None:
     assert vault.available_names() == []
+
+
+def test_the_approval_text_names_the_page_host(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_SECRETS", "on")
+    result = TrustGate(enabled=True).evaluate(_typed(), current_url="https://bank.example/login?x=1")
+    assert result.verdict is TrustVerdict.CONFIRM and "(page: bank.example)" in result.reason
+    assert SECRET not in result.reason

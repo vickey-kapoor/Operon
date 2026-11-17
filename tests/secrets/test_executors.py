@@ -355,7 +355,7 @@ def test_osworld_substitutes_only_in_the_snippet(stored, tmp_path) -> None:
         seen.append(json.loads(request.content)["command"][2])
         return httpx.Response(200, json={"status": "success", "returncode": 0})
 
-    executor = OSWorldExecutor("http://vm:5000", artifact_dir=tmp_path, transport=httpx.MockTransport(handler))
+    executor = OSWorldExecutor("http://127.0.0.1:5000", artifact_dir=tmp_path, transport=httpx.MockTransport(handler))
     action = AgentAction(action_type=ActionType.TYPE, text=PLACEHOLDER)
     result = asyncio.run(executor.execute(action))
     assert result.success and SECRET in seen[0]
@@ -369,6 +369,52 @@ def test_osworld_unknown_secret_sends_nothing(vault_dir, tmp_path) -> None:
         calls.append(1)
         return httpx.Response(200, json={"status": "success", "returncode": 0})
 
-    executor = OSWorldExecutor("http://vm:5000", artifact_dir=tmp_path, transport=httpx.MockTransport(handler))
+    executor = OSWorldExecutor("http://127.0.0.1:5000", artifact_dir=tmp_path, transport=httpx.MockTransport(handler))
     result = asyncio.run(executor.execute(AgentAction(action_type=ActionType.TYPE, text="{{secret:nope}}")))
     assert not result.success and calls == []
+
+
+@pytest.mark.parametrize("url", ["http://vm:5000", "http://10.0.0.7:5000", "http://8.8.8.8:5000"])
+def test_osworld_refuses_a_non_loopback_vm_for_secrets(stored, tmp_path, url) -> None:
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+    executor = OSWorldExecutor(url, artifact_dir=tmp_path, transport=httpx.MockTransport(handler))
+    result = asyncio.run(executor.execute(AgentAction(action_type=ActionType.TYPE, text=PLACEHOLDER)))
+    assert not result.success and "loopback" in result.detail and calls == []
+    # Ordinary text still goes to such a VM.
+    assert asyncio.run(executor.execute(AgentAction(action_type=ActionType.TYPE, text="hello"))).success
+
+
+def test_osworld_trusted_host_is_allowed(stored, tmp_path) -> None:
+    handler = lambda request: httpx.Response(200, json={"status": "success", "returncode": 0})  # noqa: E731
+    executor = OSWorldExecutor(
+        "http://10.0.0.7:5000", artifact_dir=tmp_path, transport=httpx.MockTransport(handler), trusted_host="10.0.0.7"
+    )
+    assert asyncio.run(executor.execute(AgentAction(action_type=ActionType.TYPE, text=PLACEHOLDER))).success
+
+
+async def test_secrets_used_are_forgotten_when_the_run_ends(stored, gui, monkeypatch) -> None:
+    monkeypatch.setattr(_desktop.sendinput, "type_unicode", lambda text: None)
+    monkeypatch.setattr(DesktopExecutor, "_secret_problem", lambda self, text: None)
+    executor = _desktop_executor(DesktopExecutor, monkeypatch)
+    assert (await executor.execute(_type())).success
+    assert executor._secrets_used == {"run-1": {SECRET}}
+    await executor.aclose_run("run-1")
+    assert executor._secrets_used == {}
+    assert (await executor.execute(_type())).success
+    await executor.aclose()
+    assert executor._secrets_used == {}
+
+
+def test_sendinput_refusal_message_does_not_claim_a_cause(monkeypatch) -> None:
+    class Refusing:
+        def SendInput(self, count, array, size):
+            return 0
+
+    monkeypatch.setattr(sendinput, "_user32", lambda: Refusing())
+    with pytest.raises(OSError, match="silently"):
+        sendinput.type_unicode("x")

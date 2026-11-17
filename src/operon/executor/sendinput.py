@@ -74,7 +74,7 @@ def _send(events: list[Input]) -> None:
         array = (Input * len(chunk))(*chunk)
         sent = user32.SendInput(len(chunk), array, ctypes.sizeof(Input))
         if sent != len(chunk):
-            raise OSError("Windows refused part of the keyboard input (is the target window elevated?)")
+            raise OSError("Windows refused part of the keyboard input (it can also drop input silently for an elevated window, so check the field)")
 
 
 def type_unicode(text: str) -> None:

@@ -317,3 +317,20 @@ def test_guest_command_passes_the_dpi_awareness_flag(provider, monkeypatch):
 
 def test_sandbox_tools_never_run_on_the_host():
     assert WindowsSandboxProvider.runs_on_host is False
+
+
+def test_a_reported_private_ip_becomes_the_trusted_secret_host(provider, monkeypatch):
+    _guest_comes_up(provider, monkeypatch)
+    provider.start()
+    assert provider.build_executor()._trusted_host == "172.30.0.9"
+
+
+@pytest.mark.parametrize("host", ["evil.example", "8.8.8.8", "172.30.0.9/x", "not an ip"])
+def test_a_guest_reported_host_that_is_not_a_private_ip_is_not_trusted_for_secrets(provider, monkeypatch, host):
+    def fake_open(wsb: Path):
+        (provider.exchange / "ready.json").write_text(json.dumps({"host": host, "port": 8765}))
+
+    monkeypatch.setattr(provider, "_open", fake_open)
+    monkeypatch.setattr("operon.environments.remote.wait_for_guest", lambda *a, **k: {"ok": True})
+    provider.start()
+    assert provider.build_executor()._trusted_host is None

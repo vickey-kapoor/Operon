@@ -14,12 +14,14 @@ encrypted with DPAPI (current-user scope, no new dependency). Elsewhere the file
 from __future__ import annotations
 
 import contextvars
+import ipaddress
 import os
 import re
 import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from operon.core.paths import user_config_dir
 from operon.core.settings import get_settings
@@ -208,6 +210,27 @@ def resolve_for_type(text: str) -> tuple[str, tuple[str, ...]]:
     if HOST_FILLED.get():
         return text, ((text,) if text else ())
     return resolve_text(text)
+
+
+def private_ip_literal(host: str) -> bool:
+    """True for a loopback, private or link-local IP literal (never a name)."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
+def secret_endpoint_ok(url: str, trusted_host: str | None = None) -> bool:
+    """May a secret be sent to ``url``? Only to loopback, or to exactly ``trusted_host``
+    (the address a provider reported). Never to another address, private ranges included."""
+    host = urlparse(url).hostname or ""
+    if host == "localhost" or (trusted_host is not None and host == trusted_host):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def redact(value: Any, secret_values: Iterable[str]) -> Any:

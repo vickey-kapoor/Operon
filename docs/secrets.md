@@ -41,7 +41,7 @@ was, so nothing that records the action can hold the value:
 | Browser (`NativeBrowserExecutor`, batch children included) | swaps before the focus click; types the value |
 | Windows desktop (`DesktopExecutor`) | same, typed with `SendInput` (`KEYEVENTF_UNICODE`, surrogate pairs handled): **never the clipboard** |
 | Linux desktop (`LinuxDesktopExecutor`) | typed key by key with `pyautogui.write`, any length, never the clipboard. A secret with a character that has no key (an accent, a newline, an emoji) **fails closed** before any click |
-| Remote guest (Windows Sandbox, Linux container) | the **host** swaps, because the guest has no vault; the value crosses to the guest over the token-protected HTTP connection. That connection is plain HTTP, so it is sent only to loopback (the container) or to the exact guest address the provider reported (the Sandbox's host-only IP); any other address, private ranges included, fails the action. The request carries a `secret_filled` marker so the guest types the text as it is (no second placeholder lookup, no clipboard) and masks it in its reply. The host also masks the reply and puts the original action back before the loop sees it |
+| Remote guest (Windows Sandbox, Linux container) | the **host** swaps, because the guest has no vault; the value crosses to the guest over the token-protected HTTP connection. That connection is plain HTTP, so it is sent only to loopback (the container) or to the exact guest address the provider reported (the Sandbox's host-only IP); any other address, private ranges included, fails the action. The Sandbox provider accepts the address its guest wrote to `ready.json` only if it is a loopback, private or link-local IP literal; otherwise secrets fail closed. The request carries a `secret_filled` marker so the guest types the text as it is (no second placeholder lookup, no clipboard) and masks it in its reply. The host also masks the reply and puts the original action back before the loop sees it |
 | OSWorld VM | the value goes only into the command sent to the VM (`pyautogui.write`); non-ASCII secrets fail closed instead of being pasted |
 
 A secret never goes through the clipboard (no Win+V history, no cloud clipboard). As a second guard,
@@ -64,7 +64,7 @@ placeholder, in **every** permission mode: `ask`, `risky` and `auto` all pause. 
 skip it. The one exception: if `OPERON_TRUST_ALLOW_DOMAINS` is set and the current page's host is
 on it, the secret is typed without a pause (an operator who allowlisted a login site has already
 said where passwords may go). A desktop app has no page, so it always pauses. The approval
-request shows the placeholder, never the value.
+request shows the placeholder and, when the page is known, its host, never the value.
 
 With the trust gate off (`OPERON_TRUST_GATE=off`, as in the benchmarks) a secret type **fails** with
 "secrets need the trust gate on", so a secret is never typed with no approval step at all.
@@ -78,7 +78,10 @@ With the trust gate off (`OPERON_TRUST_GATE=off`, as in the benchmarks) a secret
 - An app that echoes a password somewhere else (a "show password" toggle, an error message, a URL)
   puts it on screen the same way.
 - The model can press a "show password" control itself. Keep `ask` mode for sensitive sites.
-- Values live in memory while a type runs (and for the run's clipboard mask). They never go on the
-  clipboard.
+- Values live in memory while a type runs, and the executor keeps the values typed in a run for its
+  clipboard mask until that run is cleaned up (or the executor closes). They never go on the clipboard.
+- On an OSWorld VM the value is part of the `python3 -c` command sent to the VM, so it appears in
+  that process's argv (visible to other processes on the VM while it runs). The VM URL
+  (`OPERON_OSWORLD_URL`) must be loopback, or a secret type fails.
 - The guest process (sandbox or container) holds the value while it types.
 - The vault is only as safe as your user account. It is not a replacement for a password manager.

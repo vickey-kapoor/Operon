@@ -584,6 +584,7 @@ class DesktopExecutor(Executor):
 
     async def aclose_run(self, run_id: str) -> int:
         """Called by the loop when a run ends: closes the apps it opened, if its caller asked."""
+        self._secrets_used.pop(run_id, None)
         if run_id not in self._close_when_done:
             return 0
         self._close_when_done.discard(run_id)
@@ -597,6 +598,7 @@ class DesktopExecutor(Executor):
         exited immediately (e.g. Chrome, Settings via ms-* URIs).
         """
         self._work_windows.pop(run_id, None)
+        self._secrets_used.pop(run_id, None)
         procs = self._launched_processes.pop(run_id, [])
         app_names = self._launched_app_names.pop(run_id, [])
         owned = self._owned_pids.pop(run_id, {})
@@ -661,6 +663,7 @@ class DesktopExecutor(Executor):
         launched child apps don't outlive the process. Best-effort: one run's
         failure must not block teardown of the rest.
         """
+        self._secrets_used.clear()
         for run_id in list(self._run_recorders):
             try:
                 await self.stop_run_recording(run_id)

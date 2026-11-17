@@ -277,6 +277,7 @@ Important variables:
 - Deterministic rules run before LLM fallback.
 - TYPE remains atomic at the executor level.
 - Desktop clicks (`DesktopExecutor`, `LinuxDesktopExecutor`) use visual servo checks before input injection; the browser executor has none, and OSWorld runs its own fixed-threshold check (`environments/osworld.py`).
+- One executor serves one run's step at a time (`AgentLoop._executor_lock`). With `OPERON_PARALLEL_RUNS` > 1 each batch browser run gets its own loop and executor (`api/runtime/loops.py`), so the lock is per executor and runs overlap; observable-mode and desktop runs share one executor and take turns (one CDP port, one real screen).
 - Rolling element memory is cleared on high visual velocity.
 - Benchmark-specific behavior must not be hardcoded into core policy rules.
 

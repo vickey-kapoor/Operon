@@ -85,6 +85,10 @@ class OperonRuntime:
     # The agent loops, built on first use (``api/runtime/loops.py``).
     browser_loop: Any = None
     desktop_loop: Any = None
+    # OPERON_PARALLEL_RUNS > 1 (KAN-81): each batch browser run's own loop (own executor),
+    # by run id, and the semaphore capping how many hold a slot.
+    run_loops: dict[str, Any] = field(default_factory=dict)
+    run_slots: asyncio.Semaphore | None = None
     # The desktop run environment (KAN-80), started once.
     desktop_provider: Any = None
     # The connected CDP browser manager the browser executor attaches to.

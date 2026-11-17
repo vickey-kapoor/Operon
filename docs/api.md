@@ -157,6 +157,16 @@ curl -X POST http://127.0.0.1:8080/desktop/step \
 Request fields for both `run-task` routes: `intent` (required), `start_url`, `headless`,
 `mode` (`batch` or `observable`) and `max_steps` (1 to 200).
 
+## Parallel browser runs (OPERON_PARALLEL_RUNS, KAN-81)
+
+With `OPERON_PARALLEL_RUNS=N` (N > 1), `POST /run-task` with `mode: "batch"` (the default) gives each
+run its own agent loop, executor and isolated Chromium, so up to N runs step at the same time. At most N
+runs hold a slot (from start until they succeed, fail or are cancelled); a start beyond that is refused
+with `429` and `Retry-After: 5` rather than queued, because `start_run` opens the browser and returns the
+run id before the scheduler runs, so there is no run to hold as `pending` without a browser. Retry when one
+finishes. `observable` runs (live view, one CDP port 9222) and all desktop runs (one real screen and mouse)
+are never parallel and keep taking turns. The default `1` is the old behaviour.
+
 ## Interrupted runs (OPERON_CHECKPOINTS, KAN-80)
 
 With `OPERON_CHECKPOINTS=on`, the API start marks every run the last process left `pending`,

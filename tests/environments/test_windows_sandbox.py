@@ -226,6 +226,35 @@ def test_start_refuses_while_another_sandbox_runs(provider, monkeypatch):
     assert opened == []
 
 
+def test_start_retries_once_when_the_sandbox_closes_before_logon(provider, monkeypatch):
+    opens: list[Path] = []
+    waits = iter([ws.SandboxClosedEarly("closed"), {"status": "ok"}])
+
+    def fake_wait():
+        outcome = next(waits)
+        if isinstance(outcome, Exception):
+            raise outcome
+        provider._endpoint = "http://x:1"
+        return outcome
+
+    monkeypatch.setattr(provider, "_open", lambda wsb: opens.append(wsb))
+    monkeypatch.setattr(provider, "wait_until_ready", fake_wait)
+    provider.start()
+    assert len(opens) == 2
+
+
+def test_wait_notices_a_sandbox_that_vanished_before_logon(provider, monkeypatch):
+    provider.start_timeout_s = 1000
+    states = iter([True, False])
+    monkeypatch.setattr(ws, "sandbox_running", lambda: next(states))
+    clock = iter(range(0, 100_000, 11))
+    monkeypatch.setattr(ws.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(ws.time, "sleep", lambda s: None)
+    provider.exchange.mkdir(parents=True)
+    with pytest.raises(ws.SandboxClosedEarly):
+        provider.wait_until_ready()
+
+
 def test_start_waits_for_a_closing_sandbox_to_finish(provider, monkeypatch):
     states = iter([True, True, False])
     monkeypatch.setattr(ws, "sandbox_running", lambda: next(states))

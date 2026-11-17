@@ -53,6 +53,10 @@ LOGON_MARKER = "logon.txt"
 _GUEST_RUNTIME = r"C:\Users\WDAGUtilityAccount\operon-guest"
 
 
+class SandboxClosedEarly(RuntimeError):
+    """The sandbox opened and then closed before its logon command ran."""
+
+
 def sandbox_exe() -> Path:
     return Path(os.getenv("SystemRoot", r"C:\Windows")) / "System32" / "WindowsSandbox.exe"
 
@@ -259,9 +263,18 @@ class WindowsSandboxProvider(EnvironmentProvider):
 
         ready = self.exchange / "ready.json"
         deadline = time.monotonic() + self.start_timeout_s
+        seen_up, next_check = False, time.monotonic() + 10
         while not ready.exists():
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if now >= deadline:
                 raise RuntimeError(self.timeout_message())
+            if now >= next_check:
+                next_check = now + 10
+                if sandbox_running():
+                    seen_up = True
+                elif seen_up and not (self.exchange / LOGON_MARKER).exists():
+                    # On a loaded PC Windows can drop the sandbox before it logs on.
+                    raise SandboxClosedEarly("Windows Sandbox closed before it ran its logon command.")
             time.sleep(interval_s)
         info = json.loads(ready.read_text(encoding="utf-8"))
         self._endpoint = f"http://{info['host']}:{info['port']}"
@@ -279,7 +292,14 @@ class WindowsSandboxProvider(EnvironmentProvider):
         self._open(wsb)
         self._started = True
         try:
-            health = self.wait_until_ready()
+            try:
+                health = self.wait_until_ready()
+            except SandboxClosedEarly:
+                logger.warning("windows-sandbox: closed before logon (PC busy or low on memory); retrying once")
+                wait_for_sandbox_gone(90)
+                self.write_files()
+                self._open(wsb)
+                health = self.wait_until_ready()
         except Exception:
             self.stop()
             raise

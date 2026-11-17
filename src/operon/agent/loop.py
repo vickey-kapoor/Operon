@@ -233,8 +233,8 @@ class AgentLoop:
         # gate) as pending; a resume that approves adds that gate to the action's
         # approved set. The same action then passes the gates it was approved for, and
         # the approval is used up once it gets through (or the policy picks another).
-        self._pending_gate_approvals: dict[str, tuple[str, str, str]] = {}
-        self._pending_trust_verdicts: dict[str, str] = {}  # run_id -> "deny" | "confirm" for a trust pause
+        # run_id -> (action fingerprint, gate, risk category, trust verdict "deny"/"confirm" or "")
+        self._pending_gate_approvals: dict[str, tuple[str, str, str, str]] = {}
         # Runs a human paused by hand (UI Pause, POST /run/{id}/pause). A step already
         # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
         self._pause_requests: set[str] = set()
@@ -465,7 +465,7 @@ class AgentLoop:
         pending = self._pending_gate_approvals.get(run_id)
         if pending is None or pending[1] != "trust":
             return None
-        return self._pending_trust_verdicts.get(run_id)
+        return pending[3] or None
 
     async def take_over(self, run_id: str) -> AgentState:
         """Hand the screen to the person: pause the run and mark it under their control.
@@ -545,9 +545,8 @@ class AgentLoop:
             # pause also holds the calls; its approval is counted below, once.
             record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
-        self._pending_trust_verdicts.pop(run_id, None)
         if approve_gated_action and pending is not None:
-            fingerprint, gate, _category = pending
+            fingerprint, gate, _category, _verdict = pending
             prior = self._approved_gate_actions.get(run_id)
             gates = prior[1] if prior is not None and prior[0] == fingerprint else frozenset()
             self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
@@ -1393,7 +1392,7 @@ class AgentLoop:
             and decision.confidence < threshold
         ):
             _trace("  3 POLICY -> CONFIDENCE_GATE", f"confidence={decision.confidence:.2f} < threshold={threshold:.2f}")
-            self._pending_gate_approvals[run_id] = (fingerprint, "confidence", "")
+            self._pending_gate_approvals[run_id] = (fingerprint, "confidence", "", "")
             return (
                 f"Confidence {decision.confidence:.0%} is below your threshold {threshold:.0%}. "
                 f"Planned action: {action.action_type.value}. "
@@ -1423,8 +1422,9 @@ class AgentLoop:
             if blocked:
                 leaf, trust = blocked[0]
                 _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
-                self._pending_gate_approvals[run_id] = (fingerprint, "trust", trust.category)
-                self._pending_trust_verdicts[run_id] = trust.verdict.value
+                self._pending_gate_approvals[run_id] = (
+                    fingerprint, "trust", trust.category, trust.verdict.value
+                )
                 if trust.verdict is TrustVerdict.DENY:
                     return (
                         f"Blocked by policy: {leaf.action_type.value} action "
@@ -1496,7 +1496,7 @@ class AgentLoop:
             "coordinate_thrash" not in self._approved_gates(record.run_id, decision.action)
             and self._coordinate_thrash_detected(state, decision.action)
         ):
-            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash", "")
+            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash", "", "")
             _trace("  3 POLICY -> COORDINATE_THRASH_HITL", "3 coord failures at same point — escalating to HITL")
             thrash_x, thrash_y = decision.action.x, decision.action.y
             self._note_not_executed(record.run_id, "repeated failures at the same point")

@@ -199,7 +199,11 @@ async def _run_one(task_file: TaskFile, spec: TaskSpec) -> TaskOutcome:
         if kind == "takeover":
             lead = f"run was handed to a person and cannot continue unattended: {result.denied_reason}"
         elif kind == "policy":
-            lead = f"blocked by policy: {result.denied_reason}"
+            reason = result.denied_reason
+            if reason.lower().startswith("blocked by policy"):
+                lead = reason[0].lower() + reason[1:]
+            else:
+                lead = f"blocked by policy: {reason}"
         else:
             lead = f"approval needed and not granted (set approve_all: true to allow): {result.denied_reason}"
         problems.insert(0, lead)
@@ -268,6 +272,8 @@ def tasks_flag_problem(args: Any) -> str | None:
             for flag, used in (
                 ("a task argument", args.task),
                 ("--request", args.request),
+                ("--api", args.api),
+                ("--api-key", args.api_key),
                 ("--desktop", args.desktop),
                 ("--env", args.env),
                 ("--url", args.url),
@@ -282,7 +288,7 @@ def tasks_flag_problem(args: Any) -> str | None:
         return None
     stray = [f for f, used in (("--junit", args.junit), ("--only", args.only), ("--fail-fast", args.fail_fast)) if used]
     if stray:
-        return ", ".join(stray) + " only work with --tasks"
+        return ", ".join(stray) + (" only works" if len(stray) == 1 else " only work") + " with --tasks"
     return None
 
 

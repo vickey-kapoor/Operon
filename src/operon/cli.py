@@ -3,6 +3,7 @@
     operon setup                    first time: save the Gemini key, install the browser, self-check
     operon run "task"               run a task here, in this process, and print a report
     operon run --request "task"     send the task to a running API and follow it
+    operon mcp                      serve Operon to MCP clients over stdio (needs operon-agent[mcp])
     operon serve                    start the API and print the task page's link
     operon cloud ...                Operon's own computer on an Azure Linux VM (see operon.cloud)
 
@@ -399,7 +400,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.request:
         from operon.api.auth import client_api_key
 
-        client = RemoteClient(args.api, args.api_key or client_api_key())
+        client = RemoteClient(args.api or get_settings().api_url or _DEFAULT_API, args.api_key or client_api_key())
     else:
         from operon.core.settings import startup_problems
 
@@ -459,6 +460,12 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mcp(args: argparse.Namespace) -> int:  # noqa: ARG001 - subcommand signature
+    from operon import mcp_server
+
+    return mcp_server.main()
+
+
 def build_parser() -> argparse.ArgumentParser:
     from operon import __version__
 
@@ -473,7 +480,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--only", action="append", default=None, help="with --tasks: run only the task with this name (repeatable)")
     run.add_argument("--fail-fast", action="store_true", help="with --tasks: stop after the first failing task")
     run.add_argument("--request", action="store_true", help="send the task to a running API instead of running it here")
-    run.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
+    run.add_argument("--api", default=None, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
     run.add_argument("--desktop", action="store_true", help="run on the desktop instead of in the browser")
     run.add_argument("--env", default=None, help="desktop run environment (default $OPERON_ENVIRONMENT, else live; see `operon envs`)")
@@ -499,6 +506,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)
+
+    mcp = sub.add_parser("mcp", help="serve Operon to MCP clients (Claude Code, Claude Desktop) over stdio")
+    mcp.set_defaults(func=_mcp)
 
     from operon import cloud, setup_command
     from operon.environments import cli as environments_cli

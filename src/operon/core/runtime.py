@@ -96,6 +96,8 @@ class OperonRuntime:
     control: ControlSettings = field(default_factory=ControlSettings)
     stream: StreamState = field(default_factory=StreamState)
     runs: OrderedDict[str, RunContext] = field(default_factory=OrderedDict)
+    # Warnings logged once per process (DPI awareness, KAN-90), by key.
+    warned_once: set[str] = field(default_factory=set)
 
     def run(self, run_id: str) -> RunContext:
         """The context of ``run_id``, created on first use."""

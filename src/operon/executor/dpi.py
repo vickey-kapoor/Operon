@@ -38,8 +38,6 @@ UNKNOWN = "unknown"
 _AWARENESS_NAMES = {0: UNAWARE, 1: SYSTEM, 2: PER_MONITOR}
 _PMV2 = -4  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
 
-_warned: set[str] = set()
-
 
 @dataclass(frozen=True)
 class MonitorInfo:
@@ -164,8 +162,11 @@ def display_report() -> dict:
 
 
 def _warn_once(key: str, message: str, *args: object) -> None:
-    if key not in _warned:
-        _warned.add(key)
+    from operon.core.runtime import current_runtime
+
+    warned = current_runtime().warned_once
+    if key not in warned:
+        warned.add(key)
         logger.warning(message, *args)
 
 

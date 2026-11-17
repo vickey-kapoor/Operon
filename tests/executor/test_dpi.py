@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from operon.core.runtime import current_runtime
 from operon.executor import dpi
 from operon.executor.dpi import MonitorInfo
 
@@ -47,7 +48,7 @@ def _patch_state(monkeypatch, awareness: str, system_dpi: int, monitors: list[Mo
     monkeypatch.setattr(dpi, "get_awareness", lambda: awareness)
     monkeypatch.setattr(dpi, "get_system_dpi", lambda: system_dpi)
     monkeypatch.setattr(dpi, "enum_monitors", lambda: monitors)
-    monkeypatch.setattr(dpi, "_warned", set())
+    monkeypatch.setattr(current_runtime(), "warned_once", set())
 
 
 def test_warns_once_for_system_aware_mixed_dpi(monkeypatch, caplog) -> None:
@@ -102,7 +103,7 @@ def test_flag_on_sets_awareness_and_stays_quiet_when_it_takes(monkeypatch, caplo
 def test_flag_on_warns_once_when_something_else_won(monkeypatch, caplog) -> None:
     monkeypatch.setenv("OPERON_DPI_AWARE", "on")
     _fake_win32(monkeypatch)
-    monkeypatch.setattr(dpi, "_warned", set())
+    monkeypatch.setattr(current_runtime(), "warned_once", set())
     monkeypatch.setattr(dpi, "set_process_per_monitor_v2", lambda: False)
     monkeypatch.setattr(dpi, "get_awareness", lambda: dpi.SYSTEM)
     with caplog.at_level(logging.WARNING, logger=dpi.logger.name):
@@ -153,3 +154,27 @@ def test_match_monitor_uses_full_rect_for_same_left_monitors() -> None:
     assert dpi.match_monitor([top, bottom], (0, -1080, 1920, 0)) is top
     assert dpi.match_monitor([wide, bottom], (0, 0, 1920, 1080)) is bottom
     assert dpi.match_monitor([bottom], (5, 5, 10, 10)) is None
+
+
+# -- the startup baseline check defers to drift_expected ---------------------------------------
+
+def _baseline_warnings(monkeypatch, caplog, awareness: str, system_dpi: int, monitors) -> list[str]:
+    from operon.executor import desktop
+
+    monkeypatch.setattr(desktop, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(desktop.dpi, "get_awareness", lambda: awareness)
+    monkeypatch.setattr(desktop.dpi, "get_system_dpi", lambda: system_dpi)
+    monkeypatch.setattr(desktop.dpi, "enum_monitors", lambda: monitors)
+    monkeypatch.setattr(desktop, "_mss", lambda: (_ for _ in ()).throw(RuntimeError("no screen")))
+    with caplog.at_level(logging.WARNING, logger=desktop.logger.name):
+        desktop.validate_display_baseline()
+    return [r.getMessage() for r in caplog.records]
+
+
+def test_baseline_is_silent_for_uniform_125_percent(monkeypatch, caplog) -> None:
+    assert _baseline_warnings(monkeypatch, caplog, dpi.SYSTEM, 120, [M125]) == []
+
+
+def test_baseline_warns_for_mixed_dpi(monkeypatch, caplog) -> None:
+    msgs = _baseline_warnings(monkeypatch, caplog, dpi.SYSTEM, 120, [M125, M100])
+    assert len(msgs) == 1 and "OPERON_DPI_AWARE=on" in msgs[0]

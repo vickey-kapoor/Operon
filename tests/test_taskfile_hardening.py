@@ -35,7 +35,7 @@ def test_approve_all_never_approves_a_policy_deny(tmp_path, monkeypatch) -> None
     text = "defaults: {approve_all: true}\ntasks:\n  - {name: x, task: y}\n"
     o = run_task_file(load_task_file(_write(tmp_path, text)))[0]
     assert seen == [True, False]
-    assert not o.passed and o.reason.startswith("blocked by policy: Blocked by policy")
+    assert not o.passed and o.reason.startswith("blocked by policy:") and "Blocked by policy" not in o.reason
 
 
 def test_takeover_denial_message(tmp_path, fake) -> None:  # noqa: F811
@@ -120,7 +120,7 @@ def test_approve_all_does_not_run_a_policy_denied_action(monkeypatch, tmp_path) 
     executor = _real_sdk(monkeypatch, tmp_path, TrustGate(enabled=True, deny=("purchase",)))
     text = "tasks:\n  - {name: buy, task: Buy it, mode: auto, approve_all: true}\n"
     o = run_task_file(load_task_file(_write(tmp_path, text)))[0]
-    assert not o.passed and o.status == "denied" and o.reason.startswith("blocked by policy: Blocked by policy")
+    assert not o.passed and o.status == "denied" and o.reason.startswith("blocked by policy:") and "Blocked by policy" not in o.reason
     assert executor.executed == []
 
 
@@ -133,3 +133,23 @@ def test_approve_all_does_approve_a_confirm(monkeypatch, tmp_path) -> None:
     _real_sdk(monkeypatch, tmp_path, TrustGate(enabled=True, confirm=("purchase",)))
     text = "tasks:\n  - {name: buy, task: Buy it, mode: risky}\n"  # no approve_all: the confirm fails the task
     assert not run_task_file(load_task_file(_write(tmp_path, text)))[0].passed
+
+
+def test_flag_messages_and_api_flags(tmp_path, fake, capsys) -> None:  # noqa: F811
+    path = str(_write(tmp_path))
+    assert main(["run", "--tasks", path, "--api", "http://x.test"]) == 2
+    assert main(["run", "--tasks", path, "--api-key", "k"]) == 2
+    capsys.readouterr()
+    assert main(["run", "x", "--junit", "r.xml"]) == 2
+    assert "--junit only works with --tasks" in capsys.readouterr().err
+    assert main(["run", "x", "--junit", "r.xml", "--fail-fast"]) == 2
+    assert "only work with --tasks" in capsys.readouterr().err
+
+
+def test_cli_payload_defaults_max_steps_to_25() -> None:
+    from operon import cli
+
+    args = cli.build_parser().parse_args(["run", "do it"])
+    assert args.max_steps is None and cli._payload(args)["max_steps"] == 25
+    args = cli.build_parser().parse_args(["run", "do it", "--max-steps", "7"])
+    assert cli._payload(args)["max_steps"] == 7

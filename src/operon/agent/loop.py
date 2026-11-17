@@ -910,6 +910,7 @@ class AgentLoop:
                     decision_action=decision.action,
                     step_index=ctx.step_index,
                     use_unified_executor=True,
+                    stated_reason=decision.rationale,
                 )
             finally:
                 if hasattr(self.executor, "batch_child_check"):
@@ -2192,6 +2193,7 @@ class AgentLoop:
         decision_action,
         step_index: int,
         use_unified_executor: bool = False,
+        stated_reason: str | None = None,
     ):
         executor_runner = self.executor_adapter if use_unified_executor else self.executor
         executed_action = await executor_runner.execute(decision_action)
@@ -2239,6 +2241,20 @@ class AgentLoop:
         if await self._run_cancelled(record.run_id):
             # Stopped while the retry was being re-resolved: don't run it.
             return retry_state, self._persist_execution_trace(record.run_id, step_index, executed_action)
+        if retry_action != decision_action:
+            # The retry was re-grounded: the gate approved the first action, not this one.
+            blocked_detail = await self._retry_gate_block(
+                record, state, decision_action, retry_action, stated_reason
+            )
+            if blocked_detail is not None:
+                self._note_not_executed(record.run_id, blocked_detail)
+                blocked = executed_action.model_copy(update={
+                    "success": False,
+                    "detail": blocked_detail,
+                    "failure_category": FailureCategory.TARGET_RERESOLUTION_FAILED,
+                    "failure_stage": LoopStage.EXECUTE,
+                })
+                return retry_state, self._persist_execution_trace(record.run_id, step_index, blocked)
         retry_executed = await executor_runner.execute(retry_action)
         retry_executed = self._merge_execution_retry(
             original=executed_action,
@@ -2249,6 +2265,36 @@ class AgentLoop:
         )
         retry_executed = self._apply_no_progress_detection(state, retry_executed)
         return retry_state, self._persist_execution_trace(record.run_id, step_index, retry_executed)
+
+    async def _retry_gate_block(
+        self, record, state, original_action, retry_action, stated_reason: str | None = None
+    ) -> str | None:
+        """Re-run the trust gate on a re-grounded retry; return why it must not run
+        (None when it may). A human approval covers only the action they approved,
+        so a changed target needs ALLOW again."""
+        run_id = record.run_id
+        current_url = await self._current_url_for_trust_gate(run_id)
+        permission_mode = getattr(state, "permission_mode", None)
+        approved_same = bool(self._trust_approved.get(run_id)) and (
+            self._gate_fingerprint(original_action) == self._gate_fingerprint(retry_action)
+        )
+        for leaf in _leaf_actions(retry_action):
+            trust = apply_permission_mode(
+                self._trust_gate.evaluate(
+                    leaf, current_url=current_url, stated_reason=stated_reason
+                ),
+                leaf,
+                permission_mode,
+            )
+            if trust.verdict is TrustVerdict.ALLOW:
+                continue
+            if approved_same and trust.verdict is TrustVerdict.CONFIRM:
+                continue
+            return (
+                f"Retry not executed: the re-grounded {leaf.action_type.value} needs the trust "
+                f"gate again ({trust.verdict.value}: {trust.reason} '{trust.matched}')."
+            )
+        return None
 
     @staticmethod
     def _should_retry_execution(executed_action) -> bool:

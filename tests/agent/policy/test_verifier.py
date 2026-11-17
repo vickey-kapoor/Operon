@@ -74,6 +74,12 @@ async def test_verifier_expected_outcome_not_met() -> None:
     assert result.failure_type is VerificationFailureType.ACTION_FAILED
 
 
+def _verified_ok() -> VerificationResult:
+    return VerificationResult(
+        status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=False, reason="ok"
+    )
+
+
 def _typed_draft() -> ExecutedAction:
     typed = AgentAction(action_type=ActionType.TYPE, target_element_id="body", text="Hello")
     return ExecutedAction(action=typed, success=True, detail="typed body")
@@ -81,7 +87,10 @@ def _typed_draft() -> ExecutedAction:
 
 @pytest.mark.asyncio
 async def test_verifier_stop_before_send_boundary() -> None:
-    state = AgentState(run_id="run-3", intent="Create draft", status="running", action_history=[_typed_draft()])
+    state = AgentState(
+        run_id="run-3", intent="Create draft", status="running",
+        action_history=[_typed_draft()], verification_history=[_verified_ok()],
+    )
     action = AgentAction(action_type=ActionType.STOP)
     decision = PolicyDecision(action=action, rationale="Stop before send.", confidence=1.0, active_subgoal="stop before send")
     executed = ExecutedAction(action=action, success=True, detail="stopped before send")
@@ -462,7 +471,10 @@ async def test_stop_accepted_when_the_critic_sees_the_task_complete(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_unsure_critic_falls_back_to_the_run_history(tmp_path: Path) -> None:
-    worked = AgentState(run_id="run-s5", intent="Create draft", status="running", action_history=[_typed_draft()])
+    worked = AgentState(
+        run_id="run-s5", intent="Create draft", status="running",
+        action_history=[_typed_draft()], verification_history=[_verified_ok()],
+    )
     idle = AgentState(run_id="run-s6", intent="Create draft", status="running")
     decision, executed = _stop(tmp_path)
     service = _critic(tmp_path, "uncertain")

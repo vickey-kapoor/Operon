@@ -317,6 +317,17 @@ async def _run(args: argparse.Namespace) -> int:
         await client.close()
 
 
+def _run_entry(args: argparse.Namespace) -> int:
+    if args.tasks:
+        from operon.taskfile import run_tasks_command
+
+        return run_tasks_command(args)
+    if not args.task:
+        print("operon run: give a task, or --tasks FILE", file=sys.stderr)
+        return 2
+    return asyncio.run(_run(args))
+
+
 def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -339,7 +350,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run a task and print a report")
-    run.add_argument("task", help="what Operon should do, in plain words")
+    run.add_argument("task", nargs="?", default=None, help="what Operon should do, in plain words")
+    run.add_argument("--tasks", default=None, help="run the tasks in this YAML file (see docs/task-files.md)")
+    run.add_argument("--junit", default=None, help="with --tasks: write a JUnit XML report here")
+    run.add_argument("--only", action="append", default=None, help="with --tasks: run only the task with this name (repeatable)")
+    run.add_argument("--fail-fast", action="store_true", help="with --tasks: stop after the first failing task")
     run.add_argument("--request", action="store_true", help="send the task to a running API instead of running it here")
     run.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
@@ -349,7 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--mode", choices=["ask", "risky", "auto"], default=None, help="permission mode (default $OPERON_PERMISSION_MODE, else risky)")
     run.add_argument("--max-steps", type=int, default=25)
     run.add_argument("--headless", action="store_true", help="hide the browser window")
-    run.set_defaults(func=lambda a: asyncio.run(_run(a)))
+    run.set_defaults(func=_run_entry)
 
     serve = sub.add_parser("serve", help="start the API and print the task page's link")
     serve.add_argument("--host", default="127.0.0.1")

@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -86,6 +87,9 @@ _NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
 # Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
 _CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
 _MOUSEEVENTF_HWHEEL = 0x01000
+# How long a launch has to put a window on screen before it counts as failed.
+_LAUNCH_CONFIRM_TIMEOUT_S = 8.0
+_LAUNCH_POLL_INTERVAL_S = 0.25
 
 
 def _image_pids(exe_name: str) -> frozenset[int] | None:
@@ -310,6 +314,39 @@ def _window_owner(hwnd: int) -> tuple[int | None, str]:
         return (int(pid.value) or None), buf.value
     except Exception:
         return None, ""
+
+
+
+def _visible_windows() -> frozenset[int] | None:
+    """Handles of the visible, titled, uncloaked top-level windows; None when they
+    cannot be listed (off Windows, or the call failed). Used only to report whether
+    a launch took effect, never to choose a target."""
+    if sys.platform != "win32":
+        return None
+    try:
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        found: set[int] = set()
+        cloaked = ctypes.c_int(0)
+
+        def _visit(hwnd: int, _lparam: int) -> bool:
+            if not user32.IsWindowVisible(hwnd) or user32.GetWindowTextLengthW(hwnd) == 0:
+                return True
+            try:  # DWMWA_CLOAKED = 14: a suspended Store app is "visible" but not on screen
+                ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)  # type: ignore[attr-defined]
+            except Exception:
+                cloaked.value = 0
+            if not cloaked.value:
+                found.add(int(hwnd))
+            return True
+
+        callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(_visit)  # type: ignore[attr-defined]
+        user32.EnumWindows(callback, 0)
+        return frozenset(found)
+    except Exception:
+        logger.debug("_visible_windows failed", exc_info=True)
+        return None
 
 
 # Actions that write to whatever window is in front; the focus guard (KAN-92) covers these.
@@ -1224,6 +1261,9 @@ class DesktopExecutor(Executor):
             exe_name += ".exe"
         # Whatever runs right before this launch is not ours.
         before = await asyncio.to_thread(_image_pids, exe_name) if self._current_run_id is not None else None
+        windows_before = await asyncio.to_thread(_visible_windows)
+        foreground_before = _foreground_window()
+        proc = None
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
@@ -1259,10 +1299,61 @@ class DesktopExecutor(Executor):
                     # Only the PIDs that appeared during this launch belong to the run.
                     owned = self._owned_pids.setdefault(self._current_run_id, {})
                     owned.setdefault(exe_name, set()).update(after - before)
+            # A launch call returning is not proof the app opened (the exe may not exist
+            # in this image): require a window to appear, or the app to come forward.
+            problem = await self._confirm_launch(command, exe_name, proc, windows_before, foreground_before)
+            if problem is not None:
+                return self._fail(action, problem, FailureCategory.EXECUTION_TARGET_NOT_FOUND)
             after_path = await self._capture_after()
             return self._ok(action, f"Launched '{command}'", after_path)
         except Exception as exc:
             return self._fail(action, f"Launch failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
+    async def _confirm_launch(
+        self,
+        command: str,
+        exe_name: str,
+        proc: subprocess.Popen | None,
+        windows_before: frozenset[int] | None,
+        foreground_before: int | None,
+    ) -> str | None:
+        """None when the launch took effect (or cannot be checked here); else why not.
+
+        Took effect: a new top-level window appeared, or a window of the launched
+        program is now in front (an app that was already running just activated).
+        Polls for up to ``_LAUNCH_CONFIRM_TIMEOUT_S``; a launcher that exits non-zero
+        with no window has failed outright.
+        """
+        if windows_before is None:
+            return None  # cannot list windows here; keep the old trust-the-call behaviour
+        timeout = _LAUNCH_CONFIRM_TIMEOUT_S
+        deadline = time.monotonic() + timeout
+        while True:
+            now = await asyncio.to_thread(_visible_windows)
+            if now is None:
+                return None
+            if now - windows_before:
+                return None
+            foreground = _foreground_window()
+            if foreground is not None and foreground != foreground_before and foreground in now:
+                return None
+            if foreground is not None and foreground in now:
+                pid, _title = _window_owner(foreground)
+                pids = await asyncio.to_thread(_image_pids, exe_name)
+                if pid is not None and pids and pid in pids:
+                    return None  # the program's own window is in front: already running, activated
+            code = proc.poll() if proc is not None else None
+            if isinstance(code, int) and code != 0:
+                return (
+                    f"launched '{command}' but it exited with code {code} and no window appeared; "
+                    "the app may not be installed"
+                )
+            if time.monotonic() >= deadline:
+                return (
+                    f"launched '{command}' but no window appeared within {timeout:g} s; "
+                    "the app may not be installed"
+                )
+            await asyncio.sleep(_LAUNCH_POLL_INTERVAL_S)
 
     async def _exec_drag(self, action: AgentAction) -> ExecutedAction:
         if action.x is None or action.y is None or action.x_end is None or action.y_end is None:

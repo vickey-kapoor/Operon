@@ -45,6 +45,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desk
 # Free Windows e2e (KAN-93): real loop + real Windows desktop in Windows Sandbox (~2 min boot), scripted model ($0).
 # Needs Windows Sandbox turned on; deselected by default.
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desktop_e2e_windows -m windows_sandbox -o addopts=""
+# Free browser end-to-end: real loop + real NativeBrowserExecutor on headless Chromium against a local
+# fixture site, scripted model ($0, ~3 min). Needs Playwright's Chromium; deselected by default.
+$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/browser_e2e -m browser_e2e -o addopts=""
 
 # Offline eval: scripted scenarios through the real loop (evals/); report table
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals

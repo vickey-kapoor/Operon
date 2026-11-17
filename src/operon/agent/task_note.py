@@ -53,7 +53,8 @@ def describe_action(action: AgentAction) -> str:
     if kind in _VERBS:
         return f"{_VERBS[kind]} {where}".strip()
     if kind is ActionType.TYPE:
-        what = f"typed '{_short(action.text)}'" if action.text else "typed text"
+        # The text itself stays out: it may be a password, and the note is sent and saved.
+        what = f"typed {len(action.text)} chars" if action.text else "typed text"
         return f"{what} into field at {where}" if where else what
     if kind is ActionType.NAVIGATE:
         return f"opened {_short(action.url or '', 60)}".strip()
@@ -100,13 +101,14 @@ def build_task_note(
 ) -> str:
     """The note text; "" when nothing has run yet (the first step needs no memory).
 
-    Lines are numbered by step. When over ``max_chars``, the oldest action lines go first,
+    Lines are numbered by position in the action list. When over ``max_chars``, the oldest action lines go first,
     then the plan, so the task and the latest action always stay.
     """
     if not actions:
         return ""
     recent = list(actions)[-max(1, max_items):]
-    first = step_count - len(recent) + 1
+    # Numbered by position in the action list: a pause bumps step_count without an action.
+    first = len(actions) - len(recent) + 1
     lines = []
     for offset, executed in enumerate(recent):
         index = len(actions) - len(recent) + offset

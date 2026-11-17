@@ -193,6 +193,9 @@ class CombinedPerceptionPolicyService(PerceptionService, PolicyService):
         """Append hints scoped to run_id so concurrent runs don't cross-contaminate."""
         incoming = [(h, source) for h in hints if h]
         bucket = self._advisory_hints.setdefault(run_id, [])
+        if source == "task_note":
+            # One running note at a time: a stale one must not stack up when no model turn ran.
+            bucket[:] = [(h, s) for h, s in bucket if s != "task_note"]
         bucket.extend(incoming)
         logger.debug(
             "add_advisory_hints(%s): run=%r source=%r incoming=%d total=%d",

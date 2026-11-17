@@ -1252,7 +1252,7 @@ class AgentLoop:
             return
         try:
             await bg_writer.flush()  # the run log and step timings are written in the background
-            efficiency = run_efficiency(Path(root) / state.run_id)
+            efficiency = await asyncio.to_thread(run_efficiency, Path(root) / state.run_id)
             (Path(root) / state.run_id / "efficiency.json").write_text(
                 json.dumps(efficiency, indent=2) + "\n", encoding="utf-8"
             )

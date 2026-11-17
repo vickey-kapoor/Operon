@@ -42,6 +42,7 @@ can overlap, so they may sum to more than wasted_steps.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Iterable, Mapping, Sequence
@@ -50,7 +51,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-REDUNDANT_CATEGORIES =frozenset({
+REDUNDANT_CATEGORIES = frozenset({
     "repeated_action_without_progress",
     "repeated_target_without_progress",
     "subgoal_already_completed",
@@ -126,9 +127,10 @@ def compute_efficiency(
     }
 
 
-def efficiency_for_response(run: Any, run_store: Any) -> dict[str, Any] | None:
+async def efficiency_for_response(run: Any, run_store: Any) -> dict[str, Any] | None:
     """The score for a GET run response: the one saved at the end of the run, else (a run
-    saved before KAN-85, or a restart) computed from its files; None while it is running."""
+    saved before KAN-85, or a restart) computed from its files; None while it is running.
+    The screenshot comparisons run in a thread, off the event loop."""
     saved = getattr(run, "efficiency", None)
     if saved is not None:
         return saved if isinstance(saved, dict) else None
@@ -137,14 +139,16 @@ def efficiency_for_response(run: Any, run_store: Any) -> dict[str, Any] | None:
     if status not in {"succeeded", "failed", "cancelled"} or root is None:
         return None
     try:
-        return run_efficiency(Path(root) / run.run_id)
+        return await asyncio.to_thread(run_efficiency, Path(root) / run.run_id)
     except Exception:
         logger.debug("efficiency for run %s could not be computed", getattr(run, "run_id", "?"), exc_info=True)
         return None
 
 
 def run_efficiency(run_dir: str | Path) -> dict[str, Any]:
-    """Score the run saved in ``run_dir``; unreadable or missing files count as absent."""
+    """Score the run saved in ``run_dir``; unreadable or missing files count as absent.
+
+    Blocking (it decodes screenshots): async callers run it with ``asyncio.to_thread``."""
     root = Path(run_dir)
     entries: list[dict[str, Any]] = []
     try:
@@ -165,16 +169,57 @@ def run_efficiency(run_dir: str | Path) -> dict[str, Any]:
         except (OSError, ValueError, AttributeError):
             continue
         step_ms.append(value if isinstance(value, (int, float)) else None)
-    return compute_efficiency(entries, step_ms, _revisits(entries))
+    return compute_efficiency(entries, step_ms, _revisits(entries, root))
 
 
-def _revisits(entries: Sequence[Mapping[str, Any]]) -> list[bool | None]:
+# Same-screen thresholds (share of pixels changed). Pointer and scroll actions use RFC 0003's.
+# Moving the keyboard focus (Tab, arrows) changes well under 1% of the screen (a focus ring
+# measures about 0.75%), so keyboard actions use a much tighter one.
+_KEY_ACTIONS = frozenset({"press_key", "hotkey"})
+_KEY_SAME_SCREEN_THRESHOLD = 0.001
+_PIXEL_DIFF = 30
+
+
+def _thumb(path: str) -> Any:
+    """The screenshot as a small grayscale image, or None when it is missing or cannot be
+    decoded (so a corrupt file is never mistaken for an unchanged screen)."""
+    from PIL import Image
+
+    from operon.agent.perception.screen_diff import _COMPARE_HEIGHT, _COMPARE_WIDTH
+
+    try:
+        with Image.open(path) as image:
+            return image.convert("L").resize((_COMPARE_WIDTH, _COMPARE_HEIGHT), Image.Resampling.LANCZOS)
+    except Exception:
+        return None
+
+
+def _change_ratio(a: Any, b: Any) -> float:
+    from PIL import ImageChops
+
+    histogram = ImageChops.difference(a, b).histogram()
+    return sum(histogram[_PIXEL_DIFF + 1 :]) / (a.width * a.height)
+
+
+def _resolve_after(run_dir: Path, entry: Mapping[str, Any], recorded: Any) -> str | None:
+    """The after-screenshot path: the recorded one, else (the run was moved) the step's
+    ``after.png`` inside ``run_dir``."""
+    if isinstance(recorded, str) and recorded and Path(recorded).exists():
+        return recorded
+    index = entry.get("step_index")
+    if isinstance(index, int):
+        candidate = run_dir / f"step_{index}" / "after.png"
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _revisits(entries: Sequence[Mapping[str, Any]], run_dir: Path) -> list[bool | None]:
     """Per step: did the action repeat an earlier step's signature AND land on a screen that
     signature already produced (RFC 0003's check, measured whether or not the flag is on)?
     None when there is nothing to compare (first use of the signature, no action, a
-    screenshot missing): fail open."""
-    # Lazy imports: the tracker pulls in settings and models, the diff pulls in Pillow.
-    from operon.agent.perception.screen_diff import compute_screen_change_ratio
+    screenshot missing or undecodable): fail open. Each file is decoded once."""
+    # Lazy imports: the tracker pulls in settings and models.
     from operon.agent.policy.progress_tracker import (
         REVISIT_OUTCOMES_PER_ACTION,
         ProgressTracker,
@@ -182,22 +227,35 @@ def _revisits(entries: Sequence[Mapping[str, Any]]) -> list[bool | None]:
     )
     from operon.models.policy import AgentAction
 
-    threshold = ProgressTracker.REVISIT_SAME_SCREEN_THRESHOLD
+    thumbs: dict[str, Any] = {}
+
+    def thumb(path: str) -> Any:
+        if path not in thumbs:
+            thumbs[path] = _thumb(path)
+        return thumbs[path]
+
     outcomes: dict[str, list[str]] = {}
     verdicts: list[bool | None] = []
     for entry in entries:
         executed = _get(entry, "executed_action")
-        after = _get(executed, "artifact_path")
         try:
-            signature = action_signature(AgentAction.model_validate(_get(executed, "action")))
+            action = AgentAction.model_validate(_get(executed, "action"))
+            signature = action_signature(action)
         except Exception:
             verdicts.append(None)
             continue
-        earlier = [p for p in outcomes.get(signature, []) if Path(p).exists()]
-        if earlier and isinstance(after, str) and Path(after).exists():
-            verdicts.append(any(compute_screen_change_ratio(p, after) < threshold for p in earlier))
+        threshold = (
+            _KEY_SAME_SCREEN_THRESHOLD
+            if action.action_type.value in _KEY_ACTIONS
+            else ProgressTracker.REVISIT_SAME_SCREEN_THRESHOLD
+        )
+        after = _resolve_after(run_dir, entry, _get(executed, "artifact_path"))
+        current = thumb(after) if after else None
+        earlier = [t for t in (thumb(p) for p in outcomes.get(signature, [])) if t is not None]
+        if current is not None and earlier:
+            verdicts.append(any(_change_ratio(t, current) < threshold for t in earlier))
         else:
             verdicts.append(None)
-        if isinstance(after, str) and after:
+        if after:
             outcomes[signature] = [*outcomes.get(signature, []), after][-REVISIT_OUTCOMES_PER_ACTION:]
     return verdicts

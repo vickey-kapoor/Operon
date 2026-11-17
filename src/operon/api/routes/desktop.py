@@ -109,5 +109,5 @@ async def desktop_get_run(run_id: str) -> RunResponse:
         status=run.status,
         intent=run.intent,
         step_count=run.step_count,
-        efficiency=efficiency_for_response(run, run_store),
+        efficiency=await efficiency_for_response(run, run_store),
     )

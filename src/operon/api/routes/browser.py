@@ -123,7 +123,7 @@ async def get_run(run_id: str) -> RunResponse:
         intent=run.intent,
         step_count=run.step_count,
         hitl_message=getattr(run, "hitl_message", None),
-        efficiency=efficiency_for_response(run, run_store),
+        efficiency=await efficiency_for_response(run, run_store),
     )
 
 

@@ -89,7 +89,7 @@ def test_run_efficiency_reads_files_and_tolerates_missing(tmp_path) -> None:
     assert result["total_steps"] == 1 and result["wall_seconds"] == 2.5
 
 
-def test_response_helper_skips_running_runs(tmp_path) -> None:
+async def test_response_helper_skips_running_runs(tmp_path) -> None:
     class Status:
         value = "running"
 
@@ -101,9 +101,9 @@ def test_response_helper_skips_running_runs(tmp_path) -> None:
     class Store:
         root_dir = tmp_path
 
-    assert efficiency_for_response(Run(), Store()) is None
+    assert await efficiency_for_response(Run(), Store()) is None
     Status.value = "failed"
-    assert efficiency_for_response(Run(), Store())["total_steps"] == 0
+    assert (await efficiency_for_response(Run(), Store()))["total_steps"] == 0
 
 
 async def test_finished_scenario_run_has_efficiency_in_saved_summary() -> None:
@@ -294,3 +294,58 @@ async def test_save_efficiency_never_runs_on_a_pause(monkeypatch) -> None:
     result = await run_scenario(trust_gate_declined())
     assert result.pauses == 1 and result.status == "waiting_for_user"
     assert calls == []
+
+
+def _write_run(tmp_path, steps) -> None:
+    (tmp_path / "run.jsonl").write_text("\n".join(json.dumps(s) for s in steps) + "\n", encoding="utf-8")
+
+
+def _shot(path, *, focus: int | None = None) -> str:
+    """A 1920x1080 screen; ``focus`` moves a small focus-ring box (a keyboard-navigation change)."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (1920, 1080), (240, 240, 240))
+    if focus is not None:
+        ImageDraw.Draw(image).rectangle((100, 100 + focus * 40, 1900, 135 + focus * 40), outline=(0, 0, 0), width=6)
+    image.save(path)
+    return str(path)
+
+
+def _with_shot(row: dict, path: str, index: int) -> dict:
+    row["executed_action"]["artifact_path"] = path
+    row["step_index"] = index
+    return row
+
+
+def test_corrupt_screenshots_are_not_a_revisit(tmp_path) -> None:
+    paths = []
+    for name in ("a.png", "b.png"):
+        (tmp_path / name).write_bytes(b"not a png at all")
+        paths.append(str(tmp_path / name))
+    _write_run(tmp_path, [_with_shot(_step(CLICK_A), p, i + 1) for i, p in enumerate(paths)])
+    assert run_efficiency(tmp_path)["wasted_revisit"] == 0
+
+
+def test_identical_screens_are_a_revisit_but_a_moved_focus_ring_is_not(tmp_path) -> None:
+    from operon.agent.efficiency import _revisits
+
+    tab = {"action_type": "press_key", "key": "Tab"}
+    same = [_shot(tmp_path / f"s{i}.png") for i in range(2)]
+    rows = [_with_shot(_step(CLICK_A), p, i + 1) for i, p in enumerate(same)]
+    assert _revisits(rows, tmp_path) == [None, True]
+
+    moved = [_shot(tmp_path / "f0.png", focus=0), _shot(tmp_path / "f1.png", focus=1)]
+    rows = [_with_shot(_step(tab), p, i + 1) for i, p in enumerate(moved)]
+    assert _revisits(rows, tmp_path) == [None, False]
+
+
+def test_moved_run_falls_back_to_the_step_folder(tmp_path) -> None:
+    from operon.agent.efficiency import _revisits
+
+    rows = []
+    for index in (1, 2):
+        step_dir = tmp_path / f"step_{index}"
+        step_dir.mkdir()
+        _shot(step_dir / "after.png")
+        rows.append(_with_shot(_step(CLICK_A), "C:/gone/elsewhere/after.png", index))
+    assert _revisits(rows, tmp_path) == [None, True]

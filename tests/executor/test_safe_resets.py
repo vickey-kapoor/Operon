@@ -43,20 +43,32 @@ def _frame_with_content_at(*points: tuple[int, int]) -> np.ndarray:
     return frame
 
 
-def _run(frame: np.ndarray, coro_fn):
+def _run(frame: np.ndarray, coro_fn, *, rect=(0, 0, W, H), foreground=7):
+    """Run a reset with a fake screen; ``rect=None`` means the run has no recorded window."""
     pa = MagicMock()
     with (
         patch("operon.executor.desktop._mss", side_effect=lambda: _FakeMss(frame)),
         patch("operon.executor.desktop.pyautogui", pa),
+        patch("operon.executor.desktop._foreground_window", return_value=foreground),
+        patch("operon.executor.desktop._window_rect", return_value=rect),
+        patch("operon.executor.desktop._bring_to_front", return_value=False),
     ):
         asyncio.run(coro_fn())
     return pa
 
 
+def _desktop(frame: np.ndarray, cls=DesktopExecutor, *, window: int | None = 7):
+    ex = _executor(frame, cls)
+    ex._current_run_id = "run-1"
+    if window is not None:
+        ex._work_windows["run-1"] = window
+    return ex
+
+
 @pytest.mark.parametrize("cls", [DesktopExecutor, LinuxDesktopExecutor])
 def test_blank_default_point_is_clicked(cls) -> None:
     frame = _uniform()
-    ex = _executor(frame, cls)
+    ex = _desktop(frame, cls)
     pa = _run(frame, ex.context_reset)
     pa.click.assert_called_once_with(*DEFAULT)
     assert any("clicked blank region" in a for a in ex.last_reset_actions)
@@ -64,7 +76,7 @@ def test_blank_default_point_is_clicked(cls) -> None:
 
 def test_content_at_default_clicks_a_blank_alternative() -> None:
     frame = _frame_with_content_at(DEFAULT)
-    ex = _executor(frame)
+    ex = _desktop(frame)
     pa = _run(frame, ex.context_reset)
     pa.click.assert_called_once()
     point = pa.click.call_args.args
@@ -74,7 +86,7 @@ def test_content_at_default_clicks_a_blank_alternative() -> None:
 
 def test_no_blank_region_skips_the_click_but_keeps_the_keys() -> None:
     frame = _textlike()
-    ex = _executor(frame)
+    ex = _desktop(frame)
     pa = _run(frame, ex.context_reset)
     pa.click.assert_not_called()
     assert [c.args for c in pa.press.call_args_list] == [("escape",), ("escape",)]
@@ -84,14 +96,62 @@ def test_no_blank_region_skips_the_click_but_keeps_the_keys() -> None:
 
 def test_desktop_session_reset_does_not_alt_tab() -> None:
     frame = _uniform()
-    ex = _executor(frame)
-    ex._current_run_id = "run-1"
-    ex._work_windows["run-1"] = 42
-    with patch("operon.executor.desktop._bring_to_front", return_value=True) as front:
-        pa = _run(frame, ex.session_reset)
+    ex = _desktop(frame, window=42)
+    pa = _run(frame, ex.session_reset, foreground=42)
     assert ("alt", "tab") not in [c.args for c in pa.hotkey.call_args_list]
-    front.assert_called_once_with(42)
-    assert "restored the work window" in ex.last_reset_actions
+    assert any("work window" in a for a in ex.last_reset_actions)
+
+
+def test_desktop_candidates_stay_inside_the_work_window() -> None:
+    frame = _uniform()
+    ex = _desktop(frame)
+    pa = _run(frame, ex.context_reset, rect=(800, 100, 400, 500))
+    x, y = pa.click.call_args.args
+    assert 800 <= x <= 1200 and 100 <= y <= 600
+
+
+def test_desktop_no_recorded_window_means_keys_only() -> None:
+    frame = _uniform()
+    ex = _desktop(frame, window=None)
+    pa = _run(frame, ex.context_reset)
+    pa.click.assert_not_called()
+    assert any("no recorded work window" in a for a in ex.last_reset_actions)
+
+
+def test_desktop_window_not_in_front_means_keys_only() -> None:
+    frame = _uniform()
+    ex = _desktop(frame)
+    pa = _run(frame, ex.context_reset, foreground=99)
+    pa.click.assert_not_called()
+    assert any("not in front" in a for a in ex.last_reset_actions)
+
+
+def test_large_neutral_panel_is_not_a_click_target() -> None:
+    """Uniform 100px at the default point, but a different colour from the background."""
+    frame = _uniform()
+    cx, cy = DEFAULT
+    frame[cy - 90 : cy + 90, cx - 90 : cx + 90] = 120  # a flat grey button/card, 180px wide
+    ex = _desktop(frame)
+    pa = _run(frame, ex.context_reset)
+    pa.click.assert_called_once()
+    assert pa.click.call_args.args != DEFAULT
+
+
+def test_wide_ring_with_content_rejects_a_uniform_core() -> None:
+    frame = _uniform()
+    cx, cy = DEFAULT
+    frame[cy - 90 : cy + 90, cx + 80 : cx + 100] = 0  # content just outside the 100px core
+    ex = _desktop(frame)
+    pa = _run(frame, ex.context_reset)
+    assert pa.click.call_args.args != DEFAULT
+
+
+def test_dominant_color_is_the_histogram_mode() -> None:
+    from operon.agent.perception.screen_diff import dominant_color
+
+    img = np.full((50, 50, 3), 240, dtype=np.uint8)
+    img[:10] = (10, 20, 30)
+    assert dominant_color(img.tobytes(), stride=1) == (240, 240, 240)
 
 
 # ── browser ──────────────────────────────────────────────────────
@@ -196,3 +256,67 @@ async def test_allowed_start_url_is_passed_and_trace_recorded(monkeypatch: pytes
 
     loop.executor.session_reset.assert_awaited_once_with("https://good.test/start")
     loop._artifacts.persist_recovery_reset.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_browser_neutral_panel_is_not_clicked() -> None:
+    frame = _uniform()
+    cx, cy = DEFAULT
+    frame[cy - 90 : cy + 90, cx - 90 : cx + 90] = 120
+    ex, page = _browser(frame)
+    await ex.context_reset()
+    page.mouse.click.assert_awaited_once()
+    assert page.mouse.click.await_args.args != DEFAULT
+
+
+@pytest.mark.asyncio
+async def test_browser_hidpi_screenshot_is_sampled_in_css_pixels() -> None:
+    """A 2x screenshot of a 1280x720 viewport: the click stays in CSS px at a blank spot."""
+    big = np.full((H * 2, W * 2), 200, dtype=np.uint8)
+    cx, cy = DEFAULT
+    big[(cy - 90) * 2 : (cy + 90) * 2, (cx - 90) * 2 : (cx + 90) * 2] = 120
+    ex, page = _browser(_uniform())
+    page.screenshot = AsyncMock(return_value=_png(big))
+    await ex.context_reset()
+    page.mouse.click.assert_awaited_once()
+    x, y = page.mouse.click.await_args.args
+    assert (x, y) != DEFAULT and x <= W and y <= H
+
+
+@pytest.mark.asyncio
+async def test_browser_non_uniform_scale_skips_the_click() -> None:
+    ex, page = _browser(_uniform())
+    page.screenshot = AsyncMock(return_value=_png(np.full((H, W * 2), 200, dtype=np.uint8)))
+    await ex.context_reset()
+    page.mouse.click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mode", "expected"), [("ask", None), ("risky", "https://good.test/start"), ("auto", "https://good.test/start")])
+async def test_permission_mode_gates_the_start_url(monkeypatch: pytest.MonkeyPatch, mode: str, expected) -> None:
+    monkeypatch.setenv("OPERON_TRUST_ALLOW_DOMAINS", "good.test")
+    loop = _loop()
+    loop.executor = SimpleNamespace(session_reset=AsyncMock(), last_reset_actions=["x"])
+    loop._artifacts = MagicMock()
+    state = _state("https://good.test/start")
+    state.permission_mode = mode
+
+    await loop._apply_recovery_actions(state, _session(), 1)
+
+    loop.executor.session_reset.assert_awaited_once_with(expected)
+
+
+@pytest.mark.asyncio
+async def test_desktop_run_skips_the_start_url_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.core.contracts.perception import Environment as UnifiedEnvironment
+
+    monkeypatch.setenv("OPERON_TRUST_ALLOW_DOMAINS", "good.test")
+    loop = _loop()
+    loop.environment = UnifiedEnvironment.DESKTOP
+    loop.executor = SimpleNamespace(session_reset=AsyncMock(), last_reset_actions=["did a thing"])
+    loop._artifacts = MagicMock()
+
+    await loop._apply_recovery_actions(_state("https://evil.test/x"), _session(), 1)
+
+    notes = loop._artifacts.persist_recovery_reset.call_args.args[3]
+    assert notes == ["did a thing"]

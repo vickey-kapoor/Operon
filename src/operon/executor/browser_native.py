@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import io
 import json
 import logging
 import os
@@ -16,13 +17,16 @@ from uuid import uuid4
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from operon.agent.perception.change_note import ChangeNoteBuffer
 from operon.agent.perception.screen_diff import (
-    BLANK_VARIANCE_THRESHOLD,
+    BLANK_REGION_RADIUS,
+    WIDE_REGION_RADIUS,
     first_blank_point,
+    is_plain_background,
+    png_dominant_color,
     png_region_rgb,
-    region_variance,
     reset_click_candidates,
 )
 from operon.agent.perception.settle import frame_signature
@@ -667,16 +671,31 @@ class NativeBrowserExecutor(Executor):
             self.last_reset_actions.append("browser reset failed part-way")
 
     async def _blank_reset_point(self, page) -> tuple[int, int] | None:
-        """A point on the page whose surroundings are blank in a fresh screenshot, or None."""
+        """A point (CSS px) on a plain-background part of the page, or None.
+
+        The screenshot may be at a device scale other than 1: samples are taken at the
+        scaled position and size, and the click stays in CSS px. A screenshot whose size
+        cannot be read, or whose scale is not uniform, means no click.
+        """
         try:
             png = await page.screenshot(type="png")
+            with Image.open(io.BytesIO(png)) as img:
+                img_w, img_h = img.size
+            scale_x, scale_y = img_w / self._viewport_width, img_h / self._viewport_height
+            if abs(scale_x - scale_y) > 0.02 or scale_x <= 0:
+                logger.info("context_reset: screenshot scale %.2fx%.2f is not uniform; no click", scale_x, scale_y)
+                return None
+            background = png_dominant_color(png)
         except Exception:
             logger.debug("context_reset: screenshot failed", exc_info=True)
             return None
         candidates = reset_click_candidates(self._viewport_width, self._viewport_height)
 
         def has_content(x: int, y: int) -> bool:
-            return region_variance(png_region_rgb(png, x, y)) > BLANK_VARIANCE_THRESHOLD
+            sx, sy = round(x * scale_x), round(y * scale_x)
+            inner = png_region_rgb(png, sx, sy, round(BLANK_REGION_RADIUS * scale_x))
+            wide = png_region_rgb(png, sx, sy, round(WIDE_REGION_RADIUS * scale_x))
+            return not is_plain_background(inner, wide, background)
 
         try:
             return first_blank_point(candidates, has_content)

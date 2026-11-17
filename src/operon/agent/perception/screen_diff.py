@@ -103,3 +103,73 @@ def first_blank_point(
         if not has_content(x, y):
             return (x, y)
     return None
+
+
+# ── stronger test for a focus-click spot: plain *background*, not just uniform ──
+# A 100px square can be uniform and still be a big neutral button, a card or a canvas. The
+# click spot must also sit in a wider ring that is uniform, and match the screen's own
+# dominant (background) colour.
+WIDE_REGION_RADIUS = 100
+BACKGROUND_COLOR_TOLERANCE = 18  # per channel, 0-255
+
+
+def dominant_color(rgb: bytes, stride: int = 16) -> tuple[int, int, int]:
+    """The most common colour in raw RGB bytes (histogram mode over 5-bit quantised pixels)."""
+    import numpy as np
+
+    px = np.frombuffer(rgb, dtype=np.uint8)
+    px = px[: len(px) // 3 * 3].reshape(-1, 3)[::stride]
+    if len(px) == 0:
+        return (255, 255, 255)
+    quant = px >> 3
+    keys = (quant[:, 0].astype(np.int32) << 10) | (quant[:, 1].astype(np.int32) << 5) | quant[:, 2]
+    mode = int(np.bincount(keys).argmax())
+    members = px[keys == mode]
+    r, g, b = (int(v) for v in members.mean(axis=0))
+    return (r, g, b)
+
+
+def png_dominant_color(png: bytes) -> tuple[int, int, int]:
+    import io
+
+    with Image.open(io.BytesIO(png)) as img:
+        return dominant_color(img.convert("RGB").tobytes())
+
+
+def channel_variance(rgb: bytes) -> float:
+    """Largest per-channel variance of raw RGB bytes (a flat colour of any hue is 0)."""
+    import numpy as np
+
+    px = np.frombuffer(rgb, dtype=np.uint8)
+    px = px[: len(px) // 3 * 3].reshape(-1, 3)
+    if len(px) == 0:
+        return 0.0
+    return float(px.astype(np.float64).var(axis=0).max())
+
+
+def _mean_color(rgb: bytes) -> tuple[float, float, float]:
+    import numpy as np
+
+    px = np.frombuffer(rgb, dtype=np.uint8)
+    px = px[: len(px) // 3 * 3].reshape(-1, 3)
+    m = px.mean(axis=0) if len(px) else np.array([255.0, 255.0, 255.0])
+    return (float(m[0]), float(m[1]), float(m[2]))
+
+
+def is_plain_background(
+    inner: bytes,
+    wide: bytes,
+    background: tuple[int, int, int],
+    threshold: float = BLANK_VARIANCE_THRESHOLD,
+    tolerance: int = BACKGROUND_COLOR_TOLERANCE,
+) -> bool:
+    """True when both the inner sample and the wider ring are uniform and near ``background``."""
+    if not inner or not wide:
+        return False
+    if channel_variance(inner) > threshold or channel_variance(wide) > threshold:
+        return False
+    return all(
+        abs(c - b) <= tolerance
+        for sample in (inner, wide)
+        for c, b in zip(_mean_color(sample), background, strict=True)
+    )

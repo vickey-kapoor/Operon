@@ -2083,8 +2083,8 @@ class AgentLoop:
                 self._recovered(state.run_id, "context_reset", exc)
         elif strategy is RecoveryStrategy.SESSION_RESET:
             start_url = state.start_url
-            if start_url:
-                url_allowed = self._reset_url_allowed(start_url)
+            if start_url and self.environment is UnifiedEnvironment.BROWSER:
+                url_allowed = self._reset_url_allowed(start_url, getattr(state, "permission_mode", None))
                 if not url_allowed:
                     logger.info("session_reset: the trust gate does not allow %r; reloading instead", start_url)
                     start_url = None
@@ -2107,10 +2107,12 @@ class AgentLoop:
             except Exception as exc:
                 self._recovered(state.run_id, "persist_recovery_reset", exc)
 
-    def _reset_url_allowed(self, url: str) -> bool:
-        """True when the trust gate lets the agent navigate to ``url`` (a reset cannot ask a person)."""
+    def _reset_url_allowed(self, url: str, permission_mode: str | None = None) -> bool:
+        """True when the agent may navigate to ``url`` unasked: the trust gate allows it and
+        the run's permission mode would not hold it for approval (a reset cannot ask a person)."""
         probe = AgentAction(action_type=ActionType.NAVIGATE, url=url)
-        return self._trust_gate.evaluate(probe).verdict is TrustVerdict.ALLOW
+        result = apply_permission_mode(self._trust_gate.evaluate(probe), probe, permission_mode)
+        return result.verdict is TrustVerdict.ALLOW
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
         self._release_backend_run_state(run_id)

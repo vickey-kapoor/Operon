@@ -25,7 +25,10 @@ from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.agent.perception.change_note import ChangeNoteBuffer
 from operon.agent.perception.screen_diff import (
     BLANK_VARIANCE_THRESHOLD,
+    WIDE_REGION_RADIUS,
+    dominant_color,
     first_blank_point,
+    is_plain_background,
     reset_click_candidates,
 )
 from operon.agent.perception.settle import signature_from_rgb
@@ -323,6 +326,21 @@ _FOCUS_GUARDED_ACTIONS = frozenset({
 })
 
 
+def _window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    """(left, top, width, height) of a window in virtual-screen pixels, or None."""
+    if sys.platform != "win32":
+        return None
+    try:
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):  # type: ignore[attr-defined]
+            return None
+        return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+    except Exception:
+        return None
+
+
 def _bring_to_front(hwnd: int) -> bool:
     """Put *hwnd* back in front. False when it is gone or already in front."""
     if sys.platform != "win32":
@@ -569,15 +587,10 @@ class DesktopExecutor(Executor):
             logger.debug("context_reset: escape press failed", exc_info=True)
             self.last_reset_actions.append("escape press failed")
         try:
-            with _mss() as sct:
-                mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-                candidates = reset_click_candidates(mon["width"], mon["height"], mon["left"], mon["top"])
-            point = await asyncio.to_thread(first_blank_point, candidates, self._reset_point_has_content)
+            point, why = await asyncio.to_thread(self._pick_reset_click)
             if point is None:
-                logger.info("context_reset: no blank region found; skipping the focus click")
-                self.last_reset_actions.append(
-                    f"skipped focus click: no blank region among {len(candidates)} candidate points"
-                )
+                logger.info("context_reset: skipping the focus click (%s)", why)
+                self.last_reset_actions.append(f"skipped focus click: {why}")
             else:
                 await asyncio.to_thread(pyautogui.click, point[0], point[1])
                 await asyncio.sleep(0.1)
@@ -592,12 +605,43 @@ class DesktopExecutor(Executor):
             logger.debug("context_reset: ctrl+home failed", exc_info=True)
             self.last_reset_actions.append("ctrl+home failed")
 
-    def _reset_point_has_content(self, x: int, y: int) -> bool:
-        """Visual servo for the reset click. A failed pixel read counts as content (no click)."""
+    def _pick_reset_click(self) -> tuple[tuple[int, int] | None, str]:
+        """(point, why-not): a plain-background spot inside the run's work window, or None.
+
+        Candidates stay inside the recorded work window, which must be the one in front, so
+        the click never lands on the wallpaper or another window. Without one: keys only.
+        """
+        hwnd = self._work_windows.get(self._current_run_id) if self._current_run_id else None
+        if hwnd is None:
+            return None, "no recorded work window"
+        if _foreground_window() != hwnd:
+            return None, "the work window is not in front"
+        rect = _window_rect(hwnd)
+        if rect is None:
+            return None, "the work window rectangle is unknown"
+        left, top, width, height = rect
+        with _mss() as sct:
+            virtual = sct.monitors[0]
+            background = dominant_color(bytes(sct.grab(virtual).rgb))
+        right = min(left + width, virtual["left"] + virtual["width"])
+        bottom = min(top + height, virtual["top"] + virtual["height"])
+        left, top = max(left, virtual["left"]), max(top, virtual["top"])
+        candidates = reset_click_candidates(right - left, bottom - top, left, top)
+        point = first_blank_point(candidates, lambda x, y: not self._reset_point_is_blank(x, y, background))
+        if point is None:
+            return None, f"no blank region among {len(candidates)} candidate points in the work window"
+        return point, ""
+
+    def _reset_point_is_blank(self, x: int, y: int, background: tuple[int, int, int]) -> bool:
+        """Servo + a wider ring that is uniform and background-coloured. A failed read is not blank."""
         try:
-            return self._region_has_content(x, y)[0]
+            if self._region_has_content(x, y)[0]:
+                return False
+            inner = self._sample_region(x, y, 50)
+            wide = self._sample_region(x, y, WIDE_REGION_RADIUS)
+            return is_plain_background(inner, wide, background)
         except Exception:
-            return True
+            return False
 
     async def session_reset(self, start_url: str | None = None) -> None:
         """Re-baseline window focus: dismiss stacked UI state, then bring the run's own

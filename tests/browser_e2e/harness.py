@@ -21,10 +21,11 @@ from PIL import Image
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
-from operon.agent.policy.coordinator import PolicyCoordinator
-from operon.agent.policy.recovery import RuleBasedRecoveryManager
 from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.agent.tools import enabled_tools, function_declarations
+from operon.api.runtime.loops import _loop_layers
+from operon.api.runtime.services import RuntimeServices
+from operon.api.runtime_config import browser_mode_config
 from operon.core.contracts.perception import Environment
 from operon.core.paths import prompts_dir
 from operon.executor.browser_native import NativeBrowserExecutor
@@ -108,12 +109,14 @@ class PixelCritic:
     """Stands in for the critic model (``generate_verification``): an action that left the screen
     as it was is a failure, one that changed it a success. It reads pixels only. A stop has no
     after-screenshot to compare: it is approved when ``goal()`` (the grader's view of the app's
-    state, standing in for a critic that sees the goal on screen) says so, or always without one."""
+    state, standing in for a critic that sees the goal on screen) says so, or always without one.
+    ``goal()`` also judges any non-stop action that has no ``after.png`` to compare."""
 
     def __init__(self, goal=None) -> None:
         self.calls = 0
         self.goal = goal
         self.verdicts: list[str] = []  # each verdict's status, in order
+        self.stop_verdicts: list[str] = []  # the verdicts with no after-screenshot (stops)
 
     async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
         self.calls += 1
@@ -121,6 +124,7 @@ class PixelCritic:
         before = after.with_name("before.png")
         if after.name != "after.png" or not before.is_file():
             reached = self.goal is None or bool(self.goal())
+            self.stop_verdicts.append("success" if reached else "failure")
             verdict = {"status": "success" if reached else "failure", "expected_outcome_met": reached,
                        "stop_condition_met": False,
                        "reason": "scripted critic: the goal is " + ("on screen" if reached else "not on screen")}
@@ -146,7 +150,6 @@ class Result:
     run_dir: Path
     state: Any  # the saved AgentState
     critic: PixelCritic
-    grade: Any = None
 
     @property
     def stop_reason(self) -> str | None:
@@ -165,13 +168,12 @@ async def run_script(
     *,
     start_url: str,
     max_steps: int = 12,
-    grade=None,
     goal=None,
     tools: bool = False,
 ) -> Result:
     """Run ``intent`` through the real loop on headless Chromium. ``goal`` tells the scripted
-    critic whether the goal is on screen (see ``PixelCritic``). ``grade`` runs against the
-    app's state as the run leaves it (before the browser closes); its result is ``Result.grade``."""
+    critic whether the goal is on screen (see ``PixelCritic``); ``goal=None`` approves every
+    stop, so only Operon's own stop guards can reject one."""
     executor = NativeBrowserExecutor(
         artifact_dir=tmp_path / "artifacts",
         viewport_width=VIEWPORT[0],
@@ -190,16 +192,20 @@ async def run_script(
     critic = PixelCritic(goal)
     run_store = FileBackedRunStore(tmp_path / "runs")
     memory_store = FileBackedMemoryStore(tmp_path / "memory")
+    layers = _loop_layers(
+        config=browser_mode_config(), memory_store=memory_store, desktop=False,
+        services=RuntimeServices(perception_service=backend, policy_delegate=backend),
+    )
     loop = AgentLoop(
         capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
         perception_service=backend,
         run_store=run_store,
-        policy_service=PolicyCoordinator(delegate=backend, memory_store=memory_store),
         executor=ToolExecutor(executor, tool_names) if tool_names else executor,
-        verifier_service=DeterministicVerifierService(gemini_client=critic),
-        recovery_manager=RuleBasedRecoveryManager(),
         memory_store=memory_store,
         environment=Environment.BROWSER,
+        # Production wiring (policy coordinator with its rule engine, verifier, recovery), so a
+        # change there is followed here; only the critic model inside the verifier is the script.
+        **{**layers, "verifier_service": DeterministicVerifierService(gemini_client=critic)},
     )
     try:
         run = await loop.start_run(
@@ -215,7 +221,6 @@ async def run_script(
             status, steps = response.status, response.step_count
         await bg_writer.flush()
         state = await run_store.get_run(run.run_id)
-        graded = grade() if grade is not None else None
-        return Result(status, steps, client, run_store.root_dir / run.run_id, state, critic, graded)
+        return Result(status, steps, client, run_store.root_dir / run.run_id, state, critic)
     finally:
         await executor.aclose()

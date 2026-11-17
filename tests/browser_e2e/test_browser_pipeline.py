@@ -178,16 +178,33 @@ def test_write_a_local_file_with_the_tool_channel(tmp_path, site, app):
 
 
 # 10
-def test_the_run_is_complete_only_when_the_goal_is_reached(tmp_path, site, app):
-    # The model claims it is done twice before it has clicked anything; neither may end the run.
+def test_a_done_claim_before_any_work_never_ends_the_run(tmp_path, site, app):
+    # The critic approves every stop (goal=None), so only Operon itself can hold these back.
+    # A text-only "done" before any action is not a stop at all: the backend turns it into a wait.
     script = [DONE, DONE, call("click_at", **grid_point("btn_delta")), DONE]
-    result = run(tmp_path, site, "Click the button labelled D", script, "/t/buttons",
-                 goal=lambda: app.state()["picks"] == ["D"])
+    result = run(tmp_path, site, "Click the button labelled D", script, "/t/buttons")
+    rows = result.trace()
+    kinds = [r["policy_decision"]["action"]["action_type"] for r in rows]
+    assert "failure" not in result.critic.stop_verdicts, "the critic never rejected a stop"
+    assert kinds.count("stop") == 1 and kinds[-1] == "stop", kinds
+    assert "click" in kinds[: kinds.index("stop")], "the one stop came after the work"
     assert app.state()["picks"] == ["D"]
     assert result.status is RunStatus.SUCCEEDED
     assert result.stop_reason == "task_completed"
-    actions = [row["policy_decision"]["action"]["action_type"] for row in result.trace()]
-    assert actions[-1] == "stop" and actions.count("stop") == 1, actions
+
+
+# 10b. A real finding, kept as a strict xfail so the day Operon rejects it the test flips.
+@pytest.mark.xfail(strict=True, reason=(
+    "Operon's own stop guards only reject a stop with no substantive action (coordinator "
+    "_reject_premature_stop) or on step 1 with no elements (verifier _suspicious_early_stop). "
+    "After one wrong click, a stop is accepted whenever the critic approves it."))
+def test_a_done_claim_after_a_wrong_click_is_rejected_without_the_critic(tmp_path, site, app):
+    script = [call("click_at", **grid_point("btn_alpha")), DONE, DONE,
+              call("click_at", **grid_point("btn_delta")), DONE]
+    result = run(tmp_path, site, "Click the button labelled D", script, "/t/buttons", max_steps=12)
+    assert "failure" not in result.critic.stop_verdicts
+    assert app.state()["picks"] == ["A", "D"], "the first stop claim ended the run with the goal unmet"
+    assert result.status is RunStatus.SUCCEEDED
 
 
 # 11

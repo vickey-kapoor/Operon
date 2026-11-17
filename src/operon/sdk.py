@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Literal
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["Agent", "ApprovalRequest", "RunResult"]
 
@@ -132,7 +135,11 @@ class Agent:
                             await client.stop(started["run_id"])
                         except Exception:  # noqa: BLE001 - cleanup must not mask the real error
                             pass
-                    await client.close()
+                    try:
+                        await client.close()
+                    except BaseException:
+                        logger.warning("SDK cleanup was interrupted: an executor or sandbox may still be running")
+                        raise
             finally:
                 if client is not None:
                     self._forget_built_loops()  # even if a second cancel interrupted stop/close

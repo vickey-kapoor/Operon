@@ -172,10 +172,10 @@ class HardwareBaselineError(RuntimeError):
 def validate_display_baseline(*, require_min_resolution: tuple[int, int] = (1280, 720)) -> None:
     """Check DPI scaling and primary-monitor resolution against automation baseline.
 
-    DPI at 100% (96 DPI):  coordinates map 1:1 between logical and physical pixels.
-    DPI != 100%:            logs a CoordDriftWarning — many systems legitimately run
-                            at 125 % or 150 % with per-monitor DPI awareness enabled,
-                            so this is a warning, not a hard stop.
+    DPI scaling:            logs a CoordDriftWarning only when drift is really possible
+                            (``dpi.drift_expected``: the process is DPI-unaware, or system-aware
+                            with a monitor whose true DPI differs from the system's). A uniform
+                            125 % or 150 % setup is fine and stays silent.
     Resolution < minimum:   raises HardwareBaselineError — too little screen space for
                             reliable element targeting.
     """
@@ -183,16 +183,18 @@ def validate_display_baseline(*, require_min_resolution: tuple[int, int] = (1280
         return
 
     # --- DPI scaling ---
+    scale_pct = "?"
     try:
-        dpi = ctypes.windll.user32.GetDpiForSystem()  # type: ignore[attr-defined]
-        scale_pct = round(dpi / 96 * 100)
-        if scale_pct != 100:
+        system_dpi = dpi.get_system_dpi()
+        scale_pct = round(system_dpi / 96 * 100)
+        awareness = dpi.get_awareness()
+        if dpi.drift_expected(awareness, system_dpi, dpi.enum_monitors()):
             logger.warning(
-                "CoordDriftWarning: DPI scaling is %d%% (expected 100%% / 96 DPI). "
-                "Logical↔physical pixel ratio is %.2fx — coordinate drift is possible "
-                "if per-monitor DPI awareness is not fully applied.",
+                "CoordDriftWarning: the process is %s-aware at %s%% system scale and a display's scale "
+                "differs from what the process sees, so click coordinates can drift. "
+                "Set OPERON_DPI_AWARE=on to fix it.",
+                awareness,
                 scale_pct,
-                dpi / 96,
             )
     except (AttributeError, OSError) as exc:
         logger.debug("validate_display_baseline: DPI check skipped: %s", exc)
@@ -211,7 +213,7 @@ def validate_display_baseline(*, require_min_resolution: tuple[int, int] = (1280
                 f"{min_w}x{min_h}. Element targeting will be unreliable at this size. "
                 "Increase your display resolution before running Operon."
             )
-        logger.debug("Display baseline OK: %dx%d @ %d%% DPI", w, h, scale_pct if "scale_pct" in dir() else "?")
+        logger.debug("Display baseline OK: %dx%d @ %d%% DPI", w, h, scale_pct)
     except HardwareBaselineError:
         raise
     except Exception as exc:

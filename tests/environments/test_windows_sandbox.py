@@ -208,5 +208,12 @@ def test_guest_command_passes_the_hosts_tool_setting(provider, monkeypatch):
     assert "OPERON_TOOLS" not in provider.guest_command()
 
 
+def test_guest_command_passes_the_dpi_awareness_flag(provider, monkeypatch):
+    monkeypatch.setenv("OPERON_DPI_AWARE", "on")
+    assert "set OPERON_DPI_AWARE=on" in provider.guest_command()
+    monkeypatch.setenv("OPERON_DPI_AWARE", "off")
+    assert "OPERON_DPI_AWARE" not in provider.guest_command()
+
+
 def test_sandbox_tools_never_run_on_the_host():
     assert WindowsSandboxProvider.runs_on_host is False

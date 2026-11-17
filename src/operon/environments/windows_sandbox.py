@@ -122,6 +122,7 @@ class WindowsSandboxProvider(EnvironmentProvider):
         ex = self.exchange
         python = guest_python()
         tools = guest_tools_setting()
+        dpi_aware = get_settings().dpi_aware
         return "\r\n".join(
             [
                 "@echo off",
@@ -131,6 +132,7 @@ class WindowsSandboxProvider(EnvironmentProvider):
                 f"set OPERON_CONFIG_DIR={_GUEST_RUNTIME}",
                 f'set PYTHONPATH={source_dir()}',
                 *([f"set OPERON_TOOLS={tools}"] if tools else []),
+                *(["set OPERON_DPI_AWARE=on"] if dpi_aware else []),
                 f'"{python}" -m operon.cli guest --port {self.port} --token-file "{ex / "token.txt"}" '
                 f'--ready-file "{ex / "ready.json"}" --log-file "{ex / "guest.log"}"',
                 "",

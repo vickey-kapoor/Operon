@@ -43,7 +43,8 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests -q
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desktop_e2e -m desktop_container -o addopts=""
 
 # Free Windows e2e (KAN-93): real loop + real Windows desktop in Windows Sandbox (~2 min boot), scripted model ($0).
-# Needs Windows Sandbox turned on; deselected by default.
+# Needs Windows Sandbox turned on; deselected by default. On an 8 GB PC run it alone (no other heavy
+# processes) with $env:OPERON_SANDBOX_MEMORY_MB = "2048", or the sandbox closes before its guest starts.
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desktop_e2e_windows -m windows_sandbox -o addopts=""
 # Free browser end-to-end: real loop + real NativeBrowserExecutor on headless Chromium against a local
 # fixture site, scripted model ($0, ~3 min). Needs Playwright's Chromium; deselected by default.
@@ -67,7 +68,8 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 .venv\Scripts\mypy
 ```
 
-`addopts = "-m 'not live_server'"` in `pyproject.toml` auto-deselects the ~350
+`addopts` in `pyproject.toml` auto-deselects the `live_server`, `desktop_container`,
+`windows_sandbox` and `browser_e2e` tests (run those with `-o addopts=""` as above), including the ~350
 `live_server` tests. **Do not run them unless explicitly asked** — they need a
 uvicorn instance on `localhost:8080` and, in some cases, a headed Windows session
 that will drive the real mouse and keyboard:

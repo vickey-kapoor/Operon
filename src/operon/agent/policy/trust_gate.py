@@ -247,12 +247,21 @@ class TrustGate:
         return self._host_blocked(current_url)
 
     def evaluate(
-        self, action: object, current_url: str | None = None, *, stated_reason: str | None = None
+        self,
+        action: object,
+        current_url: str | None = None,
+        *,
+        stated_reason: str | None = None,
+        click_text: str | None = None,
     ) -> TrustResult:
         """``stated_reason`` is the model's own words for the step (KAN-153). Under
         Computer Use a click has coordinates but no element name, so "I'll click
         Place order" is the only text naming what it hits. It can only ask for
-        approval: the model's prose never blocks a step on its own."""
+        approval: the model's prose never blocks a step on its own.
+
+        ``click_text`` is the text read off the screenshot around the click point
+        (KAN-163, ``OPERON_CLICK_TEXT``). It too only asks for approval, never blocks:
+        the crop can catch a neighbouring label."""
         if not self.enabled:
             return TrustResult(TrustVerdict.ALLOW)
         description = self.describe(action)
@@ -285,11 +294,15 @@ class TrustGate:
             # No path or domain rule can judge what a command does: a person approves
             # it (``auto`` mode skips this, deny rules above still block).
             return TrustResult(TrustVerdict.CONFIRM, "shell commands need approval", "run_shell")
+        if not names_no_target(action):
+            return TrustResult(TrustVerdict.ALLOW)
         reason = (stated_reason or "").lower()
-        if reason and _names_no_target(action):
-            for keyword in (*self.deny, *self.confirm):
-                if keyword in reason:
-                    return TrustResult(TrustVerdict.CONFIRM, "the model says this step does a high-risk action", keyword)
+        seen = (click_text or "").lower()
+        for keyword in (*self.deny, *self.confirm):
+            if seen and keyword in seen:
+                return TrustResult(TrustVerdict.CONFIRM, "the screen under the click reads a high-risk action", keyword)
+            if reason and keyword in reason:
+                return TrustResult(TrustVerdict.CONFIRM, "the model says this step does a high-risk action", keyword)
         return TrustResult(TrustVerdict.ALLOW)
 
     def _category_result(self, action: object, stated_reason: str | None) -> TrustResult | None:
@@ -320,7 +333,8 @@ _ENTER_KEYS = frozenset({"enter", "return"})
 _POINTER_ACTIONS = frozenset({"click", "double_click", "triple_click", "right_click", "press_key", "hotkey", "drag"})
 
 
-def _names_no_target(action: object) -> bool:
+def names_no_target(action: object) -> bool:
+    """A pointer or key action with no resolved target name: the gate cannot tell what it presses."""
     action_type = getattr(getattr(action, "action_type", None), "value", None)
     if action_type not in _POINTER_ACTIONS:
         return False

@@ -8,6 +8,7 @@ import logging
 import shutil
 import time
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,14 @@ from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.efficiency import run_efficiency
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
+from operon.agent.perception.expect_check import (
+    EXPECT_INSTRUCTION,
+    EXPECT_REMINDER_EVERY,
+    NO_SCREEN_EFFECT_ACTIONS,
+    compare,
+    mismatch_note,
+    parse_expectation,
+)
 from operon.agent.planner import (
     PLANNER_DEADLINE_S,
     PLANNER_USAGE_FILE,
@@ -42,6 +51,7 @@ from operon.agent.policy.best_of_n import (
     best_of_n_count,
     select_best_of_n,
 )
+from operon.agent.policy.click_text import make_click_reader, read_click_text
 from operon.agent.policy.file_guard import FILE_PATH_ACTIONS, blocked_file_path
 from operon.agent.policy.progress_tracker import (
     ProgressTracker,
@@ -50,9 +60,11 @@ from operon.agent.policy.progress_tracker import (
 )
 from operon.agent.policy.recovery import RecoveryManager, validate_benchmark_integrity
 from operon.agent.policy.trust_gate import (
+    PermissionMode,
     TrustVerdict,
     apply_permission_mode,
     make_trust_gate,
+    names_no_target,
     resolve_permission_mode,
 )
 from operon.agent.policy.verifier import VerifierService
@@ -223,6 +235,8 @@ class AgentLoop:
         self._best_of_n_critic: Critic = HeuristicCritic()
         # RFC 0001 Move 5: deny/confirm policy gate before execution (OPERON_TRUST_GATE).
         self._trust_gate = make_trust_gate()
+        # KAN-163: read the text under a click from the screenshot (OPERON_CLICK_TEXT, off).
+        self._click_reader = make_click_reader()
         # One lock per run so /step, /resume and the auto-run task never interleave
         # steps on the same run. Weak values: a lock lives only while a step holds
         # or awaits it, so the map does not grow with every run ever started.
@@ -244,6 +258,8 @@ class AgentLoop:
         # into the run's state (``AgentState.recovered_errors``). Drained by
         # ``_flush_recovered_errors`` when a step, start or resume ends.
         self._recovered_errors: dict[str, dict[str, int]] = {}
+        # KAN-116: per run, the last step that got the "write an Expect line" reminder.
+        self._expect_reminded: dict[str, int] = {}
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -314,6 +330,7 @@ class AgentLoop:
                     AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
                 )
         await self._write_plan(record)
+        self._send_expect_instruction(record.run_id)
         await self._flush_recovered_errors(record.run_id)
         return RunResponse(
             run_id=record.run_id,
@@ -808,7 +825,9 @@ class AgentLoop:
         _trace("  2 PERCEIVE", f"sending screenshot to Gemini  backend={type(self.perception_service).__name__}")
         _t0 = time.perf_counter()
         try:
-            perception = await self._perceive_with_liveness_retry(record, ctx.frame)
+            perception = await self._perceive_with_liveness_retry(
+                record, ctx.frame, on_recapture=lambda fresh: setattr(ctx, "frame", fresh)
+            )
         except Exception as exc:
             # The run fails with the error recorded (pre-step failure log); a bug
             # still re-raises in strict mode.
@@ -859,8 +878,13 @@ class AgentLoop:
 
         # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
         # action never runs; the run pauses for a human instead.
-        pause_decision = await self._gate_pause_decision(ctx.record, ctx.state, ctx.decision)
+        pause_decision = await self._gate_pause_decision(ctx.record, ctx.state, ctx.decision, frame=ctx.frame)
         if pause_decision is None:
+            # Reading the click text (KAN-163) waits on OCR: a stop that came in
+            # meanwhile must still keep this action from running.
+            if getattr(self, "_click_reader", None) is not None and await self._run_cancelled(ctx.run_id):
+                _trace("  3 POLICY -> CANCELLED", "run was stopped while the gate read the click text")
+                return self._cancelled_response(ctx.record)
             return None
         return await self._pause_for_user(
             record=ctx.record,
@@ -883,6 +907,7 @@ class AgentLoop:
             if ctx.attempt_index > 1 and await self._run_cancelled(ctx.run_id):
                 # Stopped during a retry: record the attempt that ran, run no more.
                 _trace("  RETRY_LOOP -> cancelled", "run was stopped; not retrying")
+                ctx.attempt_cancelled = True
                 break
             if ctx.attempt_index > 1 and ctx.executed_action is not None:
                 # A replacement is about to run: the last attempt becomes an earlier one.
@@ -894,6 +919,8 @@ class AgentLoop:
             if not await self._prepare_adaptation_retry(ctx):
                 break
             ctx.attempt_index += 1
+        # Once per step, on the attempt the step ends with.
+        self._check_expected_change(ctx)
 
     async def _execute_attempt(self, ctx: StepContext) -> None:
         decision = ctx.decision
@@ -989,6 +1016,91 @@ class AgentLoop:
         if callable(add_hints):
             add_hints([note], source="change_note", run_id=ctx.run_id)
 
+    def _send_expect_instruction(self, run_id: str, step_index: int = 0) -> None:
+        """Ask the model to write an ``Expect:`` line before each action (OPERON_EXPECT_CHECK)."""
+        if not get_settings().expect_check:
+            return
+        try:
+            if self._backend_reports_expected_change():
+                return
+            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+            if callable(add_hints):
+                add_hints([EXPECT_INSTRUCTION], source="expect_instruction", run_id=run_id)
+                self._expect_reminded[run_id] = step_index
+        except Exception as exc:  # noqa: BLE001 - an advisory hint must never fail a run
+            self._recovered(run_id, "expect_instruction", exc)
+
+    def _backend_reports_expected_change(self) -> bool:
+        """Whether the backend's own answer carries expected_change (the combined JSON backend)."""
+        return getattr(self.perception_service, "reports_expected_change", False) is True
+
+    def _check_expected_change(self, ctx: StepContext) -> None:
+        """Compare the model's expectation with the screen change; hint on a mismatch (KAN-116).
+
+        Advisory only: never touches the verification result, retries or the action.
+        """
+        if not get_settings().expect_check:
+            return
+        try:
+            executed = ctx.executed_action
+            if executed is None or not executed.success or executed.action.action_type in NO_SCREEN_EFFECT_ACTIONS:
+                return
+            if ctx.dialog_captured or ctx.attempt_cancelled:
+                return
+            if ctx.decision.rule_name:
+                # A rule made this decision (its expected_change is the rule's, not a prediction).
+                return
+            if ctx.attempt_index > 1:
+                # After a retry the screen change spans every attempt, not the last one's.
+                return
+            ratio = ctx.screen_change_ratio
+            if ratio is None:
+                return
+            # A missing screenshot reads as "no change"; that is not evidence.
+            after_path = executed.artifact_path
+            if not (ctx.before_artifact_path and after_path):
+                return
+            if not (Path(ctx.before_artifact_path).exists() and Path(after_path).exists()):
+                return
+            decision = ctx.decision
+            # A backend's NONE is a real "none" only when the model actually supplied the field.
+            reliable = self._backend_reports_expected_change() and "expected_change" in getattr(
+                decision, "model_fields_set", ()
+            )
+            expectation = parse_expectation(
+                decision.rationale, decision.expected_change, field_is_reliable=reliable
+            )
+            if expectation is None:
+                # The model did not say what it expects: remind it now and then.
+                if ctx.step_index - self._expect_reminded.get(ctx.run_id, 0) >= EXPECT_REMINDER_EVERY:
+                    self._send_expect_instruction(ctx.run_id, ctx.step_index)
+                return
+            observation = compare(expectation, ratio)
+            note = mismatch_note(expectation, observation) if observation else None
+            if note:
+                add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+                if callable(add_hints):
+                    add_hints([note], source="expect_check", run_id=ctx.run_id)
+            step_dir = Path(self._artifacts.before_path(ctx.run_id, ctx.step_index)).resolve().parent
+            step_dir.mkdir(parents=True, exist_ok=True)
+            (step_dir / "expect_check.json").write_text(
+                json.dumps(
+                    {
+                        "step_index": ctx.step_index,
+                        "kind": expectation.kind.value,
+                        "text": expectation.text,
+                        "source": expectation.source,
+                        "change_ratio": round(ratio, 5),
+                        "mismatch": note is not None,
+                        "note": note,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as exc:  # noqa: BLE001 - an advisory check must never fail a step
+            self._recovered(ctx.run_id, "expect_check", exc)
+
     def _absorb_dialog_message(self, ctx: StepContext) -> None:
         """Fold a JS dialog the executor intercepted into this step's perception.
 
@@ -1001,6 +1113,7 @@ class AgentLoop:
         dialog_msg = self.executor.pop_last_dialog_message(ctx.run_id)
         if not dialog_msg:
             return
+        ctx.dialog_captured = True
         logger.info("JS dialog captured: %r — injecting into perception summary", dialog_msg)
         ctx.perception = ctx.perception.model_copy(
             update={"summary": (ctx.perception.summary or "") + f" {dialog_msg}"}
@@ -1100,7 +1213,9 @@ class AgentLoop:
             if hasattr(self.policy_service, "prepare_hints"):
                 self.policy_service.prepare_hints(state, None)
             self._inject_stagnation_hint(state)
-            perception = await self._perceive_with_liveness_retry(state, frame)
+            seen = [frame]
+            perception = await self._perceive_with_liveness_retry(state, frame, on_recapture=seen.append)
+            frame = seen[-1]
         except Exception as exc:
             # Keep the attempt that ran; it is recorded as the step's action.
             self._recovered(ctx.run_id, "adaptation_retry_perceive", exc)
@@ -1120,7 +1235,7 @@ class AgentLoop:
         # A retry's decision is a new action: it passes the same gates as the first.
         # If it needs a human, it does not run. The step is recorded with the
         # attempt that did run, then the run pauses for the human.
-        ctx.deferred_pause = await self._gate_pause_decision(ctx.record, state, decision)
+        ctx.deferred_pause = await self._gate_pause_decision(ctx.record, state, decision, frame=ctx.frame)
         if ctx.deferred_pause is not None:
             ctx.decision = attempted_decision
             _trace("  RETRY_LOOP -> gated", "retry decision needs a human; pausing after this step is recorded")
@@ -1340,6 +1455,49 @@ class AgentLoop:
         except Exception as exc:
             self._recovered(state.run_id, "save_efficiency", exc, level=logging.DEBUG)
 
+    async def _click_text_for_gate(
+        self,
+        action: AgentAction,
+        frame: CaptureFrame | None,
+        *,
+        run_id: str = "",
+        permission_mode: str | None = None,
+    ) -> str | None:
+        """The text the screenshot shows under a click (KAN-163), or None.
+
+        Only for a pointer action at a point with no element name, with the gate on and
+        ``OPERON_CLICK_TEXT`` set: that is the case where the gate otherwise cannot tell
+        what is pressed. Skipped when its answer can't matter: the action was already
+        approved, or the run's ``auto`` mode skips confirmations. A click inside a batch
+        is not read (the batch's own point is None). OCR runs in a worker thread so the
+        event loop keeps serving.
+        """
+        reader = getattr(self, "_click_reader", None)
+        if (
+            reader is None
+            or frame is None
+            or not self._trust_gate.enabled
+            or action.x is None
+            or action.y is None
+            or not names_no_target(action)
+            or "trust" in self._approved_gates(run_id, action)
+            or resolve_permission_mode(permission_mode) is PermissionMode.AUTO
+        ):
+            return None
+        # The action is already in virtual-desktop coordinates (_apply_monitor_origin);
+        # the screenshot is the one monitor, so take its origin back off.
+        text = await asyncio.to_thread(
+            read_click_text,
+            frame.artifact_path,
+            action.x - frame.monitor_left,
+            action.y - frame.monitor_top,
+            (frame.width, frame.height),
+            reader=reader,
+        )
+        if text:
+            _trace("  3 POLICY -> CLICK_TEXT", repr(text))
+        return text
+
     async def _current_url_for_trust_gate(self, run_id: str, *, log: bool = False) -> str | None:
         """The browser's current URL, only when the trust gate has a domain allowlist
         to judge it against; None otherwise or when the executor has no page.
@@ -1378,6 +1536,7 @@ class AgentLoop:
         run_id: str,
         current_url: str | None = None,
         permission_mode: str | None = None,
+        click_text: str | None = None,
     ) -> str | None:
         """Why ``decision`` must pause for a human before executing, or None to proceed.
 
@@ -1424,7 +1583,10 @@ class AgentLoop:
                     leaf,
                     apply_permission_mode(
                         self._trust_gate.evaluate(
-                            leaf, current_url=current_url, stated_reason=decision.rationale
+                            leaf,
+                            current_url=current_url,
+                            stated_reason=decision.rationale,
+                            click_text=click_text if leaf is action else None,
                         ),
                         leaf,
                         permission_mode,
@@ -1498,7 +1660,9 @@ class AgentLoop:
             return "batch" + json.dumps([self._gate_fingerprint(child) for child in action.actions or []])
         return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
 
-    async def _gate_pause_decision(self, record, state, decision: PolicyDecision) -> PolicyDecision | None:
+    async def _gate_pause_decision(
+        self, record, state, decision: PolicyDecision, *, frame: CaptureFrame | None = None
+    ) -> PolicyDecision | None:
         """The WAIT_FOR_USER decision to pause on before ``decision`` runs, or None
         when it may run: the policy asked for a human, the target thrashed, or a
         pre-execution gate (confidence, trust, file guard) blocked it."""
@@ -1535,6 +1699,9 @@ class AgentLoop:
             run_id=record.run_id,
             current_url=current_url,
             permission_mode=getattr(state, "permission_mode", None),
+            click_text=await self._click_text_for_gate(
+                decision.action, frame, run_id=record.run_id, permission_mode=getattr(state, "permission_mode", None)
+            ),
         )
         if gate_text is None:
             return None
@@ -1744,14 +1911,22 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
-    async def _perceive_with_liveness_retry(self, state, initial_frame: CaptureFrame):
+    async def _perceive_with_liveness_retry(
+        self,
+        state,
+        initial_frame: CaptureFrame,
+        *,
+        on_recapture: Callable[[CaptureFrame], None] | None = None,
+    ):
         """Perceive with flag-based liveness retries for transient zero-element frames.
 
         When perception returns is_empty_frame=True (blank/loading screen), re-capture
         and retry up to _LIVENESS_RETRY_MAX times before raising PerceptionLowQualityError.
         Other quality failures (unlabeled elements, etc.) propagate immediately.
         The liveness_retries count is stamped onto the returned ScreenPerception so it
-        appears in run.jsonl for observability.
+        appears in run.jsonl for observability. ``on_recapture`` gets each new frame,
+        so a caller can keep the screenshot the returned perception came from (the
+        trust gate reads the click text from it, KAN-163).
         """
         # Stable-frame perception bypass: when the previous action was WAIT (idempotent),
         # the screen hasn't moved at all (visual_velocity exactly 0), and verification
@@ -1814,6 +1989,8 @@ class AgentLoop:
             )
             await asyncio.sleep(_sleep_s)
             frame = await self.capture_service.capture(state)
+            if on_recapture is not None:
+                on_recapture(frame)
         raise PerceptionLowQualityError("no visible elements after all liveness retries")  # pragma: no cover
 
     async def _record_pre_step_perception_failure(
@@ -2134,6 +2311,7 @@ class AgentLoop:
     def _release_backend_run_state(self, run_id: str) -> None:
         """Drop the finished run's conversation and last screenshot from the backends,
         which otherwise keep them for the life of the server."""
+        self._expect_reminded.pop(run_id, None)
         services = {id(s): s for s in (self.perception_service, self.policy_service)}.values()
         for service in services:
             for target in (service, getattr(service, "delegate", None)):

@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       run_ids:
-        description: "Benchmark workflow run ids to import, space-separated"
+        description: "Run ids of finished test runs to import, space-separated"
         required: false
         default: ""
       backfill_ref:
@@ -79,7 +79,7 @@ jobs:
         if: env.BLOB_READ_WRITE_TOKEN != ''
         run: npm ci --prefix dashboard --no-audit --no-fund
 
-      - name: Import the finished benchmark run
+      - name: Import the finished test run
         if: github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -94,7 +94,7 @@ jobs:
           if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
           python3 -m evals.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert --alerts-file alerts.txt --comment-file results.md
 
-      - name: Alert Slack that the benchmark run failed
+      - name: Alert Slack that the test run failed
         # Critical: the run crashed or timed out. A cancelled run was stopped by a person, so no alert.
         # Skipped when its cost-cap alert already went out.
         if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' && env.SLACK_WEBHOOK_URL != ''

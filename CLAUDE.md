@@ -2,7 +2,8 @@
 
 Operon is a vision-first computer-use agent: it drives browsers and desktop apps
 from pixels only. See `AGENTS.md` for contributor conventions and `docs/architecture.md`
-for the long-form design.
+for the long-form design. Standing rules, infrastructure and current open items for a
+local Claude Code session are in `docs/CLAUDE-CODE-REFERENCE.md`: read it at the start of a session.
 
 ## Environment
 

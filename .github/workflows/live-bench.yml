@@ -30,7 +30,7 @@ on:
         description: "Model registry profile (src/operon/agent/backends/model_adapter/models.yaml, KAN-168), e.g. claude-sonnet-5-5 or openai-computer-use; empty = Gemini computer use. Always thin."
         default: ""
       features:
-        description: "Perception experiments to switch on (KAN-115), comma separated: settle, note, planner"
+        description: "Perception experiments to switch on (KAN-115), comma separated: settle, note, planner, expect"
         default: ""
       suite:
         description: "core (the Browser category's 10 state-graded tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), long (21 multi-app tasks on the local apps, 20 to 50 steps each), or dynamic (7 tasks on screens that move: toasts, spinners, late results; KAN-114)"
@@ -56,7 +56,7 @@ on:
       suite: {type: string, default: "core"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
-      # Set by the Benchmark workflow (benchmark.yml) so its cells' artifacts don't share a name.
+      # Set by the paid-run workflow (benchmark.yml) so its cells' artifacts don't share a name.
       artifact_suffix: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
@@ -73,7 +73,7 @@ permissions:
 
 jobs:
   plan:
-    name: Pick the backends
+    name: Pick the models
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -112,6 +112,7 @@ jobs:
       OPERON_SETTLE_DETECT: ${{ contains(inputs.features, 'settle') && 'on' || 'off' }}
       OPERON_CHANGE_NOTE: ${{ contains(inputs.features, 'note') && 'on' || 'off' }}
       OPERON_PLANNER: ${{ contains(inputs.features, 'planner') && 'on' || 'off' }}
+      OPERON_EXPECT_CHECK: ${{ contains(inputs.features, 'expect') && 'on' || 'off' }}
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}
       # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
       OPERON_TRUST_GATE: "off"
@@ -164,7 +165,7 @@ jobs:
           cat uvicorn.log
           exit 1
 
-      - name: Run the benchmark
+      - name: Run the tasks
         env:
           SUITE: ${{ inputs.suite }}
           EXTRA_ARGS: ${{ inputs.args }}

@@ -62,6 +62,10 @@ class StepContext:
     verification: VerificationResult = field(init=False)
     verification_debug: ModelDebugArtifacts = field(init=False)
     screen_change_ratio: float | None = None
+    # A JS dialog was auto-accepted this step, or the run was stopped during a retry: the
+    # screen change says nothing about the model's expectation then (KAN-116).
+    dialog_captured: bool = False
+    attempt_cancelled: bool = False
 
     # Recover and finish.
     recovery: RecoveryDecision = field(init=False)

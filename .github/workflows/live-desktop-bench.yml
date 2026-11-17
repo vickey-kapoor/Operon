@@ -78,7 +78,7 @@ on:
       model: {type: string, default: ""}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
-      # The Benchmark workflow (benchmark.yml) starts the Azure VM once for all its Desktop and
+      # The paid-run workflow (benchmark.yml) starts the Azure VM once for all its Desktop and
       # Hybrid cells and deallocates it after the last one: it passes "false" here.
       manage_vm: {type: string, default: "true"}
       # Set by the batch workflow so its cells' artifacts don't share a name.
@@ -260,7 +260,7 @@ jobs:
             Add-Content -Path $env:GITHUB_ENV -Value "OPERON_SEASON_PRIVATE=$path"
           }
 
-      - name: Start the API and run the benchmark
+      - name: Start the API and run the tasks
         # One step on purpose: Windows runners kill a step's child processes when the
         # step ends, so an API started in an earlier step is gone before the benchmark runs.
         # Hidden window: a visible console would sit on the desktop the agent is driving.
@@ -320,7 +320,7 @@ jobs:
           retention-days: 14
 
   stop-vm:
-    name: Deallocate the Azure VM
+    name: Stop the Azure VM
     needs: [start-vm, bench]
     if: ${{ always() && inputs.runner == 'azure' && inputs.manage_vm != 'false' && needs.start-vm.result == 'success' }}
     runs-on: ubuntu-latest

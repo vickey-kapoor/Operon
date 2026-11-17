@@ -64,7 +64,7 @@ placeholder, in **every** permission mode: `ask`, `risky` and `auto` all pause. 
 skip it. The one exception: if `OPERON_TRUST_ALLOW_DOMAINS` is set and the current page's host is
 on it, the secret is typed without a pause (an operator who allowlisted a login site has already
 said where passwords may go). A desktop app has no page, so it always pauses. The approval
-request shows the placeholder and, in a browser, the host the page is on (read even with no allowlist; "on an unknown site" when the URL cannot be read), never the value. A desktop app shows no site.
+request shows the placeholder and, in a browser, the host the page is on (read even with no allowlist; "on an unknown site" when the URL cannot be read), never the value. A desktop app shows no site. In a batch, the leaf that types the secret is always the one the approval describes. When earlier steps of the batch run first (a navigation, a click) the shown host is only the page at approval time, so the text says it is re-checked before typing: right before the secret is typed the page is read again, and if its host is not the one that was shown (or none was known) the batch stops before that step, nothing is typed, and the model's next turn gets the secret type gated again with the right site. This holds with or without an allowlist, in the thin and full harness.
 
 With the trust gate off (`OPERON_TRUST_GATE=off`, as in the benchmarks) a secret type **fails** with
 "secrets need the trust gate on", so a secret is never typed with no approval step at all.

@@ -103,3 +103,94 @@ async def test_sdk_callback_receives_the_host(monkeypatch, tmp_path) -> None:
 
     assert len(seen) == 1
     assert "on accounts.example.com" in seen[0].reason and VALUE not in seen[0].reason
+
+
+# --- batches: the approval shows the secret and the site, and the site is re-checked ---
+
+
+def _nav(url: str) -> AgentAction:
+    return AgentAction(action_type=ActionType.NAVIGATE, url=url)
+
+
+def _batch(*children: AgentAction) -> AgentAction:
+    return AgentAction(action_type=ActionType.BATCH, actions=list(children))
+
+
+class _BatchBrowser(_Browser):
+    """Runs a batch like the browser executor: the child check before every later child."""
+
+    def __init__(self, url: str | None) -> None:
+        super().__init__(url)
+        self.batch_child_check = None
+        self.typed: list[str] = []
+
+    async def run(self, batch: AgentAction):
+        for index, child in enumerate(batch.actions):
+            if index > 0 and self.batch_child_check is not None:
+                blocked = await self.batch_child_check(child)
+                if blocked is not None:
+                    return index, blocked
+            if child.action_type is ActionType.NAVIGATE:
+                self.url = child.url
+            elif child.action_type is ActionType.TYPE:
+                self.typed.append(child.text)
+        return None, None
+
+
+def _paused(url: str, batch: AgentAction, gate: TrustGate, mode: str | None = None):
+    browser = _BatchBrowser(url)
+    loop = _loop(browser, gate)
+
+    async def _alive(run_id: str) -> bool:
+        return False
+
+    loop._run_cancelled = _alive  # type: ignore[method-assign]
+    decision = PolicyDecision(action=batch, rationale="log in", confidence=0.9, active_subgoal="s")
+    page = asyncio.run(loop._current_url_for_trust_gate("r", secret=True))
+    text = loop._pre_execution_gate_text(decision, intent="x", run_id="r", current_url=page, permission_mode=mode)
+    return loop, browser, text
+
+
+@pytest.mark.parametrize(
+    ("first", "gate", "mode"),
+    [
+        (_nav("https://evil.test/login"), TrustGate(enabled=True), "risky"),
+        (AgentAction(action_type=ActionType.CLICK, x=1, y=2), TrustGate(enabled=True), "ask"),
+        (_nav("https://x.test/checkout"), TrustGate(enabled=True, confirm=("checkout",)), "risky"),
+    ],
+)
+def test_batch_approval_shows_the_secret_and_site(first, gate, mode) -> None:
+    _, _, text = _paused("https://accounts.example.com/", _batch(first, TYPE), gate, mode)
+    assert text is not None
+    assert "{{secret:pw}}" in text and "on accounts.example.com" in text and "re-checked before typing" in text
+    assert VALUE not in text
+
+
+def test_batch_stops_before_the_secret_when_the_site_changes() -> None:
+    loop, browser, text = _paused(
+        "https://accounts.example.com/", _batch(_nav("https://evil.test/login"), TYPE), TrustGate(enabled=True)
+    )
+    assert text is not None
+    loop._install_batch_child_check("r", _batch(_nav("https://evil.test/login"), TYPE))
+    index, blocked = asyncio.run(browser.run(_batch(_nav("https://evil.test/login"), TYPE)))
+    assert index == 1 and browser.typed == []
+    assert "nothing was typed" in blocked and VALUE not in blocked
+
+
+def test_batch_types_the_secret_on_the_approved_site() -> None:
+    batch = _batch(_nav("https://accounts.example.com/step2"), TYPE)
+    loop, browser, text = _paused("https://accounts.example.com/", batch, TrustGate(enabled=True))
+    assert text is not None
+    loop._install_batch_child_check("r", batch)
+    assert asyncio.run(browser.run(batch)) == (None, None)
+    assert browser.typed == ["{{secret:pw}}"]
+
+
+def test_batch_stops_when_no_host_was_known_at_approval() -> None:
+    batch = _batch(AgentAction(action_type=ActionType.CLICK, x=1, y=2), TYPE)
+    loop, browser, text = _paused(None, batch, TrustGate(enabled=True))
+    assert text is not None and "on an unknown site" in text
+    browser.url = "https://appeared.test/"  # a host appearing mid-batch was never approved
+    loop._install_batch_child_check("r", batch)
+    index, blocked = asyncio.run(browser.run(batch))
+    assert index == 1 and browser.typed == [] and blocked

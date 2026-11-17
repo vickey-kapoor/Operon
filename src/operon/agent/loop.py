@@ -251,6 +251,8 @@ class AgentLoop:
         # the approval is used up once it gets through (or the policy picks another).
         # run_id -> (action fingerprint, gate, risk category, trust verdict "deny"/"confirm" or "")
         self._pending_gate_approvals: dict[str, tuple[str, str, str, str]] = {}
+        # Host a person approved a secret type on, per run (None: none known; KAN-103).
+        self._secret_site_approved: dict[str, str | None] = {}
         # Runs this process created: they run where they started, so resume skips the provider check.
         self._created_runs: set[str] = set()
         # Runs a human paused by hand (UI Pause, POST /run/{id}/pause). A step already
@@ -1552,14 +1554,22 @@ class AgentLoop:
             self._log_trust_gate_url(run_id, url)
         return url
 
-    def _secret_site_suffix(self, action: AgentAction, current_url: str | None) -> str:
+    def _secret_site_suffix(
+        self, leaf: AgentAction, current_url: str | None, whole: AgentAction | None = None
+    ) -> str:
         """`` on <host>`` for an approval that types a stored secret in the browser, so the
         person sees where the password goes (batch screenshots have no address bar);
-        `` on an unknown site`` when the URL cannot be read. Desktop: unchanged."""
-        if not action_uses_secret(action) or not hasattr(self.executor, "current_url_for_run"):
+        `` on an unknown site`` when the URL cannot be read. When earlier leaves of the
+        batch run first and may change the page, the host is only the page now, and the
+        executor re-checks it right before typing. Desktop: unchanged."""
+        if not action_uses_secret(leaf) or not hasattr(self.executor, "current_url_for_run"):
             return ""
         host = (urlparse(current_url).hostname or "") if current_url else ""
-        return f" on {host}" if host else " on an unknown site"
+        text = f" on {host}" if host else " on an unknown site"
+        leaves = _leaf_actions(whole) if whole is not None else [leaf]
+        if leaves and leaves[0] is not leaf:
+            text += " (current page; re-checked before typing, the batch stops if the site changes)"
+        return text
 
     def _log_trust_gate_url(self, run_id: str, url: str | None) -> None:
         root = getattr(self.run_store, "root_dir", None)
@@ -1638,8 +1648,12 @@ class AgentLoop:
                 for leaf in leaves
             ]
             blocked = [pair for pair in verdicts if pair[1].verdict is not TrustVerdict.ALLOW]
-            # A DENY anywhere in the batch outranks a CONFIRM.
-            blocked.sort(key=lambda pair: pair[1].verdict is not TrustVerdict.DENY)
+            # A DENY anywhere in the batch outranks a CONFIRM, and a leaf that types a
+            # secret outranks the other CONFIRMs, so the approval always shows the secret
+            # (KAN-103); sort is stable, so the rest keep their order.
+            blocked.sort(
+                key=lambda pair: (pair[1].verdict is not TrustVerdict.DENY, not action_uses_secret(pair[0]))
+            )
             if blocked:
                 leaf, trust = blocked[0]
                 _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
@@ -1652,15 +1666,19 @@ class AgentLoop:
                         f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
                         "review and resume to override, or stop the run."
                     )
+                site = self._secret_site_suffix(leaf, current_url, action)
+                if action_uses_secret(leaf):
+                    # What the person approved: the secret may only be typed on this host.
+                    self._secret_site_approved[run_id] = (urlparse(current_url).hostname or None) if current_url else None
                 if resolve_permission_mode(permission_mode).value == "ask" and trust.reason.startswith("ask mode"):
                     return (
-                        f"Approval needed (ask mode): {_describe_for_approval(leaf)}. "
+                        f"Approval needed (ask mode): {_describe_for_approval(leaf)}{site}. "
                         "Approve to run it, or correct/stop."
                     )
                 if trust.category:
                     return (
                         f"{trust.category.capitalize()}: approve {_describe_for_approval(leaf)}"
-                        f"{self._secret_site_suffix(leaf, current_url)}? "
+                        f"{site}? "
                         f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
                     )
                 return (
@@ -1769,17 +1787,26 @@ class AgentLoop:
         async def check(child: AgentAction) -> str | None:
             if await self._run_cancelled(run_id):
                 return "the run was stopped"
-            if not check_domains:
-                return None
             # A nested batch runs its first leaf next (its later children get their
             # own check), so judge that leaf, not the container.
             leaves = _leaf_actions(child)
             if not leaves:
                 return None
-            current_url = await self._current_url_for_trust_gate(run_id)
-            result = self._trust_gate.evaluate(leaves[0], current_url=current_url)
+            leaf = leaves[0]
+            secret = self._trust_gate.enabled and action_uses_secret(leaf)
+            if not (check_domains or secret):
+                return None
+            current_url = await self._current_url_for_trust_gate(run_id, secret=secret)
+            result = self._trust_gate.evaluate(leaf, current_url=current_url)
             if result.verdict is TrustVerdict.DENY:
                 return f"blocked by policy ({result.reason}: '{result.matched}')"
+            if secret and result.verdict is TrustVerdict.CONFIRM and result.always:
+                # A secret goes only to the site the person approved (KAN-103); an earlier
+                # step of the batch may have moved the page. The step then fails before
+                # anything is typed and the secret type is gated again on its own.
+                host = (urlparse(current_url).hostname or None) if current_url else None
+                if host is None or host != self._secret_site_approved.get(run_id):
+                    return "the page is not the site approved for typing a secret; nothing was typed"
             return None
 
         self.executor.batch_child_check = check

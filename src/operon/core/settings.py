@@ -141,6 +141,8 @@ class Settings(BaseModel):
     planner: bool = _env_field("OPERON_PLANNER", False)
     planner_model: str = _env_field("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite")
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)
+    # The trust gate reads the text under a click from the screenshot (KAN-163; needs [ocr]).
+    click_text: bool = _env_field("OPERON_CLICK_TEXT", False)
     trust_deny: tuple[str, ...] = _env_field("OPERON_TRUST_DENY", ())
     # Empty: the gate's built-in confirm list.
     trust_confirm: tuple[str, ...] = _env_field("OPERON_TRUST_CONFIRM", ())
@@ -345,6 +347,7 @@ class _Parser:
             planner=self.flag("OPERON_PLANNER", "off"),
             planner_model=self.or_default("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite"),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},
+            click_text=self.flag("OPERON_CLICK_TEXT", "off"),
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),
             trust_confirm=_split(self.text("OPERON_TRUST_CONFIRM"), lower=True),
             trust_allow_domains=_split(self.text("OPERON_TRUST_ALLOW_DOMAINS"), lower=True),

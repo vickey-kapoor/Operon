@@ -877,12 +877,17 @@ class AgentLoop:
 
     def _send_expect_instruction(self, run_id: str, step_index: int = 0) -> None:
         """Ask the model to write an ``Expect:`` line before each action (OPERON_EXPECT_CHECK)."""
-        if not get_settings().expect_check or self._backend_reports_expected_change():
+        if not get_settings().expect_check:
             return
-        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
-        if callable(add_hints):
-            add_hints([EXPECT_INSTRUCTION], source="expect_instruction", run_id=run_id)
-            self._expect_reminded[run_id] = step_index
+        try:
+            if self._backend_reports_expected_change():
+                return
+            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+            if callable(add_hints):
+                add_hints([EXPECT_INSTRUCTION], source="expect_instruction", run_id=run_id)
+                self._expect_reminded[run_id] = step_index
+        except Exception as exc:  # noqa: BLE001 - an advisory hint must never fail a run
+            self._recovered(run_id, "expect_instruction", exc)
 
     def _backend_reports_expected_change(self) -> bool:
         """Whether the backend's own answer carries expected_change (the combined JSON backend)."""
@@ -900,6 +905,9 @@ class AgentLoop:
             if executed is None or not executed.success or executed.action.action_type in NO_SCREEN_EFFECT_ACTIONS:
                 return
             if ctx.dialog_captured or ctx.attempt_cancelled:
+                return
+            if ctx.decision.rule_name:
+                # A rule made this decision (its expected_change is the rule's, not a prediction).
                 return
             if ctx.attempt_index > 1:
                 # After a retry the screen change spans every attempt, not the last one's.

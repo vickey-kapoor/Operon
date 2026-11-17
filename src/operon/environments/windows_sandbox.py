@@ -49,6 +49,8 @@ _SANDBOX_PROCESSES = (
 )
 # Written first thing by the logon script, so a timeout can tell "logon never ran" from "guest crashed".
 LOGON_MARKER = "logon.txt"
+# Once the logon command has run, the guest gets at least this long to report ready.
+_AFTER_LOGON_GRACE_S = 150.0
 # Where the guest keeps its own files inside the sandbox (wiped on close).
 _GUEST_RUNTIME = r"C:\Users\WDAGUtilityAccount\operon-guest"
 
@@ -263,16 +265,22 @@ class WindowsSandboxProvider(EnvironmentProvider):
 
         ready = self.exchange / "ready.json"
         deadline = time.monotonic() + self.start_timeout_s
-        seen_up, next_check = False, time.monotonic() + 10
+        seen_up, extended, next_check = False, False, time.monotonic() + 10
         while not ready.exists():
             now = time.monotonic()
             if now >= deadline:
                 raise RuntimeError(self.timeout_message())
             if now >= next_check:
                 next_check = now + 10
-                if sandbox_running():
+                logged_on = (self.exchange / LOGON_MARKER).exists()
+                if logged_on and not extended:
+                    # A slow boot (busy PC) can use up the budget before logon; the guest still
+                    # gets a full grace period once the sandbox is actually up.
+                    extended, deadline = True, max(deadline, now + _AFTER_LOGON_GRACE_S)
+                running = sandbox_running()
+                if running:
                     seen_up = True
-                elif seen_up and not (self.exchange / LOGON_MARKER).exists():
+                elif seen_up and not logged_on:
                     # On a loaded PC Windows can drop the sandbox before it logs on.
                     raise SandboxClosedEarly("Windows Sandbox closed before it ran its logon command.")
             time.sleep(interval_s)

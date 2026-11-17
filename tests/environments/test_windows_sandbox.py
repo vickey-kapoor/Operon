@@ -255,6 +255,24 @@ def test_wait_notices_a_sandbox_that_vanished_before_logon(provider, monkeypatch
         provider.wait_until_ready()
 
 
+def test_a_slow_boot_still_gets_time_after_logon(provider, monkeypatch):
+    provider.start_timeout_s = 100
+    provider.exchange.mkdir(parents=True)
+    (provider.exchange / ws.LOGON_MARKER).write_text("now")
+    clock = {"t": 0.0}
+
+    def tick(_s):
+        clock["t"] += 5
+        if clock["t"] == 140:  # past the 100 s budget, inside the post-logon grace
+            (provider.exchange / "ready.json").write_text(json.dumps({"host": "h", "port": 1}))
+
+    monkeypatch.setattr(ws.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(ws.time, "sleep", tick)
+    monkeypatch.setattr(ws, "sandbox_running", lambda: True)
+    monkeypatch.setattr("operon.environments.remote.wait_for_guest", lambda *a, **k: {"status": "ok"})
+    assert provider.wait_until_ready() == {"status": "ok"}
+
+
 def test_start_waits_for_a_closing_sandbox_to_finish(provider, monkeypatch):
     states = iter([True, True, False])
     monkeypatch.setattr(ws, "sandbox_running", lambda: next(states))

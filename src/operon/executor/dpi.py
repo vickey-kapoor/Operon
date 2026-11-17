@@ -2,31 +2,23 @@
 
 Coordinate pipeline, end to end:
 
-1. ``mss`` grabs the screen. A per-monitor-v2 aware process gets *physical* pixels
-   for every monitor, in one virtual-desktop space (negative origins are normal).
-2. The frame is downscaled for the model, and the loop scales the model's point
-   back up to those physical screenshot pixels and adds the monitor origin
-   (``agent/loop.py``, tests in ``tests/models/test_monitor_offset.py``).
-3. ``pyautogui`` clicks through ``SetCursorPos``/``SendInput``. In a per-monitor
-   aware process that API also takes physical pixels, so steps 1-3 agree and
-   nothing needs converting.
+1. ``mss`` grabs the screen. Its pixels, ``EnumDisplayMonitors`` rects and the click API
+   (``SetCursorPos``/``SendInput`` through pyautogui) all live in the *process's own*
+   coordinate space, so they agree with one another whatever the awareness is.
+2. The frame is downscaled for the model; the loop scales the model's point back up and adds
+   the monitor origin (``agent/loop.py``, tests in ``tests/models/test_monitor_offset.py``).
 
-Where it can break:
+Where it can break: pyautogui calls ``SetProcessDPIAware()`` when it is imported, which locks
+the process at *system-aware*. On a monitor whose scale differs from the system's (mixed DPI),
+Windows then bitmap-stretches that monitor: the pixels the model sees are not the real ones,
+so targets blur and drift. ``OPERON_DPI_AWARE=on`` sets per-monitor-v2 *before* pyautogui is
+imported (``apply_awareness_early``, called at the top of ``desktop.py``). Then capture,
+monitor rects and clicks are all physical pixels and nothing is converted.
 
-* (a) Awareness never took effect. ``SetProcessDpiAwarenessContext`` fails when
-  something else (python, a manifest, another library) already fixed the
-  awareness. The process stays DPI-unaware or system-aware, Windows virtualizes
-  the click API into logical pixels, and the click lands at ``x * 96 / dpi`` of
-  where the screenshot pixel is: 125%, 150%, 175% drift. ``get_awareness`` reads
-  the real state so this is detected, not assumed.
-* (b) Mixed-DPI monitors. A virtualized process sees each monitor at a
-  different factor, so the point must be converted with the scale of the
-  monitor it lies on (``to_click_coords``).
-* (c) Picking the capture monitor from the foreground window by left/top alone
-  confuses monitors that share a left edge (``match_monitor`` uses the full rect).
+``GetDpiForMonitor`` and ``EnumDisplayMonitors`` are themselves virtualized for an unaware or
+system-aware process, so true values are read under a temporary per-monitor-v2 thread context.
 
-Everything that touches Win32 sits in the small helpers below so tests patch
-them; off Windows they report nothing.
+Win32 sits in small helpers so tests patch them; off Windows they report nothing.
 """
 
 from __future__ import annotations
@@ -34,7 +26,6 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
-from ctypes import wintypes
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -45,6 +36,9 @@ UNAWARE = "unaware"
 UNKNOWN = "unknown"
 
 _AWARENESS_NAMES = {0: UNAWARE, 1: SYSTEM, 2: PER_MONITOR}
+_PMV2 = -4  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+
+_warned: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -58,9 +52,6 @@ class MonitorInfo:
     @property
     def scale_pct(self) -> int:
         return round(self.dpi / 96 * 100)
-
-    def contains(self, x: int, y: int) -> bool:
-        return self.left <= x < self.right and self.top <= y < self.bottom
 
 
 def get_awareness() -> str:
@@ -77,6 +68,18 @@ def get_awareness() -> str:
         return UNKNOWN
 
 
+def set_process_per_monitor_v2() -> bool:
+    """Ask Windows for per-monitor-v2 for the whole process. False when it did not take."""
+    if sys.platform != "win32":
+        return False
+    try:
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        return bool(user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(_PMV2)))
+    except (AttributeError, OSError):
+        return False
+
+
 def get_system_dpi() -> int:
     if sys.platform != "win32":
         return 96
@@ -87,13 +90,24 @@ def get_system_dpi() -> int:
 
 
 def enum_monitors() -> list[MonitorInfo]:
-    """Every display with its rect and effective DPI (EnumDisplayMonitors + GetDpiForMonitor)."""
+    """Every display's TRUE physical rect and effective DPI, whatever the process awareness.
+
+    Read under a temporary per-monitor-v2 thread context (restored afterwards), because the
+    plain calls return virtualized values to an unaware or system-aware process.
+    """
     if sys.platform != "win32":
         return []
     found: list[MonitorInfo] = []
+    user32 = None
+    old_ctx = None
     try:
+        from ctypes import wintypes
+
         user32 = ctypes.windll.user32  # type: ignore[attr-defined]
         shcore = ctypes.windll.shcore  # type: ignore[attr-defined]
+        user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        old_ctx = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(_PMV2))
         proc_t = ctypes.WINFUNCTYPE(  # type: ignore[attr-defined]
             ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(wintypes.RECT), ctypes.c_void_p,
         )
@@ -111,15 +125,13 @@ def enum_monitors() -> list[MonitorInfo]:
         user32.EnumDisplayMonitors(None, None, proc_t(_cb), None)
     except Exception as exc:
         logger.debug("enum_monitors: %s", exc)
+    finally:
+        if user32 is not None and old_ctx:
+            try:
+                user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(old_ctx))
+            except Exception:
+                pass
     return found
-
-
-def monitor_from_point(x: int, y: int, monitors: list[MonitorInfo] | None = None) -> MonitorInfo | None:
-    """The monitor whose rect contains the point (physical virtual-desktop pixels)."""
-    for mon in monitors if monitors is not None else enum_monitors():
-        if mon.contains(x, y):
-            return mon
-    return None
 
 
 def match_monitor(mss_monitors: list[dict], rect: tuple[int, int, int, int]) -> dict | None:
@@ -130,33 +142,17 @@ def match_monitor(mss_monitors: list[dict], rect: tuple[int, int, int, int]) -> 
     return None
 
 
-def to_click_coords(
-    x: int,
-    y: int,
-    *,
-    awareness: str,
-    monitors: list[MonitorInfo],
-    system_dpi: int = 96,
-) -> tuple[int, int]:
-    """Convert a physical screenshot coordinate to what the click API expects.
-
-    Per-monitor aware (or unknown): identity, the click API is physical too.
-    System-aware: the click space is the system DPI, so the factor is
-    ``system_dpi / monitor_dpi``. Unaware: the click space is 96 DPI. The point is
-    scaled around its monitor's origin, which keeps negative-origin monitors in place.
-    """
-    if awareness not in (SYSTEM, UNAWARE):
-        return x, y
-    mon = monitor_from_point(x, y, monitors)
-    if mon is None:
-        return x, y
-    target = system_dpi if awareness == SYSTEM else 96
-    factor = target / mon.dpi
-    return round(mon.left + (x - mon.left) * factor), round(mon.top + (y - mon.top) * factor)
+def drift_expected(awareness: str, system_dpi: int, monitors: list[MonitorInfo]) -> bool:
+    """True when clicks can really drift: unaware, or system-aware with a monitor off the system DPI."""
+    if awareness == UNAWARE:
+        return True
+    if awareness == SYSTEM:
+        return any(m.dpi != system_dpi for m in monitors)
+    return False
 
 
 def display_report() -> dict:
-    """Awareness plus per-monitor DPI and scale, for logs and the run's host.json."""
+    """Process awareness plus every monitor's true DPI and scale, for logs and displays.json."""
     return {
         "awareness": get_awareness(),
         "system_dpi": get_system_dpi(),
@@ -167,15 +163,52 @@ def display_report() -> dict:
     }
 
 
-def log_awareness() -> str:
-    """Warn, with the fix, when the process is not per-monitor aware. Cheap: always on."""
+def _warn_once(key: str, message: str, *args: object) -> None:
+    if key not in _warned:
+        _warned.add(key)
+        logger.warning(message, *args)
+
+
+def warn_if_drifting() -> str:
+    """Warn once, only when it matters (see ``drift_expected``). Returns the awareness."""
     awareness = get_awareness()
-    if awareness in (SYSTEM, UNAWARE):
-        logger.warning(
-            "CoordDriftWarning: process DPI awareness is %s, not per-monitor. Another library likely set it "
-            "before Operon. Clicks drift on any display not at 100%%. Fix: launch Operon from a clean "
-            "interpreter (import nothing that sets DPI awareness first), or set OPERON_DPI_CHECK=on so "
-            "click coordinates are converted per monitor.",
+    if awareness in (SYSTEM, UNAWARE) and drift_expected(awareness, get_system_dpi(), enum_monitors()):
+        _warn_once(
+            "drift",
+            "CoordDriftWarning: process DPI awareness is %s and a display's scale differs from what the "
+            "process sees, so clicks can drift. Fix: set OPERON_DPI_AWARE=on (per-monitor-v2 is then set "
+            "before pyautogui loads).",
             awareness,
+        )
+    return awareness
+
+
+def apply_awareness_early() -> str:
+    """OPERON_DPI_AWARE: set per-monitor-v2 now, before pyautogui is imported. Returns the awareness.
+
+    Does nothing when the flag is off or off Windows. If the awareness is still not per-monitor
+    afterwards, something else already fixed it: warn once and name the likely culprit.
+    """
+    if sys.platform != "win32":
+        return UNKNOWN
+    try:
+        from operon.core.settings import get_settings
+
+        if not get_settings().dpi_aware:
+            return UNKNOWN
+    except Exception as exc:  # a broken config is reported at startup, not here
+        logger.debug("apply_awareness_early: settings unavailable: %s", exc)
+        return UNKNOWN
+    set_process_per_monitor_v2()
+    awareness = get_awareness()
+    if awareness != PER_MONITOR:
+        early = sorted(m for m in ("pyautogui", "pyscreeze", "mss", "tkinter", "PIL.ImageGrab") if m in sys.modules)
+        _warn_once(
+            "aware",
+            "OPERON_DPI_AWARE is on but the process is still %s: something fixed the DPI awareness before "
+            "Operon (already imported: %s; or an application manifest). Import operon.executor.desktop "
+            "first, or start Operon from a clean interpreter.",
+            awareness,
+            ", ".join(early) or "none of the known suspects",
         )
     return awareness

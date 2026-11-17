@@ -26,6 +26,11 @@ from operon.agent.perception.change_note import ChangeNoteBuffer
 from operon.agent.perception.settle import signature_from_rgb
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
+from operon.executor import dpi
+
+# OPERON_DPI_AWARE: pyautogui calls SetProcessDPIAware() when imported, which locks the process
+# at system-aware for good. Per-monitor-v2 has to be set first, so this runs before that import.
+dpi.apply_awareness_early()
 
 try:
     import pyautogui
@@ -50,17 +55,16 @@ except Exception as exc:  # pragma: no cover - exercised on headless CI
         scroll=_unavailable,
     )
 
-from operon.models.capture import CaptureFrame
-from operon.models.common import FailureCategory, LoopStage
-from operon.models.execution import (
+from operon.models.capture import CaptureFrame  # noqa: E402
+from operon.models.common import FailureCategory, LoopStage  # noqa: E402
+from operon.models.execution import (  # noqa: E402
     ExecutedAction,
     ExecutionAttemptTrace,
     ExecutionTrace,
 )
-from operon.models.policy import ActionType, AgentAction
+from operon.models.policy import ActionType, AgentAction  # noqa: E402
 
-from . import dpi
-from .browser import Executor
+from .browser import Executor  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +232,7 @@ def _set_dpi_awareness() -> None:
         # PMv2: -4 == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (Win10 1607+)
         # The handle must be passed pointer-sized; a plain int is 32-bit and the call fails.
         # It also fails (returns 0, no exception) when awareness was already fixed, e.g. by
-        # pyautogui's import-time SetProcessDPIAware: dpi.log_awareness() reports that (KAN-90).
+        # pyautogui's import-time SetProcessDPIAware: dpi.warn_if_drifting() reports that (KAN-90).
         ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # type: ignore[attr-defined]
     except (AttributeError, OSError):
         try:
@@ -421,7 +425,7 @@ class DesktopExecutor(Executor):
 
         _set_dpi_awareness()
         if not get_settings().test_safe_mode:
-            dpi.log_awareness()
+            dpi.warn_if_drifting()
             validate_display_baseline()
             self._noise_floor, self._servo_threshold = self._calibrate_servo_threshold()
         else:
@@ -433,25 +437,6 @@ class DesktopExecutor(Executor):
         )
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0
-
-    def _click_xy(self, x: int, y: int) -> tuple[int, int]:
-        """Screenshot coordinate -> the coordinate the click API takes (OPERON_DPI_CHECK, KAN-90).
-
-        Off: unchanged. On: a per-monitor aware process is identity; a virtualized one
-        (system-aware or unaware) is converted with the scale of the monitor under the point.
-        The visual servo keeps sampling the original screenshot coordinate.
-        """
-        if not get_settings().dpi_check:
-            return x, y
-        awareness = dpi.get_awareness()
-        if awareness not in (dpi.SYSTEM, dpi.UNAWARE):
-            return x, y
-        cx, cy = dpi.to_click_coords(
-            x, y, awareness=awareness, monitors=dpi.enum_monitors(), system_dpi=dpi.get_system_dpi(),
-        )
-        if (cx, cy) != (x, y):
-            logger.info("DPI-virtualized (%s): click (%d, %d) -> (%d, %d)", awareness, x, y, cx, cy)
-        return cx, cy
 
     def set_current_run_id(self, run_id: str) -> None:
         """Set the active run ID so launched processes are tracked per run."""
@@ -948,7 +933,7 @@ class DesktopExecutor(Executor):
         if gate is not None:
             return gate
         try:
-            await asyncio.to_thread(pyautogui.click, *self._click_xy(action.x, action.y))
+            await asyncio.to_thread(pyautogui.click, action.x, action.y)
             await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
@@ -960,7 +945,7 @@ class DesktopExecutor(Executor):
         if gate is not None:
             return gate
         try:
-            await asyncio.to_thread(pyautogui.doubleClick, *self._click_xy(action.x, action.y))
+            await asyncio.to_thread(pyautogui.doubleClick, action.x, action.y)
             await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Double-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
@@ -972,7 +957,7 @@ class DesktopExecutor(Executor):
         if gate is not None:
             return gate
         try:
-            await asyncio.to_thread(pyautogui.click, *self._click_xy(action.x, action.y), clicks=3, interval=0.05)
+            await asyncio.to_thread(pyautogui.click, action.x, action.y, clicks=3, interval=0.05)
             await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Triple-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
@@ -984,7 +969,7 @@ class DesktopExecutor(Executor):
         if gate is not None:
             return gate
         try:
-            await asyncio.to_thread(pyautogui.rightClick, *self._click_xy(action.x, action.y))
+            await asyncio.to_thread(pyautogui.rightClick, action.x, action.y)
             await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()
             return self._ok(action, f"Right-clicked at ({action.x}, {action.y})", after_path).model_copy(update={"visual_variance": variance})
@@ -1021,7 +1006,7 @@ class DesktopExecutor(Executor):
                 # Cursor blink and antialiasing make raw byte equality unreliable
                 # (bytes always differ); compare region means with a tolerance.
                 pre_pixels = await asyncio.to_thread(self._sample_region, action.x, action.y)
-                await asyncio.to_thread(pyautogui.click, *self._click_xy(action.x, action.y))
+                await asyncio.to_thread(pyautogui.click, action.x, action.y)
                 await asyncio.sleep(0.15)
                 post_pixels = await asyncio.to_thread(self._sample_region, action.x, action.y)
                 pre_mean = self._region_mean(pre_pixels)
@@ -1034,7 +1019,7 @@ class DesktopExecutor(Executor):
                         "Focus verification: no visual change at (%d, %d) (mean delta=%.2f), retrying click",
                         action.x, action.y, abs(post_mean - pre_mean),
                     )
-                    await asyncio.to_thread(pyautogui.click, *self._click_xy(action.x, action.y))
+                    await asyncio.to_thread(pyautogui.click, action.x, action.y)
                     await asyncio.sleep(0.25)
             if action.clear_before_typing:
                 await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'a')
@@ -1169,11 +1154,11 @@ class DesktopExecutor(Executor):
         try:
             # Use explicit mouseDown/moveTo/mouseUp for reliable drags on Windows.
             # pyautogui.dragTo can fail when DPI scaling or focus issues occur.
-            await asyncio.to_thread(pyautogui.moveTo, *self._click_xy(action.x, action.y))
+            await asyncio.to_thread(pyautogui.moveTo, action.x, action.y)
             await asyncio.sleep(0.15)
             await asyncio.to_thread(pyautogui.mouseDown)
             await asyncio.sleep(0.1)
-            await asyncio.to_thread(pyautogui.moveTo, *self._click_xy(action.x_end, action.y_end), duration=0.6)
+            await asyncio.to_thread(pyautogui.moveTo, action.x_end, action.y_end, duration=0.6)
             await asyncio.sleep(0.1)
             await asyncio.to_thread(pyautogui.mouseUp)
             await asyncio.sleep(0.3)
@@ -1217,7 +1202,7 @@ class DesktopExecutor(Executor):
         if action.x is None or action.y is None:
             return self._fail(action, "hover requires x, y coordinates", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
         try:
-            await asyncio.to_thread(pyautogui.moveTo, *self._click_xy(action.x, action.y))
+            await asyncio.to_thread(pyautogui.moveTo, action.x, action.y)
             await asyncio.sleep(0.15)
             after_path = await self._capture_after()
             return self._ok(action, f"Hovered at ({action.x}, {action.y})", after_path)

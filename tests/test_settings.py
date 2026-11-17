@@ -173,7 +173,7 @@ _EXPERIMENTAL_OFF = [
     ("change_note", False),
     ("focus_guard", False),
     ("trust_categories", False),
-    ("dpi_check", False),
+    ("dpi_aware", False),
     ("planner", False),
     ("task_note", False),
     ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in

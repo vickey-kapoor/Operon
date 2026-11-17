@@ -139,8 +139,8 @@ class Settings(BaseModel):
     change_note: bool = _env_field("OPERON_CHANGE_NOTE", False)
     # Windows desktop: do not act when another process took focus since the capture (KAN-92).
     focus_guard: bool = _env_field("OPERON_FOCUS_GUARD", False)
-    # Windows desktop: convert click coordinates when the process is DPI-virtualized (KAN-90).
-    dpi_check: bool = _env_field("OPERON_DPI_CHECK", False)
+    # Windows desktop: make the process per-monitor-v2 DPI aware before pyautogui loads (KAN-90).
+    dpi_aware: bool = _env_field("OPERON_DPI_AWARE", False)
     # A cheaper model writes a short plan once at task start (KAN-112).
     planner: bool = _env_field("OPERON_PLANNER", False)
     # A running note of the task, the plan and the last actions, sent with each step (KAN-102).
@@ -354,7 +354,7 @@ class _Parser:
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),
             change_note=self.flag("OPERON_CHANGE_NOTE", "off"),
             focus_guard=self.flag("OPERON_FOCUS_GUARD", "off"),
-            dpi_check=self.flag("OPERON_DPI_CHECK", "off"),
+            dpi_aware=self.flag("OPERON_DPI_AWARE", "off"),
             planner=self.flag("OPERON_PLANNER", "off"),
             task_note=self.flag("OPERON_TASK_NOTE", "off"),
             task_note_max_items=min(50, max(1, self.number("OPERON_TASK_NOTE_MAX_ITEMS", "8", int, fatal=False))),

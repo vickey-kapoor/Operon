@@ -28,8 +28,8 @@ provider; Claude and GPT run on 2 nights a week to keep the extra cost to about 
 # Long suite: 21 multi-app tasks from the /apps/ workspace page (email -> act -> reply), 20-50 steps each
 .venv\Scripts\python -m evals.live_bench --suite long
 .venv\Scripts\python -m evals.local_apps   # serve the local site on :8765 to look at it
-# Perception experiments (KAN-115): batch/nightly cell words settle, note, planner (browser only) turn on
-# OPERON_SETTLE_DETECT / OPERON_CHANGE_NOTE / OPERON_PLANNER for that cell, e.g. "browser thin dynamic x3 settle note".
+# Perception experiments (KAN-115): batch/nightly cell words settle, note, planner, expect (browser only) turn on
+# OPERON_SETTLE_DETECT / OPERON_CHANGE_NOTE / OPERON_PLANNER / OPERON_EXPECT_CHECK for that cell, e.g. "browser thin dynamic x3 settle note".
 # Dynamic suite (KAN-114): 7 tasks on screens that move (toasts, spinners, errors that vanish, late results),
 # graded from /state (evals/dynamic_apps.py, dynamic_tasks.py). Measures OPERON_SETTLE_DETECT / OPERON_CHANGE_NOTE (A/B is KAN-115).
 # In no season. Browser only; run it through the nightly queue ("dynamic" is a suite word) or by hand:

@@ -14,7 +14,7 @@ cost cap::
     hybrid full ref=main
 
 Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
-``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``, ``settle|note|planner`` (KAN-115: perception experiments, browser only)
+``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``, ``settle|note|planner|expect`` (KAN-115/116: perception experiments, browser only)
 (KAN-82: OPERON_ZOOM dense or always), ``model=<profile>`` (KAN-168: run Claude or GPT on the same cell, thin with the model's own done; the profile is a key of ``src/operon/agent/backends/model_adapter/models.yaml``, browser and desktop only), ``season=<n>``, ``pr=<number>`` (that PR's head) or
 ``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
 cell's cost cap, default 3, repeats included). ``azure`` and ``gemini`` are accepted and change nothing: batch
@@ -59,7 +59,7 @@ MODEL_CELLS = {
     "claude-sonnet-5-5": "Claude Sonnet 5.5",
     "openai-computer-use": "GPT",
 }
-FEATURES = {"settle": "OPERON_SETTLE_DETECT", "note": "OPERON_CHANGE_NOTE", "planner": "OPERON_PLANNER"}
+FEATURES = {"settle": "OPERON_SETTLE_DETECT", "note": "OPERON_CHANGE_NOTE", "planner": "OPERON_PLANNER", "expect": "OPERON_EXPECT_CHECK"}
 
 _CAP = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,2})?$")
 
@@ -78,7 +78,7 @@ class Cell:
     tools: str = "off"
     zoom: str = "off"
     model: str = ""  # KAN-168: a registry profile (MODEL_CELLS); empty is Gemini computer use
-    features: tuple[str, ...] = ()  # KAN-115: settle, note, planner (the perception flags, off by default)
+    features: tuple[str, ...] = ()  # KAN-115: settle, note, planner, expect (the perception flags, off by default)
     season: str = ""
     pr: str = ""
     ref: str = ""
@@ -190,14 +190,14 @@ def parse_line(line: str, number: int) -> Cell | None:
     if category == "hybrid" and cell.suite not in HYBRID_SUITES:
         raise BatchError(f"{where}: Hybrid has no {cell.suite} suite; use core, smoke or all.")
     if cell.features and category != "browser":
-        raise BatchError(f"{where}: settle, note and planner are browser only for now.")
+        raise BatchError(f"{where}: settle, note, planner and expect are browser only for now.")
     if cell.model:
         if category == "hybrid":
             raise BatchError(f"{where}: model= runs in the browser and on the desktop; Hybrid is Gemini only for now.")
         if cell.profile == "full" and "full" in text.split():
             raise BatchError(f"{where}: a model= cell runs thin with the model's own done; drop full.")
         if cell.critic or cell.features or cell.zoom != "off" or cell.tools != "off":
-            raise BatchError(f"{where}: model= cells take no same-critic, tools, zoom, settle, note or planner.")
+            raise BatchError(f"{where}: model= cells take no same-critic, tools, zoom, settle, note, planner or expect.")
         cell.profile = "thin"
     if cell.critic == "same" and cell.profile != "full":
         raise BatchError(f"{where}: same-critic picks the full harness's step critic; drop thin.")

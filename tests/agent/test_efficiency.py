@@ -6,7 +6,7 @@ import json
 
 from evals.__main__ import waste_cell
 from evals.harness import run_scenario
-from evals.scenarios import cu_click_then_done
+from evals.scenarios import cu_click_then_done, cu_relaunch_runaway
 from operon.agent.efficiency import (
     compute_efficiency,
     efficiency_for_response,
@@ -119,9 +119,90 @@ def test_waste_cell_handles_missing() -> None:
     assert waste_cell({"wasted_steps": 1, "total_steps": 4}) == "1/4"
 
 
-def test_evals_table_renders(capsys) -> None:
-    from evals.__main__ import main
+def test_evals_table_renders(capsys, monkeypatch) -> None:
+    import logging
 
-    assert main([]) == 0
+    import evals.__main__ as evals_main
+
+    monkeypatch.setattr(evals_main, "SCENARIOS", [cu_click_then_done])
+    monkeypatch.setattr(logging, "disable", lambda *_a, **_k: None)
+    monkeypatch.setenv("OPERON_STRICT_ERRORS", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-test-key")
+
+    assert evals_main.main([]) == 0
     out = capsys.readouterr().out
-    assert "waste" in out.splitlines()[0] and "correct" in out
+    assert "waste" in out.splitlines()[0] and "1/1 correct" in out
+
+
+async def test_unfinished_run_is_still_scored_by_the_harness() -> None:
+    result = await run_scenario(cu_relaunch_runaway())
+    assert result.efficiency is not None and result.efficiency["total_steps"] == result.steps
+    assert waste_cell(result.efficiency) != "-"
+
+
+async def test_step_budget_exhaustion_saves_efficiency(tmp_path, monkeypatch) -> None:
+    from evals import harness
+    from operon.models.common import RunStatus, RunTaskRequest, StepRequest
+
+    monkeypatch.setenv("OPERON_TEST_SAFE_MODE", "true")
+    scenario = cu_click_then_done()
+    world = harness._World(scenario, tmp_path)
+    loop, _executor, _client = harness._build_loop(scenario, world, tmp_path)
+    run = await loop.start_run(RunTaskRequest(intent=scenario.intent, max_steps=1))
+    first = await loop.step_run(StepRequest(run_id=run.run_id))
+    assert first.status is RunStatus.RUNNING
+    final = await loop.step_run(StepRequest(run_id=run.run_id))  # budget used: the run fails here
+    assert final.status is RunStatus.FAILED
+
+    state = await loop.run_store.get_run(run.run_id)
+    assert state.efficiency is not None and state.efficiency["total_steps"] == 1
+    assert (tmp_path / "runs" / run.run_id / "efficiency.json").exists()
+
+
+async def test_efficiency_json_is_written(monkeypatch) -> None:
+    import tempfile
+    from pathlib import Path
+
+    seen: dict = {}
+
+    class Keep(tempfile.TemporaryDirectory):  # keep the files so the test can read them
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            seen["root"] = self.name
+            seen["keep_alive"] = self  # its finalizer would delete the directory on garbage collection
+
+        def cleanup(self) -> None:
+            return None
+
+    monkeypatch.setattr("evals.harness.tempfile.TemporaryDirectory", Keep)
+    result = await run_scenario(cu_click_then_done())
+    files = list(Path(seen["root"]).glob("runs/*/efficiency.json"))
+    assert len(files) == 1
+    assert json.loads(files[0].read_text(encoding="utf-8")) == result.efficiency
+
+
+def test_get_run_endpoints_carry_efficiency(tmp_path) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi.testclient import TestClient
+
+    from operon.api.server import app
+    from operon.models.common import RunStatus
+    from operon.models.state import AgentState
+
+    run_dir = tmp_path / "r1"
+    run_dir.mkdir()
+    (run_dir / "run.jsonl").write_text(json.dumps(_step(CLICK_A)) + "\n", encoding="utf-8")
+    client = TestClient(app)
+    for module, getter, url in (
+        ("browser", "get_agent_loop", "/run/r1"),
+        ("desktop", "get_desktop_agent_loop", "/desktop/run/r1"),
+    ):
+        for status, expect in ((RunStatus.FAILED, True), (RunStatus.RUNNING, False)):
+            state = AgentState(run_id="r1", intent="x", status=status)
+            store = SimpleNamespace(get_run=AsyncMock(return_value=state), root_dir=tmp_path)
+            with patch(f"operon.api.routes.{module}.{getter}") as loop:
+                loop.return_value.run_store = store
+                body = client.get(url).json()
+            assert (body["efficiency"] is not None) is expect, (module, status)

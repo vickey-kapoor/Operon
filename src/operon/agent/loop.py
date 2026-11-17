@@ -666,6 +666,7 @@ class AgentLoop:
                 await self._cleanup_completed_run(record.run_id)
             except Exception as exc:
                 self._recovered(record.run_id, "cleanup_after_max_steps", exc)
+            await self._save_efficiency(record)
             return RunResponse(
                 run_id=updated.run_id,
                 status=updated.status,
@@ -788,6 +789,7 @@ class AgentLoop:
         if await self._run_cancelled(ctx.run_id):
             # Stopped while this step captured and asked the model: run nothing.
             _trace("  3 POLICY -> CANCELLED", "run was stopped during this step; not executing")
+            await self._save_efficiency(ctx.record)
             return self._cancelled_response(ctx.record)
 
         # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
@@ -1246,7 +1248,7 @@ class AgentLoop:
     async def _save_efficiency(self, state) -> None:
         """Score the finished run (KAN-85) into ``efficiency.json`` and the saved state."""
         root = getattr(self.run_store, "root_dir", None)
-        if not isinstance(root, (str, Path)):
+        if root is None:
             return
         try:
             await bg_writer.flush()  # the run log and step timings are written in the background
@@ -1786,6 +1788,7 @@ class AgentLoop:
             await self._cleanup_completed_run(record.run_id)
         except Exception as exc:
             self._recovered(record.run_id, "cleanup_after_pre_step_failure", exc)
+        await self._save_efficiency(record)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,

@@ -11,6 +11,7 @@ import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from operon.agent import control as run_control
 from operon.agent.actions.grounding import element_center, make_grounder
@@ -74,7 +75,7 @@ from operon.agent.task_note import build_task_note
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.core.settings import get_settings
-from operon.core.vault import available_names, secrets_hint
+from operon.core.vault import action_uses_secret, available_names, secrets_hint
 from operon.executor.browser import Executor
 from operon.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
 from operon.executor.desktop_adapter import DesktopExecutor as UnifiedDesktopExecutor
@@ -1527,14 +1528,18 @@ class AgentLoop:
             _trace("  3 POLICY -> CLICK_TEXT", repr(text))
         return text
 
-    async def _current_url_for_trust_gate(self, run_id: str, *, log: bool = False) -> str | None:
+    async def _current_url_for_trust_gate(
+        self, run_id: str, *, log: bool = False, secret: bool = False
+    ) -> str | None:
         """The browser's current URL, only when the trust gate has a domain allowlist
-        to judge it against; None otherwise or when the executor has no page.
+        to judge it against (or ``secret``: the action types a stored secret, whose
+        approval must name the site, KAN-103); None otherwise or when the executor
+        has no page.
 
         ``log`` (the pre-execution check) appends it to the run's
         ``trust_gate_urls.jsonl``, so a replay (evals/replay.py) can show the gate
         the same pages."""
-        if not (self._trust_gate.enabled and self._trust_gate.allow_domains):
+        if not self._trust_gate.enabled or not (self._trust_gate.allow_domains or secret):
             return None
         if not hasattr(self.executor, "current_url_for_run"):
             return None
@@ -1546,6 +1551,15 @@ class AgentLoop:
         if log:
             self._log_trust_gate_url(run_id, url)
         return url
+
+    def _secret_site_suffix(self, action: AgentAction, current_url: str | None) -> str:
+        """`` on <host>`` for an approval that types a stored secret in the browser, so the
+        person sees where the password goes (batch screenshots have no address bar);
+        `` on an unknown site`` when the URL cannot be read. Desktop: unchanged."""
+        if not action_uses_secret(action) or not hasattr(self.executor, "current_url_for_run"):
+            return ""
+        host = (urlparse(current_url).hostname or "") if current_url else ""
+        return f" on {host}" if host else " on an unknown site"
 
     def _log_trust_gate_url(self, run_id: str, url: str | None) -> None:
         root = getattr(self.run_store, "root_dir", None)
@@ -1645,7 +1659,8 @@ class AgentLoop:
                     )
                 if trust.category:
                     return (
-                        f"{trust.category.capitalize()}: approve {_describe_for_approval(leaf)}? "
+                        f"{trust.category.capitalize()}: approve {_describe_for_approval(leaf)}"
+                        f"{self._secret_site_suffix(leaf, current_url)}? "
                         f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
                     )
                 return (
@@ -1721,7 +1736,9 @@ class AgentLoop:
                 )
             })
 
-        current_url = await self._current_url_for_trust_gate(record.run_id, log=True)
+        current_url = await self._current_url_for_trust_gate(
+            record.run_id, log=True, secret=action_uses_secret(decision.action)
+        )
         gate_text = self._pre_execution_gate_text(
             decision,
             intent=state.intent,
@@ -2481,7 +2498,7 @@ class AgentLoop:
         so a changed target needs ALLOW again. ``frame`` is the fresh capture the retry
         was re-grounded on: the text under the new click is read from it (KAN-163)."""
         run_id = record.run_id
-        current_url = await self._current_url_for_trust_gate(run_id)
+        current_url = await self._current_url_for_trust_gate(run_id, secret=action_uses_secret(retry_action))
         permission_mode = getattr(state, "permission_mode", None)
         approved_same = bool(self._trust_approved.get(run_id)) and (
             self._gate_fingerprint(original_action) == self._gate_fingerprint(retry_action)

@@ -79,7 +79,7 @@ printer, microphone and camera redirection are off. Everything inside is wiped o
 
 Limits: one sandbox at a time (a Windows rule); the Microsoft Store Python cannot be shared,
 so use Python from python.org; screen recordings stay inside the sandbox. Settings:
-`OPERON_SANDBOX_MEMORY_MB` (4096), `OPERON_SANDBOX_START_TIMEOUT` (240 seconds).
+`OPERON_SANDBOX_MEMORY_MB` (4096), `OPERON_SANDBOX_START_TIMEOUT` (240 seconds). Once the sandbox has run its logon command the guest gets at least 150 more seconds to report ready, even if the budget is used up. If the sandbox closes before the guest is up (a busy or low-memory PC), the start is retried once, so the worst case is about two budgets plus up to 90 s waiting for the closing sandbox between them, and up to 90 s waiting for any earlier sandbox before the first try.
 
 ### End-to-end test (KAN-93)
 

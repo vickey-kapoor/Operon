@@ -334,3 +334,29 @@ def test_a_guest_reported_host_that_is_not_a_private_ip_is_not_trusted_for_secre
     monkeypatch.setattr("operon.environments.remote.wait_for_guest", lambda *a, **k: {"ok": True})
     provider.start()
     assert provider.build_executor()._trusted_host is None
+
+
+def test_sandbox_running_survives_undecodable_output(monkeypatch):
+    monkeypatch.setattr(ws.sys, "platform", "win32")
+    monkeypatch.setattr(ws.shutil, "which", lambda name: "tasklist")
+
+    def boom(*a, **k):
+        raise UnicodeDecodeError("cp850", b"\xfc", 0, 1, "bad")
+
+    monkeypatch.setattr(ws.subprocess, "run", boom)
+    assert ws.sandbox_running() is False
+
+
+def test_retry_fails_fast_when_the_old_sandbox_will_not_go(provider, monkeypatch):
+    opens: list[Path] = []
+    monkeypatch.setattr(provider, "_open", lambda wsb: opens.append(wsb))
+
+    def closed():
+        raise ws.SandboxClosedEarly("Windows Sandbox closed before x")
+
+    monkeypatch.setattr(provider, "wait_until_ready", closed)
+    calls = iter([True, False, False, False])
+    monkeypatch.setattr(ws, "wait_for_sandbox_gone", lambda t, **k: next(calls))
+    with pytest.raises(RuntimeError, match="not reopening"):
+        provider.start()
+    assert len(opens) == 1

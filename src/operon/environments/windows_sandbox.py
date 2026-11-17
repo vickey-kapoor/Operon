@@ -77,10 +77,11 @@ def sandbox_running() -> bool:
             ["tasklist", "/FI", "IMAGENAME eq WindowsSandboxServer.exe", "/NH"],
             capture_output=True,
             text=True,
+            errors="replace",  # localized tasklist output may not decode in the locale codec
             timeout=20,
             check=False,
         ).stdout
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return False
     return "WindowsSandboxServer.exe" in out
 
@@ -315,9 +316,13 @@ class WindowsSandboxProvider(EnvironmentProvider):
         try:
             try:
                 health = self.wait_until_ready()
-            except SandboxClosedEarly:
-                logger.warning("windows-sandbox: closed before logon (PC busy or low on memory); retrying once")
-                wait_for_sandbox_gone(90)
+            except SandboxClosedEarly as early:
+                logger.warning("windows-sandbox: %s (PC busy or low on memory); retrying once", early)
+                if not wait_for_sandbox_gone(90):
+                    raise RuntimeError(
+                        "Windows Sandbox closed early and the previous one is still shutting down; "
+                        "not reopening. Wait a minute and start again."
+                    ) from early
                 self.write_files()
                 self._open(wsb)
                 health = self.wait_until_ready()

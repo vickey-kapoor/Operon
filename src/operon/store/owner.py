@@ -14,6 +14,7 @@ import logging
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,80 @@ def claim(run_dir: Path) -> None:
         _path(run_dir).write_text(json.dumps(data), encoding="utf-8")
     except (OSError, ValueError) as exc:
         logger.warning("could not write %s: %s", _path(run_dir), exc)
+
+
+class RunOwnedError(ValueError):
+    """Another live process already owns (is resuming) the run."""
+
+
+_GUARD_FILE = "owner.takeover"
+_STALE_PARTIAL_S = 5.0
+
+
+def _owner_data() -> str:
+    pid = os.getpid()
+    return json.dumps({"pid": pid, "created": process_create_time(pid), "host": socket.gethostname()})
+
+
+def _create_exclusive(path: Path, text: str) -> bool:
+    """Create ``path`` with ``text`` only if it does not exist (atomic across processes)."""
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return True
+
+
+def _held_by_other(run_dir: Path) -> int | None:
+    """The pid of a live owner other than this process, or None when free to take over.
+    An unreadable file counts as held until it is a few seconds old (its writer may be mid-write)."""
+    path = _path(run_dir)
+    owner = read(run_dir)
+    if owner is None:
+        try:
+            return -1 if time.time() - path.stat().st_mtime < _STALE_PARTIAL_S else None
+        except OSError:
+            return None  # gone meanwhile
+    if owner["pid"] == os.getpid() and owner.get("host") in (None, socket.gethostname()):
+        return None
+    return owner["pid"] if owner_alive(owner) else None
+
+
+def acquire(run_dir: Path) -> None:
+    """Exclusively claim the run for this process, or raise ``RunOwnedError`` when another
+    live process owns it. The claim is ``owner.json`` created with O_EXCL, so of two
+    processes only one wins. A dead owner's file is taken over under a short-lived guard
+    file, so two processes that both see it stale cannot both remove and recreate it.
+    Re-acquiring a run this process already owns succeeds."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = _path(run_dir)
+    text = _owner_data()
+    for _ in range(3):
+        if _create_exclusive(path, text):
+            return
+        holder = _held_by_other(run_dir)
+        if holder is not None:
+            raise RunOwnedError(f"run {run_dir.name} is already being resumed by pid {holder}")
+        guard = run_dir / _GUARD_FILE
+        if not _create_exclusive(guard, text):
+            try:
+                if time.time() - guard.stat().st_mtime > 10 * _STALE_PARTIAL_S:
+                    guard.unlink(missing_ok=True)  # a crashed taker-over
+            except OSError:
+                pass
+            time.sleep(0.05)
+            continue  # someone is taking over right now: look again
+        try:
+            if _held_by_other(run_dir) is not None:
+                continue  # it was claimed while we took the guard: loop re-reads and rejects
+            path.unlink(missing_ok=True)
+            if _create_exclusive(path, text):
+                return
+        finally:
+            guard.unlink(missing_ok=True)
+    raise RunOwnedError(f"run {run_dir.name} is being claimed by another process")
 
 
 def release(run_dir: Path) -> None:

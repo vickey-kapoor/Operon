@@ -622,13 +622,15 @@ class AgentLoop:
         The page and the model conversation are gone: re-register the run on the executor,
         drop any backend conversation, and hand the model a "resuming" hint listing what the
         saved state says was done. Returns what the run was doing when it died."""
+        # Claimed first, across processes: another live process resuming this run is refused
+        # before any state changes or the executor is configured (raises RunOwnedError).
+        acquire = getattr(self.run_store, "acquire_run", None)
+        if callable(acquire):
+            acquire(run_id)  # this process now steps the run: no scan may call it interrupted
         # Cleared before the first await: a second resume of the same run then fails fast
         # instead of resetting the backend or adding a second hint.
         origin, record.interrupted_from = record.interrupted_from, None
         record.stop_reason = None
-        claim = getattr(self.run_store, "claim_run", None)
-        if callable(claim):
-            claim(run_id)  # this process now steps the run: no scan may call it interrupted
         async with self._executor_lock:
             if hasattr(self.executor, "set_current_run_id"):
                 self.executor.set_current_run_id(run_id)

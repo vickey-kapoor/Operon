@@ -157,6 +157,13 @@ class FileBackedRunStore(RunStore):
             return
         run_owner.claim(self._ensure_run_dir(run_id))
 
+    def acquire_run(self, run_id: str) -> None:
+        """Exclusively claim a run being resumed; raises ``RunOwnedError`` if another live
+        process owns it. Only with OPERON_CHECKPOINTS on."""
+        if not get_settings().checkpoints:
+            return
+        run_owner.acquire(self._ensure_run_dir(run_id))
+
     async def save_state(self, state: AgentState) -> None:
         """Persist the current state snapshot to disk."""
         self._runs[state.run_id] = state

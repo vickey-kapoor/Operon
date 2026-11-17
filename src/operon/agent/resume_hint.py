@@ -25,10 +25,13 @@ def build_resume_hint(state: AgentState) -> str:
     if actions:
         recent = actions[-_MAX_ACTIONS:]
         first = len(actions) - len(recent)
+        # The saved lists are trimmed from the front, so line them up from the end.
+        skew = len(actions) - len(state.verification_history)
         lines.append(f"Steps done so far ({state.step_count}); do not repeat what already worked. Last actions:")
         for offset, executed in enumerate(recent):
             index = first + offset
-            verification = state.verification_history[index] if index < len(state.verification_history) else None
+            slot = index - skew
+            verification = state.verification_history[slot] if 0 <= slot < len(state.verification_history) else None
             lines.append(f"- {describe_action(executed.action)} -> {describe_outcome(executed, verification)}")
     else:
         lines.append("No steps were completed before the interruption.")

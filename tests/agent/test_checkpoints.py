@@ -1,10 +1,13 @@
-"""Checkpoint and resume (KAN-80, OPERON_CHECKPOINTS): a run a restart interrupted is
+﻿"""Checkpoint and resume (KAN-80, OPERON_CHECKPOINTS): a run a restart interrupted is
 flagged at startup, never resumed by itself, and continues from the current screen when asked."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
+import socket
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -19,14 +22,38 @@ from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
 from operon.models.state import AgentState
 from operon.models.verification import VerificationResult, VerificationStatus
-from operon.store.checkpoints import list_interrupted, mark_interrupted_runs
+from operon.store import owner as run_owner
+from operon.store.checkpoints import (
+    find_interrupted,
+    list_interrupted,
+    mark_interrupted_runs,
+)
 from operon.store.run_store import FileBackedRunStore
 from tests.fixtures.frontdoor import CLICK_SAVE, PURCHASE, build_loop
 
 STOP = AgentAction(action_type=ActionType.STOP, text="all done")
 
 
-def _crash(root: Path, status: RunStatus, *, steps: int = 3, **fields) -> str:
+DEAD_PID = 2_000_000_000  # no such process
+
+
+def _write_owner(root: Path, run_id: str, owner: str) -> None:
+    """owner: "dead" (a pid that is gone), "live" (this process), "reused" (this pid, another
+    process's creation time) or "none" (a run saved before owner files)."""
+    path = root / run_id / "owner.json"
+    path.unlink(missing_ok=True)
+    pid = os.getpid()
+    created = run_owner.process_create_time(pid)
+    data = {
+        "dead": {"pid": DEAD_PID, "created": 1, "host": socket.gethostname()},
+        "live": {"pid": pid, "created": created, "host": socket.gethostname()},
+        "reused": {"pid": pid, "created": (created or 0) + 12345, "host": socket.gethostname()},
+    }.get(owner)
+    if data is not None:
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _crash(root: Path, status: RunStatus, *, steps: int = 3, owner: str = "dead", **fields) -> str:
     """A run as the dead process left it on disk: ``steps`` clicks done, then ``status``."""
     store = FileBackedRunStore(root)
     state = store.create_run("Save the form", max_steps=10)
@@ -36,6 +63,7 @@ def _crash(root: Path, status: RunStatus, *, steps: int = 3, **fields) -> str:
     for name, value in fields.items():
         setattr(state, name, value)
     store._write_state_sync(state)
+    _write_owner(root, state.run_id, owner)
     return state.run_id
 
 
@@ -83,11 +111,10 @@ def test_the_scan_flags_in_flight_runs_as_interrupted(tmp_path: Path, status: Ru
     assert mark_interrupted_runs(tmp_path) == []  # scanning twice changes nothing
 
 
-def test_the_scan_leaves_finished_runs_and_recent_runs_alone(tmp_path: Path) -> None:
+def test_the_scan_leaves_finished_runs_and_skipped_runs_alone(tmp_path: Path) -> None:
     done = _crash(tmp_path, RunStatus.SUCCEEDED)
     live = _crash(tmp_path, RunStatus.RUNNING)
 
-    assert mark_interrupted_runs(tmp_path, min_age_s=3600) == []  # saved a moment ago: maybe live
     assert mark_interrupted_runs(tmp_path, skip=frozenset({live})) == []
     assert _on_disk(tmp_path, done).status is RunStatus.SUCCEEDED
     assert _on_disk(tmp_path, live).status is RunStatus.RUNNING
@@ -304,3 +331,146 @@ async def test_drive_resumes_an_interrupted_run_instead_of_starting_one() -> Non
 
     assert code == 0 and calls == ["r1"]
     assert "resumed from step 3" in lines[0]
+
+
+# -- liveness: who owns a run ---------------------------------------------------
+
+
+def _age(root: Path, run_id: str, seconds: float = 3600) -> None:
+    old = time.time() - seconds
+    os.utime(root / run_id / "state.json", (old, old))
+
+
+@pytest.mark.parametrize("status", [RunStatus.WAITING_FOR_USER, RunStatus.RUNNING])
+def test_a_quiet_run_with_a_live_owner_is_never_marked(tmp_path: Path, status: RunStatus) -> None:
+    """A paused or taken-over run writes nothing for minutes; its owner is still alive."""
+    run_id = _crash(tmp_path, status, owner="live", in_takeover=True)
+    _age(tmp_path, run_id)
+
+    assert mark_interrupted_runs(tmp_path, min_age_s=120.0) == []
+    assert find_interrupted(tmp_path, min_age_s=120.0) == []
+
+    state = _on_disk(tmp_path, run_id)
+    assert state.status is status and state.in_takeover is True and state.stop_reason is None
+
+
+def test_a_dead_owner_is_marked_however_recent_the_save(tmp_path: Path) -> None:
+    run_id = _crash(tmp_path, RunStatus.RUNNING, owner="dead")
+
+    assert mark_interrupted_runs(tmp_path, min_age_s=120.0) == [run_id]
+    assert not (tmp_path / run_id / "owner.json").exists()
+
+
+def test_pid_reuse_with_another_creation_time_is_marked(tmp_path: Path) -> None:
+    if run_owner.process_create_time(os.getpid()) is None:
+        pytest.skip("no process creation time on this platform")
+    run_id = _crash(tmp_path, RunStatus.RUNNING, owner="reused")  # this pid, but not the process that owned it
+
+    assert mark_interrupted_runs(tmp_path) == [run_id]
+
+
+def test_a_run_without_an_owner_file_falls_back_to_the_age_rule(tmp_path: Path) -> None:
+    fresh = _crash(tmp_path, RunStatus.RUNNING, owner="none")
+    stale = _crash(tmp_path, RunStatus.RUNNING, owner="none")
+    _age(tmp_path, stale)
+
+    assert mark_interrupted_runs(tmp_path, min_age_s=120.0) == [stale]
+    assert _on_disk(tmp_path, fresh).status is RunStatus.RUNNING
+
+
+def test_owner_file_is_written_on_create_and_removed_at_a_terminal_state(tmp_path: Path) -> None:
+    store = FileBackedRunStore(tmp_path)
+    run_id = store.create_run("task").run_id
+    owner = json.loads((tmp_path / run_id / "owner.json").read_text(encoding="utf-8"))
+    assert owner["pid"] == os.getpid() and owner["host"] == socket.gethostname()
+
+    asyncio.run(store.set_status(run_id, RunStatus.WAITING_FOR_USER))
+    assert (tmp_path / run_id / "owner.json").exists()  # a pause is still owned
+    asyncio.run(store.set_status(run_id, RunStatus.SUCCEEDED))
+    assert not (tmp_path / run_id / "owner.json").exists()
+
+
+def test_runs_interrupted_lists_without_writing_anything(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from operon import cli
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPERON_CHECKPOINTS", "on")
+    dead = _crash(tmp_path, RunStatus.RUNNING, owner="dead")
+    live = _crash(tmp_path, RunStatus.WAITING_FOR_USER, owner="live")
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()}
+
+    assert cli.main(["runs", "--interrupted"]) == 0
+
+    out = capsys.readouterr().out
+    assert dead in out and live not in out
+    after = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()}
+    assert after == before  # no file written, changed or removed
+    assert _on_disk(tmp_path, dead).status is RunStatus.RUNNING
+
+
+def test_local_resume_refuses_while_an_api_answers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from operon import cli
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPERON_CHECKPOINTS", "on")
+    run_id = _crash(tmp_path, RunStatus.RUNNING, owner="dead")
+    monkeypatch.setattr(cli, "_api_answers", lambda url: True)
+
+    assert cli.main(["resume", run_id]) == 1
+
+    err = capsys.readouterr().err
+    assert "--request" in err
+    assert _on_disk(tmp_path, run_id).status is RunStatus.RUNNING  # nothing was marked
+
+
+def test_local_resume_marks_only_its_own_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from operon import cli
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPERON_CHECKPOINTS", "on")
+    target = _crash(tmp_path, RunStatus.RUNNING, owner="dead")
+    other = _crash(tmp_path, RunStatus.RUNNING, owner="dead")
+    monkeypatch.setattr(cli, "_api_answers", lambda url: False)
+
+    client = cli._checkpoint_client(cli.build_parser().parse_args(["resume", target]), resume_id=target)
+
+    assert client is not None
+    assert _on_disk(tmp_path, target).stop_reason is StopReason.INTERRUPTED
+    assert _on_disk(tmp_path, other).status is RunStatus.RUNNING
+
+
+async def test_a_second_resume_fails_fast_without_a_second_hint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = _crash(tmp_path, RunStatus.RUNNING)
+    mark_interrupted_runs(tmp_path)
+    loop, _ = build_loop(monkeypatch, tmp_path, [STOP])
+    hints = _use(monkeypatch, loop)
+
+    results = await asyncio.gather(
+        loop.resume_interrupted(run_id), loop.resume_interrupted(run_id), return_exceptions=True
+    )
+
+    assert sum(isinstance(r, ValueError) for r in results) == 1
+    assert sum(isinstance(r, RunResponse) for r in results) == 1
+    assert len([1 for _, source in hints if source == "resume"]) == 1
+    assert (tmp_path / run_id / "owner.json").exists()  # the resumer now owns the run
+
+
+def test_the_resume_hint_lines_verifications_up_from_the_end() -> None:
+    from operon.agent.resume_hint import build_resume_hint
+
+    state = AgentState(run_id="r", intent="Save the form", status=RunStatus.RUNNING, step_count=30)
+    state.action_history = [ExecutedAction(action=CLICK_SAVE, success=True, detail="ok") for _ in range(3)]
+    state.verification_history = [
+        VerificationResult(status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="x")
+    ]  # only the last action was verified
+
+    lines = build_resume_hint(state).splitlines()[-3:]
+
+    assert lines[0].endswith("done") and lines[1].endswith("done") and lines[2].endswith("no visible change")
+

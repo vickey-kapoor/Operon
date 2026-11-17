@@ -582,7 +582,13 @@ class AgentLoop:
         The page and the model conversation are gone: re-register the run on the executor,
         drop any backend conversation, and hand the model a "resuming" hint listing what the
         saved state says was done. Returns what the run was doing when it died."""
+        # Cleared before the first await: a second resume of the same run then fails fast
+        # instead of resetting the backend or adding a second hint.
         origin, record.interrupted_from = record.interrupted_from, None
+        record.stop_reason = None
+        claim = getattr(self.run_store, "claim_run", None)
+        if callable(claim):
+            claim(run_id)  # this process now steps the run: no scan may call it interrupted
         async with self._executor_lock:
             if hasattr(self.executor, "set_current_run_id"):
                 self.executor.set_current_run_id(run_id)
@@ -619,7 +625,6 @@ class AgentLoop:
             return RunResponse(
                 run_id=run_id, status=record.status, intent=record.intent, step_count=record.step_count
             )
-        record.stop_reason = None  # prepared above; resume_run must not do it twice
         return await self.resume_run(run_id)
 
     async def step_run(self, request: StepRequest) -> RunResponse:

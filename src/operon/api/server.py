@@ -49,7 +49,7 @@ async def _lifespan(app: FastAPI):
         try:
             from operon.store.checkpoints import mark_interrupted_runs
 
-            mark_interrupted_runs(runs_dir())
+            mark_interrupted_runs(runs_dir(), min_age_s=120.0)  # owner files decide; age only for older runs
         except Exception as exc:
             logger.warning("interrupted-run scan skipped: %s", exc)
 

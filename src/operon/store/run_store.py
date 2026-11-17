@@ -14,6 +14,7 @@ from operon.core.settings import get_settings
 from operon.models.common import RunStatus
 from operon.models.perception import ScreenPerception
 from operon.models.state import AgentState
+from operon.store import owner as run_owner
 from operon.store.background_writer import bg_writer
 
 
@@ -92,6 +93,7 @@ class FileBackedRunStore(RunStore):
         # /observer/api/run/{run_id} reads before bg_writer flushes state.json.
         self._write_state_sync(record)
         self._write_settings(run_id)
+        run_owner.claim(self._ensure_run_dir(run_id))
         return record
 
     def holds_run(self, run_id: str) -> bool:
@@ -144,7 +146,13 @@ class FileBackedRunStore(RunStore):
             return record
         record.status = status
         self._write_state(record)
+        if status in (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED):
+            run_owner.release(self._ensure_run_dir(run_id))
         return record
+
+    def claim_run(self, run_id: str) -> None:
+        """Make this process the run's owner (a resume), so no scan calls it interrupted."""
+        run_owner.claim(self._ensure_run_dir(run_id))
 
     async def save_state(self, state: AgentState) -> None:
         """Persist the current state snapshot to disk."""

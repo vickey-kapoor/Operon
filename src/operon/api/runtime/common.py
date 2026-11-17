@@ -22,7 +22,6 @@ def test_safe_mode_enabled() -> bool:
     return get_settings().test_safe_mode
 
 
-
 def require_checkpoints() -> None:
     """404 unless OPERON_CHECKPOINTS is on: with it off no run is ever marked interrupted."""
     if not get_settings().checkpoints:

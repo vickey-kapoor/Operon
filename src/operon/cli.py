@@ -295,8 +295,21 @@ def _payload(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
-def _checkpoint_client(args: argparse.Namespace):
-    """A client for the runs/resume commands, or None after printing why it cannot be made."""
+def _api_answers(base_url: str) -> bool:
+    """Whether an Operon API already answers at ``base_url``: its /health, or a key check on it."""
+    import httpx
+
+    try:
+        return httpx.get(f"{base_url.rstrip('/')}/health", timeout=1.5).status_code in {200, 401, 403}
+    except httpx.HTTPError:
+        return False
+
+
+def _checkpoint_client(args: argparse.Namespace, *, resume_id: str | None = None):
+    """A client for the resume command (and `runs --request`), or None after printing why not.
+
+    Locally only the explicit `resume <id>` marks anything, and only that run, and only when
+    its owner process is gone; `runs` never writes."""
     if args.request:
         from operon.api.auth import client_api_key
 
@@ -304,26 +317,42 @@ def _checkpoint_client(args: argparse.Namespace):
     if not get_settings().checkpoints:
         print("operon: checkpoints are off; set OPERON_CHECKPOINTS=on (and restart `operon serve`).", file=sys.stderr)
         return None
-    # This process serves no run yet, so what is still in flight on disk and has not been
-    # saved for two minutes is a dead process's (a live API saves every step).
-    from operon.core.paths import runs_dir
-    from operon.store.checkpoints import mark_interrupted_runs
+    if resume_id is not None:
+        api = get_settings().api_url or _DEFAULT_API
+        if _api_answers(api):
+            print(f"operon resume: an Operon API is running at {api}; resuming here would put two processes on "
+                  f"one run. Use `operon resume {resume_id} --request` instead.", file=sys.stderr)
+            return None
+        from operon.core.paths import runs_dir
+        from operon.store.checkpoints import mark_interrupted_runs
 
-    mark_interrupted_runs(runs_dir(), min_age_s=120.0)
+        # Legacy runs (no owner file) count as dead after two minutes without a save.
+        mark_interrupted_runs(runs_dir(), min_age_s=120.0, only=resume_id)
     return LocalClient()
 
 
 async def _runs(args: argparse.Namespace) -> int:
-    client = _checkpoint_client(args)
-    if client is None:
-        return 1
-    try:
-        runs = await client.interrupted()
-    except Exception as exc:  # noqa: BLE001 - an unreachable API ends the command
-        print(f"operon runs: {exc}", file=sys.stderr)
-        return 1
-    finally:
-        await client.close()
+    if args.request:
+        client = _checkpoint_client(args)
+        try:
+            runs = await client.interrupted()
+        except Exception as exc:  # noqa: BLE001 - an unreachable API ends the command
+            print(f"operon runs: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            await client.close()
+    else:
+        if not get_settings().checkpoints:
+            print("operon: checkpoints are off; set OPERON_CHECKPOINTS=on (and restart `operon serve`).", file=sys.stderr)
+            return 1
+        from operon.core.paths import runs_dir
+        from operon.store.checkpoints import find_interrupted
+
+        # Read-only: what a scan would flag is worked out in memory, nothing is written.
+        runs = [
+            {"run_id": s.run_id, "intent": s.intent, "environment": s.environment or "browser", "step_count": s.step_count}
+            for s in find_interrupted(runs_dir(), min_age_s=120.0)
+        ]
     if not runs:
         print("No interrupted runs.")
         return 0
@@ -334,7 +363,7 @@ async def _runs(args: argparse.Namespace) -> int:
 
 
 async def _resume(args: argparse.Namespace) -> int:
-    client = _checkpoint_client(args)
+    client = _checkpoint_client(args, resume_id=args.run_id)
     if client is None:
         return 1
     if not args.request:

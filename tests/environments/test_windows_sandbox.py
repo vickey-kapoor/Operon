@@ -19,6 +19,7 @@ from operon.environments.windows_sandbox import WindowsSandboxProvider
 def provider(tmp_path, monkeypatch):
     monkeypatch.delenv("OPERON_SANDBOX_MEMORY_MB", raising=False)
     monkeypatch.delenv("OPERON_SANDBOX_START_TIMEOUT", raising=False)
+    monkeypatch.setattr(ws, "sandbox_running", lambda: False)
     return WindowsSandboxProvider(work_dir=tmp_path / "sb")
 
 
@@ -195,6 +196,105 @@ def test_stop_closes_the_sandbox_once(provider, monkeypatch):
     provider.stop()
     assert [argv[2] for argv in killed] == list(ws._SANDBOX_PROCESSES)
     assert not (provider.exchange / "token.txt").exists()
+
+
+def test_logon_script_writes_the_marker_first(provider):
+    lines = provider.guest_command().split("\r\n")
+    assert lines[0] == "@echo off"
+    assert "logon.txt" in lines[1]
+
+
+def test_timeout_says_whether_the_logon_command_ran(provider, monkeypatch):
+    provider.start_timeout_s = 0
+    monkeypatch.setattr(provider, "_open", lambda wsb: None)
+    with pytest.raises(RuntimeError, match="never ran its logon command"):
+        provider.start()
+    monkeypatch.setattr(provider, "_open", lambda wsb: (provider.exchange / ws.LOGON_MARKER).write_text("now"))
+    with pytest.raises(RuntimeError, match="ran its logon command"):
+        provider.start()
+
+
+def test_start_refuses_while_another_sandbox_runs(provider, monkeypatch):
+    monkeypatch.setattr(ws, "sandbox_running", lambda: True)
+    monkeypatch.setattr(ws.time, "sleep", lambda s: None)
+    ticks = iter(range(0, 10_000, 50))
+    monkeypatch.setattr(ws.time, "monotonic", lambda: next(ticks))
+    opened = []
+    monkeypatch.setattr(provider, "_open", lambda wsb: opened.append(wsb))
+    with pytest.raises(RuntimeError, match="still running"):
+        provider.start()
+    assert opened == []
+
+
+def test_start_retries_once_when_the_sandbox_closes_before_logon(provider, monkeypatch):
+    opens: list[Path] = []
+    waits = iter([ws.SandboxClosedEarly("closed"), {"status": "ok"}])
+
+    def fake_wait():
+        outcome = next(waits)
+        if isinstance(outcome, Exception):
+            raise outcome
+        provider._endpoint = "http://x:1"
+        return outcome
+
+    monkeypatch.setattr(provider, "_open", lambda wsb: opens.append(wsb))
+    monkeypatch.setattr(provider, "wait_until_ready", fake_wait)
+    provider.start()
+    assert len(opens) == 2
+
+
+def test_wait_notices_a_sandbox_that_vanished_before_logon(provider, monkeypatch):
+    provider.start_timeout_s = 1000
+    states = iter([True, False])
+    monkeypatch.setattr(ws, "sandbox_running", lambda: next(states))
+    clock = iter(range(0, 100_000, 11))
+    monkeypatch.setattr(ws.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(ws.time, "sleep", lambda s: None)
+    provider.exchange.mkdir(parents=True)
+    with pytest.raises(ws.SandboxClosedEarly):
+        provider.wait_until_ready()
+
+
+def test_a_slow_boot_still_gets_time_after_logon(provider, monkeypatch):
+    provider.start_timeout_s = 100
+    provider.exchange.mkdir(parents=True)
+    (provider.exchange / ws.LOGON_MARKER).write_text("now")
+    clock = {"t": 0.0}
+
+    def tick(_s):
+        clock["t"] += 5
+        if clock["t"] == 140:  # past the 100 s budget, inside the post-logon grace
+            (provider.exchange / "ready.json").write_text(json.dumps({"host": "h", "port": 1}))
+
+    monkeypatch.setattr(ws.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(ws.time, "sleep", tick)
+    monkeypatch.setattr(ws, "sandbox_running", lambda: True)
+    monkeypatch.setattr("operon.environments.remote.wait_for_guest", lambda *a, **k: {"status": "ok"})
+    assert provider.wait_until_ready() == {"status": "ok"}
+
+
+def test_start_waits_for_a_closing_sandbox_to_finish(provider, monkeypatch):
+    states = iter([True, True, False])
+    monkeypatch.setattr(ws, "sandbox_running", lambda: next(states))
+    monkeypatch.setattr(ws.time, "sleep", lambda s: None)
+    assert ws.wait_for_sandbox_gone(60) is True
+
+
+def test_sandbox_running_reads_tasklist(monkeypatch):
+    monkeypatch.setattr(ws.sys, "platform", "win32")
+    monkeypatch.setattr(ws.shutil, "which", lambda name: "tasklist")
+
+    class Done:
+        stdout = "WindowsSandboxServer.exe   1234 Services  0  9,000 K"
+
+    monkeypatch.setattr(ws.subprocess, "run", lambda *a, **k: Done())
+    assert ws.sandbox_running() is True
+    Done.stdout = "INFO: No tasks are running which match the specified criteria."
+    assert ws.sandbox_running() is False
+
+
+def test_server_and_vm_processes_are_never_killed_by_name():
+    assert not {"WindowsSandboxServer.exe", "vmwp.exe"} & set(ws._SANDBOX_PROCESSES)
 
 
 def test_stop_before_start_does_nothing(provider):

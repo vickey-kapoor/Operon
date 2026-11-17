@@ -81,6 +81,19 @@ Limits: one sandbox at a time (a Windows rule); the Microsoft Store Python canno
 so use Python from python.org; screen recordings stay inside the sandbox. Settings:
 `OPERON_SANDBOX_MEMORY_MB` (4096), `OPERON_SANDBOX_START_TIMEOUT` (240 seconds).
 
+### End-to-end test (KAN-93)
+
+`tests/desktop_e2e_windows/` runs the real agent loop against a real Windows desktop in the
+sandbox with a scripted model, so it costs nothing. It opens one sandbox for the whole module
+(about two minutes to boot), has Notepad save a file into the shared `exchange` folder and
+grades from that file. It skips when Windows Sandbox is not ready, and is deselected by default:
+
+```powershell
+$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desktop_e2e_windows -m windows_sandbox -o addopts=""
+```
+
+Close any other Windows Sandbox first (only one can run at a time).
+
 ## Linux desktop container (`linux-container`)
 
 Needs Docker Desktop (or any Docker engine) running. `operon envs` shows `linux-container  ready`

@@ -39,17 +39,59 @@ logger = logging.getLogger(__name__)
 
 ENABLE_COMMAND = "Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All"
 # Process names Windows Sandbox has used across Windows 10 and 11 releases.
+# Only the windows and clients: closing the session window lets Windows tear the VM down cleanly
+# (about 25 s). Killing WindowsSandboxServer.exe/vmwp.exe by hand orphans the VM, which then
+# cannot be killed without admin rights.
 _SANDBOX_PROCESSES = (
     "WindowsSandboxRemoteSession.exe",
     "WindowsSandboxClient.exe",
     "WindowsSandbox.exe",
 )
+# Written first thing by the logon script, so a timeout can tell "logon never ran" from "guest crashed".
+LOGON_MARKER = "logon.txt"
+# Once the logon command has run, the guest gets at least this long to report ready.
+_AFTER_LOGON_GRACE_S = 150.0
 # Where the guest keeps its own files inside the sandbox (wiped on close).
 _GUEST_RUNTIME = r"C:\Users\WDAGUtilityAccount\operon-guest"
 
 
+class SandboxClosedEarly(RuntimeError):
+    """The sandbox opened and then closed before the guest reported ready."""
+
+
 def sandbox_exe() -> Path:
     return Path(os.getenv("SystemRoot", r"C:\Windows")) / "System32" / "WindowsSandbox.exe"
+
+
+def sandbox_running() -> bool:
+    """Whether a Windows Sandbox (or its tear-down) is still alive: its server process exists.
+
+    A launch while one is alive (or still shutting down after a close) is silently ignored by
+    Windows, so ``start()`` waits for this to clear instead of timing out blind.
+    """
+    if sys.platform != "win32" or not shutil.which("tasklist"):
+        return False
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq WindowsSandboxServer.exe", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "WindowsSandboxServer.exe" in out
+
+
+def wait_for_sandbox_gone(timeout_s: float, *, interval_s: float = 2.0) -> bool:
+    """Wait up to ``timeout_s`` for any previous sandbox to finish closing; True when gone."""
+    deadline = time.monotonic() + timeout_s
+    while sandbox_running():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval_s)
+    return True
 
 
 def source_dir() -> Path:
@@ -127,6 +169,7 @@ class WindowsSandboxProvider(EnvironmentProvider):
         return "\r\n".join(
             [
                 "@echo off",
+                f'echo %date% %time% > "{ex / LOGON_MARKER}"',
                 f'netsh advfirewall firewall add rule name="Operon guest" dir=in action=allow protocol=TCP localport={self.port} >nul',
                 "set PYTHONDONTWRITEBYTECODE=1",
                 f"set OPERON_RUNTIME_ROOT={_GUEST_RUNTIME}",
@@ -180,7 +223,7 @@ class WindowsSandboxProvider(EnvironmentProvider):
     def write_files(self) -> Path:
         """Fresh token, logon script and ``.wsb``; clears the last start's ready file."""
         self.exchange.mkdir(parents=True, exist_ok=True)
-        for stale in ("ready.json", "ready.tmp", "guest.log"):
+        for stale in ("ready.json", "ready.tmp", "guest.log", LOGON_MARKER):
             (self.exchange / stale).unlink(missing_ok=True)
         self._token = new_token()
         (self.exchange / "token.txt").write_text(self._token, encoding="utf-8")
@@ -192,7 +235,32 @@ class WindowsSandboxProvider(EnvironmentProvider):
     # ── lifecycle ────────────────────────────────────────────────
 
     def _open(self, wsb: Path) -> None:  # pragma: no cover - needs Windows
-        os.startfile(str(wsb))  # type: ignore[attr-defined]
+        # Run WindowsSandbox.exe directly: the .wsb file association is not always registered
+        # (`assoc .wsb` can say "not found"), and os.startfile then opens nothing without an error.
+        exe = sandbox_exe()
+        if exe.exists():
+            subprocess.Popen(
+                [str(exe), str(wsb)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        else:
+            os.startfile(str(wsb))  # type: ignore[attr-defined]
+
+    def timeout_message(self) -> str:
+        """What a start timeout observed: whether the logon command ran, and the guest log."""
+        log = self.exchange / "guest.log"
+        tail = log.read_text(encoding="utf-8", errors="replace")[-800:] if log.exists() else "(no guest log)"
+        if (self.exchange / LOGON_MARKER).exists():
+            seen = "The sandbox ran its logon command, so the guest process started but never reported ready."
+        else:
+            seen = (
+                "The sandbox never ran its logon command (no logon marker): it did not open, or it is still "
+                f"booting. Windows closes a sandbox that cannot get its {self.memory_mb} MB of memory: close "
+                "other programs or lower OPERON_SANDBOX_MEMORY_MB (for example 2048)."
+            )
+        return (
+            f"Windows Sandbox did not start Operon's guest within {self.start_timeout_s}s. {seen} "
+            f"Sandbox still running: {sandbox_running()}. Guest log:\n{tail}"
+        )
 
     def wait_until_ready(self, *, interval_s: float = 1.0) -> dict:
         """Wait for the guest's ready file, then for its ``/health``."""
@@ -200,13 +268,29 @@ class WindowsSandboxProvider(EnvironmentProvider):
 
         ready = self.exchange / "ready.json"
         deadline = time.monotonic() + self.start_timeout_s
+        seen_up, extended, next_check = False, False, time.monotonic() + 10
         while not ready.exists():
-            if time.monotonic() >= deadline:
-                log = self.exchange / "guest.log"
-                tail = log.read_text(encoding="utf-8", errors="replace")[-800:] if log.exists() else "(no guest log)"
-                raise RuntimeError(
-                    f"Windows Sandbox did not start Operon's guest within {self.start_timeout_s}s. Guest log:\n{tail}"
-                )
+            now = time.monotonic()
+            if now >= deadline:
+                raise RuntimeError(self.timeout_message())
+            if now >= next_check:
+                next_check = now + 10
+                logged_on = (self.exchange / LOGON_MARKER).exists()
+                if logged_on and not extended:
+                    # A slow boot (busy PC) can use up the budget before logon; the guest still
+                    # gets a full grace period once the sandbox is actually up.
+                    extended, deadline = True, max(deadline, now + _AFTER_LOGON_GRACE_S)
+                running = sandbox_running()
+                if running:
+                    seen_up = True
+                elif seen_up:
+                    # On a loaded PC Windows can drop the sandbox before the guest is up; waiting
+                    # out the rest of the budget for a sandbox that is gone only wastes minutes.
+                    raise SandboxClosedEarly(
+                        "Windows Sandbox closed "
+                        + ("after its logon command ran but" if logged_on else "before its logon command ran and")
+                        + " before the guest reported ready."
+                    )
             time.sleep(interval_s)
         info = json.loads(ready.read_text(encoding="utf-8"))
         self._endpoint = f"http://{info['host']}:{info['port']}"
@@ -217,12 +301,22 @@ class WindowsSandboxProvider(EnvironmentProvider):
     def start(self) -> None:
         if self._started:
             return
+        if not wait_for_sandbox_gone(90):
+            # A launch while one runs is silently ignored; fail fast instead of waiting blind.
+            raise RuntimeError("Another Windows Sandbox is still running. Close it and start again.")
         wsb = self.write_files()
         logger.info("windows-sandbox: opening %s", wsb)
         self._open(wsb)
         self._started = True
         try:
-            health = self.wait_until_ready()
+            try:
+                health = self.wait_until_ready()
+            except SandboxClosedEarly:
+                logger.warning("windows-sandbox: closed before logon (PC busy or low on memory); retrying once")
+                wait_for_sandbox_gone(90)
+                self.write_files()
+                self._open(wsb)
+                health = self.wait_until_ready()
         except Exception:
             self.stop()
             raise
@@ -249,4 +343,5 @@ class WindowsSandboxProvider(EnvironmentProvider):
                     stderr=subprocess.DEVNULL,
                     check=False,
                 )
+            wait_for_sandbox_gone(60)  # let the VM finish closing so the next start is not ignored
         (self.exchange / "token.txt").unlink(missing_ok=True)

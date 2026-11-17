@@ -185,7 +185,10 @@ def test_notepad_saves_what_was_typed(sandbox, tmp_path):
         call("type_text_at", **CENTER, text="hello from the scripted model", press_enter=False),
         call("key_combination", keys="control+s"),
         call("wait_5_seconds"),
-        call("type_text_at", **CENTER, text=str(target), press_enter=True),
+        # The Save dialog opens with its file-name box focused: type without clicking (a click at
+        # the screen centre would land outside the box), after selecting whatever it pre-fills.
+        call("key_combination", keys="control+a"),
+        call("type", text=str(target), press_enter=True),
         call("wait_5_seconds"),
         say("The task is complete."),
     ]

@@ -56,7 +56,7 @@ _GUEST_RUNTIME = r"C:\Users\WDAGUtilityAccount\operon-guest"
 
 
 class SandboxClosedEarly(RuntimeError):
-    """The sandbox opened and then closed before its logon command ran."""
+    """The sandbox opened and then closed before the guest reported ready."""
 
 
 def sandbox_exe() -> Path:
@@ -280,9 +280,14 @@ class WindowsSandboxProvider(EnvironmentProvider):
                 running = sandbox_running()
                 if running:
                     seen_up = True
-                elif seen_up and not logged_on:
-                    # On a loaded PC Windows can drop the sandbox before it logs on.
-                    raise SandboxClosedEarly("Windows Sandbox closed before it ran its logon command.")
+                elif seen_up:
+                    # On a loaded PC Windows can drop the sandbox before the guest is up; waiting
+                    # out the rest of the budget for a sandbox that is gone only wastes minutes.
+                    raise SandboxClosedEarly(
+                        "Windows Sandbox closed "
+                        + ("after its logon command ran but" if logged_on else "before its logon command ran and")
+                        + " before the guest reported ready."
+                    )
             time.sleep(interval_s)
         info = json.loads(ready.read_text(encoding="utf-8"))
         self._endpoint = f"http://{info['host']}:{info['port']}"

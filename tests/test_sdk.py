@@ -250,3 +250,42 @@ def test_import_operon_is_lazy() -> None:
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
+
+
+async def test_result_waits_for_the_run_to_finish_writing(monkeypatch, tmp_path) -> None:
+    """The loop sets the terminal status before its last writes: the SDK must not report early."""
+    from operon.api import frontdoor
+
+    loop, _executor = build_loop(monkeypatch, tmp_path, [CLICK_SAVE, STOP])
+    _use(monkeypatch, loop)
+    written: dict[str, str] = {}
+    real_save = loop._save_efficiency
+
+    async def slow_save(state) -> None:
+        await asyncio.sleep(0.4)  # the final run-log entry lands after the status is terminal
+        written["answer"] = "It is sunny in Paris."
+        await real_save(state)
+
+    monkeypatch.setattr(loop, "_save_efficiency", slow_save)
+    monkeypatch.setattr(frontdoor, "_final_message", lambda steps, record: written.get("answer", "stale rationale"))
+
+    result = await Agent(mode="auto", poll_s=0.01).arun("Find the weather", url="https://example.test")
+
+    assert result.status == "succeeded"
+    assert result.final_answer == "It is sunny in Paris."
+
+
+async def test_settle_is_bounded_when_the_finalizer_hangs(monkeypatch, caplog) -> None:
+    from operon.api import frontdoor
+    from operon.api.runtime import tasks
+
+    hung = asyncio.ensure_future(asyncio.sleep(3600))
+    monkeypatch.setattr(tasks, "auto_run_task", lambda run_id: hung)
+    try:
+        with caplog.at_level("WARNING", logger=frontdoor.logger.name):
+            settled = await asyncio.wait_for(frontdoor.settle_run("r1", timeout_s=0.1), timeout=5)
+        assert settled is False
+        assert "did not finish writing" in caplog.text
+        assert not hung.done()  # the run's own task is left alone
+    finally:
+        hung.cancel()

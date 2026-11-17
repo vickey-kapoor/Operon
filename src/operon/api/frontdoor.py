@@ -10,6 +10,7 @@ from the run itself, so callers only pass a run id.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -32,6 +33,7 @@ from operon.models.common import (
     StrictModel,
 )
 from operon.models.logs import StepLog
+from operon.store.background_writer import bg_writer
 from operon.store.replay import load_run_replay
 from operon.store.run_store import stored_environment
 
@@ -448,9 +450,40 @@ def _usage_cost(run_id: str) -> float | None:
         return None
 
 
+# How long a report waits for a finished run's task and background writes (seconds).
+SETTLE_TIMEOUT_S = 15.0
+
+
+async def settle_run(run_id: str, *, timeout_s: float | None = None) -> bool:
+    """Wait for a terminal run to finish writing: its auto-run task (the loop sets the
+    status before cleanup and the efficiency save) and the background artifact writes
+    (the run log). Bounded, so a hung finalizer cannot hang the caller: on timeout it
+    logs a warning, leaves the task running and returns False."""
+    limit = SETTLE_TIMEOUT_S if timeout_s is None else timeout_s
+
+    async def _wait() -> None:
+        task = _tasks.auto_run_task(run_id)
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            await asyncio.wait({task})  # unlike wait_for, never cancels the task
+        await bg_writer.flush()
+
+    waiter = asyncio.ensure_future(_wait())
+    done, _pending = await asyncio.wait({waiter}, timeout=limit)
+    if waiter in done:
+        if not waiter.cancelled() and waiter.exception() is not None:
+            logger.warning("Run %s: settling its writes failed: %r", run_id, waiter.exception())
+        return True
+    waiter.cancel()
+    logger.warning("Run %s did not finish writing within %.1fs; reporting what is on disk", run_id, limit)
+    return False
+
+
 async def build_report(run_id: str) -> dict[str, Any]:
     """A short result report: outcome, what it did, what the person approved or did."""
     loop, record = await _require_run(run_id)
+    if record.status in TERMINAL:
+        await settle_run(run_id)
+        loop, record = await _require_run(run_id)
     steps = _steps(loop, run_id)
     status = record.status
     stop_reason = record.stop_reason.value if record.stop_reason is not None else None

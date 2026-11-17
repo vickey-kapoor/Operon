@@ -20,28 +20,49 @@ logger = logging.getLogger(__name__)
 
 OWNER_FILE = "owner.json"
 _STILL_ACTIVE = 259
+_ERROR_INVALID_PARAMETER = 87
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+def _open_process(pid: int):
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    return kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+
+
+def _win_last_error() -> int:
+    import ctypes
+
+    return ctypes.get_last_error()
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    handle = _open_process(pid)
+    if not handle:
+        # Only "no such pid" means dead. Access denied (5: another account's or a protected
+        # process) and every other failure mean it exists or we cannot tell: alive.
+        return _win_last_error() != _ERROR_INVALID_PARAMETER
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True  # cannot tell: treat as alive
+        return code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
     if sys.platform == "win32":
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        try:
-            code = wintypes.DWORD()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return True  # cannot tell: treat as alive
-            return code.value == _STILL_ACTIVE
-        finally:
-            kernel32.CloseHandle(handle)
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -86,12 +107,12 @@ def _path(run_dir: Path) -> Path:
 def claim(run_dir: Path) -> None:
     """Record this process as the run's owner. Never raises: a failed write only means the
     run falls back to the age rule."""
-    pid = os.getpid()
-    data = {"pid": pid, "created": process_create_time(pid), "host": socket.gethostname()}
     try:
+        pid = os.getpid()
+        data = {"pid": pid, "created": process_create_time(pid), "host": socket.gethostname()}
         run_dir.mkdir(parents=True, exist_ok=True)
         _path(run_dir).write_text(json.dumps(data), encoding="utf-8")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("could not write %s: %s", _path(run_dir), exc)
 
 

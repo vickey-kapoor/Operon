@@ -93,7 +93,7 @@ class FileBackedRunStore(RunStore):
         # /observer/api/run/{run_id} reads before bg_writer flushes state.json.
         self._write_state_sync(record)
         self._write_settings(run_id)
-        run_owner.claim(self._ensure_run_dir(run_id))
+        self.claim_run(run_id)
         return record
 
     def holds_run(self, run_id: str) -> bool:
@@ -146,12 +146,15 @@ class FileBackedRunStore(RunStore):
             return record
         record.status = status
         self._write_state(record)
-        if status in (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED):
+        if get_settings().checkpoints and status in (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED):
             run_owner.release(self._ensure_run_dir(run_id))
         return record
 
     def claim_run(self, run_id: str) -> None:
-        """Make this process the run's owner (a resume), so no scan calls it interrupted."""
+        """Make this process the run's owner, so no scan calls it interrupted. Only with
+        OPERON_CHECKPOINTS on: with it off no owner.json is written."""
+        if not get_settings().checkpoints:
+            return
         run_owner.claim(self._ensure_run_dir(run_id))
 
     async def save_state(self, state: AgentState) -> None:

@@ -378,7 +378,10 @@ def test_a_run_without_an_owner_file_falls_back_to_the_age_rule(tmp_path: Path) 
     assert _on_disk(tmp_path, fresh).status is RunStatus.RUNNING
 
 
-def test_owner_file_is_written_on_create_and_removed_at_a_terminal_state(tmp_path: Path) -> None:
+def test_owner_file_is_written_on_create_and_removed_at_a_terminal_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OPERON_CHECKPOINTS", "on")
     store = FileBackedRunStore(tmp_path)
     run_id = store.create_run("task").run_id
     owner = json.loads((tmp_path / run_id / "owner.json").read_text(encoding="utf-8"))
@@ -388,6 +391,27 @@ def test_owner_file_is_written_on_create_and_removed_at_a_terminal_state(tmp_pat
     assert (tmp_path / run_id / "owner.json").exists()  # a pause is still owned
     asyncio.run(store.set_status(run_id, RunStatus.SUCCEEDED))
     assert not (tmp_path / run_id / "owner.json").exists()
+
+
+def test_no_owner_file_is_written_with_the_flag_off(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPERON_CHECKPOINTS", "off")
+    store = FileBackedRunStore(tmp_path)
+    run_id = store.create_run("task").run_id
+    store.claim_run(run_id)
+    asyncio.run(store.set_status(run_id, RunStatus.SUCCEEDED))
+
+    assert not (tmp_path / run_id / "owner.json").exists()
+
+
+@pytest.mark.parametrize(("error", "alive"), [(5, True), (87, False), (1, True)])
+def test_a_failed_open_process_is_dead_only_for_no_such_pid(
+    monkeypatch: pytest.MonkeyPatch, error: int, alive: bool
+) -> None:
+    """Access denied (5) is another account's live process; only 87 (invalid parameter) is gone."""
+    monkeypatch.setattr(run_owner, "_open_process", lambda pid: 0)
+    monkeypatch.setattr(run_owner, "_win_last_error", lambda: error)
+
+    assert run_owner._windows_pid_alive(1234) is alive
 
 
 def test_runs_interrupted_lists_without_writing_anything(
@@ -446,6 +470,7 @@ def test_local_resume_marks_only_its_own_run(monkeypatch: pytest.MonkeyPatch, tm
 async def test_a_second_resume_fails_fast_without_a_second_hint(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("OPERON_CHECKPOINTS", "on")
     run_id = _crash(tmp_path, RunStatus.RUNNING)
     mark_interrupted_runs(tmp_path)
     loop, _ = build_loop(monkeypatch, tmp_path, [STOP])

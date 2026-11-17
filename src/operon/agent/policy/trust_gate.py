@@ -57,6 +57,7 @@ from enum import Enum
 from urllib.parse import urlparse
 
 from operon.core.settings import get_settings
+from operon.core.vault import action_uses_secret
 
 
 class PermissionMode(str, Enum):
@@ -78,6 +79,8 @@ class TrustResult:
     matched: str = ""
     # Named risk category (KAN-103) that made this a CONFIRM, else "".
     category: str = ""
+    # A CONFIRM that ``auto`` mode may not skip (typing a secret, KAN-103).
+    always: bool = False
 
 
 # Named risk categories (KAN-103, ``OPERON_TRUST_CATEGORIES``, default off). Each phrase is
@@ -225,6 +228,14 @@ class TrustGate:
                 return None
         return host
 
+    def _page_allows_secrets(self, current_url: str | None) -> bool:
+        """True when an allowlist is set and the page itself is on it (a desktop app has no page)."""
+        if not self.allow_domains or not current_url:
+            return False
+        if urlparse(current_url).scheme not in ("http", "https"):
+            return False
+        return self._host_blocked(current_url) is None
+
     def _page_blocked(self, current_url: str | None) -> str | None:
         """The page's host when the browser already sits outside the allowlist, e.g.
         after the model clicked a link; only web pages are judged (about:blank and
@@ -257,6 +268,12 @@ class TrustGate:
             blocked_page = self._page_blocked(current_url)
             if blocked_page is not None:
                 return TrustResult(TrustVerdict.DENY, "current page not in allowlist", blocked_page)
+        if get_settings().secrets and action_uses_secret(action) and not self._page_allows_secrets(current_url):
+            # KAN-103: typing a stored secret always needs a person, in every permission mode,
+            # unless the page is on a domain the operator put on OPERON_TRUST_ALLOW_DOMAINS.
+            return TrustResult(
+                TrustVerdict.CONFIRM, "typing a secret needs approval", "secret", "account", always=True
+            )
         for keyword in self.confirm:
             if keyword in description:
                 return TrustResult(TrustVerdict.CONFIRM, "matched high-risk rule", keyword)
@@ -353,7 +370,7 @@ def apply_permission_mode(result: TrustResult, action: object, mode: str | Permi
     resolved = resolve_permission_mode(mode)
     if result.verdict is TrustVerdict.DENY:
         return result
-    if resolved is PermissionMode.AUTO and result.verdict is TrustVerdict.CONFIRM:
+    if resolved is PermissionMode.AUTO and result.verdict is TrustVerdict.CONFIRM and not result.always:
         return TrustResult(TrustVerdict.ALLOW, "auto mode skips confirmations", result.matched)
     if resolved is PermissionMode.ASK and result.verdict is TrustVerdict.ALLOW:
         action_type = getattr(action, "action_type", None)

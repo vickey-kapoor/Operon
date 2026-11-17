@@ -496,11 +496,14 @@ async def _no_sleep(*_args: Any, **_kwargs: Any) -> None:
 _TERMINAL = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
 
 
-async def run_scenario(scenario: Scenario) -> RunResult:
-    """Run one scenario to completion (or its step budget) and grade it."""
+async def run_scenario(scenario: Scenario, *, root: Path | None = None) -> RunResult:
+    """Run one scenario to completion (or its step budget) and grade it.
+
+    ``root`` keeps the run's files there (a test inspects them); the default is a temp
+    folder that goes away with the run."""
     with tempfile.TemporaryDirectory(prefix=f"operon-eval-{scenario.name}-") as tmp, ExitStack() as stack:
-        root = Path(tmp)
-        (root / "frames").mkdir()
+        root = root if root is not None else Path(tmp)
+        (root / "frames").mkdir(parents=True, exist_ok=True)
         stack.enter_context(patch.dict(os.environ, {"OPERON_TEST_SAFE_MODE": "true", **scenario.env}))
         # The loop's settle/backoff waits are wall-clock sleeps; the fake screen
         # never animates, so skip them.

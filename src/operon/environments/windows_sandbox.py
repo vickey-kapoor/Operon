@@ -92,6 +92,7 @@ class WindowsSandboxProvider(EnvironmentProvider):
         self.start_timeout_s = settings.sandbox_start_timeout
         self._token: str | None = None
         self._endpoint: str | None = None
+        self._guest_host: str | None = None
         self._started = False
 
     def platform(self) -> str:
@@ -209,6 +210,7 @@ class WindowsSandboxProvider(EnvironmentProvider):
             time.sleep(interval_s)
         info = json.loads(ready.read_text(encoding="utf-8"))
         self._endpoint = f"http://{info['host']}:{info['port']}"
+        self._guest_host = str(info["host"])
         remaining = max(5.0, deadline - time.monotonic())
         return wait_for_guest(self._endpoint, self._token or "", timeout_s=remaining, interval_s=interval_s)
 
@@ -231,13 +233,14 @@ class WindowsSandboxProvider(EnvironmentProvider):
             raise RuntimeError("windows-sandbox: start() must finish before build_executor()")
         from operon.environments.remote import RemoteDesktopExecutor
 
-        return RemoteDesktopExecutor(self._endpoint, self._token)
+        return RemoteDesktopExecutor(self._endpoint, self._token, trusted_host=self._guest_host)
 
     def stop(self) -> None:
         if not self._started:
             return
         self._started = False
         self._endpoint = None
+        self._guest_host = None
         if sys.platform == "win32" and shutil.which("taskkill"):
             for name in _SANDBOX_PROCESSES:
                 subprocess.run(

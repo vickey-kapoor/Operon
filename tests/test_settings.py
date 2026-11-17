@@ -173,6 +173,7 @@ _EXPERIMENTAL_OFF = [
     ("change_note", False),
     ("focus_guard", False),
     ("trust_categories", False),
+    ("secrets", False),
     ("dpi_aware", False),
     ("planner", False),
     ("task_note", False),

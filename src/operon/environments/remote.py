@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import logging
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
 
 from operon.core.paths import desktop_artifacts_dir
+from operon.core.vault import SecretError, redact, resolve_text
 from operon.environments.guest import FILE_FIELDS
 from operon.models.capture import CaptureFrame
 from operon.models.common import FailureCategory, LoopStage
@@ -45,8 +48,12 @@ class RemoteDesktopExecutor:
         *,
         artifact_dir: str | Path | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        trusted_host: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        # The one non-loopback address a secret may be sent to: the guest address the
+        # provider itself reported (a Windows Sandbox's host-only IP).
+        self._trusted_host = trusted_host
         self._headers = {"Authorization": f"Bearer {token}"}
         self._transport = transport
         self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else desktop_artifacts_dir()
@@ -135,17 +142,50 @@ class RemoteDesktopExecutor:
             tool_outputs=outputs or None,
         )
 
-    async def _execute_one(self, action: AgentAction) -> ExecutedAction:
+    def _local_endpoint(self) -> bool:
+        """True when the guest is on loopback, or at exactly the address the provider reported.
+        A secret is never sent anywhere else (no general private ranges)."""
+        host = urlparse(self.base_url).hostname or ""
+        if host == "localhost" or (self._trusted_host is not None and host == self._trusted_host):
+            return True
         try:
-            data = (await self._post("/execute", {"action": action.model_dump(mode="json")})).json()
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
+
+    async def _execute_one(self, action: AgentAction) -> ExecutedAction:
+        # KAN-103: the guest has no vault, so a {{secret:NAME}} placeholder is filled in here,
+        # on the host, in the copy sent over the token-protected local connection. `action`
+        # itself keeps the placeholder, and the guest's reply is masked before it is returned.
+        send = action
+        secret_values: tuple[str, ...] = ()
+        if action.action_type is ActionType.TYPE and action.text:
+            try:
+                resolved, secret_values = resolve_text(action.text)
+                if secret_values and not self._local_endpoint():
+                    raise SecretError("the run environment is not at a loopback or provider-reported address")
+            except SecretError as exc:
+                return ExecutedAction(
+                    action=action, success=False, detail=f"type failed: {exc}",
+                    failure_category=FailureCategory.EXECUTION_ERROR,
+                )
+            send = action.model_copy(update={"text": resolved})
+        try:
+            body: dict[str, Any] = {"action": send.model_dump(mode="json")}
+            if secret_values:
+                body["secret_filled"] = True
+            data = (await self._post("/execute", body)).json()
         except (GuestUnavailableError, httpx.HTTPStatusError) as exc:
             return ExecutedAction(
                 action=action,
                 success=False,
-                detail=f"Run environment unreachable: {exc}",
+                detail=redact(f"Run environment unreachable: {exc}", secret_values),
                 failure_category=FailureCategory.EXECUTION_ERROR,
             )
         result = dict(data["result"])
+        if secret_values:
+            result = redact(result, secret_values)
+            result["action"] = action.model_dump(mode="json")
         files = data.get("files") or {}
         for name in FILE_FIELDS:
             suffix = ".json" if name == "execution_trace_artifact_path" else ".png"

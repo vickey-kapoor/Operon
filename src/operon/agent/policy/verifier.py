@@ -263,8 +263,8 @@ class DeterministicVerifierService(VerifierService):
         # recovery ladder instead of resetting it. Frames that cannot be compared
         # give no evidence either way, so they keep the old optimistic answer.
         if action.action_type in self._SCREEN_CHANGING_ACTION_TYPES:
-            ratio = self._screen_change_ratio(executed_action)
-            if ratio is not None and ratio <= self._cursor_only_threshold():
+            changed = self._native_changed_pixels(executed_action)
+            if changed is not None and changed < self._DEAD_ACTION_MAX_CHANGED_PIXELS:
                 return VerificationResult(
                     status=VerificationStatus.UNCERTAIN,
                     expected_outcome_met=False,
@@ -283,6 +283,10 @@ class DeterministicVerifierService(VerifierService):
             reason="Executed action succeeded and the expected outcome is treated as met.",
             critic_fallback_reason="critic_unavailable_or_unusable",
         )
+
+    # Fewer changed pixels than this at native resolution (PNG is lossless) means the
+    # frames are essentially identical: a dead click, not a small real change.
+    _DEAD_ACTION_MAX_CHANGED_PIXELS = 10
 
     # Actions whose success should show up as a pixel change on screen.
     _SCREEN_CHANGING_ACTION_TYPES = frozenset([
@@ -369,10 +373,18 @@ class DeterministicVerifierService(VerifierService):
         return ratio > CURSOR_ONLY_THRESHOLD
 
     @staticmethod
-    def _cursor_only_threshold() -> float:
-        from operon.agent.perception.screen_diff import CURSOR_ONLY_THRESHOLD
+    def _native_changed_pixels(executed_action: ExecutedAction) -> int | None:
+        """Changed-pixel count between before.png and after.png at full resolution,
+        or None when either frame is missing or unreadable (callers fail open)."""
+        from operon.agent.perception.screen_diff import count_changed_pixels
 
-        return CURSOR_ONLY_THRESHOLD
+        after_path = executed_action.artifact_path
+        if not after_path:
+            return None
+        before_path = Path(after_path).resolve().parent / "before.png"
+        if not before_path.exists() or not Path(after_path).exists():
+            return None
+        return count_changed_pixels(str(before_path), after_path)
 
     @staticmethod
     def _screen_change_ratio(executed_action: ExecutedAction) -> float | None:

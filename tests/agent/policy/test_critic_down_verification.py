@@ -27,11 +27,16 @@ def _service(tmp_path: Path) -> DeterministicVerifierService:
     )
 
 
-def _frames(tmp_path: Path, *, changed: bool) -> str:
-    Image.new("RGB", (100, 100), "white").save(tmp_path / "before.png")
-    after = Image.new("RGB", (100, 100), "white")
+SIZE = (1920, 1080)
+
+
+def _frames(tmp_path: Path, *, changed: bool, patch: tuple[int, int] = (60, 60)) -> str:
+    """Write before/after PNGs at 1080p; ``patch`` is the size of the black block drawn
+    into the after frame when ``changed``."""
+    Image.new("RGB", SIZE, "white").save(tmp_path / "before.png")
+    after = Image.new("RGB", SIZE, "white")
     if changed:
-        after.paste(Image.new("RGB", (60, 60), "black"), (10, 10))
+        after.paste(Image.new("RGB", patch, "black"), (500, 500))
     after.save(tmp_path / "after.png")
     return str(tmp_path / "after.png")
 
@@ -174,3 +179,66 @@ async def test_regrounded_retry_that_stays_allowed_still_runs(monkeypatch: pytes
 
     assert calls == [safe, other]
     assert executed.success is True
+
+
+@pytest.mark.parametrize(
+    ("action", "patch"),
+    [
+        (CLICK, (4, 4)),  # checkbox tick
+        (CLICK, (5, 5)),  # radio dot
+        (AgentAction(action_type=ActionType.TYPE, target_element_id="f", text="42"), (14, 16)),
+    ],
+)
+async def test_small_real_changes_stay_success_with_critic_down(
+    tmp_path: Path, action: AgentAction, patch: tuple[int, int]
+) -> None:
+    state = AgentState(run_id="r", intent="Do it", status="running")
+    executed = ExecutedAction(
+        action=action, success=True, detail="ok", artifact_path=_frames(tmp_path, changed=True, patch=patch)
+    )
+
+    result = await _service(tmp_path).verify(state, _decision(action), executed, allow_stable_wait=False)
+
+    assert result.status is VerificationStatus.SUCCESS
+
+
+async def test_three_short_typed_fields_with_critic_down_do_not_end_the_run(tmp_path: Path) -> None:
+    state = AgentState(run_id="r", intent="Do it", status="running")
+    service, manager = _service(tmp_path), RuleBasedRecoveryManager()
+    for n in range(3):
+        action = AgentAction(action_type=ActionType.TYPE, target_element_id=f"f{n}", text="42")
+        executed = ExecutedAction(
+            action=action, success=True, detail="ok", artifact_path=_frames(tmp_path, changed=True, patch=(14, 16))
+        )
+        decision = _decision(action)
+        verification = await service.verify(state, decision, executed, allow_stable_wait=False)
+        recovery = await manager.recover(state, decision, executed, verification)
+        state.action_history.append(executed)
+        state.verification_history.append(verification)
+        assert recovery.terminal is False
+        assert recovery.strategy is RecoveryStrategy.ADVANCE
+
+
+async def test_undecodable_frame_fails_open_to_success(tmp_path: Path) -> None:
+    state = AgentState(run_id="r", intent="Do it", status="running")
+    after = _frames(tmp_path, changed=False)
+    (tmp_path / "before.png").write_bytes(b"not a png")
+
+    result = await _service(tmp_path).verify(
+        state, _decision(), ExecutedAction(action=CLICK, success=True, detail="ok", artifact_path=after)
+    )
+
+    assert result.status is VerificationStatus.SUCCESS
+
+
+def test_count_changed_pixels(tmp_path: Path) -> None:
+    from operon.agent.perception.screen_diff import count_changed_pixels
+
+    after = _frames(tmp_path, changed=False)
+    before = str(tmp_path / "before.png")
+    assert count_changed_pixels(before, after) == 0
+    _frames(tmp_path, changed=True, patch=(4, 4))
+    assert count_changed_pixels(before, after) == 16
+    assert count_changed_pixels(before, str(tmp_path / "missing.png")) is None
+    Image.new("RGB", (10, 10)).save(tmp_path / "small.png")
+    assert count_changed_pixels(before, str(tmp_path / "small.png")) == SIZE[0] * SIZE[1]

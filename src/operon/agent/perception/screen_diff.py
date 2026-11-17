@@ -56,6 +56,32 @@ def compute_screen_change_ratio(before_path: str, after_path: str) -> float:
 
 
 
+def count_changed_pixels(before_path: str, after_path: str, *, diff_threshold: int = _PIXEL_DIFF_THRESHOLD) -> int | None:
+    """Number of pixels that differ by more than ``diff_threshold`` in any channel,
+    at native resolution (no downscale, so a 4 px checkbox tick still counts).
+
+    Returns None when either file is missing or cannot be decoded, so a caller can
+    fail open instead of reading an error as "nothing changed". Differently sized
+    frames count every pixel as changed.
+    """
+    from PIL import ImageChops
+
+    try:
+        with Image.open(before_path) as b_img, Image.open(after_path) as a_img:
+            before = b_img.convert("RGB")
+            after = a_img.convert("RGB")
+            if before.size != after.size:
+                return before.size[0] * before.size[1]
+            mask = None
+            for channel in ImageChops.difference(before, after).split():
+                over = channel.point(lambda v: 255 if v > diff_threshold else 0)
+                mask = over if mask is None else ImageChops.lighter(mask, over)
+            return int(mask.histogram()[255]) if mask is not None else 0
+    except Exception:
+        logger.debug("screen_diff: native comparison failed", exc_info=True)
+        return None
+
+
 # ── blank-region test (visual servo, shared) ────────────────────────────────
 # A region is "blank" when its pixel variance is at or below this (pixel^2). The desktop
 # executor calibrates its own threshold from this default; the browser executor uses it as is.

@@ -58,6 +58,11 @@ notifications = [
 dashboard = [
     "psycopg[binary]>=3.3",
 ]
+# KAN-163: local text recognition for the trust gate (OPERON_CLICK_TEXT).
+ocr = [
+    "rapidocr>=3.10.0,<4.0.0",
+    "onnxruntime>=1.32.0,<2.0.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

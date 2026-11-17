@@ -179,6 +179,7 @@ _EXPERIMENTAL_OFF = [
     ("settle_detect", False),
     ("change_note", False),
     ("planner", False),
+    ("click_text", False),
     ("expect_check", False),
     ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
     ("critic", ""),

@@ -8,6 +8,7 @@ import logging
 import shutil
 import time
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,7 @@ from operon.agent.policy.best_of_n import (
     best_of_n_count,
     select_best_of_n,
 )
+from operon.agent.policy.click_text import make_click_reader, read_click_text
 from operon.agent.policy.file_guard import FILE_PATH_ACTIONS, blocked_file_path
 from operon.agent.policy.progress_tracker import (
     ProgressTracker,
@@ -57,9 +59,11 @@ from operon.agent.policy.progress_tracker import (
 )
 from operon.agent.policy.recovery import RecoveryManager, validate_benchmark_integrity
 from operon.agent.policy.trust_gate import (
+    PermissionMode,
     TrustVerdict,
     apply_permission_mode,
     make_trust_gate,
+    names_no_target,
     resolve_permission_mode,
 )
 from operon.agent.policy.verifier import VerifierService
@@ -227,6 +231,8 @@ class AgentLoop:
         self._best_of_n_critic: Critic = HeuristicCritic()
         # RFC 0001 Move 5: deny/confirm policy gate before execution (OPERON_TRUST_GATE).
         self._trust_gate = make_trust_gate()
+        # KAN-163: read the text under a click from the screenshot (OPERON_CLICK_TEXT, off).
+        self._click_reader = make_click_reader()
         # One lock per run so /step, /resume and the auto-run task never interleave
         # steps on the same run. Weak values: a lock lives only while a step holds
         # or awaits it, so the map does not grow with every run ever started.
@@ -745,7 +751,9 @@ class AgentLoop:
         _trace("  2 PERCEIVE", f"sending screenshot to Gemini  backend={type(self.perception_service).__name__}")
         _t0 = time.perf_counter()
         try:
-            perception = await self._perceive_with_liveness_retry(record, ctx.frame)
+            perception = await self._perceive_with_liveness_retry(
+                record, ctx.frame, on_recapture=lambda fresh: setattr(ctx, "frame", fresh)
+            )
         except Exception as exc:
             # The run fails with the error recorded (pre-step failure log); a bug
             # still re-raises in strict mode.
@@ -795,8 +803,13 @@ class AgentLoop:
 
         # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
         # action never runs; the run pauses for a human instead.
-        pause_decision = await self._gate_pause_decision(ctx.record, ctx.state, ctx.decision)
+        pause_decision = await self._gate_pause_decision(ctx.record, ctx.state, ctx.decision, frame=ctx.frame)
         if pause_decision is None:
+            # Reading the click text (KAN-163) waits on OCR: a stop that came in
+            # meanwhile must still keep this action from running.
+            if getattr(self, "_click_reader", None) is not None and await self._run_cancelled(ctx.run_id):
+                _trace("  3 POLICY -> CANCELLED", "run was stopped while the gate read the click text")
+                return self._cancelled_response(ctx.record)
             return None
         return await self._pause_for_user(
             record=ctx.record,
@@ -1072,7 +1085,9 @@ class AgentLoop:
             if hasattr(self.policy_service, "prepare_hints"):
                 self.policy_service.prepare_hints(state, None)
             self._inject_stagnation_hint(state)
-            perception = await self._perceive_with_liveness_retry(state, frame)
+            seen = [frame]
+            perception = await self._perceive_with_liveness_retry(state, frame, on_recapture=seen.append)
+            frame = seen[-1]
         except Exception as exc:
             # Keep the attempt that ran; it is recorded as the step's action.
             self._recovered(ctx.run_id, "adaptation_retry_perceive", exc)
@@ -1092,7 +1107,7 @@ class AgentLoop:
         # A retry's decision is a new action: it passes the same gates as the first.
         # If it needs a human, it does not run. The step is recorded with the
         # attempt that did run, then the run pauses for the human.
-        ctx.deferred_pause = await self._gate_pause_decision(ctx.record, state, decision)
+        ctx.deferred_pause = await self._gate_pause_decision(ctx.record, state, decision, frame=ctx.frame)
         if ctx.deferred_pause is not None:
             ctx.decision = attempted_decision
             _trace("  RETRY_LOOP -> gated", "retry decision needs a human; pausing after this step is recorded")
@@ -1294,6 +1309,49 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
+    async def _click_text_for_gate(
+        self,
+        action: AgentAction,
+        frame: CaptureFrame | None,
+        *,
+        run_id: str = "",
+        permission_mode: str | None = None,
+    ) -> str | None:
+        """The text the screenshot shows under a click (KAN-163), or None.
+
+        Only for a pointer action at a point with no element name, with the gate on and
+        ``OPERON_CLICK_TEXT`` set: that is the case where the gate otherwise cannot tell
+        what is pressed. Skipped when its answer can't matter: the action was already
+        approved, or the run's ``auto`` mode skips confirmations. A click inside a batch
+        is not read (the batch's own point is None). OCR runs in a worker thread so the
+        event loop keeps serving.
+        """
+        reader = getattr(self, "_click_reader", None)
+        if (
+            reader is None
+            or frame is None
+            or not self._trust_gate.enabled
+            or action.x is None
+            or action.y is None
+            or not names_no_target(action)
+            or "trust" in self._approved_gates(run_id, action)
+            or resolve_permission_mode(permission_mode) is PermissionMode.AUTO
+        ):
+            return None
+        # The action is already in virtual-desktop coordinates (_apply_monitor_origin);
+        # the screenshot is the one monitor, so take its origin back off.
+        text = await asyncio.to_thread(
+            read_click_text,
+            frame.artifact_path,
+            action.x - frame.monitor_left,
+            action.y - frame.monitor_top,
+            (frame.width, frame.height),
+            reader=reader,
+        )
+        if text:
+            _trace("  3 POLICY -> CLICK_TEXT", repr(text))
+        return text
+
     async def _current_url_for_trust_gate(self, run_id: str, *, log: bool = False) -> str | None:
         """The browser's current URL, only when the trust gate has a domain allowlist
         to judge it against; None otherwise or when the executor has no page.
@@ -1332,6 +1390,7 @@ class AgentLoop:
         run_id: str,
         current_url: str | None = None,
         permission_mode: str | None = None,
+        click_text: str | None = None,
     ) -> str | None:
         """Why ``decision`` must pause for a human before executing, or None to proceed.
 
@@ -1378,7 +1437,10 @@ class AgentLoop:
                     leaf,
                     apply_permission_mode(
                         self._trust_gate.evaluate(
-                            leaf, current_url=current_url, stated_reason=decision.rationale
+                            leaf,
+                            current_url=current_url,
+                            stated_reason=decision.rationale,
+                            click_text=click_text if leaf is action else None,
                         ),
                         leaf,
                         permission_mode,
@@ -1445,7 +1507,9 @@ class AgentLoop:
             return "batch" + json.dumps([self._gate_fingerprint(child) for child in action.actions or []])
         return f"{action.action_type.value}|{self._trust_gate.describe(action)}"
 
-    async def _gate_pause_decision(self, record, state, decision: PolicyDecision) -> PolicyDecision | None:
+    async def _gate_pause_decision(
+        self, record, state, decision: PolicyDecision, *, frame: CaptureFrame | None = None
+    ) -> PolicyDecision | None:
         """The WAIT_FOR_USER decision to pause on before ``decision`` runs, or None
         when it may run: the policy asked for a human, the target thrashed, or a
         pre-execution gate (confidence, trust, file guard) blocked it."""
@@ -1482,6 +1546,9 @@ class AgentLoop:
             run_id=record.run_id,
             current_url=current_url,
             permission_mode=getattr(state, "permission_mode", None),
+            click_text=await self._click_text_for_gate(
+                decision.action, frame, run_id=record.run_id, permission_mode=getattr(state, "permission_mode", None)
+            ),
         )
         if gate_text is None:
             return None
@@ -1691,14 +1758,22 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
-    async def _perceive_with_liveness_retry(self, state, initial_frame: CaptureFrame):
+    async def _perceive_with_liveness_retry(
+        self,
+        state,
+        initial_frame: CaptureFrame,
+        *,
+        on_recapture: Callable[[CaptureFrame], None] | None = None,
+    ):
         """Perceive with flag-based liveness retries for transient zero-element frames.
 
         When perception returns is_empty_frame=True (blank/loading screen), re-capture
         and retry up to _LIVENESS_RETRY_MAX times before raising PerceptionLowQualityError.
         Other quality failures (unlabeled elements, etc.) propagate immediately.
         The liveness_retries count is stamped onto the returned ScreenPerception so it
-        appears in run.jsonl for observability.
+        appears in run.jsonl for observability. ``on_recapture`` gets each new frame,
+        so a caller can keep the screenshot the returned perception came from (the
+        trust gate reads the click text from it, KAN-163).
         """
         # Stable-frame perception bypass: when the previous action was WAIT (idempotent),
         # the screen hasn't moved at all (visual_velocity exactly 0), and verification
@@ -1761,6 +1836,8 @@ class AgentLoop:
             )
             await asyncio.sleep(_sleep_s)
             frame = await self.capture_service.capture(state)
+            if on_recapture is not None:
+                on_recapture(frame)
         raise PerceptionLowQualityError("no visible elements after all liveness retries")  # pragma: no cover
 
     async def _record_pre_step_perception_failure(

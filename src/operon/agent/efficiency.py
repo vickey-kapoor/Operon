@@ -26,20 +26,31 @@ wasted_steps         steps counted once if ANY of these signals holds:
                      (an identical repeat with no screen change confirmed).
   noop_wait          a ``wait`` action whose verification status is not ``success`` /
                      ``progressing_stable`` (waited, nothing changed).
+  revisit            the action has the same ``action_signature`` as an earlier step and its
+                     after-screenshot (``executed_action.artifact_path``) is near-identical
+                     (RFC 0003, ``ProgressTracker.REVISIT_SAME_SCREEN_THRESHOLD``) to one of the last
+                     3 that signature produced. Ignores the verification status, so it catches a
+                     runaway whose every step the verifier called a success. Measured whatever
+                     ``OPERON_PROGRESS_REVISIT`` says. The screenshots are compared in
+                     ``run_efficiency``, which passes one True/False/None per step to the pure
+                     function; None (a missing file or an unreadable action) never counts.
 wasted_ratio         wasted_steps / total_steps (None for an empty run).
 
-``blocked``, ``failed``, ``repeat`` and ``noop_wait`` are also reported as counts; they
+``blocked``, ``failed``, ``repeat``, ``noop_wait`` and ``revisit`` are also reported as counts; they
 can overlap, so they may sum to more than wasted_steps.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-REDUNDANT_CATEGORIES = frozenset({
+logger = logging.getLogger(__name__)
+
+REDUNDANT_CATEGORIES =frozenset({
     "repeated_action_without_progress",
     "repeated_target_without_progress",
     "subgoal_already_completed",
@@ -62,15 +73,17 @@ def _leaf_count(action: Any) -> int:
 def compute_efficiency(
     entries: Iterable[Mapping[str, Any]],
     step_ms: Sequence[float | None] | None = None,
+    revisits: Sequence[bool | None] | None = None,
 ) -> dict[str, Any]:
-    """Score a run from its run-log rows (as dicts) and optional per-step durations in ms."""
+    """Score a run from its run-log rows (as dicts), optional per-step durations in ms, and
+    optional per-step revisit verdicts (aligned with the rows; see ``run_efficiency``)."""
     steps = [e for e in entries if isinstance(e, Mapping)]
     total = len(steps)
-    blocked = failed = repeat = noop = wasted = 0
+    blocked = failed = repeat = noop = revisit = wasted = 0
     model_calls: int | None = None
     executed = 0
     previous_action: Any = None
-    for entry in steps:
+    for index, entry in enumerate(steps):
         executed_action = _get(entry, "executed_action")
         action = _get(executed_action, "action")
         is_failed = entry.get("record_type") == "pre_step_failure" or _get(executed_action, "success") is False
@@ -84,7 +97,9 @@ def compute_efficiency(
         failed += is_failed
         repeat += is_repeat
         noop += is_noop
-        wasted += is_blocked or is_failed or is_repeat or is_noop
+        is_revisit = bool(revisits[index]) if revisits is not None and index < len(revisits) else False
+        revisit += is_revisit
+        wasted += is_blocked or is_failed or is_repeat or is_noop or is_revisit
         previous_action = action
 
         source = entry.get("decision_source")
@@ -106,6 +121,7 @@ def compute_efficiency(
         "wasted_failed": failed,
         "wasted_repeat": repeat,
         "wasted_noop_wait": noop,
+        "wasted_revisit": revisit,
         "actions_per_model_call": round(executed / model_calls, 3) if model_calls else None,
     }
 
@@ -123,6 +139,7 @@ def efficiency_for_response(run: Any, run_store: Any) -> dict[str, Any] | None:
     try:
         return run_efficiency(Path(root) / run.run_id)
     except Exception:
+        logger.debug("efficiency for run %s could not be computed", getattr(run, "run_id", "?"), exc_info=True)
         return None
 
 
@@ -148,4 +165,39 @@ def run_efficiency(run_dir: str | Path) -> dict[str, Any]:
         except (OSError, ValueError, AttributeError):
             continue
         step_ms.append(value if isinstance(value, (int, float)) else None)
-    return compute_efficiency(entries, step_ms)
+    return compute_efficiency(entries, step_ms, _revisits(entries))
+
+
+def _revisits(entries: Sequence[Mapping[str, Any]]) -> list[bool | None]:
+    """Per step: did the action repeat an earlier step's signature AND land on a screen that
+    signature already produced (RFC 0003's check, measured whether or not the flag is on)?
+    None when there is nothing to compare (first use of the signature, no action, a
+    screenshot missing): fail open."""
+    # Lazy imports: the tracker pulls in settings and models, the diff pulls in Pillow.
+    from operon.agent.perception.screen_diff import compute_screen_change_ratio
+    from operon.agent.policy.progress_tracker import (
+        REVISIT_OUTCOMES_PER_ACTION,
+        ProgressTracker,
+        action_signature,
+    )
+    from operon.models.policy import AgentAction
+
+    threshold = ProgressTracker.REVISIT_SAME_SCREEN_THRESHOLD
+    outcomes: dict[str, list[str]] = {}
+    verdicts: list[bool | None] = []
+    for entry in entries:
+        executed = _get(entry, "executed_action")
+        after = _get(executed, "artifact_path")
+        try:
+            signature = action_signature(AgentAction.model_validate(_get(executed, "action")))
+        except Exception:
+            verdicts.append(None)
+            continue
+        earlier = [p for p in outcomes.get(signature, []) if Path(p).exists()]
+        if earlier and isinstance(after, str) and Path(after).exists():
+            verdicts.append(any(compute_screen_change_ratio(p, after) < threshold for p in earlier))
+        else:
+            verdicts.append(None)
+        if isinstance(after, str) and after:
+            outcomes[signature] = [*outcomes.get(signature, []), after][-REVISIT_OUTCOMES_PER_ACTION:]
+    return verdicts

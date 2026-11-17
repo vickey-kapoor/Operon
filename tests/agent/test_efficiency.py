@@ -206,3 +206,91 @@ def test_get_run_endpoints_carry_efficiency(tmp_path) -> None:
                 loop.return_value.run_store = store
                 body = client.get(url).json()
             assert (body["efficiency"] is not None) is expect, (module, status)
+
+
+async def test_runaway_revisits_are_wasted_and_honest_scrolls_are_not() -> None:
+    from evals.scenarios import (
+        cu_multi_field_form,
+        cu_scroll_twice,
+        cu_scroll_twice_revisit,
+    )
+
+    runaway = (await run_scenario(cu_relaunch_runaway())).efficiency
+    assert runaway is not None
+    assert runaway["wasted_steps"] >= 9 and runaway["wasted_revisit"] >= 9
+    for factory in (cu_scroll_twice, cu_scroll_twice_revisit, cu_multi_field_form):
+        efficiency = (await run_scenario(factory())).efficiency
+        assert efficiency is not None and efficiency["wasted_steps"] == 0, factory.__name__
+
+
+def test_revisit_list_is_counted_and_missing_screens_fail_open(tmp_path) -> None:
+    rows = [_step(CLICK_A), _step(CLICK_B), _step(CLICK_A)]
+    result = compute_efficiency(rows, revisits=[None, False, True])
+    assert result["wasted_revisit"] == 1 and result["wasted_steps"] == 1
+    # no screenshots on disk: run_efficiency never counts a revisit
+    (tmp_path / "run.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    assert run_efficiency(tmp_path)["wasted_revisit"] == 0
+
+
+def _count_saves(monkeypatch) -> list[str]:
+    from operon.agent.loop import AgentLoop
+
+    calls: list[str] = []
+    original = AgentLoop._save_efficiency
+
+    async def spy(self, state) -> None:
+        calls.append(state.run_id)
+        await original(self, state)
+
+    monkeypatch.setattr(AgentLoop, "_save_efficiency", spy)
+    return calls
+
+
+async def test_save_efficiency_runs_once_on_gate_cancel(tmp_path, monkeypatch) -> None:
+    from evals import harness
+    from operon.models.common import RunStatus, RunTaskRequest, StepRequest
+
+    monkeypatch.setenv("OPERON_TEST_SAFE_MODE", "true")
+    calls = _count_saves(monkeypatch)
+    scenario = cu_click_then_done()
+    world = harness._World(scenario, tmp_path)
+    loop, _executor, client = harness._build_loop(scenario, world, tmp_path)
+    run = await loop.start_run(RunTaskRequest(intent=scenario.intent, max_steps=5))
+    original_turn = client.generate_turn
+
+    async def stop_while_thinking(*, contents):
+        await loop.run_store.set_status(run.run_id, RunStatus.CANCELLED)
+        return await original_turn(contents=contents)
+
+    client.generate_turn = stop_while_thinking
+    response = await loop.step_run(StepRequest(run_id=run.run_id))
+    assert response.status is RunStatus.CANCELLED
+    assert calls == [run.run_id]
+
+
+async def test_save_efficiency_runs_once_on_pre_step_failure(tmp_path, monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from evals import harness
+    from operon.agent.perception import PerceptionLowQualityError
+    from operon.models.common import RunStatus, RunTaskRequest, StepRequest
+
+    monkeypatch.setenv("OPERON_TEST_SAFE_MODE", "true")
+    calls = _count_saves(monkeypatch)
+    scenario = cu_click_then_done()
+    world = harness._World(scenario, tmp_path)
+    loop, _executor, _client = harness._build_loop(scenario, world, tmp_path)
+    run = await loop.start_run(RunTaskRequest(intent=scenario.intent, max_steps=5))
+    monkeypatch.setattr(loop, "_perceive_with_liveness_retry", AsyncMock(side_effect=PerceptionLowQualityError("no elements")))
+    response = await loop.step_run(StepRequest(run_id=run.run_id))
+    assert response.status is RunStatus.FAILED
+    assert calls == [run.run_id]
+
+
+async def test_save_efficiency_never_runs_on_a_pause(monkeypatch) -> None:
+    from evals.scenarios import trust_gate_declined
+
+    calls = _count_saves(monkeypatch)
+    result = await run_scenario(trust_gate_declined())
+    assert result.pauses == 1 and result.status == "waiting_for_user"
+    assert calls == []

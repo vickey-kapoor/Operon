@@ -284,7 +284,7 @@ def _payload(args: argparse.Namespace) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "intent": args.task,
         "environment": "desktop" if args.desktop else "browser",
-        "max_steps": args.max_steps,
+        "max_steps": args.max_steps if args.max_steps is not None else 25,
     }
     if args.url:
         payload["start_url"] = args.url
@@ -401,6 +401,21 @@ async def _run(args: argparse.Namespace) -> int:
         await client.close()
 
 
+def _run_entry(args: argparse.Namespace) -> int:
+    from operon.taskfile import run_tasks_command, tasks_flag_problem
+
+    problem = tasks_flag_problem(args)
+    if problem:
+        print(f"operon run: {problem}", file=sys.stderr)
+        return 2
+    if args.tasks:
+        return run_tasks_command(args)
+    if not args.task:
+        print("operon run: give a task, or --tasks FILE", file=sys.stderr)
+        return 2
+    return asyncio.run(_run(args))
+
+
 def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -423,7 +438,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run a task and print a report")
-    run.add_argument("task", help="what Operon should do, in plain words")
+    run.add_argument("task", nargs="?", default=None, help="what Operon should do, in plain words")
+    run.add_argument("--tasks", default=None, help="run the tasks in this YAML file (see docs/task-files.md)")
+    run.add_argument("--junit", default=None, help="with --tasks: write a JUnit XML report here")
+    run.add_argument("--only", action="append", default=None, help="with --tasks: run only the task with this name (repeatable)")
+    run.add_argument("--fail-fast", action="store_true", help="with --tasks: stop after the first failing task")
     run.add_argument("--request", action="store_true", help="send the task to a running API instead of running it here")
     run.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
@@ -431,9 +450,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--env", default=None, help="desktop run environment (default $OPERON_ENVIRONMENT, else live; see `operon envs`)")
     run.add_argument("--url", default=None, help="page to open first (browser)")
     run.add_argument("--mode", choices=["ask", "risky", "auto"], default=None, help="permission mode (default $OPERON_PERMISSION_MODE, else risky)")
-    run.add_argument("--max-steps", type=int, default=25)
+    run.add_argument("--max-steps", type=int, default=None, help="step limit (default 25)")
     run.add_argument("--headless", action="store_true", help="hide the browser window")
-    run.set_defaults(func=lambda a: asyncio.run(_run(a)))
+    run.set_defaults(func=_run_entry)
 
     for name, text in (("runs", "list runs a restart interrupted (OPERON_CHECKPOINTS)"),
                        ("resume", "continue an interrupted run from the current screen (OPERON_CHECKPOINTS)")):

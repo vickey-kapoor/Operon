@@ -21,6 +21,13 @@ async def _run_all() -> list[tuple[object, RunResult]]:
     return results
 
 
+def waste_cell(efficiency: dict | None) -> str:
+    """The ``waste`` column: wasted steps / total steps (KAN-85), ``-`` when not scored."""
+    if not efficiency or efficiency.get("wasted_steps") is None:
+        return "-"
+    return f"{efficiency['wasted_steps']}/{efficiency['total_steps']}"
+
+
 def main(argv: list[str]) -> int:
     os.environ.setdefault("GEMINI_API_KEY", "offline-eval")
     # KAN-158: a bug at one of the loop's recovery sites crashes the scenario instead
@@ -36,14 +43,14 @@ def main(argv: list[str]) -> int:
         print(json.dumps(rows, indent=2))
         return 0
 
-    print(f"{'scenario':30} {'outcome':14} {'ok':4} {'steps':>5} {'pauses':>6} {'model':>5}  note")
+    print(f"{'scenario':30} {'outcome':14} {'ok':4} {'steps':>5} {'waste':>6} {'pauses':>6} {'model':>5}  note")
     for scenario, result in results:
         ok = "yes" if scenario.accepts(result.outcome) else "NO"
         note = f"known: {scenario.known_issue[:60]}..." if scenario.known_issue else ""
         if result.recovered_errors:
             note = f"recovered x{sum(result.recovered_errors.values())} " + note
         print(
-            f"{result.scenario:30} {result.outcome:14} {ok:4} {result.steps:>5} {result.pauses:>6} "
+            f"{result.scenario:30} {result.outcome:14} {ok:4} {result.steps:>5} {waste_cell(result.efficiency):>6} {result.pauses:>6} "
             f"{result.model_calls:>5}  {note}"
         )
     total = len(results)

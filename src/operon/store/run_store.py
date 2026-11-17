@@ -183,6 +183,14 @@ class FileBackedRunStore(RunStore):
         # The machine's path rules, so a replay elsewhere judges file paths as this
         # run did (evals/replay.py, KAN-167).
         host = {"os": os.name, "home": str(Path.home()), "cwd": os.getcwd()}
+        if os.name == "nt":  # DPI awareness and per-monitor scale, for coordinate-drift triage (KAN-90)
+            try:
+                from operon.executor.dpi import display_report
+
+                # Separate file: host.json is the replay contract and stays three keys.
+                (path.parent / "displays.json").write_text(json.dumps(display_report(), indent=2) + "\n", encoding="utf-8")
+            except Exception:
+                pass
         (path.parent / "host.json").write_text(json.dumps(host) + "\n", encoding="utf-8")
 
     def _state_path(self, run_id: str) -> Path:

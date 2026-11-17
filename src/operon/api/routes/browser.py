@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, status
 from pydantic import ValidationError
 
+from operon.agent.efficiency import efficiency_for_response
 from operon.agent.loop import StartUrlBlockedError
 from operon.api import ws_stream as _ws_stream
 from operon.api.dependencies import (
@@ -125,7 +126,8 @@ async def cleanup(request: CleanupRequest) -> CleanupResponse:
 async def get_run(run_id: str) -> RunResponse:
     """Return the current state for a stored browser run."""
     validate_run_id(run_id)
-    run = await get_agent_loop().run_store.get_run(run_id)
+    run_store = get_agent_loop().run_store
+    run = await run_store.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     return RunResponse(
@@ -134,6 +136,7 @@ async def get_run(run_id: str) -> RunResponse:
         intent=run.intent,
         step_count=run.step_count,
         hitl_message=getattr(run, "hitl_message", None),
+        efficiency=await efficiency_for_response(run, run_store),
     )
 
 

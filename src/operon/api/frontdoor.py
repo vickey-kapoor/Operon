@@ -204,6 +204,9 @@ def _waiting(loop, record) -> dict[str, Any] | None:
     gate = loop.pending_gate(record.run_id) if hasattr(loop, "pending_gate") else None
     waiting: dict[str, Any] = {"kind": "approval" if gate is not None else "needs_you", "gate": gate, "reason": reason}
     category = loop.pending_gate_category(record.run_id) if hasattr(loop, "pending_gate_category") else None
+    verdict = loop.pending_gate_verdict(record.run_id) if hasattr(loop, "pending_gate_verdict") else None
+    if isinstance(verdict, str) and verdict:
+        waiting["verdict"] = verdict  # "deny" is a hard policy block, "confirm" is approvable
     if isinstance(category, str) and category:
         waiting["category"] = category  # KAN-103: only present for a named risk category pause
     return waiting

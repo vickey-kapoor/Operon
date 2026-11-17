@@ -39,6 +39,17 @@ Return `True` to approve. Without a callback, or when it returns `False`, the ru
 the result has `status == "denied"` and `denied_reason` set. The SDK never approves on its own.
 A run handed to a person (takeover) is stopped the same way.
 
+`ApprovalRequest.verdict` is `"deny"` when the pause is a hard policy block (the trust gate said
+"Blocked by policy") and `"confirm"` for an ordinary approval. **A callback that returns `True` on a
+`"deny"` overrides policy and runs the blocked action.** That is meant for a person at a prompt;
+an unattended callback should refuse it:
+
+```python
+Agent(on_approval=lambda r: r.verdict != "deny")
+```
+
+`RunResult.denied_kind` says why a run was denied: `"policy"`, `"approval"` or `"takeover"`.
+
 Screenshots in `artifacts_dir` capture the whole screen: review them before sharing.
 
 ## Limits and warnings

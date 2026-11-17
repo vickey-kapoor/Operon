@@ -24,6 +24,7 @@ from operon.agent.actions.retry_hardening import (
 )
 from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
+from operon.agent.efficiency import run_efficiency
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
 from operon.agent.planner import (
@@ -233,6 +234,7 @@ class AgentLoop:
         # approved set. The same action then passes the gates it was approved for, and
         # the approval is used up once it gets through (or the policy picks another).
         self._pending_gate_approvals: dict[str, tuple[str, str, str]] = {}
+        self._pending_trust_verdicts: dict[str, str] = {}  # run_id -> "deny" | "confirm" for a trust pause
         # Runs a human paused by hand (UI Pause, POST /run/{id}/pause). A step already
         # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
         self._pause_requests: set[str] = set()
@@ -457,6 +459,14 @@ class AgentLoop:
         pending = self._pending_gate_approvals.get(run_id)
         return (pending[2] or None) if pending is not None and pending[1] == "trust" else None
 
+    def pending_gate_verdict(self, run_id: str) -> str | None:
+        """``deny`` or ``confirm`` for the trust pause a run waits on, else None.
+        A deny is a hard policy block: an unattended caller must not approve it."""
+        pending = self._pending_gate_approvals.get(run_id)
+        if pending is None or pending[1] != "trust":
+            return None
+        return self._pending_trust_verdicts.get(run_id)
+
     async def take_over(self, run_id: str) -> AgentState:
         """Hand the screen to the person: pause the run and mark it under their control.
 
@@ -535,6 +545,7 @@ class AgentLoop:
             # pause also holds the calls; its approval is counted below, once.
             record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
+        self._pending_trust_verdicts.pop(run_id, None)
         if approve_gated_action and pending is not None:
             fingerprint, gate, _category = pending
             prior = self._approved_gate_actions.get(run_id)
@@ -714,6 +725,7 @@ class AgentLoop:
                 await self._cleanup_completed_run(record.run_id)
             except Exception as exc:
                 self._recovered(record.run_id, "cleanup_after_max_steps", exc)
+            await self._save_efficiency(record)
             return RunResponse(
                 run_id=updated.run_id,
                 status=updated.status,
@@ -836,6 +848,7 @@ class AgentLoop:
         if await self._run_cancelled(ctx.run_id):
             # Stopped while this step captured and asked the model: run nothing.
             _trace("  3 POLICY -> CANCELLED", "run was stopped during this step; not executing")
+            await self._save_efficiency(ctx.record)
             return self._cancelled_response(ctx.record)
 
         # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
@@ -1264,6 +1277,8 @@ class AgentLoop:
         # Persist per-stage durations for tail-latency analysis. Best-effort —
         # the step has already completed by this point.
         self._persist_step_timing(run_id, ctx.step_index, ctx.stage_timings)
+        if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
+            await self._save_efficiency(state)
 
         if ctx.deferred_pause is not None and final_status is RunStatus.RUNNING:
             # A retry asked for a human (or a gate blocked it) after this step's
@@ -1288,6 +1303,22 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    async def _save_efficiency(self, state) -> None:
+        """Score the finished run (KAN-85) into ``efficiency.json`` and the saved state."""
+        root = getattr(self.run_store, "root_dir", None)
+        if root is None:
+            return
+        try:
+            await bg_writer.flush()  # the run log and step timings are written in the background
+            efficiency = await asyncio.to_thread(run_efficiency, Path(root) / state.run_id)
+            (Path(root) / state.run_id / "efficiency.json").write_text(
+                json.dumps(efficiency, indent=2) + "\n", encoding="utf-8"
+            )
+            state.efficiency = efficiency
+            await self.run_store.save_state(state)
+        except Exception as exc:
+            self._recovered(state.run_id, "save_efficiency", exc, level=logging.DEBUG)
 
     async def _current_url_for_trust_gate(self, run_id: str, *, log: bool = False) -> str | None:
         """The browser's current URL, only when the trust gate has a domain allowlist
@@ -1388,6 +1419,7 @@ class AgentLoop:
                 leaf, trust = blocked[0]
                 _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
                 self._pending_gate_approvals[run_id] = (fingerprint, "trust", trust.category)
+                self._pending_trust_verdicts[run_id] = trust.verdict.value
                 if trust.verdict is TrustVerdict.DENY:
                     return (
                         f"Blocked by policy: {leaf.action_type.value} action "
@@ -1816,6 +1848,7 @@ class AgentLoop:
             await self._cleanup_completed_run(record.run_id)
         except Exception as exc:
             self._recovered(record.run_id, "cleanup_after_pre_step_failure", exc)
+        await self._save_efficiency(record)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,

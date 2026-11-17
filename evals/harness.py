@@ -32,6 +32,7 @@ from PIL import Image, ImageDraw
 
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.backends.combined import CombinedPerceptionPolicyService
+from operon.agent.efficiency import run_efficiency
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.coordinator import PolicyCoordinator
@@ -433,6 +434,8 @@ class RunResult:
     model_requests: list[Any] = field(default_factory=list)
     # Errors the loop caught and carried on from, by site (KAN-158).
     recovered_errors: dict[str, int] = field(default_factory=dict)
+    # The run's step-efficiency score (KAN-85), as saved in its state.
+    efficiency: dict[str, Any] | None = None
 
     def summary(self) -> str:
         return (
@@ -554,4 +557,6 @@ async def run_scenario(scenario: Scenario) -> RunResult:
             actions=[a.action_type.value for a in executor.actions],
             model_requests=requests,
             recovered_errors=dict(state.recovered_errors) if state is not None else {},
+            # A run that never ended inside the budget has no saved score: compute it from its files.
+            efficiency=(state.efficiency or run_efficiency(root / "runs" / run_id)) if state is not None else None,
         )

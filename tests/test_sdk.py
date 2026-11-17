@@ -128,7 +128,11 @@ async def test_cancelling_arun_stops_the_run(monkeypatch, tmp_path) -> None:
     _use(monkeypatch, loop)
     entered, never = asyncio.Event(), asyncio.Event()
 
+    calls = 0
+
     async def blocked(action):
+        nonlocal calls
+        calls += 1
         entered.set()
         await never.wait()  # never set: the first action hangs until the run is stopped
 
@@ -137,15 +141,14 @@ async def test_cancelling_arun_stops_the_run(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(ws_stream, "publish_event", events.append)
 
     task = asyncio.create_task(Agent(mode="auto", poll_s=0.01).arun("Loop forever"))
-    await entered.wait()
-    before = list(executor.executed)
+    await asyncio.wait_for(entered.wait(), timeout=5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=5)
 
     run_id = next(e["run_id"] for e in events if e["type"] == "run_started")
     assert (await loop.run_store.get_run(run_id)).status.value == "cancelled"
-    assert executor.executed == before
+    assert calls == 1  # nothing ran after the cancel
     runtime = current_runtime()
     assert not runtime.sdk_run_active and runtime.browser_loop is None
 

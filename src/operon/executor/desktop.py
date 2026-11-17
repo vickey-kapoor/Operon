@@ -1,4 +1,7 @@
-"""Desktop executor for full-screen computer-use automation."""
+"""Desktop executor for full-screen computer-use automation.
+
+DPI and click-coordinate pipeline notes live in ``executor/dpi.py`` (KAN-90).
+"""
 
 from __future__ import annotations
 
@@ -23,6 +26,11 @@ from operon.agent.perception.change_note import ChangeNoteBuffer
 from operon.agent.perception.settle import signature_from_rgb
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
+from operon.executor import dpi
+
+# OPERON_DPI_AWARE: pyautogui calls SetProcessDPIAware() when imported, which locks the process
+# at system-aware for good. Per-monitor-v2 has to be set first, so this runs before that import.
+dpi.apply_awareness_early()
 
 try:
     import pyautogui
@@ -47,16 +55,16 @@ except Exception as exc:  # pragma: no cover - exercised on headless CI
         scroll=_unavailable,
     )
 
-from operon.models.capture import CaptureFrame
-from operon.models.common import FailureCategory, LoopStage
-from operon.models.execution import (
+from operon.models.capture import CaptureFrame  # noqa: E402
+from operon.models.common import FailureCategory, LoopStage  # noqa: E402
+from operon.models.execution import (  # noqa: E402
     ExecutedAction,
     ExecutionAttemptTrace,
     ExecutionTrace,
 )
-from operon.models.policy import ActionType, AgentAction
+from operon.models.policy import ActionType, AgentAction  # noqa: E402
 
-from .browser import Executor
+from .browser import Executor  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +230,10 @@ def _set_dpi_awareness() -> None:
         return
     try:
         # PMv2: -4 == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (Win10 1607+)
-        ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)  # type: ignore[attr-defined]
+        # The handle must be passed pointer-sized; a plain int is 32-bit and the call fails.
+        # It also fails (returns 0, no exception) when awareness was already fixed, e.g. by
+        # pyautogui's import-time SetProcessDPIAware: dpi.warn_if_drifting() reports that (KAN-90).
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # type: ignore[attr-defined]
     except (AttributeError, OSError):
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
@@ -250,19 +261,16 @@ def _foreground_monitor() -> dict | None:
         hmon = user32.MonitorFromWindow(hwnd, 2)
         if not hmon:
             return None
+        info = ctypes.create_string_buffer(40)
+        ctypes.c_uint32.from_buffer(info, 0).value = 40  # cbSize
+        if not user32.GetMonitorInfoA(hmon, info):
+            return None
+        # rcMonitor occupies bytes 4-20: left, top, right, bottom (4xint32). Match the
+        # full rect: monitors can share a left edge or have negative origins (KAN-90).
+        left, top, right, bottom = (ctypes.c_int32.from_buffer(info, 4 + i * 4).value for i in range(4))
         with _mss() as sct:
-            for mon in sct.monitors[1:]:  # skip monitors[0] (virtual combined)
-                # mss monitor dicts use left/top/width/height; cross-reference via
-                # the monitor's origin to match the HMONITOR returned by Win32.
-                info = ctypes.create_string_buffer(40)
-                ctypes.c_uint32.from_buffer(info, 0).value = 40  # cbSize
-                if user32.GetMonitorInfoA(hmon, info):
-                    # rcMonitor occupies bytes 4-20: left, top, right, bottom (4×int32)
-                    left, top, right, bottom = (
-                        ctypes.c_int32.from_buffer(info, 4 + i * 4).value for i in range(4)
-                    )
-                    if mon["left"] == left and mon["top"] == top:
-                        return mon
+            # skip monitors[0] (the virtual combined display)
+            return dpi.match_monitor(sct.monitors[1:], (left, top, right, bottom))  # type: ignore[arg-type]
     except Exception as exc:
         logger.debug("_foreground_monitor: %s", exc)
     return None
@@ -417,6 +425,7 @@ class DesktopExecutor(Executor):
 
         _set_dpi_awareness()
         if not get_settings().test_safe_mode:
+            dpi.warn_if_drifting()
             validate_display_baseline()
             self._noise_floor, self._servo_threshold = self._calibrate_servo_threshold()
         else:

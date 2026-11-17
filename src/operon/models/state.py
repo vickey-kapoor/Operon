@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 
 from operon.models.common import RunStatus, StopReason, StrictModel
@@ -61,3 +63,5 @@ class AgentState(StrictModel):
     # pending or waiting_for_user), kept while stop_reason is "interrupted". A run that
     # was waiting for the person re-pauses on resume instead of continuing.
     interrupted_from: RunStatus | None = None
+    # KAN-85: the step-efficiency score (agent/efficiency.py), saved when the run ends.
+    efficiency: dict[str, Any] | None = None

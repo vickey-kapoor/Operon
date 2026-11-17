@@ -107,7 +107,9 @@ class BackgroundWriter:
     async def flush(self) -> None:
         """Await all pending background writes.  Use in tests that check artifacts."""
         if self._pending:
-            await asyncio.gather(*list(self._pending), return_exceptions=True)
+            # Shielded: a caller cancelled mid-flush (a timeout, a stopped run) must not
+            # cancel the queued writes themselves.
+            await asyncio.shield(asyncio.gather(*list(self._pending), return_exceptions=True))
 
 
 # Module-level singleton

@@ -289,3 +289,28 @@ async def test_settle_is_bounded_when_the_finalizer_hangs(monkeypatch, caplog) -
         assert not hung.done()  # the run's own task is left alone
     finally:
         hung.cancel()
+
+
+async def test_settle_timeout_does_not_drop_queued_writes(monkeypatch, tmp_path) -> None:
+    """A timed-out settle must not cancel run-log writes still queued on the writer thread."""
+    import threading
+
+    from operon.api import frontdoor
+    from operon.store import background_writer
+    from operon.store.background_writer import bg_writer
+
+    monkeypatch.setattr(bg_writer, "_sync", False)  # conftest forces inline writes; this needs the real thread
+    monkeypatch.setattr(bg_writer, "_pending", [])
+    gate = threading.Event()
+    blocker = asyncio.get_running_loop().run_in_executor(background_writer._thread_pool, gate.wait, 5)
+    bg_writer._pending.append(blocker)
+    log = tmp_path / "run.jsonl"
+    for i in range(3):
+        bg_writer.append(log, f"line{i}\n")
+    try:
+        assert await frontdoor.settle_run("no-such-run", timeout_s=0.1) is False
+    finally:
+        gate.set()
+    await blocker
+    await bg_writer.flush()
+    assert log.read_text(encoding="utf-8").splitlines() == ["line0", "line1", "line2"]

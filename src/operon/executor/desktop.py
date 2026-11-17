@@ -23,6 +23,11 @@ import pyperclip
 
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.agent.perception.change_note import ChangeNoteBuffer
+from operon.agent.perception.screen_diff import (
+    BLANK_VARIANCE_THRESHOLD,
+    first_blank_point,
+    reset_click_candidates,
+)
 from operon.agent.perception.settle import signature_from_rgb
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
@@ -387,7 +392,7 @@ class DesktopExecutor(Executor):
     # Ceiling prevents it from growing so high that genuinely blank regions pass.
     _SERVO_THRESHOLD_MIN: float = 8.0
     _SERVO_THRESHOLD_MAX: float = 80.0
-    _SERVO_THRESHOLD_DEFAULT: float = 20.0
+    _SERVO_THRESHOLD_DEFAULT: float = BLANK_VARIANCE_THRESHOLD
 
     def __init__(
         self,
@@ -421,6 +426,8 @@ class DesktopExecutor(Executor):
         self._close_when_done: set[str] = set()
         # run_id -> the window in front after the run's last action: the one it works in.
         self._work_windows: dict[str, int] = {}
+        # What the last context_reset/session_reset pressed, clicked or skipped (for the run trace).
+        self.last_reset_actions: list[str] = []
         # OPERON_FOCUS_GUARD: (hwnd, pid, title) of the window in front when the model last saw the screen.
         # Armed only by the loop's capture, spent by the first action after it. Our own
         # post-action captures must not re-arm it: windows opened by the agent's actions are not stolen.
@@ -544,39 +551,71 @@ class DesktopExecutor(Executor):
             await asyncio.sleep(0.5)
 
     async def context_reset(self) -> None:
-        """Dismiss open modals/dropdowns, clear focus traps, scroll to top."""
+        """Dismiss open modals/dropdowns, clear focus traps, scroll to top.
+
+        The recovery ladder runs this without the model choosing it, so it never clicks
+        blind: the click (which only puts focus on the window background) goes to a point
+        whose region is blank in the current screen, or is skipped. Each step taken or
+        skipped is noted in ``last_reset_actions`` for the run's trace.
+        """
+        self.last_reset_actions = []
         try:
             await asyncio.to_thread(pyautogui.press, "escape")
             await asyncio.sleep(0.2)
             await asyncio.to_thread(pyautogui.press, "escape")
             await asyncio.sleep(0.1)
+            self.last_reset_actions.append("pressed escape x2")
         except Exception:
             logger.debug("context_reset: escape press failed", exc_info=True)
+            self.last_reset_actions.append("escape press failed")
         try:
             with _mss() as sct:
                 mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-                cx = mon["left"] + mon["width"] // 2
-                cy = mon["top"] + mon["height"] // 3  # upper-third: avoids taskbar
-            await asyncio.to_thread(pyautogui.click, cx, cy)
-            await asyncio.sleep(0.1)
+                candidates = reset_click_candidates(mon["width"], mon["height"], mon["left"], mon["top"])
+            point = await asyncio.to_thread(first_blank_point, candidates, self._reset_point_has_content)
+            if point is None:
+                logger.info("context_reset: no blank region found; skipping the focus click")
+                self.last_reset_actions.append(
+                    f"skipped focus click: no blank region among {len(candidates)} candidate points"
+                )
+            else:
+                await asyncio.to_thread(pyautogui.click, point[0], point[1])
+                await asyncio.sleep(0.1)
+                self.last_reset_actions.append(f"clicked blank region at ({point[0]}, {point[1]})")
         except Exception:
             logger.debug("context_reset: body click failed", exc_info=True)
+            self.last_reset_actions.append("skipped focus click: blank-region check failed")
         try:
             await asyncio.to_thread(pyautogui.hotkey, "ctrl", "home")
+            self.last_reset_actions.append("pressed ctrl+home")
         except Exception:
             logger.debug("context_reset: ctrl+home failed", exc_info=True)
+            self.last_reset_actions.append("ctrl+home failed")
+
+    def _reset_point_has_content(self, x: int, y: int) -> bool:
+        """Visual servo for the reset click. A failed pixel read counts as content (no click)."""
+        try:
+            return self._region_has_content(x, y)[0]
+        except Exception:
+            return True
 
     async def session_reset(self, start_url: str | None = None) -> None:
-        """Re-baseline window focus: dismiss stacked UI state and cycle focus."""
+        """Re-baseline window focus: dismiss stacked UI state, then bring the run's own
+        window back to the front. No alt+tab: that lands on an arbitrary window."""
         await self.context_reset()
         await asyncio.sleep(0.3)
+        run_id = getattr(self, "_current_run_id", None)
+        if run_id is None:
+            self.last_reset_actions.append("no work window to restore: left focus alone")
+            return
         try:
-            await asyncio.to_thread(pyautogui.hotkey, "alt", "tab")
-            await asyncio.sleep(0.4)
-            await asyncio.to_thread(pyautogui.hotkey, "alt", "tab")
-            await asyncio.sleep(0.3)
+            moved = await self.restore_work_window(run_id)
+            self.last_reset_actions.append(
+                "restored the work window" if moved else "work window already in front or unknown"
+            )
         except Exception:
-            logger.debug("session_reset: alt+tab cycle failed", exc_info=True)
+            logger.debug("session_reset: restore_work_window failed", exc_info=True)
+            self.last_reset_actions.append("restoring the work window failed")
 
     def close_apps_when_done(self, run_id: str) -> None:
         """Close the apps *run_id* opens once it ends (succeeded, failed or stopped)."""

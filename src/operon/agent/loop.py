@@ -1282,7 +1282,7 @@ class AgentLoop:
         if final_status is not RunStatus.WAITING_FOR_USER:
             self._pause_requests.discard(run_id)
         if final_status is RunStatus.RUNNING:
-            await self._apply_recovery_actions(state, recovery)
+            await self._apply_recovery_actions(state, recovery, ctx.step_index)
         ctx.final_status = final_status
 
         _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
@@ -2063,26 +2063,54 @@ class AgentLoop:
             patience_retries=retries,
         )
 
-    async def _apply_recovery_actions(self, state, recovery: RecoveryDecision) -> None:
+    async def _apply_recovery_actions(self, state, recovery: RecoveryDecision, step_index: int | None = None) -> None:
         """Execute concrete side effects for CONTEXT_RESET and SESSION_RESET tiers.
 
         Runs after the step is logged so the log accurately reflects the failure,
         and before set_status so the next step's capture sees the cleaned state.
         Failures are swallowed — a broken reset must never terminate a live run.
+        These are actions the model never chose, so the executor never clicks blind, the
+        start URL goes through the trust gate, and what was done is written to the step's
+        ``recovery_reset.json``.
         """
         strategy = recovery.strategy
+        url_allowed: bool | None = None
         if strategy is RecoveryStrategy.CONTEXT_RESET:
-            _trace("  7b CONTEXT_RESET", "escape×2 + body-click + scroll-top")
+            _trace("  7b CONTEXT_RESET", "escape×2 + blank-region click (skipped if none) + scroll-top")
             try:
                 await self.executor.context_reset()
             except Exception as exc:
                 self._recovered(state.run_id, "context_reset", exc)
         elif strategy is RecoveryStrategy.SESSION_RESET:
-            _trace("  7b SESSION_RESET", f"start_url={state.start_url!r}")
+            start_url = state.start_url
+            if start_url:
+                url_allowed = self._reset_url_allowed(start_url)
+                if not url_allowed:
+                    logger.info("session_reset: the trust gate does not allow %r; reloading instead", start_url)
+                    start_url = None
+            _trace("  7b SESSION_RESET", f"start_url={start_url!r}")
             try:
-                await self.executor.session_reset(state.start_url)
+                await self.executor.session_reset(start_url)
             except Exception as exc:
                 self._recovered(state.run_id, "session_reset", exc)
+        else:
+            return
+        actions = list(getattr(self.executor, "last_reset_actions", None) or [])
+        if url_allowed is False:
+            actions.insert(0, "start URL not allowed by the trust gate: did not navigate to it")
+        if step_index is not None and actions:
+            try:
+                path = self._artifacts.persist_recovery_reset(
+                    state.run_id, step_index, strategy.value, actions, url_allowed
+                )
+                state.artifact_paths.append(path)
+            except Exception as exc:
+                self._recovered(state.run_id, "persist_recovery_reset", exc)
+
+    def _reset_url_allowed(self, url: str) -> bool:
+        """True when the trust gate lets the agent navigate to ``url`` (a reset cannot ask a person)."""
+        probe = AgentAction(action_type=ActionType.NAVIGATE, url=url)
+        return self._trust_gate.evaluate(probe).verdict is TrustVerdict.ALLOW
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
         self._release_backend_run_state(run_id)

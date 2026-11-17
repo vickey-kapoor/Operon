@@ -286,7 +286,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.request:
         from operon.api.auth import client_api_key
 
-        client = RemoteClient(args.api, args.api_key or client_api_key())
+        client = RemoteClient(args.api or get_settings().api_url or _DEFAULT_API, args.api_key or client_api_key())
     else:
         from operon.core.settings import startup_problems
 
@@ -360,7 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--only", action="append", default=None, help="with --tasks: run only the task with this name (repeatable)")
     run.add_argument("--fail-fast", action="store_true", help="with --tasks: stop after the first failing task")
     run.add_argument("--request", action="store_true", help="send the task to a running API instead of running it here")
-    run.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
+    run.add_argument("--api", default=None, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
     run.add_argument("--desktop", action="store_true", help="run on the desktop instead of in the browser")
     run.add_argument("--env", default=None, help="desktop run environment (default $OPERON_ENVIRONMENT, else live; see `operon envs`)")

@@ -364,7 +364,11 @@ async def hand_back(run_id: str, note: str | None = None) -> dict[str, Any]:
     loop, record = await _require_run(run_id)
     if not getattr(record, "in_takeover", False):
         raise FrontDoorError("Run is not under your control")
-    await loop.hand_back(run_id, note)
+    _check_environment(loop, record)  # before the hint and in_takeover change
+    try:
+        await loop.hand_back(run_id, note)
+    except ValueError as exc:
+        raise FrontDoorError(str(exc)) from exc
     _tasks.schedule_auto_run(loop, run_id, record.max_steps)
     _ws_stream.publish_event({"type": "control_ack", "action": "handback", "run_id": run_id})
     return await run_status(run_id)

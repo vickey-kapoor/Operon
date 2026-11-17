@@ -1,4 +1,4 @@
-﻿"""Resume keeps a desktop run in the environment provider it started in (KAN-80): a run
+"""Resume keeps a desktop run in the environment provider it started in (KAN-80): a run
 begun with --env windows-sandbox must not silently continue on the live host."""
 
 from __future__ import annotations
@@ -137,4 +137,47 @@ async def test_approve_and_decline_answer_409_not_500_and_leave_no_hint(
     assert approved.status_code == 409 and "windows-sandbox" in approved.text
     assert declined.status_code == 409
     assert run_control.consume_override_hint(run_id) is None
+    assert executor.executed == []
+
+
+def _running_sandbox_run(tmp_path: Path, **fields) -> str:
+    run_id = _crash(tmp_path, RunStatus.RUNNING, environment="desktop", **fields)
+    settings = tmp_path / run_id / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    data["OPERON_ENVIRONMENT"] = "windows-sandbox"
+    settings.write_text(json.dumps(data), encoding="utf-8")
+    return run_id
+
+
+async def test_a_disk_loaded_sandbox_run_is_not_stepped_on_the_live_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = _running_sandbox_run(tmp_path)
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "live")
+    loop, executor = build_loop(monkeypatch, tmp_path, [STOP])
+    monkeypatch.setattr("operon.api.routes.desktop.get_desktop_agent_loop", lambda: loop)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8080") as client:
+        response = await client.post("/desktop/step", json={"run_id": run_id})
+
+    assert 400 <= response.status_code < 500 and "windows-sandbox" in response.text
+    assert executor.executed == []
+    assert (await loop.run_store.get_run(run_id)).step_count == 3
+
+
+async def test_a_refused_hand_back_changes_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    run_id = _running_sandbox_run(tmp_path, in_takeover=True)
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "live")
+    loop, executor = build_loop(monkeypatch, tmp_path, [STOP])
+    monkeypatch.setattr(frontdoor, "_loop_of", lambda rid: loop)
+    monkeypatch.setattr(ws_stream, "publish_event", lambda event: None)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8080") as client:
+        response = await client.post(f"/app/api/runs/{run_id}/handback")
+    with pytest.raises(ValueError, match="windows-sandbox"):
+        await loop.hand_back(run_id)  # the loop refuses before touching anything, too
+
+    assert response.status_code == 409
+    assert run_control.consume_override_hint(run_id) is None
+    assert (await loop.run_store.get_run(run_id)).in_takeover is True
     assert executor.executed == []

@@ -523,6 +523,7 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} not found")
         if not getattr(record, "in_takeover", False):
             raise ValueError(f"Run {run_id!r} is not under the user's control")
+        self.check_resume_environment(record)  # before the hint and in_takeover change
         hint = (
             "The user took control of the screen and has now handed it back. The screen "
             "may have changed: look at it again before acting."
@@ -764,6 +765,9 @@ class AgentLoop:
                 intent=record.intent,
                 step_count=record.step_count,
             )
+        # A run loaded from disk may have started in another environment provider: refuse
+        # before this step changes anything (a no-op for browser runs and runs created here).
+        self.check_resume_environment(record)
         if record.step_count >= record.max_steps:
             record.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
             updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)

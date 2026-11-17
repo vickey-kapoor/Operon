@@ -4,7 +4,7 @@ The real agent loop (thin harness), the real guest agent and a real Windows desk
 Windows Sandbox (KAN-80): the mouse clicks and the keyboard types for real. Only the
 model is a script, so a run costs nothing. Each task is graded from machine state: the
 sandbox's writable ``exchange`` folder is mapped to the same path on the host, so a file
-the guest's Notepad saves there is read straight from the host.
+the guest writes there is read straight from the host.
 
 The sandbox maps the source folder the tests import (``source_dir()``) read-only, so the
 guest runs the same code as the test run.
@@ -175,29 +175,30 @@ def test_the_host_sees_the_real_sandbox_desktop(sandbox):
     assert Path(frame.artifact_path).stat().st_size > 5_000
 
 
-def test_notepad_saves_what_was_typed(sandbox, tmp_path):
-    """launch_app, type and the save dialog on a real desktop: the file must hold the text."""
-    target = sandbox.exchange / "operon-e2e-notepad.txt"
+def test_a_typed_command_writes_the_file(sandbox, tmp_path):
+    """launch_app and typing on a real desktop: the console the agent opens must write the file.
+
+    The sandbox image ships no Notepad (it is a Store app: ``where notepad`` finds nothing in the
+    guest, and the launch opens no window), so a real text editor cannot be launched there. ``cmd``
+    is on every Windows image and takes keyboard input the same way, so it proves launch, focus and
+    typing end to end.
+    """
+    target = sandbox.exchange / "operon-e2e-note.txt"
     target.unlink(missing_ok=True)
     script = [
-        call("launch_app", app="notepad"),
+        call("launch_app", app="cmd"),
         call("wait_5_seconds"),
-        call("type_text_at", **CENTER, text="hello from the scripted model", press_enter=False),
-        call("key_combination", keys="control+s"),
-        call("wait_5_seconds"),
-        # The Save dialog opens with its file-name box focused: type without clicking (a click at
-        # the screen centre would land outside the box), after selecting whatever it pre-fills.
-        call("key_combination", keys="control+a"),
-        call("type", text=str(target), press_enter=True),
+        # The new console takes the keyboard focus: type without clicking.
+        call("type", text=f'echo hello from the scripted model> "{target}"', press_enter=True),
         call("wait_5_seconds"),
         say("The task is complete."),
     ]
     status, _steps, client = asyncio.run(
-        run_script(sandbox, tmp_path, "Write a note in Notepad and save it", script)
+        run_script(sandbox, tmp_path, "Write a note with a command and save it", script)
     )
     assert status is RunStatus.SUCCEEDED
     assert client.turns == len(script)
-    assert target.exists(), "Notepad did not save the file"
+    assert target.exists(), "the typed command did not run in the guest's console"
     assert target.read_text(encoding="utf-8", errors="replace").strip() == "hello from the scripted model"
 
 

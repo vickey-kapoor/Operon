@@ -98,7 +98,7 @@ def test_run_passes_settings_to_agent(tmp_path, fake) -> None:
     first, second, _ = fake.calls
     assert first["mode"] == "auto" and first["max_steps"] == 7 and first["url"] == "https://example.test"
     assert first["on_approval"] is None  # deny by default
-    assert second["url"] == "https://other.test" and second["on_approval"](None) is True
+    assert second["url"] == "https://other.test" and second["on_approval"](sdk.ApprovalRequest("r", "ok?", "approval", "trust", "confirm")) is True
 
 
 def test_expect_checks(tmp_path, fake) -> None:

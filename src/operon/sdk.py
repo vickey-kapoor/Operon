@@ -33,6 +33,9 @@ class ApprovalRequest:
     reason: str
     kind: str  # "approval" (a trust/confidence gate) or "needs_you" (the model asks to confirm)
     gate: str | None = None
+    # "deny" for a hard policy block (a callback that returns True overrides policy: refuse it
+    # unless a person chose to), "confirm" for an ordinary approval, None when not a trust pause.
+    verdict: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ class RunResult:
     summary: str = ""
     message: str | None = None  # the model's last word whatever the status (a failure note, say)
     denied_reason: str | None = None
+    denied_kind: str | None = None  # "policy" (a deny gate), "approval", or "takeover" when status is denied
 
     @property
     def succeeded(self) -> bool:
@@ -185,6 +189,7 @@ class Agent:
         run_id = status["run_id"]
         started["run_id"] = run_id
         denied: str | None = None
+        denied_kind: str | None = None
         while not status["done"]:
             waiting = status.get("waiting")
             if waiting is None:
@@ -193,15 +198,18 @@ class Agent:
                 continue
             if waiting["kind"] == "takeover":
                 denied = "The run was handed to a person; the SDK cannot take over."
+                denied_kind = "takeover"
                 status = await client.stop(run_id)
                 continue
             request = ApprovalRequest(
-                run_id=run_id, reason=waiting["reason"], kind=waiting["kind"], gate=waiting.get("gate")
+                run_id=run_id, reason=waiting["reason"], kind=waiting["kind"], gate=waiting.get("gate"),
+                verdict=waiting.get("verdict"),
             )
             if await self._ask(request):
                 status = await client.approve(run_id)
             else:
                 denied = request.reason
+                denied_kind = "policy" if request.verdict == "deny" else "approval"
                 status = await client.stop(run_id)
         started["done"] = True
         report = await client.report(run_id)
@@ -216,4 +224,5 @@ class Agent:
             artifacts_dir=report.get("run_dir"),
             summary=report.get("summary", ""),
             denied_reason=denied,
+            denied_kind=denied_kind,
         )

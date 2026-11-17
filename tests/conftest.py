@@ -58,6 +58,22 @@ def _reset_active_browser_manager():
 
 
 @pytest.fixture(autouse=True)
+def _reset_runtime_loops():
+    """Drop agent loops a test built lazily (for example a request through the real app).
+
+    A loop left on the runtime makes the SDK refuse to run in the same process
+    ("This process already holds Operon agent loops") in whichever test comes next.
+    """
+    from operon.core.runtime import current_runtime
+
+    yield
+    runtime = current_runtime()
+    runtime.browser_loop = None
+    runtime.desktop_loop = None
+    runtime.desktop_provider = None
+
+
+@pytest.fixture(autouse=True)
 def _sync_bg_writer():
     """Force bg_writer to write synchronously during tests.
 

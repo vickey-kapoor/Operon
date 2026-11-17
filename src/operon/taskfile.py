@@ -11,6 +11,7 @@ batch run, a step that needs approval fails the task unless ``approve_all`` is t
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -48,7 +49,8 @@ class Expect(_Strict):
 class Defaults(_Strict):
     desktop: bool = False
     env: str | None = None
-    mode: Literal["ask", "risky", "auto"] = "ask"
+    # risky, not ask: nobody is there to approve, and `ask` pauses at the first click.
+    mode: Literal["ask", "risky", "auto"] = "risky"
     max_steps: int | None = Field(default=25, ge=1)
     url: str | None = None
     approve_all: bool = False
@@ -81,7 +83,7 @@ def load_task_file(path: str | Path) -> TaskFile:
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise TaskFileError(f"{path}: cannot read: {exc}") from exc
     try:
         data = yaml.safe_load(text)
@@ -176,12 +178,16 @@ async def _run_one(task_file: TaskFile, spec: TaskSpec) -> TaskOutcome:
     cfg = task_file.resolved(spec)
     started = time.monotonic()
     try:
+        def on_approval(request: Any) -> bool:
+            # approve_all never overrides a hard policy block (verdict "deny").
+            return request.verdict != "deny"
+
         agent = sdk.Agent(
             desktop=cfg["desktop"] or bool(cfg["env"]),
             env=cfg["env"],
             mode=cfg["mode"],
             max_steps=cfg["max_steps"],
-            on_approval=(lambda _request: True) if cfg["approve_all"] else None,
+            on_approval=on_approval if cfg["approve_all"] else None,
         )
         result = await agent.arun(spec.task, url=cfg["url"])
     except Exception as exc:  # noqa: BLE001 - one broken task must not stop the suite
@@ -189,7 +195,14 @@ async def _run_one(task_file: TaskFile, spec: TaskSpec) -> TaskOutcome:
     problems = check_expectations(spec.expect, result, cfg["env"])
     if result.status == sdk.STATUS_DENIED and result.denied_reason:
         problems = [p for p in problems if not p.startswith("status was")]
-        problems.insert(0, f"approval needed and not granted (set approve_all: true to allow): {result.denied_reason}")
+        kind = result.denied_kind
+        if kind == "takeover":
+            lead = f"run was handed to a person and cannot continue unattended: {result.denied_reason}"
+        elif kind == "policy":
+            lead = f"blocked by policy: {result.denied_reason}"
+        else:
+            lead = f"approval needed and not granted (set approve_all: true to allow): {result.denied_reason}"
+        problems.insert(0, lead)
     return TaskOutcome(
         spec.name,
         result.status,
@@ -212,6 +225,14 @@ def format_table(outcomes: list[TaskOutcome]) -> str:
     return "\n".join("  ".join(c.ljust(w) for c, w in zip(r[:6], widths)) + "  " + r[6] for r in rows).rstrip()
 
 
+_XML_BAD = re.compile("[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
+def _xml_safe(text: str) -> str:
+    """Replace characters XML 1.0 cannot hold (NUL, ESC, lone surrogates, ...) with U+FFFD."""
+    return _XML_BAD.sub("\ufffd", text)
+
+
 def write_junit(outcomes: list[TaskOutcome], path: str | Path, *, classname: str) -> None:
     failures = sum(1 for o in outcomes if not o.passed)
     root = ET.Element("testsuites")
@@ -226,15 +247,43 @@ def write_junit(outcomes: list[TaskOutcome], path: str | Path, *, classname: str
         time=f"{sum(o.seconds for o in outcomes):.3f}",
     )
     for o in outcomes:
-        case = ET.SubElement(suite, "testcase", classname=classname, name=o.name, time=f"{o.seconds:.3f}")
+        case = ET.SubElement(suite, "testcase", classname=_xml_safe(classname), name=_xml_safe(o.name), time=f"{o.seconds:.3f}")
         if not o.passed:
-            failure = ET.SubElement(case, "failure", message=o.reason or o.status)
-            failure.text = f"run_id: {o.run_id or '-'}\nartifacts: {o.artifacts_dir or '-'}\nstatus: {o.status}\n{o.reason}"
+            failure = ET.SubElement(case, "failure", message=_xml_safe(o.reason or o.status))
+            failure.text = _xml_safe(
+                f"run_id: {o.run_id or '-'}\nartifacts: {o.artifacts_dir or '-'}\nstatus: {o.status}\n{o.reason}"
+            )
     tree = ET.ElementTree(root)
     ET.indent(tree)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     tree.write(path, encoding="utf-8", xml_declaration=True)
     ET.parse(path)  # fail loudly if what we wrote does not parse
+
+
+def tasks_flag_problem(args: Any) -> str | None:
+    """Why this `operon run` flag mix is wrong, or None. --tasks excludes the single-run options."""
+    if args.tasks:
+        single = [
+            flag
+            for flag, used in (
+                ("a task argument", args.task),
+                ("--request", args.request),
+                ("--desktop", args.desktop),
+                ("--env", args.env),
+                ("--url", args.url),
+                ("--mode", args.mode),
+                ("--max-steps", args.max_steps is not None),
+                ("--headless", args.headless),
+            )
+            if used
+        ]
+        if single:
+            return "--tasks cannot be combined with " + ", ".join(single) + " (set them in the task file)"
+        return None
+    stray = [f for f, used in (("--junit", args.junit), ("--only", args.only), ("--fail-fast", args.fail_fast)) if used]
+    if stray:
+        return ", ".join(stray) + " only work with --tasks"
+    return None
 
 
 def run_tasks_command(args: Any) -> int:
@@ -246,8 +295,13 @@ def run_tasks_command(args: Any) -> int:
         print(f"operon run: {exc}", file=sys.stderr)
         return 2
     print(format_table(outcomes))
+    junit_failed = False
     if args.junit:
-        write_junit(outcomes, args.junit, classname=path.stem)
+        try:
+            write_junit(outcomes, args.junit, classname=path.stem)
+        except Exception as exc:  # noqa: BLE001 - the suite ran; a bad report must not crash the command
+            print(f"operon run: could not write the JUnit report {args.junit}: {exc}", file=sys.stderr)
+            junit_failed = True
     failed = sum(1 for o in outcomes if not o.passed)
     print(f"{len(outcomes) - failed}/{len(outcomes)} passed")
-    return 1 if failed else 0
+    return 1 if failed or junit_failed else 0

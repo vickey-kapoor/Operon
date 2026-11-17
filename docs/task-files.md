@@ -16,7 +16,7 @@ any task fails (2 if the file itself is invalid).
 defaults:                 # optional; every field can be overridden per task
   desktop: false
   env: null               # e.g. windows-sandbox (needs desktop; see `operon envs`)
-  mode: ask               # ask | risky | auto
+  mode: risky             # ask | risky | auto (default risky, see below)
   max_steps: 25
   url: https://example.com
   approve_all: false      # see "Approvals" below
@@ -27,7 +27,8 @@ tasks:
     url: https://example.com        # overrides the default
     expect:                         # optional checks after the run
       status: succeeded             # default succeeded
-      answer_contains: ["Paris"]    # case-insensitive substrings of the final answer
+      answer_contains: ["Paris"]    # case-insensitive substrings of the final answer (or, if the run gave
+                                    # no answer, of the model's last message)
       max_steps: 20                 # fail if more steps were used
   - name: save-report
     task: "Save the report to C:/tmp/out.txt"
@@ -43,11 +44,18 @@ Unknown keys are rejected, with the path of the bad field (`tasks[2].mode: ...`)
 only. With any other `env` (a sandbox or VM) the task fails with "unsupported for env X" rather than
 checking the wrong machine.
 
+## Mode
+
+Task files default to `mode: risky`: only risky actions pause. Under `ask`, every action that changes
+something pauses for approval, and with nobody there to approve, an unattended suite fails at its
+first click. You can still set `mode: ask` (in `defaults` or per task) to see which tasks would stop.
+
 ## Approvals
 
 There is no human in a task-file run. If a step needs approval (a trust gate, or the model asks to
 confirm), the task **fails** with the reason. Setting `approve_all: true` grants every approval
-automatically. **That lets the agent make purchases, send messages and delete things without anyone
+automatically, except a hard policy block (the trust gate's "Blocked by policy" deny): `approve_all`
+never overrides one, and that task fails with `blocked by policy: <reason>`. **`approve_all` lets the agent make purchases, send messages and delete things without anyone
 looking. Use it only in a disposable environment, on tasks you wrote.**
 
 ## JUnit report

@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: ["main", "master"]
 
+# Least privilege: every job only reads the repo (artifact uploads need no extra scope).
+permissions:
+  contents: read
+
 # A newer push to the same PR or branch cancels the run it replaces.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}

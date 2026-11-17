@@ -62,3 +62,7 @@ point and data on where time goes is welcome.
 ## Security
 
 Don't file security issues publicly — see [SECURITY.md](SECURITY.md).
+
+## Code of conduct
+
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).

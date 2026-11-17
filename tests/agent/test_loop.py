@@ -1909,6 +1909,7 @@ def _expect_ctx(rationale, ratio, *, success=True, action_type="click", expected
     ctx = MagicMock()
     ctx.run_id = "r1"
     ctx.step_index = 1
+    ctx.decision.rule_name = None
     ctx.attempt_index = 1
     ctx.screen_change_ratio = ratio
     ctx.decision.rationale = rationale
@@ -1957,11 +1958,19 @@ def test_expect_check_match_sends_no_hint_but_saves(monkeypatch, tmp_path):
 def test_expect_check_skips_failed_and_non_screen_actions_and_missing_ratio(monkeypatch, tmp_path):
     monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
     loop = _expect_loop(tmp_path)
-    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0, success=False))
-    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0, action_type="wait"))
-    loop._check_expected_change(_expect_ctx("Expect: content - x", 0.0, action_type="stop"))
-    loop._check_expected_change(_expect_ctx("Expect: content - x", None))
+
+    def _reraise(run_id, site, exc):
+        raise exc
+
+    # As in strict mode: a guard that lets a case through and then fails must not be hidden.
+    loop._recovered = _reraise
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0, success=False))
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0, action_type="wait"))
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0, action_type="stop"))
+    loop._check_expected_change(_expect_ctx_with_files(tmp_path, "Expect: content - x", None))
     loop.perception_service.add_advisory_hints.assert_not_called()
+    # Every case above must stop before judging, so nothing was saved either.
+    assert not (tmp_path / "step_1" / "expect_check.json").exists()
 
 
 def test_expect_check_uses_decision_field_and_reminds_at_most_every_three_steps(monkeypatch, tmp_path):
@@ -2114,3 +2123,24 @@ def test_expect_check_skips_retried_steps(monkeypatch, tmp_path):
     loop._check_expected_change(ctx)
     loop.perception_service.add_advisory_hints.assert_not_called()
     assert not (tmp_path / "step_1" / "expect_check.json").exists()
+
+
+def test_expect_check_skips_rule_made_decisions(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    ctx = _expect_ctx_with_files(tmp_path, "launch_app directly", 0.0, expected="content")
+    ctx.decision.rule_name = "prefer_launch_app"
+    loop._check_expected_change(ctx)
+    loop.perception_service.add_advisory_hints.assert_not_called()
+    assert not (tmp_path / "step_1" / "expect_check.json").exists()
+
+
+def test_expect_instruction_errors_are_recovered_not_raised(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
+    loop = _expect_loop(tmp_path)
+    loop.perception_service.add_advisory_hints.side_effect = RuntimeError("boom")
+    loop._recovered = MagicMock()
+    loop._send_expect_instruction("r1")
+    assert loop._recovered.call_args.args[:2] == ("r1", "expect_instruction")

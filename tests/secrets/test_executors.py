@@ -118,6 +118,12 @@ def gui(monkeypatch):
     return fake
 
 
+@pytest.fixture
+def windows_keyboard(monkeypatch):
+    """Pretend SendInput exists (it only does on Windows) so the Windows executor path runs on any OS."""
+    monkeypatch.setattr(_desktop, "sys", SimpleNamespace(platform="win32"))
+
+
 def _desktop_executor(cls, monkeypatch):
     executor = cls(artifact_dir=unique_artifact_dir("secrets-desktop"))
     executor.set_current_run_id("run-1")
@@ -135,7 +141,7 @@ async def test_linux_desktop_types_the_value_key_by_key(stored, gui, monkeypatch
     _assert_clean(result, action)
 
 
-async def test_windows_desktop_sends_key_events_and_never_uses_the_clipboard(stored, gui, monkeypatch) -> None:
+async def test_windows_desktop_sends_key_events_and_never_uses_the_clipboard(stored, gui, windows_keyboard, monkeypatch) -> None:
     copied: list[str] = []
     monkeypatch.setattr(_desktop.pyperclip, "copy", copied.append)
     sent: list[str] = []
@@ -150,7 +156,7 @@ async def test_windows_desktop_sends_key_events_and_never_uses_the_clipboard(sto
     _assert_clean(result, action)
 
 
-async def test_read_clipboard_after_a_secret_type_does_not_return_it(stored, gui, monkeypatch) -> None:
+async def test_read_clipboard_after_a_secret_type_does_not_return_it(stored, gui, windows_keyboard, monkeypatch) -> None:
     monkeypatch.setattr(_desktop.sendinput, "type_unicode", lambda text: None)
     monkeypatch.setattr(DesktopExecutor, "_secret_problem", lambda self, text: None)
     monkeypatch.setattr(_desktop.pyperclip, "paste", lambda: f"x {SECRET} y")
@@ -168,6 +174,20 @@ async def test_desktop_without_a_trustworthy_keyboard_path_fails_closed(stored, 
     result = await executor.execute(_type())
     assert not result.success and copied == []
     gui.click.assert_not_called()
+
+
+async def test_non_windows_desktop_refuses_a_secret_and_never_touches_the_clipboard(stored, gui, monkeypatch) -> None:
+    monkeypatch.setattr(_desktop, "sys", SimpleNamespace(platform="linux"))
+    copied: list[str] = []
+    sent: list[str] = []
+    monkeypatch.setattr(_desktop.pyperclip, "copy", copied.append)
+    monkeypatch.setattr(_desktop.sendinput, "type_unicode", sent.append)
+    executor = _desktop_executor(DesktopExecutor, monkeypatch)
+    result = await executor.execute(_type())
+    assert not result.success and "without the clipboard" in result.detail
+    assert copied == [] and sent == []
+    gui.click.assert_not_called()
+    assert SECRET not in result.model_dump_json()
 
 
 @pytest.mark.parametrize("secret", ["pä$$wörd", "emoji \U0001F600 end", "東京", "line\nbreak"])
@@ -397,7 +417,7 @@ def test_osworld_trusted_host_is_allowed(stored, tmp_path) -> None:
     assert asyncio.run(executor.execute(AgentAction(action_type=ActionType.TYPE, text=PLACEHOLDER))).success
 
 
-async def test_secrets_used_are_forgotten_when_the_run_ends(stored, gui, monkeypatch) -> None:
+async def test_secrets_used_are_forgotten_when_the_run_ends(stored, gui, windows_keyboard, monkeypatch) -> None:
     monkeypatch.setattr(_desktop.sendinput, "type_unicode", lambda text: None)
     monkeypatch.setattr(DesktopExecutor, "_secret_problem", lambda self, text: None)
     executor = _desktop_executor(DesktopExecutor, monkeypatch)

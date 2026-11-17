@@ -9,11 +9,12 @@
 2026-11-21 hybrid full season=2 ref=main cap=2  # KAN-161: first Full score
 2026-11-21 browser thin dynamic x3 ref=main cap=2.5  # KAN-115: off
 2026-11-21 browser thin dynamic x3 settle ref=main cap=2.5  # KAN-115: settle
-# Sun Nov 22 night, caps $9
+# Sun Nov 22 night, caps $11.50 (over the $10 nightly cap: the last cells that don't fit wait for the next run)
 2026-11-22 browser thin dynamic x3 settle note ref=main cap=2.5  # KAN-115: settle + change note
 2026-11-22 browser thin dynamic x3 planner ref=main cap=2.5  # KAN-115: planner
 2026-11-22 browser thin model=claude-sonnet-5-5 ref=main cap=1  # KAN-168: Claude browser
 2026-11-22 desktop thin model=claude-sonnet-5-5 ref=main cap=1  # KAN-168: Claude desktop
 2026-11-22 browser thin model=openai-computer-use ref=main cap=1  # KAN-168: GPT browser
 2026-11-22 desktop thin model=openai-computer-use ref=main cap=1  # KAN-168: GPT desktop
+2026-11-22 browser thin dynamic x3 expect ref=main cap=2.5  # KAN-116: expected-change check (compare with KAN-115 off arm)
 # OSWorld multi_apps 2c1ebcd7 re-run (about $0.15) is not a nightly cell: start "Run OSWorld test tasks (own VM)" by hand that weekend.

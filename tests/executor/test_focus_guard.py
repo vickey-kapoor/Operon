@@ -120,3 +120,80 @@ def test_linux_executor_never_guards() -> None:
     from operon.executor.linux_desktop import LinuxDesktopExecutor
 
     assert LinuxDesktopExecutor._focus_guard_platform is False
+
+
+def _burst_patches(executor):
+    from types import SimpleNamespace
+
+    frame = SimpleNamespace(artifact_path="f.png")
+    return patch.object(executor, "_capture_burst_sync", return_value=(frame, 0.0))
+
+
+@pytest.mark.asyncio
+async def test_capture_arms_guard(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_FOCUS_GUARD", "on")
+    executor = _make_executor()
+    fg_p, own_p = _windows(100, {100: (1, "Notepad")})
+    with fg_p, own_p, _burst_patches(executor):
+        await executor.capture()
+    assert executor._focus_ref == OLD
+
+
+@pytest.mark.asyncio
+async def test_internal_post_action_capture_does_not_arm(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_FOCUS_GUARD", "on")
+    executor = _make_executor()
+    fg_p, own_p = _windows(100, {100: (1, "Notepad")})
+    with fg_p, own_p, _burst_patches(executor):
+        await executor._capture_after()
+    assert executor._focus_ref is None
+
+
+@pytest.mark.asyncio
+async def test_batch_only_first_child_is_checked(monkeypatch) -> None:
+    executor = _guarded(monkeypatch)
+    batch = AgentAction(
+        action_type=ActionType.BATCH,
+        actions=[
+            AgentAction(action_type=ActionType.PRESS_KEY, key="enter"),
+            AgentAction(action_type=ActionType.PRESS_KEY, key="enter"),
+        ],
+    )
+    # Child 1 sees the recorded window; another pid's window appears before child 2.
+    fg_p, own_p = _windows(100, {100: (1, "Notepad"), 200: (2, "New App")})
+    with fg_p as fg, own_p, patch(f"{MOD}.pyautogui.press"), patch.object(
+        executor, "_capture_after", new_callable=AsyncMock, return_value="a.png"
+    ):
+        fg.side_effect = [100, 200, 200, 200]
+        result = await executor.execute(batch)
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_batch_first_child_blocked_carries_category(monkeypatch) -> None:
+    executor = _guarded(monkeypatch)
+    batch = AgentAction(
+        action_type=ActionType.BATCH,
+        actions=[
+            AgentAction(action_type=ActionType.TYPE, text="x"),
+            AgentAction(action_type=ActionType.PRESS_KEY, key="enter"),
+        ],
+    )
+    fg_p, own_p = _windows(200, {200: (2, "Popup")})
+    with fg_p, own_p:
+        result = await executor.execute(batch)
+    assert result.success is False
+    assert result.batch_failed_index == 0
+    assert result.failure_category is FailureCategory.FOCUS_STOLEN
+
+
+@pytest.mark.asyncio
+async def test_flag_off_never_reads_windows(monkeypatch) -> None:
+    executor = _guarded(monkeypatch, on=False)
+    fg_p, own_p = _windows(200, {200: (2, "Other")})
+    with fg_p, own_p as owner, patch(f"{MOD}.pyautogui.press"), patch.object(
+        executor, "_capture_after", new_callable=AsyncMock, return_value="a.png"
+    ):
+        await executor.execute(AgentAction(action_type=ActionType.PRESS_KEY, key="enter"))
+        executor._record_focus()
+    owner.assert_not_called()

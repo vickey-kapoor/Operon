@@ -410,7 +410,10 @@ class DesktopExecutor(Executor):
         # run_id -> the window in front after the run's last action: the one it works in.
         self._work_windows: dict[str, int] = {}
         # OPERON_FOCUS_GUARD: (hwnd, pid, title) of the window in front when the model last saw the screen.
+        # Armed only by the loop's capture, spent by the first action after it. Our own
+        # post-action captures must not re-arm it: windows opened by the agent's actions are not stolen.
         self._focus_ref: tuple[int, int | None, str] | None = None
+        self._internal_capture = False
 
         _set_dpi_awareness()
         if not get_settings().test_safe_mode:
@@ -687,7 +690,8 @@ class DesktopExecutor(Executor):
             logger.debug("High visual velocity (%.3f) detected; waiting 300ms before re-capture", velocity)
             await asyncio.sleep(0.3)
             frame, _ = await asyncio.to_thread(self._capture_burst_sync)
-        self._record_focus()
+        if not self._internal_capture:
+            self._record_focus()
         return frame
 
     # Windows only: the Linux executor turns this off, and off Windows the window helpers return None.
@@ -701,7 +705,8 @@ class DesktopExecutor(Executor):
         if not self._focus_guard_on():
             return
         hwnd = _foreground_window()
-        if hwnd is None:
+        if not hwnd:
+            # No foreground window to compare: fail open (UAC's secure desktop reports handle 0).
             self._focus_ref = None
             return
         pid, title = _window_owner(hwnd)
@@ -713,7 +718,10 @@ class DesktopExecutor(Executor):
         Nothing is switched back: the new window may be one the user needs to see, so the
         loop re-observes and the model decides from the pixels."""
         ref = self._focus_ref
-        if ref is None or action.action_type not in _FOCUS_GUARDED_ACTIONS or not self._focus_guard_on():
+        if ref is None or not self._focus_guard_on():
+            return None
+        self._focus_ref = None  # any action spends it: only the first one after a screenshot is checked
+        if action.action_type not in _FOCUS_GUARDED_ACTIONS:
             return None
         hwnd = _foreground_window()
         if hwnd is None or hwnd == ref[0]:
@@ -721,8 +729,6 @@ class DesktopExecutor(Executor):
         pid, title = _window_owner(hwnd)
         if pid is not None and pid == ref[1]:
             return None  # a dialog or window the same program opened
-        # The new window is what the model must look at next, so it is the new reference.
-        self._focus_ref = (hwnd, pid, title)
         old = ref[2] or "the previous window"
         return self._fail(
             action,
@@ -794,7 +800,6 @@ class DesktopExecutor(Executor):
             return stolen
         handler = dispatch.get(at, self._exec_unsupported)
         result = await handler(action)
-        self._record_focus()  # the action may itself have opened or switched windows
         self._note_work_window()
         return result
 
@@ -1290,7 +1295,11 @@ class DesktopExecutor(Executor):
     # ── helpers ──────────────────────────────────────────────────
 
     async def _capture_after(self) -> str:
-        frame = await self.capture()
+        self._internal_capture = True
+        try:
+            frame = await self.capture()
+        finally:
+            self._internal_capture = False
         return frame.artifact_path
 
     def _ok(self, action: AgentAction, detail: str, after_path: str | None) -> ExecutedAction:

@@ -258,6 +258,24 @@ class DeterministicVerifierService(VerifierService):
                 critic_fallback_reason="critic_unavailable_or_unusable",
             )
 
+        # No critic to confirm the outcome. An action that should change the screen
+        # and measurably did not (a dead click) is not "met": UNCERTAIN feeds the
+        # recovery ladder instead of resetting it. Frames that cannot be compared
+        # give no evidence either way, so they keep the old optimistic answer.
+        if action.action_type in self._SCREEN_CHANGING_ACTION_TYPES:
+            ratio = self._screen_change_ratio(executed_action)
+            if ratio is not None and ratio <= self._cursor_only_threshold():
+                return VerificationResult(
+                    status=VerificationStatus.UNCERTAIN,
+                    expected_outcome_met=False,
+                    stop_condition_met=False,
+                    reason="Critic unavailable and the screen did not change after the action.",
+                    failure_type=VerificationFailureType.UNCERTAIN_SCREEN_STATE,
+                    failure_category=FailureCategory.UNCERTAIN_SCREEN_STATE,
+                    failure_stage=LoopStage.VERIFY,
+                    critic_fallback_reason="critic_unavailable_or_unusable",
+                )
+
         return VerificationResult(
             status=VerificationStatus.SUCCESS,
             expected_outcome_met=True,
@@ -265,6 +283,20 @@ class DeterministicVerifierService(VerifierService):
             reason="Executed action succeeded and the expected outcome is treated as met.",
             critic_fallback_reason="critic_unavailable_or_unusable",
         )
+
+    # Actions whose success should show up as a pixel change on screen.
+    _SCREEN_CHANGING_ACTION_TYPES = frozenset([
+        ActionType.CLICK,
+        ActionType.DOUBLE_CLICK,
+        ActionType.TRIPLE_CLICK,
+        ActionType.RIGHT_CLICK,
+        ActionType.TYPE,
+        ActionType.SELECT,
+        ActionType.PRESS_KEY,
+        ActionType.HOTKEY,
+        ActionType.DRAG,
+        ActionType.SCROLL,
+    ])
 
     # Actions that do no work toward a task: a run made only of these has nothing
     # that a STOP could be the result of.
@@ -296,8 +328,22 @@ class DeterministicVerifierService(VerifierService):
             for executed in state.action_history
         ):
             return "Stop rejected: no action toward the task has succeeded yet.", critic
-        if state.verification_history and state.verification_history[-1].status is VerificationStatus.FAILURE:
-            return "Stop rejected: the previous step failed verification and was not recovered.", critic
+        # Without the critic, executor success alone is not evidence of progress: at
+        # least one step must have been verified as a success.
+        if not any(
+            v.status is VerificationStatus.SUCCESS and not v.stop_condition_met
+            for v in state.verification_history
+        ):
+            return "Stop rejected: no step has been verified as successful yet.", critic
+        # A recent failure that no later verified success followed is unrecovered.
+        recent = state.verification_history[-3:]
+        last_failure = max(
+            (i for i, v in enumerate(recent) if v.status is VerificationStatus.FAILURE), default=None
+        )
+        if last_failure is not None and not any(
+            v.status is VerificationStatus.SUCCESS for v in recent[last_failure + 1:]
+        ):
+            return "Stop rejected: a recent step failed verification and was not recovered.", critic
         return None, critic
 
     def _action_changed_screen(self, executed_action: ExecutedAction) -> bool:
@@ -311,23 +357,35 @@ class DeterministicVerifierService(VerifierService):
 
         Threshold: any change above CURSOR_ONLY_THRESHOLD (0.05%) counts.
         """
-        from operon.agent.perception.screen_diff import (
-            CURSOR_ONLY_THRESHOLD,
-            compute_screen_change_ratio,
-        )
+        from operon.agent.perception.screen_diff import CURSOR_ONLY_THRESHOLD
 
-        after_path = executed_action.artifact_path
-        if not after_path:
+        ratio = self._screen_change_ratio(executed_action)
+        if ratio is None:
             return False
-        before_path = Path(after_path).resolve().parent / "before.png"
-        if not before_path.exists():
-            return False
-        ratio = compute_screen_change_ratio(str(before_path), after_path)
         logger.debug(
             "stable_wait_check: screen_change_ratio=%.5f cursor_only_threshold=%.5f changed=%s",
             ratio, CURSOR_ONLY_THRESHOLD, ratio > CURSOR_ONLY_THRESHOLD,
         )
         return ratio > CURSOR_ONLY_THRESHOLD
+
+    @staticmethod
+    def _cursor_only_threshold() -> float:
+        from operon.agent.perception.screen_diff import CURSOR_ONLY_THRESHOLD
+
+        return CURSOR_ONLY_THRESHOLD
+
+    @staticmethod
+    def _screen_change_ratio(executed_action: ExecutedAction) -> float | None:
+        """Before→after change ratio, or None when either frame is missing."""
+        from operon.agent.perception.screen_diff import compute_screen_change_ratio
+
+        after_path = executed_action.artifact_path
+        if not after_path:
+            return None
+        before_path = Path(after_path).resolve().parent / "before.png"
+        if not before_path.exists() or not Path(after_path).exists():
+            return None
+        return compute_screen_change_ratio(str(before_path), after_path)
 
     async def _model_verify(
         self,

@@ -2422,7 +2422,7 @@ class AgentLoop:
         if retry_action != decision_action:
             # The retry was re-grounded: the gate approved the first action, not this one.
             blocked_detail = await self._retry_gate_block(
-                record, state, decision_action, retry_action, stated_reason
+                record, state, decision_action, retry_action, stated_reason, frame=frame
             )
             if blocked_detail is not None:
                 self._note_not_executed(record.run_id, blocked_detail)
@@ -2445,11 +2445,12 @@ class AgentLoop:
         return retry_state, self._persist_execution_trace(record.run_id, step_index, retry_executed)
 
     async def _retry_gate_block(
-        self, record, state, original_action, retry_action, stated_reason: str | None = None
+        self, record, state, original_action, retry_action, stated_reason: str | None = None, frame=None
     ) -> str | None:
         """Re-run the trust gate on a re-grounded retry; return why it must not run
         (None when it may). A human approval covers only the action they approved,
-        so a changed target needs ALLOW again."""
+        so a changed target needs ALLOW again. ``frame`` is the fresh capture the retry
+        was re-grounded on: the text under the new click is read from it (KAN-163)."""
         run_id = record.run_id
         current_url = await self._current_url_for_trust_gate(run_id)
         permission_mode = getattr(state, "permission_mode", None)
@@ -2459,7 +2460,12 @@ class AgentLoop:
         for leaf in _leaf_actions(retry_action):
             trust = apply_permission_mode(
                 self._trust_gate.evaluate(
-                    leaf, current_url=current_url, stated_reason=stated_reason
+                    leaf,
+                    current_url=current_url,
+                    stated_reason=stated_reason,
+                    click_text=await self._click_text_for_gate(
+                        leaf, frame, run_id=run_id, permission_mode=permission_mode
+                    ),
                 ),
                 leaf,
                 permission_mode,

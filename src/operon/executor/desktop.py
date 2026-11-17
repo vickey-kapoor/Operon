@@ -373,7 +373,7 @@ def _app_path(program: str) -> str | None:
                 value, _kind = winreg.QueryValueEx(key, "")
         except OSError:
             continue
-        path = str(value).strip().strip('"')
+        path = os.path.expandvars(str(value).strip().strip('"'))  # REG_EXPAND_SZ
         if path and Path(path).exists():
             return path
     return None
@@ -402,7 +402,8 @@ def _resolve_launch_command(command: str) -> str:
     path = _app_path(program)
     if path is None:
         return command
-    return subprocess.list2cmdline([path]) + (" " + rest if rest else "")
+    # Always quoted (list2cmdline only quotes a path with spaces), so cmd never splits a path.
+    return f'"{path}"' + (" " + rest if rest else "")
 
 
 # Actions that write to whatever window is in front; the focus guard (KAN-92) covers these.
@@ -1339,8 +1340,9 @@ class DesktopExecutor(Executor):
             else:
                 proc = await asyncio.to_thread(
                     subprocess.Popen,
-                    # nosec B602: `command` is a hardcoded catalog constant (above),
-                    # not user/model input, so shell=True carries no injection risk.
+                    # nosec B602: `command` is a hardcoded catalog constant (above) or the
+                    # full path of that same program from the local App Paths registry (quoted);
+                    # neither is user/model input, so shell=True carries no injection risk.
                     run_command,
                     shell=True,
                     stdout=subprocess.DEVNULL,

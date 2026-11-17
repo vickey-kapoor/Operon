@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -170,9 +171,22 @@ def test_app_path_lookup_and_missing_check() -> None:
         assert missing("chrome") is False  # found under App Paths
         assert desktop._app_path("nosuchapp") is None
         assert missing("nosuchapp") is True  # neither PATH nor App Paths
-        assert desktop._resolve_launch_command("chrome") == f'"{chrome}"' or desktop._resolve_launch_command(
-            "chrome"
-        ) == chrome
+        assert desktop._resolve_launch_command("chrome") == f'"{chrome}"'
+        assert desktop._resolve_launch_command("chrome --new-window") == f'"{chrome}" --new-window'
+
+
+@pytest.mark.skipif(os.name != "nt", reason="%VAR% expansion is Windows ntpath behaviour")
+def test_app_path_expands_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.executor import desktop
+
+    monkeypatch.setenv("OPERON_TEST_PF", r"C:\Apps")
+    fake = _fake_winreg({"tool.exe": r"%OPERON_TEST_PF%\tool.exe"})
+    with (
+        patch.object(desktop.sys, "platform", "win32"),
+        patch.dict("sys.modules", {"winreg": fake}),
+        patch.object(desktop.Path, "exists", return_value=True),
+    ):
+        assert desktop._app_path("tool") == r"C:\Apps\tool.exe"
 
 
 def test_on_path_commands_are_left_alone() -> None:

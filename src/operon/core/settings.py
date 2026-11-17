@@ -130,6 +130,8 @@ class Settings(BaseModel):
     progress_revisit: bool = _env_field("OPERON_PROGRESS_REVISIT", False)
     bestofn_n: int = _env_field("OPERON_BESTOFN_N", 1)
     bestofn_confidence: float = _env_field("OPERON_BESTOFN_CONFIDENCE", 1.0)
+    # Batch-mode browser runs that may step at the same time, each on its own browser (KAN-81).
+    parallel_runs: int = _env_field("OPERON_PARALLEL_RUNS", 1)
     # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
     settle_detect: bool = _env_field("OPERON_SETTLE_DETECT", False)
     # Benchmark runs only (KAN-169): answer the model's own "require confirmation" pauses yes.
@@ -354,6 +356,7 @@ class _Parser:
             progress_revisit=self.flag("OPERON_PROGRESS_REVISIT", "off"),
             bestofn_n=max(1, self.number("OPERON_BESTOFN_N", "1", int, fatal=False)),
             bestofn_confidence=self.number("OPERON_BESTOFN_CONFIDENCE", "1.0", float, fatal=False),
+            parallel_runs=max(1, self.number("OPERON_PARALLEL_RUNS", "1", int, fatal=False)),
             settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
             auto_confirm=self.flag("OPERON_AUTO_CONFIRM", "off"),
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),

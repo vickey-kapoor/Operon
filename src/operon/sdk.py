@@ -175,6 +175,8 @@ class Agent:
         runtime.browser_loop = None
         runtime.desktop_loop = None
         runtime.desktop_provider = None
+        runtime.run_loops.clear()
+        runtime.run_slots = None
 
     async def _ask(self, request: ApprovalRequest) -> bool:
         if self.on_approval is None:

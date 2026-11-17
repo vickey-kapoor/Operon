@@ -185,6 +185,7 @@ _EXPERIMENTAL_OFF = [
     ("grounder", "deterministic"),
     ("bestofn_n", 1),
     ("bestofn_confidence", 1.0),
+    ("parallel_runs", 1),
 ]
 # Boolean switches that are off by default but not experimental features.
 _PLAIN_SWITCHES_OFF = [

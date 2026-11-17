@@ -38,7 +38,8 @@ class UserInputRequest(StrictModel):
 
 
 def _http(exc: frontdoor.FrontDoorError) -> HTTPException:
-    return HTTPException(status_code=exc.status, detail=str(exc))
+    headers = {"Retry-After": "5"} if exc.status == 429 else None
+    return HTTPException(status_code=exc.status, detail=str(exc), headers=headers)
 
 
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)

@@ -19,21 +19,28 @@ from operon.api.observer import (
     reconcile_orphaned_browser_run,
     usage_dashboard,
 )
+from operon.api.runtime import loops as _loops
 from operon.models.common import RunStatus
 
 router = APIRouter()
 
 
+def _executor_of_run(run_id: str):
+    """The executor that holds ``run_id``'s browser: a parallel run's own, else the shared one."""
+    own = _loops.loop_for_run(run_id)
+    return (own if own is not None else get_agent_loop()).executor
+
+
 @router.get("/observer/api/runs")
 async def observer_runs(limit: int = Query(default=20, ge=1, le=100)) -> dict:
     """Return recent local runs for the observer sidebar."""
-    executor = get_agent_loop().executor
     recent_runs = list_runs(limit=limit)
-    if hasattr(executor, "current_url_for_run"):
-        for run in recent_runs:
-            if run["status"] != RunStatus.RUNNING.value or desktop_loop_holds_run(run["run_id"]):
-                # A live desktop run has no browser page, which is not a sign it died.
-                continue
+    for run in recent_runs:
+        if run["status"] != RunStatus.RUNNING.value or desktop_loop_holds_run(run["run_id"]):
+            # A live desktop run has no browser page, which is not a sign it died.
+            continue
+        executor = _executor_of_run(run["run_id"])
+        if hasattr(executor, "current_url_for_run"):
             current_url = await executor.current_url_for_run(run["run_id"])
             reconcile_orphaned_browser_run(run["run_id"], has_live_session=current_url is not None)
     return {"runs": list_runs(limit=limit)}
@@ -44,7 +51,7 @@ async def observer_run(run_id: str) -> dict:
     """Return the current observer snapshot for one run."""
     validate_run_id(run_id)
     current_url = None
-    executor = get_agent_loop().executor
+    executor = _executor_of_run(run_id)
     if hasattr(executor, "current_url_for_run"):
         current_url = await executor.current_url_for_run(run_id)
     if not desktop_loop_holds_run(run_id):
@@ -102,7 +109,7 @@ async def observer_export_run(run_id: str) -> Response:
 async def observer_live_browser(run_id: str) -> Response:
     """Return a fresh PNG frame from an active browser-native run."""
     validate_run_id(run_id)
-    executor = get_agent_loop().executor
+    executor = _executor_of_run(run_id)
     if not hasattr(executor, "live_frame_png"):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Live browser view not available") from None
     png_bytes = await executor.live_frame_png(run_id)

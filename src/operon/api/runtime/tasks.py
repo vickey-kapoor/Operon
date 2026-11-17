@@ -11,6 +11,7 @@ from operon.api.runtime.events import (
     publish_run_completed,
     publish_step_outcome,
 )
+from operon.api.runtime.loops import release_parallel_run
 from operon.core.runtime import current_runtime
 from operon.models.common import RunResponse, RunStatus, StepRequest, StopReason
 
@@ -153,6 +154,7 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
             # Without this the task dies and the run is stuck in RUNNING forever.
             logger.exception("[loop] run %s step crashed; marking failed", run_id)
             await mark_run_failed(loop, run_id)
+            await release_parallel_run(loop, run_id)
             current_runtime().finish_run(run_id)
             break
         await publish_step_outcome(loop, response)

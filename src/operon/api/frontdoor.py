@@ -77,7 +77,8 @@ def _environment_of(run_id: str) -> str:
 
 
 def _loop_of(run_id: str):
-    return _loop_for_environment(_environment_of(run_id))
+    own = _loops.loop_for_run(run_id)  # a parallel batch run has its own loop (KAN-81)
+    return own if own is not None else _loop_for_environment(_environment_of(run_id))
 
 
 async def _require_run(run_id: str):
@@ -94,7 +95,6 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
     A browser run with ``live_view`` runs in observable mode: one headless Chromium on
     CDP port 9222 whose screencast reaches the page over ``/ws/stream``. Without it
     (``operon run`` in process, where no page watches) it is an ordinary batch run."""
-    loop = _loop_for_environment(task.environment)
     request = RunTaskRequest(
         intent=task.intent,
         start_url=task.start_url,
@@ -103,7 +103,14 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
         permission_mode=task.permission_mode,
         mode="observable" if live_view and task.environment == "browser" else "batch",
     )
-    response = await loop.start_run(request)
+    if task.environment == "browser" and _loops.runs_in_parallel(request.mode):
+        try:
+            loop, response = await _loops.start_parallel_browser_run(request)
+        except _loops.RunSlotsFull as exc:
+            raise FrontDoorError(str(exc), 429) from exc
+    else:
+        loop = _loop_for_environment(task.environment)
+        response = await loop.start_run(request)
     close_apps = getattr(loop.executor, "close_apps_when_done", None)
     if close_apps is not None:
         # A desktop task leaves the screen as it found it: the apps it opened close when it ends.

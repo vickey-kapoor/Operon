@@ -88,6 +88,11 @@ class ModelProfile(_Strict):
 
     @model_validator(mode="after")
     def _check_pairing(self) -> "ModelProfile":
+        if self.adapter == "gemini_native":
+            raise ValueError(
+                "adapter gemini_native is not available: Gemini runs through "
+                "OPERON_BROWSER_BACKEND=computer_use, not the model registry"
+            )
         if self.adapter in NATIVE_ADAPTERS and self.parser not in {"native", "neutral_tools"}:
             raise ValueError(f"adapter {self.adapter} has its own action format; drop parser={self.parser}")
         if self.adapter == "openai_compat" and self.parser == "native":

@@ -1,6 +1,9 @@
 # Operon Architecture Reference
 _Last refreshed: 2026-11-11_
 
+> Note: this file is partly out of date. [`../OPERON_ARCHITECTURE.md`](../OPERON_ARCHITECTURE.md)
+> is the current description of the system; prefer it where the two disagree.
+
 This document describes the code currently present in this repository. It is the
 single canonical engineering reference; the product "why" lives in
 [`PRD.md`](./PRD.md), planned changes in [`roadmap.md`](./roadmap.md) and contributor
@@ -61,8 +64,8 @@ src/
 
 Default backend: `BrowserComputerUseBackend` using `GeminiComputerUseHttpClient`
 (`computer_use`, `gemini-3.5-flash`). `OPERON_BROWSER_BACKEND=json` selects `BrowserJsonBackend`
-alone. Gemini is Operon's only model for now; other models come back later through a simpler
-model onboarding.
+alone. Gemini is the default model; other models (Claude, OpenAI, open-weight) are selectable
+with `OPERON_BROWSER_BACKEND=model` and a profile from the model registry.
 
 Fallback: with `OPERON_BROWSER_FALLBACK_BACKEND=json` (the default), `FallbackBackend`
 hands a step to the Gemini `BrowserJsonBackend` when the primary backend's call fails.
@@ -124,6 +127,9 @@ GET  /observer/api/live-browser/{run_id}
 WS   /ws/stream
 ```
 
+The task page and front door routes (`/app`, `/app/api/...`, see `docs/api.md`) live in
+`routes/frontdoor.py`; the list above predates them.
+
 There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`, or static HTML routes in `src/operon/api/routes/`.
 
 ## Policy Layer
@@ -147,7 +153,8 @@ with the element-based guards `_semantic_anchor_check` and `_reject_hallucinated
 
 ## Verification
 
-`DeterministicVerifierService` returns:
+`DeterministicVerifierService` returns (`PROGRESSING_STABLE` is reserved: defined and handled,
+but not currently emitted by any verifier):
 
 ```text
 SUCCESS
@@ -161,7 +168,7 @@ STABLE_WAIT
 `AgentLoop` handles:
 - `PENDING`: waits 2s, 4s, then 8s and re-verifies.
 - `STABLE_WAIT`: waits 200ms and re-verifies once.
-- `PROGRESSING_STABLE`: advances because the UI reacted.
+- `PROGRESSING_STABLE`: would advance because the UI reacted (reserved, not currently emitted).
 
 The verifier is deterministic and does not use a separate video verifier module.
 

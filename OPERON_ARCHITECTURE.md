@@ -161,8 +161,8 @@ Registry adapters actually built by `build_model_backend`:
   `neutral_tools`, `ui_tars`, `opencua` (`model_adapter/formats/`), per-profile image resize
   rules (`images.py`, incl. Qwen `smart_resize`) and coordinate spaces (`pixels`,
   `relative_1000`, `normalized`). Profiles: `qwen3-vl-32b`, `ui-tars-1.5-7b`, `opencua-32b`.
-- `gemini_native` is accepted by the registry schema but `build_model_backend` raises
-  "not available here" for it.
+- `gemini_native` is in the schema's adapter list but the registry rejects a profile that uses
+  it with a clear error (Gemini runs through the `computer_use` backends).
 
 **Fallback.** Browser only, full harness only: with `OPERON_BROWSER_FALLBACK_BACKEND=json`
 (default) `FallbackBackend` (`agent/backends/fallback.py`) switches the run to
@@ -385,7 +385,7 @@ Defaults that are **on**: `OPERON_TRUST_GATE`, `OPERON_TOOLS=on` (no `run_shell`
   (`harness_profile`); there is no full-harness configuration for non-Gemini models.
 - Open-weight profiles need an external OpenAI-compatible server; Operon ships no local model
   runtime, and `models.yaml` notes that open-weight model ids are confirmed only when first
-  served. `gemini_native` is in the registry schema but not buildable.
+  served. `gemini_native` is rejected at registry validation.
 - The JSON fallback is browser-only, triggers only on `BackendCompatibilityError` from
   `perceive`, and is ignored under thin.
 - The browser executor has no visual servo; OSWorld uses a fixed threshold, not calibration.

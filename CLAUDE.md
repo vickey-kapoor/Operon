@@ -131,8 +131,9 @@ These are load-bearing — violating them silently breaks the agent.
   the browser executor has none; OSWorld runs its own fixed-threshold check), `_region_has_content()` runs before every click with an
   adaptively calibrated threshold. Never bypass it.
 - **Verification states.** SUCCESS / FAILURE / UNCERTAIN / PENDING /
-  PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify;
-  `PROGRESSING_STABLE` advances immediately.
+  PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify.
+  `PROGRESSING_STABLE` is handled (the loop would advance immediately) but reserved: no
+  verifier currently emits it.
 - **Lazy `ws_stream`.** Never import `ws_stream` at module load in `browser/manager.py`
   — use the `_ws_stream()` accessor to avoid a circular import.
 - **Experimental work ships behind an env flag defaulting to off.** Follow the

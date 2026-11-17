@@ -1,4 +1,4 @@
-"""Resume keeps a desktop run in the environment provider it started in (KAN-80): a run
+﻿"""Resume keeps a desktop run in the environment provider it started in (KAN-80): a run
 begun with --env windows-sandbox must not silently continue on the live host."""
 
 from __future__ import annotations
@@ -6,7 +6,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
+
+from operon.agent import control as run_control
+from operon.api import frontdoor, ws_stream
+from operon.api.server import app
 
 from operon.models.common import RunStatus
 from operon.store.checkpoints import mark_interrupted_runs
@@ -70,4 +75,67 @@ async def test_desktop_run_without_a_recorded_provider_is_refused(
 
     with pytest.raises(ValueError, match="no recorded environment provider"):
         await loop.resume_interrupted(run_id)
+    assert executor.executed == []
+
+
+def _paused(tmp_path: Path, *, provider: str) -> str:
+    """A desktop run a dead sandbox process left waiting for the person, never flagged interrupted."""
+    run_id = _crash(tmp_path, RunStatus.WAITING_FOR_USER, environment="desktop")
+    settings = tmp_path / run_id / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    data["OPERON_ENVIRONMENT"] = provider
+    settings.write_text(json.dumps(data), encoding="utf-8")
+    return run_id
+
+
+async def test_default_live_to_live_resume_still_works(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPERON_ENVIRONMENT", raising=False)
+    run_id = _interrupted(tmp_path, environment="desktop", provider="live")
+    loop, _ = build_loop(monkeypatch, tmp_path, [STOP])
+
+    assert (await loop.resume_interrupted(run_id)).status is RunStatus.RUNNING
+
+
+async def test_a_paused_sandbox_run_loaded_from_disk_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = _paused(tmp_path, provider="windows-sandbox")
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "live")
+    loop, executor = build_loop(monkeypatch, tmp_path, [STOP])
+
+    for approve in (True, False):
+        with pytest.raises(ValueError, match="windows-sandbox"):
+            await loop.resume_run(run_id, approve_gated_action=approve)
+
+    assert (await loop.run_store.get_run(run_id)).status is RunStatus.WAITING_FOR_USER
+    assert executor.executed == []
+
+
+async def test_a_run_this_process_started_resumes_without_the_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = _paused(tmp_path, provider="windows-sandbox")
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "live")
+    loop, _ = build_loop(monkeypatch, tmp_path, [STOP])
+    loop._created_runs.add(run_id)
+
+    assert (await loop.resume_run(run_id)).status is RunStatus.RUNNING
+
+
+async def test_approve_and_decline_answer_409_not_500_and_leave_no_hint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = _paused(tmp_path, provider="windows-sandbox")
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "live")
+    loop, executor = build_loop(monkeypatch, tmp_path, [STOP])
+    monkeypatch.setattr(frontdoor, "_loop_of", lambda rid: loop)
+    monkeypatch.setattr(ws_stream, "publish_event", lambda event: None)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8080") as client:
+        approved = await client.post(f"/app/api/runs/{run_id}/approve")
+        declined = await client.post(f"/app/api/runs/{run_id}/decline", json={"note": "no"})
+
+    assert approved.status_code == 409 and "windows-sandbox" in approved.text
+    assert declined.status_code == 409
+    assert run_control.consume_override_hint(run_id) is None
     assert executor.executed == []

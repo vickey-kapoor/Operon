@@ -136,7 +136,7 @@ def recorded_provider(run_id: str, root: Path | None = None) -> str | None:
     return value.strip().lower() if isinstance(value, str) and value.strip() else None
 
 
-def check_resume_environment(state: AgentState, root: Path | None = None) -> None:
+def check_resume_environment(state: AgentState, root: Path | None = None, current: str | None = None) -> None:
     """Refuse to resume a desktop run in a different environment provider than it started in.
 
     ``--env windows-sandbox`` only sets the original process's environment; a resume from a
@@ -146,7 +146,7 @@ def check_resume_environment(state: AgentState, root: Path | None = None) -> Non
     starting a new run. Browser runs have no provider and are unaffected. Raises ValueError."""
     if state.environment != "desktop":
         return
-    current = get_settings().environment
+    current = current or get_settings().environment
     original = recorded_provider(state.run_id, root)
     if original is None:
         raise ValueError(

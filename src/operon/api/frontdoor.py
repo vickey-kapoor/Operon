@@ -255,6 +255,23 @@ async def run_status(run_id: str, *, recent: int = 8) -> dict[str, Any]:
     }
 
 
+def _check_environment(loop, record) -> None:
+    check = getattr(loop, "check_resume_environment", None)
+    if callable(check):
+        try:
+            check(record)
+        except ValueError as exc:  # the run started in another environment provider
+            raise FrontDoorError(str(exc)) from exc
+
+
+async def _resume(loop, record, *, approve: bool) -> None:
+    _check_environment(loop, record)
+    try:
+        await _tasks.resume_and_schedule(loop, record.run_id, approve_gated_action=approve)
+    except ValueError as exc:
+        raise FrontDoorError(str(exc)) from exc
+
+
 async def approve(run_id: str) -> dict[str, Any]:
     """Approve what the run paused on (a gate's action, or 'continue' after the model
     asked for help) and keep it going."""
@@ -263,7 +280,7 @@ async def approve(run_id: str) -> dict[str, Any]:
         raise FrontDoorError(f"Run is {record.status.value}; nothing to approve")
     if getattr(record, "in_takeover", False):
         raise FrontDoorError("You are in control; hand back instead")
-    await _tasks.resume_and_schedule(loop, run_id, approve_gated_action=True)
+    await _resume(loop, record, approve=True)
     _ws_stream.publish_event({"type": "control_ack", "action": "approve", "run_id": run_id})
     return await run_status(run_id)
 
@@ -312,8 +329,9 @@ async def decline(run_id: str, hint: str | None = None) -> dict[str, Any]:
     text = "The user declined that action; do not do it."
     if hint and hint.strip():
         text += f" Instead: {hint.strip()}"
+    _check_environment(loop, record)  # before the hint: a refusal must leave nothing behind
     run_control.set_override_hint(run_id, text)
-    await _tasks.resume_and_schedule(loop, run_id, approve_gated_action=False)
+    await _resume(loop, record, approve=False)
     _ws_stream.publish_event({"type": "control_ack", "action": "decline", "run_id": run_id})
     return await run_status(run_id)
 

@@ -187,11 +187,17 @@ def acquire(run_dir: Path) -> None:
         try:
             if _held_by_other(run_dir) is not None:
                 continue  # it was claimed while we took the guard: loop re-reads and rejects
-            path.unlink(missing_ok=True)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                continue  # Windows: another process has it open (WinError 32): treat as held, retry
             if _create_exclusive(path, text):
                 return
         finally:
-            guard.unlink(missing_ok=True)
+            try:
+                guard.unlink(missing_ok=True)
+            except OSError:
+                pass
     raise RunOwnedError(f"run {run_dir.name} is being claimed by another process")
 
 

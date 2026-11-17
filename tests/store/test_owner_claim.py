@@ -128,3 +128,64 @@ async def test_the_same_process_can_resume_again_after_its_own_claim(
 
     assert run_owner.read(tmp_path / run_id)["pid"] == os.getpid()
     loop.run_store.acquire_run(run_id)  # its own claim does not block it
+
+
+def test_a_locked_owner_file_never_escapes_as_a_raw_oserror(
+    tmp_path: Path, alive: set[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows refuses to delete a file another process has open: retry, never a raw OSError."""
+    _foreign(tmp_path)  # stale owner
+    real = Path.unlink
+    calls = {"n": 0}
+
+    def flaky(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "owner.json" and calls["n"] == 0:
+            calls["n"] += 1
+            raise PermissionError(13, "being used by another process")
+        real(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", flaky)
+
+    run_owner.acquire(tmp_path)  # succeeds on the retry
+
+    assert calls["n"] == 1 and run_owner.read(tmp_path)["pid"] == os.getpid()
+    assert not (tmp_path / "owner.takeover").exists()
+
+
+def test_an_always_locked_owner_file_raises_run_owned_error(
+    tmp_path: Path, alive: set[int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _foreign(tmp_path)
+    real = Path.unlink
+
+    def locked(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "owner.json":
+            raise PermissionError(13, "being used by another process")
+        real(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", locked)
+
+    with pytest.raises(RunOwnedError):
+        run_owner.acquire(tmp_path)
+
+    assert not (tmp_path / "owner.takeover").exists()
+
+
+async def test_the_desktop_route_answers_4xx_when_the_run_is_owned(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from operon.api.routes import desktop
+    from operon.api.server import app
+
+    async def refuse(loop, run_id):
+        raise RunOwnedError(f"run {run_id} is already being resumed by pid 1")
+
+    monkeypatch.setattr(desktop, "require_checkpoints", lambda: None)
+    monkeypatch.setattr(desktop, "get_desktop_agent_loop", lambda: object())
+    monkeypatch.setattr(desktop, "resume_interrupted_and_schedule", refuse)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8080") as client:
+        response = await client.post("/desktop/run/abc123/resume-interrupted")
+
+    assert 400 <= response.status_code < 500
+    assert "already being resumed" in response.text

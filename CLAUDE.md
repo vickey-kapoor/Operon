@@ -45,6 +45,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desk
 # Free Windows e2e (KAN-93): real loop + real Windows desktop in Windows Sandbox (~2 min boot), scripted model ($0).
 # Needs Windows Sandbox turned on; deselected by default.
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desktop_e2e_windows -m windows_sandbox -o addopts=""
+# Free browser end-to-end: real loop + real NativeBrowserExecutor on headless Chromium against a local
+# fixture site, scripted model ($0, ~3 min). Needs Playwright's Chromium; deselected by default.
+$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/browser_e2e -m browser_e2e -o addopts=""
 
 # Offline eval: scripted scenarios through the real loop (evals/); report table
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
@@ -128,8 +131,9 @@ These are load-bearing — violating them silently breaks the agent.
   the browser executor has none; OSWorld runs its own fixed-threshold check), `_region_has_content()` runs before every click with an
   adaptively calibrated threshold. Never bypass it.
 - **Verification states.** SUCCESS / FAILURE / UNCERTAIN / PENDING /
-  PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify;
-  `PROGRESSING_STABLE` advances immediately.
+  PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify.
+  `PROGRESSING_STABLE` is handled (the loop would advance immediately) but reserved: no
+  verifier currently emits it.
 - **Lazy `ws_stream`.** Never import `ws_stream` at module load in `browser/manager.py`
   — use the `_ws_stream()` accessor to avoid a circular import.
 - **Experimental work ships behind an env flag defaulting to off.** Follow the

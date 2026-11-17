@@ -73,6 +73,18 @@ class StepArtifactsManager:
         bg_writer.enqueue(trace_path, progress_trace.model_dump_json())
         return str(trace_path)
 
+    def persist_recovery_reset(
+        self, run_id: str, step_index: int, strategy: str, actions: list[str], start_url_allowed: bool | None = None
+    ) -> str:
+        """Record what a recovery reset pressed, clicked or skipped, as step_<n>/recovery_reset.json."""
+        step_dir = Path(self.before_path(run_id, step_index)).resolve().parent
+        path = step_dir / "recovery_reset.json"
+        payload: dict[str, object] = {"strategy": strategy, "actions": actions}
+        if start_url_allowed is not None:
+            payload["start_url_allowed"] = start_url_allowed
+        bg_writer.enqueue(path, json.dumps(payload, sort_keys=True))
+        return str(path)
+
     def persist_step_timing(self, run_id: str, step_index: int, stage_timings: dict[str, float]) -> None:
         """Persist per-stage durations as runs/<run_id>/step_<n>/step_timing.json.
 

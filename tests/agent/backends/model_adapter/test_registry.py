@@ -69,3 +69,10 @@ def test_the_default_registry_ships_inside_the_package() -> None:
 
     assert registry_path().parent.name == "model_adapter" and registry_path().name == "models.yaml"
     assert registry_path().is_file()
+
+
+def test_gemini_native_adapter_is_rejected_at_validation() -> None:
+    from operon.agent.backends.model_adapter.registry import ModelProfile
+
+    with pytest.raises(ValueError, match="gemini_native is not available"):
+        ModelProfile(name="g", adapter="gemini_native", model="gemini-x")

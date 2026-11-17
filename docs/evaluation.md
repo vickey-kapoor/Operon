@@ -113,6 +113,34 @@ comparable. Gemini uses its browser Computer Use backend for all samples. Expect
 far lower than v2: its screens are up to 3840 px wide and are downscaled to 1280 px before
 the model sees them.
 
+## Free browser end-to-end tests
+
+`tests/browser_e2e/` runs Operon's real pipeline on a real headless Chromium for $0: the real
+`AgentLoop` (capture, perceive, decide, gate, execute, verify, recover), the full-harness policy,
+rules, verifier and recovery manager, the real `BrowserComputerUseBackend` and the real
+`NativeBrowserExecutor` in batch mode. Only the models are scripts, at the HTTP-client boundary:
+`ScriptedClient` replaces the Gemini computer-use client (as in `tests/desktop_e2e`), and
+`PixelCritic` replaces the verifier's critic model (it compares the step's before and after
+screenshots, and judges a stop from the app's state, as the grader does).
+
+A scripted model cannot see, so the pages come from `tests/browser_e2e/site.py`: a fixed
+1000x800 viewport and absolutely positioned elements, mounted on `evals/fixture_site.py` as an
+app with its own state. Scripted clicks are computed from that layout in the 0-999 grid Gemini
+uses. Every task is graded from the site's `GET /state` or its request log, never from what the
+run claims. Twelve scenarios: link navigation, a form, one button among several, scroll then
+click, a dropdown and a modal, content that appears after a delay, recovery from a click that
+misses, a sign-in/cart/checkout workflow, a file written through the tool channel, completion
+detection, an impossible task (must end `failed`), and a repeated useless click (the loop stops
+it and the efficiency score counts the waste). A reliability test repeats the form, recovery
+and workflow scenarios five times each and requires all to pass.
+
+```powershell
+$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/browser_e2e -m browser_e2e -o addopts=""
+```
+
+The marker `browser_e2e` is deselected by default; the module skips cleanly when Playwright's
+Chromium is not installed. The whole run takes about three minutes.
+
 ## Cost
 
 Each model call records its token usage next to its step, and the benchmarks report cost per

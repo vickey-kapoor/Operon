@@ -6,7 +6,7 @@
 # Experimental and off by default: nothing here is used unless the backend is "model".
 #
 # Fields (see src/operon/agent/backends/model_adapter/registry.py):
-#   adapter         claude_native | gemini_native | openai_native | openai_compat
+#   adapter         claude_native | openai_native | openai_compat   (gemini_native is rejected: not buildable)
 #   parser          openai_compat only: neutral_tools | ui_tars | opencua
 #   model           model id sent to the provider or server
 #   base_url_env    openai_compat: env var holding the server's base URL (default OPENWEIGHT_BASE_URL)

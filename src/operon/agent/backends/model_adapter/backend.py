@@ -282,7 +282,7 @@ class ModelAdapterBackend(AgentBackend):
                 pass
         hints = self._hints.pop(run_id, None) or self._hints.pop("", None) or []
         if hints:
-            parts.append("Advisory hints:\n" + "\n".join(f"- {h}" for h in hints))
+            parts.append("Advisory hints:\n" + "\n".join(f"- {h}" for h, _ in hints))
         return "\n".join(parts)
 
     def _decide(self, parsed: ParsedReply, ctx: PromptContext) -> PolicyDecision:

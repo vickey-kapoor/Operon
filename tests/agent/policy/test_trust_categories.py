@@ -12,6 +12,7 @@ from operon.agent.policy.trust_gate import (
     TrustVerdict,
     apply_permission_mode,
     make_trust_gate,
+    match_reason_category,
     match_risk_category,
 )
 from operon.api import frontdoor
@@ -45,6 +46,7 @@ def _click(name: str | None = None, text: str | None = None, kind: str = "click"
         ("Empty trash", "delete"),
         ("Delete permanently", "delete"),
         ("Uninstall", "delete"),
+        ("Format disk", "delete"),
         ("Sign out of all devices", "account"),
         ("Change password", "account"),
         ("Revoke", "account"),
@@ -67,6 +69,11 @@ def test_category_positives(label: str, category: str) -> None:
         "Postal code",
         "Allowance",
         "Information",
+        "Format",
+        "Email",
+        "Don't allow",
+        "Do not allow",
+        "Cancel payment",
         "Search",
         "Save",
         "Send us feedback about the new design",  # too long to be a button label
@@ -77,10 +84,54 @@ def test_category_negatives(label: str) -> None:
     assert match_risk_category(label, ALL) == ("", "")
 
 
-def test_stated_intent_is_prose_and_not_length_limited() -> None:
-    long_intent = "I will click the Place order button at the bottom of the page to finish up"
-    assert match_risk_category(long_intent, ALL, label=False)[0] == "payment"
-    assert match_risk_category(long_intent, ALL) == ("", "")
+ORDINARY_REASONS = [
+    "I will click on the email field",
+    "remove the price filter",
+    "submit the search",
+    "pay attention to the sidebar",
+    "Let me change the date format dropdown",
+    "I'll click the Send us feedback link in the footer of the page",
+]
+
+
+@pytest.mark.parametrize("reason", ORDINARY_REASONS)
+def test_ordinary_reasons_never_fire_on_a_nameless_click(reason: str) -> None:
+    gate = TrustGate(enabled=True, categories=ALL)
+    assert match_reason_category(reason, ALL) == ("", "")
+    assert gate.evaluate(_click(), stated_reason=reason).verdict is TrustVerdict.ALLOW
+
+
+@pytest.mark.parametrize(
+    ("reason", "category"),
+    [
+        ("Click 'Pay now'", "payment"),
+        ("I'll click \"Delete\" to remove it", "delete"),
+        ("Clicking ‘Send’", "send"),
+        ("I'll click the Place order button at the bottom of the page", "payment"),
+        ("Time to permanently delete the file", "delete"),
+        ("Now sign out of all devices", "account"),
+    ],
+)
+def test_reason_positives_quoted_target_or_multiword_phrase(reason: str, category: str) -> None:
+    result = TrustGate(enabled=True, categories=ALL).evaluate(_click(), stated_reason=reason)
+    assert (result.verdict, result.category) == (TrustVerdict.CONFIRM, category)
+
+
+def test_quoted_reason_target_obeys_label_rules() -> None:
+    assert match_reason_category("Click 'Payments history'", ALL) == ("", "")
+    assert match_reason_category("Click 'Don't allow'", ALL) == ("", "")
+    assert match_reason_category("Click 'Send us feedback about the new design'", ALL) == ("", "")
+
+
+def test_enter_may_use_the_reason_but_other_keys_never_do() -> None:
+    gate = TrustGate(enabled=True, categories=ALL)
+    reason = "Press the key to place order"
+    enter = _click(kind="press_key")
+    enter.key = "Enter"
+    ctrl_a = _click(kind="hotkey")
+    ctrl_a.key = "ctrl+a"
+    assert gate.evaluate(enter, stated_reason=reason).category == "payment"
+    assert gate.evaluate(ctrl_a, stated_reason=reason).verdict is TrustVerdict.ALLOW
 
 
 def test_gate_confirms_a_category_label_with_the_category_on_the_result() -> None:
@@ -92,16 +143,16 @@ def test_gate_confirms_a_category_label_with_the_category_on_the_result() -> Non
     assert gate.evaluate(_click("Payments history")).verdict is TrustVerdict.ALLOW
 
 
-def test_typed_text_and_keys_are_not_judged_as_categories() -> None:
+def test_typed_text_is_not_judged_as_a_category() -> None:
     gate = TrustGate(enabled=True, categories=ALL)
     assert gate.evaluate(_click("Message", text="please send it", kind="type")).verdict is TrustVerdict.ALLOW
 
 
 def test_stated_reason_used_only_when_no_target_is_named() -> None:
     gate = TrustGate(enabled=True, categories=ALL)
-    nameless = gate.evaluate(_click(), stated_reason="Click the Delete button")
+    nameless = gate.evaluate(_click(), stated_reason="Click 'Delete'")
     assert (nameless.verdict, nameless.category) == (TrustVerdict.CONFIRM, "delete")
-    named = gate.evaluate(_click("Save"), stated_reason="Click the Delete button")
+    named = gate.evaluate(_click("Save"), stated_reason="Click 'Delete'")
     assert named.verdict is TrustVerdict.ALLOW
 
 

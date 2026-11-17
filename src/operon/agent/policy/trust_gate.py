@@ -22,8 +22,9 @@ takes precedence over confirm.
 Config:
     OPERON_TRUST_CATEGORIES     on | off        named risk categories (payment, send, delete,
                                                  account, install) matched on word boundaries
-                                                 against a clicked element's short label (or the
-                                                 model's stated intent when no target is named);
+                                                 against a clicked element's short label; with no
+                                                 label, only a quoted target or a multi-word risk
+                                                 phrase in the model's stated reason;
                                                  default off (KAN-103)
     OPERON_TRUST_CATEGORY_LIST  comma-separated  categories to enforce (default all five)
     OPERON_TRUST_GATE          on | off        master switch (default on)
@@ -84,8 +85,8 @@ class TrustResult:
 # "Payments history" or "Resend code". Dict order is the match priority.
 RISK_CATEGORIES: dict[str, tuple[str, ...]] = {
     "payment": ("pay", "buy", "purchase", "checkout", "place order", "subscribe", "transfer", "wire", "donate"),
-    "send": ("send", "post", "publish", "submit", "reply all", "share", "email"),
-    "delete": ("delete", "remove", "erase", "wipe", "uninstall", "format", "empty trash", "permanently"),
+    "send": ("send", "post", "publish", "submit", "reply all", "share"),
+    "delete": ("delete", "remove", "erase", "wipe", "uninstall", "format disk", "format drive", "empty trash", "permanently"),
     "account": ("sign out of all", "change password", "close account", "revoke"),
     "install": ("install", "run as administrator", "allow", "grant access"),
 }
@@ -100,18 +101,57 @@ _CATEGORY_PATTERNS: dict[str, re.Pattern[str]] = {
     for name, phrases in RISK_CATEGORIES.items()
 }
 # A button label is a few words; a longer string is a heading or sentence ("Send us feedback
-# about the new design") and is not judged by label. The model's stated intent is prose and
-# exempt from this limit (it is only consulted when the action names no target).
+# about the new design") and is not judged by label.
 _MAX_LABEL_WORDS = 5
+# "Don't allow", "Do not allow", "Cancel payment" decline the action; they are not it.
+_NEGATED_LABEL = re.compile(r"^(?:don['\u2019]?t|do\s+not|cancel)(?!\w)")
 
 
-def match_risk_category(text: str, categories: tuple[str, ...], *, label: bool = True) -> tuple[str, str]:
-    """``(category, phrase)`` for the first enabled category whose phrase appears in ``text``,
-    else ``("", "")``. With ``label=True`` the text must be a short button-like label."""
+def match_risk_category(text: str, categories: tuple[str, ...]) -> tuple[str, str]:
+    """``(category, phrase)`` for the first enabled category whose phrase appears in the
+    short button-like label ``text``, else ``("", "")``. Longer text and labels that start
+    with a negation (don't / do not / cancel) never match."""
     lowered = text.lower().strip()
-    if not lowered or (label and len(lowered.split()) > _MAX_LABEL_WORDS):
+    if not lowered or len(lowered.split()) > _MAX_LABEL_WORDS or _NEGATED_LABEL.match(lowered):
         return "", ""
     for name, pattern in _CATEGORY_PATTERNS.items():
+        if name in categories and (found := pattern.search(lowered)):
+            return name, found.group(0)
+    return "", ""
+
+
+# The model's prose (no element list under computer-use backends) is far noisier than a label
+# ("remove the price filter", "pay attention", "submit the search"), so it is judged only by
+# multi-word phrases that unambiguously name a risky action: bare words never fire on it.
+_REASON_PHRASES: dict[str, tuple[str, ...]] = {
+    "payment": ("place order", "buy now", "pay now", "confirm payment", "send money", "wire transfer", "transfer funds"),
+    "send": ("reply all",),
+    "delete": ("empty trash", "delete permanently", "permanently delete", "delete account"),
+    "account": ("sign out of all", "change password", "close account"),
+    "install": ("grant access", "run as administrator", "install now"),
+}
+_REASON_PATTERNS: dict[str, re.Pattern[str]] = {
+    name: re.compile(r"(?<!\w)(?:" + "|".join(_phrase_regex(p) for p in phrases) + r")(?!\w)")
+    for name, phrases in _REASON_PHRASES.items()
+}
+# A quoted target in the reason: 'Pay now', "Pay now" or curly quotes. The opening quote must
+# not follow a letter, so the apostrophe in "I'll" does not open one.
+_QUOTED = re.compile(
+    r"""(?<!\w)(?:'([^']{1,60})'|"([^"]{1,60})"|\u2018([^\u2019]{1,60})\u2019|\u201c([^\u201d]{1,60})\u201d)(?!\w)"""
+)
+
+
+def match_reason_category(reason: str, categories: tuple[str, ...]) -> tuple[str, str]:
+    """``(category, phrase)`` for the model's stated reason when it names a risky target:
+    first a quoted target phrase (judged like a label), else a multi-word risk phrase."""
+    lowered = reason.lower().strip()
+    if not lowered:
+        return "", ""
+    for quoted in _QUOTED.finditer(lowered):
+        category, phrase = match_risk_category(next(g for g in quoted.groups() if g), categories)
+        if category:
+            return category, phrase
+    for name, pattern in _REASON_PATTERNS.items():
         if name in categories and (found := pattern.search(lowered)):
             return name, found.group(0)
     return "", ""
@@ -248,7 +288,9 @@ class TrustGate:
         if name:
             category, phrase = match_risk_category(str(name), self.categories)
         else:
-            category, phrase = match_risk_category(stated_reason or "", self.categories, label=False)
+            if action_type in _KEY_ACTIONS and str(getattr(action, "key", "") or "").strip().lower() not in _ENTER_KEYS:
+                return None  # only Enter / Return can submit; other keys never take the reason's word
+            category, phrase = match_reason_category(stated_reason or "", self.categories)
         if not category:
             return None
         return TrustResult(TrustVerdict.CONFIRM, f"matched {category} risk category", phrase, category)
@@ -256,6 +298,8 @@ class TrustGate:
 
 # Actions that act on whatever is under the pointer or has focus: without a
 # resolved target name the gate cannot tell what they press.
+_KEY_ACTIONS = frozenset({"press_key", "hotkey"})
+_ENTER_KEYS = frozenset({"enter", "return"})
 _POINTER_ACTIONS = frozenset({"click", "double_click", "triple_click", "right_click", "press_key", "hotkey", "drag"})
 
 

@@ -1,12 +1,12 @@
 name: Run Operon on test tasks (paid)
 run-name: >-
-  ${{ github.event_name == 'schedule' && 'Benchmark · nightly (2 AM)'
-  || github.event_name == 'issue_comment' && format('Benchmark from a comment on PR #{0}', github.event.issue.number)
-  || 'Benchmark (manual)' }}
+  ${{ github.event_name == 'schedule' && 'Paid run · nightly (2:25 AM)'
+  || github.event_name == 'issue_comment' && format('Paid run · from a comment on PR #{0}', github.event.issue.number)
+  || 'Paid run · started by hand' }}
 
 # The one place benchmarks start. Every run spends model credits, so nothing runs on a push.
 #
-# 1. Nightly, at about 2:25 AM Chicago (KAN-165): the cells queued in evals/nightly-queue.txt
+# 1. Nightly, at about 2:25 AM Chicago (KAN-165; paused since 2026-11-16, see "on:" below): the cells queued in evals/nightly-queue.txt
 #    that fit tonight's budget, as one batch: at most $10 a night, and nothing once this
 #    month's spend (from the dashboard database) reaches $100. If the month's spend can't be
 #    read, nothing runs. Lines that already ran are remembered in the "nightly-state" artifact,
@@ -45,7 +45,7 @@ run-name: >-
 # Browser cells run side by side on hosted runners. Desktop and Hybrid cells run one after
 # another on one start of the Azure VM, which is deallocated after the last one. The batch is
 # refused before anything starts when the cells' caps add up to more than the batch cap, so the
-# most it can spend is known up front. Every cell's report goes to the dashboard ("Send results
+# most it can spend is known up front. Every cell's report goes to the dashboard ("Save run results
 # to dashboard"); a /bench comment also gets its results table on the PR.
 #
 # The engines it calls (live-bench.yml, live-desktop-bench.yml, grounding.yml) are also
@@ -231,7 +231,7 @@ jobs:
   # Tonight's cells from evals/nightly-queue.txt, within the nightly budget (KAN-165). Runs on the
   # 2 AM schedule, and by hand when no cells are given.
   queue:
-    name: Pick tonight's cells
+    name: Pick tonight's queued runs
     if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.cells == '') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -286,7 +286,7 @@ jobs:
 
   # Reads the batch (from a /bench batch comment, the manual cells, or tonight's queue) and checks every line.
   plan:
-    name: Read the batch
+    name: Check the run list
     needs: [parse, queue]
     if: >-
       ${{ !cancelled() && needs.parse.result != 'failure' && needs.queue.result != 'failure' && (
@@ -409,7 +409,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   stop-vm:
-    name: Deallocate the Azure VM
+    name: Stop the Azure VM
     needs: [start-vm, batch-desktop]
     if: ${{ always() && needs.start-vm.result == 'success' }}
     runs-on: ubuntu-latest

@@ -56,7 +56,7 @@ on:
       suite: {type: string, default: "core"}
       args: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
-      # Set by the Benchmark workflow (benchmark.yml) so its cells' artifacts don't share a name.
+      # Set by the paid-run workflow (benchmark.yml) so its cells' artifacts don't share a name.
       artifact_suffix: {type: string, default: ""}
       ref:
         description: "Git ref to benchmark (empty: the triggering ref)"
@@ -73,7 +73,7 @@ permissions:
 
 jobs:
   plan:
-    name: Pick the backends
+    name: Pick the models
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -165,7 +165,7 @@ jobs:
           cat uvicorn.log
           exit 1
 
-      - name: Run the benchmark
+      - name: Run the tasks
         env:
           SUITE: ${{ inputs.suite }}
           EXTRA_ARGS: ${{ inputs.args }}

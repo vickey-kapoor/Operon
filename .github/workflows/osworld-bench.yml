@@ -53,7 +53,7 @@ jobs:
       - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
 
   bench:
-    name: OSWorld subset
+    name: Run the OSWorld tasks
     needs: start-vm
     if: ${{ !cancelled() && needs.start-vm.result == 'success' }}
     # The runner on operon-linux (docs/osworld-runner.md). It comes online a minute or two after the VM boots.
@@ -107,7 +107,7 @@ jobs:
         run: docker ps -q --filter "ancestor=happysixd/osworld-docker" | xargs -r docker rm -f
 
   stop-vm:
-    name: Deallocate the Azure VM
+    name: Stop the Azure VM
     needs: [start-vm, bench]
     if: ${{ always() && needs.start-vm.result == 'success' }}
     runs-on: ubuntu-latest

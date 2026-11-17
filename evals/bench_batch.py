@@ -290,7 +290,7 @@ def matrices(cells: list[Cell]) -> dict:
 
 def summary_markdown(cells: list[Cell], max_total_usd: float) -> str:
     lines = [
-        "## Benchmark batch",
+        "## Paid run list",
         "",
         f"{len(cells)} cells; cost caps add up to ${total_cap(cells):.2f}"
         + (f" (batch cap ${max_total_usd:.2f})." if max_total_usd > 0 else " (no batch cap)."),

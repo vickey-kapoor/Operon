@@ -55,6 +55,7 @@ class OperonMCPTools:
         self._client = client
         self._poll_s = poll_s
         self.active_run_id: str | None = None
+        self._start_lock = asyncio.Lock()
 
     @property
     def client(self) -> Any:
@@ -77,6 +78,11 @@ class OperonMCPTools:
     async def start_task(
         self, task: str, url: str | None = None, desktop: bool = False, env: str | None = None
     ) -> dict[str, Any]:
+        # The client dispatches each request as its own task: check and start are one step.
+        async with self._start_lock:
+            return await self._start_task(task, url, desktop, env)
+
+    async def _start_task(self, task: str, url: str | None, desktop: bool, env: str | None) -> dict[str, Any]:
         if self.active_run_id is not None:
             try:
                 current = await self.client.status(self.active_run_id)
@@ -96,9 +102,9 @@ class OperonMCPTools:
         }
         if url:
             payload["start_url"] = url
-        previous = os.environ.get("OPERON_ENVIRONMENT")
         if requested is not None:
-            # Read when the desktop environment is first built, which happens inside start().
+            # The desktop environment is built once per process, so the first choice stays: it is
+            # also what the app catalog and list_environments read for the rest of the process.
             os.environ["OPERON_ENVIRONMENT"] = requested
         try:
             status = await self._call(self.client.start(payload))
@@ -106,12 +112,6 @@ class OperonMCPTools:
             if isinstance(exc, ValueError):
                 raise
             raise ValueError(f"Could not start the task: {exc}") from exc
-        finally:
-            if requested is not None:  # never leave the variable changed for a later call
-                if previous is None:
-                    os.environ.pop("OPERON_ENVIRONMENT", None)
-                else:
-                    os.environ["OPERON_ENVIRONMENT"] = previous
         self.active_run_id = status["run_id"]
         return {"run_id": status["run_id"], "status": status["status"], "environment": status["environment"]}
 

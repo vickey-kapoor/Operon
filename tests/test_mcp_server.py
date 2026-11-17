@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import io
 import os
@@ -15,6 +16,7 @@ from PIL import Image  # noqa: E402
 from operon import cli, mcp_server  # noqa: E402
 from operon.api import ws_stream  # noqa: E402
 from operon.api.runtime import loops, tasks  # noqa: E402
+from operon.core.settings import get_settings  # noqa: E402
 from tests.fixtures.frontdoor import CLICK_SAVE, PURCHASE, build_loop  # noqa: E402
 
 
@@ -182,7 +184,8 @@ class _FakeStartClient:
         self.seen: list[str | None] = []
 
     async def start(self, payload: dict) -> dict:
-        self.seen.append(os.environ.get("OPERON_ENVIRONMENT"))
+        self.seen.append(get_settings().environment)
+        await asyncio.sleep(0)  # yield, as a real start does
         return {"run_id": "r1", "status": "pending", "environment": payload["environment"]}
 
     async def status(self, run_id: str) -> dict:
@@ -195,7 +198,7 @@ async def test_an_unknown_environment_is_refused_before_anything_changes(monkeyp
     tools = mcp_server.OperonMCPTools(client)
     with pytest.raises(ValueError, match="Unknown environment"):
         await tools.start_task("x", desktop=True, env="no-such-env")
-    assert client.seen == [] and "OPERON_ENVIRONMENT" not in os.environ
+    assert client.seen == [] and get_settings().environment == "live"
 
 
 async def test_a_different_environment_than_the_built_one_is_refused(monkeypatch) -> None:
@@ -216,19 +219,95 @@ async def test_a_different_environment_than_the_built_one_is_refused(monkeypatch
     assert (await tools.start_task("x", desktop=True, env="LIVE"))["run_id"] == "r1"  # same one: fine
 
 
-async def test_env_is_set_only_while_the_environment_is_built(monkeypatch) -> None:
+async def test_the_first_desktop_environment_stays_chosen(monkeypatch) -> None:
     from operon.core.runtime import current_runtime
 
     monkeypatch.setattr(current_runtime(), "desktop_provider", None)
     monkeypatch.delenv("OPERON_ENVIRONMENT", raising=False)
     client = _FakeStartClient()
     tools = mcp_server.OperonMCPTools(client)
-    await tools.start_task("x", desktop=True, env="linux-container")
-    assert client.seen == ["linux-container"]
-    assert "OPERON_ENVIRONMENT" not in os.environ
-    await tools.start_task("y", desktop=True)  # a later call without env sees no leftover
-    assert client.seen[-1] is None
+    try:
+        await tools.start_task("x", desktop=True, env="linux-container")
+        assert client.seen == ["linux-container"]
+        assert get_settings().environment == "linux-container"  # app catalog and `selected` read this
+        assert [r["name"] for r in await tools.list_environments() if r["selected"]] == ["linux-container"]
+    finally:
+        os.environ.pop("OPERON_ENVIRONMENT", None)
 
-    monkeypatch.setenv("OPERON_ENVIRONMENT", "osworld")
-    await tools.start_task("z", desktop=True, env="linux-container")
-    assert os.environ["OPERON_ENVIRONMENT"] == "osworld"
+
+async def test_concurrent_start_task_starts_only_one_run(monkeypatch) -> None:
+    client = _FakeStartClient()
+
+    async def status(run_id: str) -> dict:
+        return {"done": False, "status": "running"}
+
+    client.status = status  # type: ignore[method-assign]
+    tools = mcp_server.OperonMCPTools(client)
+    results = await asyncio.gather(tools.start_task("a"), tools.start_task("b"), return_exceptions=True)
+    assert len(client.seen) == 1
+    assert sum(isinstance(r, ValueError) for r in results) == 1
+
+
+async def test_the_real_desktop_path_builds_the_chosen_environment_once(monkeypatch, tmp_path, scheduled) -> None:
+    from types import SimpleNamespace
+
+    from operon.core.runtime import current_runtime
+    from operon.environments import registry
+
+    loop, executor = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
+    built: list[tuple[str, str]] = []
+
+    class RecordingProvider:
+        runs_on_host = True
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def check(self):
+            return SimpleNamespace(ok=True, problems=[])
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+        def build_executor(self):
+            return executor
+
+    def fake_get_provider(name=None):
+        key = name or registry.environment_name()
+        built.append((key, get_settings().environment))
+        return RecordingProvider(key)
+
+    monkeypatch.setattr(loops, "get_provider", fake_get_provider)
+    monkeypatch.setattr(current_runtime(), "desktop_provider", None)
+    monkeypatch.setattr(current_runtime(), "desktop_loop", None)
+    monkeypatch.setattr(
+        loops, "build_desktop_services", lambda: SimpleNamespace(perception_service=loop.perception_service, policy_delegate=None)
+    )
+    monkeypatch.setattr(
+        loops,
+        "_loop_layers",
+        lambda **kw: {
+            "policy_service": loop.policy_service,
+            "verifier_service": loop.verifier_service,
+            "recovery_manager": loop.recovery_manager,
+        },
+    )
+    monkeypatch.setattr(ws_stream, "publish_event", lambda event: None)
+    monkeypatch.setattr(ws_stream, "set_desktop_executor", lambda e: None)
+    monkeypatch.delenv("OPERON_ENVIRONMENT", raising=False)
+
+    tools = mcp_server.OperonMCPTools(cli.LocalClient(), poll_s=0.01)
+    try:
+        out = await tools.start_task("x", desktop=True, env="Linux-Container")
+        assert built == [("linux-container", "linux-container")]
+        assert current_runtime().desktop_provider.name == "linux-container"
+        await tools.stop_task(out["run_id"])
+        with pytest.raises(ValueError, match="already uses environment 'linux-container'"):
+            await tools.start_task("y", desktop=True, env="live")
+        await tools.start_task("z", desktop=True)  # the chosen environment is now the default
+        assert len(built) == 1
+    finally:
+        os.environ.pop("OPERON_ENVIRONMENT", None)

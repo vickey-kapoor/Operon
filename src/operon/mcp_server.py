@@ -108,9 +108,9 @@ class OperonMCPTools:
             os.environ["OPERON_ENVIRONMENT"] = requested
         try:
             status = await self._call(self.client.start(payload))
-        except Exception as exc:  # noqa: BLE001 - validation, missing key and the like reach the client as text
-            if isinstance(exc, ValueError):
-                raise
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a missing key and the like reach the client as text
             raise ValueError(f"Could not start the task: {exc}") from exc
         self.active_run_id = status["run_id"]
         return {"run_id": status["run_id"], "status": status["status"], "environment": status["environment"]}
@@ -132,8 +132,9 @@ class OperonMCPTools:
         }
         if waiting is not None:
             payload["waiting"] = {"kind": waiting["kind"], "reason": waiting["reason"]}
-            if waiting.get("gate"):
-                payload["waiting"]["category"] = waiting["gate"]
+            for key in ("gate", "verdict", "category"):  # verdict: "deny" is a hard policy block
+                if waiting.get(key):
+                    payload["waiting"][key] = waiting[key]
         if status["done"]:
             report = await self._call(self.client.report(run_id))
             payload["final_answer"] = report.get("final_message")
@@ -266,8 +267,8 @@ def build_server(tools: OperonMCPTools | None = None):
 
     @server.tool()
     async def get_task(run_id: str) -> dict[str, Any]:
-        """Current state of a run: status, step count, last message, what it waits on (waiting: reason
-        and category), and once done the final_answer and cost."""
+        """Current state of a run: status, step count, last message, what it waits on (waiting: reason,
+        verdict "confirm" or "deny", category), and once done the final_answer and cost."""
         return await tools.get_task(run_id)
 
     @server.tool()
@@ -278,7 +279,9 @@ def build_server(tools: OperonMCPTools | None = None):
 
     @server.tool()
     async def approve(run_id: str) -> dict[str, Any]:
-        """Approve the action a waiting run paused on. Call this only when the user agrees."""
+        """Approve the action a waiting run paused on. Call this only when the user agrees. If
+        waiting.verdict is "deny" the pause is a hard policy block: approving it overrides the block,
+        so treat it as the person's own decision, never your own."""
         return await tools.approve(run_id)
 
     @server.tool()

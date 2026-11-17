@@ -53,7 +53,7 @@ async def test_start_wait_approve_flow(monkeypatch, tmp_path, scheduled) -> None
     waiting = await tools.wait_for_task(run_id, timeout_s=5)
     assert waiting["status"] == "waiting_for_user" and not waiting["done"]
     assert waiting["waiting"]["kind"] == "approval" and waiting["waiting"]["reason"]
-    assert waiting["waiting"]["category"]
+    assert waiting["waiting"]["gate"]
     assert not [a for a in executor.executed if a.text == "purchase now"]  # nothing ran without the client's approval
 
     await tools.approve(run_id)
@@ -311,3 +311,17 @@ async def test_the_real_desktop_path_builds_the_chosen_environment_once(monkeypa
         assert len(built) == 1
     finally:
         os.environ.pop("OPERON_ENVIRONMENT", None)
+
+
+async def test_waiting_passes_on_verdict_and_category() -> None:
+    class Client:
+        async def status(self, run_id: str) -> dict:
+            return {
+                "status": "waiting_for_user", "done": False, "step_count": 1, "max_steps": 5, "recent_steps": [],
+                "waiting": {"kind": "approval", "gate": "trust", "reason": "Blocked by policy",
+                            "verdict": "deny", "category": "purchase"},
+            }
+
+    waiting = (await mcp_server.OperonMCPTools(Client()).get_task("r"))["waiting"]
+    assert waiting == {"kind": "approval", "reason": "Blocked by policy", "gate": "trust",
+                       "verdict": "deny", "category": "purchase"}

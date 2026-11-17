@@ -120,31 +120,34 @@ def test_constructor_validation() -> None:
         Agent(env="windows-sandbox")  # env needs desktop=True
     with pytest.raises(ValueError, match="unknown env"):
         Agent(desktop=True, env="no-such-env")
-    Agent(desktop=True, env="windows-sandbox")
+    Agent(desktop=True, env="Windows-Sandbox")  # case-insensitive
 
 
 async def test_cancelling_arun_stops_the_run(monkeypatch, tmp_path) -> None:
     loop, executor = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
     _use(monkeypatch, loop)
-    real_execute = executor.execute
+    entered, never = asyncio.Event(), asyncio.Event()
 
-    async def slow(action):
-        await asyncio.sleep(0.3)
-        return await real_execute(action)
+    async def blocked(action):
+        entered.set()
+        await never.wait()  # never set: the first action hangs until the run is stopped
 
-    executor.execute = slow  # type: ignore[method-assign]
+    executor.execute = blocked  # type: ignore[method-assign]
     events: list[dict] = []
     monkeypatch.setattr(ws_stream, "publish_event", events.append)
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(Agent(mode="auto", poll_s=0.01).arun("Loop forever"), timeout=0.5)
-    await asyncio.sleep(0.5)  # a step already in flight may finish
-    seen = len(executor.executed)
-    await asyncio.sleep(0.8)
 
-    assert len(executor.executed) == seen  # nothing runs after the cancel
+    task = asyncio.create_task(Agent(mode="auto", poll_s=0.01).arun("Loop forever"))
+    await entered.wait()
+    before = list(executor.executed)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
     run_id = next(e["run_id"] for e in events if e["type"] == "run_started")
     assert (await loop.run_store.get_run(run_id)).status.value == "cancelled"
-    assert not current_runtime().sdk_run_active
+    assert executor.executed == before
+    runtime = current_runtime()
+    assert not runtime.sdk_run_active and runtime.browser_loop is None
 
 
 async def test_second_concurrent_run_is_refused(monkeypatch) -> None:

@@ -75,6 +75,7 @@ class Agent:
         if env is not None:
             from operon.environments import provider_names
 
+            env = env.strip().lower()  # as environment_name() reads OPERON_ENVIRONMENT
             if env not in provider_names():
                 raise ValueError(f"unknown env {env!r}; choose one of {', '.join(provider_names())}")
         self.desktop = desktop
@@ -132,8 +133,9 @@ class Agent:
                         except Exception:  # noqa: BLE001 - cleanup must not mask the real error
                             pass
                     await client.close()
-                    self._forget_built_loops()
             finally:
+                if client is not None:
+                    self._forget_built_loops()  # even if a second cancel interrupted stop/close
                 if self.env:
                     if had_env and saved_env is not None:
                         os.environ[env_key] = saved_env

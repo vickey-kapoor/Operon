@@ -223,3 +223,106 @@ jobs:
 
       - name: Run mypy
         run: uv run mypy
+
+  browser-e2e:
+    # The real loop drives the real NativeBrowserExecutor on headless Chromium against a
+    # local fixture site, with a scripted model instead of Gemini, so it costs nothing.
+    # tests/browser_e2e. OPERON_E2E_REQUIRE_BROWSER makes a missing Chromium fail, not skip.
+    name: Browser end to end (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      UV_PYTHON: "3.14"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Install Chromium and its system libraries
+        run: uv run playwright install --with-deps chromium
+
+      - name: Run the browser end-to-end tests
+        env:
+          GEMINI_API_KEY: fake-test-key
+          OPERON_E2E_REQUIRE_BROWSER: "true"
+        run: uv run pytest tests/browser_e2e -m browser_e2e -o addopts="" -v --tb=short
+
+  evals:
+    # The scripted eval scenarios through the real loop, offline. `python -m evals` exits 1
+    # on a false success, a crash, or a miss that is not a labelled known issue (today one:
+    # cu_relaunch_runaway, RFC 0003), and 0 otherwise.
+    name: Scripted evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.14"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Run the scripted evals
+        env:
+          GEMINI_API_KEY: fake-test-key
+        run: uv run python -m evals
+
+  test-macos:
+    # Does not block merging (continue-on-error): shows whether the offline suite and the
+    # browser end-to-end tests hold on macOS. Chromium needs no --with-deps there.
+    name: Test (macOS, non-blocking)
+    runs-on: macos-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    env:
+      UV_PYTHON: "3.14"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
+
+      - name: Run tests
+        env:
+          GEMINI_API_KEY: fake-test-key
+          OPERON_TEST_SAFE_MODE: "true"
+        run: uv run pytest tests/ -q --tb=short
+
+      - name: Install Chromium
+        if: always()
+        run: uv run playwright install chromium
+
+      - name: Run the browser end-to-end tests
+        if: always()
+        env:
+          GEMINI_API_KEY: fake-test-key
+          OPERON_E2E_REQUIRE_BROWSER: "true"
+        run: uv run pytest tests/browser_e2e -m browser_e2e -o addopts="" -v --tb=short

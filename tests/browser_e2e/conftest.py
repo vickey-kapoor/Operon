@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -19,16 +20,20 @@ def pytest_collection_modifyitems(items):
 
 @pytest.fixture(scope="session")
 def chromium():
-    """Skip cleanly when Playwright's Chromium is not installed (never downloaded here)."""
+    """Skip cleanly when Playwright's Chromium is not installed (never downloaded here).
+
+    With OPERON_E2E_REQUIRE_BROWSER set (CI) a missing Chromium fails instead of skipping.
+    """
+    unavailable = pytest.fail if os.environ.get("OPERON_E2E_REQUIRE_BROWSER") else pytest.skip
     try:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
             installed = Path(p.chromium.executable_path).exists()
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"Playwright is unavailable: {exc}")
+        unavailable(f"Playwright is unavailable: {exc}")
     if not installed:
-        pytest.skip("Playwright Chromium is not installed (playwright install chromium)")
+        unavailable("Playwright Chromium is not installed (playwright install chromium)")
 
 
 @pytest.fixture(scope="session")

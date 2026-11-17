@@ -141,6 +141,9 @@ class Settings(BaseModel):
     focus_guard: bool = _env_field("OPERON_FOCUS_GUARD", False)
     # A cheaper model writes a short plan once at task start (KAN-112).
     planner: bool = _env_field("OPERON_PLANNER", False)
+    # A running note of the task, the plan and the last actions, sent with each step (KAN-102).
+    task_note: bool = _env_field("OPERON_TASK_NOTE", False)
+    task_note_max_items: int = _env_field("OPERON_TASK_NOTE_MAX_ITEMS", 8)
     planner_model: str = _env_field("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite")
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)
     trust_deny: tuple[str, ...] = _env_field("OPERON_TRUST_DENY", ())
@@ -350,6 +353,8 @@ class _Parser:
             change_note=self.flag("OPERON_CHANGE_NOTE", "off"),
             focus_guard=self.flag("OPERON_FOCUS_GUARD", "off"),
             planner=self.flag("OPERON_PLANNER", "off"),
+            task_note=self.flag("OPERON_TASK_NOTE", "off"),
+            task_note_max_items=min(50, max(1, self.number("OPERON_TASK_NOTE_MAX_ITEMS", "8", int, fatal=False))),
             planner_model=self.or_default("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite"),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),

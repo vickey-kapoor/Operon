@@ -56,6 +56,7 @@ from operon.agent.policy.trust_gate import (
 )
 from operon.agent.policy.verifier import VerifierService
 from operon.agent.step_context import StepContext
+from operon.agent.task_note import build_task_note
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.core.settings import get_settings
@@ -632,6 +633,7 @@ class AgentLoop:
         await self._consume_force_fresh_perception(ctx.record)
         await self._capture_stage(ctx)
         self._consume_override_hint(ctx)
+        self._add_task_note(ctx)
         if (early := await self._perceive_stage(ctx)) is not None:
             return early
         await self._decide_stage(ctx)
@@ -849,6 +851,45 @@ class AgentLoop:
             _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
             executed_action = blocked_action
         ctx.executed_action = self._relocate_after_artifact(executed_action, ctx.after_artifact_path)
+
+    def _add_task_note(self, ctx: StepContext) -> None:
+        """Send the running task note with this step (OPERON_TASK_NOTE, KAN-102).
+
+        Built from the run's own history, no model call. Allowed in the thin harness: it
+        changes what the model sees, never its action. Saved as ``task_note.txt``.
+        """
+        settings = get_settings()
+        if not settings.task_note:
+            return
+        state = ctx.record
+        note = build_task_note(
+            state.intent,
+            state.step_count,
+            state.action_history,
+            state.verification_history,
+            plan_steps=self._saved_plan_steps(ctx.run_id),
+            max_items=settings.task_note_max_items,
+        )
+        if not note:
+            return
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints([note], source="task_note", run_id=ctx.run_id)
+        try:
+            step_dir = Path(self.run_store.root_dir) / ctx.run_id / f"step_{ctx.step_index}"
+            step_dir.mkdir(parents=True, exist_ok=True)
+            (step_dir / "task_note.txt").write_text(note, encoding="utf-8")
+        except OSError as exc:
+            self._recovered(ctx.run_id, "task_note", exc)
+
+    def _saved_plan_steps(self, run_id: str) -> list[str]:
+        """The planner's steps from ``plan.json`` (empty when no plan was written)."""
+        try:
+            data = json.loads((Path(self.run_store.root_dir) / run_id / "plan.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        steps = data.get("steps") if isinstance(data, dict) else None
+        return [s for s in steps if isinstance(s, str)] if isinstance(steps, list) else []
 
     def _pass_on_change_note(self, ctx: StepContext) -> None:
         """Hand the model the executor's between-step change note, as text (KAN-111).

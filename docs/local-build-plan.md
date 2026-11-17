@@ -37,6 +37,28 @@ Checked against the code by read-only scans. "Partial" lists what is missing.
 | KAN-34 public repo hygiene | Partial | No CODE_OF_CONDUCT, no CODEOWNERS, `ci.yml` has no `permissions:` block |
 | `loop.py` split | Not started | 2514 lines in one file |
 
+## Progress (updated 2026-11-17)
+
+Landed on `dev/local-build`, each verified by an independent reviewer. The offline suite is
+2643 passed; `python -m evals` is 22/23 (the miss is the known RFC 0003 scenario).
+
+| Story | What landed | Flag |
+|---|---|---|
+| KAN-34 | Code of conduct, CODEOWNERS, least-privilege `ci.yml` permissions | none |
+| KAN-160 | Windows CI job for the offline suite | none |
+| KAN-92 | Focus-steal guard: the first action after each screenshot is skipped if another process took focus | `OPERON_FOCUS_GUARD` |
+| KAN-35 | Python SDK: `from operon import Agent`; approvals denied by default; one run per process | none |
+| KAN-103 (part 1) | Named risk categories in the trust gate (payment, send, delete, account, install) | `OPERON_TRUST_CATEGORIES` |
+| KAN-102 | Running task-state note in the model's prompt; typed text never echoed | `OPERON_TASK_NOTE` |
+| KAN-90 | Per-monitor-v2 DPI awareness set before pyautogui loads; drift warning only when real | `OPERON_DPI_AWARE` |
+| KAN-85 | Step-efficiency score per run, including a screen-revisit waste signal | none (measurement) |
+| KAN-86 (part 1) | `operon run --tasks file.yaml --junit report.xml`; policy denies are never auto-approved | none |
+| KAN-96 | `operon mcp` stdio MCP server (optional `[mcp]` extra) | none |
+| KAN-80 | Resume interrupted runs after a restart, with owner-process liveness | `OPERON_CHECKPOINTS` |
+
+In progress: secrets vault (KAN-103 part 2), parallel browser runs (KAN-81), and the Windows
+Sandbox end-to-end test (KAN-93), whose guest stopped starting on this PC during the session.
+
 ## Work order
 
 Grouped into batches. Items in a batch touch different files, so their coders run in parallel.

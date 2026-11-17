@@ -159,6 +159,8 @@ class Settings(BaseModel):
     trust_allow_domains: tuple[str, ...] = _env_field("OPERON_TRUST_ALLOW_DOMAINS", ())
     # Named risk categories (KAN-103): experimental, off by default.
     trust_categories: bool = _env_field("OPERON_TRUST_CATEGORIES", False)
+    # Secrets vault (KAN-103): experimental, off by default.
+    secrets: bool = _env_field("OPERON_SECRETS", False)
     # Empty: all five categories.
     trust_category_list: tuple[str, ...] = _env_field("OPERON_TRUST_CATEGORY_LIST", ())
     # "" when unset or not a known mode: the server default (risky).
@@ -371,6 +373,7 @@ class _Parser:
             trust_confirm=_split(self.text("OPERON_TRUST_CONFIRM"), lower=True),
             trust_allow_domains=_split(self.text("OPERON_TRUST_ALLOW_DOMAINS"), lower=True),
             trust_categories=self.flag("OPERON_TRUST_CATEGORIES", "off"),
+            secrets=self.flag("OPERON_SECRETS", "off"),
             trust_category_list=_split(self.text("OPERON_TRUST_CATEGORY_LIST"), lower=True),
             permission_mode=permission,
             allowed_file_roots=_split(self.text("OPERON_ALLOWED_FILE_ROOTS")),

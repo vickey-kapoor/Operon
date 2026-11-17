@@ -27,6 +27,7 @@ from operon.browser.builtin import (
 from operon.browser.keys import normalize_key
 from operon.core.paths import browser_artifacts_dir
 from operon.core.settings import get_settings
+from operon.core.vault import SecretError, redact, resolve_text
 from operon.executor.browser import Executor
 from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 from operon.models.capture import CaptureFrame
@@ -240,6 +241,7 @@ class NativeBrowserExecutor(Executor):
         if action.action_type is ActionType.BATCH:
             return await self._execute_batch(action)
         at = action.action_type
+        secret_values: tuple[str, ...] = ()
         try:
             if at is ActionType.NAVIGATE:
                 if action.url is None:
@@ -288,6 +290,11 @@ class NativeBrowserExecutor(Executor):
                 page = await self._current_page()
                 if action.text is None:
                     return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
+                # KAN-103: the value of a {{secret:NAME}} placeholder lives only in this local.
+                try:
+                    text, secret_values = resolve_text(action.text)
+                except SecretError as exc:
+                    return self._fail(action, f"type failed: {exc}", FailureCategory.EXECUTION_ERROR)
                 point = self._action_point(action)
                 if point is not None:
                     await page.mouse.click(*point)
@@ -295,7 +302,7 @@ class NativeBrowserExecutor(Executor):
                 if action.clear_before_typing:
                     await page.keyboard.press("Control+A")
                     await page.keyboard.press("Backspace")
-                await page.keyboard.type(action.text)
+                await page.keyboard.type(text)
                 if action.press_enter:
                     await page.keyboard.press("Enter")
             elif at is ActionType.PRESS_KEY:
@@ -459,7 +466,7 @@ class NativeBrowserExecutor(Executor):
             after_path = await self._capture_after()
             return self._ok(action, f"Executed {at.value}", after_path)
         except Exception as exc:
-            return self._fail(action, f"{at.value} failed: {exc}", FailureCategory.EXECUTION_ERROR)
+            return self._fail(action, redact(f"{at.value} failed: {exc}", secret_values), FailureCategory.EXECUTION_ERROR)
 
     async def _right_click(self, page, action: AgentAction, point: tuple[int, int]) -> ExecutedAction:
         """Right-click, and fail when nothing visible appeared.

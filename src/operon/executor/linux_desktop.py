@@ -64,6 +64,18 @@ class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
         else:
             await super()._enter_text(text)
 
+    def _secret_problem(self, text: str) -> str | None:
+        # pyautogui.write types printable ASCII as keys, any length. Anything else (an accent,
+        # a newline) would need the clipboard or be dropped, so a secret with it fails closed.
+        if text.isascii() and text.isprintable():
+            return None
+        return "this secret has a character that cannot be typed without the clipboard"
+
+    async def _enter_secret(self, text: str) -> None:
+        if (problem := self._secret_problem(text)) is not None:
+            raise _desktop.SecretError(problem)
+        await asyncio.to_thread(_desktop.pyautogui.write, text, 0.01)
+
     # ── apps ─────────────────────────────────────────────────────
 
     async def _exec_launch_app(self, action: AgentAction) -> ExecutedAction:

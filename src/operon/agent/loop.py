@@ -62,6 +62,7 @@ from operon.agent.task_note import build_task_note
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.core.settings import get_settings
+from operon.core.vault import available_names, secrets_hint
 from operon.executor.browser import Executor
 from operon.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
 from operon.executor.desktop_adapter import DesktopExecutor as UnifiedDesktopExecutor
@@ -698,6 +699,7 @@ class AgentLoop:
         await self._capture_stage(ctx)
         self._consume_override_hint(ctx)
         self._add_task_note(ctx)
+        self._add_secrets_hint(ctx)
         if (early := await self._perceive_stage(ctx)) is not None:
             return early
         await self._decide_stage(ctx)
@@ -917,6 +919,19 @@ class AgentLoop:
             _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
             executed_action = blocked_action
         ctx.executed_action = self._relocate_after_artifact(executed_action, ctx.after_artifact_path)
+
+    def _add_secrets_hint(self, ctx: StepContext) -> None:
+        """Tell the model which secret NAMES it may type (OPERON_SECRETS, KAN-103).
+
+        Names and the placeholder syntax only; a value is never read here. Allowed in the
+        thin harness: it changes what the model sees, never its action.
+        """
+        names = available_names()
+        if not names:
+            return
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints([secrets_hint(names)], source="secrets", run_id=ctx.run_id)
 
     def _add_task_note(self, ctx: StepContext) -> None:
         """Send the running task note with this step (OPERON_TASK_NOTE, KAN-102).

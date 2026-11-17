@@ -510,11 +510,12 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = sub.add_parser("mcp", help="serve Operon to MCP clients (Claude Code, Claude Desktop) over stdio")
     mcp.set_defaults(func=_mcp)
 
-    from operon import cloud, setup_command
+    from operon import cloud, secrets_command, setup_command
     from operon.environments import cli as environments_cli
     from operon.environments import guest
 
     setup_command.add_parser(sub)
+    secrets_command.add_parser(sub)
     cloud.add_parser(sub)
     environments_cli.add_parser(sub)
     guest.add_parser(sub)

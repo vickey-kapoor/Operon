@@ -30,6 +30,8 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 .venv\Scripts\operon run --request "task"
 .venv\Scripts\operon run --tasks tasks.yaml [--junit report.xml] [--only NAME] [--fail-fast]   # KAN-86: task file suite, docs/task-files.md
 .venv\Scripts\operon mcp       # KAN-96: MCP server over stdio (pip install operon-agent[mcp]); docs/mcp.md
+# KAN-103 part 2 (OPERON_SECRETS=on): the model types {{secret:NAME}} and never sees the value; the value is asked for hidden
+.venv\Scripts\operon secrets set NAME     # also: operon secrets list (names only) / operon secrets rm NAME; see docs/secrets.md
 .venv\Scripts\operon envs      # KAN-80: list desktop run environments and whether each is ready here
 # Release (KAN-36): push tag v<version> matching pyproject.toml; release.yml uploads operon-agent to PyPI (docs/releasing.md)
 

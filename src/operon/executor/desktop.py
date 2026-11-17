@@ -26,7 +26,8 @@ from operon.agent.perception.change_note import ChangeNoteBuffer
 from operon.agent.perception.settle import signature_from_rgb
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
-from operon.executor import dpi
+from operon.core.vault import SecretError, redact, resolve_for_type
+from operon.executor import dpi, sendinput
 
 # OPERON_DPI_AWARE: pyautogui calls SetProcessDPIAware() when imported, which locks the process
 # at system-aware for good. Per-monitor-v2 has to be set first, so this runs before that import.
@@ -404,6 +405,7 @@ class DesktopExecutor(Executor):
         self._post_launch_delay = post_launch_delay
         self._current_run_id: str | None = None
         self._launched_processes: dict[str, list[subprocess.Popen]] = {}
+        self._secrets_used: dict[str, set[str]] = {}  # run_id → secret values typed (KAN-103), masked on clipboard reads
         self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
         # run_id → exe name → PIDs of that image already running before the run first
         # launched it. Cleanup kills only newer PIDs, never the user's own windows.
@@ -987,6 +989,14 @@ class DesktopExecutor(Executor):
     async def _exec_type(self, action: AgentAction) -> ExecutedAction:
         if action.text is None:
             return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
+        # KAN-103: a {{secret:NAME}} placeholder is swapped for its value here, in a local
+        # variable, so the action (and everything that records it) keeps the placeholder.
+        try:
+            text, secret_values = resolve_for_type(action.text)
+        except SecretError as exc:
+            return self._fail(action, f"type failed: {exc}", FailureCategory.EXECUTION_ERROR)
+        if secret_values and (problem := self._secret_problem(text)):
+            return self._fail(action, f"type failed: {problem}", FailureCategory.EXECUTION_ERROR)
         if action.x is not None and action.y is not None:
             # The focus click gets the clicks' bounds gate, so text never goes to a
             # point off every monitor. Not the blank-region servo: a TYPE target is an
@@ -1026,7 +1036,12 @@ class DesktopExecutor(Executor):
             if action.clear_before_typing:
                 await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'a')
                 await asyncio.sleep(0.05)
-            await self._enter_text(action.text)
+            if secret_values:
+                # A secret never touches the clipboard (history, cloud sync, READ_CLIPBOARD).
+                self._secrets_used.setdefault(self._current_run_id or "", set()).update(secret_values)
+                await self._enter_secret(text)
+            else:
+                await self._enter_text(text)
             if action.press_enter:
                 await asyncio.sleep(0.05)
                 await asyncio.to_thread(pyautogui.press, 'enter')
@@ -1034,7 +1049,20 @@ class DesktopExecutor(Executor):
             after_path = await self._capture_after()
             return self._ok(action, f"Typed '{action.text}'", after_path)
         except Exception as exc:
-            return self._fail(action, f"Type failed: {exc}", FailureCategory.EXECUTION_ERROR)
+            return self._fail(action, redact(f"Type failed: {exc}", secret_values), FailureCategory.EXECUTION_ERROR)
+
+    def _secret_problem(self, text: str) -> str | None:
+        """Why ``text`` cannot be typed as a secret here (checked before any click), else None."""
+        if sys.platform != "win32":
+            return "this desktop cannot type a secret without the clipboard"
+        return None
+
+    async def _enter_secret(self, text: str) -> None:
+        """Type a secret as key events, never through the clipboard (Windows: SendInput with
+        KEYEVENTF_UNICODE, so surrogate pairs and accents work)."""
+        if sys.platform != "win32":
+            raise SecretError("this desktop cannot type a secret without the clipboard")
+        await asyncio.to_thread(sendinput.type_unicode, text)
 
     async def _enter_text(self, text: str) -> None:
         """Put ``text`` into the focused field. Clipboard-paste avoids character-ordering
@@ -1214,6 +1242,8 @@ class DesktopExecutor(Executor):
     async def _exec_read_clipboard(self, action: AgentAction) -> ExecutedAction:
         try:
             content = await asyncio.to_thread(pyperclip.paste)
+            # Belt and braces: a secret typed in this run is never handed back to the model.
+            content = redact(content, self._secrets_used.get(self._current_run_id or "", ()))
             return self._ok(action, f"Clipboard content: {content}", None)
         except Exception as exc:
             return self._fail(action, f"Read clipboard failed: {exc}", FailureCategory.EXECUTION_ERROR)

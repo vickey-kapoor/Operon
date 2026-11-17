@@ -88,10 +88,7 @@ class OperonMCPTools:
                     "wait for it, or call stop_task first."
                 )
             self.active_run_id = None
-        if env:
-            if not desktop:
-                raise ValueError("env picks a desktop environment; pass desktop=true with it.")
-            os.environ["OPERON_ENVIRONMENT"] = env
+        requested = _check_environment(env, desktop)
         payload: dict[str, Any] = {
             "intent": task,
             "environment": "desktop" if desktop else "browser",
@@ -99,12 +96,22 @@ class OperonMCPTools:
         }
         if url:
             payload["start_url"] = url
+        previous = os.environ.get("OPERON_ENVIRONMENT")
+        if requested is not None:
+            # Read when the desktop environment is first built, which happens inside start().
+            os.environ["OPERON_ENVIRONMENT"] = requested
         try:
             status = await self._call(self.client.start(payload))
         except Exception as exc:  # noqa: BLE001 - validation, missing key and the like reach the client as text
             if isinstance(exc, ValueError):
                 raise
             raise ValueError(f"Could not start the task: {exc}") from exc
+        finally:
+            if requested is not None:  # never leave the variable changed for a later call
+                if previous is None:
+                    os.environ.pop("OPERON_ENVIRONMENT", None)
+                else:
+                    os.environ["OPERON_ENVIRONMENT"] = previous
         self.active_run_id = status["run_id"]
         return {"run_id": status["run_id"], "status": status["status"], "environment": status["environment"]}
 
@@ -166,6 +173,35 @@ class OperonMCPTools:
         return await asyncio.to_thread(_environments)
 
 
+def _check_environment(env: str | None, desktop: bool) -> str | None:
+    """Validate ``env`` and return it (lower-cased) when this call should select an environment.
+
+    The desktop environment is built once per process, so a later call cannot switch it:
+    asking for a different one than the process already uses is refused, never quietly
+    served by the old one (which may be the live desktop)."""
+    from operon.core.runtime import current_runtime
+    from operon.environments.registry import environment_name, provider_names
+
+    name = env.strip().lower() if env and env.strip() else None
+    if name is not None:
+        if not desktop:
+            raise ValueError("env picks a desktop environment; pass desktop=true with it.")
+        if name not in provider_names():
+            raise ValueError(f"Unknown environment {env!r}. Choose one of: {', '.join(provider_names())}.")
+    if not desktop:
+        return None
+    provider = current_runtime().desktop_provider
+    if provider is not None:
+        wanted = name or environment_name()
+        if wanted != provider.name:
+            raise ValueError(
+                f"This operon mcp process already uses environment {provider.name!r}; "
+                f"restart it to switch to {wanted!r}."
+            )
+        return None
+    return name
+
+
 def _downscaled_png(path: str, max_edge: int = MAX_SCREENSHOT_EDGE) -> bytes:
     from PIL import Image
 
@@ -202,10 +238,20 @@ def _environments() -> list[dict[str, Any]]:
 
 def build_server(tools: OperonMCPTools | None = None):
     """The MCP server with Operon's tools. Raises ImportError when the ``mcp`` extra is missing."""
+    from contextlib import asynccontextmanager
+
     from mcp.server.mcpserver import Image, MCPServer
 
     tools = tools or OperonMCPTools()
-    server = MCPServer("operon", instructions=INSTRUCTIONS)
+
+    @asynccontextmanager
+    async def lifespan(_server):
+        try:
+            yield
+        finally:
+            await tools.close()  # in the server's own event loop: release what a run left open
+
+    server = MCPServer("operon", instructions=INSTRUCTIONS, lifespan=lifespan)
 
     @server.tool()
     async def start_task(task: str, url: str | None = None, desktop: bool = False, env: str | None = None) -> dict[str, Any]:
@@ -276,8 +322,8 @@ def main(argv: list[str] | None = None) -> int:
     if errors:  # stdout is the protocol, so everything human goes to stderr
         print("Invalid Operon configuration:\n  - " + "\n  - ".join(errors), file=sys.stderr)
         return 1
-    try:
-        server.run("stdio")
-    finally:
-        asyncio.run(tools.close())  # release the browser or desktop a run left open
+    # stdout is the protocol: mcp>=2.3's stdio transport redirects fd 1, so a stray print
+    # from a run cannot corrupt it. The browser or desktop a run left open is closed by the
+    # server's lifespan, inside its own event loop.
+    server.run("stdio")
     return 0

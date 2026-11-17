@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import io
+import os
 
 import pytest
 
@@ -70,7 +71,8 @@ async def test_deny_tells_the_model_not_to_do_it(monkeypatch, tmp_path, schedule
     await tools.deny(run_id)
 
     assert seen and "declined" in seen[0]
-    assert executor.executed == []
+    assert scheduled == [run_id, run_id]  # the run was resumed, with the refusal as its hint
+    assert not [a for a in executor.executed if a.text == "purchase now"]
 
 
 async def test_stop_cancels_and_frees_the_slot(monkeypatch, tmp_path, scheduled) -> None:
@@ -171,3 +173,62 @@ def test_missing_extra_prints_a_hint_and_exits_2(monkeypatch, capsys) -> None:
 
 def test_the_command_is_registered() -> None:
     assert cli.build_parser().parse_args(["mcp"]).command == "mcp"
+
+
+class _FakeStartClient:
+    """Records the environment variable while start() runs."""
+
+    def __init__(self) -> None:
+        self.seen: list[str | None] = []
+
+    async def start(self, payload: dict) -> dict:
+        self.seen.append(os.environ.get("OPERON_ENVIRONMENT"))
+        return {"run_id": "r1", "status": "pending", "environment": payload["environment"]}
+
+    async def status(self, run_id: str) -> dict:
+        return {"done": True, "status": "succeeded"}
+
+
+async def test_an_unknown_environment_is_refused_before_anything_changes(monkeypatch) -> None:
+    monkeypatch.delenv("OPERON_ENVIRONMENT", raising=False)
+    client = _FakeStartClient()
+    tools = mcp_server.OperonMCPTools(client)
+    with pytest.raises(ValueError, match="Unknown environment"):
+        await tools.start_task("x", desktop=True, env="no-such-env")
+    assert client.seen == [] and "OPERON_ENVIRONMENT" not in os.environ
+
+
+async def test_a_different_environment_than_the_built_one_is_refused(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from operon.core.runtime import current_runtime
+
+    monkeypatch.setattr(current_runtime(), "desktop_provider", SimpleNamespace(name="live"))
+    client = _FakeStartClient()
+    tools = mcp_server.OperonMCPTools(client)
+    with pytest.raises(ValueError, match="already uses environment 'live'; restart it to switch"):
+        await tools.start_task("x", desktop=True, env="Linux-Container")
+    assert client.seen == []
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "linux-container")
+    with pytest.raises(ValueError, match="already uses environment 'live'"):
+        await tools.start_task("x", desktop=True)  # the configured default counts too
+    monkeypatch.delenv("OPERON_ENVIRONMENT")
+    assert (await tools.start_task("x", desktop=True, env="LIVE"))["run_id"] == "r1"  # same one: fine
+
+
+async def test_env_is_set_only_while_the_environment_is_built(monkeypatch) -> None:
+    from operon.core.runtime import current_runtime
+
+    monkeypatch.setattr(current_runtime(), "desktop_provider", None)
+    monkeypatch.delenv("OPERON_ENVIRONMENT", raising=False)
+    client = _FakeStartClient()
+    tools = mcp_server.OperonMCPTools(client)
+    await tools.start_task("x", desktop=True, env="linux-container")
+    assert client.seen == ["linux-container"]
+    assert "OPERON_ENVIRONMENT" not in os.environ
+    await tools.start_task("y", desktop=True)  # a later call without env sees no leftover
+    assert client.seen[-1] is None
+
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "osworld")
+    await tools.start_task("z", desktop=True, env="linux-container")
+    assert os.environ["OPERON_ENVIRONMENT"] == "osworld"

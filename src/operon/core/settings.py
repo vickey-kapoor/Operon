@@ -137,6 +137,8 @@ class Settings(BaseModel):
     settle_max_s: float = _env_field("OPERON_SETTLE_MAX_S", 3.0)
     # One line of text about what flashed past while the screen settled (KAN-111).
     change_note: bool = _env_field("OPERON_CHANGE_NOTE", False)
+    # Windows desktop: do not act when another process took focus since the capture (KAN-92).
+    focus_guard: bool = _env_field("OPERON_FOCUS_GUARD", False)
     # A cheaper model writes a short plan once at task start (KAN-112).
     planner: bool = _env_field("OPERON_PLANNER", False)
     planner_model: str = _env_field("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite")
@@ -342,6 +344,7 @@ class _Parser:
             auto_confirm=self.flag("OPERON_AUTO_CONFIRM", "off"),
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),
             change_note=self.flag("OPERON_CHANGE_NOTE", "off"),
+            focus_guard=self.flag("OPERON_FOCUS_GUARD", "off"),
             planner=self.flag("OPERON_PLANNER", "off"),
             planner_model=self.or_default("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite"),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},

@@ -278,6 +278,35 @@ def _foreground_window() -> int | None:
         return None
 
 
+def _window_owner(hwnd: int) -> tuple[int | None, str]:
+    """(process id, title) of a window; (None, "") when it cannot be read."""
+    if sys.platform != "win32":
+        return None, ""
+    try:
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, buf, 256)
+        return (int(pid.value) or None), buf.value
+    except Exception:
+        return None, ""
+
+
+# Actions that write to whatever window is in front; the focus guard (KAN-92) covers these.
+_FOCUS_GUARDED_ACTIONS = frozenset({
+    ActionType.CLICK,
+    ActionType.DOUBLE_CLICK,
+    ActionType.TRIPLE_CLICK,
+    ActionType.RIGHT_CLICK,
+    ActionType.TYPE,
+    ActionType.PRESS_KEY,
+    ActionType.HOTKEY,
+    ActionType.DRAG,
+    ActionType.SCROLL,
+})
+
+
 def _bring_to_front(hwnd: int) -> bool:
     """Put *hwnd* back in front. False when it is gone or already in front."""
     if sys.platform != "win32":
@@ -380,6 +409,8 @@ class DesktopExecutor(Executor):
         self._close_when_done: set[str] = set()
         # run_id -> the window in front after the run's last action: the one it works in.
         self._work_windows: dict[str, int] = {}
+        # OPERON_FOCUS_GUARD: (hwnd, pid, title) of the window in front when the model last saw the screen.
+        self._focus_ref: tuple[int, int | None, str] | None = None
 
         _set_dpi_awareness()
         if not get_settings().test_safe_mode:
@@ -656,7 +687,48 @@ class DesktopExecutor(Executor):
             logger.debug("High visual velocity (%.3f) detected; waiting 300ms before re-capture", velocity)
             await asyncio.sleep(0.3)
             frame, _ = await asyncio.to_thread(self._capture_burst_sync)
+        self._record_focus()
         return frame
+
+    # Windows only: the Linux executor turns this off, and off Windows the window helpers return None.
+    _focus_guard_platform = True
+
+    def _focus_guard_on(self) -> bool:
+        return self._focus_guard_platform and get_settings().focus_guard
+
+    def _record_focus(self) -> None:
+        """Remember the window in front now (OPERON_FOCUS_GUARD) so a later steal is noticed."""
+        if not self._focus_guard_on():
+            return
+        hwnd = _foreground_window()
+        if hwnd is None:
+            self._focus_ref = None
+            return
+        pid, title = _window_owner(hwnd)
+        self._focus_ref = (hwnd, pid, title)
+
+    def _check_focus(self, action: AgentAction) -> ExecutedAction | None:
+        """A failed result when a window from another process took focus since the capture.
+
+        Nothing is switched back: the new window may be one the user needs to see, so the
+        loop re-observes and the model decides from the pixels."""
+        ref = self._focus_ref
+        if ref is None or action.action_type not in _FOCUS_GUARDED_ACTIONS or not self._focus_guard_on():
+            return None
+        hwnd = _foreground_window()
+        if hwnd is None or hwnd == ref[0]:
+            return None
+        pid, title = _window_owner(hwnd)
+        if pid is not None and pid == ref[1]:
+            return None  # a dialog or window the same program opened
+        # The new window is what the model must look at next, so it is the new reference.
+        self._focus_ref = (hwnd, pid, title)
+        old = ref[2] or "the previous window"
+        return self._fail(
+            action,
+            f"focus_stolen: {title or 'another window'} took focus from {old}; re-observing",
+            FailureCategory.FOCUS_STOLEN,
+        )
 
     def _capture_burst_sync(self) -> tuple[CaptureFrame, float]:
         """Capture t0, t+100ms, t+200ms frames; return (last_frame, visual_velocity)."""
@@ -717,8 +789,12 @@ class DesktopExecutor(Executor):
             ActionType.NAVIGATE: self._exec_unsupported,
             ActionType.SELECT: self._exec_unsupported,
         }
+        stolen = self._check_focus(action)
+        if stolen is not None:
+            return stolen
         handler = dispatch.get(at, self._exec_unsupported)
         result = await handler(action)
+        self._record_focus()  # the action may itself have opened or switched windows
         self._note_work_window()
         return result
 

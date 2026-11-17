@@ -171,6 +171,7 @@ _EXPERIMENTAL_OFF = [
     ("progress_revisit", False),
     ("settle_detect", False),
     ("change_note", False),
+    ("focus_guard", False),
     ("planner", False),
     ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
     ("critic", ""),

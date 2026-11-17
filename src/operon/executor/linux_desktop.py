@@ -38,6 +38,8 @@ _MAX_KEYED_CHARS = 500
 class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
     """Desktop executor for an X11 Linux desktop (XFCE on the Azure VM)."""
 
+    _focus_guard_platform = False
+
     # ── resets ───────────────────────────────────────────────────
 
     async def reset_desktop(self) -> None:

@@ -56,6 +56,7 @@ class FailureCategory(StrEnum):
     TARGET_SHIFTED_BEFORE_ACTION = "target_shifted_before_action"
     TARGET_LOST_BEFORE_ACTION = "target_lost_before_action"
     FOCUS_VERIFICATION_FAILED = "focus_verification_failed"
+    FOCUS_STOLEN = "focus_stolen"
     CLICK_BEFORE_TYPE_FAILED = "click_before_type_failed"
     TYPE_VERIFICATION_FAILED = "type_verification_failed"
     CLICK_NO_EFFECT = "click_no_effect"

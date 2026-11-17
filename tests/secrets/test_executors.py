@@ -365,6 +365,47 @@ async def test_remote_unknown_secret_sends_nothing(vault_dir, tmp_path) -> None:
     assert guest.received == []
 
 
+async def test_read_clipboard_masks_each_value_typed_inside_longer_text(vault_dir, gui, windows_keyboard, monkeypatch) -> None:
+    """``prefix-{{secret:pw}}`` and two placeholders in one TYPE: every value alone is masked later."""
+    vault.set_secret("pw", SECRET)
+    vault.set_secret("user", "alice-USER")
+    monkeypatch.setattr(_desktop.sendinput, "type_unicode", lambda text: None)
+    monkeypatch.setattr(DesktopExecutor, "_secret_problem", lambda self, text: None)
+    monkeypatch.setattr(_desktop.pyperclip, "paste", lambda: f"a {SECRET} b alice-USER c")
+    executor = _desktop_executor(DesktopExecutor, monkeypatch)
+    assert (await executor.execute(_type("prefix-{{secret:pw}}"))).success
+    assert (await executor.execute(_type("{{secret:user}}:{{secret:pw}}"))).success
+    assert executor._secrets_used == {"run-1": {SECRET, "alice-USER"}}
+    read = await executor.execute(AgentAction(action_type=ActionType.READ_CLIPBOARD))
+    assert SECRET not in read.detail and "alice-USER" not in read.detail
+
+
+class _ClipboardGuest(_EchoGuest):
+    """Types whatever it is sent, then a READ_CLIPBOARD hands back the password alone."""
+
+    async def execute(self, action: AgentAction) -> ExecutedAction:
+        if action.action_type is ActionType.READ_CLIPBOARD:
+            return ExecutedAction(action=action, success=True, detail=f"Clipboard: {SECRET} and alice-USER")
+        return await super().execute(action)
+
+
+async def test_remote_masks_each_value_in_a_later_reply_and_forgets_at_run_end(vault_dir, tmp_path) -> None:
+    vault.set_secret("pw", SECRET)
+    vault.set_secret("user", "alice-USER")
+    guest = _ClipboardGuest(tmp_path)
+    transport = httpx.ASGITransport(app=create_guest_app(guest, "tok"))
+    remote = RemoteDesktopExecutor("http://127.0.0.1:9", "tok", artifact_dir=tmp_path / "host", transport=transport)
+    remote._current_run_id = "run-1"
+    assert (await remote.execute(_type("prefix-{{secret:pw}}"))).success
+    assert (await remote.execute(_type("{{secret:user}}/{{secret:pw}}"))).success
+    assert remote._secrets_used == {"run-1": {SECRET, "alice-USER"}}
+    read = await remote.execute(AgentAction(action_type=ActionType.READ_CLIPBOARD))
+    assert read.detail == "Clipboard: [secret] and [secret]"
+    assert SECRET not in read.model_dump_json() and "alice-USER" not in read.model_dump_json()
+    await remote.aclose_run("run-1")
+    assert remote._secrets_used == {}
+
+
 # -- OSWorld VM ------------------------------------------------------------------------------
 
 

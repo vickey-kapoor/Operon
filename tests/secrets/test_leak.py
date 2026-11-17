@@ -61,7 +61,7 @@ class _TypingExecutor(harness.FakeExecutor):
         return await super().execute(action)
 
 
-def _scenario(env: dict[str, str]) -> Scenario:
+def _scenario(env: dict[str, str], text: str = "{{secret:pw}}") -> Scenario:
     login = Screen("login", "Sign in page with a password field", (PASSWORD,))
     done = Screen("done", "Signed in", (), goal=True)
     x, y = PASSWORD.center
@@ -70,9 +70,9 @@ def _scenario(env: dict[str, str]) -> Scenario:
         intent="Sign in with my saved password",
         backend="computer_use",
         screens=[login, done],
-        transitions=[Transition("login", types("{{secret:pw}}"), "done")],
+        transitions=[Transition("login", types(text), "done")],
         model={
-            "login": cu_call("type_text_at", x=x, y=y, text="{{secret:pw}}", press_enter=False),
+            "login": cu_call("type_text_at", x=x, y=y, text=text, press_enter=False),
             "done": cu_text("I signed in. The task is complete."),
         },
         on_pause="approve",
@@ -86,27 +86,28 @@ def _all_bytes(root):
             yield path, path.read_bytes()
 
 
-async def test_the_value_never_reaches_any_record(vault_dir, tmp_path, monkeypatch, caplog) -> None:
+@pytest.mark.parametrize("text", ["{{secret:pw}}", "prefix-{{secret:pw}}-suffix"])
+async def test_the_value_never_reaches_any_record(vault_dir, tmp_path, monkeypatch, caplog, text) -> None:
     vault.set_secret("pw", SECRET)
     monkeypatch.setattr(harness, "FakeExecutor", _TypingExecutor)
     _TypingExecutor.instances.clear()
     caplog.set_level(logging.DEBUG)
     root = tmp_path / "run"
 
-    result = await run_scenario(_scenario({"OPERON_SECRETS": "on"}), root=root)
+    result = await run_scenario(_scenario({"OPERON_SECRETS": "on"}, text), root=root)
 
     # The run did what it should: it paused for approval (typing a secret is risky), was
     # approved, and the executor typed the real value.
     assert result.status == "succeeded", result.summary()
     assert result.pauses >= 1
-    assert _TypingExecutor.instances[-1].typed == [SECRET]
+    assert _TypingExecutor.instances[-1].typed == [text.replace("{{secret:pw}}", SECRET)]
 
     files = list(_all_bytes(root))
     assert any(p.name == "run.jsonl" or p.suffix == ".json" for p, _ in files), "no run files were written"
     leaks = [str(p) for p, data in files if SECRET.encode() in data or SECRET.encode("utf-16-le") in data]
     assert leaks == []
     # The placeholder is what was recorded.
-    assert any(b"{{secret:pw}}" in data for _, data in files)
+    assert any(text.encode() in data for _, data in files)
 
     assert SECRET not in caplog.text
     assert SECRET not in str(result.model_requests)

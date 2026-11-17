@@ -59,6 +59,10 @@ class RemoteDesktopExecutor:
         self._client: httpx.AsyncClient | None = None
         self._current_run_id: str | None = None
         self._close_when_done: set[str] = set()
+        # run_id -> each secret value this host filled in (KAN-103), one by one, never the
+        # composite text. Every later guest reply of the run is masked with them; forgotten
+        # when the run ends.
+        self._secrets_used: dict[str, set[str]] = {}
         # Set by the loop around a batch: checked before each child after the first
         # (a stop, a trust gate). A callable cannot cross to the guest, so batches are
         # split here and each child goes to the guest on its own.
@@ -91,7 +95,11 @@ class RemoteDesktopExecutor:
         if not b64:
             return None
         path = self._artifact_dir / f"remote_{uuid4().hex[:8]}{suffix}"
-        path.write_bytes(base64.b64decode(b64))
+        raw = base64.b64decode(b64)
+        known = self._secrets_used.get(self._current_run_id or "")
+        if known and suffix == ".json":
+            raw = redact(raw.decode("utf-8", errors="replace"), known).encode("utf-8")
+        path.write_bytes(raw)
         return str(path)
 
     # ── the executor surface the loop uses ───────────────────────
@@ -151,6 +159,7 @@ class RemoteDesktopExecutor:
         # itself keeps the placeholder, and the guest's reply is masked before it is returned.
         send = action
         secret_values: tuple[str, ...] = ()
+        run_key = self._current_run_id or ""
         if action.action_type is ActionType.TYPE and action.text:
             try:
                 resolved, secret_values = resolve_text(action.text)
@@ -162,6 +171,9 @@ class RemoteDesktopExecutor:
                     failure_category=FailureCategory.EXECUTION_ERROR,
                 )
             send = action.model_copy(update={"text": resolved})
+            if secret_values:
+                self._secrets_used.setdefault(run_key, set()).update(secret_values)
+        known = self._secrets_used.get(run_key, ())
         try:
             body: dict[str, Any] = {"action": send.model_dump(mode="json")}
             if secret_values:
@@ -171,12 +183,14 @@ class RemoteDesktopExecutor:
             return ExecutedAction(
                 action=action,
                 success=False,
-                detail=redact(f"Run environment unreachable: {exc}", secret_values),
+                detail=redact(f"Run environment unreachable: {exc}", known),
                 failure_category=FailureCategory.EXECUTION_ERROR,
             )
         result = dict(data["result"])
-        if secret_values:
-            result = redact(result, secret_values)
+        if known:
+            # Any reply of the run (a clipboard read, a tool output) may carry a value typed
+            # earlier, so all replies are masked, longest value first.
+            result = redact(result, known)
             result["action"] = action.model_dump(mode="json")
         files = data.get("files") or {}
         for name in FILE_FIELDS:
@@ -210,6 +224,7 @@ class RemoteDesktopExecutor:
         self._close_when_done.add(run_id)
 
     async def aclose_run(self, run_id: str) -> int:
+        self._secrets_used.pop(run_id, None)
         if run_id in self._close_when_done:
             self._close_when_done.discard(run_id)
             await self._call("close_apps_when_done", run_id=run_id)
@@ -234,6 +249,7 @@ class RemoteDesktopExecutor:
         return bool(response.json().get("ok"))
 
     async def aclose(self) -> None:
+        self._secrets_used.clear()
         try:
             await self._call("aclose")
         except Exception:  # noqa: BLE001 - the machine may already be gone at shutdown

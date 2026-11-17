@@ -153,6 +153,19 @@ def check_expectations(expect: Expect, result: Any, env: str | None) -> list[str
     return problems
 
 
+def effective_env(cfg: dict[str, Any]) -> str | None:
+    """The desktop environment a task really ran in; ``None`` for a browser task.
+
+    A desktop task without ``env`` runs in the provider ``OPERON_ENVIRONMENT`` selects, so the
+    raw YAML value does not say where the files ended up. Uses the registry's own resolver.
+    """
+    if not (cfg["desktop"] or cfg["env"]):
+        return None
+    from operon.environments.registry import environment_name
+
+    return (cfg["env"] or environment_name()).strip().lower()
+
+
 def run_task_file(
     task_file: TaskFile, *, only: list[str] | None = None, fail_fast: bool = False
 ) -> list[TaskOutcome]:
@@ -192,7 +205,7 @@ async def _run_one(task_file: TaskFile, spec: TaskSpec) -> TaskOutcome:
         result = await agent.arun(spec.task, url=cfg["url"])
     except Exception as exc:  # noqa: BLE001 - one broken task must not stop the suite
         return TaskOutcome(spec.name, "error", 0, None, time.monotonic() - started, False, f"{type(exc).__name__}: {exc}")
-    problems = check_expectations(spec.expect, result, cfg["env"])
+    problems = check_expectations(spec.expect, result, effective_env(cfg))
     if result.status == sdk.STATUS_DENIED and result.denied_reason:
         problems = [p for p in problems if not p.startswith("status was")]
         kind = result.denied_kind

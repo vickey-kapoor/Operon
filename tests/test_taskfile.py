@@ -200,3 +200,38 @@ def test_real_sdk_with_scripted_model(monkeypatch, tmp_path) -> None:
     outcomes = run_task_file(load_task_file(_write(tmp_path, text)))
     assert outcomes[0].passed, outcomes[0].reason
     assert outcomes[0].status == "succeeded" and outcomes[0].run_id
+
+
+@pytest.mark.parametrize(
+    ("configured", "task_env", "passes", "reason"),
+    [
+        ("windows-sandbox", "", False, "unsupported for env 'windows-sandbox'"),  # configured guest, no env in YAML
+        ("linux-container", "", False, "unsupported for env 'linux-container'"),
+        ("osworld", "", False, "unsupported for env 'osworld'"),
+        ("live", "", True, ""),  # live provider: host check as before
+        ("", "", True, ""),  # nothing configured: live
+        ("live", "env: windows-sandbox,", False, "unsupported for env 'windows-sandbox'"),  # explicit env wins
+        ("windows-sandbox", "env: live,", True, ""),
+    ],
+)
+def test_file_checks_use_the_environment_the_run_used(
+    tmp_path, fake, monkeypatch, configured, task_env, passes, reason
+) -> None:
+    if configured:
+        monkeypatch.setenv("OPERON_ENVIRONMENT", configured)
+    else:
+        monkeypatch.delenv("OPERON_ENVIRONMENT", raising=False)
+    f = tmp_path / "out.txt"
+    f.write_text("hello", encoding="utf-8")
+    text = f'tasks:\n  - {{name: t, task: t, desktop: true, {task_env} expect: {{file_exists: "{f.as_posix()}"}}}}\n'
+    outcome = run_task_file(load_task_file(_write(tmp_path, text)))[0]
+    assert outcome.passed is passes
+    assert reason in outcome.reason
+
+
+def test_browser_task_file_check_is_unaffected_by_configured_guest(tmp_path, fake, monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "windows-sandbox")
+    f = tmp_path / "out.txt"
+    f.write_text("hello", encoding="utf-8")
+    text = f'tasks:\n  - {{name: t, task: t, expect: {{file_exists: "{f.as_posix()}"}}}}\n'
+    assert run_task_file(load_task_file(_write(tmp_path, text)))[0].passed

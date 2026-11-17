@@ -44,8 +44,6 @@ def _win_last_error() -> int:
 
 
 def _windows_pid_alive(pid: int) -> bool:
-    if sys.platform != "win32":
-        raise OSError("Windows only")
     import ctypes
     from ctypes import wintypes
 
@@ -54,7 +52,7 @@ def _windows_pid_alive(pid: int) -> bool:
         # Only "no such pid" means dead. Access denied (5: another account's or a protected
         # process) and every other failure mean it exists or we cannot tell: alive.
         return _win_last_error() != _ERROR_INVALID_PARAMETER
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     try:
         code = wintypes.DWORD()
         if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):

@@ -1,5 +1,5 @@
 name: Run click-accuracy test (engine)
-run-name: Gemini · Grounding (manual)
+run-name: Gemini · Click accuracy (manual)
 
 # Runs the ScreenSpot grounding eval (evals/grounding.py): one model call per
 # sample through Operon's Gemini computer-use backend, scored hit or miss against the
@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   grounding:
-    name: Run the grounding benchmark
+    name: Run the click-accuracy test
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -67,7 +67,7 @@ jobs:
       - name: Install dependencies (exact versions from uv.lock)
         run: uv sync --locked --extra dev
 
-      - name: Run the grounding benchmark
+      - name: Run the click-accuracy test
         env:
           MODEL: ${{ inputs.model }}
           PER_SET: ${{ inputs.per_set }}

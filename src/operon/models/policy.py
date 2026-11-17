@@ -368,8 +368,8 @@ class PolicyDecision(StrictModel):
     active_subgoal: str = Field(min_length=1)
     # What visual change the planner expects after this action executes.
     # Defaults to "none" so rule-generated decisions and old disk records deserialize
-    # without error. Live Gemini output is checked explicitly in parse_policy_output
-    # before model_validate — missing field there raises PolicyError loudly.
+    # without error. When live Gemini output omits it, parse_policy_output logs a warning
+    # and leaves it unset (NONE, absent from model_fields_set).
     expected_change: ExpectedChange = ExpectedChange.NONE
     # Set when a deterministic rule (not the LLM) produced this decision.
     # The loop uses this to build the rule trace injected into the next LLM prompt.

@@ -162,6 +162,13 @@ def test_settings_module_has_no_import_time_reads() -> None:
     assert settings_mod._ENV_NAMES and "OPERON_ZOOM" in settings_mod._ENV_NAMES
 
 
+def test_expect_check_flag_defaults_off_and_parses_on():
+    from operon.core.settings import Settings
+
+    assert Settings.from_env({}).expect_check is False
+    assert Settings.from_env({"OPERON_EXPECT_CHECK": "on"}).expect_check is True
+
+
 # --- Experimental flags default to off (CLAUDE.md invariant) ------------------------------
 # Settings.from_env({}) reads only the dict it is given, so this is a clean environment.
 # Every Settings field must be in exactly one list below, so adding a setting forces a
@@ -173,6 +180,7 @@ _EXPERIMENTAL_OFF = [
     ("change_note", False),
     ("planner", False),
     ("click_text", False),
+    ("expect_check", False),
     ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
     ("critic", ""),
     ("site_adapters", ""),

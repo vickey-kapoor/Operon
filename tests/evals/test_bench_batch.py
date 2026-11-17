@@ -160,6 +160,7 @@ def test_cap_is_the_whole_cell_limit_with_repeats(line: str, run_cap: str) -> No
 
 def test_feature_words_switch_on_perception_flags_per_cell() -> None:
     cells = parse_batch("browser thin dynamic\nbrowser thin dynamic note settle\nbrowser thin dynamic planner")
+    assert parse_batch("browser thin dynamic expect")[0].features == ("expect",)
     assert [c.features for c in cells] == [(), ("settle", "note"), ("planner",)]
     assert cells[1].label == "Gemini · Browser · Thin · dynamic · settle+note"
     assert [e["features"] for e in matrices(cells)["browser"]["include"]] == ["", "settle,note", "planner"]

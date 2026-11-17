@@ -27,6 +27,14 @@ from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
+from operon.agent.perception.expect_check import (
+    EXPECT_INSTRUCTION,
+    EXPECT_REMINDER_EVERY,
+    NO_SCREEN_EFFECT_ACTIONS,
+    compare,
+    mismatch_note,
+    parse_expectation,
+)
 from operon.agent.planner import (
     PLANNER_DEADLINE_S,
     PLANNER_USAGE_FILE,
@@ -245,6 +253,8 @@ class AgentLoop:
         # into the run's state (``AgentState.recovered_errors``). Drained by
         # ``_flush_recovered_errors`` when a step, start or resume ends.
         self._recovered_errors: dict[str, dict[str, int]] = {}
+        # KAN-116: per run, the last step that got the "write an Expect line" reminder.
+        self._expect_reminded: dict[str, int] = {}
         if environment is UnifiedEnvironment.BROWSER:
             self.executor_adapter = UnifiedBrowserExecutor(executor)
         else:
@@ -315,6 +325,7 @@ class AgentLoop:
                     AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
                 )
         await self._write_plan(record)
+        self._send_expect_instruction(record.run_id)
         await self._flush_recovered_errors(record.run_id)
         return RunResponse(
             run_id=record.run_id,
@@ -821,6 +832,7 @@ class AgentLoop:
             if ctx.attempt_index > 1 and await self._run_cancelled(ctx.run_id):
                 # Stopped during a retry: record the attempt that ran, run no more.
                 _trace("  RETRY_LOOP -> cancelled", "run was stopped; not retrying")
+                ctx.attempt_cancelled = True
                 break
             if ctx.attempt_index > 1 and ctx.executed_action is not None:
                 # A replacement is about to run: the last attempt becomes an earlier one.
@@ -832,6 +844,8 @@ class AgentLoop:
             if not await self._prepare_adaptation_retry(ctx):
                 break
             ctx.attempt_index += 1
+        # Once per step, on the attempt the step ends with.
+        self._check_expected_change(ctx)
 
     async def _execute_attempt(self, ctx: StepContext) -> None:
         decision = ctx.decision
@@ -874,6 +888,91 @@ class AgentLoop:
         if callable(add_hints):
             add_hints([note], source="change_note", run_id=ctx.run_id)
 
+    def _send_expect_instruction(self, run_id: str, step_index: int = 0) -> None:
+        """Ask the model to write an ``Expect:`` line before each action (OPERON_EXPECT_CHECK)."""
+        if not get_settings().expect_check:
+            return
+        try:
+            if self._backend_reports_expected_change():
+                return
+            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+            if callable(add_hints):
+                add_hints([EXPECT_INSTRUCTION], source="expect_instruction", run_id=run_id)
+                self._expect_reminded[run_id] = step_index
+        except Exception as exc:  # noqa: BLE001 - an advisory hint must never fail a run
+            self._recovered(run_id, "expect_instruction", exc)
+
+    def _backend_reports_expected_change(self) -> bool:
+        """Whether the backend's own answer carries expected_change (the combined JSON backend)."""
+        return getattr(self.perception_service, "reports_expected_change", False) is True
+
+    def _check_expected_change(self, ctx: StepContext) -> None:
+        """Compare the model's expectation with the screen change; hint on a mismatch (KAN-116).
+
+        Advisory only: never touches the verification result, retries or the action.
+        """
+        if not get_settings().expect_check:
+            return
+        try:
+            executed = ctx.executed_action
+            if executed is None or not executed.success or executed.action.action_type in NO_SCREEN_EFFECT_ACTIONS:
+                return
+            if ctx.dialog_captured or ctx.attempt_cancelled:
+                return
+            if ctx.decision.rule_name:
+                # A rule made this decision (its expected_change is the rule's, not a prediction).
+                return
+            if ctx.attempt_index > 1:
+                # After a retry the screen change spans every attempt, not the last one's.
+                return
+            ratio = ctx.screen_change_ratio
+            if ratio is None:
+                return
+            # A missing screenshot reads as "no change"; that is not evidence.
+            after_path = executed.artifact_path
+            if not (ctx.before_artifact_path and after_path):
+                return
+            if not (Path(ctx.before_artifact_path).exists() and Path(after_path).exists()):
+                return
+            decision = ctx.decision
+            # A backend's NONE is a real "none" only when the model actually supplied the field.
+            reliable = self._backend_reports_expected_change() and "expected_change" in getattr(
+                decision, "model_fields_set", ()
+            )
+            expectation = parse_expectation(
+                decision.rationale, decision.expected_change, field_is_reliable=reliable
+            )
+            if expectation is None:
+                # The model did not say what it expects: remind it now and then.
+                if ctx.step_index - self._expect_reminded.get(ctx.run_id, 0) >= EXPECT_REMINDER_EVERY:
+                    self._send_expect_instruction(ctx.run_id, ctx.step_index)
+                return
+            observation = compare(expectation, ratio)
+            note = mismatch_note(expectation, observation) if observation else None
+            if note:
+                add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+                if callable(add_hints):
+                    add_hints([note], source="expect_check", run_id=ctx.run_id)
+            step_dir = Path(self._artifacts.before_path(ctx.run_id, ctx.step_index)).resolve().parent
+            step_dir.mkdir(parents=True, exist_ok=True)
+            (step_dir / "expect_check.json").write_text(
+                json.dumps(
+                    {
+                        "step_index": ctx.step_index,
+                        "kind": expectation.kind.value,
+                        "text": expectation.text,
+                        "source": expectation.source,
+                        "change_ratio": round(ratio, 5),
+                        "mismatch": note is not None,
+                        "note": note,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as exc:  # noqa: BLE001 - an advisory check must never fail a step
+            self._recovered(ctx.run_id, "expect_check", exc)
+
     def _absorb_dialog_message(self, ctx: StepContext) -> None:
         """Fold a JS dialog the executor intercepted into this step's perception.
 
@@ -886,6 +985,7 @@ class AgentLoop:
         dialog_msg = self.executor.pop_last_dialog_message(ctx.run_id)
         if not dialog_msg:
             return
+        ctx.dialog_captured = True
         logger.info("JS dialog captured: %r — injecting into perception summary", dialog_msg)
         ctx.perception = ctx.perception.model_copy(
             update={"summary": (ctx.perception.summary or "") + f" {dialog_msg}"}
@@ -2027,6 +2127,7 @@ class AgentLoop:
     def _release_backend_run_state(self, run_id: str) -> None:
         """Drop the finished run's conversation and last screenshot from the backends,
         which otherwise keep them for the life of the server."""
+        self._expect_reminded.pop(run_id, None)
         services = {id(s): s for s in (self.perception_service, self.policy_service)}.values()
         for service in services:
             for target in (service, getattr(service, "delegate", None)):

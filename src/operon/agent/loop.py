@@ -545,6 +545,7 @@ class AgentLoop:
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
         if record.stop_reason is StopReason.INTERRUPTED:
+            self._check_resume_environment(record)
             await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
         if not approve_gated_action:
             # A correction is not an approval: a backend holding the calls it paused
@@ -593,6 +594,13 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
+    def _check_resume_environment(self, record) -> None:
+        """Fail before anything is changed when the run's original provider is not this one."""
+        from operon.store.checkpoints import check_resume_environment
+
+        root = getattr(self.run_store, "root_dir", None)
+        check_resume_environment(record, Path(root) if root is not None else None)
+
     async def _prepare_interrupted(self, run_id: str, record) -> RunStatus | None:
         """Rebuild this process's per-run state for a run a restart interrupted (KAN-80).
 
@@ -634,6 +642,7 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} not found")
         if record.stop_reason is not StopReason.INTERRUPTED or record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is not interrupted")
+        self._check_resume_environment(record)
         origin = await self._prepare_interrupted(run_id, record)
         if origin is RunStatus.WAITING_FOR_USER:
             record.stop_reason = StopReason.WAITING_FOR_USER

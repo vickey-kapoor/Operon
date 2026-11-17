@@ -10,11 +10,13 @@ person, and carries ``stop_reason="interrupted"`` plus ``interrupted_from``.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
 
 from operon.core.paths import runs_dir
+from operon.core.settings import get_settings
 from operon.models.common import RunStatus, StopReason
 from operon.models.state import AgentState
 from operon.store import owner as run_owner
@@ -121,3 +123,38 @@ def list_interrupted(root: Path | None = None) -> list[AgentState]:
     """The runs waiting for an explicit resume, newest first."""
     runs = [(path.stat().st_mtime, state) for path, state in _states(root) if is_interrupted(state)]
     return [state for _, state in sorted(runs, key=lambda pair: pair[0], reverse=True)]
+
+
+def recorded_provider(run_id: str, root: Path | None = None) -> str | None:
+    """The environment provider a run started with, from its ``settings.json`` (None when the
+    file or the key is missing: a run saved before settings were recorded)."""
+    base = Path(root) if root is not None else runs_dir()
+    try:
+        value = json.loads((base / run_id / "settings.json").read_text(encoding="utf-8")).get("OPERON_ENVIRONMENT")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value.strip().lower() if isinstance(value, str) and value.strip() else None
+
+
+def check_resume_environment(state: AgentState, root: Path | None = None) -> None:
+    """Refuse to resume a desktop run in a different environment provider than it started in.
+
+    ``--env windows-sandbox`` only sets the original process's environment; a resume from a
+    shell without it would build the live host executor and move a sandboxed task (and its
+    permission mode) outside its isolation. A run with no recorded provider is unknown, and an
+    unknown provider is never trusted: refused too, so the person picks one explicitly by
+    starting a new run. Browser runs have no provider and are unaffected. Raises ValueError."""
+    if state.environment != "desktop":
+        return
+    current = get_settings().environment
+    original = recorded_provider(state.run_id, root)
+    if original is None:
+        raise ValueError(
+            f"Run {state.run_id!r} has no recorded environment provider (saved by an older version), so "
+            f"Operon cannot tell whether it is safe to resume on {current!r}; start a new run instead"
+        )
+    if original != current:
+        raise ValueError(
+            f"Run {state.run_id!r} was started in {original}, but this process uses {current}: resume it "
+            f"with OPERON_ENVIRONMENT={original} (operon run --env {original})"
+        )

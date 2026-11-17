@@ -275,7 +275,10 @@ async def resume_interrupted(run_id: str) -> dict[str, Any]:
     loop, record = await _require_run(run_id)
     if record.stop_reason is not StopReason.INTERRUPTED:
         raise FrontDoorError(f"Run is {record.status.value}; it was not interrupted")
-    await _tasks.resume_interrupted_and_schedule(loop, run_id)
+    try:
+        await _tasks.resume_interrupted_and_schedule(loop, run_id)
+    except ValueError as exc:  # e.g. the run started in another environment provider
+        raise FrontDoorError(str(exc)) from exc
     _ws_stream.set_active_run(run_id, loop=loop)
     return await run_status(run_id)
 

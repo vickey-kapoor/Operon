@@ -12,7 +12,6 @@ import pytest
 from operon.agent import control as run_control
 from operon.api import frontdoor, ws_stream
 from operon.api.server import app
-
 from operon.models.common import RunStatus
 from operon.store.checkpoints import mark_interrupted_runs
 from tests.agent.test_checkpoints import STOP, _crash

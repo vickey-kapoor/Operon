@@ -433,6 +433,8 @@ class RunResult:
     model_requests: list[Any] = field(default_factory=list)
     # Errors the loop caught and carried on from, by site (KAN-158).
     recovered_errors: dict[str, int] = field(default_factory=dict)
+    # The run's step-efficiency score (KAN-85), as saved in its state.
+    efficiency: dict[str, Any] | None = None
 
     def summary(self) -> str:
         return (
@@ -554,4 +556,5 @@ async def run_scenario(scenario: Scenario) -> RunResult:
             actions=[a.action_type.value for a in executor.actions],
             model_requests=requests,
             recovered_errors=dict(state.recovered_errors) if state is not None else {},
+            efficiency=state.efficiency if state is not None else None,
         )

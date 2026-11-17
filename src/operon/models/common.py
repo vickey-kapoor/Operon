@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -161,6 +162,8 @@ class RunResponse(StrictModel):
     intent: str = Field(min_length=1)
     step_count: int = Field(ge=0)
     hitl_message: str | None = None
+    # KAN-85: step-efficiency score; set on the GET run endpoints.
+    efficiency: dict[str, Any] | None = None
 
 
 class StopRunRequest(StrictModel):

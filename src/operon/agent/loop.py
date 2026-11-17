@@ -24,6 +24,7 @@ from operon.agent.actions.retry_hardening import (
 )
 from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
+from operon.agent.efficiency import run_efficiency
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
 from operon.agent.planner import (
@@ -1215,6 +1216,8 @@ class AgentLoop:
         # Persist per-stage durations for tail-latency analysis. Best-effort —
         # the step has already completed by this point.
         self._persist_step_timing(run_id, ctx.step_index, ctx.stage_timings)
+        if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
+            await self._save_efficiency(state)
 
         if ctx.deferred_pause is not None and final_status is RunStatus.RUNNING:
             # A retry asked for a human (or a gate blocked it) after this step's
@@ -1239,6 +1242,22 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    async def _save_efficiency(self, state) -> None:
+        """Score the finished run (KAN-85) into ``efficiency.json`` and the saved state."""
+        root = getattr(self.run_store, "root_dir", None)
+        if not isinstance(root, (str, Path)):
+            return
+        try:
+            await bg_writer.flush()  # the run log and step timings are written in the background
+            efficiency = run_efficiency(Path(root) / state.run_id)
+            (Path(root) / state.run_id / "efficiency.json").write_text(
+                json.dumps(efficiency, indent=2) + "\n", encoding="utf-8"
+            )
+            state.efficiency = efficiency
+            await self.run_store.save_state(state)
+        except Exception as exc:
+            self._recovered(state.run_id, "save_efficiency", exc, level=logging.DEBUG)
 
     async def _current_url_for_trust_gate(self, run_id: str, *, log: bool = False) -> str | None:
         """The browser's current URL, only when the trust gate has a domain allowlist

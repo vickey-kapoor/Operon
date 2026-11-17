@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 
 from operon.models.common import RunStatus, StopReason, StrictModel
@@ -57,3 +59,5 @@ class AgentState(StrictModel):
     approval_count: int = Field(default=0, ge=0)
     # Why the run is paused for the person (the gate's or the model's own words).
     pause_reason: str | None = None
+    # KAN-85: the step-efficiency score (agent/efficiency.py), saved when the run ends.
+    efficiency: dict[str, Any] | None = None

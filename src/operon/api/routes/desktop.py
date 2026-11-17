@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
+from operon.agent.efficiency import efficiency_for_response
 from operon.agent.loop import StartUrlBlockedError
 from operon.api.dependencies import get_desktop_agent_loop, validate_run_id
 from operon.models.common import (
@@ -99,7 +100,8 @@ async def desktop_cleanup(request: CleanupRequest) -> CleanupResponse:
 async def desktop_get_run(run_id: str) -> RunResponse:
     """Return current state for a desktop run."""
     validate_run_id(run_id)
-    run = await get_desktop_agent_loop().run_store.get_run(run_id)
+    run_store = get_desktop_agent_loop().run_store
+    run = await run_store.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     return RunResponse(
@@ -107,4 +109,5 @@ async def desktop_get_run(run_id: str) -> RunResponse:
         status=run.status,
         intent=run.intent,
         step_count=run.step_count,
+        efficiency=efficiency_for_response(run, run_store),
     )

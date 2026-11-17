@@ -25,6 +25,8 @@ _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 def _open_process(pid: int):
+    if sys.platform != "win32":
+        raise OSError("Windows only")
     import ctypes
     from ctypes import wintypes
 
@@ -34,12 +36,16 @@ def _open_process(pid: int):
 
 
 def _win_last_error() -> int:
+    if sys.platform != "win32":
+        raise OSError("Windows only")
     import ctypes
 
     return ctypes.get_last_error()
 
 
 def _windows_pid_alive(pid: int) -> bool:
+    if sys.platform != "win32":
+        raise OSError("Windows only")
     import ctypes
     from ctypes import wintypes
 

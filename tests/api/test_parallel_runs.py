@@ -244,3 +244,26 @@ def test_backend_per_run_caches_are_keyed_by_run_id():
     backend._conversations = {"r1": ["x"], "r2": ["y"]}
     backend.release_run("r1")
     assert backend._conversations == {"r2": ["y"]}
+
+
+async def test_observer_asks_a_parallel_runs_own_executor(parallel, tmp_path, monkeypatch):
+    """A RUNNING parallel run is not reconciled to failed, and its live frame is served."""
+    from operon.api.routes import observer
+    from operon.models.common import RunStatus
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path))
+    base = current_runtime().browser_loop
+    base.executor.current_url_for_run = AsyncMock(return_value=None)  # shared executor: no session
+    loop, response = await loops.start_parallel_browser_run(_request())
+    loop.executor.current_url_for_run = AsyncMock(return_value="https://example.com")
+    loop.executor.live_frame_png = AsyncMock(return_value=b"png-bytes")
+    await loop.run_store.set_status(response.run_id, RunStatus.RUNNING)
+
+    snapshot = await observer.observer_run(response.run_id)
+    assert snapshot["run"]["current_url"] == "https://example.com"
+    await observer.observer_runs(limit=20)
+    assert (await loop.run_store.get_run(response.run_id)).status is RunStatus.RUNNING
+    frame = await observer.observer_live_browser(response.run_id)
+    assert frame.body == b"png-bytes"
+    base.executor.current_url_for_run.assert_not_called()

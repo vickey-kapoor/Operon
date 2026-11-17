@@ -161,11 +161,11 @@ Request fields for both `run-task` routes: `intent` (required), `start_url`, `he
 
 With `OPERON_PARALLEL_RUNS=N` (N > 1), `POST /run-task` with `mode: "batch"` (the default) gives each
 run its own agent loop, executor and isolated Chromium, so up to N runs step at the same time. At most N
-runs hold a slot (from start until they succeed, fail or are cancelled); a start beyond that is refused
+runs hold a slot (from start until they succeed, fail or are cancelled; a paused run keeps its slot and browser); a start beyond that is refused
 with `429` and `Retry-After: 5` rather than queued, because `start_run` opens the browser and returns the
 run id before the scheduler runs, so there is no run to hold as `pending` without a browser. Retry when one
 finishes. `observable` runs (live view, one CDP port 9222) and all desktop runs (one real screen and mouse)
-are never parallel and keep taking turns. The default `1` is the old behaviour.
+are never parallel and keep taking turns. The cap is read when the first parallel run starts and fixed until the server restarts. The default `1` is the old behaviour.
 
 ## Interrupted runs (OPERON_CHECKPOINTS, KAN-80)
 

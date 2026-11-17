@@ -10,6 +10,7 @@ import ctypes
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -90,6 +91,9 @@ _MOUSEEVENTF_HWHEEL = 0x01000
 # How long a launch has to put a window on screen before it counts as failed.
 _LAUNCH_CONFIRM_TIMEOUT_S = 8.0
 _LAUNCH_POLL_INTERVAL_S = 0.25
+# A launcher that exits non-zero may still have handed off to a running shell (explorer.exe).
+_LAUNCH_EXIT_GRACE_S = 2.5
+_LAUNCH_PIDS_CACHE_S = 1.0
 
 
 def _image_pids(exe_name: str) -> frozenset[int] | None:
@@ -328,13 +332,15 @@ def _visible_windows() -> frozenset[int] | None:
 
         user32 = ctypes.windll.user32  # type: ignore[attr-defined]
         found: set[int] = set()
-        cloaked = ctypes.c_int(0)
 
         def _visit(hwnd: int, _lparam: int) -> bool:
             if not user32.IsWindowVisible(hwnd) or user32.GetWindowTextLengthW(hwnd) == 0:
                 return True
+            cloaked = ctypes.c_int(0)
             try:  # DWMWA_CLOAKED = 14: a suspended Store app is "visible" but not on screen
-                ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)  # type: ignore[attr-defined]
+                hresult = ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)  # type: ignore[attr-defined]
+                if hresult != 0:  # the call failed: do not trust the value
+                    cloaked.value = 0
             except Exception:
                 cloaked.value = 0
             if not cloaked.value:
@@ -347,6 +353,15 @@ def _visible_windows() -> frozenset[int] | None:
     except Exception:
         logger.debug("_visible_windows failed", exc_info=True)
         return None
+
+
+
+def _executable_missing(command: str) -> bool:
+    """True on Windows when a command launched through the shell names a program that
+    is not on PATH. URIs (ms-settings:) go through the shell handler and are not checked."""
+    if sys.platform != "win32" or command.startswith("ms-"):
+        return False
+    return shutil.which(command.split()[0]) is None
 
 
 # Actions that write to whatever window is in front; the focus guard (KAN-92) covers these.
@@ -1259,6 +1274,12 @@ class DesktopExecutor(Executor):
         exe_name = Path(command.split()[0]).name.lower()
         if not exe_name.endswith(".exe"):
             exe_name += ".exe"
+        if _executable_missing(command):
+            return self._fail(
+                action,
+                f"'{command.split()[0]}' is not installed (not found on PATH); nothing was launched",
+                FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+            )
         # Whatever runs right before this launch is not ours.
         before = await asyncio.to_thread(_image_pids, exe_name) if self._current_run_id is not None else None
         windows_before = await asyncio.to_thread(_visible_windows)
@@ -1301,11 +1322,11 @@ class DesktopExecutor(Executor):
                     owned.setdefault(exe_name, set()).update(after - before)
             # A launch call returning is not proof the app opened (the exe may not exist
             # in this image): require a window to appear, or the app to come forward.
-            problem = await self._confirm_launch(command, exe_name, proc, windows_before, foreground_before)
+            problem, note = await self._confirm_launch(command, exe_name, proc, windows_before, foreground_before)
             if problem is not None:
                 return self._fail(action, problem, FailureCategory.EXECUTION_TARGET_NOT_FOUND)
             after_path = await self._capture_after()
-            return self._ok(action, f"Launched '{command}'", after_path)
+            return self._ok(action, note or f"Launched '{command}'", after_path)
         except Exception as exc:
             return self._fail(action, f"Launch failed: {exc}", FailureCategory.EXECUTION_ERROR)
 
@@ -1316,42 +1337,56 @@ class DesktopExecutor(Executor):
         proc: subprocess.Popen | None,
         windows_before: frozenset[int] | None,
         foreground_before: int | None,
-    ) -> str | None:
-        """None when the launch took effect (or cannot be checked here); else why not.
+    ) -> tuple[str | None, str | None]:
+        """(failure, note): failure is None when the launch did not visibly fail.
 
         Took effect: a new top-level window appeared, or a window of the launched
         program is now in front (an app that was already running just activated).
-        Polls for up to ``_LAUNCH_CONFIRM_TIMEOUT_S``; a launcher that exits non-zero
-        with no window has failed outright.
+        Polls up to ``_LAUNCH_CONFIRM_TIMEOUT_S``. A launcher that exits non-zero with
+        no window fails once ``_LAUNCH_EXIT_GRACE_S`` passes (explorer.exe exits 1 when
+        the running shell takes over, and its window shows up later). If the launch
+        raised nothing and the launcher did not fail, no window by the deadline is
+        success with a note: the app may have reused a window (ms-settings: is hosted
+        by ApplicationFrameHost).
         """
         if windows_before is None:
-            return None  # cannot list windows here; keep the old trust-the-call behaviour
+            return None, None  # cannot list windows here; keep the old trust-the-call behaviour
         timeout = _LAUNCH_CONFIRM_TIMEOUT_S
-        deadline = time.monotonic() + timeout
+        start = time.monotonic()
+        deadline = start + timeout
+        failed_at: float | None = None
+        pids_cache: tuple[float, frozenset[int] | None] | None = None
         while True:
             now = await asyncio.to_thread(_visible_windows)
             if now is None:
-                return None
+                return None, None
             if now - windows_before:
-                return None
+                return None, None
             foreground = _foreground_window()
             if foreground is not None and foreground != foreground_before and foreground in now:
-                return None
+                return None, None
             if foreground is not None and foreground in now:
                 pid, _title = _window_owner(foreground)
-                pids = await asyncio.to_thread(_image_pids, exe_name)
+                clock = time.monotonic()
+                if pids_cache is None or clock - pids_cache[0] >= _LAUNCH_PIDS_CACHE_S:
+                    pids_cache = (clock, await asyncio.to_thread(_image_pids, exe_name))
+                pids = pids_cache[1]
                 if pid is not None and pids and pid in pids:
-                    return None  # the program's own window is in front: already running, activated
+                    return None, None  # the program's own window is in front: already running, activated
             code = proc.poll() if proc is not None else None
+            clock = time.monotonic()
             if isinstance(code, int) and code != 0:
-                return (
-                    f"launched '{command}' but it exited with code {code} and no window appeared; "
-                    "the app may not be installed"
-                )
-            if time.monotonic() >= deadline:
-                return (
-                    f"launched '{command}' but no window appeared within {timeout:g} s; "
-                    "the app may not be installed"
+                if failed_at is None:
+                    failed_at = clock
+                if clock - failed_at >= _LAUNCH_EXIT_GRACE_S or clock >= deadline:
+                    return (
+                        f"launched '{command}' but it exited with code {code} and no window appeared; "
+                        "the app may not be installed"
+                    ), None
+            elif clock >= deadline:
+                return None, (
+                    f"Launched '{command}'; no new window detected within {timeout:g} s, "
+                    "it may have reused an existing one"
                 )
             await asyncio.sleep(_LAUNCH_POLL_INTERVAL_S)
 

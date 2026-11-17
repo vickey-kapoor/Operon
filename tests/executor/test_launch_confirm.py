@@ -55,7 +55,7 @@ async def test_new_window_means_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_executable_exits_nonzero_and_fails() -> None:
+async def test_exit_nonzero_with_no_window_fails() -> None:
     result, _ = await _run(_executor(), windows=[frozenset({1})], proc=_proc(1))
     assert result.success is False
     assert result.failure_category == FailureCategory.EXECUTION_TARGET_NOT_FOUND
@@ -63,12 +63,43 @@ async def test_missing_executable_exits_nonzero_and_fails() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_window_times_out_within_the_bound() -> None:
+async def test_exit_nonzero_but_window_appears_later_is_success() -> None:
+    # explorer.exe exits 1 when the running shell takes over; the window comes later.
+    result, _ = await _run(
+        _executor(),
+        windows=[frozenset({1}), frozenset({1}), frozenset({1}), frozenset({1}), frozenset({1, 2})],
+        proc=_proc(1),
+    )
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_exit_nonzero_waits_the_grace_period_then_fails() -> None:
+    result, elapsed = await _run(_executor(), windows=[frozenset({1})], proc=_proc(1))
+    assert result.success is False
+    assert 2.5 <= elapsed < 3.0
+
+
+@pytest.mark.asyncio
+async def test_no_window_with_launcher_not_failed_is_success_with_note_at_the_bound() -> None:
     result, elapsed = await _run(_executor(), windows=[frozenset({1})])
+    assert result.success is True
+    assert "no new window detected" in result.detail
+    assert 8.0 <= elapsed < 8.5
+
+
+@pytest.mark.asyncio
+async def test_missing_executable_fails_before_launching() -> None:
+    executor = _executor()
+    with (
+        patch(f"{D}._executable_missing", return_value=True),
+        patch(f"{D}.subprocess.Popen") as popen,
+    ):
+        result = await executor._exec_launch_app(ACTION)
     assert result.success is False
     assert result.failure_category == FailureCategory.EXECUTION_TARGET_NOT_FOUND
-    assert "no window appeared within 8 s" in result.detail
-    assert 8.0 <= elapsed < 8.5
+    assert "'notepad.exe' is not installed" in result.detail
+    popen.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -78,13 +109,6 @@ async def test_already_running_app_activated_is_success() -> None:
         _executor(), windows=[frozenset({1, 5})], foreground=(1, 5), pids=frozenset({777})
     )
     assert result.success is True
-
-
-@pytest.mark.asyncio
-async def test_launcher_exit_zero_without_window_still_waits_then_fails() -> None:
-    result, elapsed = await _run(_executor(), windows=[frozenset({1})], proc=_proc(0))
-    assert result.success is False
-    assert elapsed >= 8.0
 
 
 @pytest.mark.asyncio

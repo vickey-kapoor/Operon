@@ -54,6 +54,8 @@ The security boundary is the host, not the agent. Operon does not sandbox itself
   the safe default — do not widen it to `*`.
 - **Keep the trust gate on** (the default; `OPERON_TRUST_GATE=off` disables it),
   and for anything unattended add `OPERON_TRUST_ALLOW_DOMAINS` to fail closed on navigation.
+  `OPERON_TRUST_CATEGORIES=on` (experimental) also asks before buttons that name a payment,
+  send, delete, account or install action (see `docs/configuration.md`).
 - **Prefer a VM or dedicated machine** for desktop runs. There is no undo.
 - **Run artifacts contain full screenshots** of whatever was on screen, written
   under `.var/runs/<run_id>/`. Treat them as sensitive and scrub before sharing.

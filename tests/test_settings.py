@@ -172,6 +172,7 @@ _EXPERIMENTAL_OFF = [
     ("settle_detect", False),
     ("change_note", False),
     ("focus_guard", False),
+    ("trust_categories", False),
     ("planner", False),
     ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
     ("critic", ""),
@@ -205,7 +206,7 @@ _PLAIN_CONFIG = {
     "desktop_thinking", "desktop_fallback_model", "desktop_verifier_model", "desktop_verifier_thinking",
     "browser_backend", "browser_model", "browser_thinking", "browser_fallback_backend",
     "browser_fallback_model", "browser_verifier_model", "browser_verifier_thinking", "settle_max_s",
-    "planner_model", "trust_deny", "trust_confirm", "trust_allow_domains", "permission_mode",
+    "planner_model", "trust_deny", "trust_confirm", "trust_allow_domains", "trust_category_list", "permission_mode",
     "allowed_file_roots", "zoom_min_side", "zoom_factor", "environment", "desktop_platform",
     "sandbox_memory_mb", "sandbox_start_timeout", "container_image", "container_start_timeout",
     "container_ca_bundle", "osworld_url", "browser_width", "browser_height", "browser_profile_dir",

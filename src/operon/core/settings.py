@@ -147,6 +147,10 @@ class Settings(BaseModel):
     # Empty: the gate's built-in confirm list.
     trust_confirm: tuple[str, ...] = _env_field("OPERON_TRUST_CONFIRM", ())
     trust_allow_domains: tuple[str, ...] = _env_field("OPERON_TRUST_ALLOW_DOMAINS", ())
+    # Named risk categories (KAN-103): experimental, off by default.
+    trust_categories: bool = _env_field("OPERON_TRUST_CATEGORIES", False)
+    # Empty: all five categories.
+    trust_category_list: tuple[str, ...] = _env_field("OPERON_TRUST_CATEGORY_LIST", ())
     # "" when unset or not a known mode: the server default (risky).
     permission_mode: str = _env_field("OPERON_PERMISSION_MODE", "")
     allowed_file_roots: tuple[str, ...] = _env_field("OPERON_ALLOWED_FILE_ROOTS", ())
@@ -351,6 +355,8 @@ class _Parser:
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),
             trust_confirm=_split(self.text("OPERON_TRUST_CONFIRM"), lower=True),
             trust_allow_domains=_split(self.text("OPERON_TRUST_ALLOW_DOMAINS"), lower=True),
+            trust_categories=self.flag("OPERON_TRUST_CATEGORIES", "off"),
+            trust_category_list=_split(self.text("OPERON_TRUST_CATEGORY_LIST"), lower=True),
             permission_mode=permission,
             allowed_file_roots=_split(self.text("OPERON_ALLOWED_FILE_ROOTS")),
             tools=self.raw("OPERON_TOOLS"),

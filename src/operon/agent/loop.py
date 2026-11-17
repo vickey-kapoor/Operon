@@ -231,6 +231,7 @@ class AgentLoop:
         # approved set. The same action then passes the gates it was approved for, and
         # the approval is used up once it gets through (or the policy picks another).
         self._pending_gate_approvals: dict[str, tuple[str, str]] = {}
+        self._pending_gate_categories: dict[str, str] = {}
         # Runs a human paused by hand (UI Pause, POST /run/{id}/pause). A step already
         # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
         self._pause_requests: set[str] = set()
@@ -450,6 +451,12 @@ class AgentLoop:
         pending = self._pending_gate_approvals.get(run_id)
         return pending[1] if pending is not None else None
 
+    def pending_gate_category(self, run_id: str) -> str | None:
+        """The named risk category (KAN-103) of the trust pause a run waits on, if any."""
+        if self.pending_gate(run_id) != "trust":
+            return None
+        return self._pending_gate_categories.get(run_id)
+
     async def take_over(self, run_id: str) -> AgentState:
         """Hand the screen to the person: pause the run and mark it under their control.
 
@@ -526,6 +533,7 @@ class AgentLoop:
             # pause also holds the calls; its approval is counted below, once.
             record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
+        self._pending_gate_categories.pop(run_id, None)
         if approve_gated_action and pending is not None:
             fingerprint, gate = pending
             prior = self._approved_gate_actions.get(run_id)
@@ -1293,6 +1301,10 @@ class AgentLoop:
                 leaf, trust = blocked[0]
                 _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
                 self._pending_gate_approvals[run_id] = (fingerprint, "trust")
+                if trust.category:
+                    self._pending_gate_categories[run_id] = trust.category
+                else:
+                    self._pending_gate_categories.pop(run_id, None)
                 if trust.verdict is TrustVerdict.DENY:
                     return (
                         f"Blocked by policy: {leaf.action_type.value} action "
@@ -1303,6 +1315,11 @@ class AgentLoop:
                     return (
                         f"Approval needed (ask mode): {_describe_for_approval(leaf)}. "
                         "Approve to run it, or correct/stop."
+                    )
+                if trust.category:
+                    return (
+                        f"{trust.category.capitalize()}: approve {_describe_for_approval(leaf)}? "
+                        f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
                     )
                 return (
                     f"High-risk action needs approval: {leaf.action_type.value} "

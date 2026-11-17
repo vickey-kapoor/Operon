@@ -200,7 +200,11 @@ def _waiting(loop, record) -> dict[str, Any] | None:
         return {"kind": "takeover", "reason": "You are in control. Hand back when you are done."}
     reason = getattr(record, "pause_reason", None) or record.hitl_message or "Paused."
     gate = loop.pending_gate(record.run_id) if hasattr(loop, "pending_gate") else None
-    return {"kind": "approval" if gate is not None else "needs_you", "gate": gate, "reason": reason}
+    waiting: dict[str, Any] = {"kind": "approval" if gate is not None else "needs_you", "gate": gate, "reason": reason}
+    category = loop.pending_gate_category(record.run_id) if hasattr(loop, "pending_gate_category") else None
+    if isinstance(category, str) and category:
+        waiting["category"] = category  # KAN-103: only present for a named risk category pause
+    return waiting
 
 
 def _mark_finished(run_id: str) -> float:

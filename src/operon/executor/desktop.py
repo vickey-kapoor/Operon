@@ -356,12 +356,53 @@ def _visible_windows() -> frozenset[int] | None:
 
 
 
+def _app_path(program: str) -> str | None:
+    """The full path Windows registers for ``program`` under App Paths (HKCU, then
+    HKLM), or None. Chrome, Edge and the Office apps live there, not on PATH. Read-only."""
+    if sys.platform != "win32":
+        return None
+    name = program if Path(program).suffix else program + ".exe"
+    try:
+        import winreg
+    except ImportError:
+        return None
+    key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, key_path) as key:
+                value, _kind = winreg.QueryValueEx(key, "")
+        except OSError:
+            continue
+        path = str(value).strip().strip('"')
+        if path and Path(path).exists():
+            return path
+    return None
+
+
 def _executable_missing(command: str) -> bool:
-    """True on Windows when a command launched through the shell names a program that
-    is not on PATH. URIs (ms-settings:) go through the shell handler and are not checked."""
+    """True on Windows when a command launched through the shell names a program found
+    neither on PATH nor under App Paths. URIs (ms-settings:) go through the shell
+    handler and are not checked."""
     if sys.platform != "win32" or command.startswith("ms-"):
         return False
-    return shutil.which(command.split()[0]) is None
+    program = command.split()[0]
+    return shutil.which(program) is None and _app_path(program) is None
+
+
+def _resolve_launch_command(command: str) -> str:
+    """The command to run: a program off PATH but registered under App Paths runs by its
+    full path. cmd.exe (the shell Popen uses) does not consult App Paths, so a bare
+    "chrome" would fail there; resolving it ourselves is explicit and keeps the launcher's
+    exit code and process handle meaningful, unlike ``start`` (always exits 0)."""
+    if sys.platform != "win32" or command.startswith("ms-"):
+        return command
+    program, _, rest = command.partition(" ")
+    if shutil.which(program) is not None:
+        return command
+    path = _app_path(program)
+    if path is None:
+        return command
+    return subprocess.list2cmdline([path]) + (" " + rest if rest else "")
 
 
 # Actions that write to whatever window is in front; the focus guard (KAN-92) covers these.
@@ -1277,7 +1318,7 @@ class DesktopExecutor(Executor):
         if _executable_missing(command):
             return self._fail(
                 action,
-                f"'{command.split()[0]}' is not installed (not found on PATH); nothing was launched",
+                f"'{command.split()[0]}' is not installed (not on PATH or under App Paths); nothing was launched",
                 FailureCategory.EXECUTION_TARGET_NOT_FOUND,
             )
         # Whatever runs right before this launch is not ours.
@@ -1285,6 +1326,7 @@ class DesktopExecutor(Executor):
         windows_before = await asyncio.to_thread(_visible_windows)
         foreground_before = _foreground_window()
         proc = None
+        run_command = _resolve_launch_command(command)
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
@@ -1292,14 +1334,14 @@ class DesktopExecutor(Executor):
                 # Its own console, and no redirected handles: an interactive shell
                 # handed the server's empty stdin reads EOF and closes at once.
                 proc = await asyncio.to_thread(
-                    subprocess.Popen, command, creationflags=_NEW_CONSOLE, env=_launch_env()
+                    subprocess.Popen, run_command, creationflags=_NEW_CONSOLE, env=_launch_env()
                 )
             else:
                 proc = await asyncio.to_thread(
                     subprocess.Popen,
                     # nosec B602: `command` is a hardcoded catalog constant (above),
                     # not user/model input, so shell=True carries no injection risk.
-                    command,
+                    run_command,
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,

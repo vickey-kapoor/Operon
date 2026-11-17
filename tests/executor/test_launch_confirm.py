@@ -134,3 +134,66 @@ async def test_linux_process_exiting_with_error_fails() -> None:
     assert result.failure_category == FailureCategory.EXECUTION_TARGET_NOT_FOUND
     with patch("operon.executor.linux_desktop.subprocess.Popen", return_value=_proc(None)):
         assert (await executor._exec_launch_app(action)).success is True
+
+
+def _fake_winreg(entries: dict[str, str]):
+    """A winreg stand-in: App Paths values by exe name, under HKLM only."""
+    import types
+
+    def open_key(hive, path):
+        name = path.rsplit("\\", 1)[-1].lower()
+        if hive == "HKLM" and name in entries:
+            return MagicMock(__enter__=lambda self: name, __exit__=lambda *a: False)
+        raise FileNotFoundError(path)
+
+    return types.SimpleNamespace(
+        HKEY_CURRENT_USER="HKCU",
+        HKEY_LOCAL_MACHINE="HKLM",
+        OpenKey=open_key,
+        QueryValueEx=lambda key, _name: (entries[key], 1),
+    )
+
+
+def test_app_path_lookup_and_missing_check() -> None:
+    from operon.executor import desktop
+    from tests.executor.conftest import REAL_EXECUTABLE_MISSING as missing
+
+    chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    fake = _fake_winreg({"chrome.exe": chrome})
+    with (
+        patch.object(desktop.sys, "platform", "win32"),
+        patch.dict("sys.modules", {"winreg": fake}),
+        patch.object(desktop.Path, "exists", return_value=True),
+        patch(f"{D}.shutil.which", return_value=None),
+    ):
+        assert desktop._app_path("chrome") == chrome
+        assert missing("chrome") is False  # found under App Paths
+        assert desktop._app_path("nosuchapp") is None
+        assert missing("nosuchapp") is True  # neither PATH nor App Paths
+        assert desktop._resolve_launch_command("chrome") == f'"{chrome}"' or desktop._resolve_launch_command(
+            "chrome"
+        ) == chrome
+
+
+def test_on_path_commands_are_left_alone() -> None:
+    from operon.executor import desktop
+    from tests.executor.conftest import REAL_EXECUTABLE_MISSING as missing
+
+    with patch.object(desktop.sys, "platform", "win32"), patch(f"{D}.shutil.which", return_value="C:/w/notepad.exe"):
+        assert desktop._resolve_launch_command("notepad.exe") == "notepad.exe"
+        assert missing("notepad.exe") is False
+
+
+@pytest.mark.asyncio
+async def test_app_paths_program_is_launched_by_its_resolved_path() -> None:
+    executor = _executor()
+    action = AgentAction(action_type=ActionType.LAUNCH_APP, text="chrome")
+    chrome = r"C:\Chrome\chrome.exe"
+    with (
+        patch(f"{D}._visible_windows", return_value=None),
+        patch(f"{D}._resolve_launch_command", return_value=chrome),
+        patch(f"{D}.subprocess.Popen") as popen,
+    ):
+        result = await executor._exec_launch_app(action)
+    assert result.success is True
+    assert popen.call_args[0][0] == chrome

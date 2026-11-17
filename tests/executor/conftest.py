@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from operon.executor.desktop import _executable_missing as REAL_EXECUTABLE_MISSING  # noqa: F401
+
 
 @pytest.fixture(autouse=True)
 def _no_real_window_listing():

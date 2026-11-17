@@ -175,6 +175,7 @@ _EXPERIMENTAL_OFF = [
     ("trust_categories", False),
     ("planner", False),
     ("task_note", False),
+    ("checkpoints", False),
     ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
     ("critic", ""),
     ("site_adapters", ""),

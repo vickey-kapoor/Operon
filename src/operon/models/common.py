@@ -117,6 +117,9 @@ class StopReason(StrEnum):
     RETRY_LIMIT_REACHED = "retry_limit_reached"
     MAX_STEP_LIMIT_REACHED = "max_step_limit_reached"
     WAITING_FOR_USER = "waiting_for_user"
+    # The process died while the run was in flight (OPERON_CHECKPOINTS, KAN-80); the run
+    # waits, with this reason, for an explicit resume.
+    INTERRUPTED = "interrupted"
 
 
 class ResumeRequest(StrictModel):

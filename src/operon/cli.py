@@ -48,6 +48,12 @@ class LocalClient:
     async def status(self, run_id: str) -> dict[str, Any]:
         return await self._fd.run_status(run_id)
 
+    async def resume_interrupted(self, run_id: str) -> dict[str, Any]:
+        return await self._fd.resume_interrupted(run_id)
+
+    async def interrupted(self) -> list[dict[str, Any]]:
+        return self._fd.interrupted_runs()
+
     async def approve(self, run_id: str) -> dict[str, Any]:
         return await self._fd.approve(run_id)
 
@@ -115,6 +121,12 @@ class RemoteClient:
     async def status(self, run_id: str) -> dict[str, Any]:
         return await self._call("GET", f"/app/api/runs/{run_id}")
 
+    async def resume_interrupted(self, run_id: str) -> dict[str, Any]:
+        return await self._call("POST", f"/app/api/runs/{run_id}/resume-interrupted")
+
+    async def interrupted(self) -> list[dict[str, Any]]:
+        return (await self._call("GET", "/app/api/interrupted"))["runs"]
+
     async def approve(self, run_id: str) -> dict[str, Any]:
         return await self._call("POST", f"/app/api/runs/{run_id}/approve")
 
@@ -170,14 +182,21 @@ async def drive(
     poll_s: float = 1.0,
     interrupts: _Interrupts | None = None,
     leave_paused: bool = False,
+    resume_run_id: str | None = None,
 ) -> tuple[int, dict[str, Any] | None]:
     """Start the task and follow it to the end, asking ``ask`` whenever it waits for you.
 
     Returns ``(exit_code, report)``: 0 succeeded, 1 failed or stopped, 2 left paused
     (a non-interactive terminal with ``leave_paused``, i.e. ``--request``)."""
-    status = await client.start(payload)
-    run_id = status["run_id"]
-    out(f"Run {run_id} started: {status['environment']}, {status['permission_mode']} mode. Ctrl+C to take over.")
+    if resume_run_id is not None:
+        status = await client.resume_interrupted(resume_run_id)
+        run_id = status["run_id"]
+        out(f"Run {run_id} resumed from step {status['step_count']}: {status['environment']}, "
+            f"{status['permission_mode']} mode. Ctrl+C to take over.")
+    else:
+        status = await client.start(payload)
+        run_id = status["run_id"]
+        out(f"Run {run_id} started: {status['environment']}, {status['permission_mode']} mode. Ctrl+C to take over.")
     printed = 0
     auto_confirmed = 0
     while True:
@@ -276,6 +295,71 @@ def _payload(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
+def _checkpoint_client(args: argparse.Namespace):
+    """A client for the runs/resume commands, or None after printing why it cannot be made."""
+    if args.request:
+        from operon.api.auth import client_api_key
+
+        return RemoteClient(args.api, args.api_key or client_api_key())
+    if not get_settings().checkpoints:
+        print("operon: checkpoints are off; set OPERON_CHECKPOINTS=on (and restart `operon serve`).", file=sys.stderr)
+        return None
+    # This process serves no run yet, so what is still in flight on disk and has not been
+    # saved for two minutes is a dead process's (a live API saves every step).
+    from operon.core.paths import runs_dir
+    from operon.store.checkpoints import mark_interrupted_runs
+
+    mark_interrupted_runs(runs_dir(), min_age_s=120.0)
+    return LocalClient()
+
+
+async def _runs(args: argparse.Namespace) -> int:
+    client = _checkpoint_client(args)
+    if client is None:
+        return 1
+    try:
+        runs = await client.interrupted()
+    except Exception as exc:  # noqa: BLE001 - an unreachable API ends the command
+        print(f"operon runs: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        await client.close()
+    if not runs:
+        print("No interrupted runs.")
+        return 0
+    for run in runs:
+        print(f"{run['run_id']}  {run['environment']:<7} step {run['step_count']:<3} {run['intent'][:70]}")
+    print("Resume one with: operon resume <run_id>")
+    return 0
+
+
+async def _resume(args: argparse.Namespace) -> int:
+    client = _checkpoint_client(args)
+    if client is None:
+        return 1
+    if not args.request:
+        from operon.core.settings import startup_problems
+
+        errors, _warnings = startup_problems()
+        if errors:
+            print("Invalid Operon configuration:\n  - " + "\n  - ".join(errors), file=sys.stderr)
+            return 1
+    interrupts = _Interrupts()
+    previous = signal.signal(signal.SIGINT, interrupts)
+    try:
+        code, _ = await drive(
+            client, {}, ask=input, interactive=sys.stdin.isatty(), interrupts=interrupts,
+            leave_paused=bool(args.request), resume_run_id=args.run_id,
+        )
+        return code
+    except Exception as exc:  # noqa: BLE001 - a run that cannot resume ends the command
+        print(f"operon resume: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        await client.close()
+
+
 async def _run(args: argparse.Namespace) -> int:
     if getattr(args, "env", None):
         if args.request:
@@ -350,6 +434,18 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-steps", type=int, default=25)
     run.add_argument("--headless", action="store_true", help="hide the browser window")
     run.set_defaults(func=lambda a: asyncio.run(_run(a)))
+
+    for name, text in (("runs", "list runs a restart interrupted (OPERON_CHECKPOINTS)"),
+                       ("resume", "continue an interrupted run from the current screen (OPERON_CHECKPOINTS)")):
+        cp = sub.add_parser(name, help=text)
+        if name == "runs":
+            cp.add_argument("--interrupted", action="store_true", required=True, help="list the interrupted runs")
+        else:
+            cp.add_argument("run_id", help="the run to continue (see `operon runs --interrupted`)")
+        cp.add_argument("--request", action="store_true", help="ask a running API instead of this process")
+        cp.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
+        cp.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
+        cp.set_defaults(func=(lambda a: asyncio.run(_runs(a))) if name == "runs" else (lambda a: asyncio.run(_resume(a))))
 
     serve = sub.add_parser("serve", help="start the API and print the task page's link")
     serve.add_argument("--host", default="127.0.0.1")

@@ -16,7 +16,9 @@ from operon.api.dependencies import (
     get_agent_loop,
     mark_run_failed,
     publish_step_outcome,
+    require_checkpoints,
     resume_and_schedule,
+    resume_interrupted_and_schedule,
     schedule_auto_run,
     test_safe_mode_enabled,
     validate_run_id,
@@ -91,6 +93,17 @@ async def resume_run(request: ResumeRequest) -> RunResponse:
     validate_run_id(request.run_id)
     try:
         return await resume_and_schedule(get_agent_loop(), request.run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/run/{run_id}/resume-interrupted", response_model=RunResponse)
+async def resume_interrupted_run(run_id: str) -> RunResponse:
+    """Continue a browser run a restart interrupted, from the current screen (OPERON_CHECKPOINTS)."""
+    validate_run_id(run_id)
+    require_checkpoints()
+    try:
+        return await resume_interrupted_and_schedule(get_agent_loop(), run_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 

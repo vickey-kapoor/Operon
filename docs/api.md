@@ -84,6 +84,7 @@ POST /resume
 POST /stop
 POST /run/{run_id}/stop
 POST /run/{run_id}/pause
+POST /run/{run_id}/resume-interrupted   # OPERON_CHECKPOINTS: continue a run a restart interrupted
 GET  /run/{run_id}
 POST /cleanup
 GET  /health
@@ -94,8 +95,13 @@ POST /desktop/step
 POST /desktop/resume
 POST /desktop/stop
 POST /desktop/run/{run_id}/stop
+POST /desktop/run/{run_id}/resume-interrupted   # OPERON_CHECKPOINTS
 POST /desktop/cleanup
 GET  /desktop/run/{run_id}
+
+# Task page API (/app/api), also used by `operon runs` and `operon resume --request`
+GET  /app/api/interrupted                       # OPERON_CHECKPOINTS: runs a restart interrupted
+POST /app/api/runs/{run_id}/resume-interrupted
 
 # Observer / telemetry
 GET  /observer/api/runs
@@ -150,3 +156,14 @@ curl -X POST http://127.0.0.1:8080/desktop/step \
 
 Request fields for both `run-task` routes: `intent` (required), `start_url`, `headless`,
 `mode` (`batch` or `observable`) and `max_steps` (1 to 200).
+
+## Interrupted runs (OPERON_CHECKPOINTS, KAN-80)
+
+With `OPERON_CHECKPOINTS=on`, the API start marks every run the last process left `pending`,
+`running` or `waiting_for_user` as interrupted: its `status` stays `waiting_for_user`, its
+`stop_reason` is `interrupted`, and `pause_reason` says why. Nothing resumes by itself.
+`POST /run/{run_id}/resume-interrupted` (browser) or `POST /desktop/run/{run_id}/resume-interrupted`
+continues one from the current screen: the model gets the task, the actions saved in the
+run's state and a fresh screenshot, not its old conversation, and the step budget carries on
+from the saved `step_count`. A run that was waiting for approval when the process died
+stays paused until you approve it again. With the flag off these routes answer 404.

@@ -25,7 +25,7 @@ Checked against the code by read-only scans. "Partial" lists what is missing.
 | KAN-92 focus steal | Partial | No foreground check before click or type; only restore after a human pause |
 | KAN-90 DPI-safe clicks | Partial | Baseline reads system DPI only; no per-monitor DPI on the click's monitor; no mixed-DPI test |
 | KAN-91 GPU capture | Not started | Capture is `mss` (GDI) everywhere |
-| KAN-80 checkpoints and resume | Partial | Providers built; no checkpoint, no resume after an API restart |
+| KAN-80 checkpoints and resume | Built behind `OPERON_CHECKPOINTS` | Providers built; interrupted runs are marked at startup and resumed on request |
 | KAN-81 parallel runs | Partial | Runs are separate tasks but share one serialized executor; no concurrency cap |
 | KAN-85 efficiency | Partial | Batching and loop detection built; no step-efficiency score; no batching on the Gemini desktop backend |
 | KAN-102 task-state note | Partial | Full-harness verify-before-done built; no running task-state note carried between steps |

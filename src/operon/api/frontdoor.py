@@ -23,10 +23,12 @@ from operon.api import ws_stream as _ws_stream
 from operon.api.runtime import loops as _loops
 from operon.api.runtime import tasks as _tasks
 from operon.core.runtime import current_runtime
+from operon.core.settings import get_settings
 from operon.models.common import (
     MAX_INTENT_CHARS,
     RunStatus,
     RunTaskRequest,
+    StopReason,
     StrictModel,
 )
 from operon.models.logs import StepLog
@@ -252,6 +254,37 @@ async def approve(run_id: str) -> dict[str, Any]:
     await _tasks.resume_and_schedule(loop, run_id, approve_gated_action=True)
     _ws_stream.publish_event({"type": "control_ack", "action": "approve", "run_id": run_id})
     return await run_status(run_id)
+
+
+async def resume_interrupted(run_id: str) -> dict[str, Any]:
+    """Continue a run a restart interrupted, from the current screen (OPERON_CHECKPOINTS)."""
+    if not get_settings().checkpoints:
+        raise FrontDoorError("Checkpoints are off (set OPERON_CHECKPOINTS=on)", 404)
+    loop, record = await _require_run(run_id)
+    if record.stop_reason is not StopReason.INTERRUPTED:
+        raise FrontDoorError(f"Run is {record.status.value}; it was not interrupted")
+    await _tasks.resume_interrupted_and_schedule(loop, run_id)
+    _ws_stream.set_active_run(run_id, loop=loop)
+    return await run_status(run_id)
+
+
+def interrupted_runs() -> list[dict[str, Any]]:
+    """Runs a restart interrupted, newest first; empty with OPERON_CHECKPOINTS off."""
+    if not get_settings().checkpoints:
+        return []
+    from operon.store.checkpoints import list_interrupted
+
+    root = Path(_loops.get_agent_loop().run_store.root_dir)
+    return [
+        {
+            "run_id": s.run_id,
+            "intent": s.intent,
+            "environment": s.environment or "browser",
+            "step_count": s.step_count,
+            "interrupted_from": s.interrupted_from.value if s.interrupted_from else None,
+        }
+        for s in list_interrupted(root)
+    ]
 
 
 async def decline(run_id: str, hint: str | None = None) -> dict[str, Any]:

@@ -88,6 +88,19 @@ async def resume_and_schedule(loop: AgentLoop, run_id: str, *, approve_gated_act
     return response
 
 
+async def resume_interrupted_and_schedule(loop: AgentLoop, run_id: str) -> RunResponse:
+    """Resume a run a restart interrupted (OPERON_CHECKPOINTS, KAN-80) and step it again.
+
+    Only an explicit call gets here; nothing resumes at startup. A run that was waiting
+    for the person stays paused (``resume_interrupted`` re-pauses it) and is not scheduled.
+    Raises ValueError when the run is missing or not interrupted."""
+    response = await loop.resume_interrupted(run_id)
+    if response.status is RunStatus.RUNNING:
+        state = await loop.run_store.get_run(run_id)
+        schedule_auto_run(loop, run_id, state.max_steps if state is not None else 200)
+    return response
+
+
 async def cancel_auto_run(run_id: str) -> None:
     task = _clear_auto_run_task(run_id)
     if task is None or task.done():

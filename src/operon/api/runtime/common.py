@@ -21,3 +21,11 @@ def validate_run_id(run_id: str) -> None:
 def test_safe_mode_enabled() -> bool:
     return get_settings().test_safe_mode
 
+
+
+def require_checkpoints() -> None:
+    """404 unless OPERON_CHECKPOINTS is on: with it off no run is ever marked interrupted."""
+    if not get_settings().checkpoints:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoints are off (set OPERON_CHECKPOINTS=on)"
+        )

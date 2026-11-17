@@ -120,3 +120,14 @@ Subclass `EnvironmentProvider`, set `name` and `summary` (and `runs_on_host = Fa
 `stop()` when the machine needs them (`start` and `stop` must be safe to call twice).
 Register it in `registry._PROVIDERS` with a factory that imports lazily, so an unused
 provider's dependencies are never loaded. Add offline tests under `tests/environments/`.
+
+## Checkpoints and resume
+
+Run state is saved to `state.json` as a run goes. With `OPERON_CHECKPOINTS=on`, starting the API
+marks runs the last process left in flight as interrupted instead of stranding them, and
+`operon runs --interrupted` lists them. `operon resume <run_id>` (or
+`POST /run/{id}/resume-interrupted`) continues one from the current screen. A restart cannot
+bring back the browser page, a sandbox's open apps or the model's conversation, so the model gets
+the task, the saved actions and a fresh screenshot. For a sandbox or container environment,
+resume starts a fresh machine, so a task that needs the old one's state should be started again.
+Nothing resumes automatically: a desktop run would take the mouse.

@@ -144,6 +144,9 @@ class Settings(BaseModel):
     # A running note of the task, the plan and the last actions, sent with each step (KAN-102).
     task_note: bool = _env_field("OPERON_TASK_NOTE", False)
     task_note_max_items: int = _env_field("OPERON_TASK_NOTE_MAX_ITEMS", 8)
+    # On startup, runs the last process left in flight are marked interrupted and can be
+    # resumed from the current screen on request (KAN-80).
+    checkpoints: bool = _env_field("OPERON_CHECKPOINTS", False)
     planner_model: str = _env_field("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite")
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)
     trust_deny: tuple[str, ...] = _env_field("OPERON_TRUST_DENY", ())
@@ -355,6 +358,7 @@ class _Parser:
             planner=self.flag("OPERON_PLANNER", "off"),
             task_note=self.flag("OPERON_TASK_NOTE", "off"),
             task_note_max_items=min(50, max(1, self.number("OPERON_TASK_NOTE_MAX_ITEMS", "8", int, fatal=False))),
+            checkpoints=self.flag("OPERON_CHECKPOINTS", "off"),
             planner_model=self.or_default("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite"),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),

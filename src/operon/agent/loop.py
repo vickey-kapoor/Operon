@@ -55,6 +55,7 @@ from operon.agent.policy.trust_gate import (
     resolve_permission_mode,
 )
 from operon.agent.policy.verifier import VerifierService
+from operon.agent.resume_hint import RESUME_HINT_SOURCE, build_resume_hint
 from operon.agent.step_context import StepContext
 from operon.agent.task_note import build_task_note
 from operon.clients.gemini import GeminiClient
@@ -515,6 +516,8 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} not found")
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        if record.stop_reason is StopReason.INTERRUPTED:
+            await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
         if not approve_gated_action:
             # A correction is not an approval: a backend holding the calls it paused
             # on (Gemini's require_confirmation) must not run them on the next step.
@@ -561,6 +564,52 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    async def _prepare_interrupted(self, run_id: str, record) -> RunStatus | None:
+        """Rebuild this process's per-run state for a run a restart interrupted (KAN-80).
+
+        The page and the model conversation are gone: re-register the run on the executor,
+        drop any backend conversation, and hand the model a "resuming" hint listing what the
+        saved state says was done. Returns what the run was doing when it died."""
+        origin, record.interrupted_from = record.interrupted_from, None
+        async with self._executor_lock:
+            if hasattr(self.executor, "set_current_run_id"):
+                self.executor.set_current_run_id(run_id)
+            if hasattr(self.executor, "configure_run"):
+                try:
+                    self.executor.configure_run(
+                        run_id, headless=record.headless, mode=record.mode, start_url=record.start_url
+                    )
+                except Exception as exc:
+                    self._recovered(run_id, "configure_run", exc)
+        if hasattr(self.policy_service, "reset_run_context"):
+            self.policy_service.reset_run_context(run_id)
+        self._release_backend_run_state(run_id)
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints([build_resume_hint(record)], source=RESUME_HINT_SOURCE, run_id=run_id)
+        return origin
+
+    async def resume_interrupted(self, run_id: str) -> RunResponse:
+        """Continue a run a restart interrupted, from the current screen (KAN-80).
+
+        A run that was waiting for the person when the process died stays waiting: the
+        gate it paused on is forgotten, so the person approves again before anything runs."""
+        record = await self.run_store.get_run(run_id)
+        if record is None:
+            raise ValueError(f"Run {run_id!r} not found")
+        if record.stop_reason is not StopReason.INTERRUPTED or record.status is not RunStatus.WAITING_FOR_USER:
+            raise ValueError(f"Run {run_id!r} is not interrupted")
+        origin = await self._prepare_interrupted(run_id, record)
+        if origin is RunStatus.WAITING_FOR_USER:
+            record.stop_reason = StopReason.WAITING_FOR_USER
+            record.pause_reason = "Resumed after a restart. Approve to continue from the current screen."
+            await self.run_store.save_state(record)
+            return RunResponse(
+                run_id=run_id, status=record.status, intent=record.intent, step_count=record.step_count
+            )
+        record.stop_reason = None  # prepared above; resume_run must not do it twice
+        return await self.resume_run(run_id)
 
     async def step_run(self, request: StepRequest) -> RunResponse:
         lock = self._run_locks.get(request.run_id)

@@ -96,6 +96,17 @@ async def decline(run_id: str, body: NoteRequest | None = None) -> dict[str, Any
     return await _call(frontdoor.decline, run_id, body.note if body else None)
 
 
+@router.get("/interrupted")
+async def interrupted() -> dict[str, Any]:
+    """Runs a restart interrupted (OPERON_CHECKPOINTS); resume one with its resume-interrupted route."""
+    return {"runs": frontdoor.interrupted_runs()}
+
+
+@router.post("/runs/{run_id}/resume-interrupted")
+async def resume_interrupted(run_id: str) -> dict[str, Any]:
+    return await _call(frontdoor.resume_interrupted, run_id)
+
+
 @router.post("/runs/{run_id}/pause")
 async def pause(run_id: str) -> dict[str, Any]:
     return await _call(frontdoor.pause, run_id)

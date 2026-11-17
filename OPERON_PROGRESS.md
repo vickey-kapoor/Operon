@@ -57,9 +57,15 @@ by default:
 - Offline suite, scripted evals, lint, type check and the real-Chromium end-to-end suite all pass
   (numbers in `OPERON_TEST_REPORT.md`).
 - Windows Sandbox end-to-end: 3 of 3 pass on a quiet machine, twice in a row.
-- In progress: `launch_app` reports success even when no window appears (found in the sandbox,
-  where Notepad is not installed). Fix: confirm a new window or live process before reporting
-  success.
+- Fixed after the sandbox run: `launch_app` reported success even when no window appeared
+  (Notepad is not installed in the sandbox image). It now fails up front when the program is on
+  neither PATH nor App Paths, and otherwise waits for a new window. It also launches
+  Chrome, Edge and Office through their App Paths registration; before, `cmd /c` could never find
+  them.
+- The final combined regression after the launch fixes was stopped by Claude Code for low
+  memory (8 GB PC). The launch commits each passed the full offline suite in their verifier's
+  worktree (2794 passed). Rerun the commands in `OPERON_TEST_REPORT.md` once to confirm the
+  merged tip.
 
 ## Known limitations and open items
 

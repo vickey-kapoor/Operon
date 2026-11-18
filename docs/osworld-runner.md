@@ -13,8 +13,8 @@ stop-vm    az vm deallocate operon-linux       (always, even when the run fails)
 
 Inputs: `limit` (first N tasks; 5 = the pilot, 25 or 0 = all), `only` (one task id prefix),
 `max_cost_usd` (stop starting tasks past this; use 8 for all 25), `max_steps`. The report
-(`osworld-*.json`, per-task pass/fail, cost, seconds) and the log are uploaded as the
-`osworld-report` artifact, and the log's tail is on the run's summary page.
+(`osworld-*.json`, per-task pass/fail, cost, seconds), the log and each task's Operon run folder
+(screenshots of the task VM, model I/O, traces) are uploaded as the `osworld-report` artifact, so a failed task can be diagnosed from it. The log's tail is on the run's summary page.
 
 Scoring: OSWorld's `DesktopEnv.evaluate()` decides pass or fail, never Operon's own done-check.
 Runs use the thin harness with `OPERON_AUTO_CONFIRM=on` (Operon answers the model's own

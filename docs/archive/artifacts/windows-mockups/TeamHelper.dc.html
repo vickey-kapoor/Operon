@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ledger helper profile</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#9DB4FF}a:hover{color:#C3D1FF}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; font-family: Inter, system-ui, sans-serif; color: #F2F2F0; background: #0D0E11; overflow: hidden">
+<nav aria-label="Main" style="width: 68px; flex-shrink: 0; border-right: 1px solid #22252C; padding: 18px 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 14px">
+<a href="TeamHome.dc.html" aria-label="Home" style="width: 38px; height: 38px; border-radius: 12px; background: #F2F2F0; display: flex; align-items: center; justify-content: center; margin-bottom: 10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D0E11" stroke-width="2.6" aria-hidden="true"><circle cx="12" cy="12" r="7"></circle><circle cx="12" cy="12" r="2"></circle></svg></a>
+<a href="TeamHelper.dc.html" aria-label="Ledger" style="width: 40px; height: 40px; border-radius: 50%; background: #2F9E62; color: #0D0E11; font-weight: 700; display: flex; align-items: center; justify-content: center; text-decoration: none; box-shadow: 0 0 0 2px #0D0E11, 0 0 0 4px #F2F2F0">L</a>
+<a href="TeamChat.dc.html" aria-label="Inbox" style="width: 40px; height: 40px; border-radius: 50%; background: #9B87FF; color: #0D0E11; font-weight: 700; display: flex; align-items: center; justify-content: center; text-decoration: none">I</a>
+<a href="TeamHelper.dc.html" aria-label="Statements" style="width: 40px; height: 40px; border-radius: 50%; background: #3BB3D6; color: #0D0E11; font-weight: 700; display: flex; align-items: center; justify-content: center; text-decoration: none">S</a>
+</nav>
+<aside style="width: 320px; flex-shrink: 0; padding: 34px 28px; box-sizing: border-box; border-right: 1px solid #22252C; display: flex; flex-direction: column; gap: 18px">
+<span style="width: 112px; height: 112px; border-radius: 50%; background: #2F9E62; color: #0D0E11; font-family: 'Space Grotesk', Inter, sans-serif; font-weight: 700; font-size: 48px; display: flex; align-items: center; justify-content: center">L</span>
+<div>
+<h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 32px; font-weight: 600">Ledger</h1>
+<div style="font-size: 14px; color: #A3A7B0; margin-top: 4px">Your bookkeeper · on the team since Oct 30</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+<div style="background: #17191E; border-radius: 14px; padding: 12px"><div style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 24px; font-weight: 600">23</div><div style="font-size: 12px; color: #A3A7B0">jobs done</div></div>
+<div style="background: #17191E; border-radius: 14px; padding: 12px"><div style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 24px; font-weight: 600; color: #4ADE80">22</div><div style="font-size: 12px; color: #A3A7B0">passed every check</div></div>
+</div>
+<a href="TeamChat.dc.html" style="height: 46px; border-radius: 999px; background: #F2F2F0; color: #0D0E11; font-size: 14px; font-weight: 600; text-decoration: none; display: flex; align-items: center; justify-content: center">Talk to Ledger</a>
+<a href="TeamShowMe.dc.html" style="height: 46px; border-radius: 999px; border: 1px solid #2A2E36; color: #F2F2F0; font-size: 14px; font-weight: 600; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px"><span style="width: 9px; height: 9px; border-radius: 50%; background: #F97316"></span>Show Ledger something new</a>
+<div style="margin-top: auto; font-size: 12px; color: #A3A7B0; line-height: 1.6">Thinks with Gemini 3.5 Flash · <a href="TeamHelper.dc.html">change</a><br>Can use: accounting app, Receipts folder, Outlook (asks before sending), bank login from your vault</div>
+</aside>
+<main style="flex-grow: 1; min-width: 0; padding: 34px 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 22px">
+<section aria-labelledby="job-h">
+<h2 id="job-h" style="margin: 0 0 8px; font-size: 13px; font-weight: 600; color: #A3A7B0; letter-spacing: 0.06em">ITS JOB</h2>
+<p style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 20px; line-height: 1.5; font-weight: 500">“Keep the books up to date. Enter receipts and bills, match card charges to receipts, and tell me about anything that doesn't add up.”</p>
+</section>
+<div style="flex-grow: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+<section aria-labelledby="skills-h" style="background: #17191E; border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 12px">
+<h2 id="skills-h" style="margin: 0; font-size: 15px; font-weight: 600">Skills you showed it</h2>
+<div style="background: #20232A; border-radius: 12px; padding: 12px"><div style="font-size: 14px; font-weight: 600">Enter a receipt</div><div style="font-size: 12px; color: #A3A7B0; margin-top: 4px">Shown once · used 25 times</div><div style="font-size: 12px; color: #4ADE80; margin-top: 6px; font-weight: 600">Checks pass every time</div></div>
+<div style="background: #20232A; border-radius: 12px; padding: 12px"><div style="font-size: 14px; font-weight: 600">Match card charges</div><div style="font-size: 12px; color: #A3A7B0; margin-top: 4px">Shown once · used 2 times</div><div style="font-size: 12px; color: #FF9B9B; margin-top: 6px; font-weight: 600">1 check failed Oct 31 · <a href="TeamChat.dc.html">why</a></div></div>
+</section>
+<section aria-labelledby="rout-h" style="background: #17191E; border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 12px">
+<h2 id="rout-h" style="margin: 0; font-size: 15px; font-weight: 600">When it works</h2>
+<div style="background: #20232A; border-radius: 12px; padding: 12px"><div style="font-size: 14px; font-weight: 600">1st of each month, 8 AM</div><div style="font-size: 12px; color: #A3A7B0; margin-top: 4px">Enter last month's receipts</div></div>
+<div style="background: #20232A; border-radius: 12px; padding: 12px"><div style="font-size: 14px; font-weight: 600">When a PDF lands in Receipts</div><div style="font-size: 12px; color: #A3A7B0; margin-top: 4px">Enter it within the hour</div></div>
+<div style="font-size: 12px; color: #A3A7B0; line-height: 1.5">Add one by saying it: “every Friday, export unpaid bills”.</div>
+</section>
+<section aria-labelledby="mem-h" style="background: #17191E; border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 10px">
+<h2 id="mem-h" style="margin: 0; font-size: 15px; font-weight: 600">What it remembers</h2>
+<div style="font-size: 13px; line-height: 1.5; padding-bottom: 10px; border-bottom: 1px solid #2A2E36">Printers from Office Supply Co. go to Equipment.</div>
+<div style="font-size: 13px; line-height: 1.5; padding-bottom: 10px; border-bottom: 1px solid #2A2E36">Fiscal year starts in April.</div>
+<div style="font-size: 13px; line-height: 1.5; padding-bottom: 10px; border-bottom: 1px solid #2A2E36">Ask first over $500 and before any email.</div>
+<div style="font-size: 12px; color: #A3A7B0">Learned from your chats. Edit or delete any line.</div>
+</section>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Operon launcher</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#9AA4B2}a:hover{color:#E8ECF1}
+</style>
+</helmet>
+<div style="width: 880px; height: 560px; box-sizing: border-box; background: #0B0E13; color: #E8ECF1; font-family: Inter, system-ui, sans-serif; display: flex; align-items: center; justify-content: center">
+<div style="width: 640px; background: #151A21; border: 1px solid #2A313C; border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,0.5); display: flex; flex-direction: column">
+<div style="display: flex; align-items: center; gap: 14px; padding: 16px 20px; border-bottom: 1px solid #2A313C">
+<svg aria-hidden="true" width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="{{accent}}" stroke-width="2"><rect x="3" y="3" width="16" height="16" rx="4"></rect><circle cx="11" cy="11" r="3"></circle></svg>
+<label for="task" style="position: absolute; left: -9999px">Task for Operon</label>
+<input id="task" type="text" placeholder="What should I do?" style="flex-grow: 1; height: 44px; background: transparent; border: 0; outline: 0; color: #E8ECF1; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 22px; font-weight: 500">
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #9AA4B2; border: 1px solid #2A313C; border-radius: 6px; padding: 4px 8px">Ctrl + Space</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 4px; padding: 14px 12px 6px">
+<div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.08em; color: #9AA4B2; padding: 0 8px 6px">TRY SOMETHING</div>
+<button type="button" style="height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 8px; background: #1D232C; border: 0; border-radius: 8px; color: #E8ECF1; font-family: inherit; font-size: 15px; text-align: left">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#9AA4B2" stroke-width="1.6"><path d="M2 5h5l2 2h7v7H2z"></path></svg>
+<span style="flex-grow: 1">Sort my Downloads folder</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #9AA4B2">Enter</span>
+</button>
+<button type="button" style="height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 8px; background: transparent; border: 0; border-radius: 8px; color: #E8ECF1; font-family: inherit; font-size: 15px; text-align: left">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#9AA4B2" stroke-width="1.6"><rect x="2" y="4" width="14" height="10" rx="2"></rect><path d="M2 5l7 5 7-5"></path></svg>
+<span style="flex-grow: 1">Clean up newsletters in my inbox</span>
+</button>
+<button type="button" style="height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 8px; background: transparent; border: 0; border-radius: 8px; color: #E8ECF1; font-family: inherit; font-size: 15px; text-align: left">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#9AA4B2" stroke-width="1.6"><rect x="3" y="2" width="12" height="14" rx="2"></rect><path d="M6 6h6M6 9h6M6 12h3"></path></svg>
+<span style="flex-grow: 1">Fill in a form from a spreadsheet</span>
+</button>
+</div>
+<div style="display: flex; flex-direction: column; gap: 4px; padding: 8px 12px 12px">
+<div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.08em; color: #9AA4B2; padding: 0 8px 6px">YOUR ROUTINES</div>
+<button type="button" style="height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 8px; background: transparent; border: 0; border-radius: 8px; color: #E8ECF1; font-family: inherit; font-size: 15px; text-align: left">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="{{accent}}" stroke-width="1.6"><path d="M3 9a6 6 0 0 1 10-4.5L15 6M15 9a6 6 0 0 1-10 4.5L3 12"></path></svg>
+<span style="flex-grow: 1">Weekly Downloads tidy</span>
+<span style="font-size: 13px; color: #9AA4B2">Mondays, 9:00</span>
+</button>
+<button type="button" style="height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 8px; background: transparent; border: 0; border-radius: 8px; color: #E8ECF1; font-family: inherit; font-size: 15px; text-align: left">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="{{accent}}" stroke-width="1.6"><path d="M3 9a6 6 0 0 1 10-4.5L15 6M15 9a6 6 0 0 1-10 4.5L3 12"></path></svg>
+<span style="flex-grow: 1">Archive promotions</span>
+<span style="font-size: 13px; color: #9AA4B2">Every day</span>
+</button>
+</div>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 20px; height: 48px; border-top: 1px solid #2A313C; font-size: 13px; color: #9AA4B2">
+<div style="display: flex; align-items: center; gap: 8px">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#9AA4B2" stroke-width="1.5"><path d="M8 1.5l5 2v4c0 3.2-2.1 5.6-5 7-2.9-1.4-5-3.8-5-7v-4z"></path></svg>
+<span>Asks before anything risky</span>
+</div>
+<div style="display: flex; gap: 20px">
+<a href="#rules" style="text-decoration: none; line-height: 44px">Rules</a>
+<a href="#history" style="text-decoration: none; line-height: 44px">History</a>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#6CB6FF","options":["#6CB6FF","#5EEAD4","#F2A65A"]},"$preview":{"width":880,"height":560}}'>
+class Component extends DCLogic {
+renderVals() {
+return { accent: this.props.accent ?? '#6CB6FF' };
+}
+}
+</script>
+</body>
+</html>

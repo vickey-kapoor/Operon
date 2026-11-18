@@ -1,7 +1,9 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 Operon is a vision-first computer-use agent: it drives browsers and desktop apps
-from pixels only. See `AGENTS.md` for contributor conventions and `docs/architecture.md`
+from pixels only by default. See `AGENTS.md` for contributor conventions and `docs/architecture.md`
 for the long-form design. Standing rules, infrastructure and current open items for a
 local Claude Code session are in `docs/CLAUDE-CODE-REFERENCE.md`: read it at the start of a session.
 
@@ -38,6 +40,8 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 
 # Offline test suite (no network, no browser)
 $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests -q
+# One file or one test (tests/conftest.py sets the safe-mode, strict-errors and no-auth env defaults)
+$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/api/test_ws_browser_frames.py -q -k parallel
 
 # Free desktop end-to-end (KAN-166; CI job "Desktop (Linux container)"): real loop + real XFCE desktop
 # in Docker, scripted model ($0). Needs Docker; deselected by default.
@@ -87,7 +91,7 @@ One control loop serves both environments:
 capture -> perceive -> decide -> execute -> verify -> recover
 ```
 
-`AgentLoop` (`src/operon/agent/loop.py`, ~2300 lines) is the orchestrator. Each
+`AgentLoop` (`src/operon/agent/loop.py`, ~3000 lines) is the orchestrator. Each
 `step_run()` call is one iteration; the API drives it, so runs are resumable and
 pausable between steps. A step is a chain of stage methods (`_perceive_stage`,
 `_decide_stage`, `_gate_stage`, `_execute_and_verify_stage`, `_recover_stage`, ...)
@@ -115,10 +119,14 @@ owns CDP on port 9222 and streams JPEG frames over `/ws/stream`.
 
 These are load-bearing — violating them silently breaks the agent.
 
-- **Vision-only.** No DOM, CSS selectors, XPath, accessibility tree, or Playwright
-  `locator()` in the perception/policy path. All targeting goes through `UIElement`
-  coordinates from perception output. Improving perception is the intended fix for
-  bad targeting.
+- **Vision-only by default.** With default settings, no DOM, CSS selectors, XPath,
+  accessibility tree, or Playwright `locator()` in the perception/policy path. All
+  targeting goes through `UIElement` coordinates from perception output. Improving
+  perception is the intended fix for bad targeting.
+  Exception: the opt-in perception modes (`OPERON_PERCEPTION=a11y|dom`, default off)
+  may read the accessibility tree or DOM, only inside their own perception backend.
+  They must still emit `UIElement` coordinates, and no code outside that backend may
+  depend on them.
 - **Rules before LLM (full harness).** Anything decidable deterministically belongs in
   `PolicyRuleEngine` (`agent/policy/rules.py`). Post-LLM guards (e.g.
   `_reject_premature_stop`) live on `PolicyCoordinator`. Gemini Computer Use reports no
@@ -147,24 +155,9 @@ These are load-bearing — violating them silently breaks the agent.
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 
-For code work in Claude Code, the main session (Opus) runs this pipeline. The subagents are
-defined in `.claude/agents/` with their model pinned in frontmatter (scanner and verifier also have a
-restricted tool list).
-
-1. **Plan (main session, Opus, max effort).** Write the plan as a script: the question, the
-   files or areas to scan, and how each fix will be checked. The main session does not edit code.
-2. **Scan (`scanner`, Haiku, read-only).** Launch several in parallel, one per area, to find
-   candidates with file:line evidence. Scanners only read and search; they never edit.
-3. **Code (`coder`, Sonnet).** One coder per fix, each in its own isolated git worktree
-   (`isolation: worktree`). Coders write all code and tests and run the relevant tests.
-4. **Verify (`verifier`, Opus, independent).** Every finding and every fix gets a fresh verifier
-   that did not write it: confirm the issue is real, review the diff against the invariants
-   above, and run lint, type check and the relevant tests. Findings that fail verification
-   are dropped, not passed on.
-5. **Sign off (main session, Opus).** Review only verified findings and fixes, bring the
-   worktree changes onto the working branch, run the full offline suite once, and sign off
-   before anything is pushed. Codex reviews every PR; never merge until Vickey writes "merge"
-   for that PR.
+For any code change, follow the `pipeline` skill (`/pipeline <task>`): Opus plans, Haiku
+scanners find, Sonnet coders fix in isolated worktrees, a fresh Opus verifier checks.
+The main session does not edit code. Never merge until Vickey writes "merge" for that PR.
 
 Worktrees have no `.venv` of their own and the editable install points at the main checkout's
 `src/`, so in a worktree run the main checkout's venv by absolute path, from the worktree root, with `PYTHONPATH=src` (PowerShell:

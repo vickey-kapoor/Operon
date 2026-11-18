@@ -99,8 +99,24 @@ def wait_for_desktop(url: str, *, min_bytes: int = 200_000, timeout_s: float = 1
     return False
 
 
+def write_task_log(logs_dir: str | None, task_id: str, header: str, stdout: str, stderr: str) -> str | None:
+    """Save one task's Operon output to ``<logs_dir>/<task id>.log``; None if unset or unwritable."""
+    if not logs_dir:
+        return None
+    path = Path(logs_dir) / f"{task_id}.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = f"{header}\n\n=== stdout ===\n{stdout}\n\n=== stderr ===\n{stderr}\n"
+        path.write_text(body, encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"warning: could not write {path}: {exc}", file=sys.stderr)
+        return None
+    return str(path)
+
+
 def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
             python: str | None = None, runs_root: str | None = None, settle_s: float = EVALUATE_SETTLE_S,
+            logs_dir: str | None = None,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
     started = time.monotonic()
     wall_started = time.time()
@@ -108,21 +124,25 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
     url = f"http://{env.vm_ip}:{env.server_port}"
     wait_for_desktop(url)
     run_id, note = None, ""
+    out_text, err_text = "", ""
     try:
         done = run(operon_command(task["instruction"], max_steps, python), env=operon_env(url, runs_root), capture_output=True,
                    text=True, timeout=timeout_s, check=False)
-        run_id = parse_run_id((done.stdout or "") + (done.stderr or ""))
+        out_text, err_text = done.stdout or "", done.stderr or ""
+        run_id = parse_run_id(out_text + err_text)
         note = f"operon exit {done.returncode}"
     except subprocess.TimeoutExpired as exc:
         partial = [(x.decode("utf-8", "replace") if isinstance(x, bytes) else x or "") for x in (exc.stdout, exc.stderr)]
+        out_text, err_text = partial
         run_id = parse_run_id("".join(partial))
         note = f"operon timed out after {timeout_s:.0f}s"
+    log = write_task_log(logs_dir, task["id"], note, out_text, err_text)
     run_id = run_id or find_run_since(runs_root, wall_started)
     time.sleep(settle_s)  # let the apps flush their state to disk before the checker reads it
     score = float(env.evaluate())  # OSWorld's evaluator decides
     return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0,
             "run_id": run_id, "cost_usd": round(run_cost(run_id, runs_root), 4), "seconds": round(time.monotonic() - started),
-            "note": note}
+            "note": note, "log": log}
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -193,7 +213,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
                 break
             result = run_one(env, task, task_config(repo, task), max_steps=args.max_steps,
                              timeout_s=args.task_timeout, python=args.operon_python,
-                             runs_root=str(out / "osworld-runs"), run=run)
+                             runs_root=str(out / "osworld-runs"),
+                             logs_dir=str(out / "osworld-logs"), run=run)
             spent += result["cost_usd"]
             results.append(result)
             save()  # after every task: a later failure or Ctrl+C must not lose finished scores

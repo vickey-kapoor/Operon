@@ -249,7 +249,11 @@ async def _frame_pusher(q: asyncio.Queue) -> None:
         # BrowserManager is driving frames via CDP events — nothing to do here.
         if stream.browser_manager is not None:
             continue
+        # A parallel run owns its own loop and executor; prefer it over the shared one.
         browser = stream.browser_executor
+        own = getattr(stream.active_loop, "executor", None)
+        if own is not None and own is not desktop and hasattr(own, "live_frame_png"):
+            browser = own
         if run_id and browser and hasattr(browser, "live_frame_png"):
             try:
                 frame = await browser.live_frame_png(run_id)

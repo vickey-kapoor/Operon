@@ -23,7 +23,7 @@ frame captured right after the click still shows the dialog. Each can only xfail
 
 The osworld fix is ``OPERON_OSWORLD_POST_ACTION_WAIT_S`` (a fixed wait after each input action,
 off by default). ``test_frame_after_click_with_wait_shows_result`` passes with it on. The osworld
-xfail runs with the wait pinned off: it documents that the default still has the race, and if the
+xfail runs with the default wait (off): it documents that the default still has the race, and if the
 default ever changes it XPASSes (strict makes that loud) and can go green. The remote and
 settle-detect paths have no fix yet, so their xfails stay.
 
@@ -345,8 +345,7 @@ def test_frame_after_click_shows_result(desktop, dialog, tmp_path, path):
     makes that loud) and the mark can go."""
 
     async def scenario():
-        # wait pinned off for osworld so a stray env var cannot flip the documented default
-        executor = make_executor(path, desktop, tmp_path, post_action_wait_s=0.0)
+        executor = make_executor(path, desktop, tmp_path)
         try:
             return await _click_ok_then_capture(executor, dialog)
         finally:

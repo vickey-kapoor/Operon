@@ -85,15 +85,23 @@ class OperonRuntime:
     # The agent loops, built on first use (``api/runtime/loops.py``).
     browser_loop: Any = None
     desktop_loop: Any = None
+    # OPERON_PARALLEL_RUNS > 1 (KAN-81): each batch browser run's own loop (own executor),
+    # by run id, and the semaphore capping how many hold a slot.
+    run_loops: dict[str, Any] = field(default_factory=dict)
+    run_slots: asyncio.Semaphore | None = None
     # The desktop run environment (KAN-80), started once.
     desktop_provider: Any = None
     # The connected CDP browser manager the browser executor attaches to.
     active_browser_manager: Any = None
     # The built-in browser with the saved profile (KAN-138), started on first use.
     builtin_browser: Any = None
+    # True while one Python SDK run (``operon.sdk.Agent``) owns this process's loops.
+    sdk_run_active: bool = False
     control: ControlSettings = field(default_factory=ControlSettings)
     stream: StreamState = field(default_factory=StreamState)
     runs: OrderedDict[str, RunContext] = field(default_factory=OrderedDict)
+    # Warnings logged once per process (DPI awareness, KAN-90), by key.
+    warned_once: set[str] = field(default_factory=set)
 
     def run(self, run_id: str) -> RunContext:
         """The context of ``run_id``, created on first use."""

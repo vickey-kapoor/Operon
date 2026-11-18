@@ -3,6 +3,7 @@
     operon setup                    first time: save the Gemini key, install the browser, self-check
     operon run "task"               run a task here, in this process, and print a report
     operon run --request "task"     send the task to a running API and follow it
+    operon mcp                      serve Operon to MCP clients over stdio (needs operon-agent[mcp])
     operon serve                    start the API and print the task page's link
     operon cloud ...                Operon's own computer on an Azure Linux VM (see operon.cloud)
 
@@ -47,6 +48,12 @@ class LocalClient:
 
     async def status(self, run_id: str) -> dict[str, Any]:
         return await self._fd.run_status(run_id)
+
+    async def resume_interrupted(self, run_id: str) -> dict[str, Any]:
+        return await self._fd.resume_interrupted(run_id)
+
+    async def interrupted(self) -> list[dict[str, Any]]:
+        return self._fd.interrupted_runs()
 
     async def approve(self, run_id: str) -> dict[str, Any]:
         return await self._fd.approve(run_id)
@@ -115,6 +122,12 @@ class RemoteClient:
     async def status(self, run_id: str) -> dict[str, Any]:
         return await self._call("GET", f"/app/api/runs/{run_id}")
 
+    async def resume_interrupted(self, run_id: str) -> dict[str, Any]:
+        return await self._call("POST", f"/app/api/runs/{run_id}/resume-interrupted")
+
+    async def interrupted(self) -> list[dict[str, Any]]:
+        return (await self._call("GET", "/app/api/interrupted"))["runs"]
+
     async def approve(self, run_id: str) -> dict[str, Any]:
         return await self._call("POST", f"/app/api/runs/{run_id}/approve")
 
@@ -170,14 +183,21 @@ async def drive(
     poll_s: float = 1.0,
     interrupts: _Interrupts | None = None,
     leave_paused: bool = False,
+    resume_run_id: str | None = None,
 ) -> tuple[int, dict[str, Any] | None]:
     """Start the task and follow it to the end, asking ``ask`` whenever it waits for you.
 
     Returns ``(exit_code, report)``: 0 succeeded, 1 failed or stopped, 2 left paused
     (a non-interactive terminal with ``leave_paused``, i.e. ``--request``)."""
-    status = await client.start(payload)
-    run_id = status["run_id"]
-    out(f"Run {run_id} started: {status['environment']}, {status['permission_mode']} mode. Ctrl+C to take over.")
+    if resume_run_id is not None:
+        status = await client.resume_interrupted(resume_run_id)
+        run_id = status["run_id"]
+        out(f"Run {run_id} resumed from step {status['step_count']}: {status['environment']}, "
+            f"{status['permission_mode']} mode. Ctrl+C to take over.")
+    else:
+        status = await client.start(payload)
+        run_id = status["run_id"]
+        out(f"Run {run_id} started: {status['environment']}, {status['permission_mode']} mode. Ctrl+C to take over.")
     printed = 0
     auto_confirmed = 0
     while True:
@@ -265,7 +285,7 @@ def _payload(args: argparse.Namespace) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "intent": args.task,
         "environment": "desktop" if args.desktop else "browser",
-        "max_steps": args.max_steps,
+        "max_steps": args.max_steps if args.max_steps is not None else 25,
     }
     if args.url:
         payload["start_url"] = args.url
@@ -274,6 +294,100 @@ def _payload(args: argparse.Namespace) -> dict[str, Any]:
     if args.headless:
         payload["headless"] = True
     return payload
+
+
+def _api_answers(base_url: str) -> bool:
+    """Whether an Operon API already answers at ``base_url``: its /health, or a key check on it."""
+    import httpx
+
+    try:
+        return httpx.get(f"{base_url.rstrip('/')}/health", timeout=1.5).status_code in {200, 401, 403}
+    except httpx.HTTPError:
+        return False
+
+
+def _checkpoint_client(args: argparse.Namespace, *, resume_id: str | None = None):
+    """A client for the resume command (and `runs --request`), or None after printing why not.
+
+    Locally only the explicit `resume <id>` marks anything, and only that run, and only when
+    its owner process is gone; `runs` never writes."""
+    if args.request:
+        from operon.api.auth import client_api_key
+
+        return RemoteClient(args.api, args.api_key or client_api_key())
+    if not get_settings().checkpoints:
+        print("operon: checkpoints are off; set OPERON_CHECKPOINTS=on (and restart `operon serve`).", file=sys.stderr)
+        return None
+    if resume_id is not None:
+        api = get_settings().api_url or _DEFAULT_API
+        if _api_answers(api):
+            print(f"operon resume: an Operon API is running at {api}; resuming here would put two processes on "
+                  f"one run. Use `operon resume {resume_id} --request` instead.", file=sys.stderr)
+            return None
+        from operon.core.paths import runs_dir
+        from operon.store.checkpoints import mark_interrupted_runs
+
+        # Legacy runs (no owner file) count as dead after two minutes without a save.
+        mark_interrupted_runs(runs_dir(), min_age_s=120.0, only=resume_id)
+    return LocalClient()
+
+
+async def _runs(args: argparse.Namespace) -> int:
+    if args.request:
+        client = _checkpoint_client(args)
+        try:
+            runs = await client.interrupted()
+        except Exception as exc:  # noqa: BLE001 - an unreachable API ends the command
+            print(f"operon runs: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            await client.close()
+    else:
+        if not get_settings().checkpoints:
+            print("operon: checkpoints are off; set OPERON_CHECKPOINTS=on (and restart `operon serve`).", file=sys.stderr)
+            return 1
+        from operon.core.paths import runs_dir
+        from operon.store.checkpoints import find_interrupted
+
+        # Read-only: what a scan would flag is worked out in memory, nothing is written.
+        runs = [
+            {"run_id": s.run_id, "intent": s.intent, "environment": s.environment or "browser", "step_count": s.step_count}
+            for s in find_interrupted(runs_dir(), min_age_s=120.0)
+        ]
+    if not runs:
+        print("No interrupted runs.")
+        return 0
+    for run in runs:
+        print(f"{run['run_id']}  {run['environment']:<7} step {run['step_count']:<3} {run['intent'][:70]}")
+    print("Resume one with: operon resume <run_id>")
+    return 0
+
+
+async def _resume(args: argparse.Namespace) -> int:
+    client = _checkpoint_client(args, resume_id=args.run_id)
+    if client is None:
+        return 1
+    if not args.request:
+        from operon.core.settings import startup_problems
+
+        errors, _warnings = startup_problems()
+        if errors:
+            print("Invalid Operon configuration:\n  - " + "\n  - ".join(errors), file=sys.stderr)
+            return 1
+    interrupts = _Interrupts()
+    previous = signal.signal(signal.SIGINT, interrupts)
+    try:
+        code, _ = await drive(
+            client, {}, ask=input, interactive=sys.stdin.isatty(), interrupts=interrupts,
+            leave_paused=bool(args.request), resume_run_id=args.run_id,
+        )
+        return code
+    except Exception as exc:  # noqa: BLE001 - a run that cannot resume ends the command
+        print(f"operon resume: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        await client.close()
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -286,7 +400,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.request:
         from operon.api.auth import client_api_key
 
-        client = RemoteClient(args.api, args.api_key or client_api_key())
+        client = RemoteClient(args.api or get_settings().api_url or _DEFAULT_API, args.api_key or client_api_key())
     else:
         from operon.core.settings import startup_problems
 
@@ -317,6 +431,21 @@ async def _run(args: argparse.Namespace) -> int:
         await client.close()
 
 
+def _run_entry(args: argparse.Namespace) -> int:
+    from operon.taskfile import run_tasks_command, tasks_flag_problem
+
+    problem = tasks_flag_problem(args)
+    if problem:
+        print(f"operon run: {problem}", file=sys.stderr)
+        return 2
+    if args.tasks:
+        return run_tasks_command(args)
+    if not args.task:
+        print("operon run: give a task, or --tasks FILE", file=sys.stderr)
+        return 2
+    return asyncio.run(_run(args))
+
+
 def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -331,6 +460,12 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mcp(args: argparse.Namespace) -> int:  # noqa: ARG001 - subcommand signature
+    from operon import mcp_server
+
+    return mcp_server.main()
+
+
 def build_parser() -> argparse.ArgumentParser:
     from operon import __version__
 
@@ -339,28 +474,48 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run a task and print a report")
-    run.add_argument("task", help="what Operon should do, in plain words")
+    run.add_argument("task", nargs="?", default=None, help="what Operon should do, in plain words")
+    run.add_argument("--tasks", default=None, help="run the tasks in this YAML file (see docs/task-files.md)")
+    run.add_argument("--junit", default=None, help="with --tasks: write a JUnit XML report here")
+    run.add_argument("--only", action="append", default=None, help="with --tasks: run only the task with this name (repeatable)")
+    run.add_argument("--fail-fast", action="store_true", help="with --tasks: stop after the first failing task")
     run.add_argument("--request", action="store_true", help="send the task to a running API instead of running it here")
-    run.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
+    run.add_argument("--api", default=None, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
     run.add_argument("--desktop", action="store_true", help="run on the desktop instead of in the browser")
     run.add_argument("--env", default=None, help="desktop run environment (default $OPERON_ENVIRONMENT, else live; see `operon envs`)")
     run.add_argument("--url", default=None, help="page to open first (browser)")
     run.add_argument("--mode", choices=["ask", "risky", "auto"], default=None, help="permission mode (default $OPERON_PERMISSION_MODE, else risky)")
-    run.add_argument("--max-steps", type=int, default=25)
+    run.add_argument("--max-steps", type=int, default=None, help="step limit (default 25)")
     run.add_argument("--headless", action="store_true", help="hide the browser window")
-    run.set_defaults(func=lambda a: asyncio.run(_run(a)))
+    run.set_defaults(func=_run_entry)
+
+    for name, text in (("runs", "list runs a restart interrupted (OPERON_CHECKPOINTS)"),
+                       ("resume", "continue an interrupted run from the current screen (OPERON_CHECKPOINTS)")):
+        cp = sub.add_parser(name, help=text)
+        if name == "runs":
+            cp.add_argument("--interrupted", action="store_true", required=True, help="list the interrupted runs")
+        else:
+            cp.add_argument("run_id", help="the run to continue (see `operon runs --interrupted`)")
+        cp.add_argument("--request", action="store_true", help="ask a running API instead of this process")
+        cp.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
+        cp.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
+        cp.set_defaults(func=(lambda a: asyncio.run(_runs(a))) if name == "runs" else (lambda a: asyncio.run(_resume(a))))
 
     serve = sub.add_parser("serve", help="start the API and print the task page's link")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)
 
-    from operon import cloud, setup_command
+    mcp = sub.add_parser("mcp", help="serve Operon to MCP clients (Claude Code, Claude Desktop) over stdio")
+    mcp.set_defaults(func=_mcp)
+
+    from operon import cloud, secrets_command, setup_command
     from operon.environments import cli as environments_cli
     from operon.environments import guest
 
     setup_command.add_parser(sub)
+    secrets_command.add_parser(sub)
     cloud.add_parser(sub)
     environments_cli.add_parser(sub)
     guest.add_parser(sub)

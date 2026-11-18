@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from operon.core.vault import HOST_FILLED
 from operon.models.policy import AgentAction
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,9 @@ FILE_FIELDS = ("artifact_path", "execution_trace_artifact_path")
 
 class ExecuteRequest(BaseModel):
     action: AgentAction
+    # The host already filled a secret into this action's text (KAN-103): type it without
+    # the clipboard, do not look for placeholders in it, and mask it in the reply.
+    secret_filled: bool = False
 
 
 class CallRequest(BaseModel):
@@ -137,7 +141,11 @@ def create_guest_app(executor: Any, token: str) -> FastAPI:
 
     @app.post("/execute", dependencies=guarded)
     async def execute(body: ExecuteRequest) -> dict[str, Any]:
-        result = await executor.execute(body.action)
+        token = HOST_FILLED.set(body.secret_filled)
+        try:
+            result = await executor.execute(body.action)
+        finally:
+            HOST_FILLED.reset(token)
         files = {name: _read_b64(getattr(result, name)) for name in FILE_FIELDS}
         return {"result": result.model_dump(mode="json"), "files": files}
 

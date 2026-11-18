@@ -181,6 +181,7 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
         )
     )
     run_store = Mock()
+    run_store.root_dir = None
     run_store.get_run = AsyncMock(return_value=initial_state)
     run_store.set_status = AsyncMock(return_value=final_state)
     run_store.update_state = AsyncMock(return_value=updated_state)
@@ -276,6 +277,7 @@ async def test_agent_loop_does_not_cleanup_non_terminal_runs() -> None:
         )
     )
     run_store = Mock()
+    run_store.root_dir = None
     run_store.get_run = AsyncMock(return_value=initial_state)
     run_store.set_status = AsyncMock(return_value=final_state)
     run_store.update_state = AsyncMock(return_value=updated_state)
@@ -332,6 +334,7 @@ async def test_agent_loop_does_not_cleanup_non_terminal_runs() -> None:
 async def test_agent_loop_start_run_delegates_to_store_only() -> None:
     created = AgentState(run_id="run-3", intent="Create draft", headless=True, status=RunStatus.PENDING)
     run_store = Mock()
+    run_store.root_dir = None
     run_store.create_run = Mock(return_value=created)
 
     executor = Mock()
@@ -372,6 +375,7 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_test_safe_mode(
 ) -> None:
     created = AgentState(run_id="run-safe", intent="Create draft", status=RunStatus.PENDING)
     run_store = Mock()
+    run_store.root_dir = None
     run_store.create_run = Mock(return_value=created)
 
     executor = Mock()
@@ -406,6 +410,7 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_browser_mode() -> Non
 
     created = AgentState(run_id="run-browser", intent="Browser task", status=RunStatus.PENDING)
     run_store = Mock()
+    run_store.root_dir = None
     run_store.create_run = Mock(return_value=created)
 
     executor = Mock()
@@ -445,6 +450,7 @@ async def test_agent_loop_start_run_runs_reset_desktop_in_desktop_mode(
 
     created = AgentState(run_id="run-desktop", intent="Desktop task", status=RunStatus.PENDING)
     run_store = Mock()
+    run_store.root_dir = None
     run_store.create_run = Mock(return_value=created)
 
     executor = Mock()
@@ -515,6 +521,7 @@ async def test_agent_loop_marks_benchmark_precondition_stop_as_failed() -> None:
         )
     )
     run_store = Mock()
+    run_store.root_dir = None
     run_store.get_run = AsyncMock(return_value=initial_state)
     run_store.set_status = AsyncMock(return_value=failed_state)
     run_store.update_state = AsyncMock(return_value=updated_state)
@@ -1896,6 +1903,7 @@ def _expect_loop(tmp_path):
     loop.perception_service = MagicMock()
     loop._recovered_errors = {}
     loop._expect_reminded = {}
+    loop._secret_site_approved = {}
     loop._artifacts = MagicMock()
     loop._artifacts.before_path.return_value = str(tmp_path / "step_1" / "before.png")
     return loop

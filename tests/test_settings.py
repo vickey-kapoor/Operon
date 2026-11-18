@@ -178,7 +178,13 @@ _EXPERIMENTAL_OFF = [
     ("progress_revisit", False),
     ("settle_detect", False),
     ("change_note", False),
+    ("focus_guard", False),
+    ("trust_categories", False),
+    ("secrets", False),
+    ("dpi_aware", False),
     ("planner", False),
+    ("task_note", False),
+    ("checkpoints", False),
     ("click_text", False),
     ("expect_check", False),
     ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
@@ -188,6 +194,7 @@ _EXPERIMENTAL_OFF = [
     ("grounder", "deterministic"),
     ("bestofn_n", 1),
     ("bestofn_confidence", 1.0),
+    ("parallel_runs", 1),
 ]
 # Boolean switches that are off by default but not experimental features.
 _PLAIN_SWITCHES_OFF = [
@@ -213,7 +220,8 @@ _PLAIN_CONFIG = {
     "desktop_thinking", "desktop_fallback_model", "desktop_verifier_model", "desktop_verifier_thinking",
     "browser_backend", "browser_model", "browser_thinking", "browser_fallback_backend",
     "browser_fallback_model", "browser_verifier_model", "browser_verifier_thinking", "settle_max_s",
-    "planner_model", "trust_deny", "trust_confirm", "trust_allow_domains", "permission_mode",
+    "planner_model", "task_note_max_items", "trust_deny", "trust_confirm", "trust_allow_domains", "trust_category_list",
+    "permission_mode",
     "allowed_file_roots", "zoom_min_side", "zoom_factor", "environment", "desktop_platform",
     "sandbox_memory_mb", "sandbox_start_timeout", "container_image", "container_start_timeout",
     "container_ca_bundle", "osworld_url", "browser_width", "browser_height", "browser_profile_dir",

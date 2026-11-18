@@ -79,7 +79,20 @@ printer, microphone and camera redirection are off. Everything inside is wiped o
 
 Limits: one sandbox at a time (a Windows rule); the Microsoft Store Python cannot be shared,
 so use Python from python.org; screen recordings stay inside the sandbox. Settings:
-`OPERON_SANDBOX_MEMORY_MB` (4096), `OPERON_SANDBOX_START_TIMEOUT` (240 seconds).
+`OPERON_SANDBOX_MEMORY_MB` (4096), `OPERON_SANDBOX_START_TIMEOUT` (240 seconds). Once the sandbox has run its logon command the guest gets at least 150 more seconds to report ready, even if the budget is used up. If the sandbox closes before the guest is up (a busy or low-memory PC), the start is retried once, so the worst case is about two budgets plus up to 90 s waiting for the closing sandbox between them, and up to 90 s waiting for any earlier sandbox before the first try.
+
+### End-to-end test (KAN-93)
+
+`tests/desktop_e2e_windows/` runs the real agent loop against a real Windows desktop in the
+sandbox with a scripted model, so it costs nothing. It opens one sandbox for the whole module
+(about two minutes to boot), has Notepad save a file into the shared `exchange` folder and
+grades from that file. It skips when Windows Sandbox is not ready, and is deselected by default:
+
+```powershell
+$env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m pytest tests/desktop_e2e_windows -m windows_sandbox -o addopts=""
+```
+
+Close any other Windows Sandbox first (only one can run at a time).
 
 ## Linux desktop container (`linux-container`)
 
@@ -120,3 +133,14 @@ Subclass `EnvironmentProvider`, set `name` and `summary` (and `runs_on_host = Fa
 `stop()` when the machine needs them (`start` and `stop` must be safe to call twice).
 Register it in `registry._PROVIDERS` with a factory that imports lazily, so an unused
 provider's dependencies are never loaded. Add offline tests under `tests/environments/`.
+
+## Checkpoints and resume
+
+Run state is saved to `state.json` as a run goes. With `OPERON_CHECKPOINTS=on`, starting the API
+marks runs the last process left in flight as interrupted instead of stranding them, and
+`operon runs --interrupted` lists them. `operon resume <run_id>` (or
+`POST /run/{id}/resume-interrupted`) continues one from the current screen. A restart cannot
+bring back the browser page, a sandbox's open apps or the model's conversation, so the model gets
+the task, the saved actions and a fresh screenshot. For a sandbox or container environment,
+resume starts a fresh machine, so a task that needs the old one's state should be started again.
+Nothing resumes automatically: a desktop run would take the mouse.

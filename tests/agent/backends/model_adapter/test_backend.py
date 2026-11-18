@@ -169,9 +169,12 @@ async def test_gate_pause_is_reported_as_not_executed(frame) -> None:
 async def test_hints_reach_the_next_turn_once(frame) -> None:
     client = ScriptedChat([chat_reply(tool_calls=[tool_call("wait", seconds=1)])])
     backend = _backend(client)
-    backend.add_advisory_hints(["The cart is in the top right."], run_id="run-1")
+    backend.add_advisory_hints(["The cart is in the top right."], source="change_note", run_id="run-1")
+    backend.add_advisory_hints(["Open the page first."], source="planner", run_id="run-1")
     await _step(backend, frame, state(), "s1")
-    assert "The cart is in the top right." in client.requests[0]["messages"][-1]["content"][-1]["text"]
+    text = client.requests[0]["messages"][-1]["content"][-1]["text"]
+    assert "Advisory hints:\n- The cart is in the top right.\n- Open the page first." in text
+    assert "('" not in text
     await _step(backend, frame, state((ActionType.WAIT, True)), "s2")
     assert "The cart" not in str(client.requests[1]["messages"][-1])
 

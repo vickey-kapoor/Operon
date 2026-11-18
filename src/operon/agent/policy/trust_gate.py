@@ -20,7 +20,14 @@ the action's ``text``, target ``url``, and resolved target-element name. Deny
 takes precedence over confirm.
 
 Config:
-    OPERON_TRUST_GATE           on | off        master switch (default on)
+    OPERON_TRUST_CATEGORIES     on | off        named risk categories (payment, send, delete,
+                                                 account, install) matched on word boundaries
+                                                 against a clicked element's short label; with no
+                                                 label, only a quoted target or a multi-word risk
+                                                 phrase in the model's stated reason;
+                                                 default off (KAN-103)
+    OPERON_TRUST_CATEGORY_LIST  comma-separated  categories to enforce (default all five)
+    OPERON_TRUST_GATE          on | off        master switch (default on)
     OPERON_TRUST_DENY           comma-separated  phrases that block (default none)
     OPERON_TRUST_CONFIRM        comma-separated  phrases needing approval
                                                  (default: a conservative built-in set)
@@ -44,11 +51,13 @@ Permission modes (KAN-89) adjust the gate's verdict per run, after the rules abo
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
 
 from operon.core.settings import get_settings
+from operon.core.vault import action_uses_secret
 
 
 class PermissionMode(str, Enum):
@@ -68,6 +77,87 @@ class TrustResult:
     verdict: TrustVerdict
     reason: str = ""
     matched: str = ""
+    # Named risk category (KAN-103) that made this a CONFIRM, else "".
+    category: str = ""
+    # A CONFIRM that ``auto`` mode may not skip (typing a secret, KAN-103).
+    always: bool = False
+
+
+# Named risk categories (KAN-103, ``OPERON_TRUST_CATEGORIES``, default off). Each phrase is
+# matched case-insensitively on WORD BOUNDARIES, so "pay" hits "Pay now" but not "Payday",
+# "Payments history" or "Resend code". Dict order is the match priority.
+RISK_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "payment": ("pay", "buy", "purchase", "checkout", "place order", "subscribe", "transfer", "wire", "donate"),
+    "send": ("send", "post", "publish", "submit", "reply all", "share"),
+    "delete": ("delete", "remove", "erase", "wipe", "uninstall", "format disk", "format drive", "empty trash", "permanently"),
+    "account": ("sign out of all", "change password", "close account", "revoke"),
+    "install": ("install", "run as administrator", "allow", "grant access"),
+}
+
+
+def _phrase_regex(phrase: str) -> str:
+    return r"\s+".join(re.escape(word) for word in phrase.split())
+
+
+_CATEGORY_PATTERNS: dict[str, re.Pattern[str]] = {
+    name: re.compile(r"(?<!\w)(?:" + "|".join(_phrase_regex(p) for p in phrases) + r")(?!\w)")
+    for name, phrases in RISK_CATEGORIES.items()
+}
+# A button label is a few words; a longer string is a heading or sentence ("Send us feedback
+# about the new design") and is not judged by label.
+_MAX_LABEL_WORDS = 5
+# "Don't allow", "Do not allow", "Cancel payment" decline the action; they are not it.
+_NEGATED_LABEL = re.compile(r"^(?:don['\u2019]?t|do\s+not|cancel)(?!\w)")
+
+
+def match_risk_category(text: str, categories: tuple[str, ...]) -> tuple[str, str]:
+    """``(category, phrase)`` for the first enabled category whose phrase appears in the
+    short button-like label ``text``, else ``("", "")``. Longer text and labels that start
+    with a negation (don't / do not / cancel) never match."""
+    lowered = text.lower().strip()
+    if not lowered or len(lowered.split()) > _MAX_LABEL_WORDS or _NEGATED_LABEL.match(lowered):
+        return "", ""
+    for name, pattern in _CATEGORY_PATTERNS.items():
+        if name in categories and (found := pattern.search(lowered)):
+            return name, found.group(0)
+    return "", ""
+
+
+# The model's prose (no element list under computer-use backends) is far noisier than a label
+# ("remove the price filter", "pay attention", "submit the search"), so it is judged only by
+# multi-word phrases that unambiguously name a risky action: bare words never fire on it.
+_REASON_PHRASES: dict[str, tuple[str, ...]] = {
+    "payment": ("place order", "buy now", "pay now", "confirm payment", "send money", "wire transfer", "transfer funds"),
+    "send": ("reply all",),
+    "delete": ("empty trash", "delete permanently", "permanently delete", "delete account"),
+    "account": ("sign out of all", "change password", "close account"),
+    "install": ("grant access", "run as administrator", "install now"),
+}
+_REASON_PATTERNS: dict[str, re.Pattern[str]] = {
+    name: re.compile(r"(?<!\w)(?:" + "|".join(_phrase_regex(p) for p in phrases) + r")(?!\w)")
+    for name, phrases in _REASON_PHRASES.items()
+}
+# A quoted target in the reason: 'Pay now', "Pay now" or curly quotes. The opening quote must
+# not follow a letter, so the apostrophe in "I'll" does not open one.
+_QUOTED = re.compile(
+    r"""(?<!\w)(?:'([^']{1,60})'|"([^"]{1,60})"|\u2018([^\u2019]{1,60})\u2019|\u201c([^\u201d]{1,60})\u201d)(?!\w)"""
+)
+
+
+def match_reason_category(reason: str, categories: tuple[str, ...]) -> tuple[str, str]:
+    """``(category, phrase)`` for the model's stated reason when it names a risky target:
+    first a quoted target phrase (judged like a label), else a multi-word risk phrase."""
+    lowered = reason.lower().strip()
+    if not lowered:
+        return "", ""
+    for quoted in _QUOTED.finditer(lowered):
+        category, phrase = match_risk_category(next(g for g in quoted.groups() if g), categories)
+        if category:
+            return category, phrase
+    for name, pattern in _REASON_PATTERNS.items():
+        if name in categories and (found := pattern.search(lowered)):
+            return name, found.group(0)
+    return "", ""
 
 
 # Conservative default high-risk phrases (used when the gate is enabled and no
@@ -94,6 +184,8 @@ class TrustGate:
     deny: tuple[str, ...] = ()
     confirm: tuple[str, ...] = ()
     allow_domains: tuple[str, ...] = ()
+    # Enabled risk categories (KAN-103); empty = the feature is off.
+    categories: tuple[str, ...] = ()
 
     def describe(self, action: object) -> str:
         """Human-meaningful text for an action: its typed value, URL, and the
@@ -136,6 +228,14 @@ class TrustGate:
                 return None
         return host
 
+    def _page_allows_secrets(self, current_url: str | None) -> bool:
+        """True when an allowlist is set and the page itself is on it (a desktop app has no page)."""
+        if not self.allow_domains or not current_url:
+            return False
+        if urlparse(current_url).scheme not in ("http", "https"):
+            return False
+        return self._host_blocked(current_url) is None
+
     def _page_blocked(self, current_url: str | None) -> str | None:
         """The page's host when the browser already sits outside the allowlist, e.g.
         after the model clicked a link; only web pages are judged (about:blank and
@@ -177,9 +277,19 @@ class TrustGate:
             blocked_page = self._page_blocked(current_url)
             if blocked_page is not None:
                 return TrustResult(TrustVerdict.DENY, "current page not in allowlist", blocked_page)
+        if get_settings().secrets and action_uses_secret(action) and not self._page_allows_secrets(current_url):
+            # KAN-103: typing a stored secret always needs a person, in every permission mode,
+            # unless the page is on a domain the operator put on OPERON_TRUST_ALLOW_DOMAINS.
+            host = (urlparse(current_url).hostname or "") if current_url else ""
+            reason = "typing a secret needs approval" + (f" (page: {host})" if host else "")
+            return TrustResult(TrustVerdict.CONFIRM, reason, "secret", "account", always=True)
         for keyword in self.confirm:
             if keyword in description:
                 return TrustResult(TrustVerdict.CONFIRM, "matched high-risk rule", keyword)
+        if self.categories:
+            found = self._category_result(action, stated_reason)
+            if found is not None:
+                return found
         if is_tool and getattr(action, "tool", None) == "run_shell":
             # No path or domain rule can judge what a command does: a person approves
             # it (``auto`` mode skips this, deny rules above still block).
@@ -195,9 +305,31 @@ class TrustGate:
                 return TrustResult(TrustVerdict.CONFIRM, "the model says this step does a high-risk action", keyword)
         return TrustResult(TrustVerdict.ALLOW)
 
+    def _category_result(self, action: object, stated_reason: str | None) -> TrustResult | None:
+        """CONFIRM when the clicked element's short label (or, when the action names no
+        target, the model's stated intent) names an enabled risk category. Typed text and
+        URLs are never judged here: typing "send" into a field is not sending."""
+        action_type = getattr(getattr(action, "action_type", None), "value", None)
+        if action_type not in _POINTER_ACTIONS:
+            return None
+        ctx = getattr(action, "target_context", None)
+        original = getattr(ctx, "original_target", None) if ctx is not None else None
+        name = getattr(original, "primary_name", None)
+        if name:
+            category, phrase = match_risk_category(str(name), self.categories)
+        else:
+            if action_type in _KEY_ACTIONS and str(getattr(action, "key", "") or "").strip().lower() not in _ENTER_KEYS:
+                return None  # only Enter / Return can submit; other keys never take the reason's word
+            category, phrase = match_reason_category(stated_reason or "", self.categories)
+        if not category:
+            return None
+        return TrustResult(TrustVerdict.CONFIRM, f"matched {category} risk category", phrase, category)
+
 
 # Actions that act on whatever is under the pointer or has focus: without a
 # resolved target name the gate cannot tell what they press.
+_KEY_ACTIONS = frozenset({"press_key", "hotkey"})
+_ENTER_KEYS = frozenset({"enter", "return"})
 _POINTER_ACTIONS = frozenset({"click", "double_click", "triple_click", "right_click", "press_key", "hotkey", "drag"})
 
 
@@ -220,7 +352,14 @@ def make_trust_gate() -> TrustGate:
         deny=settings.trust_deny,
         confirm=settings.trust_confirm or _DEFAULT_CONFIRM,
         allow_domains=settings.trust_allow_domains,
+        categories=_enabled_categories(settings.trust_category_list) if settings.trust_categories else (),
     )
+
+
+def _enabled_categories(chosen: tuple[str, ...]) -> tuple[str, ...]:
+    """The configured categories (unknown names ignored), or all five when none are named."""
+    picked = tuple(name for name in RISK_CATEGORIES if name in chosen)
+    return picked or tuple(RISK_CATEGORIES)
 
 
 # Actions that change nothing on screen or disk: "ask" mode does not pause on them.
@@ -245,7 +384,7 @@ def apply_permission_mode(result: TrustResult, action: object, mode: str | Permi
     resolved = resolve_permission_mode(mode)
     if result.verdict is TrustVerdict.DENY:
         return result
-    if resolved is PermissionMode.AUTO and result.verdict is TrustVerdict.CONFIRM:
+    if resolved is PermissionMode.AUTO and result.verdict is TrustVerdict.CONFIRM and not result.always:
         return TrustResult(TrustVerdict.ALLOW, "auto mode skips confirmations", result.matched)
     if resolved is PermissionMode.ASK and result.verdict is TrustVerdict.ALLOW:
         action_type = getattr(action, "action_type", None)

@@ -51,9 +51,13 @@ dev = [
     "mypy>=2.4.1,<3.0.0",
     "pytest-cov>=7.1.0,<8.0.0",
     "tzdata>=2025.2; sys_platform == 'win32'",
+    "mcp>=2.3.0,<3.0.0",
 ]
 notifications = [
     "win11toast>=0.36.0",
+]
+mcp = [
+    "mcp>=2.3.0,<3.0.0",
 ]
 dashboard = [
     "psycopg[binary]>=3.3",
@@ -77,6 +81,8 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "desktop_container: end-to-end desktop tests on the Linux desktop container (needs Docker; opt in with -m desktop_container, KAN-166)",
+    "windows_sandbox: end-to-end desktop tests on a real Windows desktop in Windows Sandbox (needs Windows Sandbox; opt in with -m windows_sandbox, KAN-93)",
+    "browser_e2e: end-to-end browser tests: the real loop and executor on headless Chromium, scripted model, $0 (opt in with -m browser_e2e)",
     "asyncio: mark a test as using asyncio",
     "windows_only: needs Windows; skipped elsewhere by tests/conftest.py",
     "linux_only: needs Linux; skipped elsewhere by tests/conftest.py",
@@ -84,7 +90,7 @@ markers = [
 ]
 # CI runs only fast/safe tests by default. Use `pytest -m live_server` to opt into
 # the server-required suites (or set OPERON_RUN_LIVE_SERVER_TESTS=true).
-addopts = "-m 'not live_server and not desktop_container'"
+addopts = "-m 'not live_server and not desktop_container and not windows_sandbox and not browser_e2e'"
 filterwarnings = [
     # starlette 1.2.x emits this purely on importing TestClient. We can't act on
     # it without migrating off httpx (which FastAPI's TestClient still requires),

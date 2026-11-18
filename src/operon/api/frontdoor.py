@@ -10,6 +10,7 @@ from the run itself, so callers only pass a run id.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -23,13 +24,16 @@ from operon.api import ws_stream as _ws_stream
 from operon.api.runtime import loops as _loops
 from operon.api.runtime import tasks as _tasks
 from operon.core.runtime import current_runtime
+from operon.core.settings import get_settings
 from operon.models.common import (
     MAX_INTENT_CHARS,
     RunStatus,
     RunTaskRequest,
+    StopReason,
     StrictModel,
 )
 from operon.models.logs import StepLog
+from operon.store.background_writer import bg_writer
 from operon.store.replay import load_run_replay
 from operon.store.run_store import stored_environment
 
@@ -75,7 +79,8 @@ def _environment_of(run_id: str) -> str:
 
 
 def _loop_of(run_id: str):
-    return _loop_for_environment(_environment_of(run_id))
+    own = _loops.loop_for_run(run_id)  # a parallel batch run has its own loop (KAN-81)
+    return own if own is not None else _loop_for_environment(_environment_of(run_id))
 
 
 async def _require_run(run_id: str):
@@ -92,7 +97,6 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
     A browser run with ``live_view`` runs in observable mode: one headless Chromium on
     CDP port 9222 whose screencast reaches the page over ``/ws/stream``. Without it
     (``operon run`` in process, where no page watches) it is an ordinary batch run."""
-    loop = _loop_for_environment(task.environment)
     request = RunTaskRequest(
         intent=task.intent,
         start_url=task.start_url,
@@ -101,7 +105,14 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
         permission_mode=task.permission_mode,
         mode="observable" if live_view and task.environment == "browser" else "batch",
     )
-    response = await loop.start_run(request)
+    if task.environment == "browser" and _loops.runs_in_parallel(request.mode):
+        try:
+            loop, response = await _loops.start_parallel_browser_run(request)
+        except _loops.RunSlotsFull as exc:
+            raise FrontDoorError(str(exc), 429) from exc
+    else:
+        loop = _loop_for_environment(task.environment)
+        response = await loop.start_run(request)
     close_apps = getattr(loop.executor, "close_apps_when_done", None)
     if close_apps is not None:
         # A desktop task leaves the screen as it found it: the apps it opened close when it ends.
@@ -200,7 +211,14 @@ def _waiting(loop, record) -> dict[str, Any] | None:
         return {"kind": "takeover", "reason": "You are in control. Hand back when you are done."}
     reason = getattr(record, "pause_reason", None) or record.hitl_message or "Paused."
     gate = loop.pending_gate(record.run_id) if hasattr(loop, "pending_gate") else None
-    return {"kind": "approval" if gate is not None else "needs_you", "gate": gate, "reason": reason}
+    waiting: dict[str, Any] = {"kind": "approval" if gate is not None else "needs_you", "gate": gate, "reason": reason}
+    category = loop.pending_gate_category(record.run_id) if hasattr(loop, "pending_gate_category") else None
+    verdict = loop.pending_gate_verdict(record.run_id) if hasattr(loop, "pending_gate_verdict") else None
+    if isinstance(verdict, str) and verdict:
+        waiting["verdict"] = verdict  # "deny" is a hard policy block, "confirm" is approvable
+    if isinstance(category, str) and category:
+        waiting["category"] = category  # KAN-103: only present for a named risk category pause
+    return waiting
 
 
 def _mark_finished(run_id: str) -> float:
@@ -237,6 +255,23 @@ async def run_status(run_id: str, *, recent: int = 8) -> dict[str, Any]:
     }
 
 
+def _check_environment(loop, record) -> None:
+    check = getattr(loop, "check_resume_environment", None)
+    if callable(check):
+        try:
+            check(record)
+        except ValueError as exc:  # the run started in another environment provider
+            raise FrontDoorError(str(exc)) from exc
+
+
+async def _resume(loop, record, *, approve: bool) -> None:
+    _check_environment(loop, record)
+    try:
+        await _tasks.resume_and_schedule(loop, record.run_id, approve_gated_action=approve)
+    except ValueError as exc:
+        raise FrontDoorError(str(exc)) from exc
+
+
 async def approve(run_id: str) -> dict[str, Any]:
     """Approve what the run paused on (a gate's action, or 'continue' after the model
     asked for help) and keep it going."""
@@ -245,9 +280,43 @@ async def approve(run_id: str) -> dict[str, Any]:
         raise FrontDoorError(f"Run is {record.status.value}; nothing to approve")
     if getattr(record, "in_takeover", False):
         raise FrontDoorError("You are in control; hand back instead")
-    await _tasks.resume_and_schedule(loop, run_id, approve_gated_action=True)
+    await _resume(loop, record, approve=True)
     _ws_stream.publish_event({"type": "control_ack", "action": "approve", "run_id": run_id})
     return await run_status(run_id)
+
+
+async def resume_interrupted(run_id: str) -> dict[str, Any]:
+    """Continue a run a restart interrupted, from the current screen (OPERON_CHECKPOINTS)."""
+    if not get_settings().checkpoints:
+        raise FrontDoorError("Checkpoints are off (set OPERON_CHECKPOINTS=on)", 404)
+    loop, record = await _require_run(run_id)
+    if record.stop_reason is not StopReason.INTERRUPTED:
+        raise FrontDoorError(f"Run is {record.status.value}; it was not interrupted")
+    try:
+        await _tasks.resume_interrupted_and_schedule(loop, run_id)
+    except ValueError as exc:  # e.g. the run started in another environment provider
+        raise FrontDoorError(str(exc)) from exc
+    _ws_stream.set_active_run(run_id, loop=loop)
+    return await run_status(run_id)
+
+
+def interrupted_runs() -> list[dict[str, Any]]:
+    """Runs a restart interrupted, newest first; empty with OPERON_CHECKPOINTS off."""
+    if not get_settings().checkpoints:
+        return []
+    from operon.store.checkpoints import list_interrupted
+
+    root = Path(_loops.get_agent_loop().run_store.root_dir)
+    return [
+        {
+            "run_id": s.run_id,
+            "intent": s.intent,
+            "environment": s.environment or "browser",
+            "step_count": s.step_count,
+            "interrupted_from": s.interrupted_from.value if s.interrupted_from else None,
+        }
+        for s in list_interrupted(root)
+    ]
 
 
 async def decline(run_id: str, hint: str | None = None) -> dict[str, Any]:
@@ -260,8 +329,9 @@ async def decline(run_id: str, hint: str | None = None) -> dict[str, Any]:
     text = "The user declined that action; do not do it."
     if hint and hint.strip():
         text += f" Instead: {hint.strip()}"
+    _check_environment(loop, record)  # before the hint: a refusal must leave nothing behind
     run_control.set_override_hint(run_id, text)
-    await _tasks.resume_and_schedule(loop, run_id, approve_gated_action=False)
+    await _resume(loop, record, approve=False)
     _ws_stream.publish_event({"type": "control_ack", "action": "decline", "run_id": run_id})
     return await run_status(run_id)
 
@@ -294,7 +364,11 @@ async def hand_back(run_id: str, note: str | None = None) -> dict[str, Any]:
     loop, record = await _require_run(run_id)
     if not getattr(record, "in_takeover", False):
         raise FrontDoorError("Run is not under your control")
-    await loop.hand_back(run_id, note)
+    _check_environment(loop, record)  # before the hint and in_takeover change
+    try:
+        await loop.hand_back(run_id, note)
+    except ValueError as exc:
+        raise FrontDoorError(str(exc)) from exc
     _tasks.schedule_auto_run(loop, run_id, record.max_steps)
     _ws_stream.publish_event({"type": "control_ack", "action": "handback", "run_id": run_id})
     return await run_status(run_id)
@@ -401,9 +475,40 @@ def _usage_cost(run_id: str) -> float | None:
         return None
 
 
+# How long a report waits for a finished run's task and background writes (seconds).
+SETTLE_TIMEOUT_S = 15.0
+
+
+async def settle_run(run_id: str, *, timeout_s: float | None = None) -> bool:
+    """Wait for a terminal run to finish writing: its auto-run task (the loop sets the
+    status before cleanup and the efficiency save) and the background artifact writes
+    (the run log). Bounded, so a hung finalizer cannot hang the caller: on timeout it
+    logs a warning, leaves the task running and returns False."""
+    limit = SETTLE_TIMEOUT_S if timeout_s is None else timeout_s
+
+    async def _wait() -> None:
+        task = _tasks.auto_run_task(run_id)
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            await asyncio.wait({task})  # unlike wait_for, never cancels the task
+        await bg_writer.flush()
+
+    waiter = asyncio.ensure_future(_wait())
+    done, _pending = await asyncio.wait({waiter}, timeout=limit)
+    if waiter in done:
+        if not waiter.cancelled() and waiter.exception() is not None:
+            logger.warning("Run %s: settling its writes failed: %r", run_id, waiter.exception())
+        return True
+    waiter.cancel()
+    logger.warning("Run %s did not finish writing within %.1fs; reporting what is on disk", run_id, limit)
+    return False
+
+
 async def build_report(run_id: str) -> dict[str, Any]:
     """A short result report: outcome, what it did, what the person approved or did."""
     loop, record = await _require_run(run_id)
+    if record.status in TERMINAL:
+        await settle_run(run_id)
+        loop, record = await _require_run(run_id)
     steps = _steps(loop, run_id)
     status = record.status
     stop_reason = record.stop_reason.value if record.stop_reason is not None else None

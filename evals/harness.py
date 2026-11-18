@@ -32,6 +32,7 @@ from PIL import Image, ImageDraw
 
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.backends.combined import CombinedPerceptionPolicyService
+from operon.agent.efficiency import run_efficiency
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.coordinator import PolicyCoordinator
@@ -433,6 +434,8 @@ class RunResult:
     model_requests: list[Any] = field(default_factory=list)
     # Errors the loop caught and carried on from, by site (KAN-158).
     recovered_errors: dict[str, int] = field(default_factory=dict)
+    # The run's step-efficiency score (KAN-85), as saved in its state.
+    efficiency: dict[str, Any] | None = None
 
     def summary(self) -> str:
         return (
@@ -493,11 +496,14 @@ async def _no_sleep(*_args: Any, **_kwargs: Any) -> None:
 _TERMINAL = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
 
 
-async def run_scenario(scenario: Scenario) -> RunResult:
-    """Run one scenario to completion (or its step budget) and grade it."""
+async def run_scenario(scenario: Scenario, *, root: Path | None = None) -> RunResult:
+    """Run one scenario to completion (or its step budget) and grade it.
+
+    ``root`` keeps the run's files there (a test inspects them); the default is a temp
+    folder that goes away with the run."""
     with tempfile.TemporaryDirectory(prefix=f"operon-eval-{scenario.name}-") as tmp, ExitStack() as stack:
-        root = Path(tmp)
-        (root / "frames").mkdir()
+        root = root if root is not None else Path(tmp)
+        (root / "frames").mkdir(parents=True, exist_ok=True)
         stack.enter_context(patch.dict(os.environ, {"OPERON_TEST_SAFE_MODE": "true", **scenario.env}))
         # The loop's settle/backoff waits are wall-clock sleeps; the fake screen
         # never animates, so skip them.
@@ -554,4 +560,6 @@ async def run_scenario(scenario: Scenario) -> RunResult:
             actions=[a.action_type.value for a in executor.actions],
             model_requests=requests,
             recovered_errors=dict(state.recovered_errors) if state is not None else {},
+            # A run that never ended inside the budget has no saved score: compute it from its files.
+            efficiency=(state.efficiency or run_efficiency(root / "runs" / run_id)) if state is not None else None,
         )

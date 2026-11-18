@@ -19,6 +19,7 @@ from uuid import uuid4
 import httpx
 
 from operon.core.paths import desktop_artifacts_dir
+from operon.core.vault import SecretError, redact, resolve_text, secret_endpoint_ok
 from operon.environments.guest import FILE_FIELDS
 from operon.models.capture import CaptureFrame
 from operon.models.common import FailureCategory, LoopStage
@@ -45,8 +46,12 @@ class RemoteDesktopExecutor:
         *,
         artifact_dir: str | Path | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        trusted_host: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        # The one non-loopback address a secret may be sent to: the guest address the
+        # provider itself reported (a Windows Sandbox's host-only IP).
+        self._trusted_host = trusted_host
         self._headers = {"Authorization": f"Bearer {token}"}
         self._transport = transport
         self._artifact_dir = Path(artifact_dir) if artifact_dir is not None else desktop_artifacts_dir()
@@ -54,6 +59,10 @@ class RemoteDesktopExecutor:
         self._client: httpx.AsyncClient | None = None
         self._current_run_id: str | None = None
         self._close_when_done: set[str] = set()
+        # run_id -> each secret value this host filled in (KAN-103), one by one, never the
+        # composite text. Every later guest reply of the run is masked with them; forgotten
+        # when the run ends.
+        self._secrets_used: dict[str, set[str]] = {}
         # Set by the loop around a batch: checked before each child after the first
         # (a stop, a trust gate). A callable cannot cross to the guest, so batches are
         # split here and each child goes to the guest on its own.
@@ -86,7 +95,11 @@ class RemoteDesktopExecutor:
         if not b64:
             return None
         path = self._artifact_dir / f"remote_{uuid4().hex[:8]}{suffix}"
-        path.write_bytes(base64.b64decode(b64))
+        raw = base64.b64decode(b64)
+        known = self._secrets_used.get(self._current_run_id or "")
+        if known and suffix == ".json":
+            raw = redact(raw.decode("utf-8", errors="replace"), known).encode("utf-8")
+        path.write_bytes(raw)
         return str(path)
 
     # ── the executor surface the loop uses ───────────────────────
@@ -135,17 +148,50 @@ class RemoteDesktopExecutor:
             tool_outputs=outputs or None,
         )
 
+    def _local_endpoint(self) -> bool:
+        """True when the guest is on loopback, or at exactly the address the provider reported.
+        A secret is never sent anywhere else (no general private ranges)."""
+        return secret_endpoint_ok(self.base_url, self._trusted_host)
+
     async def _execute_one(self, action: AgentAction) -> ExecutedAction:
+        # KAN-103: the guest has no vault, so a {{secret:NAME}} placeholder is filled in here,
+        # on the host, in the copy sent over the token-protected local connection. `action`
+        # itself keeps the placeholder, and the guest's reply is masked before it is returned.
+        send = action
+        secret_values: tuple[str, ...] = ()
+        run_key = self._current_run_id or ""
+        if action.action_type is ActionType.TYPE and action.text:
+            try:
+                resolved, secret_values = resolve_text(action.text)
+                if secret_values and not self._local_endpoint():
+                    raise SecretError("the run environment is not at a loopback or provider-reported address")
+            except SecretError as exc:
+                return ExecutedAction(
+                    action=action, success=False, detail=f"type failed: {exc}",
+                    failure_category=FailureCategory.EXECUTION_ERROR,
+                )
+            send = action.model_copy(update={"text": resolved})
+            if secret_values:
+                self._secrets_used.setdefault(run_key, set()).update(secret_values)
+        known = self._secrets_used.get(run_key, ())
         try:
-            data = (await self._post("/execute", {"action": action.model_dump(mode="json")})).json()
+            body: dict[str, Any] = {"action": send.model_dump(mode="json")}
+            if secret_values:
+                body["secret_filled"] = True
+            data = (await self._post("/execute", body)).json()
         except (GuestUnavailableError, httpx.HTTPStatusError) as exc:
             return ExecutedAction(
                 action=action,
                 success=False,
-                detail=f"Run environment unreachable: {exc}",
+                detail=redact(f"Run environment unreachable: {exc}", known),
                 failure_category=FailureCategory.EXECUTION_ERROR,
             )
         result = dict(data["result"])
+        if known:
+            # Any reply of the run (a clipboard read, a tool output) may carry a value typed
+            # earlier, so all replies are masked, longest value first.
+            result = redact(result, known)
+            result["action"] = action.model_dump(mode="json")
         files = data.get("files") or {}
         for name in FILE_FIELDS:
             suffix = ".json" if name == "execution_trace_artifact_path" else ".png"
@@ -178,6 +224,7 @@ class RemoteDesktopExecutor:
         self._close_when_done.add(run_id)
 
     async def aclose_run(self, run_id: str) -> int:
+        self._secrets_used.pop(run_id, None)
         if run_id in self._close_when_done:
             self._close_when_done.discard(run_id)
             await self._call("close_apps_when_done", run_id=run_id)
@@ -202,6 +249,7 @@ class RemoteDesktopExecutor:
         return bool(response.json().get("ok"))
 
     async def aclose(self) -> None:
+        self._secrets_used.clear()
         try:
             await self._call("aclose")
         except Exception:  # noqa: BLE001 - the machine may already be gone at shutdown

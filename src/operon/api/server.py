@@ -43,6 +43,16 @@ async def _lifespan(app: FastAPI):
             # Cleanup failure must never block server startup.
             logger.warning("retention_sweep skipped: %s", exc)
 
+    # 2b. Runs the last process left in flight are flagged interrupted (KAN-80). Never
+    # resumed here: the screen may have changed, and a desktop run would take the mouse.
+    if settings.checkpoints:
+        try:
+            from operon.store.checkpoints import mark_interrupted_runs
+
+            mark_interrupted_runs(runs_dir(), min_age_s=120.0)  # owner files decide; age only for older runs
+        except Exception as exc:
+            logger.warning("interrupted-run scan skipped: %s", exc)
+
     # 3. A run environment other than the live desktop (KAN-80) boots its machine now,
     # off the event loop, so the first desktop task doesn't wait for it.
     from operon.environments import DEFAULT_ENVIRONMENT, environment_name

@@ -1,4 +1,7 @@
-"""Desktop executor for full-screen computer-use automation."""
+"""Desktop executor for full-screen computer-use automation.
+
+DPI and click-coordinate pipeline notes live in ``executor/dpi.py`` (KAN-90).
+"""
 
 from __future__ import annotations
 
@@ -7,8 +10,10 @@ import ctypes
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,9 +25,23 @@ import pyperclip
 
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
 from operon.agent.perception.change_note import ChangeNoteBuffer
+from operon.agent.perception.screen_diff import (
+    BLANK_VARIANCE_THRESHOLD,
+    WIDE_REGION_RADIUS,
+    dominant_color,
+    first_blank_point,
+    is_plain_background,
+    reset_click_candidates,
+)
 from operon.agent.perception.settle import signature_from_rgb
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
+from operon.core.vault import SecretError, redact, resolve_for_type
+from operon.executor import dpi, sendinput
+
+# OPERON_DPI_AWARE: pyautogui calls SetProcessDPIAware() when imported, which locks the process
+# at system-aware for good. Per-monitor-v2 has to be set first, so this runs before that import.
+dpi.apply_awareness_early()
 
 try:
     import pyautogui
@@ -47,16 +66,16 @@ except Exception as exc:  # pragma: no cover - exercised on headless CI
         scroll=_unavailable,
     )
 
-from operon.models.capture import CaptureFrame
-from operon.models.common import FailureCategory, LoopStage
-from operon.models.execution import (
+from operon.models.capture import CaptureFrame  # noqa: E402
+from operon.models.common import FailureCategory, LoopStage  # noqa: E402
+from operon.models.execution import (  # noqa: E402
     ExecutedAction,
     ExecutionAttemptTrace,
     ExecutionTrace,
 )
-from operon.models.policy import ActionType, AgentAction
+from operon.models.policy import ActionType, AgentAction  # noqa: E402
 
-from .browser import Executor
+from .browser import Executor  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +88,12 @@ _NEW_CONSOLE = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
 # Console apps launched with _NO_CONSOLE run with no window at all; they need a console of their own.
 _CONSOLE_APPS = frozenset({"cmd.exe", "powershell.exe"})
 _MOUSEEVENTF_HWHEEL = 0x01000
+# How long a launch has to put a window on screen before it counts as failed.
+_LAUNCH_CONFIRM_TIMEOUT_S = 8.0
+_LAUNCH_POLL_INTERVAL_S = 0.25
+# A launcher that exits non-zero may still have handed off to a running shell (explorer.exe).
+_LAUNCH_EXIT_GRACE_S = 2.5
+_LAUNCH_PIDS_CACHE_S = 1.0
 
 
 def _image_pids(exe_name: str) -> frozenset[int] | None:
@@ -164,10 +189,10 @@ class HardwareBaselineError(RuntimeError):
 def validate_display_baseline(*, require_min_resolution: tuple[int, int] = (1280, 720)) -> None:
     """Check DPI scaling and primary-monitor resolution against automation baseline.
 
-    DPI at 100% (96 DPI):  coordinates map 1:1 between logical and physical pixels.
-    DPI != 100%:            logs a CoordDriftWarning — many systems legitimately run
-                            at 125 % or 150 % with per-monitor DPI awareness enabled,
-                            so this is a warning, not a hard stop.
+    DPI scaling:            logs a CoordDriftWarning only when drift is really possible
+                            (``dpi.drift_expected``: the process is DPI-unaware, or system-aware
+                            with a monitor whose true DPI differs from the system's). A uniform
+                            125 % or 150 % setup is fine and stays silent.
     Resolution < minimum:   raises HardwareBaselineError — too little screen space for
                             reliable element targeting.
     """
@@ -175,16 +200,18 @@ def validate_display_baseline(*, require_min_resolution: tuple[int, int] = (1280
         return
 
     # --- DPI scaling ---
+    scale_pct = "?"
     try:
-        dpi = ctypes.windll.user32.GetDpiForSystem()  # type: ignore[attr-defined]
-        scale_pct = round(dpi / 96 * 100)
-        if scale_pct != 100:
+        system_dpi = dpi.get_system_dpi()
+        scale_pct = round(system_dpi / 96 * 100)
+        awareness = dpi.get_awareness()
+        if dpi.drift_expected(awareness, system_dpi, dpi.enum_monitors()):
             logger.warning(
-                "CoordDriftWarning: DPI scaling is %d%% (expected 100%% / 96 DPI). "
-                "Logical↔physical pixel ratio is %.2fx — coordinate drift is possible "
-                "if per-monitor DPI awareness is not fully applied.",
+                "CoordDriftWarning: the process is %s-aware at %s%% system scale and a display's scale "
+                "differs from what the process sees, so click coordinates can drift. "
+                "Set OPERON_DPI_AWARE=on to fix it.",
+                awareness,
                 scale_pct,
-                dpi / 96,
             )
     except (AttributeError, OSError) as exc:
         logger.debug("validate_display_baseline: DPI check skipped: %s", exc)
@@ -203,7 +230,7 @@ def validate_display_baseline(*, require_min_resolution: tuple[int, int] = (1280
                 f"{min_w}x{min_h}. Element targeting will be unreliable at this size. "
                 "Increase your display resolution before running Operon."
             )
-        logger.debug("Display baseline OK: %dx%d @ %d%% DPI", w, h, scale_pct if "scale_pct" in dir() else "?")
+        logger.debug("Display baseline OK: %dx%d @ %d%% DPI", w, h, scale_pct)
     except HardwareBaselineError:
         raise
     except Exception as exc:
@@ -222,7 +249,10 @@ def _set_dpi_awareness() -> None:
         return
     try:
         # PMv2: -4 == DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (Win10 1607+)
-        ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)  # type: ignore[attr-defined]
+        # The handle must be passed pointer-sized; a plain int is 32-bit and the call fails.
+        # It also fails (returns 0, no exception) when awareness was already fixed, e.g. by
+        # pyautogui's import-time SetProcessDPIAware: dpi.warn_if_drifting() reports that (KAN-90).
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # type: ignore[attr-defined]
     except (AttributeError, OSError):
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
@@ -250,19 +280,16 @@ def _foreground_monitor() -> dict | None:
         hmon = user32.MonitorFromWindow(hwnd, 2)
         if not hmon:
             return None
+        info = ctypes.create_string_buffer(40)
+        ctypes.c_uint32.from_buffer(info, 0).value = 40  # cbSize
+        if not user32.GetMonitorInfoA(hmon, info):
+            return None
+        # rcMonitor occupies bytes 4-20: left, top, right, bottom (4xint32). Match the
+        # full rect: monitors can share a left edge or have negative origins (KAN-90).
+        left, top, right, bottom = (ctypes.c_int32.from_buffer(info, 4 + i * 4).value for i in range(4))
         with _mss() as sct:
-            for mon in sct.monitors[1:]:  # skip monitors[0] (virtual combined)
-                # mss monitor dicts use left/top/width/height; cross-reference via
-                # the monitor's origin to match the HMONITOR returned by Win32.
-                info = ctypes.create_string_buffer(40)
-                ctypes.c_uint32.from_buffer(info, 0).value = 40  # cbSize
-                if user32.GetMonitorInfoA(hmon, info):
-                    # rcMonitor occupies bytes 4-20: left, top, right, bottom (4×int32)
-                    left, top, right, bottom = (
-                        ctypes.c_int32.from_buffer(info, 4 + i * 4).value for i in range(4)
-                    )
-                    if mon["left"] == left and mon["top"] == top:
-                        return mon
+            # skip monitors[0] (the virtual combined display)
+            return dpi.match_monitor(sct.monitors[1:], (left, top, right, bottom))  # type: ignore[arg-type]
     except Exception as exc:
         logger.debug("_foreground_monitor: %s", exc)
     return None
@@ -274,6 +301,136 @@ def _foreground_window() -> int | None:
         return None
     try:
         return int(ctypes.windll.user32.GetForegroundWindow()) or None  # type: ignore[attr-defined]
+    except Exception:
+        return None
+
+
+def _window_owner(hwnd: int) -> tuple[int | None, str]:
+    """(process id, title) of a window; (None, "") when it cannot be read."""
+    if sys.platform != "win32":
+        return None, ""
+    try:
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, buf, 256)
+        return (int(pid.value) or None), buf.value
+    except Exception:
+        return None, ""
+
+
+
+def _visible_windows() -> frozenset[int] | None:
+    """Handles of the visible, titled, uncloaked top-level windows; None when they
+    cannot be listed (off Windows, or the call failed). Used only to report whether
+    a launch took effect, never to choose a target."""
+    if sys.platform != "win32":
+        return None
+    try:
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        found: set[int] = set()
+
+        def _visit(hwnd: int, _lparam: int) -> bool:
+            if not user32.IsWindowVisible(hwnd) or user32.GetWindowTextLengthW(hwnd) == 0:
+                return True
+            cloaked = ctypes.c_int(0)
+            try:  # DWMWA_CLOAKED = 14: a suspended Store app is "visible" but not on screen
+                hresult = ctypes.windll.dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)  # type: ignore[attr-defined]
+                if hresult != 0:  # the call failed: do not trust the value
+                    cloaked.value = 0
+            except Exception:
+                cloaked.value = 0
+            if not cloaked.value:
+                found.add(int(hwnd))
+            return True
+
+        callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(_visit)  # type: ignore[attr-defined]
+        user32.EnumWindows(callback, 0)
+        return frozenset(found)
+    except Exception:
+        logger.debug("_visible_windows failed", exc_info=True)
+        return None
+
+
+
+def _app_path(program: str) -> str | None:
+    """The full path Windows registers for ``program`` under App Paths (HKCU, then
+    HKLM), or None. Chrome, Edge and the Office apps live there, not on PATH. Read-only."""
+    if sys.platform != "win32":
+        return None
+    name = program if Path(program).suffix else program + ".exe"
+    try:
+        import winreg
+    except ImportError:
+        return None
+    key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, key_path) as key:
+                value, _kind = winreg.QueryValueEx(key, "")
+        except OSError:
+            continue
+        path = os.path.expandvars(str(value).strip().strip('"'))  # REG_EXPAND_SZ
+        if path and Path(path).exists():
+            return path
+    return None
+
+
+def _executable_missing(command: str) -> bool:
+    """True on Windows when a command launched through the shell names a program found
+    neither on PATH nor under App Paths. URIs (ms-settings:) go through the shell
+    handler and are not checked."""
+    if sys.platform != "win32" or command.startswith("ms-"):
+        return False
+    program = command.split()[0]
+    return shutil.which(program) is None and _app_path(program) is None
+
+
+def _resolve_launch_command(command: str) -> str:
+    """The command to run: a program off PATH but registered under App Paths runs by its
+    full path. cmd.exe (the shell Popen uses) does not consult App Paths, so a bare
+    "chrome" would fail there; resolving it ourselves is explicit and keeps the launcher's
+    exit code and process handle meaningful, unlike ``start`` (always exits 0)."""
+    if sys.platform != "win32" or command.startswith("ms-"):
+        return command
+    program, _, rest = command.partition(" ")
+    if shutil.which(program) is not None:
+        return command
+    path = _app_path(program)
+    if path is None:
+        return command
+    # Always quoted (list2cmdline only quotes a path with spaces), so cmd never splits a path.
+    return f'"{path}"' + (" " + rest if rest else "")
+
+
+# Actions that write to whatever window is in front; the focus guard (KAN-92) covers these.
+_FOCUS_GUARDED_ACTIONS = frozenset({
+    ActionType.CLICK,
+    ActionType.DOUBLE_CLICK,
+    ActionType.TRIPLE_CLICK,
+    ActionType.RIGHT_CLICK,
+    ActionType.TYPE,
+    ActionType.PRESS_KEY,
+    ActionType.HOTKEY,
+    ActionType.DRAG,
+    ActionType.SCROLL,
+})
+
+
+def _window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    """(left, top, width, height) of a window in virtual-screen pixels, or None."""
+    if sys.platform != "win32":
+        return None
+    try:
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):  # type: ignore[attr-defined]
+            return None
+        return (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
     except Exception:
         return None
 
@@ -347,7 +504,7 @@ class DesktopExecutor(Executor):
     # Ceiling prevents it from growing so high that genuinely blank regions pass.
     _SERVO_THRESHOLD_MIN: float = 8.0
     _SERVO_THRESHOLD_MAX: float = 80.0
-    _SERVO_THRESHOLD_DEFAULT: float = 20.0
+    _SERVO_THRESHOLD_DEFAULT: float = BLANK_VARIANCE_THRESHOLD
 
     def __init__(
         self,
@@ -365,6 +522,7 @@ class DesktopExecutor(Executor):
         self._post_launch_delay = post_launch_delay
         self._current_run_id: str | None = None
         self._launched_processes: dict[str, list[subprocess.Popen]] = {}
+        self._secrets_used: dict[str, set[str]] = {}  # run_id → secret values typed (KAN-103), masked on clipboard reads
         self._launched_app_names: dict[str, list[str]] = {}  # run_id → exe names for taskkill fallback
         # run_id → exe name → PIDs of that image already running before the run first
         # launched it. Cleanup kills only newer PIDs, never the user's own windows.
@@ -380,9 +538,17 @@ class DesktopExecutor(Executor):
         self._close_when_done: set[str] = set()
         # run_id -> the window in front after the run's last action: the one it works in.
         self._work_windows: dict[str, int] = {}
+        # What the last context_reset/session_reset pressed, clicked or skipped (for the run trace).
+        self.last_reset_actions: list[str] = []
+        # OPERON_FOCUS_GUARD: (hwnd, pid, title) of the window in front when the model last saw the screen.
+        # Armed only by the loop's capture, spent by the first action after it. Our own
+        # post-action captures must not re-arm it: windows opened by the agent's actions are not stolen.
+        self._focus_ref: tuple[int, int | None, str] | None = None
+        self._internal_capture = False
 
         _set_dpi_awareness()
         if not get_settings().test_safe_mode:
+            dpi.warn_if_drifting()
             validate_display_baseline()
             self._noise_floor, self._servo_threshold = self._calibrate_servo_threshold()
         else:
@@ -497,39 +663,97 @@ class DesktopExecutor(Executor):
             await asyncio.sleep(0.5)
 
     async def context_reset(self) -> None:
-        """Dismiss open modals/dropdowns, clear focus traps, scroll to top."""
+        """Dismiss open modals/dropdowns, clear focus traps, scroll to top.
+
+        The recovery ladder runs this without the model choosing it, so it never clicks
+        blind: the click (which only puts focus on the window background) goes to a point
+        whose region is blank in the current screen, or is skipped. Each step taken or
+        skipped is noted in ``last_reset_actions`` for the run's trace.
+        """
+        self.last_reset_actions = []
         try:
             await asyncio.to_thread(pyautogui.press, "escape")
             await asyncio.sleep(0.2)
             await asyncio.to_thread(pyautogui.press, "escape")
             await asyncio.sleep(0.1)
+            self.last_reset_actions.append("pressed escape x2")
         except Exception:
             logger.debug("context_reset: escape press failed", exc_info=True)
+            self.last_reset_actions.append("escape press failed")
         try:
-            with _mss() as sct:
-                mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-                cx = mon["left"] + mon["width"] // 2
-                cy = mon["top"] + mon["height"] // 3  # upper-third: avoids taskbar
-            await asyncio.to_thread(pyautogui.click, cx, cy)
-            await asyncio.sleep(0.1)
+            point, why = await asyncio.to_thread(self._pick_reset_click)
+            if point is None:
+                logger.info("context_reset: skipping the focus click (%s)", why)
+                self.last_reset_actions.append(f"skipped focus click: {why}")
+            else:
+                await asyncio.to_thread(pyautogui.click, point[0], point[1])
+                await asyncio.sleep(0.1)
+                self.last_reset_actions.append(f"clicked blank region at ({point[0]}, {point[1]})")
         except Exception:
             logger.debug("context_reset: body click failed", exc_info=True)
+            self.last_reset_actions.append("skipped focus click: blank-region check failed")
         try:
             await asyncio.to_thread(pyautogui.hotkey, "ctrl", "home")
+            self.last_reset_actions.append("pressed ctrl+home")
         except Exception:
             logger.debug("context_reset: ctrl+home failed", exc_info=True)
+            self.last_reset_actions.append("ctrl+home failed")
+
+    def _pick_reset_click(self) -> tuple[tuple[int, int] | None, str]:
+        """(point, why-not): a plain-background spot inside the run's work window, or None.
+
+        Candidates stay inside the recorded work window, which must be the one in front, so
+        the click never lands on the wallpaper or another window. Without one: keys only.
+        """
+        hwnd = self._work_windows.get(self._current_run_id) if self._current_run_id else None
+        if hwnd is None:
+            return None, "no recorded work window"
+        if _foreground_window() != hwnd:
+            return None, "the work window is not in front"
+        rect = _window_rect(hwnd)
+        if rect is None:
+            return None, "the work window rectangle is unknown"
+        left, top, width, height = rect
+        with _mss() as sct:
+            virtual = sct.monitors[0]
+            background = dominant_color(bytes(sct.grab(virtual).rgb))
+        right = min(left + width, virtual["left"] + virtual["width"])
+        bottom = min(top + height, virtual["top"] + virtual["height"])
+        left, top = max(left, virtual["left"]), max(top, virtual["top"])
+        candidates = reset_click_candidates(right - left, bottom - top, left, top)
+        point = first_blank_point(candidates, lambda x, y: not self._reset_point_is_blank(x, y, background))
+        if point is None:
+            return None, f"no blank region among {len(candidates)} candidate points in the work window"
+        return point, ""
+
+    def _reset_point_is_blank(self, x: int, y: int, background: tuple[int, int, int]) -> bool:
+        """Servo + a wider ring that is uniform and background-coloured. A failed read is not blank."""
+        try:
+            if self._region_has_content(x, y)[0]:
+                return False
+            inner = self._sample_region(x, y, 50)
+            wide = self._sample_region(x, y, WIDE_REGION_RADIUS)
+            return is_plain_background(inner, wide, background)
+        except Exception:
+            return False
 
     async def session_reset(self, start_url: str | None = None) -> None:
-        """Re-baseline window focus: dismiss stacked UI state and cycle focus."""
+        """Re-baseline window focus: dismiss stacked UI state, then bring the run's own
+        window back to the front. No alt+tab: that lands on an arbitrary window."""
         await self.context_reset()
         await asyncio.sleep(0.3)
+        run_id = getattr(self, "_current_run_id", None)
+        if run_id is None:
+            self.last_reset_actions.append("no work window to restore: left focus alone")
+            return
         try:
-            await asyncio.to_thread(pyautogui.hotkey, "alt", "tab")
-            await asyncio.sleep(0.4)
-            await asyncio.to_thread(pyautogui.hotkey, "alt", "tab")
-            await asyncio.sleep(0.3)
+            moved = await self.restore_work_window(run_id)
+            self.last_reset_actions.append(
+                "restored the work window" if moved else "work window already in front or unknown"
+            )
         except Exception:
-            logger.debug("session_reset: alt+tab cycle failed", exc_info=True)
+            logger.debug("session_reset: restore_work_window failed", exc_info=True)
+            self.last_reset_actions.append("restoring the work window failed")
 
     def close_apps_when_done(self, run_id: str) -> None:
         """Close the apps *run_id* opens once it ends (succeeded, failed or stopped)."""
@@ -537,6 +761,7 @@ class DesktopExecutor(Executor):
 
     async def aclose_run(self, run_id: str) -> int:
         """Called by the loop when a run ends: closes the apps it opened, if its caller asked."""
+        self._secrets_used.pop(run_id, None)
         if run_id not in self._close_when_done:
             return 0
         self._close_when_done.discard(run_id)
@@ -550,6 +775,7 @@ class DesktopExecutor(Executor):
         exited immediately (e.g. Chrome, Settings via ms-* URIs).
         """
         self._work_windows.pop(run_id, None)
+        self._secrets_used.pop(run_id, None)
         procs = self._launched_processes.pop(run_id, [])
         app_names = self._launched_app_names.pop(run_id, [])
         owned = self._owned_pids.pop(run_id, {})
@@ -614,6 +840,7 @@ class DesktopExecutor(Executor):
         launched child apps don't outlive the process. Best-effort: one run's
         failure must not block teardown of the rest.
         """
+        self._secrets_used.clear()
         for run_id in list(self._run_recorders):
             try:
                 await self.stop_run_recording(run_id)
@@ -656,7 +883,51 @@ class DesktopExecutor(Executor):
             logger.debug("High visual velocity (%.3f) detected; waiting 300ms before re-capture", velocity)
             await asyncio.sleep(0.3)
             frame, _ = await asyncio.to_thread(self._capture_burst_sync)
+        if not self._internal_capture:
+            self._record_focus()
         return frame
+
+    # Windows only: the Linux executor turns this off, and off Windows the window helpers return None.
+    _focus_guard_platform = True
+
+    def _focus_guard_on(self) -> bool:
+        return self._focus_guard_platform and get_settings().focus_guard
+
+    def _record_focus(self) -> None:
+        """Remember the window in front now (OPERON_FOCUS_GUARD) so a later steal is noticed."""
+        if not self._focus_guard_on():
+            return
+        hwnd = _foreground_window()
+        if not hwnd:
+            # No foreground window to compare: fail open (UAC's secure desktop reports handle 0).
+            self._focus_ref = None
+            return
+        pid, title = _window_owner(hwnd)
+        self._focus_ref = (hwnd, pid, title)
+
+    def _check_focus(self, action: AgentAction) -> ExecutedAction | None:
+        """A failed result when a window from another process took focus since the capture.
+
+        Nothing is switched back: the new window may be one the user needs to see, so the
+        loop re-observes and the model decides from the pixels."""
+        ref = self._focus_ref
+        if ref is None or not self._focus_guard_on():
+            return None
+        self._focus_ref = None  # any action spends it: only the first one after a screenshot is checked
+        if action.action_type not in _FOCUS_GUARDED_ACTIONS:
+            return None
+        hwnd = _foreground_window()
+        if hwnd is None or hwnd == ref[0]:
+            return None
+        pid, title = _window_owner(hwnd)
+        if pid is not None and pid == ref[1]:
+            return None  # a dialog or window the same program opened
+        old = ref[2] or "the previous window"
+        return self._fail(
+            action,
+            f"focus_stolen: {title or 'another window'} took focus from {old}; re-observing",
+            FailureCategory.FOCUS_STOLEN,
+        )
 
     def _capture_burst_sync(self) -> tuple[CaptureFrame, float]:
         """Capture t0, t+100ms, t+200ms frames; return (last_frame, visual_velocity)."""
@@ -717,6 +988,9 @@ class DesktopExecutor(Executor):
             ActionType.NAVIGATE: self._exec_unsupported,
             ActionType.SELECT: self._exec_unsupported,
         }
+        stolen = self._check_focus(action)
+        if stolen is not None:
+            return stolen
         handler = dispatch.get(at, self._exec_unsupported)
         result = await handler(action)
         self._note_work_window()
@@ -895,6 +1169,14 @@ class DesktopExecutor(Executor):
     async def _exec_type(self, action: AgentAction) -> ExecutedAction:
         if action.text is None:
             return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
+        # KAN-103: a {{secret:NAME}} placeholder is swapped for its value here, in a local
+        # variable, so the action (and everything that records it) keeps the placeholder.
+        try:
+            text, secret_values = resolve_for_type(action.text)
+        except SecretError as exc:
+            return self._fail(action, f"type failed: {exc}", FailureCategory.EXECUTION_ERROR)
+        if secret_values and (problem := self._secret_problem(text)):
+            return self._fail(action, f"type failed: {problem}", FailureCategory.EXECUTION_ERROR)
         if action.x is not None and action.y is not None:
             # The focus click gets the clicks' bounds gate, so text never goes to a
             # point off every monitor. Not the blank-region servo: a TYPE target is an
@@ -934,7 +1216,12 @@ class DesktopExecutor(Executor):
             if action.clear_before_typing:
                 await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'a')
                 await asyncio.sleep(0.05)
-            await self._enter_text(action.text)
+            if secret_values:
+                # A secret never touches the clipboard (history, cloud sync, READ_CLIPBOARD).
+                self._secrets_used.setdefault(self._current_run_id or "", set()).update(secret_values)
+                await self._enter_secret(text)
+            else:
+                await self._enter_text(text)
             if action.press_enter:
                 await asyncio.sleep(0.05)
                 await asyncio.to_thread(pyautogui.press, 'enter')
@@ -942,7 +1229,20 @@ class DesktopExecutor(Executor):
             after_path = await self._capture_after()
             return self._ok(action, f"Typed '{action.text}'", after_path)
         except Exception as exc:
-            return self._fail(action, f"Type failed: {exc}", FailureCategory.EXECUTION_ERROR)
+            return self._fail(action, redact(f"Type failed: {exc}", secret_values), FailureCategory.EXECUTION_ERROR)
+
+    def _secret_problem(self, text: str) -> str | None:
+        """Why ``text`` cannot be typed as a secret here (checked before any click), else None."""
+        if sys.platform != "win32":
+            return "this desktop cannot type a secret without the clipboard"
+        return None
+
+    async def _enter_secret(self, text: str) -> None:
+        """Type a secret as key events, never through the clipboard (Windows: SendInput with
+        KEYEVENTF_UNICODE, so surrogate pairs and accents work)."""
+        if sys.platform != "win32":
+            raise SecretError("this desktop cannot type a secret without the clipboard")
+        await asyncio.to_thread(sendinput.type_unicode, text)
 
     async def _enter_text(self, text: str) -> None:
         """Put ``text`` into the focused field. Clipboard-paste avoids character-ordering
@@ -1016,8 +1316,18 @@ class DesktopExecutor(Executor):
         exe_name = Path(command.split()[0]).name.lower()
         if not exe_name.endswith(".exe"):
             exe_name += ".exe"
+        if _executable_missing(command):
+            return self._fail(
+                action,
+                f"'{command.split()[0]}' is not installed (not on PATH or under App Paths); nothing was launched",
+                FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+            )
         # Whatever runs right before this launch is not ours.
         before = await asyncio.to_thread(_image_pids, exe_name) if self._current_run_id is not None else None
+        windows_before = await asyncio.to_thread(_visible_windows)
+        foreground_before = _foreground_window()
+        proc = None
+        run_command = _resolve_launch_command(command)
         try:
             if command.startswith("ms-"):
                 await asyncio.to_thread(os.startfile, command)  # type: ignore[attr-defined]
@@ -1025,14 +1335,15 @@ class DesktopExecutor(Executor):
                 # Its own console, and no redirected handles: an interactive shell
                 # handed the server's empty stdin reads EOF and closes at once.
                 proc = await asyncio.to_thread(
-                    subprocess.Popen, command, creationflags=_NEW_CONSOLE, env=_launch_env()
+                    subprocess.Popen, run_command, creationflags=_NEW_CONSOLE, env=_launch_env()
                 )
             else:
                 proc = await asyncio.to_thread(
                     subprocess.Popen,
-                    # nosec B602: `command` is a hardcoded catalog constant (above),
-                    # not user/model input, so shell=True carries no injection risk.
-                    command,
+                    # nosec B602: `command` is a hardcoded catalog constant (above) or the
+                    # full path of that same program from the local App Paths registry (quoted);
+                    # neither is user/model input, so shell=True carries no injection risk.
+                    run_command,
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -1053,10 +1364,75 @@ class DesktopExecutor(Executor):
                     # Only the PIDs that appeared during this launch belong to the run.
                     owned = self._owned_pids.setdefault(self._current_run_id, {})
                     owned.setdefault(exe_name, set()).update(after - before)
+            # A launch call returning is not proof the app opened (the exe may not exist
+            # in this image): require a window to appear, or the app to come forward.
+            problem, note = await self._confirm_launch(command, exe_name, proc, windows_before, foreground_before)
+            if problem is not None:
+                return self._fail(action, problem, FailureCategory.EXECUTION_TARGET_NOT_FOUND)
             after_path = await self._capture_after()
-            return self._ok(action, f"Launched '{command}'", after_path)
+            return self._ok(action, note or f"Launched '{command}'", after_path)
         except Exception as exc:
             return self._fail(action, f"Launch failed: {exc}", FailureCategory.EXECUTION_ERROR)
+
+    async def _confirm_launch(
+        self,
+        command: str,
+        exe_name: str,
+        proc: subprocess.Popen | None,
+        windows_before: frozenset[int] | None,
+        foreground_before: int | None,
+    ) -> tuple[str | None, str | None]:
+        """(failure, note): failure is None when the launch did not visibly fail.
+
+        Took effect: a new top-level window appeared, or a window of the launched
+        program is now in front (an app that was already running just activated).
+        Polls up to ``_LAUNCH_CONFIRM_TIMEOUT_S``. A launcher that exits non-zero with
+        no window fails once ``_LAUNCH_EXIT_GRACE_S`` passes (explorer.exe exits 1 when
+        the running shell takes over, and its window shows up later). If the launch
+        raised nothing and the launcher did not fail, no window by the deadline is
+        success with a note: the app may have reused a window (ms-settings: is hosted
+        by ApplicationFrameHost).
+        """
+        if windows_before is None:
+            return None, None  # cannot list windows here; keep the old trust-the-call behaviour
+        timeout = _LAUNCH_CONFIRM_TIMEOUT_S
+        start = time.monotonic()
+        deadline = start + timeout
+        failed_at: float | None = None
+        pids_cache: tuple[float, frozenset[int] | None] | None = None
+        while True:
+            now = await asyncio.to_thread(_visible_windows)
+            if now is None:
+                return None, None
+            if now - windows_before:
+                return None, None
+            foreground = _foreground_window()
+            if foreground is not None and foreground != foreground_before and foreground in now:
+                return None, None
+            if foreground is not None and foreground in now:
+                pid, _title = _window_owner(foreground)
+                clock = time.monotonic()
+                if pids_cache is None or clock - pids_cache[0] >= _LAUNCH_PIDS_CACHE_S:
+                    pids_cache = (clock, await asyncio.to_thread(_image_pids, exe_name))
+                pids = pids_cache[1]
+                if pid is not None and pids and pid in pids:
+                    return None, None  # the program's own window is in front: already running, activated
+            code = proc.poll() if proc is not None else None
+            clock = time.monotonic()
+            if isinstance(code, int) and code != 0:
+                if failed_at is None:
+                    failed_at = clock
+                if clock - failed_at >= _LAUNCH_EXIT_GRACE_S or clock >= deadline:
+                    return (
+                        f"launched '{command}' but it exited with code {code} and no window appeared; "
+                        "the app may not be installed"
+                    ), None
+            elif clock >= deadline:
+                return None, (
+                    f"Launched '{command}'; no new window detected within {timeout:g} s, "
+                    "it may have reused an existing one"
+                )
+            await asyncio.sleep(_LAUNCH_POLL_INTERVAL_S)
 
     async def _exec_drag(self, action: AgentAction) -> ExecutedAction:
         if action.x is None or action.y is None or action.x_end is None or action.y_end is None:
@@ -1122,6 +1498,8 @@ class DesktopExecutor(Executor):
     async def _exec_read_clipboard(self, action: AgentAction) -> ExecutedAction:
         try:
             content = await asyncio.to_thread(pyperclip.paste)
+            # Belt and braces: a secret typed in this run is never handed back to the model.
+            content = redact(content, self._secrets_used.get(self._current_run_id or "", ()))
             return self._ok(action, f"Clipboard content: {content}", None)
         except Exception as exc:
             return self._fail(action, f"Read clipboard failed: {exc}", FailureCategory.EXECUTION_ERROR)
@@ -1214,7 +1592,11 @@ class DesktopExecutor(Executor):
     # ── helpers ──────────────────────────────────────────────────
 
     async def _capture_after(self) -> str:
-        frame = await self.capture()
+        self._internal_capture = True
+        try:
+            frame = await self.capture()
+        finally:
+            self._internal_capture = False
         return frame.artifact_path
 
     def _ok(self, action: AgentAction, detail: str, after_path: str | None) -> ExecutedAction:

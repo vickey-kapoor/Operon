@@ -293,7 +293,11 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         self._advisory_hints = {"": [(h, "") for h in hints if h]}
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
-        self._advisory_hints.setdefault(run_id, []).extend((h, source) for h in hints if h)
+        bucket = self._advisory_hints.setdefault(run_id, [])
+        if source == "task_note":
+            # One running note at a time: a stale one must not stack up when no model turn ran.
+            bucket[:] = [(h, s) for h, s in bucket if s != "task_note"]
+        bucket.extend((h, source) for h in hints if h)
 
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._advisory_hints.pop(run_id, None)

@@ -262,3 +262,25 @@ def test_gate_stage_rechecks_a_stop_that_came_in_during_ocr(tmp_path: Path) -> N
     )
     response = asyncio.run(loop._gate_stage(ctx))
     assert response is not None and response.status is RunStatus.CANCELLED
+
+
+def test_regrounded_retry_gate_reads_the_text_under_the_new_click(tmp_path: Path) -> None:
+    frame = CaptureFrame(artifact_path=_screen(tmp_path / "s.png", label="Delete account"), width=1280, height=720)
+    gate = TrustGate(enabled=True, confirm=("delete account",))
+    original = AgentAction(action_type=ActionType.CLICK, x=100, y=100)
+    retry = AgentAction(action_type=ActionType.CLICK, x=600, y=355)
+    record = Mock(run_id="r")
+
+    async def _no_url(*_a: object, **_k: object) -> None:
+        return None
+
+    async def block(loop: AgentLoop, frm: CaptureFrame | None) -> str | None:
+        loop._current_url_for_trust_gate = _no_url  # type: ignore[method-assign]
+        return await loop._retry_gate_block(record, Mock(permission_mode=None), original, retry, None, frame=frm)
+
+    detail = asyncio.run(block(_loop_with(_Recorder(["Delete account"]), gate), frame))
+    assert detail is not None and "confirm" in detail and "delete account" in detail
+    # OPERON_CLICK_TEXT off (no reader): unchanged, the retry is allowed.
+    assert asyncio.run(block(_loop_with(None, gate), frame)) is None
+    # Harmless text under the new click is allowed.
+    assert asyncio.run(block(_loop_with(_Recorder(["Cancel"]), gate), frame)) is None

@@ -11,6 +11,7 @@ import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from operon.agent import control as run_control
 from operon.agent.actions.grounding import element_center, make_grounder
@@ -25,6 +26,7 @@ from operon.agent.actions.retry_hardening import (
 )
 from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
+from operon.agent.efficiency import run_efficiency
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
 from operon.agent.perception.expect_check import (
@@ -67,10 +69,13 @@ from operon.agent.policy.trust_gate import (
     resolve_permission_mode,
 )
 from operon.agent.policy.verifier import VerifierService
+from operon.agent.resume_hint import RESUME_HINT_SOURCE, build_resume_hint
 from operon.agent.step_context import StepContext
+from operon.agent.task_note import build_task_note
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.core.settings import get_settings
+from operon.core.vault import action_uses_secret, available_names, secrets_hint
 from operon.executor.browser import Executor
 from operon.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
 from operon.executor.desktop_adapter import DesktopExecutor as UnifiedDesktopExecutor
@@ -244,7 +249,12 @@ class AgentLoop:
         # gate) as pending; a resume that approves adds that gate to the action's
         # approved set. The same action then passes the gates it was approved for, and
         # the approval is used up once it gets through (or the policy picks another).
-        self._pending_gate_approvals: dict[str, tuple[str, str]] = {}
+        # run_id -> (action fingerprint, gate, risk category, trust verdict "deny"/"confirm" or "")
+        self._pending_gate_approvals: dict[str, tuple[str, str, str, str]] = {}
+        # Host a person approved a secret type on, per run (None: none known; KAN-103).
+        self._secret_site_approved: dict[str, str | None] = {}
+        # Runs this process created: they run where they started, so resume skips the provider check.
+        self._created_runs: set[str] = set()
         # Runs a human paused by hand (UI Pause, POST /run/{id}/pause). A step already
         # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
         self._pause_requests: set[str] = set()
@@ -291,6 +301,7 @@ class AgentLoop:
             mode=request.mode,
             max_steps=request.max_steps,
         )
+        self._created_runs.add(record.run_id)
         if request.permission_mode is not None:
             # Kept on the run so every step (and its report) uses the mode it started with.
             record.permission_mode = request.permission_mode
@@ -467,6 +478,19 @@ class AgentLoop:
         pending = self._pending_gate_approvals.get(run_id)
         return pending[1] if pending is not None else None
 
+    def pending_gate_category(self, run_id: str) -> str | None:
+        """The named risk category (KAN-103) of the trust pause a run waits on, if any."""
+        pending = self._pending_gate_approvals.get(run_id)
+        return (pending[2] or None) if pending is not None and pending[1] == "trust" else None
+
+    def pending_gate_verdict(self, run_id: str) -> str | None:
+        """``deny`` or ``confirm`` for the trust pause a run waits on, else None.
+        A deny is a hard policy block: an unattended caller must not approve it."""
+        pending = self._pending_gate_approvals.get(run_id)
+        if pending is None or pending[1] != "trust":
+            return None
+        return pending[3] or None
+
     async def take_over(self, run_id: str) -> AgentState:
         """Hand the screen to the person: pause the run and mark it under their control.
 
@@ -502,6 +526,7 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} not found")
         if not getattr(record, "in_takeover", False):
             raise ValueError(f"Run {run_id!r} is not under the user's control")
+        self.check_resume_environment(record)  # before the hint and in_takeover change
         hint = (
             "The user took control of the screen and has now handed it back. The screen "
             "may have changed: look at it again before acting."
@@ -526,6 +551,9 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} not found")
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        self.check_resume_environment(record)
+        if record.stop_reason is StopReason.INTERRUPTED:
+            await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
         if not approve_gated_action:
             # A correction is not an approval: a backend holding the calls it paused
             # on (Gemini's require_confirmation) must not run them on the next step.
@@ -544,7 +572,7 @@ class AgentLoop:
             record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
         if approve_gated_action and pending is not None:
-            fingerprint, gate = pending
+            fingerprint, gate, _category, _verdict = pending
             prior = self._approved_gate_actions.get(run_id)
             gates = prior[1] if prior is not None and prior[0] == fingerprint else frozenset()
             self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
@@ -572,6 +600,78 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    def check_resume_environment(self, record) -> None:
+        """Fail before anything is changed when the run's original provider is not this one.
+
+        A run this process created needs no check (it runs where it started); a run loaded
+        from disk does, whatever its stop reason. Compared with the provider this process
+        actually built when there is one: settings can change after it is built (MCP)."""
+        if record.run_id in self._created_runs:
+            return
+        from operon.core.runtime import current_runtime
+        from operon.store.checkpoints import check_resume_environment
+
+        root = getattr(self.run_store, "root_dir", None)
+        provider = current_runtime().desktop_provider
+        check_resume_environment(
+            record, Path(root) if root is not None else None, getattr(provider, "name", None)
+        )
+        self._created_runs.add(record.run_id)
+
+    async def _prepare_interrupted(self, run_id: str, record) -> RunStatus | None:
+        """Rebuild this process's per-run state for a run a restart interrupted (KAN-80).
+
+        The page and the model conversation are gone: re-register the run on the executor,
+        drop any backend conversation, and hand the model a "resuming" hint listing what the
+        saved state says was done. Returns what the run was doing when it died."""
+        # Claimed first, across processes: another live process resuming this run is refused
+        # before any state changes or the executor is configured (raises RunOwnedError).
+        acquire = getattr(self.run_store, "acquire_run", None)
+        if callable(acquire):
+            acquire(run_id)  # this process now steps the run: no scan may call it interrupted
+        # Cleared before the first await: a second resume of the same run then fails fast
+        # instead of resetting the backend or adding a second hint.
+        origin, record.interrupted_from = record.interrupted_from, None
+        record.stop_reason = None
+        async with self._executor_lock:
+            if hasattr(self.executor, "set_current_run_id"):
+                self.executor.set_current_run_id(run_id)
+            if hasattr(self.executor, "configure_run"):
+                try:
+                    self.executor.configure_run(
+                        run_id, headless=record.headless, mode=record.mode, start_url=record.start_url
+                    )
+                except Exception as exc:
+                    self._recovered(run_id, "configure_run", exc)
+        if hasattr(self.policy_service, "reset_run_context"):
+            self.policy_service.reset_run_context(run_id)
+        self._release_backend_run_state(run_id)
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints([build_resume_hint(record)], source=RESUME_HINT_SOURCE, run_id=run_id)
+        return origin
+
+    async def resume_interrupted(self, run_id: str) -> RunResponse:
+        """Continue a run a restart interrupted, from the current screen (KAN-80).
+
+        A run that was waiting for the person when the process died stays waiting: the
+        gate it paused on is forgotten, so the person approves again before anything runs."""
+        record = await self.run_store.get_run(run_id)
+        if record is None:
+            raise ValueError(f"Run {run_id!r} not found")
+        if record.stop_reason is not StopReason.INTERRUPTED or record.status is not RunStatus.WAITING_FOR_USER:
+            raise ValueError(f"Run {run_id!r} is not interrupted")
+        self.check_resume_environment(record)
+        origin = await self._prepare_interrupted(run_id, record)
+        if origin is RunStatus.WAITING_FOR_USER:
+            record.stop_reason = StopReason.WAITING_FOR_USER
+            record.pause_reason = "Resumed after a restart. Approve to continue from the current screen."
+            await self.run_store.save_state(record)
+            return RunResponse(
+                run_id=run_id, status=record.status, intent=record.intent, step_count=record.step_count
+            )
+        return await self.resume_run(run_id)
 
     async def step_run(self, request: StepRequest) -> RunResponse:
         lock = self._run_locks.get(request.run_id)
@@ -644,6 +744,8 @@ class AgentLoop:
         await self._consume_force_fresh_perception(ctx.record)
         await self._capture_stage(ctx)
         self._consume_override_hint(ctx)
+        self._add_task_note(ctx)
+        self._add_secrets_hint(ctx)
         if (early := await self._perceive_stage(ctx)) is not None:
             return early
         await self._decide_stage(ctx)
@@ -668,6 +770,9 @@ class AgentLoop:
                 intent=record.intent,
                 step_count=record.step_count,
             )
+        # A run loaded from disk may have started in another environment provider: refuse
+        # before this step changes anything (a no-op for browser runs and runs created here).
+        self.check_resume_environment(record)
         if record.step_count >= record.max_steps:
             record.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
             updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
@@ -675,6 +780,7 @@ class AgentLoop:
                 await self._cleanup_completed_run(record.run_id)
             except Exception as exc:
                 self._recovered(record.run_id, "cleanup_after_max_steps", exc)
+            await self._save_efficiency(record)
             return RunResponse(
                 run_id=updated.run_id,
                 status=updated.status,
@@ -799,6 +905,7 @@ class AgentLoop:
         if await self._run_cancelled(ctx.run_id):
             # Stopped while this step captured and asked the model: run nothing.
             _trace("  3 POLICY -> CANCELLED", "run was stopped during this step; not executing")
+            await self._save_efficiency(ctx.record)
             return self._cancelled_response(ctx.record)
 
         # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
@@ -862,6 +969,7 @@ class AgentLoop:
                     decision_action=decision.action,
                     step_index=ctx.step_index,
                     use_unified_executor=True,
+                    stated_reason=decision.rationale,
                 )
             finally:
                 if hasattr(self.executor, "batch_child_check"):
@@ -871,6 +979,58 @@ class AgentLoop:
             _trace("  4 EXECUTE blocked", f"redundant action suppressed: {blocked_action.detail!r}")
             executed_action = blocked_action
         ctx.executed_action = self._relocate_after_artifact(executed_action, ctx.after_artifact_path)
+
+    def _add_secrets_hint(self, ctx: StepContext) -> None:
+        """Tell the model which secret NAMES it may type (OPERON_SECRETS, KAN-103).
+
+        Names and the placeholder syntax only; a value is never read here. Allowed in the
+        thin harness: it changes what the model sees, never its action.
+        """
+        names = available_names()
+        if not names:
+            return
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints([secrets_hint(names)], source="secrets", run_id=ctx.run_id)
+
+    def _add_task_note(self, ctx: StepContext) -> None:
+        """Send the running task note with this step (OPERON_TASK_NOTE, KAN-102).
+
+        Built from the run's own history, no model call. Allowed in the thin harness: it
+        changes what the model sees, never its action. Saved as ``task_note.txt``.
+        """
+        settings = get_settings()
+        if not settings.task_note:
+            return
+        state = ctx.record
+        note = build_task_note(
+            state.intent,
+            state.step_count,
+            state.action_history,
+            state.verification_history,
+            plan_steps=self._saved_plan_steps(ctx.run_id),
+            max_items=settings.task_note_max_items,
+        )
+        if not note:
+            return
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints([note], source="task_note", run_id=ctx.run_id)
+        try:
+            step_dir = Path(self.run_store.root_dir) / ctx.run_id / f"step_{ctx.step_index}"
+            step_dir.mkdir(parents=True, exist_ok=True)
+            (step_dir / "task_note.txt").write_text(note, encoding="utf-8")
+        except OSError as exc:
+            self._recovered(ctx.run_id, "task_note", exc)
+
+    def _saved_plan_steps(self, run_id: str) -> list[str]:
+        """The planner's steps from ``plan.json`` (empty when no plan was written)."""
+        try:
+            data = json.loads((Path(self.run_store.root_dir) / run_id / "plan.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        steps = data.get("steps") if isinstance(data, dict) else None
+        return [s for s in steps if isinstance(s, str)] if isinstance(steps, list) else []
 
     def _pass_on_change_note(self, ctx: StepContext) -> None:
         """Hand the model the executor's between-step change note, as text (KAN-111).
@@ -1270,7 +1430,7 @@ class AgentLoop:
         if final_status is not RunStatus.WAITING_FOR_USER:
             self._pause_requests.discard(run_id)
         if final_status is RunStatus.RUNNING:
-            await self._apply_recovery_actions(state, recovery)
+            await self._apply_recovery_actions(state, recovery, ctx.step_index)
         ctx.final_status = final_status
 
         _trace("  8 LOG", f"StepLog -> run.jsonl  final_status={final_status.value!r}")
@@ -1284,6 +1444,8 @@ class AgentLoop:
         # Persist per-stage durations for tail-latency analysis. Best-effort —
         # the step has already completed by this point.
         self._persist_step_timing(run_id, ctx.step_index, ctx.stage_timings)
+        if final_status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
+            await self._save_efficiency(state)
 
         if ctx.deferred_pause is not None and final_status is RunStatus.RUNNING:
             # A retry asked for a human (or a gate blocked it) after this step's
@@ -1308,6 +1470,22 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    async def _save_efficiency(self, state) -> None:
+        """Score the finished run (KAN-85) into ``efficiency.json`` and the saved state."""
+        root = getattr(self.run_store, "root_dir", None)
+        if root is None:
+            return
+        try:
+            await bg_writer.flush()  # the run log and step timings are written in the background
+            efficiency = await asyncio.to_thread(run_efficiency, Path(root) / state.run_id)
+            (Path(root) / state.run_id / "efficiency.json").write_text(
+                json.dumps(efficiency, indent=2) + "\n", encoding="utf-8"
+            )
+            state.efficiency = efficiency
+            await self.run_store.save_state(state)
+        except Exception as exc:
+            self._recovered(state.run_id, "save_efficiency", exc, level=logging.DEBUG)
 
     async def _click_text_for_gate(
         self,
@@ -1352,14 +1530,18 @@ class AgentLoop:
             _trace("  3 POLICY -> CLICK_TEXT", repr(text))
         return text
 
-    async def _current_url_for_trust_gate(self, run_id: str, *, log: bool = False) -> str | None:
+    async def _current_url_for_trust_gate(
+        self, run_id: str, *, log: bool = False, secret: bool = False
+    ) -> str | None:
         """The browser's current URL, only when the trust gate has a domain allowlist
-        to judge it against; None otherwise or when the executor has no page.
+        to judge it against (or ``secret``: the action types a stored secret, whose
+        approval must name the site, KAN-103); None otherwise or when the executor
+        has no page.
 
         ``log`` (the pre-execution check) appends it to the run's
         ``trust_gate_urls.jsonl``, so a replay (evals/replay.py) can show the gate
         the same pages."""
-        if not (self._trust_gate.enabled and self._trust_gate.allow_domains):
+        if not self._trust_gate.enabled or not (self._trust_gate.allow_domains or secret):
             return None
         if not hasattr(self.executor, "current_url_for_run"):
             return None
@@ -1371,6 +1553,37 @@ class AgentLoop:
         if log:
             self._log_trust_gate_url(run_id, url)
         return url
+
+    def _secret_host_changed(self, run_id: str, leaf: AgentAction, current_url: str | None) -> bool:
+        """True when ``leaf`` types a secret in the browser, the gate would still ask for it, and
+        the page's host is not the one the person approved (None counts as a host: "unknown").
+        Desktop (no page URL) is never judged."""
+        if not (self._trust_gate.enabled and action_uses_secret(leaf)):
+            return False
+        if not hasattr(self.executor, "current_url_for_run"):
+            return False
+        result = self._trust_gate.evaluate(leaf, current_url=current_url)
+        if not (result.verdict is TrustVerdict.CONFIRM and result.always):
+            return False
+        host = (urlparse(current_url).hostname or None) if current_url else None
+        return host != self._secret_site_approved.get(run_id)
+
+    def _secret_site_suffix(
+        self, leaf: AgentAction, current_url: str | None, whole: AgentAction | None = None
+    ) -> str:
+        """`` on <host>`` for an approval that types a stored secret in the browser, so the
+        person sees where the password goes (batch screenshots have no address bar);
+        `` on an unknown site`` when the URL cannot be read. When earlier leaves of the
+        batch run first and may change the page, the host is only the page now, and the
+        executor re-checks it right before typing. Desktop: unchanged."""
+        if not action_uses_secret(leaf) or not hasattr(self.executor, "current_url_for_run"):
+            return ""
+        host = (urlparse(current_url).hostname or "") if current_url else ""
+        text = f" on {host}" if host else " on an unknown site"
+        leaves = _leaf_actions(whole) if whole is not None else [leaf]
+        if leaves and leaves[0] is not leaf:
+            text += " (current page; re-checked before typing, the batch stops if the site changes)"
+        return text
 
     def _log_trust_gate_url(self, run_id: str, url: str | None) -> None:
         root = getattr(self.run_store, "root_dir", None)
@@ -1421,7 +1634,7 @@ class AgentLoop:
             and decision.confidence < threshold
         ):
             _trace("  3 POLICY -> CONFIDENCE_GATE", f"confidence={decision.confidence:.2f} < threshold={threshold:.2f}")
-            self._pending_gate_approvals[run_id] = (fingerprint, "confidence")
+            self._pending_gate_approvals[run_id] = (fingerprint, "confidence", "", "")
             return (
                 f"Confidence {decision.confidence:.0%} is below your threshold {threshold:.0%}. "
                 f"Planned action: {action.action_type.value}. "
@@ -1432,6 +1645,8 @@ class AgentLoop:
         # trust gate and file guard judge every one of them, not the container.
         leaves = _leaf_actions(action)
         if "trust" not in approved:
+            # A host approved earlier must not authorise this action's secret (KAN-103).
+            self._secret_site_approved.pop(run_id, None)
             verdicts = [
                 (
                     leaf,
@@ -1449,27 +1664,63 @@ class AgentLoop:
                 for leaf in leaves
             ]
             blocked = [pair for pair in verdicts if pair[1].verdict is not TrustVerdict.ALLOW]
-            # A DENY anywhere in the batch outranks a CONFIRM.
-            blocked.sort(key=lambda pair: pair[1].verdict is not TrustVerdict.DENY)
+            # A DENY anywhere in the batch outranks a CONFIRM, and a leaf that types a
+            # secret outranks the other CONFIRMs, so the approval always shows the secret
+            # (KAN-103); sort is stable, so the rest keep their order.
+            blocked.sort(
+                key=lambda pair: (pair[1].verdict is not TrustVerdict.DENY, not action_uses_secret(pair[0]))
+            )
             if blocked:
                 leaf, trust = blocked[0]
                 _trace("  3 POLICY -> TRUST_GATE", f"{trust.verdict.value} (matched {trust.matched!r})")
-                self._pending_gate_approvals[run_id] = (fingerprint, "trust")
+                self._pending_gate_approvals[run_id] = (
+                    fingerprint, "trust", trust.category, trust.verdict.value
+                )
+                if action_uses_secret(action):
+                    # What the person approves: the secret may only be typed on this host.
+                    self._secret_site_approved[run_id] = (urlparse(current_url).hostname or None) if current_url else None
                 if trust.verdict is TrustVerdict.DENY:
+                    secret_leaf = next((item for item in leaves if action_uses_secret(item)), None)
+                    secret_note = (
+                        f" It also types {_describe_for_approval(secret_leaf)}"
+                        f"{self._secret_site_suffix(secret_leaf, current_url, action)}."
+                        if secret_leaf is not None
+                        else ""
+                    )
                     return (
                         f"Blocked by policy: {leaf.action_type.value} action "
-                        f"({trust.reason}: '{trust.matched}'). It will not run autonomously — "
+                        f"({trust.reason}: '{trust.matched}').{secret_note} It will not run autonomously — "
                         "review and resume to override, or stop the run."
                     )
+                site = self._secret_site_suffix(leaf, current_url, action)
                 if resolve_permission_mode(permission_mode).value == "ask" and trust.reason.startswith("ask mode"):
                     return (
-                        f"Approval needed (ask mode): {_describe_for_approval(leaf)}. "
+                        f"Approval needed (ask mode): {_describe_for_approval(leaf)}{site}. "
                         "Approve to run it, or correct/stop."
+                    )
+                if trust.category:
+                    return (
+                        f"{trust.category.capitalize()}: approve {_describe_for_approval(leaf)}"
+                        f"{site}? "
+                        f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
                     )
                 return (
                     f"High-risk action needs approval: {leaf.action_type.value} "
                     f"(matched '{trust.matched}'). Resume to approve, or correct/stop."
                 )
+
+        elif leaves and self._secret_host_changed(run_id, leaves[0], current_url):
+            # Approved on one site, but the page is on another now (a redirect while the run
+            # waited): ask again, naming the site it is on now (KAN-103).
+            self._approved_gate_actions.pop(run_id, None)
+            self._trust_approved[run_id] = False
+            self._secret_site_approved[run_id] = (urlparse(current_url).hostname or None) if current_url else None
+            self._pending_gate_approvals[run_id] = (fingerprint, "trust", "account", TrustVerdict.CONFIRM.value)
+            return (
+                f"Account: approve {_describe_for_approval(leaves[0])}"
+                f"{self._secret_site_suffix(leaves[0], current_url)}? "
+                "(the page changed since you approved). Resume to approve, or correct/stop."
+            )
 
         for leaf in leaves:
             if leaf.action_type not in FILE_PATH_ACTIONS:
@@ -1523,7 +1774,7 @@ class AgentLoop:
             "coordinate_thrash" not in self._approved_gates(record.run_id, decision.action)
             and self._coordinate_thrash_detected(state, decision.action)
         ):
-            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash")
+            self._pending_gate_approvals[record.run_id] = (self._gate_fingerprint(decision.action), "coordinate_thrash", "", "")
             _trace("  3 POLICY -> COORDINATE_THRASH_HITL", "3 coord failures at same point — escalating to HITL")
             thrash_x, thrash_y = decision.action.x, decision.action.y
             self._note_not_executed(record.run_id, "repeated failures at the same point")
@@ -1539,7 +1790,9 @@ class AgentLoop:
                 )
             })
 
-        current_url = await self._current_url_for_trust_gate(record.run_id, log=True)
+        current_url = await self._current_url_for_trust_gate(
+            record.run_id, log=True, secret=action_uses_secret(decision.action)
+        )
         gate_text = self._pre_execution_gate_text(
             decision,
             intent=state.intent,
@@ -1570,17 +1823,30 @@ class AgentLoop:
         async def check(child: AgentAction) -> str | None:
             if await self._run_cancelled(run_id):
                 return "the run was stopped"
-            if not check_domains:
-                return None
             # A nested batch runs its first leaf next (its later children get their
             # own check), so judge that leaf, not the container.
             leaves = _leaf_actions(child)
             if not leaves:
                 return None
-            current_url = await self._current_url_for_trust_gate(run_id)
-            result = self._trust_gate.evaluate(leaves[0], current_url=current_url)
+            leaf = leaves[0]
+            secret = self._trust_gate.enabled and action_uses_secret(leaf)
+            if not (check_domains or secret):
+                return None
+            current_url = await self._current_url_for_trust_gate(run_id, secret=secret)
+            result = self._trust_gate.evaluate(leaf, current_url=current_url)
             if result.verdict is TrustVerdict.DENY:
                 return f"blocked by policy ({result.reason}: '{result.matched}')"
+            if secret and hasattr(self.executor, "current_url_for_run"):
+                # A secret goes only to the site the person approved (KAN-103); an earlier
+                # step of the batch may have moved the page. The step then fails before
+                # anything is typed and the secret type is gated again on its own.
+                host = (urlparse(current_url).hostname or None) if current_url else None
+                if (
+                    result.verdict is TrustVerdict.CONFIRM
+                    and result.always
+                    and (host is None or host != self._secret_site_approved.get(run_id))
+                ):
+                    return "the page is not the site approved for typing a secret; nothing was typed"
             return None
 
         self.executor.batch_child_check = check
@@ -1893,6 +2159,7 @@ class AgentLoop:
             await self._cleanup_completed_run(record.run_id)
         except Exception as exc:
             self._recovered(record.run_id, "cleanup_after_pre_step_failure", exc)
+        await self._save_efficiency(record)
         return RunResponse(
             run_id=updated.run_id,
             status=updated.status,
@@ -2087,26 +2354,56 @@ class AgentLoop:
             patience_retries=retries,
         )
 
-    async def _apply_recovery_actions(self, state, recovery: RecoveryDecision) -> None:
+    async def _apply_recovery_actions(self, state, recovery: RecoveryDecision, step_index: int | None = None) -> None:
         """Execute concrete side effects for CONTEXT_RESET and SESSION_RESET tiers.
 
         Runs after the step is logged so the log accurately reflects the failure,
         and before set_status so the next step's capture sees the cleaned state.
         Failures are swallowed — a broken reset must never terminate a live run.
+        These are actions the model never chose, so the executor never clicks blind, the
+        start URL goes through the trust gate, and what was done is written to the step's
+        ``recovery_reset.json``.
         """
         strategy = recovery.strategy
+        url_allowed: bool | None = None
         if strategy is RecoveryStrategy.CONTEXT_RESET:
-            _trace("  7b CONTEXT_RESET", "escape×2 + body-click + scroll-top")
+            _trace("  7b CONTEXT_RESET", "escape×2 + blank-region click (skipped if none) + scroll-top")
             try:
                 await self.executor.context_reset()
             except Exception as exc:
                 self._recovered(state.run_id, "context_reset", exc)
         elif strategy is RecoveryStrategy.SESSION_RESET:
-            _trace("  7b SESSION_RESET", f"start_url={state.start_url!r}")
+            start_url = state.start_url
+            if start_url and self.environment is UnifiedEnvironment.BROWSER:
+                url_allowed = self._reset_url_allowed(start_url, getattr(state, "permission_mode", None))
+                if not url_allowed:
+                    logger.info("session_reset: the trust gate does not allow %r; reloading instead", start_url)
+                    start_url = None
+            _trace("  7b SESSION_RESET", f"start_url={start_url!r}")
             try:
-                await self.executor.session_reset(state.start_url)
+                await self.executor.session_reset(start_url)
             except Exception as exc:
                 self._recovered(state.run_id, "session_reset", exc)
+        else:
+            return
+        actions = list(getattr(self.executor, "last_reset_actions", None) or [])
+        if url_allowed is False:
+            actions.insert(0, "start URL not allowed by the trust gate: did not navigate to it")
+        if step_index is not None and actions:
+            try:
+                path = self._artifacts.persist_recovery_reset(
+                    state.run_id, step_index, strategy.value, actions, url_allowed
+                )
+                state.artifact_paths.append(path)
+            except Exception as exc:
+                self._recovered(state.run_id, "persist_recovery_reset", exc)
+
+    def _reset_url_allowed(self, url: str, permission_mode: str | None = None) -> bool:
+        """True when the agent may navigate to ``url`` unasked: the trust gate allows it and
+        the run's permission mode would not hold it for approval (a reset cannot ask a person)."""
+        probe = AgentAction(action_type=ActionType.NAVIGATE, url=url)
+        result = apply_permission_mode(self._trust_gate.evaluate(probe), probe, permission_mode)
+        return result.verdict is TrustVerdict.ALLOW
 
     async def _cleanup_completed_run(self, run_id: str) -> None:
         self._release_backend_run_state(run_id)
@@ -2128,6 +2425,7 @@ class AgentLoop:
         """Drop the finished run's conversation and last screenshot from the backends,
         which otherwise keep them for the life of the server."""
         self._expect_reminded.pop(run_id, None)
+        self._secret_site_approved.pop(run_id, None)
         services = {id(s): s for s in (self.perception_service, self.policy_service)}.values()
         for service in services:
             for target in (service, getattr(service, "delegate", None)):
@@ -2187,6 +2485,7 @@ class AgentLoop:
         decision_action,
         step_index: int,
         use_unified_executor: bool = False,
+        stated_reason: str | None = None,
     ):
         executor_runner = self.executor_adapter if use_unified_executor else self.executor
         executed_action = await executor_runner.execute(decision_action)
@@ -2234,6 +2533,20 @@ class AgentLoop:
         if await self._run_cancelled(record.run_id):
             # Stopped while the retry was being re-resolved: don't run it.
             return retry_state, self._persist_execution_trace(record.run_id, step_index, executed_action)
+        if retry_action != decision_action:
+            # The retry was re-grounded: the gate approved the first action, not this one.
+            blocked_detail = await self._retry_gate_block(
+                record, state, decision_action, retry_action, stated_reason, frame=frame
+            )
+            if blocked_detail is not None:
+                self._note_not_executed(record.run_id, blocked_detail)
+                blocked = executed_action.model_copy(update={
+                    "success": False,
+                    "detail": blocked_detail,
+                    "failure_category": FailureCategory.TARGET_RERESOLUTION_FAILED,
+                    "failure_stage": LoopStage.EXECUTE,
+                })
+                return retry_state, self._persist_execution_trace(record.run_id, step_index, blocked)
         retry_executed = await executor_runner.execute(retry_action)
         retry_executed = self._merge_execution_retry(
             original=executed_action,
@@ -2244,6 +2557,46 @@ class AgentLoop:
         )
         retry_executed = self._apply_no_progress_detection(state, retry_executed)
         return retry_state, self._persist_execution_trace(record.run_id, step_index, retry_executed)
+
+    async def _retry_gate_block(
+        self, record, state, original_action, retry_action, stated_reason: str | None = None, frame=None
+    ) -> str | None:
+        """Re-run the trust gate on a re-grounded retry; return why it must not run
+        (None when it may). A human approval covers only the action they approved,
+        so a changed target needs ALLOW again. ``frame`` is the fresh capture the retry
+        was re-grounded on: the text under the new click is read from it (KAN-163)."""
+        run_id = record.run_id
+        current_url = await self._current_url_for_trust_gate(run_id, secret=action_uses_secret(retry_action))
+        permission_mode = getattr(state, "permission_mode", None)
+        approved_same = bool(self._trust_approved.get(run_id)) and (
+            self._gate_fingerprint(original_action) == self._gate_fingerprint(retry_action)
+        )
+        for leaf in _leaf_actions(retry_action):
+            trust = apply_permission_mode(
+                self._trust_gate.evaluate(
+                    leaf,
+                    current_url=current_url,
+                    stated_reason=stated_reason,
+                    click_text=await self._click_text_for_gate(
+                        leaf, frame, run_id=run_id, permission_mode=permission_mode
+                    ),
+                ),
+                leaf,
+                permission_mode,
+            )
+            if trust.verdict is TrustVerdict.ALLOW:
+                continue
+            if (
+                approved_same
+                and trust.verdict is TrustVerdict.CONFIRM
+                and not self._secret_host_changed(run_id, leaf, current_url)
+            ):
+                continue
+            return (
+                f"Retry not executed: the re-grounded {leaf.action_type.value} needs the trust "
+                f"gate again ({trust.verdict.value}: {trust.reason} '{trust.matched}')."
+            )
+        return None
 
     @staticmethod
     def _should_retry_execution(executed_action) -> bool:

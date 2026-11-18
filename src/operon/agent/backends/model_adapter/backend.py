@@ -85,7 +85,7 @@ class ModelAdapterBackend(AgentBackend):
         self._cached_decision: PolicyDecision | None = None
         self._last_frames: dict[str, CaptureFrame] = {}
         self._last_debug: ModelDebugArtifacts | None = None
-        self._hints: dict[str, list[str]] = {}
+        self._hints: dict[str, list[tuple[str, str]]] = {}
 
     # ── AgentBackend ────────────────────────────────────────────────────────
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
@@ -176,13 +176,17 @@ class ModelAdapterBackend(AgentBackend):
         return False
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
-        self._hints.setdefault(run_id, []).extend(h for h in hints if h)
+        bucket = self._hints.setdefault(run_id, [])
+        if source == "task_note":
+            # One running note at a time: a stale one must not stack up when no model turn ran.
+            bucket[:] = [(h, s) for h, s in bucket if s != "task_note"]
+        bucket.extend((h, source) for h in hints if h)
 
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._hints.pop(run_id, None)
 
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
-        self._hints = {"": [h for h in hints if h]}
+        self._hints = {"": [(h, "") for h in hints if h]}
 
     def note_not_executed(self, run_id: str, reason: str) -> None:
         run = self._runs.get(run_id)
@@ -278,7 +282,7 @@ class ModelAdapterBackend(AgentBackend):
                 pass
         hints = self._hints.pop(run_id, None) or self._hints.pop("", None) or []
         if hints:
-            parts.append("Advisory hints:\n" + "\n".join(f"- {h}" for h in hints))
+            parts.append("Advisory hints:\n" + "\n".join(f"- {h}" for h, _ in hints))
         return "\n".join(parts)
 
     def _decide(self, parsed: ParsedReply, ctx: PromptContext) -> PolicyDecision:

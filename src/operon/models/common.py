@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -56,6 +57,7 @@ class FailureCategory(StrEnum):
     TARGET_SHIFTED_BEFORE_ACTION = "target_shifted_before_action"
     TARGET_LOST_BEFORE_ACTION = "target_lost_before_action"
     FOCUS_VERIFICATION_FAILED = "focus_verification_failed"
+    FOCUS_STOLEN = "focus_stolen"
     CLICK_BEFORE_TYPE_FAILED = "click_before_type_failed"
     TYPE_VERIFICATION_FAILED = "type_verification_failed"
     CLICK_NO_EFFECT = "click_no_effect"
@@ -116,6 +118,9 @@ class StopReason(StrEnum):
     RETRY_LIMIT_REACHED = "retry_limit_reached"
     MAX_STEP_LIMIT_REACHED = "max_step_limit_reached"
     WAITING_FOR_USER = "waiting_for_user"
+    # The process died while the run was in flight (OPERON_CHECKPOINTS, KAN-80); the run
+    # waits, with this reason, for an explicit resume.
+    INTERRUPTED = "interrupted"
 
 
 class ResumeRequest(StrictModel):
@@ -160,6 +165,8 @@ class RunResponse(StrictModel):
     intent: str = Field(min_length=1)
     step_count: int = Field(ge=0)
     hitl_message: str | None = None
+    # KAN-85: step-efficiency score; set on the GET run endpoints.
+    efficiency: dict[str, Any] | None = None
 
 
 class StopRunRequest(StrictModel):

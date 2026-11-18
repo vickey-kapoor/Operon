@@ -149,7 +149,10 @@ been built, where things stand and what is next.
 |---|---|
 | [Roadmap](docs/roadmap.md) | What has been built, the current results, and what comes next |
 | [Configuration](docs/configuration.md) | Model keys, backends, harness profiles, every setting |
+| [Python SDK](docs/sdk.md) | `from operon import Agent`: run a task from Python, with approvals |
+| [Task files](docs/task-files.md) | `operon run --tasks tasks.yaml --junit report.xml`: a suite of tasks in CI |
 | [HTTP API](docs/api.md) | Routes for browser and desktop runs, the live stream, auth |
+| [MCP server](docs/mcp.md) | `operon mcp`: hand tasks to Operon from Claude Code, Claude Desktop and other MCP clients |
 | [Evaluation](docs/evaluation.md) | Latest results, benchmark suites, `/bench` PR commands, cost caps, dashboard |
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |

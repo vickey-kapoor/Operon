@@ -23,6 +23,7 @@ from PIL import Image
 
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
+from operon.core.vault import SecretError, redact, resolve_text, secret_endpoint_ok
 from operon.environments.base import EnvironmentProvider, ProviderCheck
 from operon.models.capture import CaptureFrame
 from operon.models.common import FailureCategory
@@ -130,8 +131,9 @@ class OSWorldExecutor:
     """The executor surface the loop uses, over an OSWorld VM's HTTP server."""
 
     def __init__(self, base_url: str, *, artifact_dir: str | Path | None = None,
-                 transport: httpx.AsyncBaseTransport | None = None) -> None:
+                 transport: httpx.AsyncBaseTransport | None = None, trusted_host: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
+        self._trusted_host = trusted_host  # the one non-loopback address a secret may go to
         self._dir = Path(artifact_dir) if artifact_dir is not None else desktop_artifacts_dir()
         self._dir.mkdir(parents=True, exist_ok=True)
         self._transport = transport
@@ -197,13 +199,27 @@ class OSWorldExecutor:
                 blank = await self._blank_target(action)
                 if blank is not None:
                     return blank
-            snippet = pyautogui_snippet(action)
+            # KAN-103: the value goes only into the snippet sent to the VM, never into `action`.
+            secret_values: tuple[str, ...] = ()
+            to_type = action
+            if t is ActionType.TYPE and action.text:
+                try:
+                    resolved, secret_values = resolve_text(action.text)
+                except SecretError as exc:
+                    return _failed(action, f"type failed: {exc}")
+                if secret_values and not secret_endpoint_ok(self.base_url, self._trusted_host):
+                    return _failed(action, "type failed: the OSWorld VM is not at a loopback address")
+                if secret_values and not resolved.isascii():
+                    # Non-ASCII text is pasted through the VM's clipboard: a secret never is.
+                    return _failed(action, "type failed: this secret has a character that cannot be typed without the clipboard")
+                to_type = action.model_copy(update={"text": resolved})
+            snippet = pyautogui_snippet(to_type)
             if snippet is None:
                 return _failed(action, f"{t.value} is not supported on an OSWorld machine")
             script = "import pyautogui; pyautogui.FAILSAFE = False\n" + snippet
             reply = await self._shell(["python3", "-c", script])
             if reply.get("status") == "error" or reply.get("returncode", 0) not in (0, None):
-                return _failed(action, f"VM refused {t.value}: {json.dumps(reply)[:300]}")
+                return _failed(action, redact(f"VM refused {t.value}: {json.dumps(reply)[:300]}", secret_values))
             return ExecutedAction(action=action, success=True, detail=f"Executed {t.value} on the OSWorld VM")
         except httpx.HTTPError as exc:
             return _failed(action, f"OSWorld VM unreachable: {exc}")

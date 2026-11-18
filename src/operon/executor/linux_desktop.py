@@ -38,6 +38,8 @@ _MAX_KEYED_CHARS = 500
 class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
     """Desktop executor for an X11 Linux desktop (XFCE on the Azure VM)."""
 
+    _focus_guard_platform = False
+
     # ── resets ───────────────────────────────────────────────────
 
     async def reset_desktop(self) -> None:
@@ -61,6 +63,18 @@ class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
             await asyncio.to_thread(_desktop.pyautogui.write, text, 0.01)
         else:
             await super()._enter_text(text)
+
+    def _secret_problem(self, text: str) -> str | None:
+        # pyautogui.write types printable ASCII as keys, any length. Anything else (an accent,
+        # a newline) would need the clipboard or be dropped, so a secret with it fails closed.
+        if text.isascii() and text.isprintable():
+            return None
+        return "this secret has a character that cannot be typed without the clipboard"
+
+    async def _enter_secret(self, text: str) -> None:
+        if (problem := self._secret_problem(text)) is not None:
+            raise _desktop.SecretError(problem)
+        await asyncio.to_thread(_desktop.pyautogui.write, text, 0.01)
 
     # ── apps ─────────────────────────────────────────────────────
 
@@ -89,8 +103,23 @@ class LinuxDesktopExecutor(LiveViewMixin, _desktop.DesktopExecutor):
             if self._current_run_id is not None:
                 self._launched_processes.setdefault(self._current_run_id, []).append(proc)
             await asyncio.sleep(self._post_launch_delay)
+            # No window tooling here (no wmctrl/xdotool), so the check is the process:
+            # one that already exited with an error did not start.
+            code = proc.poll() if hasattr(proc, "poll") else None
+            if isinstance(code, int) and code != 0:
+                return self._fail(
+                    action,
+                    f"launched '{command}' but it exited with code {code}; the app may not be installed",
+                    FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+                )
             after_path = await self._capture_after()
             return self._ok(action, f"Launched '{command}'", after_path)
+        except FileNotFoundError:
+            return self._fail(
+                action,
+                f"launch failed: '{command.split()[0]}' is not installed",
+                FailureCategory.EXECUTION_TARGET_NOT_FOUND,
+            )
         except Exception as exc:
             return self._fail(action, f"Launch failed: {exc}", FailureCategory.EXECUTION_ERROR)
 

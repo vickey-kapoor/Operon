@@ -67,6 +67,19 @@ async def _step(backend, frame, st, name):
     return await backend.choose_action(st, perception)
 
 
+async def test_hints_render_as_plain_lines(frame) -> None:
+    client = ScriptedResponses([sample("openai_computer_call")])
+    backend = _backend(client)
+    backend.add_advisory_hints(["The cart is in the top right."], source="change_note", run_id="run-1")
+    backend.add_advisory_hints(["Open the page first."], source="planner", run_id="run-1")
+    await _step(backend, frame, state(), "s1")
+
+    text = json.dumps(client.requests[0])
+    # json.dumps escapes the newline between the two lines.
+    assert "- The cart is in the top right.\\n- Open the page first." in text
+    assert "('" not in text
+
+
 async def test_first_turn_sends_task_screenshot_and_tools(frame) -> None:
     client = ScriptedResponses([sample("openai_computer_call")])
     decision = await _step(_backend(client), frame, state(), "s1")

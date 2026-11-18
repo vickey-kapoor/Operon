@@ -14,6 +14,7 @@ from operon.core.settings import get_settings
 from operon.models.common import RunStatus
 from operon.models.perception import ScreenPerception
 from operon.models.state import AgentState
+from operon.store import owner as run_owner
 from operon.store.background_writer import bg_writer
 
 
@@ -92,6 +93,7 @@ class FileBackedRunStore(RunStore):
         # /observer/api/run/{run_id} reads before bg_writer flushes state.json.
         self._write_state_sync(record)
         self._write_settings(run_id)
+        self.claim_run(run_id)
         return record
 
     def holds_run(self, run_id: str) -> bool:
@@ -144,7 +146,23 @@ class FileBackedRunStore(RunStore):
             return record
         record.status = status
         self._write_state(record)
+        if get_settings().checkpoints and status in (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED):
+            run_owner.release(self._ensure_run_dir(run_id))
         return record
+
+    def claim_run(self, run_id: str) -> None:
+        """Make this process the run's owner, so no scan calls it interrupted. Only with
+        OPERON_CHECKPOINTS on: with it off no owner.json is written."""
+        if not get_settings().checkpoints:
+            return
+        run_owner.claim(self._ensure_run_dir(run_id))
+
+    def acquire_run(self, run_id: str) -> None:
+        """Exclusively claim a run being resumed; raises ``RunOwnedError`` if another live
+        process owns it. Only with OPERON_CHECKPOINTS on."""
+        if not get_settings().checkpoints:
+            return
+        run_owner.acquire(self._ensure_run_dir(run_id))
 
     async def save_state(self, state: AgentState) -> None:
         """Persist the current state snapshot to disk."""
@@ -183,6 +201,14 @@ class FileBackedRunStore(RunStore):
         # The machine's path rules, so a replay elsewhere judges file paths as this
         # run did (evals/replay.py, KAN-167).
         host = {"os": os.name, "home": str(Path.home()), "cwd": os.getcwd()}
+        if os.name == "nt":  # DPI awareness and per-monitor scale, for coordinate-drift triage (KAN-90)
+            try:
+                from operon.executor.dpi import display_report
+
+                # Separate file: host.json is the replay contract and stays three keys.
+                (path.parent / "displays.json").write_text(json.dumps(display_report(), indent=2) + "\n", encoding="utf-8")
+            except Exception:
+                pass
         (path.parent / "host.json").write_text(json.dumps(host) + "\n", encoding="utf-8")
 
     def _state_path(self, run_id: str) -> Path:

@@ -130,6 +130,8 @@ class Settings(BaseModel):
     progress_revisit: bool = _env_field("OPERON_PROGRESS_REVISIT", False)
     bestofn_n: int = _env_field("OPERON_BESTOFN_N", 1)
     bestofn_confidence: float = _env_field("OPERON_BESTOFN_CONFIDENCE", 1.0)
+    # Batch-mode browser runs that may step at the same time, each on its own browser (KAN-81).
+    parallel_runs: int = _env_field("OPERON_PARALLEL_RUNS", 1)
     # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
     settle_detect: bool = _env_field("OPERON_SETTLE_DETECT", False)
     # Benchmark runs only (KAN-169): answer the model's own "require confirmation" pauses yes.
@@ -137,10 +139,20 @@ class Settings(BaseModel):
     settle_max_s: float = _env_field("OPERON_SETTLE_MAX_S", 3.0)
     # One line of text about what flashed past while the screen settled (KAN-111).
     change_note: bool = _env_field("OPERON_CHANGE_NOTE", False)
+    # Windows desktop: do not act when another process took focus since the capture (KAN-92).
+    focus_guard: bool = _env_field("OPERON_FOCUS_GUARD", False)
+    # Windows desktop: make the process per-monitor-v2 DPI aware before pyautogui loads (KAN-90).
+    dpi_aware: bool = _env_field("OPERON_DPI_AWARE", False)
     # The model says what it expects after each action; a mismatch with the screen is a hint (KAN-116).
     expect_check: bool = _env_field("OPERON_EXPECT_CHECK", False)
     # A cheaper model writes a short plan once at task start (KAN-112).
     planner: bool = _env_field("OPERON_PLANNER", False)
+    # A running note of the task, the plan and the last actions, sent with each step (KAN-102).
+    task_note: bool = _env_field("OPERON_TASK_NOTE", False)
+    task_note_max_items: int = _env_field("OPERON_TASK_NOTE_MAX_ITEMS", 8)
+    # On startup, runs the last process left in flight are marked interrupted and can be
+    # resumed from the current screen on request (KAN-80).
+    checkpoints: bool = _env_field("OPERON_CHECKPOINTS", False)
     planner_model: str = _env_field("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite")
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)
     # The trust gate reads the text under a click from the screenshot (KAN-163; needs [ocr]).
@@ -149,6 +161,12 @@ class Settings(BaseModel):
     # Empty: the gate's built-in confirm list.
     trust_confirm: tuple[str, ...] = _env_field("OPERON_TRUST_CONFIRM", ())
     trust_allow_domains: tuple[str, ...] = _env_field("OPERON_TRUST_ALLOW_DOMAINS", ())
+    # Named risk categories (KAN-103): experimental, off by default.
+    trust_categories: bool = _env_field("OPERON_TRUST_CATEGORIES", False)
+    # Secrets vault (KAN-103): experimental, off by default.
+    secrets: bool = _env_field("OPERON_SECRETS", False)
+    # Empty: all five categories.
+    trust_category_list: tuple[str, ...] = _env_field("OPERON_TRUST_CATEGORY_LIST", ())
     # "" when unset or not a known mode: the server default (risky).
     permission_mode: str = _env_field("OPERON_PERMISSION_MODE", "")
     allowed_file_roots: tuple[str, ...] = _env_field("OPERON_ALLOWED_FILE_ROOTS", ())
@@ -342,18 +360,27 @@ class _Parser:
             progress_revisit=self.flag("OPERON_PROGRESS_REVISIT", "off"),
             bestofn_n=max(1, self.number("OPERON_BESTOFN_N", "1", int, fatal=False)),
             bestofn_confidence=self.number("OPERON_BESTOFN_CONFIDENCE", "1.0", float, fatal=False),
+            parallel_runs=max(1, self.number("OPERON_PARALLEL_RUNS", "1", int, fatal=False)),
             settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
             auto_confirm=self.flag("OPERON_AUTO_CONFIRM", "off"),
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),
             change_note=self.flag("OPERON_CHANGE_NOTE", "off"),
+            focus_guard=self.flag("OPERON_FOCUS_GUARD", "off"),
+            dpi_aware=self.flag("OPERON_DPI_AWARE", "off"),
             expect_check=self.flag("OPERON_EXPECT_CHECK", "off"),
             planner=self.flag("OPERON_PLANNER", "off"),
+            task_note=self.flag("OPERON_TASK_NOTE", "off"),
+            task_note_max_items=min(50, max(1, self.number("OPERON_TASK_NOTE_MAX_ITEMS", "8", int, fatal=False))),
+            checkpoints=self.flag("OPERON_CHECKPOINTS", "off"),
             planner_model=self.or_default("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite"),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},
             click_text=self.flag("OPERON_CLICK_TEXT", "off"),
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),
             trust_confirm=_split(self.text("OPERON_TRUST_CONFIRM"), lower=True),
             trust_allow_domains=_split(self.text("OPERON_TRUST_ALLOW_DOMAINS"), lower=True),
+            trust_categories=self.flag("OPERON_TRUST_CATEGORIES", "off"),
+            secrets=self.flag("OPERON_SECRETS", "off"),
+            trust_category_list=_split(self.text("OPERON_TRUST_CATEGORY_LIST"), lower=True),
             permission_mode=permission,
             allowed_file_roots=_split(self.text("OPERON_ALLOWED_FILE_ROOTS")),
             tools=self.raw("OPERON_TOOLS"),

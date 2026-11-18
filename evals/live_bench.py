@@ -177,6 +177,30 @@ class TaskResult:
     # Errors the agent loop caught and carried on from, by site (KAN-158; the run's
     # state.json "recovered_errors"). A pass with recoveries may hide a bug.
     recovered_errors: dict = field(default_factory=dict)
+    # Step-efficiency (KAN-85, operon.agent.efficiency), read from the run's files; None
+    # when the run left none.
+    wasted_steps: int | None = None
+    wasted_ratio: float | None = None
+    step_seconds: float | None = None
+
+
+def _efficiency(run_id: str | None) -> dict:
+    """wasted_steps / wasted_ratio / step_seconds for a run, or {} if it cannot be read."""
+    if not run_id:
+        return {}
+    from operon.agent.efficiency import run_efficiency
+
+    try:
+        score = run_efficiency(_run_dir(run_id))
+    except Exception:
+        return {}
+    if not score.get("total_steps"):
+        return {}
+    return {
+        "wasted_steps": score["wasted_steps"],
+        "wasted_ratio": score["wasted_ratio"],
+        "step_seconds": score["seconds_per_step"],
+    }
 
 
 def classify(status: str, goal_visible: bool | None) -> str:
@@ -637,6 +661,7 @@ async def run_task(
         unpriced_models=sorted({*usage.get("unpriced_models", []), *judge_unpriced}),
         tags=tags_of(task),
         recovered_errors=_recovered_errors(run_id) if run_id else {},
+        **_efficiency(run_id),
     )
 
 
@@ -674,6 +699,12 @@ def interrupted_result(active: dict) -> TaskResult:
     )
 
 
+def _mean(values: list, digits: int) -> float | None:
+    """Mean of the values that are not None; None if there are none."""
+    present = [v for v in values if v is not None]
+    return round(sum(present) / len(present), digits) if present else None
+
+
 def summarize(results: list[TaskResult]) -> dict:
     counts = {outcome: sum(r.outcome == outcome for r in results) for outcome in OUTCOMES}
     total = len(results)
@@ -690,6 +721,8 @@ def summarize(results: list[TaskResult]) -> dict:
         "paused_tasks": sum(1 for r in results if r.pauses),
         "recovered_errors": sum(sum(r.recovered_errors.values()) for r in results),
         "recovered_tasks": sum(1 for r in results if r.recovered_errors),
+        "mean_wasted_ratio": _mean([r.wasted_ratio for r in results], 3),
+        "mean_step_seconds": _mean([r.step_seconds for r in results], 2),
         **cost_summary(results, counts["success"]),
         **({"repeat": repeat_summary(results)} if any(r.attempt > 1 for r in results) else {}),
         **({"by_tag": tag_summary(results)} if any(r.tags for r in results) else {}),

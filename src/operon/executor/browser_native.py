@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import io
 import json
 import logging
 import os
@@ -16,8 +17,18 @@ from uuid import uuid4
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from operon.agent.perception.change_note import ChangeNoteBuffer
+from operon.agent.perception.screen_diff import (
+    BLANK_REGION_RADIUS,
+    WIDE_REGION_RADIUS,
+    first_blank_point,
+    is_plain_background,
+    png_dominant_color,
+    png_region_rgb,
+    reset_click_candidates,
+)
 from operon.agent.perception.settle import frame_signature
 from operon.browser.builtin import (
     CDP_PORT,
@@ -27,6 +38,7 @@ from operon.browser.builtin import (
 from operon.browser.keys import normalize_key
 from operon.core.paths import browser_artifacts_dir
 from operon.core.settings import get_settings
+from operon.core.vault import SecretError, redact, resolve_text
 from operon.executor.browser import Executor
 from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
 from operon.models.capture import CaptureFrame
@@ -95,6 +107,8 @@ class NativeBrowserExecutor(Executor):
         self._post_action_delay = post_action_delay
         self._change_notes = ChangeNoteBuffer()
         self._current_run_id: str | None = None
+        # What the last context_reset/session_reset pressed, clicked or skipped (for the run trace).
+        self.last_reset_actions: list[str] = []
         # Set by the loop for one step: called before each child of a batch runs,
         # returns why that child must not run (e.g. the page left the allowed
         # domains after an earlier child), or None to go on.
@@ -240,6 +254,7 @@ class NativeBrowserExecutor(Executor):
         if action.action_type is ActionType.BATCH:
             return await self._execute_batch(action)
         at = action.action_type
+        secret_values: tuple[str, ...] = ()
         try:
             if at is ActionType.NAVIGATE:
                 if action.url is None:
@@ -288,6 +303,11 @@ class NativeBrowserExecutor(Executor):
                 page = await self._current_page()
                 if action.text is None:
                     return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
+                # KAN-103: the value of a {{secret:NAME}} placeholder lives only in this local.
+                try:
+                    text, secret_values = resolve_text(action.text)
+                except SecretError as exc:
+                    return self._fail(action, f"type failed: {exc}", FailureCategory.EXECUTION_ERROR)
                 point = self._action_point(action)
                 if point is not None:
                     await page.mouse.click(*point)
@@ -295,7 +315,7 @@ class NativeBrowserExecutor(Executor):
                 if action.clear_before_typing:
                     await page.keyboard.press("Control+A")
                     await page.keyboard.press("Backspace")
-                await page.keyboard.type(action.text)
+                await page.keyboard.type(text)
                 if action.press_enter:
                     await page.keyboard.press("Enter")
             elif at is ActionType.PRESS_KEY:
@@ -459,7 +479,7 @@ class NativeBrowserExecutor(Executor):
             after_path = await self._capture_after()
             return self._ok(action, f"Executed {at.value}", after_path)
         except Exception as exc:
-            return self._fail(action, f"{at.value} failed: {exc}", FailureCategory.EXECUTION_ERROR)
+            return self._fail(action, redact(f"{at.value} failed: {exc}", secret_values), FailureCategory.EXECUTION_ERROR)
 
     async def _right_click(self, page, action: AgentAction, point: tuple[int, int]) -> ExecutedAction:
         """Right-click, and fail when nothing visible appeared.
@@ -620,36 +640,96 @@ class NativeBrowserExecutor(Executor):
         return frame_signature(shot)
 
     async def context_reset(self) -> None:
-        """Dismiss open modals/dropdowns, clear focus traps, scroll to top."""
+        """Dismiss open modals/dropdowns, clear focus traps, scroll to top.
+
+        Never clicks blind: the click (which only puts focus on the page background) goes
+        to a point that is blank in a fresh screenshot, or is skipped. What was pressed,
+        clicked or skipped is noted in ``last_reset_actions`` for the run trace.
+        """
+        self.last_reset_actions = []
         try:
             page = await self._current_page(foreground=False)
         except Exception:
+            self.last_reset_actions.append("no page: nothing reset")
             return
         try:
             await page.keyboard.press("Escape")
             await asyncio.sleep(0.2)
-            await page.mouse.click(self._viewport_width // 2, self._viewport_height // 3)
-            await asyncio.sleep(0.1)
+            self.last_reset_actions.append("pressed Escape")
+            point = await self._blank_reset_point(page)
+            if point is None:
+                logger.info("context_reset: no blank region found; skipping the focus click")
+                self.last_reset_actions.append("skipped focus click: no blank region among the candidate points")
+            else:
+                await page.mouse.click(point[0], point[1])
+                await asyncio.sleep(0.1)
+                self.last_reset_actions.append(f"clicked blank region at ({point[0]}, {point[1]})")
             await page.keyboard.press("Home")
+            self.last_reset_actions.append("pressed Home")
         except Exception:
             logger.debug("context_reset: browser reset failed", exc_info=True)
+            self.last_reset_actions.append("browser reset failed part-way")
+
+    async def _blank_reset_point(self, page) -> tuple[int, int] | None:
+        """A point (CSS px) on a plain-background part of the page, or None.
+
+        The screenshot may be at a device scale other than 1: samples are taken at the
+        scaled position and size, and the click stays in CSS px. A screenshot whose size
+        cannot be read, or whose scale is not uniform, means no click.
+        """
+        try:
+            png = await page.screenshot(type="png")
+            with Image.open(io.BytesIO(png)) as img:
+                img_w, img_h = img.size
+            scale_x, scale_y = img_w / self._viewport_width, img_h / self._viewport_height
+            if abs(scale_x - scale_y) > 0.02 or scale_x <= 0:
+                logger.info("context_reset: screenshot scale %.2fx%.2f is not uniform; no click", scale_x, scale_y)
+                return None
+            background = png_dominant_color(png)
+        except Exception:
+            logger.debug("context_reset: screenshot failed", exc_info=True)
+            return None
+        candidates = reset_click_candidates(self._viewport_width, self._viewport_height)
+
+        def has_content(x: int, y: int) -> bool:
+            sx, sy = round(x * scale_x), round(y * scale_x)
+            inner = png_region_rgb(png, sx, sy, round(BLANK_REGION_RADIUS * scale_x))
+            wide = png_region_rgb(png, sx, sy, round(WIDE_REGION_RADIUS * scale_x))
+            return not is_plain_background(inner, wide, background)
+
+        try:
+            return first_blank_point(candidates, has_content)
+        except Exception:
+            logger.debug("context_reset: blank-region check failed", exc_info=True)
+            return None
 
     async def session_reset(self, start_url: str | None = None) -> None:
-        """Navigate to start URL (or current URL) to reset page context."""
+        """Go back to the run start URL, or reload the current page without one.
+
+        The loop passes ``start_url`` only when the trust gate allows it. Without it the
+        page is reloaded, never sent somewhere the agent did not choose.
+        """
+        self.last_reset_actions = []
         try:
             page = await self._current_page(foreground=False)
         except Exception:
-            return
-        target_url = start_url or page.url
-        if not target_url:
-            await self.context_reset()
+            self.last_reset_actions.append("no page: nothing reset")
             return
         try:
-            await page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
+            if start_url:
+                await page.goto(start_url, wait_until="domcontentloaded", timeout=15000)
+                self.last_reset_actions.append(f"navigated to the start URL {start_url}")
+            elif page.url and page.url != "about:blank":
+                await page.reload(wait_until="domcontentloaded", timeout=15000)
+                self.last_reset_actions.append("reloaded the current page (no allowed start URL)")
+            else:
+                await self.context_reset()
+                return
             await asyncio.sleep(0.5)
         except Exception:
-            logger.debug("session_reset: goto %r failed, falling back to context_reset", target_url, exc_info=True)
+            logger.debug("session_reset: navigation failed, falling back to context_reset", exc_info=True)
             await self.context_reset()
+            self.last_reset_actions.insert(0, "navigation failed")
 
     async def _capture_after(self) -> str:
         frame = await self.capture()

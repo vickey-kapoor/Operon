@@ -1,5 +1,6 @@
 """Operon - vision-driven computer-use engine for UI-native automation."""
 
+import os
 from importlib.metadata import PackageNotFoundError, version
 
 try:

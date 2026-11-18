@@ -23,8 +23,11 @@ xfail on ``SentinelStillVisible``, raised by the final pixel check alone, so a b
 fails instead. The fix (a fixed wait after each action) is a later task. When it lands the
 strict xfails turn into failures (XPASS): remove the marks then.
 
-Measured on CI (filled in after the first run):
-    TODO: click-to-capture times for each path, and the CLOSE_DELAY_S chosen from them.
+Measured on CI (GitHub run 44340050002, job "Desktop (Linux container)", 2026-11-18),
+click-to-capture time over 7 samples per path:
+    osworld: min 0.79 s, median 0.79 s, max 0.80 s
+    remote:  min 0.65 s, median 0.66 s, max 0.67 s
+CLOSE_DELAY_S = 3.0 s, chosen as at least 3 x the worst sample (2.4 s) and at least 2 s.
 
 Opt in: ``pytest tests/desktop_e2e -m desktop_container -o addopts=""``. Needs Docker.
 """

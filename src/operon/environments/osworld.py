@@ -166,14 +166,16 @@ class OSWorldExecutor:
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
         result, did_input = await self._execute_one(action)
-        if result.success and did_input and self._post_action_wait_s > 0:
-            # The VM replies before the app has finished reacting (a dialog still closing), so let
-            # it settle before the loop's next screenshot. Once per action, once per whole batch.
+        if did_input and self._post_action_wait_s > 0:
+            # The VM replies before the app has finished reacting (a dialog still closing, an app
+            # still opening), so let it settle before the loop's next screenshot. Once per action,
+            # once per batch; also after a batch that failed part-way, since its earlier input ran.
             await asyncio.sleep(self._post_action_wait_s)
         return result
 
     async def _execute_one(self, action: AgentAction) -> tuple[ExecutedAction, bool]:
-        """Run one action; the flag says whether it sent input to the VM (so a post-action wait applies)."""
+        """Run one action; the flag says whether it sent input to the VM (so a post-action wait applies).
+        A failed single action sent no input; a part-failed batch reports its earlier children's input."""
         if action.action_type is ActionType.BATCH:
             detail: list[str] = []
             any_input = False
@@ -185,13 +187,13 @@ class OSWorldExecutor:
                         return ExecutedAction(
                             action=action, success=False,
                             detail=f"Batch stopped before {child.action_type.value}: {blocked}",
-                            failure_category=FailureCategory.EXECUTION_ERROR, batch_failed_index=index), False
+                            failure_category=FailureCategory.EXECUTION_ERROR, batch_failed_index=index), any_input
                 result, child_input = await self._execute_one(child)
                 any_input = any_input or child_input
                 detail.append(f"{child.action_type.value}:{'ok' if result.success else 'failed'}")
                 if not result.success:
                     return ExecutedAction(action=action, success=False, detail=f"Batch failed: {result.detail}",
-                                          failure_category=result.failure_category), False
+                                          failure_category=result.failure_category), any_input
             return ExecutedAction(action=action, success=True, detail=f"Executed batch: {', '.join(detail)}"), any_input
         t = action.action_type
         try:
@@ -207,7 +209,7 @@ class OSWorldExecutor:
                 if command is None:
                     return _failed(action, f"launch_app: '{action.text}' is not a catalog application"), False
                 await self._shell(["bash", "-c", f"DISPLAY=:0 nohup {command} >/dev/null 2>&1 &"])
-                return ExecutedAction(action=action, success=True, detail=f"Launched {action.text}"), False
+                return ExecutedAction(action=action, success=True, detail=f"Launched {action.text}"), True
             if t in _SERVO_ACTIONS and action.x is not None and action.y is not None and not action.is_input_zone:
                 blank = await self._blank_target(action)
                 if blank is not None:

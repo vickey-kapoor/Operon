@@ -62,7 +62,7 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 | `OPERON_SANDBOX_MEMORY_MB` / `OPERON_SANDBOX_START_TIMEOUT` | `4096` / `240` | Windows Sandbox memory, and seconds to wait for its guest agent to start |
 | `OPERON_CONTAINER_IMAGE` / `OPERON_CONTAINER_START_TIMEOUT` / `OPERON_CONTAINER_CA_BUNDLE` | built from `docker/linux-desktop` / `120` / unset | Linux container: a prebuilt image instead of building one, seconds to wait for it, and a CA bundle for pip during the build behind a TLS-inspecting proxy |
 | `OPERON_OSWORLD_URL` | unset | OSWorld run environment: the task VM's server, e.g. `http://127.0.0.1:5000` (KAN-169) |
-| `OPERON_OSWORLD_POST_ACTION_WAIT_S` | `0` (off) | OSWorld run environment: seconds to wait after each input action before the next screenshot, so a closing dialog is gone from it (max `10`) |
+| `OPERON_OSWORLD_POST_ACTION_WAIT_S` | `0` (off) | OSWorld run environment: seconds to wait after each input action or app launch (once per batch, also a part-failed one) before the next screenshot, so a closing dialog is gone from it (max `10`) |
 | `OPERON_GUEST_TOKEN` | unset | Inside a run environment only: the token `operon guest` requires (else `--token-file`) |
 | `OPERON_BROWSER_MODEL` / `OPERON_DESKTOP_MODEL` | `gemini-3.5-flash` | Primary model |
 | `OPERON_BROWSER_FALLBACK_MODEL` / `OPERON_DESKTOP_FALLBACK_MODEL` | `gemini-3.5-flash` | Fallback (JSON) model |

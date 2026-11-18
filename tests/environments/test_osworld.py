@@ -304,6 +304,65 @@ def test_finished_scores_survive_a_later_failure(monkeypatch, tmp_path):
     assert saved["summary"]["passed"] == 1
 
 
+def _log_env():
+    return SimpleNamespace(vm_ip="v", server_port=5000, reset=lambda task_config: None, evaluate=lambda: 0.0)
+
+
+def test_run_one_saves_the_operon_output_when_startup_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
+    monkeypatch.setattr(osworld, "run_cost", lambda run_id, runs_root=None: 0.0)
+    result = osworld.run_one(
+        _log_env(), {"domain": "os", "id": "2c1ebcd7", "instruction": "i"}, {}, max_steps=1, timeout_s=9,
+        settle_s=0, logs_dir=str(tmp_path / "logs"),
+        run=lambda cmd, **kw: SimpleNamespace(stdout="", stderr="RuntimeError: no API key", returncode=1))
+    assert result["run_id"] is None
+    assert result["log"] == str(tmp_path / "logs" / "2c1ebcd7.log")
+    text = (tmp_path / "logs" / "2c1ebcd7.log").read_text(encoding="utf-8")
+    assert "operon exit 1" in text and "RuntimeError: no API key" in text
+
+
+def test_run_one_saves_partial_output_on_timeout(monkeypatch, tmp_path):
+    import subprocess
+
+    monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
+    monkeypatch.setattr(osworld, "run_cost", lambda run_id, runs_root=None: 0.0)
+
+    def timing_out(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 1, output=b"step 3 clicked caf\xc3\xa9", stderr=b"warn")
+
+    result = osworld.run_one(_log_env(), {"domain": "os", "id": "t1", "instruction": "i"}, {}, max_steps=1,
+                             timeout_s=1, settle_s=0, logs_dir=str(tmp_path), run=timing_out)
+    text = open(result["log"], encoding="utf-8").read()
+    assert "timed out after 1s" in text and "step 3 clicked café" in text and "warn" in text
+
+
+def test_run_one_without_logs_dir_writes_nothing(monkeypatch, tmp_path):
+    monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
+    monkeypatch.setattr(osworld, "run_cost", lambda run_id, runs_root=None: 0.0)
+    monkeypatch.chdir(tmp_path)
+    result = osworld.run_one(_log_env(), {"domain": "os", "id": "t2", "instruction": "i"}, {}, max_steps=1,
+                             timeout_s=9, settle_s=0,
+                             run=lambda cmd, **kw: SimpleNamespace(stdout="x", stderr="y", returncode=0))
+    assert result["log"] is None and list(tmp_path.iterdir()) == []
+
+
+def test_main_passes_a_logs_dir_beside_the_runs_dir(monkeypatch, tmp_path):
+    (tmp_path / "repo").mkdir()
+    monkeypatch.setattr(osworld, "load_subset", lambda: [{"domain": "os", "id": "a", "instruction": "i"}])
+    monkeypatch.setattr(osworld, "task_config", lambda repo, task: {})
+    seen = {}
+
+    def fake_run_one(*a, **k):
+        seen.update(k)
+        return {"domain": "os", "id": "a", "passed": False, "cost_usd": 0.0, "score": 0.0, "seconds": 1}
+
+    monkeypatch.setattr(osworld, "run_one", fake_run_one)
+    osworld.main(["--osworld-repo", str(tmp_path / "repo"), "--out", str(tmp_path / "out")],
+                 env_factory=lambda repo: SimpleNamespace(close=lambda: None))
+    assert seen["logs_dir"] == str(tmp_path / "out" / "osworld-logs")
+    assert seen["runs_root"] == str(tmp_path / "out" / "osworld-runs")
+
+
 def test_long_benchmark_instructions_are_accepted_by_the_run_request():
     from operon.api.frontdoor import FrontDoorTask
     from operon.models.common import MAX_INTENT_CHARS, RunTaskRequest

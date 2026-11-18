@@ -100,8 +100,10 @@ jobs:
           path: |
             osworld.log
             .var/bench/osworld-*.json
+            .var/bench/osworld-runs/
+            .var/bench/osworld-logs/
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 14
       - name: Close any task machine left running
         if: always()
         run: docker ps -q --filter "ancestor=happysixd/osworld-docker" | xargs -r docker rm -f

@@ -17,11 +17,15 @@ closes. Two code paths click it for real:
 * ``remote``: the real ``RemoteDesktopExecutor`` talking to the container's guest agent.
 
 ``test_one_click_closes_dialog`` and ``test_frame_after_wait_shows_result`` (the control)
-pass today: the click works and the dialog does close. The two ``xfail(strict=True)``
-tests say the frame captured right after the click still shows the dialog. Each can only
-xfail on ``SentinelStillVisible``, raised by the final pixel check alone, so a broken setup
-fails instead. The fix (a fixed wait after each action) is a later task. When it lands the
-strict xfails turn into failures (XPASS): remove the marks then.
+pass: the click works and the dialog does close. The ``xfail(strict=True)`` tests say the
+frame captured right after the click still shows the dialog. Each can only xfail on
+``SentinelStillVisible``, raised by the final pixel check alone, so a broken setup fails instead.
+
+The osworld fix is ``OPERON_OSWORLD_POST_ACTION_WAIT_S`` (a fixed wait after each input action,
+off by default). ``test_frame_after_click_with_wait_shows_result`` passes with it on. The osworld
+xfail runs with the wait pinned off: it documents that the default still has the race, and if the
+default ever changes it XPASSes (strict makes that loud) and can go green. The remote and
+settle-detect paths have no fix yet, so their xfails stay.
 
 Measured on CI (GitHub run 44340050002, job "Desktop (Linux container)", 2026-11-18),
 click-to-capture time over 7 samples per path:
@@ -247,10 +251,11 @@ class DockerExecTransport(httpx.AsyncBaseTransport):
         return httpx.Response(404)
 
 
-def make_executor(path: str, provider, tmp_path: Path):
+def make_executor(path: str, provider, tmp_path: Path, *, post_action_wait_s: float | None = None):
     if path == "osworld":
         return OSWorldExecutor("http://osworld.test", artifact_dir=tmp_path,
-                               transport=DockerExecTransport(provider.container))
+                               transport=DockerExecTransport(provider.container),
+                               post_action_wait_s=post_action_wait_s)
     return provider.build_executor()
 
 
@@ -332,12 +337,16 @@ async def _click_ok_then_capture(executor, dialog: Dialog):
 
 @PATHS
 @pytest.mark.xfail(strict=True, raises=SentinelStillVisible,
-                   reason="no wait after the action: the frame is taken before the dialog closes")
+                   reason="default (no post-action wait): the frame is taken before the dialog closes; "
+                          "OPERON_OSWORLD_POST_ACTION_WAIT_S fixes the osworld path when set")
 def test_frame_after_click_shows_result(desktop, dialog, tmp_path, path):
-    """Click OK, capture straight away: the dialog should be gone. Today it is not."""
+    """Click OK, capture straight away: the dialog should be gone. With the default (wait off) it is
+    not, so this documents the race. If the default ever changes, the osworld case XPASSes (strict
+    makes that loud) and the mark can go."""
 
     async def scenario():
-        executor = make_executor(path, desktop, tmp_path)
+        # wait pinned off for osworld so a stray env var cannot flip the documented default
+        executor = make_executor(path, desktop, tmp_path, post_action_wait_s=0.0)
         try:
             return await _click_ok_then_capture(executor, dialog)
         finally:
@@ -351,6 +360,23 @@ def test_frame_after_click_shows_result(desktop, dialog, tmp_path, path):
         assert result.artifact_path, "the guest sent no after-frame"
         frames["after-frame of the click"] = result.artifact_path
     assert_sentinel_gone(frames, dialog.sentinel)
+
+
+def test_frame_after_click_with_wait_shows_result(desktop, dialog, tmp_path):
+    """The fix: the osworld executor waits past the close delay after the click, so the capture
+    taken straight after shows the dialog gone. Must pass."""
+
+    async def scenario():
+        executor = make_executor("osworld", desktop, tmp_path, post_action_wait_s=CLOSE_DELAY_S + 1.0)
+        try:
+            return await _click_ok_then_capture(executor, dialog)
+        finally:
+            await executor.aclose()
+
+    result, frame = asyncio.run(scenario())
+    assert result.success, result.detail
+    assert file_exists(desktop.container, OK_MARKER), "the click never reached OK"
+    assert_sentinel_gone({"capture after the click and wait": frame.artifact_path}, dialog.sentinel)
 
 
 @PATHS

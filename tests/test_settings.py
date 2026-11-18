@@ -224,7 +224,7 @@ _PLAIN_CONFIG = {
     "permission_mode",
     "allowed_file_roots", "zoom_min_side", "zoom_factor", "environment", "desktop_platform",
     "sandbox_memory_mb", "sandbox_start_timeout", "container_image", "container_start_timeout",
-    "container_ca_bundle", "osworld_url", "browser_width", "browser_height", "browser_profile_dir",
+    "container_ca_bundle", "osworld_url", "osworld_post_action_wait_s", "browser_width", "browser_height", "browser_profile_dir",
 }
 
 

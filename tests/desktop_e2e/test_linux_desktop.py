@@ -14,9 +14,6 @@ container)" job.
 from __future__ import annotations
 
 import asyncio
-import os
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -31,11 +28,12 @@ from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.thin import OwnDoneVerifier, ThinPolicy, ThinRecovery
 from operon.core.contracts.perception import Environment
 from operon.core.paths import prompts_dir
-from operon.environments import get_provider
 from operon.models.common import RunStatus, RunTaskRequest, StepRequest
 from operon.store.background_writer import bg_writer
 from operon.store.memory import FileBackedMemoryStore
 from operon.store.run_store import FileBackedRunStore
+
+from .helpers import sh
 
 pytestmark = pytest.mark.desktop_container
 
@@ -105,36 +103,6 @@ class ScriptedClient:
             "active_subgoal": fc["name"],
             "model_content": {"parts": [{"function_call": fc}]},
         }
-
-
-@pytest.fixture(scope="session")
-def desktop():
-    """One Linux desktop container for the whole module."""
-    # In CI a missing desktop is a failure, never a quiet skip.
-    unavailable = pytest.fail if os.environ.get("OPERON_E2E_REQUIRE_DESKTOP") else pytest.skip
-    if shutil.which("docker") is None:
-        unavailable("Docker is not installed")
-    mp = pytest.MonkeyPatch()
-    mp.setenv("OPERON_DESKTOP_PLATFORM", "linux")
-    provider = get_provider("linux-container")
-    check = provider.check()
-    if not check.ok:
-        mp.undo()
-        unavailable("linux-container not ready: " + " ".join(check.problems))
-    provider.start()
-    try:
-        yield provider
-    finally:
-        provider.stop()
-        mp.undo()
-
-
-def sh(provider, command: str) -> subprocess.CompletedProcess:
-    """A shell command inside the desktop container (to grade from its own state)."""
-    return subprocess.run(
-        ["docker", "exec", provider.container, "sh", "-c", command],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
 
 
 async def run_script(provider, tmp_path: Path, intent: str, script: list[dict], grade=None):

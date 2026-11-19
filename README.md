@@ -148,9 +148,9 @@ on the OSWorld-Verified subset above.
 What stays: the engine, the environments, the run API and live view, the safety gates (trust
 gate, approvals, takeover, secrets vault), evals, replay, the dashboard and CI.
 
-What is being removed: parts built for an earlier product direction. That covers the Python
-SDK, YAML task files, the MCP server, `operon setup`, the task page, the built-in browser and
-new PyPI releases. Until each is removed, it still works as documented.
+Removed on 2026-11-18: parts built for an earlier product direction (the Python SDK, YAML
+task files, the MCP server, `operon setup`, the task page, the built-in browser and new PyPI
+releases). They remain in the git history.
 
 ## Documentation
 

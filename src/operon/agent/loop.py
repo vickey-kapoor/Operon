@@ -584,7 +584,7 @@ class AgentLoop:
             record.pause_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
         if hasattr(self.executor, "restore_work_window"):
-            # The person answered on the task page, which is now in front of the app
+            # The person answered through the API client, which is now in front of the app
             # the run was using: put that app back before the next screenshot.
             try:
                 # Under the executor lock: another run's step must not have its window

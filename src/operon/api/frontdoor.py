@@ -1,8 +1,7 @@
 """Front door (KAN-89): start a task, follow it, approve, take over, and report.
 
-One small service used by the local task page (``/app``), its HTTP routes
-(``/app/api/...``) and ``operon run`` (in process, or against a running API with
-``--request``), so the three always behave the same way.
+One small service used by its HTTP routes (``/app/api/...``) and ``operon run`` (in process, or
+against a running API with ``--request``), so the two always behave the same way.
 
 A run lives in the browser loop or the desktop loop. The service finds the loop
 from the run itself, so callers only pass a run id.
@@ -95,8 +94,8 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
     """Create the run and, unless ``auto_run`` is False (offline tests), start stepping it.
 
     A browser run with ``live_view`` runs in observable mode: one headless Chromium on
-    CDP port 9222 whose screencast reaches the page over ``/ws/stream``. Without it
-    (``operon run`` in process, where no page watches) it is an ordinary batch run."""
+    CDP port 9222 whose screencast reaches a client over ``/ws/stream``. Without it
+    (``operon run`` in process, where nobody watches) it is an ordinary batch run."""
     request = RunTaskRequest(
         intent=task.intent,
         start_url=task.start_url,

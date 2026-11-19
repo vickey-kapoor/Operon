@@ -6,7 +6,7 @@ subclass replaces only what is Windows-specific:
 * apps come from ``LINUX_APP_LAUNCH_TARGETS`` and start as plain argv lists in
   their own process group, so cleanup can end the app and its children;
 * "show desktop" is XFCE's ctrl+alt+d instead of win+d;
-* the task page's live view gets JPEG frames of the screen (``live_frame_png``) and
+* the live view gets JPEG frames of the screen (``live_frame_png``) and
   the person's clicks and keys during a takeover (``user_input``), because the
   person is not sitting at this machine.
 

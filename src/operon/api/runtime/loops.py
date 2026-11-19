@@ -286,7 +286,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             environment=UnifiedEnvironment.DESKTOP,
             **_loop_layers(config=desktop_config, services=services, memory_store=memory_store, desktop=True),
         )
-        # The task page streams the desktop when its executor can (the Linux cloud computer).
+        # The API streams the desktop when its executor can (the Linux cloud computer).
         _ws_stream.set_desktop_executor(executor)
     return runtime.desktop_loop
 

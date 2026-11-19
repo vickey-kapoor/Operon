@@ -127,7 +127,7 @@ GET  /observer/api/live-browser/{run_id}
 WS   /ws/stream
 ```
 
-The task page and front door routes (`/app`, `/app/api/...`, see `docs/api.md`) live in
+The front door routes (`/app/api/...`, see `docs/api.md`) live in
 `routes/frontdoor.py`; the list above predates them.
 
 There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`, or static HTML routes in `src/operon/api/routes/`.

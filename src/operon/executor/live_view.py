@@ -1,4 +1,4 @@
-"""The task page's live view of a desktop the person is not sitting at.
+"""The live view of a desktop the person is not sitting at.
 
 Shared by the Linux cloud computer (KAN-108) and the guest agent inside a run
 environment (KAN-80): JPEG frames of the screen for ``/ws/stream``

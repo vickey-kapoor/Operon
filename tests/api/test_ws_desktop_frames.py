@@ -1,4 +1,4 @@
-"""The task page's live view of a desktop (KAN-108): /ws/stream sends the desktop
+"""The live view of a desktop (KAN-108): /ws/stream sends the desktop
 executor's frames for the run on it, and the run status says the page can drive it."""
 
 from __future__ import annotations

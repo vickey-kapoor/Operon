@@ -533,7 +533,7 @@ class DesktopExecutor(Executor):
         self.batch_child_check: Callable[[AgentAction], Awaitable[str | None]] | None = None
         self._run_recorders: dict[str, object] = {}   # run_id → ScreenRecorder
         self._run_video_paths: dict[str, Path] = {}   # run_id → final video path
-        # Runs whose apps close as soon as the run ends (the task page asks for this).
+        # Runs whose apps close as soon as the run ends (front-door runs ask for this).
         # Benchmarks leave it off: they grade the machine first, then call cleanup_run.
         self._close_when_done: set[str] = set()
         # run_id -> the window in front after the run's last action: the one it works in.
@@ -1004,8 +1004,8 @@ class DesktopExecutor(Executor):
     async def restore_work_window(self, run_id: str) -> bool:
         """Bring back the window the run was working in, when something else is in front.
 
-        Answering the run on the task page puts that browser window in front of the
-        app the run was using, and the next screenshot would show Operon's own page.
+        Answering the run from a client puts that browser window in front of the
+        app the run was using, and the next screenshot would show the client's window.
         Called when a paused run resumes. True when it changed the window in front."""
         hwnd = self._work_windows.get(run_id)
         if hwnd is None:

@@ -54,7 +54,7 @@ either). A bad name fails the same way.
 Typing the literal text `{{secret:pw}}` into a password field would silently submit a wrong
 password, and could lock an account.
 
-The human takeover typing in the task page is not the model's action and is not substituted.
+The human takeover typing during a takeover is not the model's action and is not substituted.
 
 ## Approval
 

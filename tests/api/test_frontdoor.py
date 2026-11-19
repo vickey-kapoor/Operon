@@ -1,4 +1,4 @@
-"""The task page and its API (KAN-89): start, follow, approve, decline, take over,
+"""The front-door run API (KAN-89): start, follow, approve, decline, take over,
 hand back, stop and report, over HTTP against a real loop with scripted model calls."""
 
 from __future__ import annotations
@@ -40,17 +40,10 @@ async def _start(client: httpx.AsyncClient, **body) -> dict:
     return response.json()
 
 
-async def test_the_page_is_served_without_the_key_and_locked_down(monkeypatch) -> None:
+async def test_the_run_api_needs_the_key(monkeypatch) -> None:
     monkeypatch.setenv("API_KEYS", "s3cret")
     async with _client() as client:
-        page = await client.get("/app")
         api = await client.get("/app/api/runs/abc")
-
-    assert page.status_code == 200
-    assert "<title>Operon</title>" in page.text
-    assert "default-src 'none'" in page.headers["content-security-policy"]
-    assert page.headers["cache-control"] == "no-store"
-    assert "s3cret" not in page.text
     assert api.status_code == 401
 
 
@@ -273,21 +266,6 @@ async def test_the_run_list_shows_the_newest_runs_first(monkeypatch, tmp_path, s
     assert runs[1]["intent"] == "Archive promotions" and not runs[1]["done"]
     assert len(one) == 1
     assert too_many.status_code == 422
-
-
-async def test_the_page_has_home_live_run_and_recording(monkeypatch) -> None:
-    async with _client() as client:
-        page = (await client.get("/app")).text
-
-    for view in ('id="view-home"', 'id="view-run"', 'id="view-recording"', 'id="view-history"'):
-        assert view in page
-    assert "fonts.googleapis.com" not in page  # the page loads nothing from the internet
-
-
-async def test_the_bare_address_opens_the_task_page() -> None:
-    async with _client() as client:
-        response = await client.get("/")
-    assert response.status_code == 307 and response.headers["location"] == "/app"
 
 
 def test_a_step_the_critic_failed_on_is_not_shown_as_checked() -> None:

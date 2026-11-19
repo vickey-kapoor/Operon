@@ -4,16 +4,16 @@
     operon run "task"               run a task here, in this process, and print a report
     operon run --request "task"     send the task to a running API and follow it
     operon mcp                      serve Operon to MCP clients over stdio (needs operon-agent[mcp])
-    operon serve                    start the API and print the task page's link
+    operon serve                    start the API
     operon cloud ...                Operon's own computer on an Azure Linux VM (see operon.cloud)
 
-Both ``run`` forms use the same front-door service as the task page
+Both ``run`` forms use the same front-door service as the API's /app/api routes
 (``operon.api.frontdoor``), so permission modes, approvals, takeover and the report
 behave the same everywhere. While a run waits for you, the terminal asks:
 approve or decline a paused action, or hand back after a takeover. Press Ctrl+C
 once to take over (the run pauses: no screenshots, no model calls); press it again
 to quit. With ``--request`` the run keeps going on the server after you quit, and
-the task page can pick it up.
+the run can be followed through the API.
 """
 
 from __future__ import annotations
@@ -225,10 +225,10 @@ async def drive(
             if not interactive:
                 if leave_paused:
                     out(f"Waiting for you: {waiting['reason']}")
-                    out("Left paused: approve it on the task page, or run again in a terminal.")
+                    out("Left paused: approve it through the API, or run again in a terminal.")
                     page = getattr(client, "base_url", None)
                     if page:
-                        out(f"Follow it on {page}/app#run={run_id}")
+                        out(f"Run {run_id} is on {page}")
                     return 2, None
                 out(f"Waiting for you, but there is no terminal to ask: {waiting['reason']}. Stopping.")
                 status = await client.stop(run_id)
@@ -453,9 +453,9 @@ def _serve(args: argparse.Namespace) -> int:
 
     keys = list(get_settings().api_keys)
     key = keys[0] if keys else (None if auth_disabled() else local_api_key())
-    url = f"http://{'127.0.0.1' if args.host in {'0.0.0.0', '::'} else args.host}:{args.port}/app"
-    # The key goes in the fragment, which the browser never sends to the server.
-    print(f"Task page: {url}#key={key}" if key else f"Task page: {url}  (authentication is off)")
+    url = f"http://{'127.0.0.1' if args.host in {'0.0.0.0', '::'} else args.host}:{args.port}"
+    print(f"API: {url}")
+    print(f"API key: {key}" if key else "Authentication is off")
     uvicorn.run("operon.api.server:app", host=args.host, port=args.port)
     return 0
 
@@ -502,7 +502,7 @@ def build_parser() -> argparse.ArgumentParser:
         cp.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
         cp.set_defaults(func=(lambda a: asyncio.run(_runs(a))) if name == "runs" else (lambda a: asyncio.run(_resume(a))))
 
-    serve = sub.add_parser("serve", help="start the API and print the task page's link")
+    serve = sub.add_parser("serve", help="start the API")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)

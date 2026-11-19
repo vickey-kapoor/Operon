@@ -83,10 +83,9 @@ short report of what it did.
 
 That run took 2 model steps and 23 seconds; a fresh PyPI install on Windows did it in 5 steps and 88 seconds. A task like this costs a few cents of Gemini calls on your key.
 
-**Next:** `operon serve` prints a link to a local task page, where you type tasks, watch them
-live, approve steps and take over with your own mouse. Add `--desktop` to `operon run` to drive
+**Next:** `operon serve` starts the API, which `operon run --request` and other clients drive. Add `--desktop` to `operon run` to drive
 Windows apps instead of the browser (it moves your real mouse and keyboard). More in the
-[API and task page guide](docs/api.md#task-page-and-operon-run).
+[API guide](docs/api.md#operon-run-and-the-run-api).
 
 Or, with `operon serve` running, give it a task over HTTP:
 
@@ -157,7 +156,7 @@ been built, where things stand and what is next.
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |
 | [Azure desktop runner](docs/azure-desktop-runner.md) | Running the desktop benchmark on a cloud Windows VM |
-| [Cloud computer](docs/azure-linux-computer.md) | Operon on its own Azure Linux VM, watched live on the task page (`operon cloud`) |
+| [Cloud computer](docs/azure-linux-computer.md) | Operon on its own Azure Linux VM, reached through an SSH tunnel (`operon cloud`) |
 | [Reports](docs/reports/) | Benchmark write-ups, including the [Season 1 grid](docs/reports/season-1-grid.md) |
 | [PRD](docs/PRD.md) and [RFCs](docs/rfcs/) | Product context and design proposals |
 

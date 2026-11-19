@@ -53,7 +53,7 @@ host: API, loop, Gemini calls, run files          machine: operon guest (token-g
 
 The Gemini key, the model calls and the run artifacts stay on the host; screenshots and
 traces travel back as bytes and are written under the host's artifact folder. The guest
-holds only a one-time token. The task page's live view and takeover go through the guest too.
+holds only a one-time token. The live view and takeover go through the guest too.
 
 ## Windows Sandbox (`windows-sandbox`)
 

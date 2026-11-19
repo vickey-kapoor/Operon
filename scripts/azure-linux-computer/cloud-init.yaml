@@ -2,7 +2,7 @@
 # Operon's cloud computer (KAN-108): a Debian 12 VM with an XFCE desktop on a virtual
 # display (Xvfb :1) and the Operon API on 127.0.0.1:8080, driving that desktop.
 # Pass it to `az vm create --custom-data`. Nothing listens on a public port: the
-# `operon cloud` command on your PC reaches the task page through an SSH tunnel.
+# `operon cloud` command on your PC reaches the API through an SSH tunnel.
 # Setup log on the VM: /var/log/cloud-init-output.log; done when /var/lib/operon/ready exists.
 
 package_update: true
@@ -65,7 +65,7 @@ write_files:
   - path: /etc/systemd/system/operon-api.service
     content: |
       [Unit]
-      Description=Operon API (task page on 127.0.0.1:8080)
+      Description=Operon API (on 127.0.0.1:8080)
       After=operon-desktop.service
       Requires=operon-desktop.service
       [Service]

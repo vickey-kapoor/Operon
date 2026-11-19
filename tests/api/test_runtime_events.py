@@ -1,4 +1,4 @@
-"""What a step event tells the task page (operon.api.runtime.events)."""
+"""What a step event tells a client (operon.api.runtime.events)."""
 
 from __future__ import annotations
 

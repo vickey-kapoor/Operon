@@ -76,7 +76,7 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 | az login | Needs `--tenant bae81514-1670-44ef-9e7a-c41552f64f59` (MFA). AVG antivirus HTTPS scanning breaks az certificates on Vickey's PC (workaround: temporary cert file). |
 | Eval dashboard | Vercel project `operon-evals` (root `dashboard/`, don't move it), Neon Postgres. Dashboard reads through the read-only role `dashboard_ro` (`DASHBOARD_DATABASE_URL`). New tables need `GRANT SELECT ... TO dashboard_ro`. Never "Rotate Neon Secrets". Backfill via the "Save run results to dashboard" workflow. |
 | Slack | Only critical alerts (cost cap, failed run, failed import) plus the daily summary after the dashboard import. |
-| PyPI | Package `operon-agent`, released by pushing tag `v<version>` (`docs/releasing.md`). |
+| PyPI | Package `operon-agent`: releases stopped on 2026-11-18 (the release workflow was removed); published versions stay on PyPI. |
 
 ## Current state (2026-11-17)
 

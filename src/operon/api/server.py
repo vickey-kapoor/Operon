@@ -84,7 +84,7 @@ def create_app() -> FastAPI:
     load_dotenv(find_dotenv(usecwd=True), override=True)
     from operon.core.paths import load_user_env
 
-    load_user_env()  # `operon setup`'s per-user key; never overrides .env or the environment
+    load_user_env()  # the optional per-user key file (~/.operon/operon.env); never overrides .env or the environment
 
     from operon.api.auth import (
         TrustedHostMiddleware,

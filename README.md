@@ -45,30 +45,18 @@ You need Python 3.14+ and a free [Gemini API key](https://aistudio.google.com/ap
 New to Python or the terminal? Follow [First run, step by step](docs/first-run.md), which
 explains every command.
 
-**1. Install** (about a minute) from [PyPI](https://pypi.org/project/operon-agent/):
+**1. Install** from source:
 
 ```bash
+git clone https://github.com/vickey-kapoor/Operon.git && cd Operon
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
-pip install operon-agent
+pip install -e ".[dev]"
+playwright install chromium
 ```
 
-To work on Operon itself, clone the repo and `pip install -e .` instead.
+**2. Set your key**: copy `.env.example` to `.env` and put your key in `GEMINI_API_KEY`.
 
-> [!TIP]
-> If Windows blocks `operon.exe` or `pip.exe` (Smart App Control), run the same commands through
-> Python: `python -m pip install operon-agent`, then `python -m operon.cli setup` and
-> `python -m operon.cli run "..."`.
-
-**2. Set up** (about two minutes): paste your key when asked. `operon setup` checks it with
-Gemini, saves it to `~/.operon` (readable only by you), installs Chromium and runs a self-check.
-
-```bash
-operon setup
-```
-
-It ends with `Ready.` If a line says `FAIL`, it tells you what to fix; run `operon setup` again.
-
-**3. Run a task** (about a minute):
+**3. Run a task**:
 
 ```bash
 operon run "Find the population of Paris on Wikipedia" --url https://en.wikipedia.org
@@ -81,7 +69,7 @@ short report of what it did.
 
 ![Operon finding the population of Paris on Wikipedia, from screenshots only](docs/assets/demo.gif)
 
-That run took 2 model steps and 23 seconds; a fresh PyPI install on Windows did it in 5 steps and 88 seconds. A task like this costs a few cents of Gemini calls on your key.
+That run took 2 model steps and 23 seconds. A task like this costs a few cents of Gemini calls on your key.
 
 **Next:** `operon serve` prints a link to a local task page, where you type tasks, watch them
 live, approve steps and take over with your own mouse. Add `--desktop` to `operon run` to drive
@@ -149,10 +137,7 @@ been built, where things stand and what is next.
 |---|---|
 | [Roadmap](docs/roadmap.md) | What has been built, the current results, and what comes next |
 | [Configuration](docs/configuration.md) | Model keys, backends, harness profiles, every setting |
-| [Python SDK](docs/sdk.md) | `from operon import Agent`: run a task from Python, with approvals |
-| [Task files](docs/task-files.md) | `operon run --tasks tasks.yaml --junit report.xml`: a suite of tasks in CI |
 | [HTTP API](docs/api.md) | Routes for browser and desktop runs, the live stream, auth |
-| [MCP server](docs/mcp.md) | `operon mcp`: hand tasks to Operon from Claude Code, Claude Desktop and other MCP clients |
 | [Evaluation](docs/evaluation.md) | Latest results, benchmark suites, `/bench` PR commands, cost caps, dashboard |
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |

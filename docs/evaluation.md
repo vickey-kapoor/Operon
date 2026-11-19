@@ -6,8 +6,8 @@ suite, a grounding eval, repeated runs for flakiness, and a check of the benchma
 ## Latest results
 
 As of 2026-11-11. Season 1 core sets, 10 tasks per cell, graded from state; one pass each.
-Triage of every miss is in [reports/season-1-grid.md](reports/season-1-grid.md), and the plan
-that follows from it is in the [roadmap](roadmap.md).
+Triage of every miss is in [reports/season-1-grid.md](reports/season-1-grid.md); the follow-up
+plan is Jira epic KAN-7.
 
 | Model | Browser Thin | Browser Full | Desktop Thin | Desktop Full | Hybrid Thin | Hybrid Full |
 |---|---|---|---|---|---|---|

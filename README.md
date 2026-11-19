@@ -135,7 +135,7 @@ model credits.
 
 Operon is an agent engine plus a personal test bench: it runs browser, desktop and hybrid
 (desktop plus browser) tasks with Gemini computer use, and the focus is the engine, benchmarks
-and failure analysis. It installs from PyPI (`operon-agent` 0.1.0), and on the Season 1 core
+and failure analysis. On the Season 1 core
 sets Gemini scores 9 or 10 of 10 in most cells. See [Evaluation](docs/evaluation.md) for the
 current results and the failure triage.
 

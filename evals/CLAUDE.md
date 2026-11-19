@@ -3,7 +3,7 @@
 Benchmarks cost real credits: run only when asked. Runs use Gemini (gemini-3.5-flash) unless a
 cell names a model: `model=claude-sonnet-5-5` or `model=openai-computer-use` (KAN-168) runs that
 model on the same cell, thin with its own done, so the results sit next to Gemini's. One model per
-provider; Claude and GPT run on 2 nights a week to keep the extra cost to about $25-30 a month.
+provider; Claude and GPT cells are started by hand (a batch with `model=` cells) to keep the extra cost down.
 
 ```powershell
 # Benchmarks are grouped by category (Browser, Desktop, Hybrid) x harness (thin, full): a 3x2 grid per
@@ -28,11 +28,11 @@ provider; Claude and GPT run on 2 nights a week to keep the extra cost to about 
 # Long suite: 21 multi-app tasks from the /apps/ workspace page (email -> act -> reply), 20-50 steps each
 .venv\Scripts\python -m evals.live_bench --suite long
 .venv\Scripts\python -m evals.local_apps   # serve the local site on :8765 to look at it
-# Perception experiments (KAN-115): batch/nightly cell words settle, note, planner, expect (browser only) turn on
+# Perception experiments (KAN-115): batch cell words settle, note, planner, expect (browser only) turn on
 # OPERON_SETTLE_DETECT / OPERON_CHANGE_NOTE / OPERON_PLANNER / OPERON_EXPECT_CHECK for that cell, e.g. "browser thin dynamic x3 settle note".
 # Dynamic suite (KAN-114): 7 tasks on screens that move (toasts, spinners, errors that vanish, late results),
 # graded from /state (evals/dynamic_apps.py, dynamic_tasks.py). Measures OPERON_SETTLE_DETECT / OPERON_CHANGE_NOTE (A/B is KAN-115).
-# In no season. Browser only; run it through the nightly queue ("dynamic" is a suite word) or by hand:
+# In no season. Browser only; run it as a batch cell ("dynamic" is a suite word) or by hand:
 .venv\Scripts\python -m evals.live_bench --suite dynamic
 .venv\Scripts\python -m evals.dynamic_apps   # serve the local site with the dynamic app (/apps/dynamic/)
 
@@ -60,8 +60,6 @@ provider; Claude and GPT run on 2 nights a week to keep the extra cost to about 
 #   /bench grounding [zoom|zoom=always]   (zoom: OPERON_ZOOM=dense, KAN-82)
 #   /bench batch  (then one cell per line, e.g. "desktop thin season=2 pr=242 cap=1.5"): the day's approved
 #   queue in one run, one Azure VM start, caps summed up front (KAN-105, benchmark.yml, evals/bench_batch.py)
-#   Nightly (KAN-165): paid runs happen once a night at 2 AM Chicago from evals/nightly-queue.txt
-#   ("2026-11-14 desktop thin season=2 cap=2.5  # note"), $10 a night, stop at $100 a month (evals/nightly.py, run by benchmark.yml)
 # Record and replay (KAN-167, evals/replay.py): --keep-screens also writes <report>/recordings/<task>.json for each
 # thin-harness run (Gemini's answers + the actions Operon ran). Copy one into evals/recordings/ and every PR
 # replays it through the real loop for $0 (tests/evals/test_replay.py); a changed action fails with the step.

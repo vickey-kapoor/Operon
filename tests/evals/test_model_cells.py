@@ -19,7 +19,7 @@ def _clean_env(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
 
 
-# --- the batch / nightly cell word ----------------------------------------------------
+# --- the batch cell word ----------------------------------------------------
 
 
 def test_a_model_cell_is_named_after_its_model_and_runs_thin() -> None:

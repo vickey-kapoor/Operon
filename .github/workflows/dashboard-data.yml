@@ -7,8 +7,7 @@ run-name: Save run results to dashboard (${{ github.event.workflow_run.name || '
 # cost and the judge's one-line reasons. Screenshots and traces of a finished run
 # go to Vercel Blob (BLOB_READ_WRITE_TOKEN secret) and the database keeps their
 # links. Slack (SLACK_WEBHOOK_URL secret) gets critical alerts only: a run that hit its
-# cost cap, a benchmark run that failed, or this import failing. Scores and cost go in
-# the daily summary instead, posted by the last step below after the nightly run's import.
+# cost cap, a benchmark run that failed, or this import failing.
 # Each run's summary gets its score with a 95% range and the change against the
 # previous run of the same grid cell (KAN-60); for a /bench run the same table is
 # posted as a comment on the pull request.
@@ -16,8 +15,7 @@ run-name: Save run results to dashboard (${{ github.event.workflow_run.name || '
 #
 # Run it by hand to import an older workflow run (run_ids, while its artifacts
 # last, 14 days) or reports committed at a git ref (backfill_ref; the default is
-# the last commit that kept them in dashboard/data/reports), or to post the daily
-# summary now (post_summary).
+# the last commit that kept them in dashboard/data/reports).
 
 on:
   workflow_run:
@@ -33,10 +31,6 @@ on:
         description: "Also import dashboard/data/reports from this git ref (empty to skip)"
         required: false
         default: ""
-      post_summary:
-        description: "Post the daily benchmark summary to Slack now (last 24 hours)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -144,18 +138,6 @@ jobs:
           mkdir -p backfill
           git archive FETCH_HEAD dashboard/data/reports | tar -x -C backfill
           python3 -m evals.dashboard import backfill/dashboard/data/reports
-
-      - name: Post the daily summary to Slack
-        # One Slack post with the last 24 hours of benchmark runs: each run's score, cost and
-        # change against the previous run of its cell, the day's total and this month's spend.
-        # Sent after the 2 AM nightly run's own import, so tonight's results are in the database.
-        # Free: it only reads the database. Posts nothing when the last 24 hours had no runs.
-        if: >-
-          env.SLACK_WEBHOOK_URL != '' && (
-            (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'schedule' && github.event.workflow_run.path == '.github/workflows/benchmark.yml') ||
-            (github.event_name == 'workflow_dispatch' && inputs.post_summary)
-          )
-        run: python3 -m evals.dashboard digest
 
       - name: Alert Slack that the import failed
         if: failure() && env.SLACK_WEBHOOK_URL != ''

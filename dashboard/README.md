@@ -126,19 +126,11 @@ Without the secret, results are imported without screenshots.
 
 ## Alerts
 
-Slack (`SLACK_WEBHOOK_URL` repository secret) gets two kinds of posts.
-
-Critical alerts, right away, from the "Save run results to dashboard" workflow:
+Slack (`SLACK_WEBHOOK_URL` repository secret) gets critical alerts only, right away, from the "Save run results to dashboard" workflow:
 
 - a run stopped at its cost cap (`MAX_RUN_COST_USD`, the workflows' `max_cost_usd` input),
 - a benchmark run failed (crashed or timed out; a run you cancel yourself sends nothing), or
 - the dashboard import itself failed.
-
-One daily summary, posted after the nightly run's import (the last step of `dashboard-data.yml`, `python -m evals.dashboard digest`):
-every run of the last 24 hours with its score, cost and change against the previous run of
-its cell (same mode, suite, backend, harness, model and season, not flagged), the day's total
-and this month's spend. Nothing is posted on a day with no runs; run "Save run results to dashboard" by hand with `post_summary` to
-post now, or `digest --dry-run` locally to print it.
 
 Without the secret, no alerts are sent.
 

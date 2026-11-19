@@ -75,7 +75,7 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 | Deallocate after runs | `az vm deallocate -g operon-bench -n operon-desktop` (or `-n operon-linux`). Workflows deallocate on their own; check by hand after manual work. |
 | az login | Needs `--tenant bae81514-1670-44ef-9e7a-c41552f64f59` (MFA). AVG antivirus HTTPS scanning breaks az certificates on Vickey's PC (workaround: temporary cert file). |
 | Eval dashboard | Vercel project `operon-evals` (root `dashboard/`, don't move it), Neon Postgres. Dashboard reads through the read-only role `dashboard_ro` (`DASHBOARD_DATABASE_URL`). New tables need `GRANT SELECT ... TO dashboard_ro`. Never "Rotate Neon Secrets". Backfill via the "Save run results to dashboard" workflow. |
-| Slack | Only critical alerts (cost cap, failed run, failed import) plus the daily summary after the dashboard import. |
+| Slack | Critical alerts only (cost cap, failed run, failed import). |
 | PyPI | Package `operon-agent`, released by pushing tag `v<version>` (`docs/releasing.md`). |
 
 ## Current state (2026-11-17)

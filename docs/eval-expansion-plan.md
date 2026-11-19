@@ -2,6 +2,8 @@
 
 Oct 24, 2026 · @Vickey Kapoor
 
+_Note: this plan dates from 2026-10-24. The OSWorld-Verified subset has since been run (21 of 25, see the OSWorld result in [README.md](../README.md) and [osworld-runner.md](osworld-runner.md))._
+
 ## Summary
 
 Operon's evals are good at one thing: catching regressions on short web tasks. They are too thin to tell us much else. Both backends now score 40 to 42 of 44, so the browser suite is close to its ceiling. Tasks average 2 to 4 steps, while public benchmarks average about 30 (OSWorld) to about 300 (OSWorld 2.0). Each task runs once. The judge reads only the final screenshot, and nobody has checked how often it is right. There is nothing for safety, prompt injection, or grounding.

@@ -16,7 +16,7 @@ the code. ``get_settings()`` returns the current settings; code reads fields off
   saw, with secrets replaced by ``"<set>"``; the run store writes it to the run's
   ``settings.json``.
 * **Follows the environment.** The result is cached against the current values of the
-  variables it reads, so a ``.env`` loaded at startup, ``operon setup`` saving a key, or
+  variables it reads, so a ``.env`` loaded at startup, or
   a test's ``monkeypatch.setenv`` is picked up on the next call without a reload step.
 
 ``.env.example`` stays the contract: every variable listed there is a field here (or
@@ -40,9 +40,8 @@ _TRUE = {"1", "true", "yes", "on"}
 
 # Variables some module still reads itself, and why (the contract test allows these).
 DIRECT_READS: dict[str, str] = {
-    # `operon setup` reads and writes the key before any settings exist, and tells a
-    # key set in the shell from one in a file; it also checks against GEMINI_API_BASE_URL.
-    "GEMINI_API_KEY": "operon setup (src/operon/setup_command.py)",
+    # The Azure helper reads the key itself to hand it to the VM.
+    "GEMINI_API_KEY": "operon cloud (src/operon/cloud.py)",
     # The Windows Sandbox guest runs inside the sandbox, as its own process.
     "OPERON_GUEST_TOKEN": "sandbox guest (src/operon/environments/guest.py)",
     # The Azure helper is a developer tool with injectable settings of its own.

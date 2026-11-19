@@ -1,9 +1,7 @@
 """The ``operon`` command (KAN-89).
 
-    operon setup                    first time: save the Gemini key, install the browser, self-check
     operon run "task"               run a task here, in this process, and print a report
     operon run --request "task"     send the task to a running API and follow it
-    operon mcp                      serve Operon to MCP clients over stdio (needs operon-agent[mcp])
     operon serve                    start the API and print the task page's link
     operon cloud ...                Operon's own computer on an Azure Linux VM (see operon.cloud)
 
@@ -278,7 +276,7 @@ def _load_env() -> None:
 
     remember_shell_env()
     load_dotenv(find_dotenv(usecwd=True), override=False)
-    load_user_env()  # the key `operon setup` saved, for a pip install with no .env here
+    load_user_env()  # the optional per-user key file (~/.operon/operon.env), for a run with no .env here
 
 
 def _payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -432,16 +430,8 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def _run_entry(args: argparse.Namespace) -> int:
-    from operon.taskfile import run_tasks_command, tasks_flag_problem
-
-    problem = tasks_flag_problem(args)
-    if problem:
-        print(f"operon run: {problem}", file=sys.stderr)
-        return 2
-    if args.tasks:
-        return run_tasks_command(args)
     if not args.task:
-        print("operon run: give a task, or --tasks FILE", file=sys.stderr)
+        print("operon run: give a task", file=sys.stderr)
         return 2
     return asyncio.run(_run(args))
 
@@ -460,12 +450,6 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _mcp(args: argparse.Namespace) -> int:  # noqa: ARG001 - subcommand signature
-    from operon import mcp_server
-
-    return mcp_server.main()
-
-
 def build_parser() -> argparse.ArgumentParser:
     from operon import __version__
 
@@ -475,10 +459,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="run a task and print a report")
     run.add_argument("task", nargs="?", default=None, help="what Operon should do, in plain words")
-    run.add_argument("--tasks", default=None, help="run the tasks in this YAML file (see docs/task-files.md)")
-    run.add_argument("--junit", default=None, help="with --tasks: write a JUnit XML report here")
-    run.add_argument("--only", action="append", default=None, help="with --tasks: run only the task with this name (repeatable)")
-    run.add_argument("--fail-fast", action="store_true", help="with --tasks: stop after the first failing task")
     run.add_argument("--request", action="store_true", help="send the task to a running API instead of running it here")
     run.add_argument("--api", default=None, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
@@ -507,14 +487,10 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)
 
-    mcp = sub.add_parser("mcp", help="serve Operon to MCP clients (Claude Code, Claude Desktop) over stdio")
-    mcp.set_defaults(func=_mcp)
-
-    from operon import cloud, secrets_command, setup_command
+    from operon import cloud, secrets_command
     from operon.environments import cli as environments_cli
     from operon.environments import guest
 
-    setup_command.add_parser(sub)
     secrets_command.add_parser(sub)
     cloud.add_parser(sub)
     environments_cli.add_parser(sub)

@@ -64,31 +64,18 @@ flowchart LR
 
 You need Python 3.14+ and a free [Gemini API key](https://aistudio.google.com/apikey).
 
-**1. Install** (about a minute) from [PyPI](https://pypi.org/project/operon-agent/):
+**1. Install** from source:
 
 ```bash
+git clone https://github.com/vickey-kapoor/Operon.git && cd Operon
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
-pip install operon-agent
+pip install -e ".[dev]"
+playwright install chromium
 ```
 
-Version 0.1.0 stays on PyPI but gets no new releases. To follow current work, clone the repo
-and `pip install -e .` instead.
+**2. Set your key**: copy `.env.example` to `.env` and put your key in `GEMINI_API_KEY`.
 
-> [!TIP]
-> If Windows blocks `operon.exe` or `pip.exe` (Smart App Control), run the same commands through
-> Python: `python -m pip install operon-agent`, then `python -m operon.cli setup` and
-> `python -m operon.cli run "..."`.
-
-**2. Set up** (about two minutes): paste your key when asked. `operon setup` checks it with
-Gemini, saves it to `~/.operon` (readable only by you), installs Chromium and runs a self-check.
-
-```bash
-operon setup
-```
-
-It ends with `Ready.` If a line says `FAIL`, it tells you what to fix; run `operon setup` again.
-
-**3. Run a task** (about a minute):
+**3. Run a task**:
 
 ```bash
 operon run "Find the population of Paris on Wikipedia" --url https://en.wikipedia.org
@@ -101,7 +88,7 @@ short report of what it did.
 
 ![Operon finding the population of Paris on Wikipedia, from screenshots only](docs/assets/demo.gif)
 
-That run took 2 model steps and 23 seconds; a fresh PyPI install on Windows did it in 5 steps and 88 seconds. A task like this costs a few cents of Gemini calls on your key.
+That run took 2 model steps and 23 seconds. A task like this costs a few cents of Gemini calls on your key.
 
 **Next:** `operon serve` prints a link to a local task page, where you type tasks, watch them
 live, approve steps and take over with your own mouse. Add `--desktop` to `operon run` to drive

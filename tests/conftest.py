@@ -16,7 +16,7 @@ os.environ.setdefault("OPERON_ALLOWED_HOSTS", "testserver,test")
 # Offline tests call the API without a key; importing the server must not write
 # .var/api-key. Auth tests turn this off to check the default.
 os.environ.setdefault("OPERON_ALLOW_UNAUTHENTICATED", "true")
-# Never read (or let `operon setup` tests write) the developer's real ~/.operon key file.
+# Never read the developer's real ~/.operon key file.
 os.environ["OPERON_CONFIG_DIR"] = os.path.join(os.path.dirname(__file__), "..", ".var", "test-user-config")
 
 # Pre-import modules that test stubs (test_phase4_integration.py) replace via
@@ -61,8 +61,7 @@ def _reset_active_browser_manager():
 def _reset_runtime_loops():
     """Drop agent loops a test built lazily (for example a request through the real app).
 
-    A loop left on the runtime makes the SDK refuse to run in the same process
-    ("This process already holds Operon agent loops") in whichever test comes next.
+    A loop left on the runtime would leak into whichever test comes next.
     """
     from operon.core.runtime import current_runtime
 

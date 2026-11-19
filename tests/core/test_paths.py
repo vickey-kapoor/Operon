@@ -99,3 +99,30 @@ def test_checkout_layout_keeps_the_var_folder(monkeypatch, tmp_path: Path) -> No
 
     assert paths.source_checkout() == repo
     assert paths.runtime_dir() == repo / ".var"
+
+
+def _no_key(monkeypatch, tmp_path: Path) -> Path:
+    home = tmp_path / "cfg"
+    monkeypatch.setenv("OPERON_CONFIG_DIR", str(home))
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.delenv("GEMINI_API_KEY")
+    return home
+
+
+def test_user_env_file_is_loaded_without_overriding(monkeypatch, tmp_path: Path) -> None:
+    import os
+
+    home = _no_key(monkeypatch, tmp_path)
+    home.mkdir(parents=True)
+    (home / "operon.env").write_text("GEMINI_API_KEY=from-file\n", encoding="utf-8")
+    assert paths.load_user_env() is True
+    assert os.environ["GEMINI_API_KEY"] == "from-file"
+
+    monkeypatch.setenv("GEMINI_API_KEY", "from-env")
+    paths.load_user_env()
+    assert os.environ["GEMINI_API_KEY"] == "from-env"
+
+
+def test_no_user_env_file_is_fine(monkeypatch, tmp_path: Path) -> None:
+    _no_key(monkeypatch, tmp_path)
+    assert paths.load_user_env() is False

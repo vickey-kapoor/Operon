@@ -77,13 +77,13 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 | az login | Needs `--tenant bae81514-1670-44ef-9e7a-c41552f64f59` (MFA). AVG antivirus HTTPS scanning breaks az certificates on Vickey's PC (workaround: temporary cert file). |
 | Eval dashboard | Vercel project `operon-evals` (root `dashboard/`, don't move it), Neon Postgres. Dashboard reads through the read-only role `dashboard_ro` (`DASHBOARD_DATABASE_URL`). New tables need `GRANT SELECT ... TO dashboard_ro`. Never "Rotate Neon Secrets". Backfill via the "Save run results to dashboard" workflow. |
 | Slack | Critical alerts only (cost cap, failed run, failed import). |
-| PyPI | Package `operon-agent`, released by pushing tag `v<version>` (`docs/releasing.md`). |
+| PyPI | Package `operon-agent`: releases stopped on 2026-11-18 (the release workflow was removed); published versions stay on PyPI. |
 
 ## Current state (2026-11-17)
 
 **Merged today:** #315 (KAN-116 expected-change check, `OPERON_EXPECT_CHECK`, off),
 #318 (plain workflow run/job names), #319 (KAN-163 trust gate reads the text under a
-click with local OCR, `OPERON_CLICK_TEXT`, off; optional extra `operon-agent[ocr]`).
+click with local OCR, `OPERON_CLICK_TEXT`, off; optional extra `.[ocr]`).
 No open PRs.
 
 **Done in Jira:** KAN-116, KAN-163, KAN-168 (Claude Sonnet 5.5 and GPT computer use

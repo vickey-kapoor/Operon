@@ -21,10 +21,7 @@ machine. See [configuration.md](configuration.md).
 
 ## Task page and `operon run`
 
-First time, run `operon setup`: it asks for your Gemini key (hidden, checked with a free
-model-list call, saved to `~/.operon/operon.env` readable only by you), installs Chromium and
-runs a self-check. `operon setup --check` reruns only the self-check; `--new-key` replaces the
-key; `--offline` and `--skip-browser` skip the key check and the browser.
+Put your Gemini key in `.env` (or in `~/.operon/operon.env`, an optional per-user file).
 
 `operon serve` starts the API and prints the task page's link, with the key in the URL
 fragment (`#key=...`, which the browser never sends to the server). On

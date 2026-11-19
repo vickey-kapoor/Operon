@@ -34,7 +34,7 @@ def test_every_setting_is_listed_in_env_example() -> None:
 
 
 def test_only_settings_and_the_named_tools_read_operon_variables_directly() -> None:
-    allowed = set(DIRECT_READS) | {"GEMINI_API_BASE_URL"}  # operon setup's key check
+    allowed = set(DIRECT_READS)
     for path in (ROOT / "src" / "operon").rglob("*.py"):
         if path.name == "settings.py" and path.parent.name == "core":
             continue

@@ -54,15 +54,15 @@ def source_checkout() -> Path | None:
 
 
 def user_config_dir() -> Path:
-    """Return the per-user settings folder (``~/.operon``) that ``operon setup`` writes.
+    """Return the per-user settings folder (``~/.operon``).
 
-    It holds ``operon.env``, so a pip-installed Operon finds its key from any folder.
+    It optionally holds ``operon.env``, so Operon finds its key from any folder.
     """
     return _env_path("OPERON_CONFIG_DIR", Path.home() / ".operon")
 
 
 def user_env_file() -> Path:
-    """Return the per-user settings file that ``operon setup`` writes the model key to."""
+    """Return the per-user settings file (``~/.operon/operon.env``), which is optional: it can hold the model key."""
     return user_config_dir() / "operon.env"
 
 
@@ -72,7 +72,7 @@ _shell_env: dict[str, str] | None = None
 def remember_shell_env() -> None:
     """Note the environment as the shell gave it, before any ``.env`` file is loaded.
 
-    ``operon setup`` uses it to tell a key set in the shell from one read out of a file.
+    It tells a key set in the shell from one read out of a file.
     """
     global _shell_env
     if _shell_env is None:

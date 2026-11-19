@@ -605,7 +605,7 @@ class AgentLoop:
 
         A run this process created needs no check (it runs where it started); a run loaded
         from disk does, whatever its stop reason. Compared with the provider this process
-        actually built when there is one: settings can change after it is built (MCP)."""
+        actually built when there is one: settings can change after it is built."""
         if record.run_id in self._created_runs:
             return
         from operon.core.runtime import current_runtime

@@ -93,8 +93,6 @@ class OperonRuntime:
     desktop_provider: Any = None
     # The connected CDP browser manager the browser executor attaches to.
     active_browser_manager: Any = None
-    # True while one Python SDK run (``operon.sdk.Agent``) owns this process's loops.
-    sdk_run_active: bool = False
     control: ControlSettings = field(default_factory=ControlSettings)
     stream: StreamState = field(default_factory=StreamState)
     runs: OrderedDict[str, RunContext] = field(default_factory=OrderedDict)

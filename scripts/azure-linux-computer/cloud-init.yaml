@@ -115,8 +115,8 @@ write_files:
         chown operon:operon "$ENV"
         chmod 600 "$ENV"
       fi
-      # Root-only: the admin user (the one `operon cloud` signs in as) reads the API key with sudo,
-      # so apps the agent launches as `operon` cannot.
+      # Root-only, so other non-root users on the VM cannot read it. The admin user (the one
+      # `operon cloud` signs in as) reads it with sudo.
       install -d -m 0755 /etc/operon
       install -m 0600 -o root -g root /dev/null /etc/operon/api-key
       grep '^API_KEYS=' "$ENV" | cut -d= -f2- > /etc/operon/api-key

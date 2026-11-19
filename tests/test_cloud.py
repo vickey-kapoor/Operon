@@ -354,3 +354,7 @@ def test_cloud_init_keeps_the_api_key_root_only() -> None:
     text = (Path(__file__).resolve().parents[1] / "scripts/azure-linux-computer/cloud-init.yaml").read_text()
     assert "install -m 0600 -o root -g root /dev/null /etc/operon/api-key" in text
     assert "0644" not in text
+
+
+def test_update_script_tightens_an_old_api_key_file_without_failing() -> None:
+    assert "{ sudo chmod 600 /etc/operon/api-key 2>/dev/null || true; }" in cloud.UPDATE_SCRIPT

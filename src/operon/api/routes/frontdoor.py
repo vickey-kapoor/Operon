@@ -55,7 +55,7 @@ async def start(task: frontdoor.FrontDoorTask) -> dict[str, Any]:
 
 @router.get("/runs")
 async def list_runs(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
-    """The newest runs on this computer, for the page's Home and History."""
+    """The newest runs on this computer, for listings."""
     return {"runs": frontdoor.recent_runs(limit)}
 
 

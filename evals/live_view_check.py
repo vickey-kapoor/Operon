@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -102,6 +103,8 @@ async def check(api: str, key: str, out: Path, *, max_steps: int, timeout_s: flo
                     report = (await http.get(f"/app/api/runs/{run_id}/report")).json()
             finally:
                 listener.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await listener
         shop = site.state().get("shop", {})
 
     result = {

@@ -169,7 +169,7 @@ async def test_request_mode_drives_a_running_api(monkeypatch, tmp_path) -> None:
     assert report["steps"] == 2 and len(executor.executed) == 2
 
 
-async def test_request_mode_leaves_a_paused_run_for_the_page(monkeypatch, tmp_path) -> None:
+async def test_request_mode_leaves_a_paused_run(monkeypatch, tmp_path) -> None:
     from operon.api.routes import frontdoor as routes
 
     loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])

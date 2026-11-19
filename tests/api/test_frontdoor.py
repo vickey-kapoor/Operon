@@ -47,6 +47,12 @@ async def test_the_run_api_needs_the_key(monkeypatch) -> None:
     assert api.status_code == 401
 
 
+async def test_the_task_page_is_gone() -> None:
+    async with _client() as client:
+        assert (await client.get("/")).status_code == 404
+        assert (await client.get("/app")).status_code == 404
+
+
 async def test_start_reports_the_run_and_its_mode(monkeypatch, tmp_path, scheduled) -> None:
     loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
     _use(monkeypatch, loop)

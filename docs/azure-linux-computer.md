@@ -32,7 +32,7 @@ API: http://127.0.0.1:8090 (X-API-Key header)
 |---|---|
 | `operon cloud create [--ref BRANCH]` | Creates the VM once (about 10 minutes of setup). Allows SSH from this PC's IP only and sets the daily auto-deallocate. |
 | `operon cloud set-key` | Saves `GEMINI_API_KEY` on the VM, then deallocates it. |
-| `operon cloud open` | Starts the VM, opens the tunnel and prints the API address and key. Start a desktop run through the API (`operon run --request --desktop`). Ctrl+C deallocates. |
+| `operon cloud open` | Starts the VM, opens the tunnel and prints the API address and key. Start a desktop run with `operon run --request --desktop --api http://127.0.0.1:8090 --api-key <the printed key> "task"` (8090 is `OPERON_CLOUD_LOCAL_PORT`, the default tunnel port). Ctrl+C deallocates. |
 | `operon cloud run "task"` | Starts the VM, runs one desktop task (run id printed), then deallocates. Add `--browser` to use the VM's browser instead. |
 | `operon cloud stop` | Deallocates the VM now. |
 
@@ -49,8 +49,9 @@ All of them accept `--keep` to leave the VM running. Settings: `OPERON_CLOUD_*` 
   Firefox ESR, LibreOffice Calc and Writer, and others). Apps start as argv lists with no shell,
   each in its own process group, so cleanup ends the app and its children.
 - The prompt is `desktop_computer_use_prompt_linux.txt`.
-- `/ws/stream` gets JPEG frames of the screen over `/ws/stream` (4 a second, at most 1280 px
-  wide), and during a takeover it sends your clicks, keys and scrolls to the VM.
+- `/ws/stream` carries JPEG frames of the screen (4 a second, at most 1280 px wide).
+  During a takeover, clicks, keys and scrolls you send with `POST /app/api/runs/{id}/input`
+  go to the VM.
 
 A local Windows desktop is unchanged. Its runs still show step screenshots, and you take over
 with your own mouse and keyboard.

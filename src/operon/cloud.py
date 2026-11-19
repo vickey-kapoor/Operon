@@ -317,7 +317,8 @@ def cmd_open(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_comma
     with _Session(cfg, run, keep=args.keep, update=getattr(args, "update", False), out=out) as session:
         out(f"API: {session.base_url}")
         out(f"API key: {session.api_key}")
-        out("Pick Desktop to use the VM's own desktop. Press Ctrl+C here when you are done.")
+        out(f'Start a desktop task: operon run --request --desktop --api {session.base_url} --api-key <key above> "task"')
+        out("Press Ctrl+C here when you are done.")
         try:
             while session.tunnel is not None and session.tunnel.poll() is None:
                 time.sleep(1)

@@ -46,7 +46,7 @@ ENVIRONMENTS = ("browser", "desktop")
 
 
 class FrontDoorTask(StrictModel):
-    """A task as the page and ``operon run`` send it."""
+    """A task as the API and ``operon run`` send it."""
 
     intent: str = Field(min_length=1, max_length=MAX_INTENT_CHARS)
     environment: str = Field(default="browser", pattern=r"^(browser|desktop)$")
@@ -239,7 +239,7 @@ async def run_status(run_id: str, *, recent: int = 8) -> dict[str, Any]:
         "run_id": record.run_id,
         "intent": record.intent,
         "environment": environment,
-        # A desktop the page streams and drives during a takeover (the Linux cloud
+        # A desktop the API streams and drives during a takeover (the Linux cloud
         # computer); a local Windows desktop shows step screenshots instead.
         "live_view": environment == "browser" or hasattr(getattr(loop, "executor", None), "live_frame_png"),
         "status": record.status.value,
@@ -384,13 +384,13 @@ async def stop(run_id: str) -> dict[str, Any]:
 
 
 async def user_input(run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """The person's own click or keys during a takeover, sent from the page's live view."""
+    """The person's own click or keys during a takeover, sent through the API."""
     loop, record = await _require_run(run_id)
     if not getattr(record, "in_takeover", False):
         raise FrontDoorError("Take over first: the agent is in control")
     send = getattr(loop.executor, "user_input", None)
     if send is None:
-        raise FrontDoorError("This environment takes input on the screen itself, not from the page")
+        raise FrontDoorError("This environment takes input on the screen itself, not through the API")
     try:
         delivered = await send(
             run_id,
@@ -419,7 +419,7 @@ _OUTCOME = {
 
 
 def recent_runs(limit: int = 20) -> list[dict[str, Any]]:
-    """The newest runs on this computer, newest first, for the page's Home and History.
+    """The newest runs on this computer, newest first, for listings.
 
     Reads each run's ``state.json`` under the runs directory, which both loops share."""
     from operon.models.state import AgentState

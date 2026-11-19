@@ -145,7 +145,7 @@ def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() ->
         inputs = yaml.safe_load((WORKFLOWS / called).read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
         assert jobs[job]["with"]["artifact_suffix"] == "${{ matrix.suffix }}"
-    # The dashboard import listens for the Benchmark workflow (nightly, manual and /bench runs) by its name.
+    # The dashboard import listens for the Benchmark workflow (manual and /bench runs) by its name.
     dashboard = yaml.safe_load((WORKFLOWS / "dashboard-data.yml").read_text(encoding="utf-8"))
     assert batch["name"] in dashboard[True]["workflow_run"]["workflows"]
 
@@ -182,7 +182,9 @@ def test_benchmark_workflow_jobs_only_wait_on_jobs_that_exist() -> None:
     for job, called in (("browser", "live-bench.yml"), ("desktop", "live-desktop-bench.yml"), ("grounding", "grounding.yml")):
         inputs = yaml.safe_load((WORKFLOWS / called).read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
-    assert set(wf[True]) == {"issue_comment", "workflow_dispatch"}
+    assert set(wf[True]) == {"issue_comment", "workflow_dispatch"}  # no schedule
+    assert "queue" not in jobs  # the nightly queue was removed 2026-11-18
+    assert wf[True]["workflow_dispatch"]["inputs"]["cells"]["required"] is True
 
 
 def test_the_old_benchmark_entry_points_are_gone() -> None:

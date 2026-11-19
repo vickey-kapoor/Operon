@@ -1,7 +1,7 @@
 """Read a benchmark batch: many grid cells, one GitHub Actions run (KAN-105).
 
 Paid runs are queued during the day and run together once Vickey approves the batch.
-The batch workflow (``.github/workflows/benchmark.yml``: the nightly run, a manual run, or a ``/bench batch`` PR
+The batch workflow (``.github/workflows/benchmark.yml``: a manual run or a ``/bench batch`` PR
 comment) passes its cell list here; this module checks every line and turns it into
 the job matrices the workflow runs: Browser cells side by side on hosted runners,
 Desktop and Hybrid cells one after another on a single start of the Azure VM.
@@ -54,7 +54,7 @@ _PR = re.compile(r"^[1-9][0-9]{0,6}$")
 _REF = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$")
 # Per-cell switches for the perception experiments (KAN-115): word -> the env flag it turns on.
 # Models a cell may name with model=<profile>: one per provider, picked by Vickey (KAN-168).
-# Other registry profiles are not set up for nightly runs.
+# Other registry profiles are not set up for batch runs.
 MODEL_CELLS = {
     "claude-sonnet-5-5": "Claude Sonnet 5.5",
     "openai-computer-use": "GPT",

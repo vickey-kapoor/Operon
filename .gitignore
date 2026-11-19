@@ -85,6 +85,3 @@ desktop.ini
 *.code-workspace
 demo-*.png
 .gcloudignore
-
-# Stray PowerShell cache folder
-/Microsoft/

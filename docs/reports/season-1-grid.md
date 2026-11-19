@@ -79,6 +79,6 @@ topped up.
 - **The core sets are saturated.** Nearly every cell is 9 or 10 of 10, so the grid can't yet show
   whether a change to Operon helps. Season 2 (KAN-78) adds harder core sets aimed at 40% to 70%.
 - **Hybrid is the hardest category**, and its misses come from writing files and commands by
-  typing into a shell window. The planned tool channel (KAN-79) gives the model typed file and
-  command tools instead. Tracked in Jira epic KAN-7.
+  typing into a shell window. The tool channel (KAN-79, #254) has since given the model typed
+  file and command tools; it is on by default (`OPERON_TOOLS`, see [configuration.md](../configuration.md)).
 - **Most remaining misses are model misses**, not Operon bugs, after the KAN-75 and #233 fixes.

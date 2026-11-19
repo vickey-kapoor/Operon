@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 
@@ -64,24 +63,6 @@ def user_config_dir() -> Path:
 def user_env_file() -> Path:
     """Return the per-user settings file (``~/.operon/operon.env``), which is optional: it can hold the model key."""
     return user_config_dir() / "operon.env"
-
-
-_shell_env: dict[str, str] | None = None
-
-
-def remember_shell_env() -> None:
-    """Note the environment as the shell gave it, before any ``.env`` file is loaded.
-
-    It tells a key set in the shell from one read out of a file.
-    """
-    global _shell_env
-    if _shell_env is None:
-        _shell_env = dict(os.environ)
-
-
-def shell_env() -> dict[str, str]:
-    """The environment from before ``.env`` files were loaded (now, if never noted)."""
-    return dict(_shell_env) if _shell_env is not None else dict(os.environ)
 
 
 def load_user_env() -> bool:

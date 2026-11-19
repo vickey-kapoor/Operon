@@ -6,8 +6,7 @@ suite, a grounding eval, repeated runs for flakiness, and a check of the benchma
 ## Latest results
 
 As of 2026-11-11. Season 1 core sets, 10 tasks per cell, graded from state; one pass each.
-Triage of every miss is in [reports/season-1-grid.md](reports/season-1-grid.md); the follow-up
-plan is Jira epic KAN-7.
+Triage of every miss is in [reports/season-1-grid.md](reports/season-1-grid.md).
 
 | Model | Browser Thin | Browser Full | Desktop Thin | Desktop Full | Hybrid Thin | Hybrid Full |
 |---|---|---|---|---|---|---|
@@ -191,7 +190,7 @@ Documents folder, and the report and dashboard mark the run as not comparable wi
 The **Run browser test tasks (engine)**, **Run desktop test tasks (engine)** and **Run click-accuracy test (engine)** workflows can also be started by hand,
 with inputs for harness profile, suite and cost cap (`max_cost_usd`).
 
-## Daily benchmark batch
+## Benchmark batch
 
 Paid runs are batched (KAN-105): the cells that need running are sent together for one cost approval and run as one **Run Operon on test tasks (paid)**
 workflow run (`benchmark.yml`). Start it from the Actions tab (Run Operon on test tasks (paid) > Run workflow, cells separated by

@@ -385,8 +385,7 @@ class BrowserManager:
                 await self._page.keyboard.type(text)
 
             elif input_type == "text":
-                # Keys into whatever has focus: no click first (the Browser tab, where the
-                # user clicked a field a moment ago and now types).
+                # Keys into whatever has focus: no click first.
                 await self._page.keyboard.type(kwargs.get("text", ""))
 
             elif input_type == "scroll":

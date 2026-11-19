@@ -95,7 +95,7 @@ def test_a_copied_run_folder_still_records(tmp_path):
 
 @pytest.mark.parametrize("path", rp.recording_paths(), ids=lambda p: p.stem)
 def test_saved_recordings_replay_the_same(path):
-    """Every recording in evals/recordings/ (real Gemini answers from the nightly run)."""
+    """Every recording in evals/recordings/ (real Gemini answers from paid runs)."""
     result = asyncio.run(rp.replay(json.loads(path.read_text(encoding="utf-8"))))
     assert result.ok, result.message
 

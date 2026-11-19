@@ -193,8 +193,7 @@ with inputs for harness profile, suite and cost cap (`max_cost_usd`).
 
 ## Daily benchmark batch
 
-Paid runs are batched (KAN-105): during the day, the cells that need running go into a queue,
-and once a day the whole queue is sent for one cost approval and run as one **Run Operon on test tasks (paid)**
+Paid runs are batched (KAN-105): the cells that need running are sent together for one cost approval and run as one **Run Operon on test tasks (paid)**
 workflow run (`benchmark.yml`). Start it from the Actions tab (Run Operon on test tasks (paid) > Run workflow, cells separated by
 `;`) or with one PR comment, one cell per line after the first:
 
@@ -213,19 +212,6 @@ front. Browser cells run side by side on hosted runners; Desktop and Hybrid cell
 another on a single start of the Azure VM, which is deallocated after the last one. Every cell's
 report goes to the dashboard, and a `/bench batch` comment gets one results table on its PR.
 `evals/bench_batch.py` reads and checks the cells.
-
-### Nightly run (KAN-165)
-
-The batch can also run by itself (paused since 2026-11-16: start it by hand with an empty `cells`; uncomment the schedule in `benchmark.yml` to bring the nightly back): the same **Run Operon on test tasks (paid)** workflow (`benchmark.yml`) fires at about 2:25 AM Chicago
-(cron `23 8 * * *`, 3:25 AM in summer time) and runs the cells queued in `evals/nightly-queue.txt`.
-Threads queue a cell by adding a line in any PR: `2026-11-14 desktop thin season=2 cap=2.5  # note`
-(the date, the cell words above, an optional note). Each night `evals/nightly.py` takes the queued
-lines, oldest first, while their caps fit the budget: **$10 a night**, or what is left of
-**$100 for the month** (from the dashboard database), whichever is less. Lines that don't fit wait
-for the next night; a line runs once (run lines are kept in the `nightly-state` artifact, marked
-before the run so a failed cell isn't paid for twice); lines older than 7 days are skipped. If the
-month's spend can't be read, nothing runs. Run that workflow by hand with no cells and `dry_run` on to see the plan for free.
-Results reach the dashboard.
 
 ## Adding models later
 

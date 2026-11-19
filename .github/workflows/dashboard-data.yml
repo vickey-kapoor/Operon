@@ -81,7 +81,7 @@ jobs:
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           # A /bench comment runs on the default branch's workflow but benchmarks the
           # PR's head, so its head_sha is not the commit that was measured; nor is a Benchmark run's
-          # (nightly, manual batch), whose cells can each run a different PR or ref.
+          # (manual batch), whose cells can each run a different PR or ref.
           GIT_SHA: ${{ github.event.workflow_run.event != 'issue_comment' && github.event.workflow_run.path != '.github/workflows/benchmark.yml' && github.event.workflow_run.head_sha || '' }}
         run: |
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$RUN_ID" || true

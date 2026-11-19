@@ -84,7 +84,7 @@ Grounding evals (`evals.grounding`) are stored as runs with mode and suite
 Leaderboard leave them out.
 
 The **Save run results to dashboard** workflow (`.github/workflows/dashboard-data.yml`) runs after
-every "Run Operon on test tasks (paid)" run (nightly, manual batch or `/bench` comment), and every engine run started by hand ("Run browser test tasks (engine)", "Run desktop test tasks (engine)", "Run click-accuracy test (engine)")
+every "Run Operon on test tasks (paid)" run (manual batch or `/bench` comment), and every engine run started by hand ("Run browser test tasks (engine)", "Run desktop test tasks (engine)", "Run click-accuracy test (engine)")
 run, cancelled ones included, and writes its reports to the database, using the
 `DATABASE_URL` repository secret. Importing a report again replaces it. Run the workflow by hand to import older workflow runs
 (`run_ids`) or reports committed at a git ref (`backfill_ref`).

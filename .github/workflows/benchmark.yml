@@ -1,19 +1,12 @@
 name: Run Operon on test tasks (paid)
 run-name: >-
-  ${{ github.event_name == 'schedule' && 'Paid run · nightly (2:25 AM)'
-  || github.event_name == 'issue_comment' && format('Paid run · from a comment on PR #{0}', github.event.issue.number)
+  ${{ github.event_name == 'issue_comment' && format('Paid run · from a comment on PR #{0}', github.event.issue.number)
   || 'Paid run · started by hand' }}
 
 # The one place benchmarks start. Every run spends model credits, so nothing runs on a push.
 #
-# 1. Nightly, at about 2:25 AM Chicago (KAN-165; paused since 2026-11-16, see "on:" below): the cells queued in evals/nightly-queue.txt
-#    that fit tonight's budget, as one batch: at most $10 a night, and nothing once this
-#    month's spend (from the dashboard database) reaches $100. If the month's spend can't be
-#    read, nothing runs. Lines that already ran are remembered in the "nightly-state" artifact,
-#    so a line runs once. Results go to the dashboard and the daily Slack summary.
-# 2. By hand (Actions > Run Operon on test tasks (paid) > Run workflow): give cells to run a batch (KAN-105), or leave
-#    them empty to print tonight's plan (free; dry_run) or run it (dry_run off).
-# 3. A comment on a pull request by someone with write access:
+# 1. By hand (Actions > Run Operon on test tasks (paid) > Run workflow): give cells to run a batch (KAN-105).
+# 2. A comment on a pull request by someone with write access:
 #
 #   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [same-critic] [tools] [zoom|zoom=always] [azure] [season=<n>]
 #   /bench grounding [zoom|zoom=always]
@@ -36,7 +29,7 @@ run-name: >-
 # browser); with "zoom" each click on a dense screen is refined on a zoomed crop (KAN-82).
 # azure runs a desktop benchmark on our Azure VM instead of GitHub's hosted runner.
 #
-# A batch (nightly, manual or "/bench batch") is a list of cells, one per line or separated by
+# A batch (manual or "/bench batch") is a list of cells, one per line or separated by
 # ";" (evals/bench_batch.py), in the words above plus pr=<n> (that PR's head; forks refused),
 # ref=<branch|tag|commit> and cap=<USD> (default $3):
 #
@@ -52,30 +45,22 @@ run-name: >-
 # startable by hand. PRs from forks are refused: the run has the repository's API key.
 
 on:
-  # PAUSED (Vickey, 2026-11-16): runs are started by hand for now. To bring the nightly back, uncomment:
-  # schedule:
-  #   - cron: "23 8 * * *"  # about 2:25 AM Chicago in winter (CST), 3:25 AM in summer (CDT); off the top of the hour, when GitHub delays or drops scheduled runs
   issue_comment:
     types: [created]
   workflow_dispatch:
     inputs:
       cells:
-        description: "Cells, separated by ';', e.g. browser thin season=2 pr=242; desktop thin season=2 pr=242 cap=1.5. Empty: tonight's queue"
-        required: false
-        default: ""
+        description: "Cells, separated by ';', e.g. browser thin season=2 pr=242; desktop thin season=2 pr=242 cap=1.5"
+        required: true
       max_total_usd:
-        description: "Batch cost cap: refuse the batch if its cells' caps add up to more (0: no cap). Not used for tonight's queue"
+        description: "Batch cost cap: refuse the batch if its cells' caps add up to more (0: no cap)"
         default: "10"
-      dry_run:
-        description: "Tonight's queue only (cells empty): print the plan, run nothing and mark nothing as run"
-        type: boolean
-        default: true
 
 permissions:
   contents: read
   pull-requests: read
 
-# One queue or batch at a time: nightly, manual and "/bench batch" runs share a group, and the
+# One batch at a time: manual and "/bench batch" runs share a group, and the
 # Azure VM is theirs while they run. Single /bench comments and everything else run freely
 # (each Desktop or Hybrid cell also takes the VM's own concurrency group, azure-desktop-vm).
 concurrency:
@@ -228,71 +213,14 @@ jobs:
           path: pr-request/
           retention-days: 14
 
-  # Tonight's cells from evals/nightly-queue.txt, within the nightly budget (KAN-165). Runs on the
-  # 2 AM schedule, and by hand when no cells are given.
-  queue:
-    name: Pick tonight's queued runs
-    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.cells == '') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      run: ${{ steps.plan.outputs.run }}
-      budget: ${{ steps.plan.outputs.budget }}
-      cells: ${{ steps.plan.outputs.cells }}
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      GH_TOKEN: ${{ github.token }}
-      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-
-      - name: Install the Postgres driver
-        run: python3 -m pip install --quiet "psycopg[binary]==3.2.9"
-
-      - name: Get the list of lines already run
-        # Stops the night (nothing is charged) if the history can't be read: a missing list would run old cells again.
-        run: |
-          set -euo pipefail
-          mkdir -p state
-          info=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=nightly-state&per_page=1" --jq '[.total_count, (.artifacts[0].id // "")] | @tsv')
-          read -r count id <<< "$info"
-          if [ "$count" = "0" ]; then
-            echo "No earlier nightly list: this is the first run."
-          else
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > state.zip
-            unzip -o state.zip -d state
-            echo "Using the list from artifact $id."
-          fi
-
-      - id: plan
-        run: |
-          flags=""
-          if [ "$DRY_RUN" = "true" ]; then flags="--dry-run"; fi
-          python3 -m evals.nightly plan --done state/done.txt $flags
-
-      # Always, so the lines marked as run survive even if the batch below fails (no second charge).
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: ${{ always() && hashFiles('state/done.txt') != '' }}
-        with:
-          name: nightly-state
-          path: state/done.txt
-          retention-days: 90
-
-  # Reads the batch (from a /bench batch comment, the manual cells, or tonight's queue) and checks every line.
+  # Reads the batch (from a /bench batch comment or the manual cells) and checks every line.
   plan:
     name: Check the run list
-    needs: [parse, queue]
+    needs: parse
     if: >-
-      ${{ !cancelled() && needs.parse.result != 'failure' && needs.queue.result != 'failure' && (
+      ${{ !cancelled() && needs.parse.result != 'failure' && (
         (github.event_name == 'issue_comment' && needs.parse.outputs.target == 'batch') ||
-        (github.event_name == 'workflow_dispatch' && inputs.cells != '') ||
-        needs.queue.outputs.run == 'true') }}
+        github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -312,8 +240,8 @@ jobs:
       - id: read
         env:
           GH_TOKEN: ${{ github.token }}
-          CELLS: ${{ needs.parse.outputs.cells || inputs.cells || needs.queue.outputs.cells }}
-          MAX_TOTAL_USD: ${{ needs.queue.outputs.budget || inputs.max_total_usd || '10' }}
+          CELLS: ${{ needs.parse.outputs.cells || inputs.cells }}
+          MAX_TOTAL_USD: ${{ inputs.max_total_usd || '10' }}
         run: printf '%s\n' "$CELLS" | python3 -m evals.bench_batch --max-total-usd "$MAX_TOTAL_USD"
 
   start-vm:

@@ -12,6 +12,7 @@ Vision-only: the executor takes a screenshot and turns each action into plain
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -131,7 +132,8 @@ class OSWorldExecutor:
     """The executor surface the loop uses, over an OSWorld VM's HTTP server."""
 
     def __init__(self, base_url: str, *, artifact_dir: str | Path | None = None,
-                 transport: httpx.AsyncBaseTransport | None = None, trusted_host: str | None = None) -> None:
+                 transport: httpx.AsyncBaseTransport | None = None, trusted_host: str | None = None,
+                 post_action_wait_s: float | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self._trusted_host = trusted_host  # the one non-loopback address a secret may go to
         self._dir = Path(artifact_dir) if artifact_dir is not None else desktop_artifacts_dir()
@@ -139,6 +141,8 @@ class OSWorldExecutor:
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
         self.batch_child_check = None
+        self._post_action_wait_s = (get_settings().osworld_post_action_wait_s
+                                    if post_action_wait_s is None else max(0.0, post_action_wait_s))
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -161,8 +165,20 @@ class OSWorldExecutor:
         return CaptureFrame(artifact_path=str(path), width=width, height=height)
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
+        result, did_input = await self._execute_one(action)
+        if did_input and self._post_action_wait_s > 0:
+            # The VM replies before the app has finished reacting (a dialog still closing, an app
+            # still opening), so let it settle before the loop's next screenshot. Once per action,
+            # once per batch; also after a batch that failed part-way, since its earlier input ran.
+            await asyncio.sleep(self._post_action_wait_s)
+        return result
+
+    async def _execute_one(self, action: AgentAction) -> tuple[ExecutedAction, bool]:
+        """Run one action; the flag says whether it sent input to the VM (so a post-action wait applies).
+        A failed single action sent no input; a part-failed batch reports its earlier children's input."""
         if action.action_type is ActionType.BATCH:
             detail: list[str] = []
+            any_input = False
             for index, child in enumerate(action.actions or []):
                 check = self.batch_child_check
                 if index > 0 and check is not None:
@@ -171,34 +187,33 @@ class OSWorldExecutor:
                         return ExecutedAction(
                             action=action, success=False,
                             detail=f"Batch stopped before {child.action_type.value}: {blocked}",
-                            failure_category=FailureCategory.EXECUTION_ERROR, batch_failed_index=index)
-                result = await self.execute(child)
+                            failure_category=FailureCategory.EXECUTION_ERROR, batch_failed_index=index), any_input
+                result, child_input = await self._execute_one(child)
+                any_input = any_input or child_input
                 detail.append(f"{child.action_type.value}:{'ok' if result.success else 'failed'}")
                 if not result.success:
                     return ExecutedAction(action=action, success=False, detail=f"Batch failed: {result.detail}",
-                                          failure_category=result.failure_category)
-            return ExecutedAction(action=action, success=True, detail=f"Executed batch: {', '.join(detail)}")
+                                          failure_category=result.failure_category), any_input
+            return ExecutedAction(action=action, success=True, detail=f"Executed batch: {', '.join(detail)}"), any_input
         t = action.action_type
         try:
             if t in (ActionType.STOP, ActionType.WAIT_FOR_USER):
-                return ExecutedAction(action=action, success=True, detail=f"{t.value}: nothing to do")
+                return ExecutedAction(action=action, success=True, detail=f"{t.value}: nothing to do"), False
             if t is ActionType.WAIT:
-                import asyncio
-
                 await asyncio.sleep((action.wait_ms or 1000) / 1000)
-                return ExecutedAction(action=action, success=True, detail=f"Waited {action.wait_ms or 1000} ms")
+                return ExecutedAction(action=action, success=True, detail=f"Waited {action.wait_ms or 1000} ms"), False
             if t is ActionType.LAUNCH_APP:
                 from operon.agent.app_catalog import launch_targets
 
                 command = launch_targets().get((action.text or "").strip().lower())
                 if command is None:
-                    return _failed(action, f"launch_app: '{action.text}' is not a catalog application")
+                    return _failed(action, f"launch_app: '{action.text}' is not a catalog application"), False
                 await self._shell(["bash", "-c", f"DISPLAY=:0 nohup {command} >/dev/null 2>&1 &"])
-                return ExecutedAction(action=action, success=True, detail=f"Launched {action.text}")
+                return ExecutedAction(action=action, success=True, detail=f"Launched {action.text}"), True
             if t in _SERVO_ACTIONS and action.x is not None and action.y is not None and not action.is_input_zone:
                 blank = await self._blank_target(action)
                 if blank is not None:
-                    return blank
+                    return blank, False
             # KAN-103: the value goes only into the snippet sent to the VM, never into `action`.
             secret_values: tuple[str, ...] = ()
             to_type = action
@@ -206,23 +221,23 @@ class OSWorldExecutor:
                 try:
                     resolved, secret_values = resolve_text(action.text)
                 except SecretError as exc:
-                    return _failed(action, f"type failed: {exc}")
+                    return _failed(action, f"type failed: {exc}"), False
                 if secret_values and not secret_endpoint_ok(self.base_url, self._trusted_host):
-                    return _failed(action, "type failed: the OSWorld VM is not at a loopback address")
+                    return _failed(action, "type failed: the OSWorld VM is not at a loopback address"), False
                 if secret_values and not resolved.isascii():
                     # Non-ASCII text is pasted through the VM's clipboard: a secret never is.
-                    return _failed(action, "type failed: this secret has a character that cannot be typed without the clipboard")
+                    return _failed(action, "type failed: this secret has a character that cannot be typed without the clipboard"), False
                 to_type = action.model_copy(update={"text": resolved})
             snippet = pyautogui_snippet(to_type)
             if snippet is None:
-                return _failed(action, f"{t.value} is not supported on an OSWorld machine")
+                return _failed(action, f"{t.value} is not supported on an OSWorld machine"), False
             script = "import pyautogui; pyautogui.FAILSAFE = False\n" + snippet
             reply = await self._shell(["python3", "-c", script])
             if reply.get("status") == "error" or reply.get("returncode", 0) not in (0, None):
-                return _failed(action, redact(f"VM refused {t.value}: {json.dumps(reply)[:300]}", secret_values))
-            return ExecutedAction(action=action, success=True, detail=f"Executed {t.value} on the OSWorld VM")
+                return _failed(action, redact(f"VM refused {t.value}: {json.dumps(reply)[:300]}", secret_values)), False
+            return ExecutedAction(action=action, success=True, detail=f"Executed {t.value} on the OSWorld VM"), True
         except httpx.HTTPError as exc:
-            return _failed(action, f"OSWorld VM unreachable: {exc}")
+            return _failed(action, f"OSWorld VM unreachable: {exc}"), False
 
     async def _blank_target(self, action: AgentAction) -> ExecutedAction | None:
         """Visual servo (an invariant: every click goes through it): refuse a click whose

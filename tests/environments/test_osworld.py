@@ -372,3 +372,145 @@ def test_long_benchmark_instructions_are_accepted_by_the_run_request():
     assert RunTaskRequest(intent=long_task).intent == long_task
     with pytest.raises(ValueError):
         RunTaskRequest(intent="x" * (MAX_INTENT_CHARS + 1))
+
+
+# ── post-action wait (OPERON_OSWORLD_POST_ACTION_WAIT_S) ───────────
+
+from operon.environments import osworld as osworld_env  # noqa: E402
+
+
+def _ok_handler(request: httpx.Request) -> httpx.Response:
+    if request.method == "GET":
+        return httpx.Response(200, content=_png(noisy=True))
+    return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    monkeypatch.delenv("OPERON_OSWORLD_POST_ACTION_WAIT_S", raising=False)
+    recorded: list[float] = []
+
+    async def fake_sleep(seconds):
+        recorded.append(seconds)
+
+    monkeypatch.setattr(osworld_env.asyncio, "sleep", fake_sleep)
+    return recorded
+
+
+def _wait_executor(handler, tmp_path, wait):
+    return OSWorldExecutor("http://vm:5000", artifact_dir=tmp_path, transport=httpx.MockTransport(handler),
+                           post_action_wait_s=wait)
+
+
+_INPUT_ACTIONS = [
+    AgentAction(action_type=ActionType.CLICK, x=200, y=150),
+    AgentAction(action_type=ActionType.TYPE, text="hi", x=200, y=150),
+    AgentAction(action_type=ActionType.PRESS_KEY, key="enter"),
+    AgentAction(action_type=ActionType.SCROLL, x=200, y=150, scroll_amount=-3),
+    AgentAction(action_type=ActionType.DRAG, x=100, y=100, x_end=200, y_end=200),
+]
+
+
+def test_post_action_wait_is_off_by_default(tmp_path, sleeps):
+    result = asyncio.run(_wait_executor(_ok_handler, tmp_path, None).execute(_INPUT_ACTIONS[0]))
+    assert result.success and sleeps == []
+
+
+@pytest.mark.parametrize("action", _INPUT_ACTIONS, ids=lambda a: a.action_type.value)
+def test_post_action_wait_follows_an_input_action(tmp_path, sleeps, action):
+    result = asyncio.run(_wait_executor(_ok_handler, tmp_path, 1.5).execute(action))
+    assert result.success and sleeps == [1.5]
+
+
+def test_no_post_action_wait_after_stop_or_wait(tmp_path, sleeps):
+    executor = _wait_executor(_ok_handler, tmp_path, 1.5)
+    assert asyncio.run(executor.execute(AgentAction(action_type=ActionType.STOP))).success
+    assert sleeps == []
+    assert asyncio.run(executor.execute(AgentAction(action_type=ActionType.WAIT, wait_ms=250))).success
+    assert sleeps == [0.25]
+
+
+def test_no_post_action_wait_after_a_vm_error(tmp_path, sleeps):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=_png(noisy=True))
+        return httpx.Response(200, json={"status": "error", "returncode": 1})
+
+    result = asyncio.run(_wait_executor(handler, tmp_path, 1.5).execute(_INPUT_ACTIONS[0]))
+    assert not result.success and sleeps == []
+
+
+def test_no_post_action_wait_after_a_servo_refusal(tmp_path, sleeps):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=_png())
+        return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+    result = asyncio.run(_wait_executor(handler, tmp_path, 1.5).execute(_INPUT_ACTIONS[0]))
+    assert not result.success and "visual servo" in result.detail and sleeps == []
+
+
+def test_batch_waits_once_after_the_whole_batch(tmp_path, sleeps):
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[_INPUT_ACTIONS[0], _INPUT_ACTIONS[0]])
+    result = asyncio.run(_wait_executor(_ok_handler, tmp_path, 1.5).execute(batch))
+    assert result.success and sleeps == [1.5]
+
+
+def test_post_action_wait_setting_feeds_the_executor(tmp_path, monkeypatch, sleeps):
+    monkeypatch.setenv("OPERON_OSWORLD_POST_ACTION_WAIT_S", "2.5")
+    assert get_settings().osworld_post_action_wait_s == 2.5
+    asyncio.run(_wait_executor(_ok_handler, tmp_path, None).execute(_INPUT_ACTIONS[0]))
+    assert sleeps == [2.5]
+    monkeypatch.setenv("OPERON_OSWORLD_POST_ACTION_WAIT_S", "99")
+    assert get_settings().osworld_post_action_wait_s == 10.0
+
+
+def _vm_error_after_first(request: httpx.Request) -> httpx.Response:
+    if request.method == "GET":
+        return httpx.Response(200, content=_png(noisy=True))
+    return httpx.Response(200, json={"status": "error", "returncode": 1})
+
+
+def test_post_action_wait_follows_a_catalog_app_launch(tmp_path, monkeypatch, sleeps):
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "osworld")
+    result = asyncio.run(_wait_executor(_ok_handler, tmp_path, 1.5).execute(
+        AgentAction(action_type=ActionType.LAUNCH_APP, text="browser")))
+    assert result.success and sleeps == [1.5]
+
+
+def test_no_post_action_wait_after_an_unknown_app_launch(tmp_path, monkeypatch, sleeps):
+    monkeypatch.setenv("OPERON_ENVIRONMENT", "osworld")
+    result = asyncio.run(_wait_executor(_ok_handler, tmp_path, 1.5).execute(
+        AgentAction(action_type=ActionType.LAUNCH_APP, text="no-such-app")))
+    assert not result.success and sleeps == []
+
+
+def test_batch_waits_once_when_a_later_child_fails(tmp_path, sleeps):
+    replies = iter([{"status": "success", "returncode": 0}, {"status": "error", "returncode": 1}])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=_png(noisy=True))
+        return httpx.Response(200, json=next(replies))
+
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[_INPUT_ACTIONS[0], _INPUT_ACTIONS[2]])
+    result = asyncio.run(_wait_executor(handler, tmp_path, 1.5).execute(batch))
+    assert not result.success and sleeps == [1.5]
+
+
+def test_batch_waits_once_when_a_later_child_is_blocked(tmp_path, sleeps):
+    executor = _wait_executor(_ok_handler, tmp_path, 1.5)
+
+    async def check(child):
+        return "run stopped"
+
+    executor.batch_child_check = check
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[_INPUT_ACTIONS[0], _INPUT_ACTIONS[2]])
+    result = asyncio.run(executor.execute(batch))
+    assert not result.success and result.batch_failed_index == 1 and sleeps == [1.5]
+
+
+def test_no_post_action_wait_when_a_batch_fails_on_its_first_child(tmp_path, sleeps):
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[_INPUT_ACTIONS[0], _INPUT_ACTIONS[2]])
+    result = asyncio.run(_wait_executor(_vm_error_after_first, tmp_path, 1.5).execute(batch))
+    assert not result.success and sleeps == []

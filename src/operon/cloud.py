@@ -187,7 +187,9 @@ def wait_for_ssh(cfg: CloudConfig, ip: str, run: Runner, *, timeout_s: float = 1
 # empty ~/.Xauthority that python-xlib (pyautogui's X11 backend) will not load without; VMs
 # created before the setup script did that need it. Safe to repeat.
 UPDATE_SCRIPT = (
-    "sudo -u operon -H bash -lc '"
+    # VMs made before the key file went root-only still have it world-readable; tighten it if present.
+    "{ sudo chmod 600 /etc/operon/api-key 2>/dev/null || true; } "
+    "&& sudo -u operon -H bash -lc '"
     "cd /home/operon/Operon && touch /home/operon/.Xauthority && git pull -q --ff-only "
     "&& ~/.local/bin/uv pip install -q --python .venv/bin/python -e .' "
     "&& sudo systemctl restart operon-api"
@@ -200,7 +202,7 @@ def update_vm(cfg: CloudConfig, ip: str, run: Runner, out=print) -> None:
 
 
 def read_api_key(cfg: CloudConfig, ip: str, run: Runner) -> str:
-    key = run([*ssh_base(cfg, ip), "cat /etc/operon/api-key"]).strip()
+    key = run([*ssh_base(cfg, ip), "sudo -n cat /etc/operon/api-key"]).strip()
     if not key:
         raise RuntimeError("the VM has no API key yet (setup still running?)")
     return key

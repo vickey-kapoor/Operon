@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +26,7 @@ class FakeRunner:
         if argv[0] == "ssh" and "test -f /var/lib/operon/ready" in argv and self.fail_ssh:
             self.fail_ssh -= 1
             raise RuntimeError("not yet")
-        if argv[0] == "ssh" and "cat /etc/operon/api-key" in argv:
+        if argv[0] == "ssh" and "sudo -n cat /etc/operon/api-key" in argv:
             return "k3y\n"
         if argv[:3] == ["az", "vm", "create"]:
             return '{"publicIpAddress": "20.1.2.3"}'
@@ -341,3 +342,19 @@ def test_the_update_script_fixes_xauthority_and_restarts_the_api() -> None:
 def test_the_cli_accepts_update_on_open_and_run() -> None:
     assert build_parser().parse_args(["cloud", "open", "--update"]).update
     assert build_parser().parse_args(["cloud", "run", "x", "--update"]).update
+
+
+def test_api_key_is_read_with_sudo() -> None:
+    run = FakeRunner()
+    assert cloud.read_api_key(CFG, "20.1.2.3", run) == "k3y"
+    assert run.calls[-1][0][-1] == "sudo -n cat /etc/operon/api-key"
+
+
+def test_cloud_init_keeps_the_api_key_root_only() -> None:
+    text = (Path(__file__).resolve().parents[1] / "scripts/azure-linux-computer/cloud-init.yaml").read_text()
+    assert "install -m 0600 -o root -g root /dev/null /etc/operon/api-key" in text
+    assert "0644" not in text
+
+
+def test_update_script_tightens_an_old_api_key_file_without_failing() -> None:
+    assert "{ sudo chmod 600 /etc/operon/api-key 2>/dev/null || true; }" in cloud.UPDATE_SCRIPT

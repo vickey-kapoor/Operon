@@ -69,7 +69,7 @@ where = ["src"]
 include = ["operon*"]
 
 [tool.setuptools.package-data]
-operon = ["prompts/*.txt", "prompts/tools/*.md", "api/static/*.html", "agent/backends/model_adapter/models.yaml"]
+operon = ["prompts/*.txt", "prompts/tools/*.md", "agent/backends/model_adapter/models.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

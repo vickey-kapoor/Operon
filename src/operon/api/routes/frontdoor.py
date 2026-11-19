@@ -1,9 +1,7 @@
-"""Front-door routes (KAN-89): the local task page's API under ``/app/api``.
+"""Front-door routes (KAN-89): the run API under ``/app/api``.
 
-These sit behind the API key like every other route. The page itself (``GET /app``)
-is served without the key because it holds no secret: it asks for the key, or reads
-it from the URL fragment that ``operon serve`` prints (a fragment never reaches the
-server or its logs).
+These sit behind the API key like every other route. ``operon run --request``, the
+benchmark runners and other clients start, follow and report runs through them.
 """
 
 from __future__ import annotations
@@ -57,7 +55,7 @@ async def start(task: frontdoor.FrontDoorTask) -> dict[str, Any]:
 
 @router.get("/runs")
 async def list_runs(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
-    """The newest runs on this computer, for the page's Home and History."""
+    """The newest runs on this computer, for listings."""
     return {"runs": frontdoor.recent_runs(limit)}
 
 

@@ -169,7 +169,7 @@ async def test_request_mode_drives_a_running_api(monkeypatch, tmp_path) -> None:
     assert report["steps"] == 2 and len(executor.executed) == 2
 
 
-async def test_request_mode_leaves_a_paused_run_for_the_page(monkeypatch, tmp_path) -> None:
+async def test_request_mode_leaves_a_paused_run(monkeypatch, tmp_path) -> None:
     from operon.api.routes import frontdoor as routes
 
     loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE])
@@ -192,8 +192,8 @@ async def test_request_mode_leaves_a_paused_run_for_the_page(monkeypatch, tmp_pa
 
     assert code == 2 and report is None
     assert any(line.startswith("Left paused") for line in lines)
-    link = [line for line in lines if line.startswith("Follow it on ")]
-    assert link and "/app#run=" in link[0] and len(link[0].split("#run=")[1]) > 8
+    link = [line for line in lines if line.startswith("Run ") and " is on " in line]
+    assert link and "is on http://" in link[0] and "/app" not in link[0]
 
 
 async def test_remote_errors_carry_the_api_detail() -> None:
@@ -205,14 +205,14 @@ async def test_remote_errors_carry_the_api_detail() -> None:
         await client.close()
 
 
-def test_serve_prints_the_page_link_with_the_key_in_the_fragment(monkeypatch, capsys) -> None:
+def test_serve_prints_the_api_address_and_key(monkeypatch, capsys) -> None:
     import uvicorn
 
     monkeypatch.setenv("API_KEYS", "k1,k2")
     monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
 
     assert cli.main(["serve", "--port", "9000"]) == 0
-    assert capsys.readouterr().out.strip() == "Task page: http://127.0.0.1:9000/app#key=k1"
+    assert capsys.readouterr().out.splitlines() == ["API: http://127.0.0.1:9000", "API key: k1"]
 
 
 async def test_settle_subprocess_pipes_waits_only_on_windows(monkeypatch) -> None:

@@ -149,7 +149,7 @@ def tool_path(raw: str) -> Path:
 
 
 def summary(name: str, args: dict[str, Any]) -> str:
-    """One line naming the call, which the gates judge and the task page shows. A
+    """One line naming the call, which the gates judge and a client shows. A
     file's content is left out, so text inside it can't match a trust-gate phrase."""
     if name == RUN_SHELL:
         detail = args.get("command")

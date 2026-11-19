@@ -19,41 +19,34 @@ Any `Host` other than loopback or `OPERON_ALLOWED_HOSTS` gets 400, which blocks 
 `OPERON_ALLOW_UNAUTHENTICATED=true` turns authentication off, which is only safe on a throwaway
 machine. See [configuration.md](configuration.md).
 
-## Task page and `operon run`
+## `operon run` and the run API
 
 Put your Gemini key in `.env` (or in `~/.operon/operon.env`, an optional per-user file).
 
-`operon serve` starts the API and prints the task page's link, with the key in the URL
-fragment (`#key=...`, which the browser never sends to the server). On
-`http://127.0.0.1:8080/app` you type a task, pick Browser or Desktop and a permission mode,
-then watch it run:
+`operon serve` starts the API and prints its address and key. Runs are driven through
+`/app/api/...`, which needs the API key like every other route:
 
-- **Live view.** Browser runs stream frames over `/ws/stream`; desktop runs show each step's
-  screenshot.
-- **Approvals.** When the run pauses, the page shows why. **Approve** runs the paused action
-  once. **Decline** refuses it, and an optional note tells the model what to do instead.
-- **Take over.** This pauses the run. While you are in control, Operon takes no screenshots
-  and makes no model calls. A step already in flight finishes its action first. For a
-  browser run, you can click, scroll and type on the live view, or use the browser window
-  itself. For a desktop run, you use the real mouse and keyboard. **Hand back** resumes the
-  run, and the model is told the screen may have changed. Handing back never approves an
-  action that was waiting before you took over.
+- **Live view.** Browser runs stream frames over `/ws/stream`; desktop runs stream the screen
+  when their executor can, and otherwise each step's screenshot.
+- **Approvals.** When the run pauses, its status says why. `approve` runs the paused action
+  once. `decline` refuses it, and an optional note tells the model what to do instead.
+- **Take over.** `takeover` pauses the run. While you are in control, Operon takes no
+  screenshots and makes no model calls. A step already in flight finishes its action first.
+  For a browser run, `input` sends clicks, scrolls and keys to the browser. For a desktop run,
+  you use the real mouse and keyboard. `handback` resumes the run, and the model is told the
+  screen may have changed. Handing back never approves an action that was waiting before you
+  took over.
 - **Permission modes.** `ask` approves every action that does something. `risky` (the
   default, or `OPERON_PERMISSION_MODE`) asks only before the trust gate's confirm list.
   `auto` asks for nothing. Deny rules and the domain allowlist block in every mode, and so
   does a vendor safety confirmation. `ask` asks even when `OPERON_TRUST_GATE=off`.
-- **Screens.** **Home** takes a task and lists recent runs; **Live run** shows the live view,
-  any approval, the steps so far and Pause, Take over and Stop; **Run recording** replays a
-  finished run step by step: the screenshot, what it did, why, and how it was checked.
-- **Report.** When the run ends, the page shows the outcome, steps, approvals and takeovers,
-  and links to its recording, which can be downloaded as a zip.
+- **Report.** `GET /app/api/runs/{run_id}/report` gives the outcome, steps, approvals and
+  takeovers once the run ends.
 
-The page talks to `/app/api/...`, which needs the API key like every other route. The live
-stream uses a short-lived token from `POST /app/api/stream-token` instead of the key. The
-token is sent as the subprotocol pair `["x-stream-token", token]` and expires after
+The live stream uses a short-lived token from `POST /app/api/stream-token` instead of the key.
+The token is sent as the subprotocol pair `["x-stream-token", token]` and expires after
 `OPERON_STREAM_TOKEN_TTL_S` seconds (default 600). A `view` token gets frames and events only.
-A `control` token can also send control messages. The page itself is served without the key,
-because it holds no secret.
+A `control` token can also send control messages.
 
 From a terminal:
 
@@ -96,7 +89,7 @@ POST /desktop/run/{run_id}/resume-interrupted   # OPERON_CHECKPOINTS
 POST /desktop/cleanup
 GET  /desktop/run/{run_id}
 
-# Task page API (/app/api), also used by `operon runs` and `operon resume --request`
+# Run API (/app/api), also used by `operon runs` and `operon resume --request`
 GET  /app/api/interrupted                       # OPERON_CHECKPOINTS: runs a restart interrupted
 POST /app/api/runs/{run_id}/resume-interrupted
 
@@ -109,10 +102,9 @@ GET  /observer/api/settings          # {"trust_gate": "on"|"off"}, read by the b
 GET  /observer/api/export/{run_id}
 GET  /observer/api/live-browser/{run_id}
 
-# Task page (KAN-89)
-GET  /app                              # the page; served without the key
+# Run API (KAN-89)
 POST /app/api/runs                     # {intent, environment, start_url, permission_mode, max_steps, headless}
-GET  /app/api/runs?limit=20            # newest runs on this PC (Home and History)
+GET  /app/api/runs?limit=20            # newest runs on this PC
 GET  /app/api/runs/{run_id}            # status, what it waits on, recent steps
 GET  /app/api/runs/{run_id}/report
 POST /app/api/runs/{run_id}/approve

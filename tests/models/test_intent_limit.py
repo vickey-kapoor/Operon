@@ -5,7 +5,6 @@ existed, so the benchmark scored it 0 for $0 (KAN-169)."""
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -33,13 +32,6 @@ def test_a_task_one_character_over_the_limit_is_refused(model) -> None:
 def test_a_736_character_task_is_accepted(model) -> None:
     # The length of OSWorld's multi_apps 2c1ebcd7, which the old 500-character cap refused.
     assert len(model(intent="b" * 736).intent) == 736
-
-
-def test_the_task_page_input_allows_the_same_length() -> None:
-    page = (ROOT / "src" / "operon" / "api" / "static" / "app.html").read_text(encoding="utf-8")
-    match = re.search(r'id="intent"[^>]*maxlength="(\d+)"', page)
-    assert match is not None
-    assert int(match.group(1)) == MAX_INTENT_CHARS
 
 
 def test_every_osworld_subset_task_fits_the_limit() -> None:

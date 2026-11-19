@@ -205,7 +205,7 @@ async def test_resume_brings_back_the_window_the_run_was_using(monkeypatch, tmp_
 
     executor.restore_work_window = restore_work_window
     run_id = await _start(loop, "ask")
-    await _step(loop, run_id)  # paused; answering it puts the task page in front
+    await _step(loop, run_id)  # paused; answering it puts the app in front
 
     await loop.resume_run(run_id)
 

@@ -3,12 +3,12 @@
 Runs on your PC and needs only the Azure CLI (``az``, signed in) and ``ssh``. The VM
 runs an XFCE desktop and the Operon API on its own 127.0.0.1:8080; nothing on it
 listens on a public port except SSH. This command starts the VM, opens an SSH
-tunnel to the API, prints the task page's link, and deallocates the VM when you
+tunnel to the API, prints the API address, and deallocates the VM when you
 are done, so it is billed only while a task runs (its disk and IP are kept).
 
     operon cloud create                 create the VM (once; asks Azure, costs money)
     operon cloud set-key                put your GEMINI_API_KEY on the VM
-    operon cloud open                   start it, open the task page, deallocate on Ctrl+C
+    operon cloud open                   start it, open the tunnel, deallocate on Ctrl+C
     operon cloud run "task"             start it, run one desktop task, deallocate
     operon cloud stop                   deallocate it now
 
@@ -315,8 +315,10 @@ def cmd_set_key(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_co
 
 def cmd_open(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_command, out=print) -> int:
     with _Session(cfg, run, keep=args.keep, update=getattr(args, "update", False), out=out) as session:
-        out(f"Task page: {session.base_url}/app#key={session.api_key}")
-        out("Pick Desktop to use the VM's own desktop. Press Ctrl+C here when you are done.")
+        out(f"API: {session.base_url}")
+        out(f"API key: {session.api_key}")
+        out(f'Start a desktop task: operon run --request --desktop --api {session.base_url} --api-key <key above> "task"')
+        out("Press Ctrl+C here when you are done.")
         try:
             while session.tunnel is not None and session.tunnel.poll() is None:
                 time.sleep(1)
@@ -344,13 +346,8 @@ def cmd_run(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_comman
         return asyncio.run(go())
 
 
-def live_link(base_url: str, api_key: str, run_id: str) -> str:
-    """The task page for one run: the key and the run both ride in the fragment."""
-    return f"{base_url}/app#key={api_key}&run={run_id}"
-
-
 class _LinkingClient(RemoteClient):
-    """Prints the started run's task-page link, so a fresh tab opens that run."""
+    """Prints the started run's id and the API address."""
 
     def __init__(self, base_url: str, api_key: str, *, out=print) -> None:
         super().__init__(base_url, api_key)
@@ -358,7 +355,7 @@ class _LinkingClient(RemoteClient):
 
     async def start(self, payload):
         status = await super().start(payload)
-        self._out(f"Watch it live: {live_link(self.base_url, self._key, status['run_id'])}")
+        self._out(f"Run {status['run_id']} started on {self.base_url}")
         return status
 
 
@@ -380,7 +377,7 @@ def add_parser(sub) -> None:
     set_key.add_argument("--keep", action="store_true", help="leave the VM running afterwards")
     set_key.set_defaults(func=lambda a: cmd_set_key(a, CloudConfig.from_env()))
 
-    open_ = cs.add_parser("open", help="start the VM and open the task page; deallocate on Ctrl+C")
+    open_ = cs.add_parser("open", help="start the VM and open the tunnel; deallocate on Ctrl+C")
     open_.add_argument("--keep", action="store_true", help="leave the VM running afterwards")
     open_.add_argument("--update", action="store_true", help="first bring Operon on the VM to the latest main")
     open_.set_defaults(func=lambda a: cmd_open(a, CloudConfig.from_env()))

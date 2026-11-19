@@ -90,10 +90,9 @@ short report of what it did.
 
 That run took 2 model steps and 23 seconds. A task like this costs a few cents of Gemini calls on your key.
 
-**Next:** `operon serve` prints a link to a local task page, where you type tasks, watch them
-live, approve steps and take over with your own mouse. Add `--desktop` to `operon run` to drive
+**Next:** `operon serve` starts the API, which `operon run --request` and other clients drive. Add `--desktop` to `operon run` to drive
 Windows apps instead of the browser (it moves your real mouse and keyboard). More in the
-[API and task page guide](docs/api.md#task-page-and-operon-run).
+[API guide](docs/api.md#operon-run-and-the-run-api).
 
 Or, with `operon serve` running, give it a task over HTTP:
 
@@ -149,9 +148,9 @@ on the OSWorld-Verified subset above.
 What stays: the engine, the environments, the run API and live view, the safety gates (trust
 gate, approvals, takeover, secrets vault), evals, replay, the dashboard and CI.
 
-What is being removed: parts built for an earlier product direction. That covers the Python
-SDK, YAML task files, the MCP server, `operon setup`, the task page, the built-in browser and
-new PyPI releases. Until each is removed, it still works as documented.
+Removed on 2026-11-18: parts built for an earlier product direction (the Python SDK, YAML
+task files, the MCP server, `operon setup`, the task page, the built-in browser and new PyPI
+releases). They remain in the git history.
 
 ## Documentation
 
@@ -163,7 +162,7 @@ new PyPI releases. Until each is removed, it still works as documented.
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |
 | [Azure desktop runner](docs/azure-desktop-runner.md) | Running the desktop benchmark on a cloud Windows VM |
-| [Cloud computer](docs/azure-linux-computer.md) | Operon on its own Azure Linux VM, watched live on the task page (`operon cloud`) |
+| [Cloud computer](docs/azure-linux-computer.md) | Operon on its own Azure Linux VM, reached through an SSH tunnel (`operon cloud`) |
 | [OSWorld runner](docs/osworld-runner.md) | Setting up and running the OSWorld-Verified subset |
 | [Reports](docs/reports/) | Benchmark write-ups, including the [Season 1 grid](docs/reports/season-1-grid.md) |
 | [RFCs](docs/rfcs/) | Design proposals |

@@ -289,7 +289,7 @@ def test_run_sends_the_task_through_the_session(monkeypatch, browser, mode, expe
     assert sent == [expected] and sessions == [False]
 
 
-async def test_run_prints_a_link_to_the_started_run() -> None:
+async def test_run_prints_the_started_run_id() -> None:
     import httpx
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -300,7 +300,7 @@ async def test_run_prints_a_link_to_the_started_run() -> None:
     client._http = httpx.AsyncClient(base_url=client.base_url, transport=httpx.MockTransport(handler))
     await client.start({"intent": "x"})
     await client.close()
-    assert lines == ["Watch it live: http://127.0.0.1:8090/app#key=k3y&run=r-42"]
+    assert lines == ["Run r-42 started on http://127.0.0.1:8090"]
 
 
 def test_auto_shutdown_lives_in_the_vms_region() -> None:

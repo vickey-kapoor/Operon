@@ -1,8 +1,7 @@
 """Front door (KAN-89): start a task, follow it, approve, take over, and report.
 
-One small service used by the local task page (``/app``), its HTTP routes
-(``/app/api/...``) and ``operon run`` (in process, or against a running API with
-``--request``), so the three always behave the same way.
+One small service used by its HTTP routes (``/app/api/...``) and ``operon run`` (in process, or
+against a running API with ``--request``), so the two always behave the same way.
 
 A run lives in the browser loop or the desktop loop. The service finds the loop
 from the run itself, so callers only pass a run id.
@@ -47,7 +46,7 @@ ENVIRONMENTS = ("browser", "desktop")
 
 
 class FrontDoorTask(StrictModel):
-    """A task as the page and ``operon run`` send it."""
+    """A task as the API and ``operon run`` send it."""
 
     intent: str = Field(min_length=1, max_length=MAX_INTENT_CHARS)
     environment: str = Field(default="browser", pattern=r"^(browser|desktop)$")
@@ -95,8 +94,8 @@ async def start_task(task: FrontDoorTask, *, auto_run: bool = True, live_view: b
     """Create the run and, unless ``auto_run`` is False (offline tests), start stepping it.
 
     A browser run with ``live_view`` runs in observable mode: one headless Chromium on
-    CDP port 9222 whose screencast reaches the page over ``/ws/stream``. Without it
-    (``operon run`` in process, where no page watches) it is an ordinary batch run."""
+    CDP port 9222 whose screencast reaches a client over ``/ws/stream``. Without it
+    (``operon run`` in process, where nobody watches) it is an ordinary batch run."""
     request = RunTaskRequest(
         intent=task.intent,
         start_url=task.start_url,
@@ -240,7 +239,7 @@ async def run_status(run_id: str, *, recent: int = 8) -> dict[str, Any]:
         "run_id": record.run_id,
         "intent": record.intent,
         "environment": environment,
-        # A desktop the page streams and drives during a takeover (the Linux cloud
+        # A desktop the API streams and drives during a takeover (the Linux cloud
         # computer); a local Windows desktop shows step screenshots instead.
         "live_view": environment == "browser" or hasattr(getattr(loop, "executor", None), "live_frame_png"),
         "status": record.status.value,
@@ -385,13 +384,13 @@ async def stop(run_id: str) -> dict[str, Any]:
 
 
 async def user_input(run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """The person's own click or keys during a takeover, sent from the page's live view."""
+    """The person's own click or keys during a takeover, sent through the API."""
     loop, record = await _require_run(run_id)
     if not getattr(record, "in_takeover", False):
         raise FrontDoorError("Take over first: the agent is in control")
     send = getattr(loop.executor, "user_input", None)
     if send is None:
-        raise FrontDoorError("This environment takes input on the screen itself, not from the page")
+        raise FrontDoorError("This environment takes input on the screen itself, not through the API")
     try:
         delivered = await send(
             run_id,
@@ -420,7 +419,7 @@ _OUTCOME = {
 
 
 def recent_runs(limit: int = 20) -> list[dict[str, Any]]:
-    """The newest runs on this computer, newest first, for the page's Home and History.
+    """The newest runs on this computer, newest first, for listings.
 
     Reads each run's ``state.json`` under the runs directory, which both loops share."""
     from operon.models.state import AgentState

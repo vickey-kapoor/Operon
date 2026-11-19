@@ -7,6 +7,9 @@
 Operon sees only pixels. It reads the screen, picks a coordinate action, runs it and checks
 the result. No DOM, no selectors, no accessibility tree.
 
+The focus is reliability you can measure: an agent engine, benchmarks, and a record of every
+failure and its fix. It is not a consumer product.
+
 [![CI](https://github.com/vickey-kapoor/Operon/actions/workflows/ci.yml/badge.svg)](https://github.com/vickey-kapoor/Operon/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
@@ -19,7 +22,6 @@ the result. No DOM, no selectors, no accessibility tree.
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages and native Windows apps.
 - **Gemini computer use.** Every run uses Gemini 3.5 Flash, which has computer use built in.
-  Other models may come back through a simpler model onboarding.
 - **Two harnesses.** The full harness (Gemini's default) puts rules, guards, a per-step verifier
   and recovery around the model; the thin harness lets the model make every decision.
 - **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on
@@ -39,7 +41,26 @@ flowchart LR
 One loop serves both environments. The API drives it one step at a time, so a run can be
 paused, resumed or handed to a human between steps. See [architecture](docs/architecture.md).
 
-## Quick start (5 minutes)
+## Focus: the test bench
+
+Since November 18, 2026, Operon is an agent engine plus a personal test bench for benchmarks
+and failure analysis. The work follows one loop:
+
+```mermaid
+flowchart LR
+    F[Find a failure] --> U[Understand it] --> X[Fix it] --> R[Re-run] --> N[Show the numbers] --> F
+```
+
+- **What exists today.** The engine, the benchmark suites with their own pass/fail checks, a
+  per-step record of every run (screenshot, model answer, action, verification), free replay of
+  a recorded run through the current code with no model calls ([`evals/replay.py`](evals/replay.py)),
+  and the [eval dashboard](https://operon-evals.vercel.app).
+- **What is planned.** A test bench on top of those: pick benchmark tasks, watch them run, see
+  every miss with its cause, check a fix against the exact failing run, compare runs side by
+  side, and export a write-up with the score, each miss and why, the fix, and cost and time
+  per task.
+
+## Try it (5 minutes)
 
 You need Python 3.14+ and a free [Gemini API key](https://aistudio.google.com/apikey).
 
@@ -50,7 +71,8 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Act
 pip install operon-agent
 ```
 
-To work on Operon itself, clone the repo and `pip install -e .` instead.
+Version 0.1.0 stays on PyPI but gets no new releases. To follow current work, clone the repo
+and `pip install -e .` instead.
 
 > [!TIP]
 > If Windows blocks `operon.exe` or `pip.exe` (Smart App Control), run the same commands through
@@ -133,26 +155,29 @@ model credits.
 
 ## Status
 
-Operon is an agent engine plus a personal test bench: it runs browser, desktop and hybrid
-(desktop plus browser) tasks with Gemini computer use, and the focus is the engine, benchmarks
-and failure analysis. On the Season 1 core
-sets Gemini scores 9 or 10 of 10 in most cells. See [Evaluation](docs/evaluation.md) for the
-current results and the failure triage.
+Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Gemini computer use.
+On the Season 1 core sets Gemini scores 9 or 10 of 10 in most cells, and it completed 21 of 25
+on the OSWorld-Verified subset above.
+
+What stays: the engine, the environments, the run API and live view, the safety gates (trust
+gate, approvals, takeover, secrets vault), evals, replay, the dashboard and CI.
+
+What is being removed: parts built for an earlier product direction. That covers the Python
+SDK, YAML task files, the MCP server, `operon setup`, the task page, the built-in browser and
+new PyPI releases. Until each is removed, it still works as documented.
 
 ## Documentation
 
 | Topic | |
 |---|---|
 | [Configuration](docs/configuration.md) | Model keys, backends, harness profiles, every setting |
-| [Python SDK](docs/sdk.md) | `from operon import Agent`: run a task from Python, with approvals |
-| [Task files](docs/task-files.md) | `operon run --tasks tasks.yaml --junit report.xml`: a suite of tasks in CI |
 | [HTTP API](docs/api.md) | Routes for browser and desktop runs, the live stream, auth |
-| [MCP server](docs/mcp.md) | `operon mcp`: hand tasks to Operon from Claude Code, Claude Desktop and other MCP clients |
 | [Evaluation](docs/evaluation.md) | Latest results, benchmark suites, `/bench` PR commands, cost caps, dashboard |
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |
 | [Azure desktop runner](docs/azure-desktop-runner.md) | Running the desktop benchmark on a cloud Windows VM |
 | [Cloud computer](docs/azure-linux-computer.md) | Operon on its own Azure Linux VM, watched live on the task page (`operon cloud`) |
+| [OSWorld runner](docs/osworld-runner.md) | Setting up and running the OSWorld-Verified subset |
 | [Reports](docs/reports/) | Benchmark write-ups, including the [Season 1 grid](docs/reports/season-1-grid.md) |
 | [RFCs](docs/rfcs/) | Design proposals |
 

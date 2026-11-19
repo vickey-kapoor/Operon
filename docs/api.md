@@ -21,10 +21,7 @@ machine. See [configuration.md](configuration.md).
 
 ## `operon run` and the run API
 
-First time, run `operon setup`: it asks for your Gemini key (hidden, checked with a free
-model-list call, saved to `~/.operon/operon.env` readable only by you), installs Chromium and
-runs a self-check. `operon setup --check` reruns only the self-check; `--new-key` replaces the
-key; `--offline` and `--skip-browser` skip the key check and the browser.
+Put your Gemini key in `.env` (or in `~/.operon/operon.env`, an optional per-user file).
 
 `operon serve` starts the API and prints its address and key. Runs are driven through
 `/app/api/...`, which needs the API key like every other route:

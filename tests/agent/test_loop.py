@@ -364,7 +364,7 @@ async def test_agent_loop_start_run_delegates_to_store_only() -> None:
         mode="batch",
         max_steps=25,
     )
-    executor.configure_run.assert_called_once_with("run-3", headless=True, mode="batch", start_url=None)
+    executor.configure_run.assert_called_once_with("run-3", headless=True, mode="batch")
     assert response.run_id == "run-3"
     assert response.status is RunStatus.PENDING
 

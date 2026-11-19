@@ -34,7 +34,7 @@ def test_every_setting_is_listed_in_env_example() -> None:
 
 
 def test_only_settings_and_the_named_tools_read_operon_variables_directly() -> None:
-    allowed = set(DIRECT_READS) | {"GEMINI_API_BASE_URL"}  # operon setup's key check
+    allowed = set(DIRECT_READS)
     for path in (ROOT / "src" / "operon").rglob("*.py"):
         if path.name == "settings.py" and path.parent.name == "core":
             continue
@@ -199,7 +199,6 @@ _EXPERIMENTAL_OFF = [
 # Boolean switches that are off by default but not experimental features.
 _PLAIN_SWITCHES_OFF = [
     "auto_confirm",
-    "builtin_browser",
     "use_vertex",
     "allow_unauthenticated",
     "browser_headless",
@@ -224,7 +223,7 @@ _PLAIN_CONFIG = {
     "permission_mode",
     "allowed_file_roots", "zoom_min_side", "zoom_factor", "environment", "desktop_platform",
     "sandbox_memory_mb", "sandbox_start_timeout", "container_image", "container_start_timeout",
-    "container_ca_bundle", "osworld_url", "osworld_post_action_wait_s", "browser_width", "browser_height", "browser_profile_dir",
+    "container_ca_bundle", "osworld_url", "osworld_post_action_wait_s", "browser_width", "browser_height",
 }
 
 

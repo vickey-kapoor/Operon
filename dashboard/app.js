@@ -6,7 +6,7 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 const BACKEND_NAMES = { computer_use: "Gemini", json: "Gemini" };
 // Gemini plus one model per other provider (KAN-168): the Claude and GPT profiles of
-// src/operon/agent/backends/model_adapter/models.yaml run on the same nightly cells as Gemini, so they sit side by side.
+// src/operon/agent/backends/model_adapter/models.yaml run on the same batch cells as Gemini, so they sit side by side.
 // Runs of any other model stay in the database; they count toward spend on the Cost tab
 // and are left out everywhere else.
 const OTHER_MODEL = "Other model (earlier runs)";

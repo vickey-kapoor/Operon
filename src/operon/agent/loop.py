@@ -323,7 +323,6 @@ class AgentLoop:
                     record.run_id,
                     headless=request.headless,
                     mode=record.mode,
-                    start_url=request.start_url,
                 )
             if hasattr(self.executor, "start_run_recording"):
                 try:
@@ -606,7 +605,7 @@ class AgentLoop:
 
         A run this process created needs no check (it runs where it started); a run loaded
         from disk does, whatever its stop reason. Compared with the provider this process
-        actually built when there is one: settings can change after it is built (MCP)."""
+        actually built when there is one: settings can change after it is built."""
         if record.run_id in self._created_runs:
             return
         from operon.core.runtime import current_runtime
@@ -639,9 +638,7 @@ class AgentLoop:
                 self.executor.set_current_run_id(run_id)
             if hasattr(self.executor, "configure_run"):
                 try:
-                    self.executor.configure_run(
-                        run_id, headless=record.headless, mode=record.mode, start_url=record.start_url
-                    )
+                    self.executor.configure_run(run_id, headless=record.headless, mode=record.mode)
                 except Exception as exc:
                     self._recovered(run_id, "configure_run", exc)
         if hasattr(self.policy_service, "reset_run_context"):

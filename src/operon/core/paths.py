@@ -24,7 +24,6 @@ _PATH_FIELDS = {
     "OPERON_RUNTIME_ROOT": "runtime_root",
     "OPERON_RUNS_ROOT": "runs_root",
     "OPERON_BROWSER_ARTIFACTS_ROOT": "browser_artifacts_root",
-    "OPERON_BROWSER_PROFILE_DIR": "browser_profile_dir",
     "OPERON_DESKTOP_ARTIFACTS_ROOT": "desktop_artifacts_root",
     "OPERON_TEST_ARTIFACTS_ROOT": "test_artifacts_root",
 }
@@ -55,20 +54,15 @@ def source_checkout() -> Path | None:
 
 
 def user_config_dir() -> Path:
-    """Return the per-user settings folder (``~/.operon``) that ``operon setup`` writes.
+    """Return the per-user settings folder (``~/.operon``).
 
-    It holds ``operon.env``, so a pip-installed Operon finds its key from any folder.
+    It optionally holds ``operon.env``, so Operon finds its key from any folder.
     """
     return _env_path("OPERON_CONFIG_DIR", Path.home() / ".operon")
 
 
-def browser_profile_dir() -> Path:
-    """Return the built-in browser's saved profile (cookies, sign-ins); stays on this computer."""
-    return _env_path("OPERON_BROWSER_PROFILE_DIR", user_config_dir() / "browser-profile")
-
-
 def user_env_file() -> Path:
-    """Return the per-user settings file that ``operon setup`` writes the model key to."""
+    """Return the per-user settings file (``~/.operon/operon.env``), which is optional: it can hold the model key."""
     return user_config_dir() / "operon.env"
 
 
@@ -78,7 +72,7 @@ _shell_env: dict[str, str] | None = None
 def remember_shell_env() -> None:
     """Note the environment as the shell gave it, before any ``.env`` file is loaded.
 
-    ``operon setup`` uses it to tell a key set in the shell from one read out of a file.
+    It tells a key set in the shell from one read out of a file.
     """
     global _shell_env
     if _shell_env is None:

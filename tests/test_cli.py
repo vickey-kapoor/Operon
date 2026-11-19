@@ -306,3 +306,24 @@ async def test_auto_confirm_is_off_by_default_and_never_answers_gates(monkeypatc
     gate = _FakeClient(kind="approval")
     await cli.drive(gate, {"intent": "x"}, ask=lambda _: "n", out=lambda _: None, interactive=False, poll_s=0.01)
     assert gate.approved == 0
+
+
+def test_cli_payload_defaults_max_steps_to_25() -> None:
+    args = cli.build_parser().parse_args(["run", "do it"])
+    assert args.max_steps is None and cli._payload(args)["max_steps"] == 25
+    args = cli.build_parser().parse_args(["run", "do it", "--max-steps", "7"])
+    assert cli._payload(args)["max_steps"] == 7
+
+
+def test_run_without_a_task_is_a_usage_error(capsys) -> None:
+    assert cli.main(["run"]) == 2
+    assert "give a task" in capsys.readouterr().err
+
+
+def test_version_flag(capsys) -> None:
+    from operon import __version__
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.build_parser().parse_args(["--version"])
+    assert exit_info.value.code == 0
+    assert capsys.readouterr().out.strip() == f"operon {__version__}"

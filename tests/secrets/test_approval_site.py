@@ -84,27 +84,6 @@ def test_url_not_fetched_for_non_secret_action() -> None:
     assert asyncio.run(loop._current_url_for_trust_gate("r")) is None
 
 
-async def test_sdk_callback_receives_the_host(monkeypatch, tmp_path) -> None:
-    from operon import Agent
-    from operon.sdk import ApprovalRequest
-    from tests.fixtures.frontdoor import build_loop
-    from tests.test_sdk import STOP, _use
-
-    loop, executor = build_loop(monkeypatch, tmp_path, [TYPE, STOP], gate=TrustGate(enabled=True))
-    executor.current_url_for_run = _Browser("https://accounts.example.com/signin").current_url_for_run
-    _use(monkeypatch, loop)
-    seen: list[ApprovalRequest] = []
-
-    def approve(request: ApprovalRequest) -> bool:
-        seen.append(request)
-        return True
-
-    await Agent(on_approval=approve, poll_s=0.01).arun("Log in")
-
-    assert len(seen) == 1
-    assert "on accounts.example.com" in seen[0].reason and VALUE not in seen[0].reason
-
-
 # --- batches: the approval shows the secret and the site, and the site is re-checked ---
 
 

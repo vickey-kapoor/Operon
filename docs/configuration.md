@@ -27,7 +27,7 @@ Off by default. `OPERON_BROWSER_BACKEND=model` (or `OPERON_DESKTOP_BACKEND=model
 profile named by `OPERON_MODEL_PROFILE`, a key of `src/operon/agent/backends/model_adapter/models.yaml`: `claude-sonnet-5-5`
 (needs `ANTHROPIC_API_KEY`) or `openai-computer-use` (needs `OPENAI_API_KEY`). A model run is
 always thin and the model's own "done" ends it, the same as Gemini's thin runs, so scores compare.
-The nightly queue and `/bench batch` take the cell word `model=<profile>`; the workflows give a
+Manual batches and `/bench batch` take the cell word `model=<profile>`; the workflows give a
 cell only its own provider's key. Startup refuses a missing key or profile.
 
 ## Harness profiles
@@ -70,8 +70,6 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 | `OPERON_BROWSER_VERIFIER_MODEL` / `OPERON_DESKTOP_VERIFIER_MODEL` | `gemini-3.5-flash` | Full-harness step critic model |
 | `OPERON_BROWSER_VERIFIER_THINKING` / `OPERON_DESKTOP_VERIFIER_THINKING` | `low` | Critic thinking level |
 | `OPERON_HARNESS_PROFILE` | `full` | `thin` switches a `computer_use` backend to the thin harness (judged by its own "done"). `json` backends always run `full`. |
-| `OPERON_BUILTIN_BROWSER` | `false` | `true` turns on the built-in browser (KAN-138): one Operon browser with a saved profile, shown as the app's **Browser** tab. Sign in once and browser tasks reuse it; a task asks before opening a site you have not allowed; "Sign out everywhere" deletes the profile. Benchmarks never set it. |
-| `OPERON_BROWSER_PROFILE_DIR` | `~/.operon/browser-profile` | The built-in browser's saved profile. Cookies and sign-ins stay on this computer. |
 | `OPERON_CRITIC` | (unset) | `same`: the full harness's step critic runs on the acting model instead of the `OPERON_*_VERIFIER_MODEL` |
 | `BROWSER_HEADLESS` | `false` | `true` runs Chromium headless; the default shows the browser window. Set `true` on servers and CI. |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |

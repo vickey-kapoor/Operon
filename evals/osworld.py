@@ -7,7 +7,7 @@ Per task: OSWorld's ``DesktopEnv`` boots the Ubuntu task VM and sets the task up
 (``operon run --desktop --env osworld``, thin harness) drives that VM from screenshots;
 then OSWorld's own evaluator scores the end state. Operon's done-check is not the score.
 The task list is fixed in ``evals/osworld_subset.json`` (chosen before any run).
-Costs real credits: it goes through the nightly queue and needs Vickey's OK.
+Costs real credits: it is started by hand and needs Vickey's OK.
 """
 
 from __future__ import annotations

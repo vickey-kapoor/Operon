@@ -32,11 +32,7 @@ files through its ``/api/blob`` route.
 
 ``--alert`` posts to a Slack incoming webhook (``SLACK_WEBHOOK_URL``) only for critical
 problems: a run that stopped at its cost cap. (The workflow adds the other critical one: a
-benchmark or import run that failed.) Score and cost changes go in the daily summary instead:
-``digest`` posts every run imported in the last 24 hours with its score, cost and change against the
-previous comparable run (same mode, suite, backend, harness, model and season, not flagged),
-plus this month's spend.
-"""
+benchmark or import run that failed.)"""
 
 from __future__ import annotations
 
@@ -50,7 +46,7 @@ import sys
 import tempfile
 import urllib.request
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from evals.leaderboard.changes import (
@@ -493,7 +489,7 @@ def post_slack(webhook_url: str, text: str) -> None:
 def check_alerts(conn, report: dict, notify: Callable[[str], None]) -> list[str]:
     """Notify Slack of a just-written report's critical problems: only a cost-cap stop.
 
-    Score and cost changes are not critical; they go in the daily summary (``digest``)."""
+    Score and cost changes are not critical, so they are not sent."""
     problems = []
     stop = report.get("budget_stop")
     if stop:
@@ -504,79 +500,6 @@ def check_alerts(conn, report: dict, notify: Callable[[str], None]) -> list[str]
     if problems:
         notify(alert_text(report, problems))
     return problems
-
-
-# ---------- daily summary ----------
-
-_DIGEST_SQL = """SELECT key, mode, suite, backend, harness_profile, model, started_at, flagged,
-        github_run_url, config, summary FROM bench_runs
-    WHERE imported_at >= %s AND imported_at < %s ORDER BY started_at"""
-_MONTH_SQL = """SELECT COALESCE(SUM(COALESCE((summary->>'cost_usd')::float, 0)
-        + COALESCE((summary->>'judge_cost_usd')::float, 0)
-        + COALESCE((summary->>'gpu_cost_usd')::float, 0)), 0) FROM bench_runs WHERE started_at >= %s"""
-
-
-def run_cost(summary: dict) -> float:
-    return sum(float(summary.get(field) or 0) for field in ("cost_usd", "judge_cost_usd", "gpu_cost_usd"))
-
-
-def digest_line(run: dict, previous: dict | None) -> str:
-    """One run in the daily summary: its cell, score, cost and change against the previous run."""
-    summary = run["summary"] or {}
-    label = cell_label(run["mode"], run["suite"], run.get("harness_profile"), (run.get("config") or {}).get("season"))
-    parts = [f"*{label}*"]
-    if summary.get("tasks") is not None:
-        rate = summary.get("success_rate")
-        parts.append(f"{summary.get('success')}/{summary.get('tasks')}" + (f" ({rate:.0%})" if rate is not None else ""))
-    parts.append(f"${run_cost(summary):.2f}")
-    before = (previous or {}).get("summary") or {}
-    rate, rate_before = summary.get("success_rate"), before.get("success_rate")
-    if rate is not None and rate_before is not None:
-        points = round((rate - rate_before) * 100)
-        parts.append("same score as last run" if points == 0 else f"{points:+d} pts vs last run")
-    if run.get("flagged"):
-        parts.append(f"flagged: {run['flagged']}")
-    line = " · ".join(parts)
-    return f"• <{run['github_run_url']}|{line}>" if run.get("github_run_url") else f"• {line}"
-
-
-def cell_label(mode: str, suite: str, harness: str | None, season: object) -> str:
-    words = [mode.capitalize(), suite]
-    if harness:
-        words.append(harness.capitalize())
-    if season not in (None, ""):
-        words.append(f"Season {season}")
-    return " · ".join(words)
-
-
-def digest_text(runs: list[tuple[dict, dict | None]], month_spend: float, day: str) -> str | None:
-    """The daily summary for Slack, or None when nothing ran."""
-    if not runs:
-        return None
-    total = sum(run_cost(run["summary"] or {}) for run, _ in runs)
-    lines = [
-        f":bar_chart: *Operon daily runs* ({day}): {len(runs)} run{'s' if len(runs) != 1 else ''}, ${total:.2f}",
-        *(digest_line(run, previous) for run, previous in runs),
-        f"Month to date: ${month_spend:.2f} · <{DASHBOARD_URL}|Dashboard>",
-    ]
-    return "\n".join(lines)
-
-
-def collect_digest(conn, end: datetime, hours: float = 24) -> tuple[list[tuple[dict, dict | None]], float]:
-    """Runs imported in the ``hours`` before ``end`` (so a run that finishes after one summary
-    goes in the next), each with its previous comparable run, and the month's spend so far
-    (UTC month of ``end``)."""
-    columns = ("key", "mode", "suite", "backend", "harness_profile", "model", "started_at", "flagged",
-               "github_run_url", "config", "summary")
-    rows = conn.execute(_DIGEST_SQL, (end - timedelta(hours=hours), end)).fetchall()
-    runs = []
-    for row in rows:
-        run = dict(zip(columns, row, strict=True))
-        previous = previous_comparable(conn, run, (run["config"] or {}).get("season"))
-        runs.append((run, previous))
-    month_start = end.astimezone(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month_spend = float(conn.execute(_MONTH_SQL, (month_start,)).fetchone()[0] or 0)
-    return runs, month_spend
 
 
 # ---------- run-over-run changes (KAN-60) ----------
@@ -734,31 +657,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--alert", action="store_true", help="post critical problems (cost-cap stops) to Slack ($SLACK_WEBHOOK_URL)")
     add.add_argument("--alerts-file", type=Path, help="append each alert sent to Slack to this file")
     add.add_argument("--comment-file", type=Path, help="write the results table for a /bench PR comment (Markdown) here")
-    digest = commands.add_parser("digest", help="post the daily summary of runs, scores and cost to Slack")
-    digest.add_argument("--database-url", default=os.getenv("DATABASE_URL"), help="Postgres URL (default: $DATABASE_URL)")
-    digest.add_argument("--hours", type=float, default=24, help="runs imported this many hours back (default 24)")
-    digest.add_argument("--dry-run", action="store_true", help="print the summary instead of posting it")
     return parser
-
-
-def run_digest(args: argparse.Namespace) -> int:
-    end = datetime.now(timezone.utc)
-    with connect(args.database_url) as conn:
-        runs, month_spend = collect_digest(conn, end, args.hours)
-    text = digest_text(runs, month_spend, end.strftime("%Y-%m-%d"))
-    if text is None:
-        print(f"No benchmark runs in the last {args.hours:g} hours; nothing to post.")
-        return 0
-    print(text)
-    if args.dry_run:
-        return 0
-    webhook = os.getenv("SLACK_WEBHOOK_URL")
-    if not webhook:
-        print("::warning::SLACK_WEBHOOK_URL is not set; the summary was not posted.", file=sys.stderr)
-        return 0
-    post_slack(webhook, text)
-    print("sent the daily summary to Slack")
-    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -766,8 +665,6 @@ def main(argv: list[str]) -> int:
     if not args.database_url:
         print("Set DATABASE_URL (or pass --database-url) to the dashboard's Postgres database.", file=sys.stderr)
         return 2
-    if args.command == "digest":
-        return run_digest(args)
     overrides = {
         "backend": args.backend,
         "harness_profile": args.harness,

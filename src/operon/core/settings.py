@@ -191,10 +191,6 @@ class Settings(BaseModel):
     browser_width: int = _env_field("BROWSER_WIDTH", 1920)
     browser_height: int = _env_field("BROWSER_HEIGHT", 1080)
     browser_headless: bool = _env_field("BROWSER_HEADLESS", False)
-    # KAN-138: one Operon browser with a saved profile, shown as the app's Browser tab.
-    builtin_browser: bool = _env_field("OPERON_BUILTIN_BROWSER", False)
-    # None: <OPERON_CONFIG_DIR>/browser-profile.
-    browser_profile_dir: Path | None = _env_field("OPERON_BROWSER_PROFILE_DIR")
 
     # --- Diagnostics -----------------------------------------------------------------
     test_safe_mode: bool = _env_field("OPERON_TEST_SAFE_MODE", False)
@@ -401,8 +397,6 @@ class _Parser:
             browser_width=self.number("BROWSER_WIDTH", "1920", int, fatal=True),
             browser_height=self.number("BROWSER_HEIGHT", "1080", int, fatal=True),
             browser_headless=self.text("BROWSER_HEADLESS", "false").lower() == "true",
-            builtin_browser=self.flag("OPERON_BUILTIN_BROWSER"),
-            browser_profile_dir=self.path("OPERON_BROWSER_PROFILE_DIR"),
             test_safe_mode=self.text("OPERON_TEST_SAFE_MODE", "false").lower() == "true",
             strict_errors=self.flag("OPERON_STRICT_ERRORS"),
             trace=self.text("OPERON_TRACE").lower() in {"1", "true", "yes"},

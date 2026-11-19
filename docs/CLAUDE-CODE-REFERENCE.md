@@ -36,9 +36,10 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 
 ### Paid runs and budget
 - **No paid runs until the weekend of Sat-Sun Nov 21-22, 2026**, and Vickey starts
-  those by hand. The nightly schedule was removed on purpose (PR #311, the cron in
-  `benchmark.yml` is commented out): don't add any scheduled starter.
-- **$100/month benchmark cap**, $10 nightly cap. Before asking for any paid run, state
+  those by hand (Actions > Run Operon on test tasks (paid) > Run workflow, with `cells`).
+  The nightly schedule and the nightly queue were removed on purpose (2026-11-18): don't add
+  any scheduled starter.
+- **$100/month benchmark cap**, $10 default batch cap. Before asking for any paid run, state
   the cost estimate and month-to-date spend; never start one without Vickey OKing its
   cost. At most one paid run (batch) per day.
 - Any local run that calls Gemini is a paid run. Keep model calls stubbed for offline
@@ -68,14 +69,14 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 | Confluence | Space **OPERON**, home page 295140 (hand-written TOC). |
 | GitHub | `vickey-kapoor/Operon`. API keys (Gemini, Anthropic, OpenAI) are repo secrets. Actions: approval required for all external contributors. |
 | Paid workflow | `benchmark.yml` "Run Operon on test tasks (paid)": manual dispatch (`cells`), or `/bench ...` PR comments. Engines: `live-bench.yml`, `live-desktop-bench.yml`, `grounding.yml`. Syntax in `evals/CLAUDE.md`. |
-| Paid queue | `evals/nightly-queue.txt` (line = `YYYY-MM-DD <cell words>  # note`); add a line in any PR to queue a cell. Older batch log: project file `bench-queue/queue.md`. |
+| Paid batches | Started by hand with `cells` (Actions > Run Operon on test tasks (paid) > Run workflow). The nightly queue (`evals/nightly-queue.txt`) was removed 2026-11-18; it stays in git history. Older batch log: project file `bench-queue/queue.md`. |
 | OSWorld | `osworld-bench.yml` "Run OSWorld test tasks (own VM)": manual only, runs on Azure VM `operon-linux`, report artifact `osworld-report` (not imported to the dashboard). |
 | Azure Windows VM | `operon-desktop` (westus2, resource group `operon-bench`), self-hosted desktop bench runner, logged in via OIDC. Clean snapshot `operon-desktop-clean` (manual restore point; `az snapshot create` needs `-l westus2`). |
 | Azure Linux VM | `operon-linux` (westus3, rg `operon-bench`, Standard_D2s_v4): cloud desktop via `operon cloud open`, and the OSWorld runner (label `operon-osworld`). |
 | Deallocate after runs | `az vm deallocate -g operon-bench -n operon-desktop` (or `-n operon-linux`). Workflows deallocate on their own; check by hand after manual work. |
 | az login | Needs `--tenant bae81514-1670-44ef-9e7a-c41552f64f59` (MFA). AVG antivirus HTTPS scanning breaks az certificates on Vickey's PC (workaround: temporary cert file). |
 | Eval dashboard | Vercel project `operon-evals` (root `dashboard/`, don't move it), Neon Postgres. Dashboard reads through the read-only role `dashboard_ro` (`DASHBOARD_DATABASE_URL`). New tables need `GRANT SELECT ... TO dashboard_ro`. Never "Rotate Neon Secrets". Backfill via the "Save run results to dashboard" workflow. |
-| Slack | Only critical alerts (cost cap, failed run, failed import) plus the daily summary after the dashboard import. |
+| Slack | Critical alerts only (cost cap, failed run, failed import). |
 | PyPI | Package `operon-agent`: releases stopped on 2026-11-18 (the release workflow was removed); published versions stay on PyPI. |
 
 ## Current state (2026-11-17)
@@ -94,15 +95,15 @@ side-by-side benchmark cells only.
 
 ### Weekend paid queue (Nov 21-22, started by hand)
 
-From `evals/nightly-queue.txt`:
+Cells to enter by hand as `cells` (they were in the removed `evals/nightly-queue.txt`, see git history):
 
 - **Sat Nov 21** (caps $9.50): Desktop Thin Season 2 zoom=always (KAN-82); Hybrid Full
   Season 2 (KAN-161, first Full score); Browser Thin dynamic x3 `off` and `settle` arms (KAN-115).
-- **Sun Nov 22** (caps $11.50, over the $10 nightly cap): KAN-115 `settle note` and
+- **Sun Nov 22** (caps $11.50, over the $10 default batch cap): KAN-115 `settle note` and
   `planner` arms, then the KAN-116 `expect` arm, then four KAN-168 cells (Claude browser,
   Claude desktop, GPT browser, GPT desktop, cap $1 each). The two **GPT cells won't fit
   in the first start: start the run a second time on Sunday** to finish them.
-- **OSWorld re-run** of multi_apps task `2c1ebcd7` (~$0.15): not a nightly cell, start
+- **OSWorld re-run** of multi_apps task `2c1ebcd7` (~$0.15): not a batch cell, start
   "Run OSWorld test tasks (own VM)" by hand that weekend.
 - Ask Vickey before each start with the cost and month-to-date spend.
 

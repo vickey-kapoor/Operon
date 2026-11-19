@@ -1,11 +1,11 @@
 """Record a real Gemini run and replay it through the real loop for free (KAN-167).
 
-**Record.** A paid benchmark run (the nightly batch, KAN-165) already saves, for each
+**Record.** A paid benchmark run (a batch run, KAN-165) already saves, for each
 step, Gemini's answer (``computer_use_raw.json``) and the action Operon then ran
 (``run.jsonl``). :func:`record_run` folds one run folder into a small recording: the
 task, the settings that shape the loop, every model answer in order and every action
 Operon ran. ``python -m evals.live_bench --keep-screens`` writes one per thin-harness
-Gemini computer-use task to ``<report>/recordings/<task>.json``, so the nightly
+Gemini computer-use task to ``<report>/recordings/<task>.json``, so a batch
 artifact carries them.
 
 **Replay.** :func:`replay` runs the recorded task again through the real
@@ -16,7 +16,7 @@ the same order as it did for real; when a code change makes it do something else
 with the same model answers, the replay says at which step and what changed.
 
 Recordings that CI replays live in ``evals/recordings/`` (``tests/evals/test_replay.py``).
-Add one by copying it there from a nightly artifact. Their screenshots are never
+Add one by copying it there from a batch artifact. Their screenshots are never
 kept: a recording holds only the model's text and actions.
 
     python -m evals.replay record .var/runs/<run_id> --task NAME --mode desktop > rec.json

@@ -30,11 +30,6 @@ from operon.agent.perception.screen_diff import (
     reset_click_candidates,
 )
 from operon.agent.perception.settle import frame_signature
-from operon.browser.builtin import (
-    CDP_PORT,
-    builtin_browser_enabled,
-    get_builtin_browser,
-)
 from operon.browser.keys import normalize_key
 from operon.core.paths import browser_artifacts_dir
 from operon.core.settings import get_settings
@@ -72,7 +67,6 @@ class _BrowserSession:
     video_dir: Path | None = None
     browser_pid: int | None = None
     owns_context: bool = True   # False for CDP mode — context is the shared default, only page is ours
-    run_id: str | None = None   # set for a built-in browser run: its tabs are closed with it
 
 
 class NativeBrowserExecutor(Executor):
@@ -119,7 +113,6 @@ class NativeBrowserExecutor(Executor):
         self._session_lock = asyncio.Lock()
         self._run_headless: dict[str, bool | None] = {}
         self._run_mode: dict[str, str] = {}
-        self._run_start_url: dict[str, str | None] = {}  # for the built-in browser's site gate
         self._live_view_tasks: set[asyncio.Task] = set()  # live-view switches for late popups
         self._live_view_lock = asyncio.Lock()
         self._fresh_session_run_id: str | None = None
@@ -145,11 +138,9 @@ class NativeBrowserExecutor(Executor):
         *,
         headless: bool | None = None,
         mode: str = "batch",
-        start_url: str | None = None,
     ) -> None:
         self._run_headless[run_id] = headless
         self._run_mode[run_id] = mode
-        self._run_start_url[run_id] = start_url
 
     async def reset_desktop(self) -> None:
         """No-op for native browser control."""
@@ -534,12 +525,7 @@ class NativeBrowserExecutor(Executor):
         session = self._sessions.get(self._current_run_id)
         if session is None:
             return
-        if session.run_id is not None:
-            # Built-in browser: the context also holds the user's own tabs. Only the
-            # run's own pages (its tab and its popups) count.
-            pages = get_builtin_browser().pages_of_run(session.run_id)
-        else:
-            pages = session.context.pages
+        pages = session.context.pages
         if len(pages) <= 1:
             return
         new_page = pages[-1]
@@ -764,8 +750,6 @@ class NativeBrowserExecutor(Executor):
     async def _ensure_session_observable(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:
         """Observable mode: reuse the persistent browser across tasks; only context+page are new."""
         await self._close_other_sessions(run_id)
-        if builtin_browser_enabled():
-            return await self._open_builtin_session(run_id)
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
@@ -825,26 +809,6 @@ class NativeBrowserExecutor(Executor):
             page=page,
             video_dir=video_dir,
             browser_pid=None,
-        )
-        self._sessions[run_id] = session
-        self._fresh_session_run_id = run_id
-        return session
-
-    async def _open_builtin_session(self, run_id: str) -> _BrowserSession:
-        """Observable run in the built-in browser (KAN-138): a tab of the saved-profile
-        browser, so the run starts signed in. Only the tab is the run's; the browser and
-        its profile outlive it."""
-        browser = get_builtin_browser()
-        page = await browser.new_task_page(run_id, self._run_start_url.get(run_id))
-        self._attach_page_listeners(page, run_id)
-        await self._attach_live_view(page, CDP_PORT)
-        session = _BrowserSession(
-            playwright=None,
-            browser=None,
-            context=page.context,
-            page=page,
-            owns_context=False,
-            run_id=run_id,
         )
         self._sessions[run_id] = session
         self._fresh_session_run_id = run_id
@@ -962,8 +926,6 @@ class NativeBrowserExecutor(Executor):
             session = self._sessions.get(run_id)
             if session is None or session.page is not page:
                 return
-            if session.run_id is not None:
-                get_builtin_browser().set_active(page)
             await self._attach_live_view(page, 9222)
 
     def _attach_page_listeners(self, page: object, run_id: str) -> None:
@@ -974,8 +936,6 @@ class NativeBrowserExecutor(Executor):
             # Follow the event as well, including popups opened by a popup.
             self._attach_page_listeners(popup, run_id)
             session = self._sessions.get(run_id)
-            if session is not None and session.run_id is not None:
-                get_builtin_browser().own_page(popup, run_id)
             if session is not None and session.page is page:
                 session.page = popup
                 if self._run_mode.get(run_id) == "observable":
@@ -1252,11 +1212,7 @@ class NativeBrowserExecutor(Executor):
     async def _close_session(self, session: _BrowserSession, *, observable: bool = False) -> None:
         if observable:
             await self._stop_live_view()
-        if session.run_id is not None:
-            # Built-in browser: close the run's own tabs and popups; the browser and the
-            # user's tabs stay.
-            await get_builtin_browser().release_run(session.run_id)
-        elif observable and not session.owns_context:
+        if observable and not session.owns_context:
             # CDP mode: the context is the user's default Chrome context — never close it.
             # Only close our task page.
             try:

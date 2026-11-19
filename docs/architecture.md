@@ -1,12 +1,8 @@
 # Operon Architecture Reference
 _Last refreshed: 2026-11-11_
 
-> Note: this file is partly out of date. [`../OPERON_ARCHITECTURE.md`](../OPERON_ARCHITECTURE.md)
-> is the current description of the system; prefer it where the two disagree.
-
 This document describes the code currently present in this repository. It is the
-single canonical engineering reference; the product "why" lives in
-[`PRD.md`](./PRD.md), planned changes in [`roadmap.md`](./roadmap.md) and contributor
+single canonical engineering reference; contributor
 workflow in [`../AGENTS.md`](../AGENTS.md).
 
 ## Active Runtime Shape

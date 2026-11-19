@@ -19,7 +19,7 @@ the result. No DOM, no selectors, no accessibility tree.
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages and native Windows apps.
 - **Gemini computer use.** Every run uses Gemini 3.5 Flash, which has computer use built in.
-  Other models will come back through a simpler model onboarding (see the roadmap).
+  Other models may come back through a simpler model onboarding.
 - **Two harnesses.** The full harness (Gemini's default) puts rules, guards, a per-step verifier
   and recovery around the model; the thin harness lets the model make every decision.
 - **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on
@@ -42,8 +42,6 @@ paused, resumed or handed to a human between steps. See [architecture](docs/arch
 ## Quick start (5 minutes)
 
 You need Python 3.14+ and a free [Gemini API key](https://aistudio.google.com/apikey).
-New to Python or the terminal? Follow [First run, step by step](docs/first-run.md), which
-explains every command.
 
 **1. Install** (about a minute) from [PyPI](https://pypi.org/project/operon-agent/):
 
@@ -133,21 +131,18 @@ model credits.
   The full run costs about $3. (Our own runs go through a manual GitHub Actions workflow on a
   private VM, which others can't use; the command above is the way to reproduce it.)
 
-## Status and roadmap
+## Status
 
-Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Gemini computer use.
-It installs from PyPI (`operon-agent` 0.1.0), and on the Season 1 core sets Gemini scores 9 or
-10 of 10 in most cells. The plan is six stages, users first: installable (done apart from the
-stranger test), the first 10 users, reliability (Season 2, verify before
-done, safety), builders (more models, an MCP server, task files), a public launch, then scale (an
-SDK, a Windows app, parallel and hosted runs). See the [roadmap](docs/roadmap.md) for what has
-been built, where things stand and what is next.
+Operon is an agent engine plus a personal test bench: it runs browser, desktop and hybrid
+(desktop plus browser) tasks with Gemini computer use, and the focus is the engine, benchmarks
+and failure analysis. It installs from PyPI (`operon-agent` 0.1.0), and on the Season 1 core
+sets Gemini scores 9 or 10 of 10 in most cells. See [Evaluation](docs/evaluation.md) for the
+current results and the failure triage.
 
 ## Documentation
 
 | Topic | |
 |---|---|
-| [Roadmap](docs/roadmap.md) | What has been built, the current results, and what comes next |
 | [Configuration](docs/configuration.md) | Model keys, backends, harness profiles, every setting |
 | [Python SDK](docs/sdk.md) | `from operon import Agent`: run a task from Python, with approvals |
 | [Task files](docs/task-files.md) | `operon run --tasks tasks.yaml --junit report.xml`: a suite of tasks in CI |
@@ -159,7 +154,7 @@ been built, where things stand and what is next.
 | [Azure desktop runner](docs/azure-desktop-runner.md) | Running the desktop benchmark on a cloud Windows VM |
 | [Cloud computer](docs/azure-linux-computer.md) | Operon on its own Azure Linux VM, watched live on the task page (`operon cloud`) |
 | [Reports](docs/reports/) | Benchmark write-ups, including the [Season 1 grid](docs/reports/season-1-grid.md) |
-| [PRD](docs/PRD.md) and [RFCs](docs/rfcs/) | Product context and design proposals |
+| [RFCs](docs/rfcs/) | Design proposals |
 
 ## Development
 

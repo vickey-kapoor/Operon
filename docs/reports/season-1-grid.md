@@ -80,5 +80,5 @@ topped up.
   whether a change to Operon helps. Season 2 (KAN-78) adds harder core sets aimed at 40% to 70%.
 - **Hybrid is the hardest category**, and its misses come from writing files and commands by
   typing into a shell window. The planned tool channel (KAN-79) gives the model typed file and
-  command tools instead. See the [roadmap](../roadmap.md).
+  command tools instead. Tracked in Jira epic KAN-7.
 - **Most remaining misses are model misses**, not Operon bugs, after the KAN-75 and #233 fixes.

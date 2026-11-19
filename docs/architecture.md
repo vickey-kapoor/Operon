@@ -57,9 +57,10 @@ methods over a `StepContext` (`agent/step_context.py`, KAN-155). Fields a stage 
 |---|---|---|
 | 0 | `_begin_step` | Refuses runs that are not PENDING or RUNNING; enforces `max_steps` (default 25, `models/common.py`); builds the `StepContext` |
 | 1 | `_warmup_stage` | Step 1 only: a browser run without a start URL navigates to google.com if the trust gate allows it; 2.5 s settle (skipped in test safe mode) |
+| 1b | `_consume_force_fresh_perception` | When the run record has `force_fresh_perception` set, waits for the UI to settle (1.0 s in a browser, 0.5 s on the desktop; `OPERON_SETTLE_DETECT` swaps the fixed sleep for settle detection), then clears the flag |
 | 2 | `_capture_stage` | `ScreenCaptureService.capture` (`agent/perception/capture.py`) asks the executor for a frame and moves it to `step_N/before.png` |
 | 3 | `_consume_override_hint`, `_add_task_note`, `_add_secrets_hint` | Queue advisory text hints for the model: a user correction, `OPERON_TASK_NOTE`, secret names |
-| 4 | `_perceive_stage` | Memory hints, stagnation hint, then `perception_service.perceive` (with a liveness retry); stamps the monitor origin; saves the observation. Rolling element memory is cleared when `visual_velocity > 0.05` |
+| 4 | `_perceive_stage` | Memory hints, stagnation hint, then `perception_service.perceive` (with a liveness retry); stamps the monitor origin; saves the observation |
 | 5 | `_decide_stage` | `policy_service.choose_action`; `_attach_target_context` (grounder, monitor origin); Best-of-N (`OPERON_BESTOFN_N`) |
 | 6 | `_gate_stage` | Cancel check, then `_gate_pause_decision`: the model asked for a human, coordinate thrash (3 failures at one point), confidence threshold, trust gate, file guard. A blocked action becomes WAIT_FOR_USER and the run pauses |
 | 7 | `_execute_and_verify_stage` | A loop of `_execute_attempt` then `_verify_attempt`. On a hard FAILURE, `_prepare_adaptation_retry` re-captures, re-perceives, re-decides and re-gates (at most `_MAX_ADAPTATION_RETRIES` = 3; never in thin) |
@@ -461,7 +462,6 @@ Defaults that are **on**: `OPERON_TRUST_GATE`, `OPERON_TOOLS=on` (no `run_shell`
 - TYPE remains atomic at the executor level.
 - Desktop clicks (`DesktopExecutor`, `LinuxDesktopExecutor`) use visual servo checks before input injection; the browser executor has none, and OSWorld runs its own fixed-threshold check (`environments/osworld.py`).
 - One executor serves one run's step at a time (`AgentLoop._executor_lock`). With `OPERON_PARALLEL_RUNS` > 1 each batch browser run gets its own loop and executor (`api/runtime/loops.py`), so the lock is per executor and runs overlap; observable-mode and desktop runs share one executor and take turns (one CDP port, one real screen).
-- Rolling element memory is cleared on high visual velocity.
 - Benchmark-specific behavior must not be hardcoded into core policy rules.
 
 ## Testing Layers

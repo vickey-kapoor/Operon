@@ -22,7 +22,7 @@ API: http://127.0.0.1:8090 (X-API-Key header)
   was left open.
 - **Keys.** `operon cloud set-key` sends your `GEMINI_API_KEY` to the VM over SSH's stdin,
   into `/etc/operon/gemini.env` (root only). The API key is generated on the
-  VM, and `operon cloud` reads it over SSH.
+  VM (stored root-only), and `operon cloud` reads it over SSH with `sudo`.
   Apps that Operon launches don't inherit secret environment variables. But they run as the
   same user as the API, so treat the VM as a sandbox: don't sign it in to anything you care about.
 

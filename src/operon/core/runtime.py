@@ -93,8 +93,6 @@ class OperonRuntime:
     desktop_provider: Any = None
     # The connected CDP browser manager the browser executor attaches to.
     active_browser_manager: Any = None
-    # The built-in browser with the saved profile (KAN-138), started on first use.
-    builtin_browser: Any = None
     # True while one Python SDK run (``operon.sdk.Agent``) owns this process's loops.
     sdk_run_active: bool = False
     control: ControlSettings = field(default_factory=ControlSettings)

@@ -323,7 +323,6 @@ class AgentLoop:
                     record.run_id,
                     headless=request.headless,
                     mode=record.mode,
-                    start_url=request.start_url,
                 )
             if hasattr(self.executor, "start_run_recording"):
                 try:
@@ -639,9 +638,7 @@ class AgentLoop:
                 self.executor.set_current_run_id(run_id)
             if hasattr(self.executor, "configure_run"):
                 try:
-                    self.executor.configure_run(
-                        run_id, headless=record.headless, mode=record.mode, start_url=record.start_url
-                    )
+                    self.executor.configure_run(run_id, headless=record.headless, mode=record.mode)
                 except Exception as exc:
                     self._recovered(run_id, "configure_run", exc)
         if hasattr(self.policy_service, "reset_run_context"):

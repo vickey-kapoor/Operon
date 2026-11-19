@@ -27,7 +27,6 @@
     "OPERON_BROWSER_THINKING": "low",
     "OPERON_BROWSER_VERIFIER_MODEL": "gemini-3.5-flash",
     "OPERON_BROWSER_VERIFIER_THINKING": "low",
-    "OPERON_BUILTIN_BROWSER": "false",
     "OPERON_CHANGE_NOTE": "false",
     "OPERON_CRITIC": "",
     "OPERON_DESKTOP_BACKEND": "computer_use",

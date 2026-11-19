@@ -82,7 +82,7 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 
 **Merged today:** #315 (KAN-116 expected-change check, `OPERON_EXPECT_CHECK`, off),
 #318 (plain workflow run/job names), #319 (KAN-163 trust gate reads the text under a
-click with local OCR, `OPERON_CLICK_TEXT`, off; optional extra `operon-agent[ocr]`).
+click with local OCR, `OPERON_CLICK_TEXT`, off; optional extra `.[ocr]`).
 No open PRs.
 
 **Done in Jira:** KAN-116, KAN-163, KAN-168 (Claude Sonnet 5.5 and GPT computer use

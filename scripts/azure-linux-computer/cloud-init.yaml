@@ -115,7 +115,7 @@ write_files:
         chown operon:operon "$ENV"
         chmod 600 "$ENV"
       fi
-      # The admin user (the one `operon cloud` signs in as) reads the page's key from here.
+      # The admin user (the one `operon cloud` signs in as) reads the API key from here.
       install -d -m 0755 /etc/operon
       grep '^API_KEYS=' "$ENV" | cut -d= -f2- > /etc/operon/api-key
       chmod 0644 /etc/operon/api-key

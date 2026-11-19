@@ -55,7 +55,7 @@ class RapidOcrReader:
                 except Exception:  # noqa: BLE001 - missing or broken engine: the gate runs without it
                     self._failed = True
                     logger.warning(
-                        "OPERON_CLICK_TEXT is on but RapidOCR could not load; install the ocr extra (pip install -e \".[ocr]\")."
+                        "OPERON_CLICK_TEXT is on but RapidOCR could not load; install the ocr extra (pip install -e \".[ocr]\"). "
                         "The trust gate runs without reading click text.",
                         exc_info=True,
                     )

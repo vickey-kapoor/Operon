@@ -6,7 +6,7 @@ the click point from the step's screenshot and reads it with local text recognit
 (RapidOCR on the CPU: no model call, no network, about 10 ms a crop).
 
 Off by default (``OPERON_CLICK_TEXT``). The OCR engine is an optional install
-(``pip install "operon-agent[ocr]"``); without it, or on any error, the reader
+(``pip install -e ".[ocr]"``); without it, or on any error, the reader
 returns ``None`` and the gate behaves exactly as before.
 """
 
@@ -49,13 +49,13 @@ class RapidOcrReader:
         with self._lock:
             if self._engine is None and not self._failed:
                 try:
-                    from rapidocr import RapidOCR  # optional: operon-agent[ocr]
+                    from rapidocr import RapidOCR  # optional: the "ocr" extra
 
                     self._engine = RapidOCR()
                 except Exception:  # noqa: BLE001 - missing or broken engine: the gate runs without it
                     self._failed = True
                     logger.warning(
-                        "OPERON_CLICK_TEXT is on but RapidOCR could not load; install operon-agent[ocr]. "
+                        "OPERON_CLICK_TEXT is on but RapidOCR could not load; install the ocr extra (pip install -e \".[ocr]\")."
                         "The trust gate runs without reading click text.",
                         exc_info=True,
                     )

@@ -156,11 +156,11 @@ def test_write_videos_only_gets_the_shown_results(tmp_path, monkeypatch) -> None
 
 def test_mixed_frame_sizes_are_all_kept(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(shutil, "which", lambda _name: None)
-    run = _run(tmp_path, steps=3)
-    Image.new("RGB", (1921, 1201), (9, 9, 9)).save(run / "step_2" / "before.png")
+    run = _run(tmp_path, steps=3)  # 1281x801 frames scale to 640x400
+    Image.new("RGB", (1280, 1024), (9, 9, 9)).save(run / "step_2" / "before.png")  # 640x512
     written = run_video.make_video(run, tmp_path / "m.mp4", width=640)
     assert written == 12
-    assert abs(_info(tmp_path / "m.mp4")[0] - written) <= 1
+    assert _info(tmp_path / "m.mp4")[0] == written
 
 
 def test_cli_task_and_verdict(tmp_path, monkeypatch) -> None:

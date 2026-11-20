@@ -153,27 +153,30 @@ def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
     which has OpenCV), since this script's own venv may not. Never raises."""
     runs_root = out / "osworld-runs"
     repo_root = Path(__file__).resolve().parent.parent
-    (out / "videos").mkdir(parents=True, exist_ok=True)
     made = 0
     for r in results:
-        run_dir = runs_root / str(r.get("run_id") or "")
-        if not r.get("run_id") or not run_dir.is_dir():
-            continue
-        short = str(r["id"])[:8]
-        verdict = "pass" if r.get("passed") else "fail"
-        target = out / "videos" / f"{short}-{verdict}.mp4"
-        cmd = [python, "-m", "evals.run_video", "--run", str(run_dir), "--out", str(target),
-               "--task", f"{r.get('domain', '')}: {short}", "--verdict", verdict]
+        short = str(r.get("id", ""))[:8]
         try:
+            run_dir = runs_root / str(r.get("run_id") or "")
+            if not r.get("run_id") or not run_dir.is_dir():
+                continue
+            verdict = "pass" if r.get("passed") else "fail"
+            (out / "videos").mkdir(parents=True, exist_ok=True)
+            target = out / "videos" / f"{short}-{verdict}.mp4"
+            cmd = [python, "-m", "evals.run_video", "--run", str(run_dir.resolve()), "--out", str(target.resolve()),
+                   "--task", f"{r.get('domain', '')}: {short}", "--verdict", verdict]
             done = run(cmd, cwd=str(repo_root), capture_output=True, text=True, timeout=300)
-            ok, why = done.returncode == 0, (done.stderr or done.stdout or "").strip()[-200:]
+            if done.returncode == 0:
+                made += 1
+                continue
+            why = (done.stderr or done.stdout or "").strip()[-200:]
         except Exception as exc:  # noqa: BLE001
-            ok, why = False, str(exc)
-        if ok:
-            made += 1
-        else:
-            for stream in (sys.stdout, sys.stderr):
-                print(f"::warning::no video for {short}: {why}", file=stream, flush=True)
+            why = str(exc)
+        try:
+            target.unlink(missing_ok=True)  # never leave a truncated MP4 to be uploaded
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"::warning::no video for {short}: {why}", flush=True)
     return made
 
 

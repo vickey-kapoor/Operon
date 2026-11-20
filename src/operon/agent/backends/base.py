@@ -13,6 +13,14 @@ class BackendCompatibilityError(RuntimeError):
     """Raised when a backend cannot serve the current request contract."""
 
 
+class ModelBlockedError(BackendCompatibilityError):
+    """The model API blocked the request (not the screen content's fault we can fix), even after one retry."""
+
+    def __init__(self, block_reason: str) -> None:
+        super().__init__(f"Gemini blocked the request ({block_reason})")
+        self.block_reason = block_reason
+
+
 class AgentBackend(ABC):
     @abstractmethod
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:

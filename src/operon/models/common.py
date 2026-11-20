@@ -43,6 +43,7 @@ class FailureCategory(StrEnum):
 
     BENCHMARK_PRECONDITION_FAILED = "benchmark_precondition_failed"
     PRE_STEP_PERCEPTION_FAILED = "pre_step_perception_failed"
+    MODEL_BLOCKED = "model_blocked"
     PERCEPTION_LOW_QUALITY = "perception_low_quality"
     AMBIGUOUS_TARGET_CANDIDATES = "ambiguous_target_candidates"
     SELECTOR_SCORE_BELOW_THRESHOLD = "selector_score_below_threshold"
@@ -90,6 +91,7 @@ class StopReason(StrEnum):
     COMPLETION_UNVERIFIED = "completion_unverified"
     BENCHMARK_PRECONDITION_FAILED = "benchmark_precondition_failed"
     PRE_STEP_PERCEPTION_FAILED = "pre_step_perception_failed"
+    MODEL_BLOCKED = "model_blocked"
     PERCEPTION_LOW_QUALITY = "perception_low_quality"
     AMBIGUOUS_TARGET_CANDIDATES = "ambiguous_target_candidates"
     SELECTOR_SCORE_BELOW_THRESHOLD = "selector_score_below_threshold"

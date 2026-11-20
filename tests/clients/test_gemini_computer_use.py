@@ -160,6 +160,23 @@ def test_normalize_response_rejects_missing_candidates() -> None:
         GeminiComputerUseHttpClient._normalize_response({})
 
 
+def test_normalize_response_raises_blocked_error_with_the_block_reason() -> None:
+    from operon.clients.gemini_computer_use import GeminiPromptBlockedError
+
+    with pytest.raises(GeminiPromptBlockedError) as info:
+        GeminiComputerUseHttpClient._normalize_response({"promptFeedback": {"blockReason": "SAFETY"}})
+    assert info.value.block_reason == "SAFETY"
+    assert isinstance(info.value, GeminiComputerUseError)
+
+
+def test_normalize_response_without_a_block_reason_is_the_generic_error() -> None:
+    from operon.clients.gemini_computer_use import GeminiPromptBlockedError
+
+    with pytest.raises(GeminiComputerUseError) as info:
+        GeminiComputerUseHttpClient._normalize_response({"promptFeedback": {"safetyRatings": []}})
+    assert not isinstance(info.value, GeminiPromptBlockedError)
+
+
 def test_build_function_response_content_includes_url_and_screenshot(tmp_path: Path) -> None:
     screenshot = tmp_path / "screen.png"
     screenshot.write_bytes(

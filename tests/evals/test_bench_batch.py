@@ -35,6 +35,12 @@ def test_defaults_match_a_plain_bench_comment() -> None:
     assert cell.extra == ""
 
 
+@pytest.mark.parametrize("name", ["live-bench.yml", "live-desktop-bench.yml"])
+def test_live_workflows_pin_older_revisions_to_the_thin_harness(name) -> None:
+    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / name).read_text(encoding="utf-8")
+    assert "      OPERON_HARNESS_PROFILE: thin\n" in text
+
+
 @pytest.mark.parametrize("word", ["full", "same-critic"])
 def test_the_removed_full_harness_words_are_errors(word) -> None:
     with pytest.raises(BatchError, match=r"Full harness was removed \(KAN-183\)"):

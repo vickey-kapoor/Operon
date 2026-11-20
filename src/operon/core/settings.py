@@ -293,7 +293,10 @@ class _Parser:
         from operon.agent.actions import zoom as zoom_mod
 
         for name in _REMOVED_FULL_HARNESS_VARS:
-            if self.env.get(name, "").strip():
+            value = self.env.get(name, "").strip()
+            if name == "OPERON_HARNESS_PROFILE" and value.lower() == "thin":
+                continue  # matches what runs; CI sets it so benchmarks of older revisions run thin
+            if value:
                 self.warnings.append(f"{name} was removed with the Full harness (KAN-183), ignored")
 
         zoom_mode = (self.raw("OPERON_ZOOM") or zoom_mod.DENSE).strip().lower()

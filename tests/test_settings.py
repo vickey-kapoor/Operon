@@ -107,6 +107,11 @@ def test_variables_of_the_removed_full_harness_warn_and_are_ignored(name) -> Non
     assert Settings.from_env({name: ""}).warnings == ()  # blank means unset
 
 
+def test_harness_profile_thin_does_not_warn() -> None:
+    assert Settings.from_env({"OPERON_HARNESS_PROFILE": "thin"}).warnings == ()
+    assert Settings.from_env({"OPERON_HARNESS_PROFILE": "full"}).warnings != ()
+
+
 def test_values_that_used_to_crash_later_are_errors() -> None:
     s = Settings.from_env({"BROWSER_WIDTH": "wide", "OPERON_RUNS_RETAIN_DAYS": "two weeks"})
     assert s.browser_width == 1920

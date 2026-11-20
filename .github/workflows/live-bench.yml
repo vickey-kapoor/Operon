@@ -87,6 +87,9 @@ jobs:
       UV_PYTHON: "3.14"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPERON_BROWSER_BACKEND: ${{ inputs.model && 'model' || matrix.backend }}
+      # Kept so benchmarks of revisions older than fc3d0ff, which default Gemini computer use to the
+      # Full harness, still run thin (KAN-183). Current code ignores it.
+      OPERON_HARNESS_PROFILE: thin
       # A registry model (KAN-168) acts through the model backend, always thin with its own done.
       OPERON_MODEL_PROFILE: ${{ inputs.model }}
       # Another provider's key reaches a cell only when that cell runs that provider's model.

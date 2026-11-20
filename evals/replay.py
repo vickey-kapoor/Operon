@@ -179,7 +179,12 @@ def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None
     """One run folder as a replayable recording (raises :class:`RecordingError`)."""
     run_dir = Path(run_dir)
     settings = _read_json(run_dir / "settings.json") if (run_dir / "settings.json").is_file() else {}
-    if (settings.get("OPERON_HARNESS_PROFILE") or "").lower() != "thin":
+    # Mirror harness_profile(): Gemini computer use runs thin unless OPERON_HARNESS_PROFILE=full
+    # (an unset value recorded as "" is a thin run); the json backend always runs full.
+    backend_key = "OPERON_BROWSER_BACKEND" if mode == "browser" else "OPERON_DESKTOP_BACKEND"
+    backend = (settings.get(backend_key) or "computer_use").lower()
+    requested = (settings.get("OPERON_HARNESS_PROFILE") or "").lower()
+    if backend == "json" or (backend == "computer_use" and requested == "full"):
         raise RecordingError("only thin-harness runs replay (the full harness's critic is not recorded)")
     state = _read_json(run_dir / "state.json") if (run_dir / "state.json").is_file() else {}
     steps = _step_logs(run_dir)

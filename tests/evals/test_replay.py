@@ -83,6 +83,27 @@ def test_only_thin_harness_runs_record(tmp_path):
         rp.record_run(run_dir, task="t", mode="desktop")
 
 
+def test_a_default_run_with_an_unset_profile_records(tmp_path):
+    """A default Gemini run ran thin and records its profile as an empty string."""
+    real_run(tmp_path)
+    run_dir = next((tmp_path / "runs").iterdir())
+    settings = json.loads((run_dir / "settings.json").read_text())
+    settings["OPERON_HARNESS_PROFILE"] = ""
+    (run_dir / "settings.json").write_text(json.dumps(settings))
+    assert len(rp.record_run(run_dir, task="t", mode="desktop")["turns"]) == 4
+
+
+def test_a_json_backend_run_is_refused(tmp_path):
+    real_run(tmp_path)
+    run_dir = next((tmp_path / "runs").iterdir())
+    settings = json.loads((run_dir / "settings.json").read_text())
+    settings["OPERON_HARNESS_PROFILE"] = ""
+    settings["OPERON_DESKTOP_BACKEND"] = "json"
+    (run_dir / "settings.json").write_text(json.dumps(settings))
+    with pytest.raises(rp.RecordingError, match="thin"):
+        rp.record_run(run_dir, task="t", mode="desktop")
+
+
 def test_a_copied_run_folder_still_records(tmp_path):
     """Benchmark artifacts copy run folders elsewhere; the step files are found again inside."""
     real_run(tmp_path)

@@ -31,6 +31,7 @@ from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import PageHint, ScreenPerception
 from operon.models.policy import ActionType, PolicyDecision
 from operon.models.state import AgentState
+from operon.models.usage import ModelUsage
 from operon.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,8 @@ class BrowserComputerUseBackend(AgentBackend):
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._conversations: dict[str, _ConversationState] = {}
+        # Usage of a blocked (then retried) request, merged into the step's usage.
+        self._blocked_usage: dict[str, ModelUsage] = {}
         # Zoom before clicking on dense screens (KAN-82, OPERON_ZOOM; off by default).
         self.zoom = _zoom.zoom_settings()
 
@@ -235,6 +238,11 @@ class BrowserComputerUseBackend(AgentBackend):
         else:
             # The client only remembers the zoom request; the step's turn is the one before it.
             usage = _zoom.merge_usage(zoom_usage[0], zoom_usage[1])
+            if usage is not None:
+                bg_writer.enqueue(usage_path, usage.model_dump_json(indent=2))
+        blocked_usage = self._blocked_usage.pop(state.run_id, None)
+        if blocked_usage is not None:
+            usage = _zoom.merge_usage(blocked_usage, usage)
             if usage is not None:
                 bg_writer.enqueue(usage_path, usage.model_dump_json(indent=2))
         self._last_debug_artifacts = ModelDebugArtifacts(
@@ -489,10 +497,16 @@ class BrowserComputerUseBackend(AgentBackend):
                 BLOCK_RETRY_KEEP_SCREENSHOTS,
             )
             pruned = _with_recent_screenshots_only(conversation.contents)
+            if pruned == conversation.contents:
+                # Nothing to drop: an identical request would just be blocked again.
+                raise ModelBlockedError(blocked.block_reason) from blocked
+            first_usage = self.client.latest_usage() if hasattr(self.client, "latest_usage") else None
             try:
                 response_payload = await self.client.generate_turn(contents=pruned)
             except GeminiPromptBlockedError as again:
                 raise ModelBlockedError(again.block_reason) from again
+            if isinstance(first_usage, ModelUsage):
+                self._blocked_usage[state.run_id] = first_usage
             conversation.contents = pruned
         model_content = response_payload.get("model_content")
         if isinstance(model_content, dict):

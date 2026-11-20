@@ -107,6 +107,19 @@ def _frame_array(shot: Path, width: int, line1: str, line2: str) -> np.ndarray:
     return cv2.cvtColor(np.asarray(out), cv2.COLOR_RGB2BGR)
 
 
+def _fit(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """Letterbox ``frame`` into ``size`` (w, h): VideoWriter silently drops frames of another size."""
+    w, h = size
+    if (frame.shape[1], frame.shape[0]) == size:
+        return frame
+    scale = min(w / frame.shape[1], h / frame.shape[0])
+    nw, nh = max(1, int(frame.shape[1] * scale)), max(1, int(frame.shape[0] * scale))
+    resized = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_AREA)
+    canvas = np.full((h, w, 3), (20, 17, 17), dtype=np.uint8)
+    canvas[0:nh, 0:nw] = resized
+    return canvas
+
+
 def _to_h264(path: Path) -> None:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -146,6 +159,7 @@ def make_video(
 
     out.parent.mkdir(parents=True, exist_ok=True)
     writer = None
+    size = (0, 0)
     written = 0
     try:
         for i, shot in enumerate(shots):
@@ -161,7 +175,10 @@ def make_video(
             if last and verdict:
                 line2 = f"{line2}  |  {verdict}"
             frame = _frame_array(shot, width, line1, _clip(line2))
+            if writer is not None:
+                frame = _fit(frame, size)
             if writer is None:
+                size = (frame.shape[1], frame.shape[0])
                 writer = cv2.VideoWriter(str(out), cv2.VideoWriter_fourcc(*"mp4v"), FPS,
                                          (frame.shape[1], frame.shape[0]))
                 if not writer.isOpened():
@@ -207,11 +224,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("run.mp4"), help="with --run: the MP4 to write")
     parser.add_argument("--out-dir", type=Path, default=Path("videos"), help="with --all: where the MP4s go")
     parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--task", default=None, help="with --run: caption text (default: the run's task)")
+    parser.add_argument("--verdict", default=None, help="with --run: shown on the held last frame")
     args = parser.parse_args(argv)
 
     if args.run:
         try:
-            count = make_video(args.run, args.out, width=args.width)
+            count = make_video(args.run, args.out, width=args.width, task=args.task, verdict=args.verdict)
         except (FileNotFoundError, OSError) as exc:
             print(f"run_video: {exc}", file=sys.stderr)
             return 1

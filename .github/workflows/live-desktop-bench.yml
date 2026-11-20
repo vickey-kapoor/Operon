@@ -307,6 +307,7 @@ jobs:
             uvicorn.log
             uvicorn.err.log
             .var/bench/
+            !.var/bench/**/videos/**
           if-no-files-found: ignore
           retention-days: 14
 

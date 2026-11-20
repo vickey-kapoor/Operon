@@ -145,19 +145,36 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
             "note": note, "log": log}
 
 
-def save_task_videos(results: list[dict[str, Any]], out: Path) -> int:
-    """One captioned MP4 per finished task (KAN-185): ``<out>/videos/<id prefix>-<pass|fail>.mp4``."""
-    from evals.run_video import save_videos
+def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
+                     run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> int:
+    """One captioned MP4 per finished task (KAN-185): ``<out>/videos/<id prefix>-<pass|fail>.mp4``.
 
+    Rendered by ``python -m evals.run_video`` under ``python`` (the venv that runs ``operon run``,
+    which has OpenCV), since this script's own venv may not. Never raises."""
     runs_root = out / "osworld-runs"
-    items = []
+    repo_root = Path(__file__).resolve().parent.parent
+    (out / "videos").mkdir(parents=True, exist_ok=True)
+    made = 0
     for r in results:
         run_dir = runs_root / str(r.get("run_id") or "")
         if not r.get("run_id") or not run_dir.is_dir():
             continue
-        items.append((str(r["id"])[:8], run_dir, f"{r.get('domain', '')}: {r['id'][:8]}",
-                      "pass" if r.get("passed") else "fail"))
-    return save_videos(items, out / "videos")
+        short = str(r["id"])[:8]
+        verdict = "pass" if r.get("passed") else "fail"
+        target = out / "videos" / f"{short}-{verdict}.mp4"
+        cmd = [python, "-m", "evals.run_video", "--run", str(run_dir), "--out", str(target),
+               "--task", f"{r.get('domain', '')}: {short}", "--verdict", verdict]
+        try:
+            done = run(cmd, cwd=str(repo_root), capture_output=True, text=True, timeout=300)
+            ok, why = done.returncode == 0, (done.stderr or done.stdout or "").strip()[-200:]
+        except Exception as exc:  # noqa: BLE001
+            ok, why = False, str(exc)
+        if ok:
+            made += 1
+        else:
+            for stream in (sys.stdout, sys.stderr):
+                print(f"::warning::no video for {short}: {why}", file=stream, flush=True)
+    return made
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -239,10 +256,7 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
     finally:
         save()
         if args.videos:
-            try:
-                save_task_videos(results, out)
-            except Exception as exc:  # noqa: BLE001 - e.g. OpenCV missing in this venv; scores matter more
-                print(f"videos skipped: {exc}", file=sys.stderr)
+            save_task_videos(results, out, args.operon_python)
         close = getattr(env, "close", None)
         if close:
             close()

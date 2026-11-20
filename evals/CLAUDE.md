@@ -90,3 +90,5 @@ With `ffmpeg` on PATH the file is H.264 (plays in browsers, Windows, Loom); with
   connector (`createLoomObjectUpload`, then `publishLoomObject`) into the Loom folder "Operon
   benchmarks". Loom Starter holds 25 videos, so put up the failures and one success, and remove
   Loom copies older than about two weeks.
+- Captions include the text Operon typed, and release assets are permanent and as visible as the
+  repo, so benchmark tasks must only ever use fake data.

@@ -959,6 +959,16 @@ def save_task_videos(results: list[TaskResult], target: Path) -> int:
     return save_videos(items, target)
 
 
+def write_videos(results: list[TaskResult], season_run, target: Path) -> int:
+    """``--videos``: videos for the shown results only (never a held-out task). Never raises:
+    a video problem must not change the report or the exit code."""
+    try:
+        return save_task_videos(shown_results(results, season_run), target)
+    except Exception as exc:  # noqa: BLE001
+        print(f"videos skipped: {exc}", file=sys.stderr)
+        return 0
+
+
 DEFAULT_TIMEOUT_S = 420.0
 DEFAULT_PAUSES = 2
 LONG_PAUSES = 10
@@ -1235,7 +1245,7 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
         save_final_screens(shown, bench_dir / Path(name).stem)
         save_recordings(shown, bench_dir / Path(name).stem / "recordings", mode=args.mode)
     if args.videos:
-        save_task_videos(shown, bench_dir / Path(name).stem / "videos")
+        write_videos(results, season_run, bench_dir / Path(name).stem / "videos")
 
     if args.json:
         print(json.dumps(report, indent=2))

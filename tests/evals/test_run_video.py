@@ -137,16 +137,67 @@ def test_live_bench_never_makes_a_video_for_a_held_out_task(tmp_path, monkeypatc
     assert live_bench.build_parser().parse_args(["--videos"]).videos is True
 
 
-def test_osworld_videos_are_named_by_task_prefix_and_score(tmp_path, monkeypatch) -> None:
+def test_write_videos_only_gets_the_shown_results(tmp_path, monkeypatch) -> None:
+    from evals import live_bench
+
+    captured = {}
+    monkeypatch.setattr(live_bench, "save_task_videos", lambda results, target: captured.update(r=results, t=target) or 1)
+    season = SimpleNamespace(held_out=[(0, SimpleNamespace(name="secret"))])
+    results = [SimpleNamespace(task="open"), SimpleNamespace(task="secret")]
+    assert live_bench.write_videos(results, season, tmp_path) == 1
+    assert [r.task for r in captured["r"]] == ["open"]
+
+    def boom(results, target):
+        raise ImportError("no cv2")
+
+    monkeypatch.setattr(live_bench, "save_task_videos", boom)
+    assert live_bench.write_videos(results, season, tmp_path) == 0  # never raises
+
+
+def test_mixed_frame_sizes_are_all_kept(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    run = _run(tmp_path, steps=3)
+    Image.new("RGB", (1921, 1201), (9, 9, 9)).save(run / "step_2" / "before.png")
+    written = run_video.make_video(run, tmp_path / "m.mp4", width=640)
+    assert written == 12
+    assert abs(_info(tmp_path / "m.mp4")[0] - written) <= 1
+
+
+def test_cli_task_and_verdict(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    run = _run(tmp_path)
+    rc = run_video.main(["--run", str(run), "--out", str(tmp_path / "c.mp4"), "--width", "320",
+                         "--task", "chrome: abc", "--verdict", "pass"])
+    assert rc == 0 and (tmp_path / "c.mp4").is_file()
+
+
+def test_osworld_videos_run_under_the_operon_python(tmp_path) -> None:
+    import os
+
     from evals import osworld
 
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
     out = tmp_path / "bench"
-    _run(out / "osworld-runs", "run-a")
+    (out / "osworld-runs" / "run-a").mkdir(parents=True)
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw))
+        ok = cmd[cmd.index("--out") + 1].endswith("abcdef12-pass.mp4")
+        return SimpleNamespace(returncode=0 if ok else 1, stdout="", stderr="boom")
+
     results = [
         {"id": "abcdef12-0000", "domain": "chrome", "passed": True, "run_id": "run-a"},
         {"id": "99999999-0000", "domain": "gimp", "passed": False, "run_id": "run-a"},
         {"id": "no-run-id", "domain": "os", "passed": False, "run_id": None},
     ]
-    assert osworld.save_task_videos(results, out) == 2
-    assert sorted(p.name for p in (out / "videos").iterdir()) == ["99999999-fail.mp4", "abcdef12-pass.mp4"]
+    assert osworld.save_task_videos(results, out, "/venv/python", run=fake_run) == 1
+    assert len(calls) == 2
+    cmd, kw = calls[0]
+    assert cmd[:3] == ["/venv/python", "-m", "evals.run_video"]
+    assert cmd[cmd.index("--verdict") + 1] == "pass"
+    assert "evals" in os.listdir(kw["cwd"])
+
+    def raising(cmd, **kw):
+        raise OSError("no python")
+
+    assert osworld.save_task_videos(results, out, "/nope", run=raising) == 0

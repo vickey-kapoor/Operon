@@ -409,7 +409,9 @@ jobs:
   publish-videos:
     name: Keep the run videos
     needs: [batch-browser, batch-desktop, browser, desktop]
-    if: ${{ always() && !cancelled() }}
+    # Only when a bench job ran: skipped jobs must not turn every comment into a successful run
+    # (dashboard-data.yml starts on any run that did not conclude 'skipped').
+    if: ${{ !cancelled() && (contains(needs.*.result, 'success') || contains(needs.*.result, 'failure')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

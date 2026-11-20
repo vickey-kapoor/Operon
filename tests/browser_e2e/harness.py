@@ -1,11 +1,10 @@
 """Run a scripted model through Operon's real browser pipeline (headless Chromium, $0).
 
 The real ``AgentLoop`` (capture, perceive, decide, gate, execute, verify, recover), the real
-full-harness policy, rules, verifier and recovery, the real ``BrowserComputerUseBackend``
+production policy, verifier and recovery layers (the thin harness), the real ``BrowserComputerUseBackend``
 and the real ``NativeBrowserExecutor`` on a real headless Chromium in batch mode. Only the
 model is a script: ``ScriptedClient`` stands in for the Gemini computer-use HTTP client, as
-in ``tests/desktop_e2e``. The verifier's critic is a second model, so it is scripted too
-(``PixelCritic``): it judges an action by comparing the step's before and after screenshots.
+in ``tests/desktop_e2e``. The thin harness has no second model: the run ends on the script's own "done".
 """
 
 from __future__ import annotations
@@ -15,17 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-from PIL import Image
-
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
-from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.agent.tools import enabled_tools, function_declarations
 from operon.api.runtime.loops import _loop_layers
 from operon.api.runtime.services import RuntimeServices
-from operon.api.runtime_config import browser_mode_config
 from operon.core.contracts.perception import Environment
 from operon.core.paths import prompts_dir
 from operon.executor.browser_native import NativeBrowserExecutor
@@ -105,43 +99,6 @@ class ScriptedClient:
         }
 
 
-class PixelCritic:
-    """Stands in for the critic model (``generate_verification``): an action that left the screen
-    as it was is a failure, one that changed it a success. It reads pixels only. A stop has no
-    after-screenshot to compare: it is approved when ``goal()`` (the grader's view of the app's
-    state, standing in for a critic that sees the goal on screen) says so, or always without one.
-    ``goal()`` also judges any non-stop action that has no ``after.png`` to compare."""
-
-    def __init__(self, goal=None) -> None:
-        self.calls = 0
-        self.goal = goal
-        self.verdicts: list[str] = []  # each verdict's status, in order
-        self.stop_verdicts: list[str] = []  # the verdicts with no after-screenshot (stops)
-
-    async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
-        self.calls += 1
-        after = Path(screenshot_path)
-        before = after.with_name("before.png")
-        if after.name != "after.png" or not before.is_file():
-            reached = self.goal is None or bool(self.goal())
-            self.stop_verdicts.append("success" if reached else "failure")
-            verdict = {"status": "success" if reached else "failure", "expected_outcome_met": reached,
-                       "stop_condition_met": False,
-                       "reason": "scripted critic: the goal is " + ("on screen" if reached else "not on screen")}
-        else:
-            a = np.asarray(Image.open(before).convert("L"), dtype=np.int16)
-            b = np.asarray(Image.open(after).convert("L"), dtype=np.int16)
-            changed = float((np.abs(a - b) > 30).mean()) if a.shape == b.shape else 1.0
-            if changed < 0.002:
-                verdict = {"status": "failure", "expected_outcome_met": False, "stop_condition_met": False,
-                           "reason": "scripted critic: the screen did not change after the action"}
-            else:
-                verdict = {"status": "success", "expected_outcome_met": True, "stop_condition_met": False,
-                           "reason": "scripted critic: the screen changed"}
-        self.verdicts.append(verdict["status"])
-        return json.dumps(verdict)
-
-
 @dataclass
 class Result:
     status: RunStatus
@@ -149,7 +106,6 @@ class Result:
     client: ScriptedClient
     run_dir: Path
     state: Any  # the saved AgentState
-    critic: PixelCritic
 
     @property
     def stop_reason(self) -> str | None:
@@ -168,12 +124,9 @@ async def run_script(
     *,
     start_url: str,
     max_steps: int = 12,
-    goal=None,
     tools: bool = False,
 ) -> Result:
-    """Run ``intent`` through the real loop on headless Chromium. ``goal`` tells the scripted
-    critic whether the goal is on screen (see ``PixelCritic``); ``goal=None`` approves every
-    stop, so only Operon's own stop guards can reject one."""
+    """Run ``intent`` through the real loop on headless Chromium."""
     executor = NativeBrowserExecutor(
         artifact_dir=tmp_path / "artifacts",
         viewport_width=VIEWPORT[0],
@@ -189,13 +142,9 @@ async def run_script(
         browser_runtime=executor,
         tools=tool_names,
     )
-    critic = PixelCritic(goal)
     run_store = FileBackedRunStore(tmp_path / "runs")
     memory_store = FileBackedMemoryStore(tmp_path / "memory")
-    layers = _loop_layers(
-        config=browser_mode_config(), memory_store=memory_store, desktop=False,
-        services=RuntimeServices(perception_service=backend, policy_delegate=backend),
-    )
+    layers = _loop_layers(services=RuntimeServices(perception_service=backend, policy_delegate=backend))
     loop = AgentLoop(
         capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
         perception_service=backend,
@@ -203,9 +152,8 @@ async def run_script(
         executor=ToolExecutor(executor, tool_names) if tool_names else executor,
         memory_store=memory_store,
         environment=Environment.BROWSER,
-        # Production wiring (policy coordinator with its rule engine, verifier, recovery), so a
-        # change there is followed here; only the critic model inside the verifier is the script.
-        **{**layers, "verifier_service": DeterministicVerifierService(gemini_client=critic)},
+        # Production wiring (the thin policy, own-done verifier and recovery), so a change there is followed here.
+        **layers,
     )
     try:
         run = await loop.start_run(
@@ -221,6 +169,6 @@ async def run_script(
             status, steps = response.status, response.step_count
         await bg_writer.flush()
         state = await run_store.get_run(run.run_id)
-        return Result(status, steps, client, run_store.root_dir / run.run_id, state, critic)
+        return Result(status, steps, client, run_store.root_dir / run.run_id, state)
     finally:
         await executor.aclose()

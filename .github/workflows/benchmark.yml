@@ -8,24 +8,23 @@ run-name: >-
 # 1. By hand (Actions > Run Operon on test tasks (paid) > Run workflow): give cells to run a batch (KAN-105).
 # 2. A comment on a pull request by someone with write access:
 #
-#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [same-critic] [tools] [zoom|zoom=always] [azure] [season=<n>]
+#   /bench [browser|desktop|hybrid] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [tools] [zoom|zoom=always] [azure] [season=<n>]
 #   /bench grounding [zoom|zoom=always]
 #   /bench batch            (then one cell per line)
 #
 # Runs use Gemini computer use unless a batch cell names a model with model=claude-sonnet-5-5 or
 # model=openai-computer-use (KAN-168): that model runs the same cell, thin with its own done. Each
 # such cell gets only its own provider's key. The first word is the category
-# (KAN-72): browser, desktop or hybrid, each in the thin or full harness, one cell of the
-# 3 x 2 grid. Defaults: browser, thin harness, the category's core set (evals/categories.py).
-# A thin run ends on Gemini's own "done" (KAN-67). hybrid (KAN-73) runs a desktop app and the
+# (KAN-72): browser, desktop or hybrid. Defaults: browser, the category's core set
+# (evals/categories.py). The Full harness was removed (KAN-183): "full" and "same-critic"
+# are errors, "thin" is accepted and changes nothing. A run ends on Gemini's own "done" (KAN-67). hybrid (KAN-73) runs a desktop app and the
 # browser in each task, on the local site the benchmark serves on the runner itself. "smoke"
 # runs a few quick tasks; "all" the full suite; "safety" the prompt-injection and overreach
 # tasks; "apps" the browser tasks on the local fake shop, mailbox, account and forms; "hard" the
 # 20-task hard subset; "long" the multi-app tasks; "dynamic" the 7 browser tasks on screens
 # that move (KAN-114). x2/x3/x5 repeat every task to measure flakiness (the cost cap scales
 # with it). season=<n> runs a frozen season's tasks (evals/seasons/), which is how a grid run
-# counts on the dashboard's Leaderboard tab. "same-critic" makes a full run's step critic the
-# acting model. "grounding" runs the ScreenSpot grounding eval (one model call per sample, no
+# counts on the dashboard's Leaderboard tab. "grounding" runs the ScreenSpot grounding eval (one model call per sample, no
 # browser); with "zoom" each click on a dense screen is refined on a zoomed crop (KAN-82).
 # azure runs a desktop benchmark on our Azure VM instead of GitHub's hosted runner.
 #
@@ -82,7 +81,6 @@ jobs:
       suite: ${{ steps.args.outputs.suite }}
       runner: ${{ steps.args.outputs.runner }}
       repeat: ${{ steps.args.outputs.repeat }}
-      critic: ${{ steps.args.outputs.critic }}
       tools: ${{ steps.args.outputs.tools }}
       zoom: ${{ steps.args.outputs.zoom }}
       extra: ${{ steps.args.outputs.extra }}
@@ -104,13 +102,14 @@ jobs:
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          target=browser profile=thin suite=core runner=github repeat=1 critic= season= tools=off zoom=off
+          target=browser profile=thin suite=core runner=github repeat=1 season= tools=off zoom=off
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
               /bench) ;;
               browser|desktop|hybrid|grounding) target=$word ;;
-              thin|full) profile=$word ;;
+              thin) ;;  # the only harness; accepted so earlier commands still parse
+              full|same-critic) echo "::error::The Full harness was removed (KAN-183); '$word' no longer exists. Runs are thin."; exit 1 ;;
               core) suite=core ;;
               smoke) suite=smoke ;;
               all) suite=full ;;
@@ -121,7 +120,6 @@ jobs:
               dynamic) suite=dynamic ;;  # KAN-114: screens that move (toasts, spinners); browser only
               x2|x3|x5) repeat=${word#x} ;;
               gemini) ;;  # Operon's only model; accepted so earlier commands still parse
-              same-critic) critic=same ;;
               tools) tools=all ;;  # RFC 0002: shell, file and HTTP tools next to screen actions
               azure) runner=azure ;;
               zoom|zoom=dense) zoom=dense ;;  # KAN-82: OPERON_ZOOM; dense needs a screen side >= 2000 px
@@ -131,7 +129,7 @@ jobs:
                 if ! printf '%s' "$season" | grep -Eq '^[1-9][0-9]{0,2}$'; then
                   echo "::error::season= needs a season number such as 1."; exit 1
                 fi ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [same-critic] [tools] [zoom|zoom=always] [azure] [season=<n>], or /bench grounding [zoom|zoom=always]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [tools] [zoom|zoom=always] [azure] [season=<n>], or /bench grounding [zoom|zoom=always]"; exit 1 ;;
             esac
           done
           # Desktop has its own safety and long tasks (KAN-74); apps, hard and dynamic are browser only.
@@ -151,12 +149,6 @@ jobs:
           if [ "$tools" != off ] && [ "$target" = grounding ]; then
             echo "::error::tools is for /bench browser, desktop and hybrid."; exit 1
           fi
-          if [ "$critic" = same ] && [ "$target" = grounding ]; then
-            echo "::error::same-critic picks the full harness's step critic; /bench grounding has none."; exit 1
-          fi
-          if [ "$critic" = same ] && [ "$profile" != full ]; then
-            echo "::error::same-critic picks the full harness's step critic; thin is the default, so add full."; exit 1
-          fi
           # The run's name in the Actions list, the way runs are named in chat:
           # "Gemini · Browser · Thin", plus the suite, season and repeats when not the default.
           cap() { printf '%s' "$1" | sed 's/./\U&/'; }
@@ -168,15 +160,14 @@ jobs:
             if [ "$suite" != core ]; then label="$label · $suite"; fi
             if [ -n "$season" ]; then label="$label · Season $season"; fi
             if [ "$repeat" != 1 ]; then label="$label · x$repeat"; fi
-            if [ "$critic" = same ]; then label="$label · same critic"; fi
             if [ "$tools" != off ]; then label="$label · tools"; fi
             if [ "$zoom" != off ]; then label="$label · zoom $zoom"; fi
             if [ "$runner" = azure ]; then label="$label · Azure VM"; fi
           fi
-          echo "target=$target profile=$profile suite=$suite runner=$runner repeat=$repeat critic=$critic tools=$tools zoom=$zoom extra=$extra label=$label"
+          echo "target=$target profile=$profile suite=$suite runner=$runner repeat=$repeat tools=$tools zoom=$zoom extra=$extra label=$label"
           {
             echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
-            echo "runner=$runner"; echo "repeat=$repeat"; echo "critic=$critic"; echo "tools=$tools"; echo "zoom=$zoom"; echo "extra=$extra"
+            echo "runner=$runner"; echo "repeat=$repeat"; echo "tools=$tools"; echo "zoom=$zoom"; echo "extra=$extra"
             echo "label=$label"
           } >> "$GITHUB_OUTPUT"
 
@@ -287,8 +278,6 @@ jobs:
     uses: ./.github/workflows/live-bench.yml
     with:
       backends: computer_use
-      harness_profile: ${{ matrix.profile }}
-      critic: ${{ matrix.critic }}
       tools: ${{ matrix.tools }}
       zoom: ${{ matrix.zoom }}
       features: ${{ matrix.features }}
@@ -321,8 +310,6 @@ jobs:
       manage_vm: "false"
       category: ${{ matrix.category }}
       desktop_backend: computer_use
-      harness_profile: ${{ matrix.profile }}
-      critic: ${{ matrix.critic }}
       tools: ${{ matrix.tools }}
       zoom: ${{ matrix.zoom }}
       model: ${{ matrix.model }}
@@ -370,8 +357,6 @@ jobs:
     uses: ./.github/workflows/live-bench.yml
     with:
       backends: computer_use
-      harness_profile: ${{ needs.parse.outputs.profile }}
-      critic: ${{ needs.parse.outputs.critic }}
       tools: ${{ needs.parse.outputs.tools }}
       zoom: ${{ needs.parse.outputs.zoom }}
       suite: ${{ needs.parse.outputs.suite }}
@@ -397,8 +382,6 @@ jobs:
       runner: ${{ needs.parse.outputs.runner }}
       category: ${{ needs.parse.outputs.target }}
       desktop_backend: computer_use
-      harness_profile: ${{ needs.parse.outputs.profile }}
-      critic: ${{ needs.parse.outputs.critic }}
       tools: ${{ needs.parse.outputs.tools }}
       zoom: ${{ needs.parse.outputs.zoom }}
       suite: ${{ needs.parse.outputs.suite }}

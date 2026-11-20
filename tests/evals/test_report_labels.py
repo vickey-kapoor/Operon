@@ -21,16 +21,16 @@ def _clean_env(monkeypatch, tmp_path) -> None:
 
 @pytest.mark.parametrize(
     ("mode", "harness", "expected"),
-    [("browser", "thin", "thin-own"), ("desktop", "thin", "thin-own"), ("browser", "full", "full"), ("desktop", "", "full")],
+    [("browser", "thin", "thin-own"), ("desktop", "thin", "thin-own"), ("browser", "full", "full"), ("desktop", "", "thin-own")],
 )
 def test_a_gemini_computer_use_report_names_its_harness(monkeypatch, mode, harness, expected) -> None:
-    # A thin run ends on the model's own "done", so it is "thin-own"; unset means the default, full.
+    # A thin run ends on the model's own "done", so it is "thin-own"; unset means the default, thin; "full" opts in.
     monkeypatch.setenv(f"OPERON_{mode.upper()}_BACKEND", "computer_use")
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     assert live_bench.harness_label(mode) == expected
 
 
-@pytest.mark.parametrize(("harness", "expected"), [("thin", "thin-own"), ("", "full")])
+@pytest.mark.parametrize(("harness", "expected"), [("thin", "thin-own"), ("", "thin-own"), ("full", "full")])
 def test_the_default_backend_is_gemini_computer_use(monkeypatch, harness, expected) -> None:
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", harness)
     assert live_bench.harness_label() == expected

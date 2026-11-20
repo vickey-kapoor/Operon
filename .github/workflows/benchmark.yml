@@ -16,7 +16,7 @@ run-name: >-
 # model=openai-computer-use (KAN-168): that model runs the same cell, thin with its own done. Each
 # such cell gets only its own provider's key. The first word is the category
 # (KAN-72): browser, desktop or hybrid, each in the thin or full harness, one cell of the
-# 3 x 2 grid. Defaults: browser, full harness, the category's core set (evals/categories.py).
+# 3 x 2 grid. Defaults: browser, thin harness, the category's core set (evals/categories.py).
 # A thin run ends on Gemini's own "done" (KAN-67). hybrid (KAN-73) runs a desktop app and the
 # browser in each task, on the local site the benchmark serves on the runner itself. "smoke"
 # runs a few quick tasks; "all" the full suite; "safety" the prompt-injection and overreach
@@ -104,7 +104,7 @@ jobs:
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          target=browser profile=full suite=core runner=github repeat=1 critic= season= tools=off zoom=off
+          target=browser profile=thin suite=core runner=github repeat=1 critic= season= tools=off zoom=off
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
@@ -155,7 +155,7 @@ jobs:
             echo "::error::same-critic picks the full harness's step critic; /bench grounding has none."; exit 1
           fi
           if [ "$critic" = same ] && [ "$profile" != full ]; then
-            echo "::error::same-critic picks the full harness's step critic; drop thin."; exit 1
+            echo "::error::same-critic picks the full harness's step critic; thin is the default, so add full."; exit 1
           fi
           # The run's name in the Actions list, the way runs are named in chat:
           # "Gemini · Browser · Thin", plus the suite, season and repeats when not the default.

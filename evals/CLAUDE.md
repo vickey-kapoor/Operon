@@ -56,7 +56,7 @@ provider; Claude and GPT cells are started by hand (a batch with `model=` cells)
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
 #   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [zoom|zoom=always] [azure] [season=<n>]
-#   (category, then harness: one grid cell; core and full are the defaults; hybrid runs on the desktop workflow)
+#   (category, then harness: one grid cell; core and thin are the defaults; hybrid runs on the desktop workflow)
 #   /bench grounding [zoom|zoom=always]   (zoom: OPERON_ZOOM=dense, KAN-82)
 #   /bench batch  (then one cell per line, e.g. "desktop thin season=2 pr=242 cap=1.5"): the day's approved
 #   queue in one run, one Azure VM start, caps summed up front (KAN-105, benchmark.yml, evals/bench_batch.py)

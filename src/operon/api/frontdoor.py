@@ -565,6 +565,9 @@ def format_report(report: dict[str, Any]) -> str:
     facts = [f"mode {report['permission_mode']}"]
     if report.get("failed_steps"):
         facts.append(f"{report['failed_steps']} step(s) failed")
+    rows = [step for step in report.get("timeline") or [] if step.get("checked_by") != "retried"]
+    if rows and all(step.get("checked_by") == "none" for step in rows):
+        facts.append("checked by: the model's own done")  # the thin harness (the default) has no step critic
     if report.get("duration_s") is not None:
         facts.append(f"{report['duration_s']}s")
     if report.get("cost_usd") is not None:

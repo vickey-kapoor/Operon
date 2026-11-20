@@ -89,7 +89,7 @@ Do not modify test selection settings merely to obtain a passing result.
 
 ### Policy and action execution
 
-- Apply deterministic checks through `PolicyRuleEngine` before invoking an LLM where applicable.
+- In the full harness (opt in with `OPERON_HARNESS_PROFILE=full`; Gemini computer use runs thin by default), apply deterministic checks through `PolicyRuleEngine` before invoking an LLM where applicable.
 - Preserve policy enforcement and authorization boundaries.
 - Do not bypass existing safety checks to improve task completion rates.
 - Keep action selection, execution, and outcome verification logically separated.

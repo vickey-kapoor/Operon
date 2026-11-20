@@ -406,15 +406,16 @@ def _server_backend(env: dict[str, str], mode: str) -> str:
 
 
 def harness_label(mode: str = "browser", profile=None) -> str:
-    """The report's harness: ``full``, or ``thin-own`` for a thin run, which takes the
-    model's own "done". A registry model (``profile``) always runs thin with its own done.
+    """The report's harness: ``thin-own`` for a thin run, which takes the model's own
+    "done", or ``full``. Gemini computer use runs thin unless OPERON_HARNESS_PROFILE=full;
+    a registry model (``profile``) always runs thin with its own done.
     Read from the settings the server sees (shell plus ``.env``)."""
     if profile is not None:
         return "thin-own"
     env = _server_env()
     requested = (env.get("OPERON_HARNESS_PROFILE") or "").strip().lower()
-    if _server_backend(env, mode) == "computer_use" and requested == "thin":
-        # Gemini computer use runs full unless thin is asked for (operon.agent.policy.thin).
+    if _server_backend(env, mode) == "computer_use" and requested != "full":
+        # Gemini computer use runs thin unless full is asked for (operon.agent.policy.thin).
         return "thin-own"
     return "full"
 

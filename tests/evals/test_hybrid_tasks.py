@@ -491,14 +491,14 @@ def test_a_hybrid_report_names_its_cell_and_suite(monkeypatch) -> None:
     monkeypatch.setenv("OPERON_DESKTOP_BACKEND", "computer_use")
     monkeypatch.delenv("OPERON_HYBRID_BACKEND", raising=False)
     monkeypatch.delenv("OPERON_HARNESS_PROFILE", raising=False)
-    assert live_bench.cell_name("hybrid", "full") == "Hybrid · Full"
+    assert live_bench.cell_name("hybrid", "thin-own") == "Hybrid · Thin"
     assert live_bench.mode_suite("hybrid", "core") == "hybrid-core"
     # A hybrid run is a desktop run on the server: it reads the OPERON_DESKTOP_* settings.
-    assert live_bench.harness_label("hybrid") == live_bench.harness_label("desktop") == "full"
+    assert live_bench.harness_label("hybrid") == live_bench.harness_label("desktop") == "thin-own"
     args = live_bench.build_parser(default_mode="hybrid").parse_args([])
     assert args.mode == "hybrid" and args.suite == "core"
     report = live_bench.build_report(args, "20261110T000000Z", [], repeat=1, planned=10, stopped=None,
                                      complete=True)
     assert (report["suite"], report["mode"], report["category"], report["cell"]) == (
-        "hybrid-core", "hybrid", "hybrid", "Hybrid · Full")
+        "hybrid-core", "hybrid", "hybrid", "Hybrid · Thin")
     assert report["backend"] == "computer_use"

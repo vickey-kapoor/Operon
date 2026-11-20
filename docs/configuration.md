@@ -34,9 +34,9 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 
 `OPERON_HARNESS_PROFILE` sets how much scaffolding surrounds the model.
 
-- **full** (the default, and the only profile for `json` backends): deterministic rules
+- **full** (`OPERON_HARNESS_PROFILE=full`, and the only profile for `json` backends): deterministic rules
   before the model, post-model guards, a per-step critic and a recovery ladder.
-- **thin** (`OPERON_HARNESS_PROFILE=thin` with a `computer_use` backend, browser or desktop):
+- **thin** (the default for a `computer_use` backend, browser or desktop):
   Gemini makes every decision. No rule engine or guard replaces its action, and its own
   "done" ends the run, so the benchmark graders decide success. The trust gate, allowed file
   roots, coordinate-thrash pause and step budget still apply.
@@ -69,7 +69,7 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 | `OPERON_BROWSER_THINKING` / `OPERON_DESKTOP_THINKING` | `low` | Thinking level (Gemini 3 levels) |
 | `OPERON_BROWSER_VERIFIER_MODEL` / `OPERON_DESKTOP_VERIFIER_MODEL` | `gemini-3.5-flash` | Full-harness step critic model |
 | `OPERON_BROWSER_VERIFIER_THINKING` / `OPERON_DESKTOP_VERIFIER_THINKING` | `low` | Critic thinking level |
-| `OPERON_HARNESS_PROFILE` | `full` | `thin` switches a `computer_use` backend to the thin harness (judged by its own "done"). `json` backends always run `full`. |
+| `OPERON_HARNESS_PROFILE` | (unset: thin) | A `computer_use` backend runs the thin harness (judged by its own "done") unless this is `full`. `json` backends always run `full`. |
 | `OPERON_CRITIC` | (unset) | `same`: the full harness's step critic runs on the acting model instead of the `OPERON_*_VERIFIER_MODEL` |
 | `BROWSER_HEADLESS` | `false` | `true` runs Chromium headless; the default shows the browser window. Set `true` on servers and CI. |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |

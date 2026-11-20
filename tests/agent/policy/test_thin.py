@@ -48,13 +48,14 @@ def _executed(action: AgentAction, *, success: bool = True, detail: str = "ok") 
 @pytest.mark.parametrize(
     ("requested", "backend", "expected"),
     [
-        (None, "computer_use", FULL),
-        ("thin", "computer_use", THIN),  # Gemini computer use runs thin on request (KAN-67)
-        ("full", "computer_use", FULL),
+        (None, "computer_use", THIN),  # thin is the default for Gemini computer use (KAN-183)
+        ("", "computer_use", THIN),
+        ("thin", "computer_use", THIN),
+        ("full", "computer_use", FULL),  # the full harness is opt-in
         ("thin", "json", FULL),
     ],
 )
-def test_gemini_computer_use_runs_full_unless_thin_is_asked_for(monkeypatch, requested, backend, expected) -> None:
+def test_gemini_computer_use_runs_thin_unless_full_is_asked_for(monkeypatch, requested, backend, expected) -> None:
     if requested is None:
         monkeypatch.delenv("OPERON_HARNESS_PROFILE", raising=False)
     else:

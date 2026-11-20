@@ -190,3 +190,12 @@ def test_benchmark_workflow_jobs_only_wait_on_jobs_that_exist() -> None:
 def test_the_old_benchmark_entry_points_are_gone() -> None:
     for old in ("bench-batch.yml", "bench-command.yml", "nightly.yml"):
         assert not (WORKFLOWS / old).exists(), f"{old} was merged into benchmark.yml"
+
+
+def test_batch_jobs_run_past_the_skipped_comment_parser() -> None:
+    # On a manual dispatch `parse` is skipped, so a job without a status function is skipped too.
+    jobs = yaml.safe_load((WORKFLOWS / "benchmark.yml").read_text(encoding="utf-8"))["jobs"]
+    for name in ("start-vm", "batch-browser"):
+        condition = jobs[name]["if"]
+        assert "!cancelled()" in condition, name
+        assert "needs.plan.result == 'success'" in condition, name

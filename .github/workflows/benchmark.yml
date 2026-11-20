@@ -247,7 +247,7 @@ jobs:
   start-vm:
     name: Start the Azure VM
     needs: plan
-    if: needs.plan.outputs.has_desktop == 'true'
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_desktop == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -280,7 +280,7 @@ jobs:
   batch-browser:
     name: ${{ matrix.label }}
     needs: plan
-    if: needs.plan.outputs.has_browser == 'true'
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_browser == 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.browser) }}

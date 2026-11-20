@@ -236,9 +236,6 @@ def test_a_relaunch_that_lands_on_a_screen_it_already_produced_is_not_progress(t
     # already a counted repeat, so today's rule says no progress on its own.
     assert [t.revisited_screen for t in traces] == [False, False, True, False]
     assert state.progress_state.no_progress_streak == 2
-    # ...so the existing repeat guard now blocks the next relaunch.
-    blocked = pt.ProgressTracker().block_redundant_action(state, _LAUNCH, 5, LOG)
-    assert blocked is not None and blocked.failure_category is FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS
 
 
 def test_a_repeat_that_reaches_new_screens_keeps_counting(tmp_path, revisit_on) -> None:
@@ -263,7 +260,6 @@ def test_a_repeat_recovers_when_it_reaches_a_new_screen_after_a_revisit(tmp_path
     assert [t.progress_made for t in traces] == [True, True, False, True]
     assert [t.revisited_screen for t in traces] == [False, False, True, False]
     assert state.progress_state.no_progress_streak == 0
-    assert pt.ProgressTracker().block_redundant_action(state, _SCROLL, 5, LOG) is None
 
 
 def test_a_counted_repeat_without_an_earlier_screenshot_keeps_todays_verdict(tmp_path, revisit_on) -> None:
@@ -333,57 +329,6 @@ def test_remembered_outcomes_are_bounded() -> None:
     assert "launch" not in progress.action_outcomes  # the least recently used went first
 
 
-# --- the stall reset ---------------------------------------------------------------
-
-
-def test_a_stalled_screen_forces_a_subgoal_reset() -> None:
-    state = _state(last_screen_change_ratio=0.001, no_progress_streak=2)
-
-    blocked = pt.ProgressTracker().block_redundant_action(state, _click(), 3, LOG)
-
-    assert blocked is not None and not blocked.success
-    assert blocked.failure_category is FailureCategory.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS
-    assert state.current_subgoal.startswith("Stalled — choose a completely different approach for: ")
-    assert state.current_subgoal.endswith("fill name")
-
-
-@pytest.mark.parametrize(
-    ("ratio", "streak", "action"),
-    [
-        (0.001, 1, _click()),  # one quiet step is not a stall yet
-        (0.05, 3, _click()),  # the screen is still moving
-        (0.001, 3, AgentAction(action_type=ActionType.NAVIGATE, url="https://example.com")),  # not an input action
-    ],
-    ids=["first-quiet-step", "screen-moving", "navigate"],
-)
-def test_no_stall_reset_without_all_three_conditions(ratio, streak, action) -> None:
-    state = _state(last_screen_change_ratio=ratio, no_progress_streak=streak)
-
-    blocked = pt.ProgressTracker().block_redundant_action(state, action, 3, LOG)
-
-    assert blocked is None or blocked.failure_category is not FailureCategory.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS
-    assert state.current_subgoal == "fill name"
-
-
-def test_a_target_hit_twice_without_progress_is_blocked_even_with_a_new_action() -> None:
-    # Different text, same box: the action signature is new, the target is not.
-    state = _state(repeated_target_count={"id:name": 2}, no_progress_streak=1, last_screen_change_ratio=0.5)
-    action = AgentAction(action_type=ActionType.TYPE, target_element_id="name", text="something else")
-
-    blocked = pt.ProgressTracker().block_redundant_action(state, action, 3, LOG)
-
-    assert blocked is not None
-    assert blocked.failure_category is FailureCategory.REPEATED_TARGET_WITHOUT_PROGRESS
-
-
-def test_nothing_is_blocked_while_progress_is_being_made() -> None:
-    state = _state(repeated_action_count={"click|id:submit|": 5}, repeated_target_count={"id:submit": 5}, no_progress_streak=0)
-    assert pt.ProgressTracker().block_redundant_action(state, _click(), 3, LOG) is None
-
-
-# --- loop detection and the stop guard ----------------------------------------------
-
-
 def test_the_no_progress_ceiling_stops_the_run() -> None:
     state = _state(no_progress_streak=pt.ProgressTracker.MAX_NO_PROGRESS_STEPS)
 
@@ -395,28 +340,16 @@ def test_the_no_progress_ceiling_stops_the_run() -> None:
     assert pattern == "no_meaningful_progress_threshold_reached"
 
 
-def test_the_stop_guard_passes_recovery_through_when_no_loop_was_found() -> None:
-    recovery = _recovery()
-    trace = pt.ProgressTracker().update_progress_state(
-        state=_state(), decision=PolicyDecision(action=_click(), rationale="r", confidence=0.9, active_subgoal="submit"),
-        executed_action=_executed(_click()), verification=_verification(), recovery=recovery, step_index=1, screen_change_ratio=0.5,
-    )
-
-    assert trace.final_failure_category is None
-    assert pt.ProgressTracker().apply_progress_stop_guard(recovery, trace) is recovery
-
-
-def test_the_stop_guard_turns_a_loop_into_a_terminal_stop() -> None:
+def test_a_loop_is_recorded_on_the_progress_trace() -> None:
     state = _state(no_progress_streak=pt.ProgressTracker.MAX_NO_PROGRESS_STEPS - 1, latest_subgoal_signature="submit")
     trace = pt.ProgressTracker().update_progress_state(
         state=state, decision=PolicyDecision(action=_click(), rationale="r", confidence=0.9, active_subgoal="submit"),
         executed_action=_executed(_click(), success=False), verification=_verification(), recovery=_recovery(), step_index=4,
     )
 
-    guarded = pt.ProgressTracker().apply_progress_stop_guard(_recovery(), trace)
-
-    assert guarded.strategy is RecoveryStrategy.STOP and guarded.terminal and not guarded.recoverable
-    assert guarded.stop_reason is StopReason.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS
+    # The loop is recorded for the run's report; the loop never turns it into a stop.
+    assert trace.final_failure_category is FailureCategory.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS
+    assert trace.final_stop_reason is None or trace.final_stop_reason is StopReason.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS
 
 
 # --- repeated no-progress on one target -----------------------------------------------

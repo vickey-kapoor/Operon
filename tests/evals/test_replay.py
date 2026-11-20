@@ -46,7 +46,7 @@ def real_run(tmp_path: Path, turns: list[dict] = TURNS) -> dict:
 
 def test_a_recorded_run_replays_the_same(tmp_path):
     recording = real_run(tmp_path)
-    assert recording["settings"]["OPERON_HARNESS_PROFILE"] == "thin"
+    assert recording["settings"]["OPERON_DESKTOP_PLATFORM"] == "windows"
     assert recording["screen"] == {"width": 1280, "height": 800}
     assert len(recording["turns"]) == 4
     assert [s["action"]["action_type"] for s in recording["steps"]] == ["launch_app", "type", "hotkey", "stop"]
@@ -350,3 +350,12 @@ def test_relative_roots_follow_the_recorded_working_directory(tmp_path):
         assert blocked_file_path(read, intent="task", run_dir=tmp_path) == "report.txt"  # C:\Users\alice\report.txt
         in_cwd = read.model_copy(update={"tool_args": {"path": r"C:\Operon\report.txt"}})
         assert blocked_file_path(in_cwd, intent="task", run_dir=tmp_path) is None
+
+
+def test_variables_of_the_removed_full_harness_in_an_old_recording_are_not_applied():
+    """Recordings from before KAN-183 carry OPERON_HARNESS_PROFILE and friends; nothing reads
+    them now, so the replay leaves them out of its environment instead of tripping the warning."""
+    stale = {"OPERON_HARNESS_PROFILE": "thin", "OPERON_CRITIC": "same", "OPERON_ZOOM": "off"}
+    with rp.loop_environment(stale):
+        assert os.environ["OPERON_ZOOM"] == "off"
+        assert "OPERON_HARNESS_PROFILE" not in os.environ and "OPERON_CRITIC" not in os.environ

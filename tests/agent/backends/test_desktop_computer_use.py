@@ -8,11 +8,11 @@ import pytest
 
 from operon.agent.actions.translation import normalize_computer_use_function_call
 from operon.agent.app_catalog import APP_LAUNCH_TARGETS
+from operon.agent.backends.base import BackendCompatibilityError
 from operon.agent.backends.desktop_computer_use import (
     GEMINI_LAUNCH_APP_FUNCTION,
     DesktopComputerUseBackend,
 )
-from operon.agent.backends.fallback import BackendCompatibilityError
 from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
 from operon.core.paths import prompts_dir
 from operon.models.capture import CaptureFrame

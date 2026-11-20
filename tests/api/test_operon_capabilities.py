@@ -10,7 +10,6 @@ services (Gemini, OS executor). No live browser or real API key required.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -660,70 +659,6 @@ async def test_perception_failure_produces_failed_status() -> None:
     assert response.run_id == run_id
     assert response.status in (RunStatus.FAILED, RunStatus.RUNNING)
 
-
-@pytest.mark.asyncio
-async def test_policy_llm_fallback_is_used_when_no_rule_fires() -> None:
-    """
-    CAPABILITY: When no deterministic rule applies, the LLM policy is called.
-
-    Uses PolicyCoordinator with a stub LLM to verify the fallback path.
-    """
-
-    from operon.agent.policy.coordinator import PolicyCoordinator
-    from operon.store.memory import FileBackedMemoryStore
-
-    test_root = _test_dir("llm-fallback")
-    prompt_path = test_root / "policy_prompt.txt"
-    prompt_path.write_text(
-        "Intent: {intent}\nSubgoal: {current_subgoal}\nStep: {step_count}\nRetry: {retry_counts}\nPerception: {perception_json}",
-        encoding="utf-8",
-    )
-
-    llm_response = json.dumps({
-        "action": {"action_type": "click", "target_element_id": "submit-btn"},
-        "rationale": "Submit the form.",
-        "active_subgoal": "submit_form",
-        "confidence": 0.85,
-        "expected_change": "content",
-    })
-
-    class _StubLLMClient:
-        async def generate_policy(self, prompt: str) -> str:
-            return llm_response
-        async def generate_perception(self, prompt: str, path: str) -> str:
-            raise NotImplementedError
-
-    memory_dir = test_root / "memory"
-    memory_store = FileBackedMemoryStore(root_dir=memory_dir)
-
-    from tests.fixtures.policy import PromptPolicyStub
-    policy_service = PromptPolicyStub(
-        gemini_client=_StubLLMClient(),  # type: ignore[arg-type]
-        prompt_path=prompt_path,
-    )
-    coordinator = PolicyCoordinator(
-        delegate=policy_service,
-        memory_store=memory_store,
-    )
-
-    state = AgentState(run_id="run-llm-fallback", intent="Fill out contact form", status=RunStatus.RUNNING)
-    perception = ScreenPerception(
-        summary="Generic page with no matching rule.",
-        page_hint="generic_page",
-        capture_artifact_path="runs/test/step_1/before.png",
-        visible_elements=[_ui_button("submit-btn", "Submit")],
-    )
-
-    decision = await coordinator.choose_action(state, perception)
-
-    assert decision is not None
-    assert decision.action.action_type == ActionType.CLICK
-    assert decision.action.target_element_id == "submit-btn"
-
-
-# ===========================================================================
-# TIER 4 — COMPLEX: Observer API and run inspection
-# ===========================================================================
 
 def test_observer_runs_list_endpoint_exists() -> None:
     """GET /observer/api/runs should return run data (list or dict with 'runs' key)."""

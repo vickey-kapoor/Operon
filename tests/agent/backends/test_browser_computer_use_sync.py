@@ -137,44 +137,6 @@ async def test_a_gate_pause_declined_with_a_correction_reports_the_call_as_not_r
     assert "declined" in _last_answer(client)["parts"][0]["function_response"]["response"]["error"]
 
 
-async def test_a_rule_running_something_else_is_reported_as_not_run(tmp_path: Path) -> None:
-    client = ScriptedClient([_click_reply(), _click_reply(600)])
-    backend = _backend(client)
-    await _step(backend, _frame(tmp_path, "a.png"), _state())
-
-    backend.note_replaced("run-1", "scroll down")
-    # The rule's own action ran and succeeded; the model's click did not.
-    await _step(backend, _frame(tmp_path, "b.png"), _state(True))
-
-    error = _last_answer(client)["parts"][0]["function_response"]["response"]["error"]
-    assert "Operon ran scroll down instead" in error
-
-
-async def test_a_perception_only_re_look_takes_no_model_turn_and_keeps_the_decision(tmp_path: Path) -> None:
-    client = ScriptedClient([_click_reply(), _click_reply(600)])
-    backend = _backend(client)
-    await backend.perceive(_frame(tmp_path, "a.png"), _state())
-
-    backend.set_perception_only(True)
-    await backend.perceive(_frame(tmp_path, "retry.png"), _state())
-    backend.set_perception_only(False)
-
-    decision = await backend.choose_action(_state(), _perception(_frame(tmp_path, "a.png")))
-    assert len(client.turns) == 1
-    assert decision.action.x == 500
-
-
-async def test_a_failed_attempt_not_yet_recorded_is_reported_to_the_model(tmp_path: Path) -> None:
-    client = ScriptedClient([_click_reply(), _click_reply(600)])
-    backend = _backend(client)
-    await _step(backend, _frame(tmp_path, "a.png"), _state())
-
-    backend.note_attempt_failed("run-1", "click landed on empty space")
-    await _step(backend, _frame(tmp_path, "b.png"), _state())
-
-    assert _last_answer(client)["parts"][0]["function_response"]["response"]["error"] == "click landed on empty space"
-
-
 async def test_decisions_of_two_runs_do_not_mix(tmp_path: Path) -> None:
     client = ScriptedClient([_click_reply(100), _click_reply(900)])
     backend = _backend(client)

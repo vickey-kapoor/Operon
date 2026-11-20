@@ -19,8 +19,6 @@ from operon.models.common import (
 )
 from operon.models.execution import (
     ExecutedAction,
-    ExecutionAttemptTrace,
-    ExecutionTrace,
 )
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import (
@@ -683,277 +681,6 @@ async def test_agent_loop_logs_pre_step_low_quality_perception_failure() -> None
     assert payload["perception_debug"]["retry_log_artifact_path"].endswith("perception_retry_log.txt")
 
 
-@pytest.mark.asyncio
-async def test_stale_target_triggers_reresolution_once() -> None:
-    initial_state = AgentState(run_id="run-retry", intent="Create draft", status=RunStatus.PENDING)
-    updated_state = initial_state.model_copy(update={"step_count": 1, "status": RunStatus.RUNNING})
-    retry_state = updated_state.model_copy(update={"step_count": 2})
-    frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
-    perception = ScreenPerception(
-        summary="Form visible",
-        page_hint="form_page",
-        capture_artifact_path=frame.artifact_path,
-        visible_elements=[
-            UIElement(
-                element_id="name-input",
-                element_type=UIElementType.INPUT,
-                label="Name",
-                x=40,
-                y=80,
-                width=120,
-                height=80,
-                is_interactable=True,
-                confidence=0.9,
-            )
-        ],
-    )
-    refreshed_perception = ScreenPerception(
-        summary="Form visible",
-        page_hint="form_page",
-        capture_artifact_path=frame.artifact_path,
-        visible_elements=[
-            UIElement(
-                element_id="name-input",
-                element_type=UIElementType.INPUT,
-                label="Name",
-                x=40,
-                y=80,
-                width=120,
-                height=80,
-                is_interactable=True,
-                confidence=0.9,
-            )
-        ],
-    )
-    action = AgentAction(action_type=ActionType.CLICK, target_element_id="name-input", x=10, y=10)
-    decision = PolicyDecision(action=action, rationale="Click name.", confidence=0.8, active_subgoal="fill_name")
-    stale = ExecutedAction(
-        action=action,
-        success=False,
-        detail="Execution failed: stale target before action.",
-        execution_trace=ExecutionTrace(
-            attempts=[
-                ExecutionAttemptTrace(
-                    attempt_index=1,
-                    revalidation_result="stale_target_before_action",
-                    verification_result="click_not_attempted",
-                    failure_category=FailureCategory.STALE_TARGET_BEFORE_ACTION,
-                )
-            ],
-            final_outcome="failure",
-            final_failure_category=FailureCategory.STALE_TARGET_BEFORE_ACTION,
-        ),
-        failure_category=FailureCategory.STALE_TARGET_BEFORE_ACTION,
-        failure_stage=None,
-    )
-    retry_action = action.model_copy(update={"x": 100, "y": 120})
-    success = ExecutedAction(
-        action=retry_action,
-        success=True,
-        detail="Clicked target.",
-        execution_trace=ExecutionTrace(
-            attempts=[
-                ExecutionAttemptTrace(
-                    attempt_index=1,
-                    revalidation_result="ok",
-                    verification_result="click_verified",
-                )
-            ],
-            final_outcome="success",
-        ),
-    )
-    verification = VerificationResult(
-        status=VerificationStatus.SUCCESS,
-        expected_outcome_met=True,
-        stop_condition_met=False,
-        reason="clicked",
-    )
-    recovery = RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="continue")
-
-    capture_service = SimpleNamespace(capture=AsyncMock(side_effect=[frame, frame]))
-    perception_service = SimpleNamespace(
-        perceive=AsyncMock(side_effect=[perception, refreshed_perception]),
-        latest_debug_artifacts=lambda: ModelDebugArtifacts(
-            prompt_artifact_path="runs/run-retry/step_1/perception_prompt.txt",
-            raw_response_artifact_path="runs/run-retry/step_1/perception_raw.txt",
-            parsed_artifact_path="runs/run-retry/step_1/perception_parsed.json",
-        ),
-    )
-    run_store = SimpleNamespace(
-        get_run=AsyncMock(return_value=initial_state),
-        set_status=AsyncMock(return_value=updated_state),
-        update_state=AsyncMock(side_effect=[updated_state, retry_state]),
-    )
-    policy_service = SimpleNamespace(
-        choose_action=AsyncMock(return_value=decision),
-        latest_debug_artifacts=lambda: ModelDebugArtifacts(
-            prompt_artifact_path="runs/run-retry/step_1/policy_prompt.txt",
-            raw_response_artifact_path="runs/run-retry/step_1/policy_raw.txt",
-            parsed_artifact_path="runs/run-retry/step_1/policy_decision.json",
-        ),
-    )
-    executor = SimpleNamespace(execute=AsyncMock(side_effect=[stale, success]))
-    verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verification))
-    recovery_manager = SimpleNamespace(recover=AsyncMock(return_value=recovery))
-    run_root = _local_test_dir("test-execution-retry")
-    run_store.before_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "before.png")
-    run_store.after_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "after.png")
-    run_store.run_log_path = lambda run_id: str(run_root / run_id / "run.jsonl")
-
-    loop = AgentLoop(
-        capture_service=capture_service,
-        perception_service=perception_service,
-        run_store=run_store,
-        policy_service=policy_service,
-        executor=executor,
-        verifier_service=verifier_service,
-        recovery_manager=recovery_manager,
-    )
-
-    await loop.step_run(StepRequest(run_id="run-retry"))
-
-    assert executor.execute.await_count == 2
-    assert executor.execute.await_args_list[1].args[0].x == 100
-    assert executor.execute.await_args_list[1].args[0].y == 120
-    assert executor.execute.await_args_list[1].args[0].target_context is not None
-    payload = json.loads((run_root / "run-retry" / "run.jsonl").read_text(encoding="utf-8").strip())
-    assert payload["executed_action"]["execution_trace"]["retry_attempted"] is True
-    assert payload["executed_action"]["execution_trace"]["target_reresolved"] is True
-    assert payload["executed_action"]["execution_trace"]["reresolution_trace"]["original_intent"]["target_text"] == "Name"
-    assert payload["executed_action"]["execution_trace"]["reresolution_trace"]["final_target_element_id"] == "name-input"
-    assert payload["executed_action"]["execution_trace_artifact_path"].endswith("execution_trace.json")
-
-
-@pytest.mark.asyncio
-async def test_reresolution_failure_is_recorded_explicitly() -> None:
-    initial_state = AgentState(run_id="run-reresolution-fail", intent="Complete form", status=RunStatus.PENDING)
-    updated_state = initial_state.model_copy(update={"step_count": 1, "status": RunStatus.RUNNING})
-    retry_state = updated_state.model_copy(update={"step_count": 2})
-    frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
-    perception = ScreenPerception(
-        summary="Form visible",
-        page_hint="form_page",
-        capture_artifact_path=frame.artifact_path,
-        visible_elements=[
-            UIElement(
-                element_id="email-input",
-                element_type=UIElementType.INPUT,
-                label="Email",
-                x=40,
-                y=80,
-                width=120,
-                height=40,
-                is_interactable=True,
-                confidence=0.9,
-            )
-        ],
-    )
-    refreshed_perception = ScreenPerception(
-        summary="Form rerendered",
-        page_hint="form_page",
-        capture_artifact_path=frame.artifact_path,
-        visible_elements=[
-            UIElement(
-                element_id="name-input",
-                element_type=UIElementType.INPUT,
-                label="Name",
-                x=40,
-                y=80,
-                width=120,
-                height=40,
-                is_interactable=True,
-                confidence=0.9,
-            ),
-            UIElement(
-                element_id="phone-input",
-                element_type=UIElementType.INPUT,
-                label="Phone",
-                x=40,
-                y=132,
-                width=120,
-                height=40,
-                is_interactable=True,
-                confidence=0.9,
-            ),
-        ],
-    )
-    action = AgentAction(action_type=ActionType.CLICK, target_element_id="email-input", x=10, y=10)
-    decision = PolicyDecision(action=action, rationale="Click email.", confidence=0.8, active_subgoal="fill_email")
-    stale = ExecutedAction(
-        action=action,
-        success=False,
-        detail="Execution failed: stale target before action.",
-        execution_trace=ExecutionTrace(
-            attempts=[
-                ExecutionAttemptTrace(
-                    attempt_index=1,
-                    revalidation_result="stale_target_before_action",
-                    verification_result="click_not_attempted",
-                    failure_category=FailureCategory.STALE_TARGET_BEFORE_ACTION,
-                )
-            ],
-            final_outcome="failure",
-            final_failure_category=FailureCategory.STALE_TARGET_BEFORE_ACTION,
-        ),
-        failure_category=FailureCategory.STALE_TARGET_BEFORE_ACTION,
-    )
-    verification = VerificationResult(
-        status=VerificationStatus.FAILURE,
-        expected_outcome_met=False,
-        stop_condition_met=False,
-        reason="not clicked",
-        failure_category=FailureCategory.TARGET_RERESOLUTION_FAILED,
-    )
-    recovery = RecoveryDecision(strategy=RecoveryStrategy.RETRY_SAME_STEP, message="retry")
-
-    capture_service = SimpleNamespace(capture=AsyncMock(side_effect=[frame, frame]))
-    perception_service = SimpleNamespace(
-        perceive=AsyncMock(side_effect=[perception, refreshed_perception]),
-        latest_debug_artifacts=lambda: ModelDebugArtifacts(
-            prompt_artifact_path="runs/run-reresolution-fail/step_1/perception_prompt.txt",
-            raw_response_artifact_path="runs/run-reresolution-fail/step_1/perception_raw.txt",
-            parsed_artifact_path="runs/run-reresolution-fail/step_1/perception_parsed.json",
-        ),
-    )
-    run_store = SimpleNamespace(
-        get_run=AsyncMock(return_value=initial_state),
-        set_status=AsyncMock(return_value=updated_state),
-        update_state=AsyncMock(side_effect=[updated_state, retry_state]),
-    )
-    policy_service = SimpleNamespace(
-        choose_action=AsyncMock(return_value=decision),
-        latest_debug_artifacts=lambda: ModelDebugArtifacts(
-            prompt_artifact_path="runs/run-reresolution-fail/step_1/policy_prompt.txt",
-            raw_response_artifact_path="runs/run-reresolution-fail/step_1/policy_raw.txt",
-            parsed_artifact_path="runs/run-reresolution-fail/step_1/policy_decision.json",
-        ),
-    )
-    executor = SimpleNamespace(execute=AsyncMock(return_value=stale))
-    verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verification))
-    recovery_manager = SimpleNamespace(recover=AsyncMock(return_value=recovery))
-    run_root = _local_test_dir("test-reresolution-failure")
-    run_store.before_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "before.png")
-    run_store.after_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "after.png")
-    run_store.run_log_path = lambda run_id: str(run_root / run_id / "run.jsonl")
-
-    loop = AgentLoop(
-        capture_service=capture_service,
-        perception_service=perception_service,
-        run_store=run_store,
-        policy_service=policy_service,
-        executor=executor,
-        verifier_service=verifier_service,
-        recovery_manager=recovery_manager,
-    )
-
-    await loop.step_run(StepRequest(run_id="run-reresolution-fail"))
-
-    assert executor.execute.await_count == 1
-    payload = json.loads((run_root / "run-reresolution-fail" / "run.jsonl").read_text(encoding="utf-8").strip())
-    assert payload["executed_action"]["failure_category"] == FailureCategory.TARGET_RERESOLUTION_FAILED.value
-    assert payload["executed_action"]["execution_trace"]["reresolution_trace"]["succeeded"] is False
-
-
 def test_verified_type_action_marks_target_complete() -> None:
     loop = _loop()
     state = AgentState(
@@ -1299,56 +1026,6 @@ def test_attach_target_context_fills_upload_file_native_coordinates_from_target(
     assert normalized.y == 332
 
 
-def test_repeated_same_value_type_action_is_blocked() -> None:
-    loop = _loop()
-    state = AgentState(
-        run_id="run-progress-2",
-        intent="Complete form",
-        status=RunStatus.RUNNING,
-        current_subgoal="fill_name",
-        progress_state=ProgressState(
-            completed_targets=["id:name-input"],
-            completed_subgoals=["fill_name"],
-            target_value_history={"id:name-input": "Alice"},
-            latest_page_signature="form_page|none|name-input:Name",
-            target_completion_page_signatures={"id:name-input": "form_page|none|name-input:Name"},
-            subgoal_completion_page_signatures={"fill_name": "form_page|none|name-input:Name"},
-        ),
-    )
-
-    blocked = loop._block_redundant_action(
-        state,
-        AgentAction(action_type=ActionType.TYPE, target_element_id="name-input", text="Alice"),
-        step_index=2,
-    )
-
-    assert blocked is not None
-    assert blocked.failure_category is FailureCategory.SUBGOAL_ALREADY_COMPLETED
-
-
-def test_repeated_same_click_without_progress_is_blocked() -> None:
-    loop = _loop()
-    state = AgentState(
-        run_id="run-progress-3",
-        intent="Complete form",
-        status=RunStatus.RUNNING,
-        progress_state=ProgressState(
-            latest_page_signature="form_page|none|submit-button:Submit",
-            repeated_action_count={"click|id:submit-button|": 2},
-            no_progress_streak=1,
-        ),
-    )
-
-    blocked = loop._block_redundant_action(
-        state,
-        AgentAction(action_type=ActionType.CLICK, target_element_id="submit-button"),
-        step_index=3,
-    )
-
-    assert blocked is not None
-    assert blocked.failure_category is FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS
-
-
 def test_alternating_action_pattern_triggers_loop_detection() -> None:
     loop = _loop()
     state = AgentState(
@@ -1397,7 +1074,7 @@ def test_alternating_action_pattern_triggers_loop_detection() -> None:
     assert state.progress_state.loop_detected is True
 
 
-def test_repeated_failure_signatures_trigger_loop_stop() -> None:
+def test_repeated_failure_signatures_are_recorded_as_a_loop() -> None:
     loop = _loop()
     state = AgentState(
         run_id="run-progress-5",
@@ -1439,10 +1116,8 @@ def test_repeated_failure_signatures_trigger_loop_stop() -> None:
         step_index=3,
     )
 
+    # Recorded for the report; the thin loop never turns a loop into a stop.
     assert trace.final_failure_category is FailureCategory.REPEATED_FAILURE_LOOP
-    guarded = loop._apply_progress_stop_guard(recovery, trace)
-    assert guarded.strategy is RecoveryStrategy.STOP
-    assert guarded.stop_reason is StopReason.REPEATED_FAILURE_LOOP
 
 
 def test_page_change_reduces_no_progress_suppression() -> None:
@@ -1475,126 +1150,6 @@ def test_page_change_reduces_no_progress_suppression() -> None:
     assert state.progress_state.recent_failures == []
     assert state.progress_state.no_progress_streak == 2  # streak resets in _update_progress_state, not _sync
     assert state.progress_state.loop_detected is False
-
-
-def test_completed_subgoal_prevents_redundant_reexecution() -> None:
-    loop = _loop()
-    state = AgentState(
-        run_id="run-progress-7",
-        intent="Complete form",
-        status=RunStatus.RUNNING,
-        current_subgoal="submit_form",
-        progress_state=ProgressState(
-            completed_subgoals=["submit_form"],
-            latest_page_signature="form_page|none|submit-button:Submit",
-            subgoal_completion_page_signatures={"submit_form": "form_page|none|submit-button:Submit"},
-        ),
-    )
-
-    blocked = loop._block_redundant_action(
-        state,
-        AgentAction(action_type=ActionType.WAIT, wait_ms=1000),
-        step_index=4,
-    )
-
-    assert blocked is not None
-    assert blocked.failure_category is FailureCategory.SUBGOAL_ALREADY_COMPLETED
-
-
-@pytest.mark.asyncio
-async def test_no_progress_across_consecutive_steps_terminates_deterministically() -> None:
-    run_root = _local_test_dir("test-runs-no-progress-stop")
-    initial_state = AgentState(
-        run_id="run-no-progress",
-        intent="Complete form",
-        status=RunStatus.RUNNING,
-        step_count=2,
-        progress_state=ProgressState(
-            latest_page_signature="form_page|none|name-input:Name",
-            no_progress_streak=2,
-        ),
-    )
-    updated_state = initial_state.model_copy(update={"step_count": 3})
-    failed_state = updated_state.model_copy(update={"status": RunStatus.FAILED})
-    frame = CaptureFrame(artifact_path="artifacts/frame.png", width=1280, height=800, mime_type="image/png")
-    perception = ScreenPerception(
-        summary="Form visible",
-        page_hint="form_page",
-        capture_artifact_path=frame.artifact_path,
-        visible_elements=[
-            UIElement(
-                element_id="name-input",
-                element_type=UIElementType.INPUT,
-                label="Name",
-                x=40,
-                y=80,
-                width=120,
-                height=40,
-                is_interactable=True,
-                confidence=0.9,
-            )
-        ],
-    )
-    action = AgentAction(action_type=ActionType.WAIT, wait_ms=1000)
-    decision = PolicyDecision(action=action, rationale="Wait.", confidence=0.8, active_subgoal="wait")
-    executed = ExecutedAction(action=action, success=False, detail="wait did not help")
-    verification = VerificationResult(
-        status=VerificationStatus.FAILURE,
-        expected_outcome_met=False,
-        stop_condition_met=False,
-        reason="still no progress",
-    )
-    recovery = RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="retry")
-
-    capture_service = SimpleNamespace(capture=AsyncMock(return_value=frame))
-    perception_service = SimpleNamespace(
-        perceive=AsyncMock(return_value=perception),
-        latest_debug_artifacts=lambda: ModelDebugArtifacts(
-            prompt_artifact_path=str(run_root / "run-no-progress" / "step_3" / "perception_prompt.txt"),
-            raw_response_artifact_path=str(run_root / "run-no-progress" / "step_3" / "perception_raw.txt"),
-            parsed_artifact_path=str(run_root / "run-no-progress" / "step_3" / "perception_parsed.json"),
-        ),
-    )
-    run_store = SimpleNamespace(
-        get_run=AsyncMock(return_value=initial_state),
-        set_status=AsyncMock(return_value=failed_state),
-        update_state=AsyncMock(return_value=updated_state),
-    )
-    policy_service = SimpleNamespace(
-        choose_action=AsyncMock(return_value=decision),
-        latest_debug_artifacts=lambda: ModelDebugArtifacts(
-            prompt_artifact_path=str(run_root / "run-no-progress" / "step_3" / "policy_prompt.txt"),
-            raw_response_artifact_path=str(run_root / "run-no-progress" / "step_3" / "policy_raw.txt"),
-            parsed_artifact_path=str(run_root / "run-no-progress" / "step_3" / "policy_decision.json"),
-        ),
-    )
-    executor = SimpleNamespace(execute=AsyncMock(return_value=executed))
-    verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verification))
-    recovery_manager = SimpleNamespace(recover=AsyncMock(return_value=recovery))
-    run_store.before_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "before.png")
-    run_store.after_artifact_path = lambda run_id, step_index: str(run_root / run_id / f"step_{step_index}" / "after.png")
-    run_store.run_log_path = lambda run_id: str(run_root / run_id / "run.jsonl")
-
-    loop = AgentLoop(
-        capture_service=capture_service,
-        perception_service=perception_service,
-        run_store=run_store,
-        policy_service=policy_service,
-        executor=executor,
-        verifier_service=verifier_service,
-        recovery_manager=recovery_manager,
-    )
-
-    response = await loop.step_run(StepRequest(run_id="run-no-progress"))
-
-    assert response.status is RunStatus.FAILED
-    payload = json.loads((run_root / "run-no-progress" / "run.jsonl").read_text(encoding="utf-8").strip())
-    assert payload["recovery_decision"]["stop_reason"] == StopReason.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS.value
-    assert payload["progress_trace_artifact_path"].endswith("progress_trace.json")
-    assert payload["progress_state"]["no_progress_streak"] == 3
-
-
-# ── force_fresh_perception ordering test ─────────────────────────
 
 
 @pytest.mark.asyncio
@@ -1756,94 +1311,6 @@ def _pixel(path: Path) -> tuple[int, int, int]:
 
     with Image.open(path) as img:
         return img.convert("RGB").getpixel((0, 0))
-
-
-@pytest.mark.asyncio
-async def test_wait_for_ui_stable_reverifies_on_fresh_frame_without_reperceiving(tmp_path: Path) -> None:
-    from unittest.mock import patch as _patch
-
-    after, fresh, state, decision, executed, verdict = _settle_inputs(tmp_path)
-    loop = _loop()
-    loop.capture_service = SimpleNamespace(
-        capture=AsyncMock(return_value=CaptureFrame(artifact_path=str(fresh), width=480, height=270))
-    )
-    loop.verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verdict))
-    loop.perception_service = SimpleNamespace(perceive=AsyncMock())
-
-    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-        result = await loop._wait_for_ui_stable(
-            record=state, state=state, decision=decision, executed_action=executed
-        )
-
-    mock_sleep.assert_awaited_once_with(0.2)
-    assert result is verdict
-    assert _pixel(after) == (0, 0, 0), "after.png must hold the post-wait frame"
-    assert not fresh.parent.exists(), "emptied next-step dir must be removed"
-    loop.perception_service.perceive.assert_not_awaited()
-    assert loop.verifier_service.verify.await_args.kwargs == {"allow_stable_wait": False}
-
-
-@pytest.mark.asyncio
-async def test_wait_for_ui_stable_verifies_original_frame_when_recapture_fails(tmp_path: Path) -> None:
-    from unittest.mock import patch as _patch
-
-    after, _fresh, state, decision, executed, verdict = _settle_inputs(tmp_path)
-    loop = _loop()
-    loop.capture_service = SimpleNamespace(capture=AsyncMock(side_effect=RuntimeError("no screen")))
-    loop.verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verdict))
-
-    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock):
-        result = await loop._wait_for_ui_stable(
-            record=state, state=state, decision=decision, executed_action=executed
-        )
-
-    assert result is verdict
-    assert _pixel(after) == (255, 255, 255)
-    assert loop.verifier_service.verify.await_args.kwargs == {"allow_stable_wait": False}
-
-
-@pytest.mark.asyncio
-async def test_wait_for_page_load_reverifies_on_loaded_frame(tmp_path: Path) -> None:
-    from unittest.mock import patch as _patch
-
-    after, fresh, state, decision, executed, verdict = _settle_inputs(tmp_path)
-    loop = _loop()
-    loop.capture_service = SimpleNamespace(
-        capture=AsyncMock(return_value=CaptureFrame(artifact_path=str(fresh), width=480, height=270))
-    )
-    loaded = ScreenPerception(
-        summary="loaded", page_hint="unknown", capture_artifact_path=str(fresh), visible_elements=[]
-    )
-    loop._perceive_with_liveness_retry = AsyncMock(return_value=loaded)
-    loop._infer_focused_element = lambda _record, perception: perception
-    loop._sync_progress_state_with_perception = Mock()
-    loop.verifier_service = SimpleNamespace(verify=AsyncMock(return_value=verdict))
-
-    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock):
-        result = await loop._wait_for_page_load(
-            record=state,
-            state=state,
-            decision=decision,
-            executed_action=executed,
-            before_artifact_path=str(tmp_path / "run-1" / "step_1" / "before.png"),
-        )
-
-    assert result.status is VerificationStatus.SUCCESS
-    assert result.patience_retries == 1
-    assert _pixel(after) == (0, 0, 0), "critic must judge the loaded frame, not the loading one"
-    assert state.observation_history[-1].capture_artifact_path == str(after)
-    assert loop.verifier_service.verify.await_args.kwargs == {"allow_stable_wait": False}
-
-
-def test_adopt_settle_frame_never_moves_protected_before_frame(tmp_path: Path) -> None:
-    after, _fresh, _state, _decision, executed, _verdict = _settle_inputs(tmp_path)
-    before = _save_frame(tmp_path / "run-1" / "step_1" / "before.png", "black")
-
-    swapped = AgentLoop._adopt_settle_frame(executed, str(before), protected_path=str(before))
-
-    assert swapped is False
-    assert before.exists()
-    assert _pixel(after) == (255, 255, 255)
 
 
 @pytest.mark.asyncio
@@ -2020,7 +1487,6 @@ def _expect_ctx_with_files(tmp_path, rationale, ratio, **kw):
     ctx.before_artifact_path = str(before)
     ctx.executed_action.artifact_path = str(after)
     ctx.dialog_captured = False
-    ctx.attempt_cancelled = False
     return ctx
 
 
@@ -2029,9 +1495,6 @@ def test_expect_check_skips_dialog_cancel_and_missing_screenshots(monkeypatch, t
     loop = _expect_loop(tmp_path)
     ctx = _expect_ctx_with_files(tmp_path, "Expect: dialog - modal", 0.0)
     ctx.dialog_captured = True
-    loop._check_expected_change(ctx)
-    ctx = _expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0)
-    ctx.attempt_cancelled = True
     loop._check_expected_change(ctx)
     ctx = _expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0)
     ctx.executed_action.artifact_path = str(tmp_path / "gone.png")
@@ -2060,19 +1523,6 @@ def test_expect_check_backend_that_reports_expected_change(monkeypatch, tmp_path
     assert all(c.kwargs["source"] != "expect_check" for c in loop.perception_service.add_advisory_hints.call_args_list)
 
 
-def test_fallback_backend_forwards_reports_expected_change():
-    from unittest.mock import MagicMock
-
-    from operon.agent.backends.combined import CombinedPerceptionPolicyService
-    from operon.agent.backends.fallback import FallbackBackend
-
-    assert CombinedPerceptionPolicyService.reports_expected_change is True
-    both = FallbackBackend(primary=MagicMock(reports_expected_change=True), secondary=MagicMock(reports_expected_change=True))
-    one = FallbackBackend(primary=MagicMock(reports_expected_change=True), secondary=MagicMock(spec=[]))
-    assert both.reports_expected_change is True
-    assert one.reports_expected_change is False
-
-
 def test_release_backend_run_state_forgets_expect_reminder(tmp_path):
     from unittest.mock import MagicMock
 
@@ -2084,23 +1534,20 @@ def test_release_backend_run_state_forgets_expect_reminder(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_execute_and_verify_stage_checks_expected_change_once_after_retries(tmp_path):
+async def test_execute_and_verify_stage_runs_the_action_once_then_checks_the_expected_change(tmp_path):
     from unittest.mock import AsyncMock, MagicMock
 
     loop = _expect_loop(tmp_path)
     loop.executor = MagicMock(spec=[])
     ctx = MagicMock()
-    ctx.attempt_index = 1
-    loop._run_cancelled = AsyncMock(return_value=False)
-    loop._execute_attempt = AsyncMock()
-    loop._absorb_dialog_message = MagicMock()
-    loop._pass_on_change_note = MagicMock()
-    loop._verify_attempt = AsyncMock()
-    loop._prepare_adaptation_retry = AsyncMock(side_effect=[True, True, False])
-    loop._check_expected_change = MagicMock()
+    order: list[str] = []
+    loop._execute_attempt = AsyncMock(side_effect=lambda c: order.append("execute"))
+    loop._absorb_dialog_message = MagicMock(side_effect=lambda c: order.append("dialog"))
+    loop._pass_on_change_note = MagicMock(side_effect=lambda c: order.append("note"))
+    loop._verify_attempt = AsyncMock(side_effect=lambda c: order.append("verify"))
+    loop._check_expected_change = MagicMock(side_effect=lambda c: order.append("check"))
     await loop._execute_and_verify_stage(ctx)
-    assert loop._execute_attempt.await_count == 3
-    loop._check_expected_change.assert_called_once_with(ctx)
+    assert order == ["execute", "dialog", "note", "verify", "check"]
 
 
 def test_start_run_sends_expect_instruction_after_planning():
@@ -2121,26 +1568,6 @@ def test_expect_check_ignores_none_the_model_did_not_supply(monkeypatch, tmp_pat
     ctx.decision.model_fields_set = {"action"}
     loop._check_expected_change(ctx)
     loop.perception_service.add_advisory_hints.assert_not_called()
-
-
-def test_expect_check_skips_retried_steps(monkeypatch, tmp_path):
-    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
-    loop = _expect_loop(tmp_path)
-    ctx = _expect_ctx_with_files(tmp_path, "Expect: content - x", 0.0)
-    ctx.attempt_index = 2
-    loop._check_expected_change(ctx)
-    loop.perception_service.add_advisory_hints.assert_not_called()
-    assert not (tmp_path / "step_1" / "expect_check.json").exists()
-
-
-def test_expect_check_skips_rule_made_decisions(monkeypatch, tmp_path):
-    monkeypatch.setenv("OPERON_EXPECT_CHECK", "on")
-    loop = _expect_loop(tmp_path)
-    ctx = _expect_ctx_with_files(tmp_path, "launch_app directly", 0.0, expected="content")
-    ctx.decision.rule_name = "prefer_launch_app"
-    loop._check_expected_change(ctx)
-    loop.perception_service.add_advisory_hints.assert_not_called()
-    assert not (tmp_path / "step_1" / "expect_check.json").exists()
 
 
 def test_expect_instruction_errors_are_recovered_not_raised(monkeypatch, tmp_path):

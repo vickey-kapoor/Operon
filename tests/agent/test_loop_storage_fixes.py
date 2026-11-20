@@ -30,7 +30,7 @@ def _failing(stop: bool) -> AsyncMock:
     )
 
 
-# G8: no in-step retry after a terminal verdict, and never in the thin harness.
+# G8: no in-step retry, after a terminal verdict or a plain failure.
 
 
 async def test_no_retry_after_a_terminal_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -43,27 +43,13 @@ async def test_no_retry_after_a_terminal_verdict(monkeypatch: pytest.MonkeyPatch
     assert loop.policy_service.choose_action.call_count == 1
 
 
-async def test_the_thin_harness_never_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_failed_action_is_never_retried_in_the_step(monkeypatch: pytest.MonkeyPatch) -> None:
     loop, execute, _ = _loop(monkeypatch, [SAFE, SAFE, SAFE, SAFE])
     loop.verifier_service.verify = _failing(stop=False)
-    loop.thin_harness = True
 
     await loop.step_run(StepRequest(run_id="run-1"))
 
     assert execute.call_count == 1
-
-
-async def test_the_full_harness_still_retries_a_plain_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, execute, _ = _loop(monkeypatch, [SAFE, SAFE, SAFE, SAFE])
-    loop.verifier_service.verify = _failing(stop=False)
-    loop.thin_harness = False
-
-    await loop.step_run(StepRequest(run_id="run-1"))
-
-    assert execute.call_count > 1
-
-
-# G9: background writes land in order and atomically.
 
 
 async def test_background_writes_land_in_the_order_queued(tmp_path: Path) -> None:
@@ -185,29 +171,3 @@ def test_a_swap_refused_once_still_lands(tmp_path, monkeypatch) -> None:
     background_writer._write_file(target, "new")
     assert target.read_text(encoding="utf-8") == "new"
 
-
-def test_the_json_backend_releases_its_run_and_the_fallback_unpins_it() -> None:
-    from operon.agent.backends.combined import CombinedPerceptionPolicyService
-    from operon.agent.backends.fallback import FallbackBackend
-
-    combined = CombinedPerceptionPolicyService.__new__(CombinedPerceptionPolicyService)
-    combined._cached_decision = {"run-1": object()}
-    combined._advisory_hints = {"run-1": [("hint", "src")]}
-    combined._image_size = {"run-1": (10, 10), "run-2": (5, 5)}
-    combined.release_run("run-1")
-    assert combined._image_size == {"run-2": (5, 5)}
-    assert not combined._cached_decision and not combined._advisory_hints
-
-    class NoHook:
-        pass
-
-    class Broken:
-        def release_run(self, run_id):
-            raise RuntimeError("boom")
-
-    fallback = FallbackBackend.__new__(FallbackBackend)
-    fallback.primary, fallback.secondary = NoHook(), Broken()
-    fallback._active_backends = {"run-1": fallback.secondary}
-    with pytest.raises(RuntimeError):
-        fallback.release_run("run-1")
-    assert fallback._active_backends == {}

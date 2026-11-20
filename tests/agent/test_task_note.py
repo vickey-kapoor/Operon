@@ -161,7 +161,6 @@ def test_a_new_task_note_replaces_the_queued_one_in_every_hint_store() -> None:
         BrowserClaudeComputerUseBackend,
     )
     from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
-    from operon.agent.backends.combined import CombinedPerceptionPolicyService
     from operon.agent.backends.model_adapter.backend import ModelAdapterBackend
     from operon.agent.backends.model_adapter.openai_native import (
         OpenAIComputerUseBackend,
@@ -170,7 +169,6 @@ def test_a_new_task_note_replaces_the_queued_one_in_every_hint_store() -> None:
     for cls in (
         BrowserComputerUseBackend,
         BrowserClaudeComputerUseBackend,
-        CombinedPerceptionPolicyService,
         ModelAdapterBackend,
         OpenAIComputerUseBackend,
     ):

@@ -8,11 +8,10 @@ from uuid import uuid4
 import pytest
 
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
+from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
-from operon.agent.policy.coordinator import PolicyCoordinator
-from operon.agent.policy.recovery import RuleBasedRecoveryManager
-from operon.agent.policy.verifier import DeterministicVerifierService
+from operon.agent.policy.thin import OwnDoneVerifier, ThinPolicy, ThinRecovery
 from operon.clients.gemini import PlaceholderGeminiClient
 from operon.models.capture import CaptureFrame
 from operon.models.common import RunStatus, RunTaskRequest, StepRequest
@@ -141,13 +140,10 @@ async def test_browser_computer_use_single_step_smoke() -> None:
         ),
         perception_service=backend,
         run_store=run_store,
-        policy_service=PolicyCoordinator(
-            delegate=backend,
-            memory_store=memory_store,
-        ),
+        policy_service=ThinPolicy(backend),
         executor=executor,
-        verifier_service=DeterministicVerifierService(gemini_client=PlaceholderGeminiClient()),
-        recovery_manager=RuleBasedRecoveryManager(),
+        verifier_service=OwnDoneVerifier(gave_up_prefix=GAVE_UP_PREFIX),
+        recovery_manager=ThinRecovery(),
         memory_store=memory_store,
         gemini_client=PlaceholderGeminiClient(),
     )

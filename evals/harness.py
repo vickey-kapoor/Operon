@@ -1,8 +1,8 @@
 """Offline eval harness: run the real agent loop against scripted screens.
 
 A :class:`Scenario` is a small state machine of screens. The harness drives the
-real ``AgentLoop`` with its real policy coordinator, rule engine, verifier,
-recovery manager, stores and model backend; only the model *client*, the screen
+real ``AgentLoop`` with its real thin policy, own-done verifier,
+recovery, stores and model backend; only the model *client*, the screen
 and the executor are fakes:
 
 - the screen is a generated PNG per state (distinct pixels, so screen diffs see
@@ -17,7 +17,6 @@ rather than against what the run claims, so false successes are measurable.
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from collections import Counter
@@ -31,14 +30,12 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
-from operon.agent.backends.combined import CombinedPerceptionPolicyService
+from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.efficiency import run_efficiency
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
-from operon.agent.policy.coordinator import PolicyCoordinator
-from operon.agent.policy.recovery import RuleBasedRecoveryManager
+from operon.agent.policy.thin import OwnDoneVerifier, ThinPolicy, ThinRecovery
 from operon.agent.policy.trust_gate import TrustGate
-from operon.agent.policy.verifier import DeterministicVerifierService
 from operon.core.contracts.perception import Environment
 from operon.core.paths import prompts_dir
 from operon.models.capture import CaptureFrame
@@ -51,7 +48,7 @@ from operon.store.run_store import FileBackedRunStore
 
 SCREEN_SIZE = (640, 400)
 
-Backend = Literal["computer_use", "json"]
+Backend = Literal["computer_use"]
 Outcome = Literal["success", "false_success", "missed", "failure", "incomplete", "crash"]
 
 
@@ -60,7 +57,7 @@ Outcome = Literal["success", "false_success", "missed", "failure", "incomplete",
 
 @dataclass(frozen=True)
 class Element:
-    """A visible element on a screen, reported by the scripted JSON model."""
+    """A visible element on a screen (drawn into its frame)."""
 
     element_id: str
     label: str
@@ -129,9 +126,6 @@ class Scenario:
     transitions: list[Transition]
     model: dict[str, Reply | list[Reply]]
     start: str = ""
-    # Critic verdicts per screen (the verifier's model check). None = no critic
-    # client, so the verifier uses its deterministic fallback.
-    critic: dict[str, Reply] | None = None
     max_steps: int = 12
     # What the scripted human does at a WAIT_FOR_USER pause.
     on_pause: Literal["approve", "stop"] = "stop"
@@ -192,17 +186,6 @@ def launches(app: str) -> ActionMatcher:
 # ── Scripted replies ──────────────────────────────────────────────────────
 
 
-def json_reply(
-    action: dict[str, Any],
-    *,
-    confidence: float = 0.85,
-    subgoal: str = "advance",
-    rationale: str = "scripted",
-) -> Reply:
-    """A combined (JSON backend) reply; perception is filled in from the screen."""
-    return {"action": action, "confidence": confidence, "active_subgoal": subgoal, "rationale": rationale}
-
-
 def cu_call(name: str, **args: Any) -> Reply:
     """A Gemini Computer Use function call. Pixel coordinates in ``x``/``y`` are
     converted to the model's 0-999 grid."""
@@ -219,15 +202,6 @@ def cu_text(text: str) -> Reply:
     return {"text": text}
 
 
-def critic_verdict(status: str, *, stop: bool = False, reason: str = "scripted critic") -> Reply:
-    return {
-        "status": status,
-        "expected_outcome_met": status == "success",
-        "stop_condition_met": stop,
-        "reason": reason,
-    }
-
-
 # ── Fakes ─────────────────────────────────────────────────────────────────
 
 
@@ -242,7 +216,6 @@ class _World:
         self.visits: Counter[str] = Counter({self.current: 1})
         self._calls: Counter[tuple[int, str]] = Counter()
         self.model_calls = 0
-        self.critic_calls = 0
         self._frames_dir = frames_dir
         self._seq = 0
         self._images = {
@@ -373,46 +346,11 @@ class FakeComputerUseClient:
             },
             "function_call": call,
             "function_calls": [call],
-            "rationale": call["name"],
+            "rationale": reply.get("rationale", call["name"]),
             "confidence": 0.7,
             "active_subgoal": call["name"],
             "model_content": {"parts": [{"function_call": call}]},
         }
-
-
-class FakeGeminiClient:
-    """Stands in for ``GeminiHttpClient`` for the combined JSON backend."""
-
-    def __init__(self, world: _World) -> None:
-        self._world = world
-        self.prompts: list[str] = []
-
-    def latest_perception_scale_ratio(self) -> float:
-        return 1.0
-
-    async def generate_perception(self, prompt: str, screenshot_path: str) -> str:
-        self.prompts.append(prompt)
-        self._world.model_calls += 1
-        reply = self._world.reply(self._world.scenario.model)
-        screen = self._world.screen
-        return json.dumps({
-            "perception": {
-                "summary": screen.summary,
-                "page_hint": screen.page_hint,
-                "visible_elements": [e.as_perception() for e in screen.elements],
-                "confidence": 0.9,
-            },
-            **reply,
-        })
-
-
-class FakeCriticClient:
-    def __init__(self, world: _World) -> None:
-        self._world = world
-
-    async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
-        self._world.critic_calls += 1
-        return json.dumps(self._world.reply(self._world.scenario.critic or {}))
 
 
 # ── Running and grading ───────────────────────────────────────────────────
@@ -427,7 +365,6 @@ class RunResult:
     steps: int
     pauses: int
     model_calls: int
-    critic_calls: int
     final_screen: str
     error: str | None = None
     actions: list[str] = field(default_factory=list)
@@ -456,33 +393,24 @@ def grade(*, claimed_success: bool, reached_goal: bool, ended: bool) -> Outcome:
 
 def _build_loop(scenario: Scenario, world: _World, root: Path) -> tuple[AgentLoop, FakeExecutor, Any]:
     executor = FakeExecutor(world)
-    if scenario.backend == "computer_use":
-        model_client: Any = FakeComputerUseClient(world)
-        backend: Any = BrowserComputerUseBackend(
-            client=model_client,
-            prompt_path=prompts_dir() / "browser_computer_use_prompt.txt",
-            browser_runtime=executor,
-        )
-        environment = Environment.BROWSER
-    else:
-        model_client = FakeGeminiClient(world)
-        backend = CombinedPerceptionPolicyService(
-            gemini_client=model_client, prompt_path=prompts_dir() / "desktop_combined_prompt.txt"
-        )
-        environment = Environment.DESKTOP
+    model_client = FakeComputerUseClient(world)
+    backend = BrowserComputerUseBackend(
+        client=model_client,
+        prompt_path=prompts_dir() / "browser_computer_use_prompt.txt",
+        browser_runtime=executor,
+    )
     run_store = FileBackedRunStore(root / "runs")
     memory_store = FileBackedMemoryStore(root / "memory")
-    critic: Any = FakeCriticClient(world) if scenario.critic is not None else object()
     loop = AgentLoop(
         capture_service=ScreenCaptureService(executor=executor, root_dir=run_store.root_dir),
         perception_service=backend,
         run_store=run_store,
-        policy_service=PolicyCoordinator(delegate=backend, memory_store=memory_store),
+        policy_service=ThinPolicy(backend),
         executor=executor,
-        verifier_service=DeterministicVerifierService(gemini_client=critic),
-        recovery_manager=RuleBasedRecoveryManager(),
+        verifier_service=OwnDoneVerifier(gave_up_prefix=GAVE_UP_PREFIX),
+        recovery_manager=ThinRecovery(),
         memory_store=memory_store,
-        environment=environment,
+        environment=Environment.BROWSER,
     )
     if scenario.trust_gate is not None:
         loop._trust_gate = scenario.trust_gate
@@ -541,7 +469,7 @@ async def run_scenario(scenario: Scenario, *, root: Path | None = None) -> RunRe
 
         state = await loop.run_store.get_run(run_id)
         await bg_writer.flush()  # artifact writes land in the temp dir; finish them before it goes
-        requests = getattr(model_client, "requests", None) or getattr(model_client, "prompts", [])
+        requests = model_client.requests
         return RunResult(
             scenario=scenario.name,
             outcome="crash" if error else grade(
@@ -554,7 +482,6 @@ async def run_scenario(scenario: Scenario, *, root: Path | None = None) -> RunRe
             steps=steps,
             pauses=pauses,
             model_calls=world.model_calls,
-            critic_calls=world.critic_calls,
             final_screen=world.current,
             error=error,
             actions=[a.action_type.value for a in executor.actions],

@@ -147,11 +147,7 @@ async def test_post_json_payload_does_not_retry_non_retryable_http_error() -> No
         ("gemini-2.5-flash", "low", None),
     ],
 )
-async def test_generate_verification_sends_the_screenshot_and_thinking_setting(tmp_path, model, thinking, expected) -> None:
-    from PIL import Image
-
-    screenshot = tmp_path / "after.png"
-    Image.new("RGB", (8, 8)).save(screenshot)
+async def test_generate_policy_sends_the_thinking_setting(model, thinking, expected) -> None:
     client = GeminiHttpClient(api_key="test-key", model=model, thinking=thinking)
     sent: dict = {}
 
@@ -161,10 +157,8 @@ async def test_generate_verification_sends_the_screenshot_and_thinking_setting(t
 
     client._post_json_payload = fake_post
 
-    assert await client.generate_verification("judge this", str(screenshot)) == "{}"
-    parts = sent["contents"][0]["parts"]
-    assert parts[0]["text"] == "judge this"
-    assert parts[1]["inline_data"]["mime_type"] == "image/jpeg"
+    assert await client.generate_policy("plan this") == "{}"
+    assert sent["contents"][0]["parts"][0]["text"] == "plan this"
     assert sent["generationConfig"].get("thinkingConfig") == expected
 
 

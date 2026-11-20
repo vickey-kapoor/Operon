@@ -35,7 +35,6 @@ def test_optional_hooks_are_harmless_no_ops() -> None:
     assert backend.note_not_executed("r", "blocked") is None
     assert backend.discard_held_actions("r", "correction") is None
     assert backend.has_held_actions("r") is False
-    assert backend.supports_resampling("r") is True
 
 
 def test_release_run_drops_only_that_run_from_every_known_cache() -> None:

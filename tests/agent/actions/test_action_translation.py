@@ -9,7 +9,7 @@ from operon.agent.actions.translation import (
     normalize_computer_use_function_call,
     translate_computer_use_action,
 )
-from operon.agent.backends.fallback import BackendCompatibilityError
+from operon.agent.backends.base import BackendCompatibilityError
 from operon.models.policy import ActionType
 
 

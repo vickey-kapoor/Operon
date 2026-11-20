@@ -8,10 +8,10 @@ import pytest
 from PIL import Image
 
 from operon.agent.actions.translation import normalize_claude_computer_calls
+from operon.agent.backends.base import BackendCompatibilityError
 from operon.agent.backends.browser_claude_computer_use import (
     BrowserClaudeComputerUseBackend,
 )
-from operon.agent.backends.fallback import BackendCompatibilityError
 from operon.clients.anthropic import AnthropicClientError
 from operon.clients.anthropic_computer_use import AnthropicComputerUseHttpClient
 from operon.core.paths import prompts_dir
@@ -292,16 +292,14 @@ async def test_calls_a_gate_blocked_are_reported_as_not_executed(tmp_path: Path)
     assert client.requests[2][-1]["content"][0]["content"][0] == {"type": "text", "text": "OK"}
 
 
-async def test_a_gate_note_reaches_the_backend_through_the_wrappers() -> None:
-    from operon.agent.backends.fallback import FallbackBackend
+async def test_a_gate_note_reaches_the_backend_through_the_policy_wrapper() -> None:
     from operon.agent.policy.thin import ThinPolicy
 
-    primary, secondary = _backend(ScriptedClient([])), _backend(ScriptedClient([]))
+    backend = _backend(ScriptedClient([]))
     seen: list[tuple[str, str]] = []
-    primary.note_not_executed = lambda run_id, reason: seen.append((run_id, reason))
-    secondary.note_not_executed = lambda run_id, reason: pytest.fail("the inactive backend was told")
+    backend.note_not_executed = lambda run_id, reason: seen.append((run_id, reason))
 
-    ThinPolicy(FallbackBackend(primary=primary, secondary=secondary)).note_not_executed("run-1", "gated")
+    ThinPolicy(backend).note_not_executed("run-1", "gated")
 
     assert seen == [("run-1", "gated")]
 

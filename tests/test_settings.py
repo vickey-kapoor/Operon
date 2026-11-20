@@ -47,7 +47,7 @@ def test_defaults_match_the_old_call_sites() -> None:
     s = Settings.from_env({})
     assert s.desktop_backend == s.browser_backend == "computer_use"
     assert s.browser_model == "gemini-3.5-flash"
-    assert s.browser_thinking == "low" and s.browser_fallback_backend == "json"
+    assert s.browser_thinking == "low"
     assert s.trust_gate is True and s.trust_confirm == ()
     assert s.permission_mode == "" and s.tools is None
     assert (s.zoom, s.zoom_min_side, s.zoom_factor) == ("dense", 2000, 2.0)
@@ -71,7 +71,6 @@ def test_values_parse_as_before() -> None:
             "OPERON_ZOOM": "yes",
             "OPERON_ZOOM_FACTOR": "9",
             "OPERON_STREAM_TOKEN_TTL_S": "1",
-            "OPERON_BESTOFN_N": "0",
             "OPERON_ENVIRONMENT": " Sandbox ",
             "OPERON_DESKTOP_PLATFORM": "LINUX",
             "OPERON_TEST_SAFE_MODE": "TRUE",
@@ -87,7 +86,6 @@ def test_values_parse_as_before() -> None:
     assert s.trust_deny == ("rm -rf", "format")
     assert s.zoom == "dense" and s.zoom_factor == 6.0
     assert s.stream_token_ttl_s == 10
-    assert s.bestofn_n == 1
     assert s.environment == "sandbox" and s.desktop_platform == "linux"
     assert s.test_safe_mode is True and s.strict_errors is True
 
@@ -98,6 +96,16 @@ def test_unusable_values_fall_back_with_a_warning() -> None:
     assert s.errors == ()
     assert len(s.warnings) == 3
     assert any("OPERON_ZOOM='maybe'" in w for w in s.warnings)
+
+
+@pytest.mark.parametrize(
+    "name", ["OPERON_HARNESS_PROFILE", "OPERON_CRITIC", "OPERON_GROUNDER", "OPERON_BESTOFN_N", "OPERON_SITE_ADAPTERS"]
+)
+def test_variables_of_the_removed_full_harness_warn_and_are_ignored(name) -> None:
+    s = Settings.from_env({name: "full"})
+    assert s.errors == ()
+    assert [w for w in s.warnings if name in w] == [f"{name} was removed with the Full harness (KAN-183), ignored"]
+    assert Settings.from_env({name: ""}).warnings == ()  # blank means unset
 
 
 def test_values_that_used_to_crash_later_are_errors() -> None:
@@ -126,12 +134,12 @@ def test_startup_check_passes_on_defaults(monkeypatch) -> None:
 
 
 def test_get_settings_follows_the_environment_and_caches(monkeypatch) -> None:
-    monkeypatch.setenv("OPERON_GROUNDER", "snap")
+    monkeypatch.setenv("OPERON_ZOOM", "off")
     first = get_settings()
-    assert first.grounder == "snap"
+    assert first.zoom == "off"
     assert get_settings() is first  # nothing changed: the same object
-    monkeypatch.setenv("OPERON_GROUNDER", "Deterministic")
-    assert get_settings().grounder == "deterministic"
+    monkeypatch.setenv("OPERON_ZOOM", "Always")
+    assert get_settings().zoom == "always"
 
 
 def test_effective_settings_hide_secrets() -> None:
@@ -149,11 +157,11 @@ def test_each_run_records_its_settings(tmp_path, monkeypatch) -> None:
     from operon.store.run_store import FileBackedRunStore
 
     monkeypatch.setenv("GEMINI_API_KEY", "sekrit")
-    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "thin")
+    monkeypatch.setenv("OPERON_PERMISSION_MODE", "ask")
     record = FileBackedRunStore(root_dir=tmp_path).create_run("do a thing")
 
     saved = json.loads((tmp_path / record.run_id / "settings.json").read_text(encoding="utf-8"))
-    assert saved["OPERON_HARNESS_PROFILE"] == "thin"
+    assert saved["OPERON_PERMISSION_MODE"] == "ask"
     assert saved["GEMINI_API_KEY"] == "<set>"
 
 
@@ -187,13 +195,7 @@ _EXPERIMENTAL_OFF = [
     ("checkpoints", False),
     ("click_text", False),
     ("expect_check", False),
-    ("harness_profile", ""),  # "" is the default (thin for Gemini computer use); "full" is opt-in
-    ("critic", ""),
-    ("site_adapters", ""),
     ("model_profile", ""),
-    ("grounder", "deterministic"),
-    ("bestofn_n", 1),
-    ("bestofn_confidence", 1.0),
     ("parallel_runs", 1),
 ]
 # Boolean switches that are off by default but not experimental features.
@@ -216,9 +218,7 @@ _PLAIN_CONFIG = {
     "desktop_artifacts_root", "test_artifacts_root", "gemini_api_key", "google_api_key", "gemini_model",
     "gemini_api_base_url", "vertex_project", "vertex_location", "model_registry", "anthropic_api_key",
     "anthropic_api_base_url", "openai_api_key", "openai_api_base_url", "desktop_backend", "desktop_model",
-    "desktop_thinking", "desktop_fallback_model", "desktop_verifier_model", "desktop_verifier_thinking",
-    "browser_backend", "browser_model", "browser_thinking", "browser_fallback_backend",
-    "browser_fallback_model", "browser_verifier_model", "browser_verifier_thinking", "settle_max_s",
+    "desktop_thinking", "browser_backend", "browser_model", "browser_thinking", "settle_max_s",
     "planner_model", "task_note_max_items", "trust_deny", "trust_confirm", "trust_allow_domains", "trust_category_list",
     "permission_mode",
     "allowed_file_roots", "zoom_min_side", "zoom_factor", "environment", "desktop_platform",

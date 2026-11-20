@@ -14,11 +14,9 @@ from evals.harness import (
     Screen,
     Transition,
     clicks,
-    critic_verdict,
     cu_call,
     cu_text,
     hovers,
-    json_reply,
     launches,
     presses,
     scrolls,
@@ -26,24 +24,6 @@ from evals.harness import (
     waits,
 )
 from operon.agent.policy.trust_gate import TrustGate
-
-
-def _click(element: Element) -> dict:
-    x, y = element.center
-    return {"action_type": "click", "target_element_id": element.element_id, "x": x, "y": y}
-
-
-def _type(element: Element, text: str) -> dict:
-    x, y = element.center
-    return {"action_type": "type", "target_element_id": element.element_id, "text": text, "x": x, "y": y}
-
-
-def _hover(element: Element) -> dict:
-    x, y = element.center
-    return {"action_type": "hover", "x": x, "y": y}
-
-
-_STOP = {"action_type": "stop"}
 
 # ── Shared widgets ────────────────────────────────────────────────────────
 
@@ -60,99 +40,22 @@ PLACE_ORDER = Element("place_order", "Place order", 40, 260)
 CART = Element("cart", "Cart", 360, 260)
 
 
-def form_submit() -> Scenario:
-    form = Screen("form", "Contact form with Name and Email fields", (NAME, EMAIL, SUBMIT), page_hint="form_page")
-    filled = Screen("filled", "Contact form, Name is Ada", (NAME, EMAIL, SUBMIT), page_hint="form_page")
-    done = Screen("done", "Thank you! Your message was sent.", (HOME, SUPPORT), page_hint="form_success", goal=True)
-    return Scenario(
-        name="json_form_submit",
-        description="Baseline: fill one field, submit, see the success page.",
-        intent="Fill in the contact form with the name Ada and submit it",
-        backend="json",
-        screens=[form, filled, done],
-        transitions=[
-            Transition("form", types("Ada"), "filled"),
-            Transition("filled", clicks(SUBMIT), "done"),
-        ],
-        model={
-            "form": json_reply(_type(NAME, "Ada"), subgoal="fill name"),
-            "filled": json_reply(_click(SUBMIT), subgoal="submit"),
-            "done": json_reply(_STOP, subgoal="complete task", confidence=0.95),
-        },
-    )
-
-
-def hover_then_click() -> Scenario:
+def cu_hover_then_click() -> Scenario:
     nav = Screen("nav", "Site header with Home, Products and Support", (HOME, PRODUCTS, SUPPORT))
     menu = Screen("menu", "Products menu open: Pricing, Docs", (PRODUCTS, PRICING, DOCS))
     pricing = Screen("pricing", "Pricing page with plans", (PLAN, CART, HOME), goal=True)
+    hx, hy = PRODUCTS.center
     return Scenario(
-        name="json_hover_then_click",
+        name="cu_hover_then_click",
         description="Two-step intent whose first step is a hover.",
         intent="Hover over the Products menu and click Pricing",
-        backend="json",
+        backend="computer_use",
         screens=[nav, menu, pricing],
         transitions=[
             Transition("nav", hovers(PRODUCTS), "menu"),
             Transition("menu", clicks(PRICING), "pricing"),
         ],
-        model={
-            "nav": json_reply(_hover(PRODUCTS), subgoal="open products menu"),
-            "menu": json_reply(_click(PRICING), subgoal="open pricing"),
-            "pricing": json_reply(_STOP, subgoal="complete task", confidence=0.95),
-        },
-    )
-
-
-def premature_stop() -> Scenario:
-    nav = Screen("nav", "Site header with Home, Products and Support", (HOME, PRODUCTS, SUPPORT))
-    pricing = Screen("pricing", "Pricing page with plans", (PLAN, CART, HOME), goal=True)
-    return Scenario(
-        name="json_premature_stop",
-        description="The model claims the task is done before doing anything.",
-        intent="Open the Products page",
-        backend="json",
-        screens=[nav, pricing],
-        transitions=[Transition("nav", clicks(PRODUCTS), "pricing")],
-        model={
-            "nav": json_reply(_STOP, subgoal="complete task", confidence=0.9),
-            "pricing": json_reply(_STOP, subgoal="complete task", confidence=0.95),
-        },
-        expected=("failure", "incomplete"),
-    )
-
-
-def dead_button() -> Scenario:
-    form = Screen("form", "Contact form, Name is Ada", (NAME, EMAIL, SUBMIT), page_hint="form_page")
-    done = Screen("done", "Thank you! Your message was sent.", (HOME, SUPPORT), page_hint="form_success", goal=True)
-    return Scenario(
-        name="json_dead_button",
-        description="Submit does nothing; the agent must not claim success.",
-        intent="Submit the contact form",
-        backend="json",
-        screens=[form, done],
-        transitions=[],
-        model={"form": json_reply(_click(SUBMIT), subgoal="submit")},
-        expected=("failure", "incomplete"),
-    )
-
-
-def silent_submit_then_stop() -> Scenario:
-    form = Screen("form", "Contact form, Name is Ada", (NAME, EMAIL, SUBMIT), page_hint="form_page")
-    done = Screen("done", "Thank you! Your message was sent.", (HOME, SUPPORT), page_hint="form_success", goal=True)
-    return Scenario(
-        name="json_silent_submit_then_stop",
-        description=(
-            "Submit silently does nothing, the model assumes it worked and stops; "
-            "the critic sees the unchanged form."
-        ),
-        intent="Submit the contact form",
-        backend="json",
-        screens=[form, done],
-        transitions=[],
-        model={"form": [json_reply(_click(SUBMIT), subgoal="submit"), json_reply(_STOP, subgoal="complete task")]},
-        critic={"form": critic_verdict("failure", reason="The form is unchanged; nothing was submitted.")},
-        expected=("failure", "incomplete"),
+        model={"nav": cu_call("hover_at", x=hx, y=hy), "menu": _cu_click(PRICING), "pricing": _DONE},
     )
 
 
@@ -162,12 +65,13 @@ def _checkout(name: str, on_pause: str, expected) -> Scenario:
     return Scenario(
         name=name,
         intent="Buy the Pro plan",
-        backend="json",
+        backend="computer_use",
         screens=[plan, confirmed],
         transitions=[Transition("plan", clicks(PLACE_ORDER), "confirmed")],
         model={
-            "plan": json_reply(_click(PLACE_ORDER), subgoal="place order"),
-            "confirmed": json_reply(_STOP, subgoal="complete task", confidence=0.95),
+            # Computer Use names no element: the model's own words are what the gate reads.
+            "plan": {**_cu_click(PLACE_ORDER), "rationale": "Click Place order to buy the Pro plan"},
+            "confirmed": _DONE,
         },
         trust_gate=TrustGate(enabled=True, confirm=("place order",)),
         on_pause=on_pause,
@@ -176,13 +80,13 @@ def _checkout(name: str, on_pause: str, expected) -> Scenario:
 
 
 def trust_gate_approved() -> Scenario:
-    scenario = _checkout("json_trust_gate_approved", "approve", "success")
+    scenario = _checkout("cu_trust_gate_approved", "approve", "success")
     scenario.description = "High-risk click pauses; the human approves; it runs once."
     return scenario
 
 
 def trust_gate_declined() -> Scenario:
-    scenario = _checkout("json_trust_gate_declined", "stop", "incomplete")
+    scenario = _checkout("cu_trust_gate_declined", "stop", "incomplete")
     scenario.description = "High-risk click pauses; the human never approves; it must not run."
     return scenario
 
@@ -396,37 +300,6 @@ def cu_go_back() -> Scenario:
     )
 
 
-def cu_done_without_effect() -> Scenario:
-    form = Screen("form", "Contact form, Name is Ada", (NAME, EMAIL, SUBMIT), page_hint="form_page")
-    sent = Screen("sent", "Thank you! Your message was sent.", (HOME,), page_hint="form_success", goal=True)
-    return Scenario(
-        name="cu_done_without_effect",
-        description="Submit silently does nothing; the model says done; the critic sees the unchanged form.",
-        intent="Submit the contact form",
-        backend="computer_use",
-        screens=[form, sent],
-        transitions=[],
-        model={"form": [_cu_click(SUBMIT), _DONE]},
-        critic={"form": critic_verdict("failure", reason="The form is unchanged; nothing was submitted.")},
-        expected=("failure", "incomplete"),
-    )
-
-
-def cu_done_before_acting() -> Scenario:
-    nav = Screen("nav", "Site header with Home, Products and Support", (HOME, PRODUCTS, SUPPORT))
-    products = Screen("products", "Products page", (PLAN, CART), goal=True)
-    return Scenario(
-        name="cu_done_before_acting",
-        description="The model claims it is done on the first screen without doing anything.",
-        intent="Open the Products page",
-        backend="computer_use",
-        screens=[nav, products],
-        transitions=[Transition("nav", clicks(PRODUCTS), "products")],
-        model={"nav": _DONE, "products": _DONE},
-        expected=("failure", "incomplete"),
-    )
-
-
 def cu_scroll_twice() -> Scenario:
     top = Screen("top", "Long article, top", (HOME, PRODUCTS))
     middle = Screen("middle", "Long article, middle", (PLAN,))
@@ -457,8 +330,9 @@ def cu_relaunch_runaway() -> Scenario:
         name="cu_relaunch_runaway",
         description=(
             "RFC 0003: the model keeps relaunching the browser with the same call. Each launch "
-            "changes the screen (window A, B, A, B), so today every step counts as progress and "
-            "no guard fires; the run should be stopped as a loop, not left to its step budget."
+            "changes the screen (window A, B, A, B), so every step counts as progress. The thin "
+            "harness never stops a loop (the step budget ends the run); with OPERON_PROGRESS_REVISIT "
+            "on, the progress trace flags it (see cu_relaunch_runaway_revisit)."
         ),
         intent="Open the browser and go to the Products page",
         backend="computer_use",
@@ -469,8 +343,7 @@ def cu_relaunch_runaway() -> Scenario:
             Transition("window_b", launches("browser"), "window_a"),
         ],
         model={screen: cu_call("open_web_browser") for screen in ("desktop", "window_a", "window_b")},
-        expected="failure",
-        known_issue="RFC 0003: a repeated action that changes the screen always counts as progress (fixed under OPERON_PROGRESS_REVISIT)",
+        expected="incomplete",
         env={"OPERON_PROGRESS_REVISIT": "off"},
     )
 
@@ -478,8 +351,7 @@ def cu_relaunch_runaway() -> Scenario:
 def cu_relaunch_runaway_revisit() -> Scenario:
     scenario = cu_relaunch_runaway()
     scenario.name = "cu_relaunch_runaway_revisit"
-    scenario.description = "The same runaway with OPERON_PROGRESS_REVISIT on: stopped as a loop."
-    scenario.known_issue = None
+    scenario.description = "The same runaway with OPERON_PROGRESS_REVISIT on: the progress trace flags the loop; the run is not stopped."
     scenario.env = {"OPERON_PROGRESS_REVISIT": "on"}
     return scenario
 
@@ -493,11 +365,7 @@ def cu_scroll_twice_revisit() -> Scenario:
 
 
 SCENARIOS = [
-    form_submit,
-    hover_then_click,
-    premature_stop,
-    dead_button,
-    silent_submit_then_stop,
+    cu_hover_then_click,
     trust_gate_approved,
     trust_gate_declined,
     cu_click_then_done,
@@ -511,8 +379,6 @@ SCENARIOS = [
     cu_slow_load,
     cu_misclick_recovers,
     cu_go_back,
-    cu_done_without_effect,
-    cu_done_before_acting,
     cu_relaunch_runaway,
     cu_relaunch_runaway_revisit,
     cu_scroll_twice_revisit,

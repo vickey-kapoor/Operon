@@ -138,8 +138,8 @@ These are load-bearing — violating them silently breaks the agent.
   adaptively calibrated threshold. Never bypass it.
 - **Verification states.** SUCCESS / FAILURE / UNCERTAIN / PENDING /
   PROGRESSING_STABLE / STABLE_WAIT. The thin harness's `OwnDoneVerifier` emits SUCCESS, FAILURE
-  and UNCERTAIN; PENDING, PROGRESSING_STABLE and STABLE_WAIT are no longer emitted (the loop still
-  handles them) and the values are kept so old reports and recordings load.
+  and UNCERTAIN; PENDING, PROGRESSING_STABLE and STABLE_WAIT are no longer emitted by any
+  verifier, and their handlers were removed. The values are kept only so old reports load.
 - **Lazy `ws_stream`.** Never import `ws_stream` at module load in `browser/manager.py`
   — use the `_ws_stream()` accessor to avoid a circular import.
 - **Experimental work ships behind an env flag defaulting to off.** Follow the

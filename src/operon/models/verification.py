@@ -15,9 +15,9 @@ class VerificationStatus(StrEnum):
     SUCCESS = "success"
     FAILURE = "failure"
     UNCERTAIN = "uncertain"
-    PENDING = "pending"  # page is mid-transition (loading); wait 2–8s before re-verifying
-    PROGRESSING_STABLE = "progressing_stable"  # UI reacted (Gemini-confirmed); advance immediately
-    STABLE_WAIT = "stable_wait"  # screen actively changing post-action; wait 200ms and re-verify once
+    PENDING = "pending"  # no longer emitted; kept so old reports load
+    PROGRESSING_STABLE = "progressing_stable"  # no longer emitted; kept so old reports load
+    STABLE_WAIT = "stable_wait"  # no longer emitted; kept so old reports load
 
 
 class VerificationFailureType(StrEnum):

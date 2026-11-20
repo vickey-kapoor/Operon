@@ -324,8 +324,8 @@ class ProgressTracker:
             )
             progress_state.loop_detected = loop_failure_category is not None
 
-        # Persist the raw screen change ratio so block_redundant_action can
-        # detect a Stalled State on the *next* step without recomputing it.
+        # Persist the raw screen change ratio on the progress state
+        # so later steps and the progress trace can read it.
         if screen_change_ratio is not None:
             progress_state.last_screen_change_ratio = screen_change_ratio
 

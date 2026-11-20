@@ -10,6 +10,7 @@ import pytest
 
 from operon.core import settings as settings_mod
 from operon.core.settings import (
+    _REMOVED_FULL_HARNESS_VARS,
     DIRECT_READS,
     SECRET_VARIABLES,
     Settings,
@@ -98,9 +99,7 @@ def test_unusable_values_fall_back_with_a_warning() -> None:
     assert any("OPERON_ZOOM='maybe'" in w for w in s.warnings)
 
 
-@pytest.mark.parametrize(
-    "name", ["OPERON_HARNESS_PROFILE", "OPERON_CRITIC", "OPERON_GROUNDER", "OPERON_BESTOFN_N", "OPERON_SITE_ADAPTERS"]
-)
+@pytest.mark.parametrize("name", _REMOVED_FULL_HARNESS_VARS)
 def test_variables_of_the_removed_full_harness_warn_and_are_ignored(name) -> None:
     s = Settings.from_env({name: "full"})
     assert s.errors == ()

@@ -78,6 +78,62 @@ def test_only_thin_harness_runs_record(tmp_path):
     run_dir = next((tmp_path / "runs").iterdir())
     settings = json.loads((run_dir / "settings.json").read_text())
     settings["OPERON_HARNESS_PROFILE"] = "full"
+    settings["harness_profile_resolved"] = "full"
+    (run_dir / "settings.json").write_text(json.dumps(settings))
+    with pytest.raises(rp.RecordingError, match="thin"):
+        rp.record_run(run_dir, task="t", mode="desktop")
+
+
+def _edit_settings(tmp_path, **changes):
+    run_dir = next((tmp_path / "runs").iterdir())
+    settings = json.loads((run_dir / "settings.json").read_text())
+    settings.update(changes)
+    settings = {k: v for k, v in settings.items() if v is not None}
+    (run_dir / "settings.json").write_text(json.dumps(settings))
+    return run_dir
+
+
+def test_a_default_run_with_an_unset_profile_records(tmp_path):
+    """A new default Gemini run resolves thin (recorded apart from the raw, empty env value)."""
+    real_run(tmp_path)
+    run_dir = _edit_settings(tmp_path, OPERON_HARNESS_PROFILE="")
+    assert json.loads((run_dir / "settings.json").read_text())["harness_profile_resolved"] == "thin"
+    assert len(rp.record_run(run_dir, task="t", mode="desktop")["turns"]) == 4
+
+
+def test_the_real_write_path_records_the_resolved_profile(tmp_path):
+    real_run(tmp_path)
+    run_dir = next((tmp_path / "runs").iterdir())
+    assert json.loads((run_dir / "settings.json").read_text())["harness_profile_resolved"] == "thin"
+
+
+def test_a_run_saved_before_the_thin_default_with_an_unset_profile_is_refused(tmp_path):
+    real_run(tmp_path)
+    run_dir = _edit_settings(tmp_path, OPERON_HARNESS_PROFILE="", harness_profile_resolved=None)
+    with pytest.raises(rp.RecordingError, match="before the thin default"):
+        rp.record_run(run_dir, task="t", mode="desktop")
+
+
+def test_an_old_run_with_an_explicit_thin_profile_records(tmp_path):
+    real_run(tmp_path)
+    run_dir = _edit_settings(tmp_path, OPERON_HARNESS_PROFILE="thin", harness_profile_resolved=None)
+    assert len(rp.record_run(run_dir, task="t", mode="desktop")["turns"]) == 4
+
+
+def test_a_run_that_resolved_full_is_refused(tmp_path):
+    real_run(tmp_path)
+    run_dir = _edit_settings(tmp_path, OPERON_HARNESS_PROFILE="", harness_profile_resolved="full")
+    with pytest.raises(rp.RecordingError, match="thin"):
+        rp.record_run(run_dir, task="t", mode="desktop")
+
+
+def test_a_json_backend_run_is_refused(tmp_path):
+    real_run(tmp_path)
+    run_dir = next((tmp_path / "runs").iterdir())
+    settings = json.loads((run_dir / "settings.json").read_text())
+    settings["OPERON_HARNESS_PROFILE"] = ""
+    settings["OPERON_DESKTOP_BACKEND"] = "json"
+    settings["harness_profile_resolved"] = "thin"
     (run_dir / "settings.json").write_text(json.dumps(settings))
     with pytest.raises(rp.RecordingError, match="thin"):
         rp.record_run(run_dir, task="t", mode="desktop")
@@ -215,6 +271,11 @@ def test_a_run_folder_records_its_host(tmp_path):
 def test_file_roots_are_kept():
     kept = rp.recordable_settings({"OPERON_ALLOWED_FILE_ROOTS": ["C:/Users/runner/Documents"], "OPERON_RUNS_ROOT": "/x"})
     assert kept == {"OPERON_ALLOWED_FILE_ROOTS": "C:/Users/runner/Documents"}
+
+
+def test_the_resolved_profile_is_not_a_recordable_setting():
+    kept = rp.recordable_settings({"OPERON_HARNESS_PROFILE": "thin", "harness_profile_resolved": "thin"})
+    assert kept == {"OPERON_HARNESS_PROFILE": "thin"}
 
 
 def test_a_secondary_monitor_origin_replays(tmp_path):

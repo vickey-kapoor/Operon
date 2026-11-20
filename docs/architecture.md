@@ -146,14 +146,14 @@ Executor: `DesktopExecutor`.
 
 `OPERON_HARNESS_PROFILE` (`harness_profile()` in `agent/policy/thin.py`) picks how much
 scaffolding surrounds the model per backend; the layers are wired in
-`api/runtime/loops.py:_loop_layers`. Gemini `computer_use` runs **full** by default.
-`OPERON_HARNESS_PROFILE=thin` switches it to **thin**: `ThinPolicy` passes Gemini's action
+`api/runtime/loops.py:_loop_layers`. Gemini `computer_use` runs **thin** by default (KAN-183).
+`OPERON_HARNESS_PROFILE=full` switches it to **full**. In thin, `ThinPolicy` passes Gemini's action
 through with no rules, guards or retries, and its own "done" ends the run (`OwnDoneVerifier`),
 so the benchmark graders decide success. `json` backends always run full; the `model` backend
 (Claude, OpenAI, open-weight) always runs thin. `OPERON_CRITIC=same` makes the full harness's
 step critic the acting model. [configuration.md](configuration.md) has the details.
 
-| | Full (default for Gemini `computer_use`; always for `json`) | Thin (`OPERON_HARNESS_PROFILE=thin`; always for `model`) |
+| | Full (`OPERON_HARNESS_PROFILE=full`; always for `json`) | Thin (default for Gemini `computer_use`; always for `model`) |
 |---|---|---|
 | Policy | `PolicyCoordinator`: memory hints, `PolicyRuleEngine` (two rules: `_task_success_stop_rule`, and `_prefer_launch_app_rule` on desktop), the model, `_reject_premature_stop` | `ThinPolicy`: the backend's decision unchanged |
 | Verifier | `DeterministicVerifierService` with a Gemini critic (`OPERON_*_VERIFIER_MODEL`, or the acting model with `OPERON_CRITIC=same`) | `OwnDoneVerifier`: failures go back to the model as tool results; the model's "done" ends the run |
@@ -431,7 +431,7 @@ Experimental work ships behind an env flag that defaults to off. Defaults are fr
 
 | Flag | Default | Effect |
 |---|---|---|
-| `OPERON_HARNESS_PROFILE` | empty (full) | `thin` runs Gemini computer use in the thin harness |
+| `OPERON_HARNESS_PROFILE` | empty (thin) | `full` runs Gemini computer use in the full harness |
 | `OPERON_CRITIC` | empty | `same` makes the acting model the step critic |
 | `OPERON_BESTOFN_N` / `OPERON_BESTOFN_CONFIDENCE` | 1 / 1.0 | Sample N candidates at uncertain steps and run the best |
 | `OPERON_GROUNDER` | `deterministic` | `snap` moves near-miss clicks onto the nearest element (full only) |

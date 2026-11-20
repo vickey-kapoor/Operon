@@ -187,7 +187,7 @@ _EXPERIMENTAL_OFF = [
     ("checkpoints", False),
     ("click_text", False),
     ("expect_check", False),
-    ("harness_profile", ""),  # "" is the full harness; "thin" is opt-in
+    ("harness_profile", ""),  # "" is the default (thin for Gemini computer use); "full" is opt-in
     ("critic", ""),
     ("site_adapters", ""),
     ("model_profile", ""),

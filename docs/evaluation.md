@@ -167,7 +167,7 @@ Documents folder, and the report and dashboard mark the run as not comparable wi
 
 | Comment | Runs |
 |---|---|
-| `/bench` | Gemini · Browser · Full: the Browser core set (10 tasks) |
+| `/bench` | Gemini · Browser · Thin: the Browser core set (10 tasks) |
 | `/bench browser thin season=1` | Gemini · Browser · Thin on Season 1, one cell of the grid |
 | `/bench desktop full azure season=1` | Gemini · Desktop · Full on Season 1, on the Azure VM |
 | `/bench smoke` | Browser smoke (5 live web tasks) |
@@ -184,7 +184,7 @@ Documents folder, and the report and dashboard mark the run as not comparable wi
 | `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
 | `/bench hybrid full azure season=1` | Gemini · Hybrid · Full on Season 1, on the Azure VM (run `scripts/edge-policies.ps1` on the VM once first; [azure-desktop-runner.md](azure-desktop-runner.md)) |
 | `/bench hybrid smoke` | Hybrid smoke (2 tasks) on GitHub's hosted Windows runner |
-| `/bench long same-critic` | Long suite in the full harness, with Gemini as its own step critic |
+| `/bench long full same-critic` | Long suite in the full harness, with Gemini as its own step critic |
 | `/bench desktop thin season=2 tools` | Desktop · Thin on Season 2 with tools on (the A/B arm for the tools-off run) |
 
 The **Run browser test tasks (engine)**, **Run desktop test tasks (engine)** and **Run click-accuracy test (engine)** workflows can also be started by hand,

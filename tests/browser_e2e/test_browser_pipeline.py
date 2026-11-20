@@ -158,7 +158,7 @@ def test_content_that_appears_after_a_delay(tmp_path, site, app):
 
 
 # 7
-def test_recovery_from_a_click_that_misses(tmp_path, site, app):
+def test_recovery_from_a_click_that_misses(tmp_path, site, app, full_harness):
     scenario_recovery(tmp_path, site, app)
 
 
@@ -220,7 +220,7 @@ def test_an_impossible_task_ends_without_a_false_success(tmp_path, site, app):
 
 
 # 12
-def test_a_repeated_useless_click_is_stopped_and_scored_as_waste(tmp_path, site, app):
+def test_a_repeated_useless_click_is_stopped_and_scored_as_waste(tmp_path, site, app, full_harness):
     script = [call("click_at", **BLANK) for _ in range(40)]
     result = run(tmp_path, site, "Click the button labelled Z", script, "/t/buttons", max_steps=10,
                  goal=lambda: False)
@@ -234,7 +234,7 @@ def test_a_repeated_useless_click_is_stopped_and_scored_as_waste(tmp_path, site,
 
 # Reliability: the scripted model is deterministic, so Operon's own behavior must be too.
 @pytest.mark.parametrize("scenario", [scenario_form, scenario_recovery, scenario_workflow], ids=lambda f: f.__name__)
-def test_reliability_five_runs_all_pass(scenario, tmp_path_factory, site, app, capsys):
+def test_reliability_five_runs_all_pass(scenario, tmp_path_factory, site, app, capsys, full_harness):
     durations = []
     for i in range(5):
         site.reset()

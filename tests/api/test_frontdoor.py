@@ -316,3 +316,12 @@ def test_a_step_the_thin_harness_took_on_trust_is_not_checked() -> None:
     )
 
     assert frontdoor._checked_by(result) == "none"
+
+
+def test_format_report_says_a_thin_run_was_checked_by_the_models_own_done() -> None:
+    base = {
+        "outcome": "Done", "intent": "t", "summary": "Done after 1 step.", "permission_mode": "ask",
+        "run_dir": "/x", "timeline": [{"checked_by": "none"}],
+    }
+    assert "checked by: the model's own done" in frontdoor.format_report(base)
+    assert "checked by" not in frontdoor.format_report({**base, "timeline": [{"checked_by": "rules"}]})

@@ -123,11 +123,12 @@ These are load-bearing — violating them silently breaks the agent.
   may read the accessibility tree or DOM, only inside their own perception backend.
   They must still emit `UIElement` coordinates, and no code outside that backend may
   depend on them.
-- **Rules before LLM (full harness).** Anything decidable deterministically belongs in
+- **Rules before LLM (full harness).** The thin harness is the default for Gemini computer use
+  (`OPERON_HARNESS_PROFILE=full` opts into the full one); this rule applies to the full harness. Anything decidable deterministically belongs in
   `PolicyRuleEngine` (`agent/policy/rules.py`). Post-LLM guards (e.g.
   `_reject_premature_stop`) live on `PolicyCoordinator`. Gemini Computer Use reports no
   element list or page type, so a rule must work without them or it never fires (KAN-161). The thin harness
-  (`agent/policy/thin.py`, opt in with `OPERON_HARNESS_PROFILE=thin`) runs none of them: the model's
+  (`agent/policy/thin.py`, the default for Gemini computer use; `OPERON_HARNESS_PROFILE=full` opts out) runs none of them: the model's
   action is never replaced, retried or reset by the loop; fix failures there by
   improving what the model sees or the executor, not by adding rules.
 - **No scenario hardcoding.** Never branch on a specific site, task, or benchmark

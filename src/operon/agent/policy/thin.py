@@ -37,8 +37,9 @@ logger = logging.getLogger(__name__)
 THIN = "thin"
 FULL = "full"
 
-# Gemini computer use (browser and desktop) runs full by default and thin on request,
-# so the benchmark can run the same model in both harnesses (KAN-67).
+# Gemini computer use (browser and desktop) runs thin by default (KAN-183) and full on
+# request (OPERON_HARNESS_PROFILE=full), so the benchmark can run the same model in both
+# harnesses (KAN-67).
 GEMINI_COMPUTER_USE = "computer_use"
 
 # The model backend (OPERON_*_BACKEND=model) runs the registry model named by
@@ -48,14 +49,14 @@ MODEL_BACKEND = "model"
 
 
 def harness_profile(backend: str) -> str:
-    """The harness profile for a backend. Gemini computer use runs full unless
-    ``OPERON_HARNESS_PROFILE=thin`` asks for the thin harness; the json backend always
+    """The harness profile for a backend. Gemini computer use runs thin unless
+    ``OPERON_HARNESS_PROFILE=full`` asks for the full harness; the json backend always
     runs full, since its decisions still need the rules and the critic."""
     requested = get_settings().harness_profile
     if backend == MODEL_BACKEND:
         return THIN
     if backend == GEMINI_COMPUTER_USE:
-        return THIN if requested == THIN else FULL
+        return FULL if requested == FULL else THIN
     if requested == THIN:
         logger.warning("OPERON_HARNESS_PROFILE=thin needs backend=computer_use (got %r); using full", backend)
     return FULL

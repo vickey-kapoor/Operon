@@ -39,7 +39,13 @@ def test_backend_model_always_runs_thin() -> None:
     assert harness_profile("model") == THIN
 
 
-def test_gemini_computer_use_still_runs_full_by_default() -> None:
+def test_gemini_computer_use_runs_thin_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("OPERON_HARNESS_PROFILE", raising=False)
+    assert harness_profile("computer_use") == THIN
+
+
+def test_gemini_computer_use_runs_full_when_asked(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
     assert harness_profile("computer_use") == FULL
 
 

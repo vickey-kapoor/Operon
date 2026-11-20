@@ -31,8 +31,13 @@ def test_a_cell_reads_like_a_bench_comment() -> None:
 
 def test_defaults_match_a_plain_bench_comment() -> None:
     cell = parse_line("desktop azure gemini", 1)
-    assert (cell.profile, cell.suite, cell.repeat, cell.critic, cell.ref, cell.cap) == ("full", "core", 1, "", "", 3.0)
+    assert (cell.profile, cell.suite, cell.repeat, cell.critic, cell.ref, cell.cap) == ("thin", "core", 1, "", "", 3.0)
     assert cell.extra == ""
+
+
+def test_same_critic_needs_an_explicit_full() -> None:
+    cell = parse_line("browser full same-critic", 1)
+    assert (cell.profile, cell.critic) == ("full", "same")
 
 
 def test_blank_and_comment_lines_are_skipped_and_semicolons_split_cells() -> None:
@@ -66,7 +71,8 @@ def test_ref_keeps_its_case() -> None:
         ("browser grounding", "grounding is not part of a batch"),
         ("desktop apps", "browser only"),
         ("hybrid safety", "Hybrid has no safety suite"),
-        ("browser thin same-critic", "drop thin"),
+        ("browser thin same-critic", "add full"),
+        ("browser same-critic", "add full"),  # thin is the default; same-critic needs an explicit full
         ("browser season=x", "season="),
         ("browser pr=12a", "pr="),
         ("browser ref=-rf", "ref="),

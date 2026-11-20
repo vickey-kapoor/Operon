@@ -56,3 +56,10 @@ def site(_site_server):
 @pytest.fixture
 def app(_site_server, site):
     return _site_server[1]
+
+
+@pytest.fixture
+def full_harness(monkeypatch):
+    """Run the test under the Full harness. Execution retry, the progress-stop guard and the
+    redundant-action block are Full-only; the thin default (Gemini computer use) skips them."""
+    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")

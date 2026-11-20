@@ -71,7 +71,7 @@ class BatchError(ValueError):
 @dataclass
 class Cell:
     category: str
-    profile: str = "full"
+    profile: str = "thin"
     suite: str = "core"
     repeat: int = 1
     critic: str = ""
@@ -200,7 +200,7 @@ def parse_line(line: str, number: int) -> Cell | None:
             raise BatchError(f"{where}: model= cells take no same-critic, tools, zoom, settle, note, planner or expect.")
         cell.profile = "thin"
     if cell.critic == "same" and cell.profile != "full":
-        raise BatchError(f"{where}: same-critic picks the full harness's step critic; drop thin.")
+        raise BatchError(f"{where}: same-critic picks the full harness's step critic; thin is the default, so add full.")
     return cell
 
 

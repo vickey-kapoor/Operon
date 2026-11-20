@@ -6,8 +6,8 @@ model on the same cell, thin with its own done, so the results sit next to Gemin
 provider; Claude and GPT cells are started by hand (a batch with `model=` cells) to keep the extra cost down.
 
 ```powershell
-# Benchmarks are grouped by category (Browser, Desktop, Hybrid) x harness (thin, full): a 3x2 grid per
-# model (KAN-72, evals/categories.py). Default suite is the category's core set (~10 state-graded tasks:
+# Benchmarks are grouped by category (Browser, Desktop, Hybrid), all thin (the Full harness was removed,
+# KAN-183): three cells per model (KAN-72, evals/categories.py). Default suite is the category's core set (~10 state-graded tasks:
 # short, long, safety); the report names its cell and breaks the score down in summary.by_tag.
 # Name runs by cell when asking Vickey: "Gemini · Browser · Thin · once, about $X". Saves to .var/bench/
 # Stops once a run has spent --max-cost-usd / $MAX_RUN_COST_USD (default 3; 0 = no cap)
@@ -55,8 +55,8 @@ provider; Claude and GPT cells are started by hand (a batch with `model=` cells)
 .venv\Scripts\python -m evals.live_hybrid_bench [--suite core|smoke|full] [--keep-screens]
 
 # Live benchmarks from a PR comment (owners/collaborators; runs on the PR head, never on push):
-#   /bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [same-critic] [tools] [zoom|zoom=always] [azure] [season=<n>]
-#   (category, then harness: one grid cell; core and thin are the defaults; hybrid runs on the desktop workflow)
+#   /bench [browser|desktop|hybrid] [core|smoke|all|safety|apps|hard|long] [x2|x3|x5] [tools] [zoom|zoom=always] [azure] [season=<n>]
+#   (category: one grid cell; core is the default; "thin" is a no-op word, "full" and "same-critic" are errors; hybrid runs on the desktop workflow)
 #   /bench grounding [zoom|zoom=always]   (zoom: OPERON_ZOOM=dense, KAN-82)
 #   /bench batch  (then one cell per line, e.g. "desktop thin season=2 pr=242 cap=1.5"): the day's approved
 #   queue in one run, one Azure VM start, caps summed up front (KAN-105, benchmark.yml, evals/bench_batch.py)

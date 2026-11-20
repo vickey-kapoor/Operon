@@ -89,7 +89,7 @@ Do not modify test selection settings merely to obtain a passing result.
 
 ### Policy and action execution
 
-- In the full harness (opt in with `OPERON_HARNESS_PROFILE=full`; Gemini computer use runs thin by default), apply deterministic checks through `PolicyRuleEngine` before invoking an LLM where applicable.
+- Do not add rules, guards or retries around the model's action: the thin harness is the only harness (KAN-183). Fix failures through what the model sees or the executor.
 - Preserve policy enforcement and authorization boundaries.
 - Do not bypass existing safety checks to improve task completion rates.
 - Keep action selection, execution, and outcome verification logically separated.

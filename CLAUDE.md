@@ -123,29 +123,27 @@ These are load-bearing — violating them silently breaks the agent.
   may read the accessibility tree or DOM, only inside their own perception backend.
   They must still emit `UIElement` coordinates, and no code outside that backend may
   depend on them.
-- **Rules before LLM (full harness).** The thin harness is the default for Gemini computer use
-  (`OPERON_HARNESS_PROFILE=full` opts into the full one); this rule applies to the full harness. Anything decidable deterministically belongs in
-  `PolicyRuleEngine` (`agent/policy/rules.py`). Post-LLM guards (e.g.
-  `_reject_premature_stop`) live on `PolicyCoordinator`. Gemini Computer Use reports no
-  element list or page type, so a rule must work without them or it never fires (KAN-161). The thin harness
-  (`agent/policy/thin.py`, the default for Gemini computer use; `OPERON_HARNESS_PROFILE=full` opts out) runs none of them: the model's
-  action is never replaced, retried or reset by the loop; fix failures there by
-  improving what the model sees or the executor, not by adding rules.
+- **One harness: the thin harness (KAN-183).** The Full harness (rules, guards, step critic,
+  retries) was removed. `agent/policy/thin.py` is the only policy: the model's action is never
+  replaced, retried or reset by the loop, and its own "done" ends the run. Fix failures by
+  improving what the model sees or the executor, not by adding rules or guards around the model.
+  The safety gates (trust gate, OCR trust gate, file guard, permission modes, confidence gate,
+  coordinate-thrash pause, max steps, secret-type gate, visual servo) are not part of the harness and stay.
 - **No scenario hardcoding.** Never branch on a specific site, task, or benchmark
-  in core policy. Site-specific behavior belongs in `agent/policy/site_adapters.py`.
+  in core policy.
 - **Atomic TYPE.** The executor merges focus+type into one call. Policy must never
   emit a CLICK immediately followed by a TYPE on the same element.
 - **Visual servo.** On the desktop executors (`DesktopExecutor` and `LinuxDesktopExecutor`;
   the browser executor has none; OSWorld runs its own fixed-threshold check), `_region_has_content()` runs before every click with an
   adaptively calibrated threshold. Never bypass it.
 - **Verification states.** SUCCESS / FAILURE / UNCERTAIN / PENDING /
-  PROGRESSING_STABLE / STABLE_WAIT. `STABLE_WAIT` triggers a 200ms re-verify.
-  `PROGRESSING_STABLE` is handled (the loop would advance immediately) but reserved: no
-  verifier currently emits it.
+  PROGRESSING_STABLE / STABLE_WAIT. The thin harness's `OwnDoneVerifier` emits SUCCESS, FAILURE
+  and UNCERTAIN; PENDING, PROGRESSING_STABLE and STABLE_WAIT are no longer emitted (the loop still
+  handles them) and the values are kept so old reports and recordings load.
 - **Lazy `ws_stream`.** Never import `ws_stream` at module load in `browser/manager.py`
   — use the `_ws_stream()` accessor to avoid a circular import.
 - **Experimental work ships behind an env flag defaulting to off.** Follow the
-  `OPERON_BESTOFN_*`, `OPERON_GROUNDER` pattern (the trust gate graduated to on by default); larger proposals
+  `OPERON_SETTLE_DETECT`, `OPERON_CHANGE_NOTE` pattern (the trust gate graduated to on by default); larger proposals
   get an RFC in `docs/rfcs/`.
 - **`.env.example` is a contract.** Every variable in it must actually be read by
   code in `src/`, and new settings must be added there (and to `Settings`).

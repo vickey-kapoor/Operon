@@ -17,9 +17,7 @@ settings it started with in `settings.json` in its run folder, with keys shown o
 ## Model keys
 
 `GEMINI_API_KEY` runs Gemini, Operon's default model: the browser and desktop backends
-(Gemini computer use), the browser fallback (full harness only), the step critic and the
-benchmark judge. The Gemini JSON backends also accept `GOOGLE_API_KEY`; Gemini Computer Use
-reads `GEMINI_API_KEY` only.
+(Gemini computer use) and the benchmark judge. `GOOGLE_API_KEY` is accepted as a fallback name.
 
 ### Other models, side by side with Gemini (KAN-168)
 
@@ -30,19 +28,15 @@ always thin and the model's own "done" ends it, the same as Gemini's thin runs, 
 Manual batches and `/bench batch` take the cell word `model=<profile>`; the workflows give a
 cell only its own provider's key. Startup refuses a missing key or profile.
 
-## Harness profiles
+## One harness
 
-`OPERON_HARNESS_PROFILE` sets how much scaffolding surrounds the model.
-
-- **full** (`OPERON_HARNESS_PROFILE=full`, and the only profile for `json` backends): deterministic rules
-  before the model, post-model guards, a per-step critic and a recovery ladder.
-- **thin** (the default for a `computer_use` backend, browser or desktop):
-  Gemini makes every decision. No rule engine or guard replaces its action, and its own
-  "done" ends the run, so the benchmark graders decide success. The trust gate, allowed file
-  roots, coordinate-thrash pause and step budget still apply.
-- **same-model critic** (`OPERON_CRITIC=same`, full harness only): the per-step critic calls
-  the acting model instead of the `OPERON_*_VERIFIER_MODEL`. Reports record the critic as
-  `critic` (`same:<model>` or `gemini:<model>`).
+There is one harness, thin (KAN-183 removed the Full harness, its `json` backends and the flags
+`OPERON_HARNESS_PROFILE`, `OPERON_CRITIC`, `OPERON_GROUNDER`, `OPERON_BESTOFN_N` and
+`OPERON_SITE_ADAPTERS`; setting any of them only logs a warning). Gemini makes every decision. No
+rule engine or guard replaces its action, and its own "done" ends the run, so the benchmark graders
+decide success. The trust gate, allowed file roots, coordinate-thrash pause and step budget still
+apply. `OPERON_BROWSER_BACKEND=json` and `OPERON_DESKTOP_BACKEND=json` fail startup with a message
+saying json was removed.
 
 ## All settings
 
@@ -55,9 +49,8 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 | `OPERON_ALLOW_UNAUTHENTICATED` | `false` | With `API_KEYS` unset, `true` turns authentication off. Only safe on a throwaway machine, since the API can drive a real browser/desktop. |
 | `OPERON_ALLOWED_HOSTS` | unset | Extra host names the API answers to. Loopback names are always allowed; any other `Host` gets 400, which blocks DNS rebinding. |
 | `CORS_ORIGINS` | empty | Comma-separated exact origins (`scheme://host:port`) allowed to call the API from a browser, e.g. `http://localhost:3000`. `http://127.0.0.1:3000` is a different origin and needs its own entry. Also gates `/ws/stream`, which otherwise accepts only clients that send no `Origin` and loopback pages served from the API's own host and port. `*` allows any origin over HTTP but not on `/ws/stream`. Empty = no cross-origin access. |
-| `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `json` (Gemini JSON) |
-| `OPERON_BROWSER_FALLBACK_BACKEND` | `json` | Browser fallback backend. Ignored under the thin harness |
-| `OPERON_DESKTOP_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `json` (the older Gemini JSON path) |
+| `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `model` (see above) |
+| `OPERON_DESKTOP_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `model` (see above) |
 | `OPERON_ENVIRONMENT` | `live` | Where desktop runs happen (KAN-80). `live` is this machine's own screen; `operon envs` lists every environment and whether it can run here, and `operon run --env NAME` picks one for a single local run. `windows-sandbox` runs desktop tasks in a throwaway Windows Sandbox, `linux-container` in a Linux desktop in Docker. See [environments.md](environments.md). |
 | `OPERON_SANDBOX_MEMORY_MB` / `OPERON_SANDBOX_START_TIMEOUT` | `4096` / `240` | Windows Sandbox memory, and seconds to wait for its guest agent to start |
 | `OPERON_CONTAINER_IMAGE` / `OPERON_CONTAINER_START_TIMEOUT` / `OPERON_CONTAINER_CA_BUNDLE` | built from `docker/linux-desktop` / `120` / unset | Linux container: a prebuilt image instead of building one, seconds to wait for it, and a CA bundle for pip during the build behind a TLS-inspecting proxy |
@@ -65,12 +58,8 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 | `OPERON_OSWORLD_POST_ACTION_WAIT_S` | `0` (off) | OSWorld run environment: seconds to wait after each input action or app launch (once per batch, also a part-failed one) before the next screenshot, so a closing dialog is gone from it (max `10`) |
 | `OPERON_GUEST_TOKEN` | unset | Inside a run environment only: the token `operon guest` requires (else `--token-file`) |
 | `OPERON_BROWSER_MODEL` / `OPERON_DESKTOP_MODEL` | `gemini-3.5-flash` | Primary model |
-| `OPERON_BROWSER_FALLBACK_MODEL` / `OPERON_DESKTOP_FALLBACK_MODEL` | `gemini-3.5-flash` | Fallback (JSON) model |
 | `OPERON_BROWSER_THINKING` / `OPERON_DESKTOP_THINKING` | `low` | Thinking level (Gemini 3 levels) |
-| `OPERON_BROWSER_VERIFIER_MODEL` / `OPERON_DESKTOP_VERIFIER_MODEL` | `gemini-3.5-flash` | Full-harness step critic model |
 | `OPERON_BROWSER_VERIFIER_THINKING` / `OPERON_DESKTOP_VERIFIER_THINKING` | `low` | Critic thinking level |
-| `OPERON_HARNESS_PROFILE` | (unset: thin) | A `computer_use` backend runs the thin harness (judged by its own "done") unless this is `full`. `json` backends always run `full`. |
-| `OPERON_CRITIC` | (unset) | `same`: the full harness's step critic runs on the acting model instead of the `OPERON_*_VERIFIER_MODEL` |
 | `BROWSER_HEADLESS` | `false` | `true` runs Chromium headless; the default shows the browser window. Set `true` on servers and CI. |
 | `BROWSER_WIDTH` | `1920` | Browser viewport width |
 | `BROWSER_HEIGHT` | `1080` | Browser viewport height |
@@ -82,8 +71,6 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 | `OPERON_TRACE` | unset | Set `1` for loop trace logging |
 | `OPERON_TEST_SAFE_MODE` | `false` | Skips display baseline and servo calibration in tests |
 | `OPERON_STRICT_ERRORS` | `false` | Re-raise bugs (`AttributeError`, `NameError`, `AssertionError`, `ImportError`) at the agent loop's recovery sites instead of carrying on; on in the offline test suite. Off, every recovery is logged with its traceback and counted in the run's `recovered_errors` (KAN-158) |
-| `OPERON_BESTOFN_N` | `1` | Experimental (RFC 0001 Move 3): sample N candidate actions at uncertain steps and execute the best-scored one. `1` disables (default). |
-| `OPERON_BESTOFN_CONFIDENCE` | `1.0` | Experimental: only sample when a step's policy confidence is below this ceiling (lower to restrict Best-of-N to uncertain steps). |
 | `OPERON_PARALLEL_RUNS` | `1` | Experimental (KAN-81): how many batch-mode browser runs may step at once. Above `1`, each batch run gets its own executor and isolated Chromium (and its own backend, so its conversation is its own); a start beyond the cap is refused with HTTP 429 and `Retry-After`. Observable (live view) browser runs and all desktop runs stay serialized: they share one CDP port (9222) or one real screen and mouse. `1` is today's behaviour. |
 | `OPERON_SETTLE_DETECT` | `off` | Experimental (KAN-110): after each action, watch small local frames until the screen stops changing instead of sleeping a fixed time. No model call. `on` enables. |
 | `OPERON_AUTO_CONFIRM` | `off` | Benchmark runs only (KAN-169): `operon run` answers the model's own "require confirmation" pause yes (at most 10 per run), since nobody can click Resume. Trust-gate approvals are never answered. `evals/osworld.py` sets it for its runs; report scores as run with it. |
@@ -96,13 +83,12 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 | `OPERON_TASK_NOTE_MAX_ITEMS` | `8` | How many recent actions the task note lists (1 to 50). |
 | `OPERON_CHECKPOINTS` | `off` | Experimental (KAN-80): resume runs after a restart. When the API starts, runs the last process left running, pending or waiting are marked interrupted (status `waiting_for_user`, stop reason `interrupted`). Nothing resumes by itself: `POST /run/{id}/resume-interrupted`, `operon runs --interrupted` and `operon resume <run_id>` continue one from the current screen, with the saved steps as a hint instead of the lost conversation. The step budget continues from the saved step count. See [api.md](api.md). |
 | `OPERON_PLANNER_MODEL` | `gemini-3.5-flash-lite` | The model that writes the plan. |
-| `OPERON_EXPECT_CHECK` | `off` | Experimental (KAN-116): the model is asked to write one line, `Expect: <none/focus/content/navigation/dialog> - <what it will see>`, before each action. After the action runs, that is compared with how much of the screen changed (for example, content or navigation expected but the screen did not change), and a mismatch is sent to the model as a "Note from Operon" with the next screenshot. Text only, no model call; it never changes a verification result, a retry or an action. The result is saved as `expect_check.json` in the step folder for each checked step; a step is not checked when its action failed or does not touch the screen (stop, wait, tool calls), a JS dialog was auto-accepted, the run was stopped, the step was retried, a rule (not the model) chose the action, or a screenshot is missing. The JSON (full harness) backend already returns `expected_change`, so it uses that field instead of the `Expect:` line and is not asked for one. |
-| `OPERON_GROUNDER` | `deterministic` | Experimental (RFC 0001 Move 2): grounder backend. `deterministic` (default, baseline) or `snap` (snap a near-miss raw coordinate onto the nearest interactable element). |
+| `OPERON_EXPECT_CHECK` | `off` | Experimental (KAN-116): the model is asked to write one line, `Expect: <none/focus/content/navigation/dialog> - <what it will see>`, before each action. After the action runs, that is compared with how much of the screen changed (for example, content or navigation expected but the screen did not change), and a mismatch is sent to the model as a "Note from Operon" with the next screenshot. Text only, no model call; it never changes a verification result, a retry or an action. The result is saved as `expect_check.json` in the step folder for each checked step; a step is not checked when its action failed or does not touch the screen (stop, wait, tool calls), a JS dialog was auto-accepted, the run was stopped, or a screenshot is missing. |
 | `OPERON_TOOLS` | `on` | On by default since 2026-11-14 ([RFC 0002](rfcs/0002-tool-action-channel.md), KAN-79): tools the Gemini computer-use model may call next to its screen actions, each answered with its output. `off` = no tools; `on` = `read_file`, `list_dir`, `write_file`, `http_get`; `all` adds `run_shell`; or a comma list of tool names. Relative paths and the shell's working folder are the home folder. File tools obey the file guard (`OPERON_ALLOWED_FILE_ROOTS`), `http_get` the domain allowlist, and with the trust gate on every `run_shell` needs approval. |
 | `OPERON_ZOOM` | `dense` | KAN-82: zoom before clicking, on by default for dense screens only (ScreenSpot-Pro grounding 50% to 68%; screens under `OPERON_ZOOM_MIN_SIDE` are untouched). The benchmark workflows pass `off` unless a run asks for zoom, so scores stay comparable. The model's proposed click is refined in one extra one-shot request that shows it only a crop around that point (with what it said it was clicking); its click on the crop is mapped back to the screen. `dense` (default) zooms only on screens whose longer side is at least `OPERON_ZOOM_MIN_SIDE` pixels (2000 by default, so a 1920x1080 screen is never zoomed), `always` on every click (for measuring), `off` never. A failed or empty zoom request keeps the original click. Gemini computer-use backends (browser and desktop). Measure with `python -m evals.grounding --zoom dense`. |
 | `OPERON_ZOOM_MIN_SIDE` | `2000` | With `OPERON_ZOOM=dense`: the screen's longer side, in pixels, from which a screen counts as dense. |
 | `OPERON_ZOOM_FACTOR` | `2.0` | The zoom crop is 1/factor of the screen on each side (clamped to 1.5 to 6). |
-| `OPERON_PROGRESS_REVISIT` | `off` | Experimental ([RFC 0003](rfcs/0003-repeated-action-progress.md)), full harness only: a repeated action counts as progress only if its after-screen differs (by at least 1%) from the screens the same action produced earlier in the run, so a model relaunching the same app is stopped by the existing loop guards instead of running to `max_steps`. A missing screenshot never counts as the same screen. |
+| `OPERON_PROGRESS_REVISIT` | `off` | Experimental ([RFC 0003](rfcs/0003-repeated-action-progress.md)): a repeated action counts as progress only if its after-screen differs (by at least 1%) from the screens the same action produced earlier in the run. The thin harness only records this in the progress trace (the loop is flagged, never stopped). A missing screenshot never counts as the same screen. |
 | `OPERON_TRUST_GATE` | `on` | Pre-execution deny/confirm policy gate (RFC 0001 Move 5). On by default with the built-in confirm list, an empty deny list and no domain allowlist, so the run pauses for approval before a high-risk action such as `place order`. `off` (also `false`, `0`, `no`) allows every action; the live benchmarks and their CI workflows set it to `off` so scores stay comparable with earlier runs, and a benchmark report records it as `trust_gate`. When it pauses a run, **Resume** (or Proceed) approves that exact action once: the next step runs it if the policy picks it again. Resuming with a correction hint does not approve it. |
 | `OPERON_TRUST_DENY` | unset | Comma-separated phrases that **block** an action (the run pauses for a human; the action never runs autonomously). Matched case-insensitively against the action text, URL, and target-element name. |
 | `OPERON_TRUST_CONFIRM` | built-in set | Comma-separated phrases that require **human approval** before running. Defaults to a conservative high-risk set (`delete account`, `permanently delete`, `deactivate`, `close account`, `confirm payment`, `place order`, `buy now`, `complete purchase`, `send money`, `transfer funds`, `uninstall`) when this is unset. |
@@ -115,7 +101,6 @@ cell only its own provider's key. Startup refuses a missing key or profile.
 | `OPERON_STREAM_TOKEN_TTL_S` | `600` | Lifetime of the short-lived `/ws/stream` tokens from `POST /app/api/stream-token` (10 to 86400 s). Checked at connect, so an open stream is not cut off. |
 | `OPERON_API_URL` | `http://127.0.0.1:8080` | Where `operon run --request` sends the task. |
 | `OPERON_ALLOWED_FILE_ROOTS` | unset | Extra directories that `read_text` / `upload_file` may touch. The file guard is always on: any path not named in the task or inside the run directory pauses the run for a human. |
-| `OPERON_SITE_ADAPTERS` | unset | Built-in site adapters to load (`wikipedia`, `github`, or `all`) |
 | `OPERON_RUNS_RETAIN_DAYS` | `14` | Days of run directories kept by the startup sweep; `-1` disables it |
 | `HITL_WEBHOOK_URL` | unset | POST endpoint called when a run pauses for a human |
 

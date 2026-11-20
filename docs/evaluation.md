@@ -29,9 +29,10 @@ The eval dashboard at https://operon-evals.vercel.app has every run.
 
 ## Categories and the grid
 
-Every live benchmark belongs to one of three **categories**, and each category runs under
-both **harnesses** (thin: the model alone; full: Operon's rules, checks and recovery), so each
-model has a 3 x 2 grid. The full-minus-thin gap per category is Operon's north-star number.
+Every live benchmark belongs to one of three **categories** (Browser, Desktop, Hybrid), and
+every run is thin: the model alone decides, and its own "done" ends the run. The Full harness
+(Operon's rules, checks and recovery) was removed in KAN-183, so the old 3 x 2 grid is now 3 cells
+per model; older reports that name a Full cell stay on the dashboard as history.
 Runs are named by their cell, e.g. "Gemini · Browser · Thin · once, about $0.50"; reports
 record it as `"cell"`.
 
@@ -115,12 +116,11 @@ the model sees them.
 ## Free browser end-to-end tests
 
 `tests/browser_e2e/` runs Operon's real pipeline on a real headless Chromium for $0: the real
-`AgentLoop` (capture, perceive, decide, gate, execute, verify, recover), the full-harness policy,
-rules, verifier and recovery manager, the real `BrowserComputerUseBackend` and the real
-`NativeBrowserExecutor` in batch mode. Only the models are scripts, at the HTTP-client boundary:
-`ScriptedClient` replaces the Gemini computer-use client (as in `tests/desktop_e2e`), and
-`PixelCritic` replaces the verifier's critic model (it compares the step's before and after
-screenshots, and judges a stop from the app's state, as the grader does).
+`AgentLoop` (capture, perceive, decide, gate, execute, verify, recover), the production thin
+policy, verifier and recovery layers, the real `BrowserComputerUseBackend` and the real
+`NativeBrowserExecutor` in batch mode. Only the model is a script, at the HTTP-client boundary:
+`ScriptedClient` replaces the Gemini computer-use client (as in `tests/desktop_e2e`). The thin
+harness has no second model, so a run ends on the script's own "done".
 
 A scripted model cannot see, so the pages come from `tests/browser_e2e/site.py`: a fixed
 1000x800 viewport and absolutely positioned elements, mounted on `evals/fixture_site.py` as an
@@ -153,15 +153,16 @@ Repository owners, members and collaborators can comment on a PR to benchmark it
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop|hybrid] [thin|full] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [same-critic] [tools] [azure] [season=<n>]
+/bench [browser|desktop|hybrid] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [tools] [azure] [season=<n>]
 /bench grounding
 ```
 
-The first word is the category and the second the harness: one cell of the grid. Defaults:
-browser, the full harness, the category's core set. Every run uses Gemini computer use
+The first word is the category: one cell of the grid. Defaults:
+browser, the category's core set. `thin` is still accepted and changes nothing; `full` and
+`same-critic` are errors ("the Full harness was removed (KAN-183)"). Every run uses Gemini computer use
 (`gemini-3.5-flash`). A thin run ends on Gemini's own "done", with no completion check. `season=<n>` runs
 the frozen season's tasks (`--season`), which is what the Leaderboard tab's grid counts.
-`same-critic` makes a full run's step critic the acting model. `tools` turns on Operon's tools next to
+`tools` turns on Operon's tools next to
 screen actions (`OPERON_TOOLS=all`, [RFC 0002](rfcs/0002-tool-action-channel.md)); file tools may use the
 Documents folder, and the report and dashboard mark the run as not comparable with tools-off runs. Examples:
 
@@ -169,7 +170,7 @@ Documents folder, and the report and dashboard mark the run as not comparable wi
 |---|---|
 | `/bench` | Gemini · Browser · Thin: the Browser core set (10 tasks) |
 | `/bench browser thin season=1` | Gemini · Browser · Thin on Season 1, one cell of the grid |
-| `/bench desktop full azure season=1` | Gemini · Desktop · Full on Season 1, on the Azure VM |
+| `/bench desktop azure season=1` | Gemini · Desktop · Thin on Season 1, on the Azure VM |
 | `/bench smoke` | Browser smoke (5 live web tasks) |
 | `/bench all` | Full browser benchmark (44 tasks) |
 | `/bench safety` | Safety suite (browser only) |
@@ -177,18 +178,15 @@ Documents folder, and the report and dashboard mark the run as not comparable wi
 | `/bench long` | Long multi-app suite (browser only) |
 | `/bench hard x3` | Hard subset, every task 3 times |
 | `/bench grounding` | Grounding eval, 300 samples on Gemini |
-| `/bench long thin` | Long suite in the thin harness |
-| `/bench desktop all azure thin` | Full desktop benchmark, thin harness |
+| `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
 | `/bench desktop` | Desktop core set on GitHub's hosted Windows runner |
 | `/bench desktop smoke` | Desktop smoke (3 tasks) |
-| `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
-| `/bench hybrid full azure season=1` | Gemini · Hybrid · Full on Season 1, on the Azure VM (run `scripts/edge-policies.ps1` on the VM once first; [azure-desktop-runner.md](azure-desktop-runner.md)) |
+| `/bench hybrid azure season=1` | Gemini · Hybrid · Thin on Season 1, on the Azure VM (run `scripts/edge-policies.ps1` on the VM once first; [azure-desktop-runner.md](azure-desktop-runner.md)) |
 | `/bench hybrid smoke` | Hybrid smoke (2 tasks) on GitHub's hosted Windows runner |
-| `/bench long full same-critic` | Long suite in the full harness, with Gemini as its own step critic |
 | `/bench desktop thin season=2 tools` | Desktop · Thin on Season 2 with tools on (the A/B arm for the tools-off run) |
 
 The **Run browser test tasks (engine)**, **Run desktop test tasks (engine)** and **Run click-accuracy test (engine)** workflows can also be started by hand,
-with inputs for harness profile, suite and cost cap (`max_cost_usd`).
+with inputs for suite and cost cap (`max_cost_usd`).
 
 ## Benchmark batch
 
@@ -238,7 +236,7 @@ That repo's text tasks and direct model-API providers did not come over.
 ### Run-over-run changes (KAN-60)
 
 After an Operon change, is a grid cell (model · category · harness, for example
-"Gemini · Desktop · Full") really better or worse than last time, or is it noise?
+"Gemini · Desktop · Thin") really better or worse than last time, or is it noise?
 `evals/leaderboard/changes.py` answers it on top of `stats.py`, with tasks as the samples:
 
 - **Score with a 95% range.** Every report's `summary.score_range` holds the pass rate and its
@@ -385,7 +383,7 @@ that the workflow starts before the run and deallocates after. Setup is in
 
 | Name | Kind | Used by |
 |---|---|---|
-| `GEMINI_API_KEY` | secret | Every model call: backends, step critic and the benchmark judge |
+| `GEMINI_API_KEY` | secret | Every model call: backends and the benchmark judge |
 | `DATABASE_URL` | secret | Save run results to dashboard import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
 | `SLACK_WEBHOOK_URL` | secret | Critical alerts; optional |

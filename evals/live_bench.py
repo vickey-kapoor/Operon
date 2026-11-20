@@ -940,6 +940,25 @@ def save_recordings(results: list[TaskResult], target: Path, *, mode: str) -> in
     return written
 
 
+def shown_results(results: list[TaskResult], season_run) -> list[TaskResult]:
+    """The results a report may show: a season's held-out tasks are left out."""
+    held = {t.name for _, t in season_run.held_out} if season_run else set()
+    return [r for r in results if r.task not in held]
+
+
+def save_task_videos(results: list[TaskResult], target: Path) -> int:
+    """One captioned MP4 per result (KAN-185, ``evals/run_video.py``), named like the recordings.
+    Pass only the ``shown`` results: a held-out task must never get a video."""
+    from evals.run_video import save_videos
+
+    items = [
+        (r.task if r.attempt == 1 else f"{r.task}-try{r.attempt}", _run_dir(r.run_id), r.task, r.outcome)
+        for r in results
+        if r.run_id and _run_dir(r.run_id).is_dir()
+    ]
+    return save_videos(items, target)
+
+
 DEFAULT_TIMEOUT_S = 420.0
 DEFAULT_PAUSES = 2
 LONG_PAUSES = 10
@@ -1210,11 +1229,13 @@ async def run_bench(args: argparse.Namespace, judge: Judge) -> int:
 
     report = save(complete=True)
     summary = report["summary"]
-    shown = [r for r in results if not (season_run and r.task in {t.name for _, t in season_run.held_out})]
+    shown = shown_results(results, season_run)
     if args.keep_screens:
         # Held-out tasks' screens and run folders stay out of the artifact.
         save_final_screens(shown, bench_dir / Path(name).stem)
         save_recordings(shown, bench_dir / Path(name).stem / "recordings", mode=args.mode)
+    if args.videos:
+        save_task_videos(shown, bench_dir / Path(name).stem / "videos")
 
     if args.json:
         print(json.dumps(report, indent=2))
@@ -1252,6 +1273,7 @@ def build_parser(default_suite: str = "core", default_mode: str = "browser") -> 
     parser.add_argument("--judge-model", default=os.getenv("OPERON_BENCH_JUDGE_MODEL", DEFAULT_MODEL))
     parser.add_argument("--out-dir", default=str(BENCH_DIR))
     parser.add_argument("--keep-screens", action="store_true", help="copy each graded screenshot next to the report")
+    parser.add_argument("--videos", action="store_true", help="write one MP4 per shown task under <report>/videos")
     parser.add_argument("--repeat", type=int, default=1, help="run every task this many times (measures flakiness)")
     parser.add_argument(
         "--max-cost-usd", type=float, default=_max_cost_default(),

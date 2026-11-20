@@ -164,7 +164,7 @@ jobs:
         # --keep-screens saves the screenshots the dashboard shows; pipefail keeps the cost-cap exit.
         run: |
           set -o pipefail
-          uv run python -m evals.live_bench --suite "$SUITE" --keep-screens $EXTRA_ARGS | tee bench.txt
+          uv run python -m evals.live_bench --suite "$SUITE" --keep-screens --videos $EXTRA_ARGS | tee bench.txt
 
       - name: Summary
         if: always()
@@ -187,5 +187,14 @@ jobs:
             bench.txt
             uvicorn.log
             .var/bench/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload the run videos
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: run-videos-${{ matrix.backend }}${{ inputs.artifact_suffix }}
+          path: .var/bench/**/videos/*.mp4
           if-no-files-found: ignore
           retention-days: 14

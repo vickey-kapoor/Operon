@@ -403,3 +403,43 @@ jobs:
       zoom: ${{ needs.parse.outputs.zoom }}
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  # Keeps the run videos for good: workflow artifacts expire after 14 days, a prerelease does not.
+  # It only downloads files and uploads them to a release; it never checks out or runs benchmarked code.
+  publish-videos:
+    name: Keep the run videos
+    needs: [batch-browser, batch-desktop, browser, desktop]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+      TAG: videos-bench-${{ github.run_id }}-${{ github.run_attempt }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      # gh itself downloads the artifacts (no third-party action); the files are data, never run.
+      - name: Publish a prerelease with the videos
+        run: |
+          set -eu
+          mkdir -p videos upload
+          gh run download "$RUN_ID" --pattern 'run-videos-*' --dir videos || echo "No run-videos artifacts."
+          n=0
+          while IFS= read -r -d '' file; do
+            rel="${file#videos/}"
+            safe="$(printf '%s' "$rel" | tr -c 'A-Za-z0-9._\n-' '-')"   # artifact folder first, so names stay unique
+            cp -- "$file" "upload/$safe"
+            n=$((n + 1))
+          done < <(find videos -type f -name '*.mp4' -print0)
+          if [ "$n" -eq 0 ]; then
+            echo "No run videos to keep."
+            exit 0
+          fi
+          gh release create "$TAG" --prerelease --latest=false \
+            --title "Run videos bench $RUN_ID (attempt $GITHUB_RUN_ATTEMPT)" \
+            --notes "Captioned MP4 per task. Workflow run: $RUN_URL" \
+            upload/*.mp4

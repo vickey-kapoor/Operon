@@ -145,6 +145,21 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
             "note": note, "log": log}
 
 
+def save_task_videos(results: list[dict[str, Any]], out: Path) -> int:
+    """One captioned MP4 per finished task (KAN-185): ``<out>/videos/<id prefix>-<pass|fail>.mp4``."""
+    from evals.run_video import save_videos
+
+    runs_root = out / "osworld-runs"
+    items = []
+    for r in results:
+        run_dir = runs_root / str(r.get("run_id") or "")
+        if not r.get("run_id") or not run_dir.is_dir():
+            continue
+        items.append((str(r["id"])[:8], run_dir, f"{r.get('domain', '')}: {r['id'][:8]}",
+                      "pass" if r.get("passed") else "fail"))
+    return save_videos(items, out / "videos")
+
+
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(results)
     passed = sum(1 for r in results if r["passed"])
@@ -178,6 +193,7 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
     parser.add_argument("--max-cost-usd", type=float, default=8.0, help="stop starting tasks past this spend")
     parser.add_argument("--operon-python", default=sys.executable,
                         help="Python that has Operon installed (3.14); default: this one")
+    parser.add_argument("--videos", action="store_true", help="write one MP4 per task under <out>/videos")
     parser.add_argument("--out", default=".var/bench")
     args = parser.parse_args(argv)
 
@@ -222,6 +238,11 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
                   f"${result['cost_usd']:.3f} {result['seconds']}s")
     finally:
         save()
+        if args.videos:
+            try:
+                save_task_videos(results, out)
+            except Exception as exc:  # noqa: BLE001 - e.g. OpenCV missing in this venv; scores matter more
+                print(f"videos skipped: {exc}", file=sys.stderr)
         close = getattr(env, "close", None)
         if close:
             close()

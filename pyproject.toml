@@ -116,7 +116,6 @@ warn_unused_configs = true
 
 [[tool.mypy.overrides]]
 module = [
-    "operon.agent.actions.retry_hardening",
     "operon.agent.actions.selector",
     "operon.agent.actions.translation",
     "operon.agent.artifacts.screen_recorder",
@@ -124,17 +123,12 @@ module = [
     "operon.agent.backends.browser_computer_use",
     "operon.agent.backends.model_adapter.actions",
     "operon.agent.backends.model_adapter.backend",
-    "operon.agent.backends.model_adapter.critic",
     "operon.agent.backends.model_adapter.formats.opencua",
     "operon.agent.backends.model_adapter.images",
     "operon.agent.backends.model_adapter.openai_native",
     "operon.agent.hitl",
     "operon.agent.loop",
     "operon.agent.perception.screen_diff",
-    "operon.agent.policy.coordinator",
-    "operon.agent.policy.rules",
-    "operon.agent.policy.site_adapters",
-    "operon.agent.policy.verifier",
     "operon.api.frontdoor",
     "operon.api.observer",
     "operon.api.runtime.loops",

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from operon.agent import tools as _tools
-from operon.agent.backends.fallback import BackendCompatibilityError
+from operon.agent.backends.base import BackendCompatibilityError
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
 
 

@@ -1,7 +1,7 @@
 """Operator control state the agent reads each step.
 
 A ``/ws/stream`` client sets these (``api/ws_stream.py`` writes them); the
-loop and rule engine only read them. Living in the agent layer keeps that
+loop only reads them. Living in the agent layer keeps that
 dependency pointing api -> agent, so agent code never imports the API.
 
 - confidence threshold: pause for approval when a decision's confidence is below
@@ -33,14 +33,6 @@ def set_confidence_threshold(value: float) -> float:
     return control.confidence_threshold
 
 
-def get_disabled_rules() -> frozenset[str]:
-    return current_runtime().control.disabled_rules
-
-
-def set_disabled_rules(names: list[str]) -> None:
-    current_runtime().control.disabled_rules = frozenset(names)
-
-
 def set_override_hint(run_id: str, hint: str | None) -> None:
     """Store ``hint`` for ``run_id``'s next step; an empty hint clears a pending one."""
     runtime = current_runtime()
@@ -63,6 +55,5 @@ def reset() -> None:
     """Restore defaults (tests)."""
     runtime = current_runtime()
     runtime.control.confidence_threshold = 0.0
-    runtime.control.disabled_rules = frozenset()
     for context in runtime.runs.values():
         context.override_hint = None

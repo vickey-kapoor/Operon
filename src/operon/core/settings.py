@@ -110,25 +110,12 @@ class Settings(BaseModel):
     desktop_backend: str = _env_field("OPERON_DESKTOP_BACKEND", "computer_use")
     desktop_model: str = _env_field("OPERON_DESKTOP_MODEL", "gemini-3.5-flash")
     desktop_thinking: str | None = _env_field("OPERON_DESKTOP_THINKING", "low")
-    desktop_fallback_model: str = _env_field("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-3.5-flash")
-    desktop_verifier_model: str = _env_field("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-3.5-flash")
-    desktop_verifier_thinking: str | None = _env_field("OPERON_DESKTOP_VERIFIER_THINKING", "low")
     browser_backend: str = _env_field("OPERON_BROWSER_BACKEND", "computer_use")
     browser_model: str = _env_field("OPERON_BROWSER_MODEL", "gemini-3.5-flash")
     browser_thinking: str | None = _env_field("OPERON_BROWSER_THINKING", "low")
-    browser_fallback_backend: str = _env_field("OPERON_BROWSER_FALLBACK_BACKEND", "json")
-    browser_fallback_model: str = _env_field("OPERON_BROWSER_FALLBACK_MODEL", "gemini-3.5-flash")
-    browser_verifier_model: str = _env_field("OPERON_BROWSER_VERIFIER_MODEL", "gemini-3.5-flash")
-    browser_verifier_thinking: str | None = _env_field("OPERON_BROWSER_VERIFIER_THINKING", "low")
 
     # --- Harness and policy ---------------------------------------------------------
-    harness_profile: str = _env_field("OPERON_HARNESS_PROFILE", "")
-    critic: str = _env_field("OPERON_CRITIC", "")
-    grounder: str = _env_field("OPERON_GROUNDER", "deterministic")
-    site_adapters: str = _env_field("OPERON_SITE_ADAPTERS", "")
     progress_revisit: bool = _env_field("OPERON_PROGRESS_REVISIT", False)
-    bestofn_n: int = _env_field("OPERON_BESTOFN_N", 1)
-    bestofn_confidence: float = _env_field("OPERON_BESTOFN_CONFIDENCE", 1.0)
     # Batch-mode browser runs that may step at the same time, each on its own browser (KAN-81).
     parallel_runs: int = _env_field("OPERON_PARALLEL_RUNS", 1)
     # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
@@ -231,6 +218,17 @@ class Settings(BaseModel):
         return out
 
 
+# Variables of the retired Full harness (KAN-183). Nothing reads them; a leftover value is
+# reported as a warning so an old .env does not silently look as if it still does something.
+_REMOVED_FULL_HARNESS_VARS: tuple[str, ...] = (
+    "OPERON_HARNESS_PROFILE",
+    "OPERON_CRITIC",
+    "OPERON_GROUNDER",
+    "OPERON_BESTOFN_N",
+    "OPERON_SITE_ADAPTERS",
+)
+
+
 def _split(raw: str, *, lower: bool = False) -> tuple[str, ...]:
     items = (item.strip() for item in raw.split(","))
     return tuple(item.lower() if lower else item for item in items if item)
@@ -286,6 +284,10 @@ class _Parser:
     def build(self) -> Settings:
         from operon.agent.actions import zoom as zoom_mod
 
+        for name in _REMOVED_FULL_HARNESS_VARS:
+            if self.env.get(name, "").strip():
+                self.warnings.append(f"{name} was removed with the Full harness (KAN-183), ignored")
+
         zoom_mode = (self.raw("OPERON_ZOOM") or zoom_mod.DENSE).strip().lower()
         if zoom_mode in _TRUE:
             zoom_mode = zoom_mod.DENSE
@@ -340,23 +342,10 @@ class _Parser:
             desktop_backend=self.stripped("OPERON_DESKTOP_BACKEND", "computer_use"),
             desktop_model=self.or_default("OPERON_DESKTOP_MODEL", "gemini-3.5-flash"),
             desktop_thinking=thinking("OPERON_DESKTOP_THINKING"),
-            desktop_fallback_model=self.or_default("OPERON_DESKTOP_FALLBACK_MODEL", "gemini-3.5-flash"),
-            desktop_verifier_model=self.or_default("OPERON_DESKTOP_VERIFIER_MODEL", "gemini-3.5-flash"),
-            desktop_verifier_thinking=thinking("OPERON_DESKTOP_VERIFIER_THINKING"),
             browser_backend=self.stripped("OPERON_BROWSER_BACKEND", "computer_use"),
             browser_model=self.or_default("OPERON_BROWSER_MODEL", "gemini-3.5-flash"),
             browser_thinking=thinking("OPERON_BROWSER_THINKING"),
-            browser_fallback_backend=self.text("OPERON_BROWSER_FALLBACK_BACKEND", "json"),
-            browser_fallback_model=self.or_default("OPERON_BROWSER_FALLBACK_MODEL", "gemini-3.5-flash"),
-            browser_verifier_model=self.or_default("OPERON_BROWSER_VERIFIER_MODEL", "gemini-3.5-flash"),
-            browser_verifier_thinking=thinking("OPERON_BROWSER_VERIFIER_THINKING"),
-            harness_profile=(self.raw("OPERON_HARNESS_PROFILE") or "").strip().lower(),
-            critic=(self.raw("OPERON_CRITIC") or "").strip().lower(),
-            grounder=self.text("OPERON_GROUNDER", "deterministic").strip().lower(),
-            site_adapters=self.text("OPERON_SITE_ADAPTERS").strip(),
             progress_revisit=self.flag("OPERON_PROGRESS_REVISIT", "off"),
-            bestofn_n=max(1, self.number("OPERON_BESTOFN_N", "1", int, fatal=False)),
-            bestofn_confidence=self.number("OPERON_BESTOFN_CONFIDENCE", "1.0", float, fatal=False),
             parallel_runs=max(1, self.number("OPERON_PARALLEL_RUNS", "1", int, fatal=False)),
             settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
             auto_confirm=self.flag("OPERON_AUTO_CONFIRM", "off"),

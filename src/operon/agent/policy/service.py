@@ -28,41 +28,12 @@ class PolicyService(ABC):
     ) -> PolicyDecision:
         """Choose the next action from current state and perception."""
 
-    def supports_resampling(self, run_id: str = "") -> bool:
-        """Whether a second ``choose_action`` for the same step yields a fresh
-        decision (Best-of-N sampling needs it)."""
-        return True
-
     def note_not_executed(self, run_id: str, reason: str) -> None:
         """The last decision was stopped by a gate before it ran. Wrappers pass it
         to their delegate; a backend holding open tool calls reports it to the model."""
         note = getattr(getattr(self, "delegate", None), "note_not_executed", None)
         if note is not None:
             note(run_id, reason)
-
-    def note_replaced(self, run_id: str, action: str) -> None:
-        """The full harness ran ``action`` instead of the delegate's last decision (a
-        rule fired, or a guard replaced it). Wrappers pass it on; a backend that holds
-        the model's own tool call tells the model on its next turn."""
-        note = getattr(getattr(self, "delegate", None), "note_replaced", None)
-        if note is not None:
-            note(run_id, action)
-
-    def note_rejected(self, run_id: str, reason: str) -> None:
-        """The full harness dropped the delegate's last decision without running
-        anything in its place, and is about to ask again. Wrappers pass it on; a
-        backend that holds the model's tool call tells the model it did not run."""
-        note = getattr(getattr(self, "delegate", None), "note_rejected", None)
-        if note is not None:
-            note(run_id, reason)
-
-    def note_attempt_failed(self, run_id: str, detail: str) -> None:
-        """The step's attempt failed before it was recorded and the harness is
-        asking again in the same step. Wrappers pass it on; a backend that answers
-        the model's tool calls reports the failure."""
-        note = getattr(getattr(self, "delegate", None), "note_attempt_failed", None)
-        if note is not None:
-            note(run_id, detail)
 
     def has_held_actions(self, run_id: str) -> bool:
         """Whether the delegate holds calls the model asked the user to confirm."""

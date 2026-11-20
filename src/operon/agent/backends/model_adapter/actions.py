@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from operon.agent.actions.translation import key_action
-from operon.agent.backends.fallback import BackendCompatibilityError
+from operon.agent.backends.base import BackendCompatibilityError
 from operon.agent.backends.model_adapter.registry import CoordSpace
 
 # Every neutral action name. ``done`` and ``fail`` end the run.

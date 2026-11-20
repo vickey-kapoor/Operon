@@ -9,6 +9,10 @@ from operon.models.policy import PolicyDecision
 from operon.models.state import AgentState
 
 
+class BackendCompatibilityError(RuntimeError):
+    """Raised when a backend cannot serve the current request contract."""
+
+
 class AgentBackend(ABC):
     @abstractmethod
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
@@ -43,19 +47,6 @@ class AgentBackend(ABC):
         backends that answer the model's calls with their outcome."""
         return None
 
-    def note_replaced(self, run_id: str, action: str) -> None:
-        """The harness ran ``action`` instead of the last decision. Optional hook."""
-        return None
-
-    def note_rejected(self, run_id: str, reason: str) -> None:
-        """The harness dropped the last decision unrun and is asking again. Optional hook."""
-        return None
-
-    def note_attempt_failed(self, run_id: str, detail: str) -> None:
-        """The step's attempt failed before it was recorded, and the harness is about
-        to ask again in the same step. Optional hook."""
-        return None
-
     # Per-run caches the backends keep, keyed by run_id.
     _PER_RUN_CACHES = ("_conversations", "_last_frames", "_advisory_hints", "_runs", "_hints", "_cached_decisions")
 
@@ -76,9 +67,3 @@ class AgentBackend(ABC):
         approval. Optional hook for backends that hold the paused calls to run them
         on resume: drop them, unrun."""
         return None
-
-    def supports_resampling(self, run_id: str = "") -> bool:
-        """Whether a second ``choose_action`` for the same step yields a fresh
-        decision. Best-of-N sampling needs it; backends that only replay a
-        decision cached by ``perceive`` return False."""
-        return True

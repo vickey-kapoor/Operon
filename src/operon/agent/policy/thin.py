@@ -1,7 +1,8 @@
-"""Thin harness profile (``OPERON_HARNESS_PROFILE=thin``) for model-driven backends.
+"""The harness: policy, verifier and recovery layers for every backend.
 
 The model decides every action and the executor runs exactly that. Nothing here
-replaces, retries or resets an action behind the model's back:
+replaces, retries or resets an action behind the model's back (KAN-183 retired the
+rule-based "full" harness; this is the only harness):
 
 - ``ThinPolicy`` passes the backend's decision through, with no rule engine or
   post-model guards in front of it.
@@ -11,14 +12,11 @@ replaces, retries or resets an action behind the model's back:
   budget and the model's own "done" are the only stops.
 
 Safety gates (trust gate, file roots, coordinate-thrash pause, max steps) stay in
-the loop and apply to every profile.
+the loop.
 """
 
 from __future__ import annotations
 
-import logging
-
-from operon.core.settings import get_settings
 from operon.models.common import StopReason
 from operon.models.execution import ExecutedAction
 from operon.models.logs import ModelDebugArtifacts
@@ -32,34 +30,13 @@ from .recovery import RecoveryManager
 from .service import PolicyService
 from .verifier import VerifierService
 
-logger = logging.getLogger(__name__)
-
 THIN = "thin"
-FULL = "full"
 
-# Gemini computer use (browser and desktop) runs thin by default (KAN-183) and full on
-# request (OPERON_HARNESS_PROFILE=full), so the benchmark can run the same model in both
-# harnesses (KAN-67).
+# The backends the loop runs: Gemini computer use, and the model backend
+# (OPERON_*_BACKEND=model), which runs the registry model named by OPERON_MODEL_PROFILE
+# (Claude, GPT; src/operon/agent/backends/model_adapter/models.yaml).
 GEMINI_COMPUTER_USE = "computer_use"
-
-# The model backend (OPERON_*_BACKEND=model) runs the registry model named by
-# OPERON_MODEL_PROFILE (Claude, GPT; src/operon/agent/backends/model_adapter/models.yaml). It always runs thin, so every
-# model in a side-by-side night is judged the same way: its own "done", graders decide.
 MODEL_BACKEND = "model"
-
-
-def harness_profile(backend: str) -> str:
-    """The harness profile for a backend. Gemini computer use runs thin unless
-    ``OPERON_HARNESS_PROFILE=full`` asks for the full harness; the json backend always
-    runs full, since its decisions still need the rules and the critic."""
-    requested = get_settings().harness_profile
-    if backend == MODEL_BACKEND:
-        return THIN
-    if backend == GEMINI_COMPUTER_USE:
-        return FULL if requested == FULL else THIN
-    if requested == THIN:
-        logger.warning("OPERON_HARNESS_PROFILE=thin needs backend=computer_use (got %r); using full", backend)
-    return FULL
 
 
 class ThinPolicy(PolicyService):
@@ -70,9 +47,6 @@ class ThinPolicy(PolicyService):
 
     async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
         return await self.delegate.choose_action(state, perception)
-
-    def supports_resampling(self, run_id: str = "") -> bool:
-        return False
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         getter = getattr(self.delegate, "latest_debug_artifacts", None)
@@ -99,8 +73,6 @@ class OwnDoneVerifier(VerifierService):
         state: AgentState,
         decision: PolicyDecision,
         executed_action: ExecutedAction,
-        *,
-        allow_stable_wait: bool = True,
     ) -> VerificationResult:
         if decision.action.action_type is ActionType.STOP:
             if (decision.rationale or "").startswith(self.gave_up_prefix):

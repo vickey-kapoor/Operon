@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
-import mimetypes
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -79,39 +76,6 @@ class AnthropicHttpClient:
                 "messages": [{"role": "user", "content": prompt}],
             },
             request_kind="text",
-        )
-
-    async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
-        image_path = Path(screenshot_path)
-        image_bytes = image_path.read_bytes()
-        mime_type, _ = mimetypes.guess_type(str(image_path))
-        if mime_type is None:
-            mime_type = "image/png"
-        media_type = "image/png" if mime_type == "image/png" else "image/jpeg"
-        return await self._post_message(
-            payload={
-                "model": self.model,
-                "max_tokens": 4096,
-                # See generate_policy: no temperature, thinking off where allowed.
-                **thinking_off_fields(self.model),
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type,
-                                    "data": base64.b64encode(image_bytes).decode("utf-8"),
-                                },
-                            },
-                        ],
-                    }
-                ],
-            },
-            request_kind="image",
         )
 
     async def generate_judgement(

@@ -10,24 +10,10 @@ from typing import Any
 from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
-from operon.agent.policy.coordinator import PolicyCoordinator
-from operon.agent.policy.recovery import RuleBasedRecoveryManager
-from operon.agent.policy.rules import PolicyRuleEngine
-from operon.agent.policy.thin import (
-    THIN,
-    OwnDoneVerifier,
-    ThinPolicy,
-    ThinRecovery,
-    harness_profile,
-)
-from operon.agent.policy.verifier import DeterministicVerifierService
+from operon.agent.policy.thin import OwnDoneVerifier, ThinPolicy, ThinRecovery
 from operon.agent.tools import enabled_tools
 from operon.api import ws_stream as _ws_stream
-from operon.api.runtime.services import (
-    build_browser_services,
-    build_critic_client,
-    build_desktop_services,
-)
+from operon.api.runtime.services import build_browser_services, build_desktop_services
 from operon.api.runtime_config import browser_mode_config, desktop_mode_config
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.core.runtime import current_runtime
@@ -106,25 +92,12 @@ def _with_tools(executor, config):
     return ToolExecutor(executor, tools)
 
 
-def _loop_layers(*, config, services, memory_store, desktop: bool = False) -> dict:
-    """Policy, verifier and recovery for the configured harness profile."""
-    profile = harness_profile(config.backend)
-    if profile == THIN:
-        return {
-            "policy_service": ThinPolicy(services.policy_delegate),
-            "verifier_service": OwnDoneVerifier(gave_up_prefix=GAVE_UP_PREFIX),
-            "recovery_manager": ThinRecovery(),
-            "harness_profile": profile,
-        }
+def _loop_layers(*, services) -> dict:
+    """Policy, verifier and recovery: the model's action is never replaced, retried or reset."""
     return {
-        "policy_service": PolicyCoordinator(
-            delegate=services.policy_delegate,
-            memory_store=memory_store,
-            rule_engine=PolicyRuleEngine(launch_apps=desktop),
-        ),
-        "verifier_service": DeterministicVerifierService(gemini_client=build_critic_client(config=config)),
-        "recovery_manager": RuleBasedRecoveryManager(),
-        "harness_profile": profile,
+        "policy_service": ThinPolicy(services.policy_delegate),
+        "verifier_service": OwnDoneVerifier(gave_up_prefix=GAVE_UP_PREFIX),
+        "recovery_manager": ThinRecovery(),
     }
 
 
@@ -143,7 +116,7 @@ def _new_browser_loop(*, run_store=None, memory_store=None, loop_cls=AgentLoop):
         executor=_with_tools(executor, browser_config),
         memory_store=memory_store,
         environment=UnifiedEnvironment.BROWSER,
-        **_loop_layers(config=browser_config, services=services, memory_store=memory_store, desktop=False),
+        **_loop_layers(services=services),
     )
     return loop, executor
 
@@ -278,7 +251,7 @@ def get_desktop_agent_loop() -> AgentLoop:
             executor=_with_tools(executor, desktop_config) if provider.runs_on_host else executor,
             memory_store=memory_store,
             environment=UnifiedEnvironment.DESKTOP,
-            **_loop_layers(config=desktop_config, services=services, memory_store=memory_store, desktop=True),
+            **_loop_layers(services=services),
         )
         # The API streams the desktop when its executor can (the Linux cloud computer).
         _ws_stream.set_desktop_executor(executor)

@@ -52,20 +52,14 @@ class StepContext:
     decision: PolicyDecision = field(init=False)
     policy_debug: ModelDebugArtifacts = field(init=False)
 
-    # Execute / verify, including in-step adaptation retries.
+    # Execute / verify.
     executed_action: ExecutedAction | None = None
-    earlier_attempts: list[ExecutedAction] = field(default_factory=list)
-    adaptation_trace: list[str] = field(default_factory=list)
-    deferred_pause: PolicyDecision | None = None
-    retries_used: int = 0
-    attempt_index: int = 1
     verification: VerificationResult = field(init=False)
     verification_debug: ModelDebugArtifacts = field(init=False)
     screen_change_ratio: float | None = None
-    # A JS dialog was auto-accepted this step, or the run was stopped during a retry: the
-    # screen change says nothing about the model's expectation then (KAN-116).
+    # A JS dialog was auto-accepted this step: the screen change says nothing about the
+    # model's expectation then (KAN-116).
     dialog_captured: bool = False
-    attempt_cancelled: bool = False
 
     # Recover and finish.
     recovery: RecoveryDecision = field(init=False)
@@ -84,7 +78,7 @@ class StepContext:
 
     @property
     def last_attempt(self) -> ExecutedAction:
-        """The attempt the step ends with; set once the first attempt ran."""
+        """The action the step ran; set once it ran."""
         if self.executed_action is None:
             raise AttributeError("no attempt has run in this step yet")
         return self.executed_action

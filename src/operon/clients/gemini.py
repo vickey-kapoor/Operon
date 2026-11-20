@@ -137,12 +137,6 @@ class GeminiHttpClient(GeminiClient):
         payload = self._build_text_payload(prompt=prompt)
         return await self._post_json_payload(self._with_thinking(payload), request_kind="text")
 
-    async def generate_verification(self, prompt: str, screenshot_path: str) -> str:
-        """Send the critic prompt with the post-action screenshot it judges."""
-        image_bytes, _ = await asyncio.to_thread(_optimize_screenshot, Path(screenshot_path))
-        payload = self._build_perception_payload(prompt=prompt, image_bytes=image_bytes, mime_type="image/jpeg")
-        return await self._post_json_payload(self._with_thinking(payload), request_kind="image")
-
     def _with_thinking(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.thinking:
             return payload

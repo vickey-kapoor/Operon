@@ -94,8 +94,6 @@ def set_agent_loop(loop: Any) -> None:
 
 set_confidence_threshold = _control.set_confidence_threshold
 get_confidence_threshold = _control.get_confidence_threshold
-get_disabled_rules = _control.get_disabled_rules
-set_disabled_rules = _control.set_disabled_rules
 consume_override_hint = _control.consume_override_hint
 
 
@@ -201,11 +199,6 @@ async def _handle_control(msg: dict) -> None:
                 publish_event({"type": "control_ack", "action": "resume", "error": str(exc)})
         else:
             publish_event({"type": "control_ack", "action": "resume"})
-
-    elif msg_type == "set_disabled_rules":
-        rules = [str(r) for r in msg.get("rules", []) if isinstance(r, str)]
-        set_disabled_rules(rules)
-        publish_event({"type": "control_ack", "action": "set_disabled_rules", "rules": rules})
 
     elif msg_type == "override":
         # Store the correction hint and resume the paused run in one shot.

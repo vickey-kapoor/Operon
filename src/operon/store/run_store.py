@@ -194,6 +194,19 @@ class FileBackedRunStore(RunStore):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def record_harness_profile(self, run_id: str, profile: str) -> None:
+        """Add the harness profile the run resolved to ("thin" or "full") to its
+        settings.json, apart from the raw env snapshot: an unset OPERON_HARNESS_PROFILE
+        means full in runs saved before the thin default and thin after, so replay
+        (evals/replay.py) needs the resolved value."""
+        path = self._ensure_run_dir(run_id) / "settings.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        data["harness_profile_resolved"] = profile
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     def _write_settings(self, run_id: str) -> None:
         """Record the settings this run started with (KAN-157), secrets left out."""
         path = self._ensure_run_dir(run_id) / "settings.json"

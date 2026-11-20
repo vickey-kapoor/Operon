@@ -302,6 +302,9 @@ class AgentLoop:
             max_steps=request.max_steps,
         )
         self._created_runs.add(record.run_id)
+        record_profile = getattr(self.run_store, "record_harness_profile", None)
+        if record_profile is not None:
+            record_profile(record.run_id, "thin" if self.thin_harness else "full")
         if request.permission_mode is not None:
             # Kept on the run so every step (and its report) uses the mode it started with.
             record.permission_mode = request.permission_mode

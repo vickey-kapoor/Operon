@@ -50,11 +50,11 @@ point and data on where time goes is welcome.
 - **Vision-only is the constraint, not an implementation detail.** Proposals that
   reach for the DOM, accessibility tree, or app-specific APIs to make targeting
   easier defeat the point. Improving *perception* is the intended path.
-- **Deterministic rules run before the model (full harness).** If something can be handled by
-  `agent/policy/rules.py` without an LLM call, it should be. The thin harness
-  has no rules by design: fix failures there through what the model sees or the executor.
+- **One harness, no rules around the model.** The Full harness was removed (KAN-183). The thin
+  harness never replaces, retries or resets the model's action: fix failures through what the
+  model sees or the executor.
 - **Experimental work goes behind an env flag, defaulting to off.** See the
-  `OPERON_BESTOFN_*` and `OPERON_GROUNDER` flags for the
+  `OPERON_SETTLE_DETECT` and `OPERON_CHANGE_NOTE` flags for the
   pattern, and `docs/rfcs/` for the shape of a larger proposal.
 - **`.env.example` is a contract.** Every variable in it must be read by code in
   `src/`. Don't document configuration that isn't wired up.

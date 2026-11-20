@@ -360,12 +360,11 @@ def test_services_declare_the_tools_and_the_loop_wraps_the_executor(monkeypatch)
     assert loops._with_tools(inner, Config()) is inner
 
 
-async def test_the_full_harness_passes_a_tool_call_through(tmp_path: Path) -> None:
-    from operon.agent.policy.coordinator import PolicyCoordinator
+async def test_the_thin_policy_passes_a_tool_call_through(tmp_path: Path) -> None:
     from operon.agent.policy.service import PolicyService
+    from operon.agent.policy.thin import ThinPolicy
     from operon.models.perception import ScreenPerception
     from operon.models.policy import PolicyDecision
-    from operon.store.memory import FileBackedMemoryStore
 
     decision = PolicyDecision(
         action=_tool("read_file", path="a.txt"), rationale="read it", confidence=0.8, active_subgoal="read"
@@ -375,10 +374,9 @@ async def test_the_full_harness_passes_a_tool_call_through(tmp_path: Path) -> No
         async def choose_action(self, state, perception):
             return decision
 
-    coordinator = PolicyCoordinator(delegate=Delegate(), memory_store=FileBackedMemoryStore(root_dir=tmp_path / "runs"))
     state = AgentState(run_id="r", intent="Total the orders in a.txt", status=RunStatus.RUNNING, step_count=1)
     perception = ScreenPerception(
         summary="A desktop.", page_hint="unknown", visible_elements=[], confidence=0.5, capture_artifact_path="s.png"
     )
-    chosen = await coordinator.choose_action(state, perception)
+    chosen = await ThinPolicy(Delegate()).choose_action(state, perception)
     assert chosen.action.action_type is ActionType.TOOL and chosen.action.tool_args == {"path": "a.txt"}

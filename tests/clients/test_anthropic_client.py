@@ -32,13 +32,10 @@ def test_other_models_keep_disabled_thinking(model: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_critic_request_for_sonnet_5_5_never_sends_disabled_thinking(tmp_path) -> None:
-    shot = tmp_path / "shot.png"
-    shot.write_bytes(b"\x89PNG\r\n\x1a\n")
+async def test_the_policy_request_for_sonnet_5_5_never_sends_disabled_thinking() -> None:
     client = AnthropicHttpClient(api_key="test", model="claude-sonnet-5-5")
     client._post_json = AsyncMock(return_value={"content": [{"type": "text", "text": "{}"}]})
 
-    await client.generate_verification("Did the step work?", str(shot))
     await client.generate_policy("Plan the next step.")
 
     for call in client._post_json.await_args_list:

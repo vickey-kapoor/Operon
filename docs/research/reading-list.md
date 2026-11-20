@@ -25,7 +25,7 @@ Grounding = turning "click the Save button" into the right pixel. Operon already
 | [OS-Atlas](https://arxiv.org/abs/2410.23218) (Oct 2024) | Open cross-platform grounding model plus the largest open grounding dataset at the time. | Data source if we ever host our own grounder (`OPERON_GROUNDER`). |
 | [GUI-Actor](https://arxiv.org/abs/2506.03143) (Jun 2025) | Grounding without generating coordinates as text: an attention head points at screen patches and can propose several regions. | Model-level idea; relevant only if we host a grounder. |
 | [OSWorld-G / Jedi](https://arxiv.org/abs/2505.13227) (May 2025) | Benchmark of 564 harder grounding cases (layout, fine manipulation) and a 4M-example dataset. | Candidate extra set for `evals.grounding` beyond short labels. |
-| [GTA1](https://arxiv.org/abs/2507.05791) (Jul 2025) | Samples several candidate actions per step and lets a judge model pick; also RL-trained grounding. | Same idea as our `best_of_n.py` (flag off today). |
+| [GTA1](https://arxiv.org/abs/2507.05791) (Jul 2025) | Samples several candidate actions per step and lets a judge model pick; also RL-trained grounding. | Same idea as the best-of-N code we removed with the Full harness (KAN-183). |
 
 ## 2. Computer-use agent designs
 

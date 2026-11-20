@@ -4,12 +4,9 @@ Single source of truth mapping a spoken application alias (as a user might
 phrase it — "google chrome", "vs code") to the command used to launch it.
 
 This module deliberately imports nothing from the policy or executor layers so
-both can depend on it without a circular import:
-
-* the policy rule (:mod:`operon.agent.policy.rules`) uses the *keys* to
-  recognise "open/launch <app>" intents, and
-* the desktop executor (:mod:`operon.executor.desktop`) uses ``.get()`` to
-  resolve the alias to an executable at launch time.
+both can depend on it without a circular import: the desktop executor
+(:mod:`operon.executor.desktop`) uses ``.get()`` to resolve the alias to an
+executable at launch time.
 
 Previously each layer kept its own copy, which drifted: the policy map knew
 about Office apps the executor could not launch, and the two disagreed on

@@ -57,8 +57,6 @@ class ControlSettings:
 
     # Pause for approval when a decision's confidence is below this (0.0 = off).
     confidence_threshold: float = 0.0
-    # Rule-engine primitives the operator switched off.
-    disabled_rules: frozenset[str] = frozenset()
 
 
 @dataclass

@@ -17,7 +17,8 @@ from operon.agent.backends.model_adapter.backend import (
 )
 from operon.agent.backends.model_adapter.openai_native import OpenAIComputerUseBackend
 from operon.agent.backends.model_adapter.registry import ModelRegistryError
-from operon.agent.policy.thin import FULL, THIN, OwnDoneVerifier, harness_profile
+from operon.agent.policy.thin import OwnDoneVerifier, ThinPolicy, ThinRecovery
+from operon.api.runtime.loops import _loop_layers
 from operon.api.runtime.services import build_browser_services, build_desktop_services
 from operon.api.runtime_config import validate_modes
 from operon.models.common import RunStatus, StopReason
@@ -29,24 +30,30 @@ from operon.models.verification import VerificationStatus
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("OPERON_HARNESS_PROFILE", "OPERON_MODEL_PROFILE", "OPENWEIGHT_BASE_URL"):
+    for name in ("OPERON_MODEL_PROFILE", "OPENWEIGHT_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key")
     monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
 
 
-def test_backend_model_always_runs_thin() -> None:
-    assert harness_profile("model") == THIN
+@pytest.mark.parametrize("backend", ["model", "computer_use"])
+def test_every_backend_runs_the_thin_layers(monkeypatch, backend) -> None:
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", backend)
+    if backend == "model":
+        monkeypatch.setenv("OPERON_MODEL_PROFILE", "claude-sonnet-5-5")
+    layers = _loop_layers(services=build_browser_services(executor=None))
+    assert isinstance(layers["policy_service"], ThinPolicy)
+    assert isinstance(layers["verifier_service"], OwnDoneVerifier)
+    assert isinstance(layers["recovery_manager"], ThinRecovery)
+    assert set(layers) == {"policy_service", "verifier_service", "recovery_manager"}
 
 
-def test_gemini_computer_use_runs_thin_by_default(monkeypatch) -> None:
-    monkeypatch.delenv("OPERON_HARNESS_PROFILE", raising=False)
-    assert harness_profile("computer_use") == THIN
-
-
-def test_gemini_computer_use_runs_full_when_asked(monkeypatch) -> None:
-    monkeypatch.setenv("OPERON_HARNESS_PROFILE", "full")
-    assert harness_profile("computer_use") == FULL
+def test_the_json_backend_was_removed(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_BROWSER_BACKEND", "json")
+    monkeypatch.setenv("OPERON_DESKTOP_BACKEND", "json")
+    errors = validate_modes()
+    assert any("OPERON_BROWSER_BACKEND" in e and "KAN-183" in e for e in errors)
+    assert any("OPERON_DESKTOP_BACKEND" in e and "KAN-183" in e for e in errors)
 
 
 def test_claude_profile_builds_the_browser_backend(monkeypatch) -> None:

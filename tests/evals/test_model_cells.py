@@ -45,9 +45,9 @@ def test_the_same_cell_for_each_model_is_not_a_repeat() -> None:
         ("browser model=gpt-9", "model= needs one of"),
         ("browser model=qwen3-vl-32b", "model= needs one of"),
         ("hybrid model=claude-sonnet-5-5", "Hybrid"),
-        ("browser full model=claude-sonnet-5-5", "drop full"),
-        ("browser model=claude-sonnet-5-5 zoom", "no same-critic"),
-        ("browser model=claude-sonnet-5-5 planner", "no same-critic"),
+        ("browser full model=claude-sonnet-5-5", "Full harness was removed"),
+        ("browser model=claude-sonnet-5-5 zoom", "take no tools"),
+        ("browser model=claude-sonnet-5-5 planner", "take no tools"),
     ],
 )
 def test_a_model_cell_that_cannot_run_is_refused(line, why) -> None:
@@ -75,7 +75,6 @@ def test_model_flag_checks_the_profile_and_the_server_settings(monkeypatch) -> N
 def test_a_registry_model_is_labelled_thin_own_like_gemini_thin(monkeypatch) -> None:
     profile = live_bench.resolve_model_profile("claude-sonnet-5-5", "browser")
     assert live_bench.harness_label("browser", profile) == "thin-own"
-    assert live_bench.critic_label("browser", profile) is None
     monkeypatch.setenv("OPERON_HARNESS_PROFILE", "thin")
     assert live_bench.harness_label("browser") == "thin-own"  # Gemini thin: the same label, so they compare
 

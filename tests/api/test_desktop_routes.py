@@ -254,42 +254,36 @@ def test_browser_cleanup_without_support(client: TestClient) -> None:
 # ── desktop agent loop configuration tests ──────────────────────
 
 
-def test_desktop_agent_loop_uses_120s_timeout_and_combined_service() -> None:
-    """get_desktop_agent_loop should use CombinedPerceptionPolicyService with 120s timeout."""
+def test_desktop_agent_loop_is_built_with_the_thin_layers() -> None:
+    """get_desktop_agent_loop wires the Gemini computer use backend into the thin policy,
+    verifier and recovery."""
     import operon.api.runtime.loops as routes_module
+    from operon.agent.policy.thin import OwnDoneVerifier, ThinPolicy, ThinRecovery
     from operon.api.runtime_config import RuntimeModeConfig
 
     # Reset the singleton so it gets rebuilt
     original = current_runtime().desktop_loop
     current_runtime().desktop_loop = None
 
-    gemini_config = RuntimeModeConfig(
-        backend="json",
-        primary_model="gemini-3-flash-preview",
-        verifier_model="gemini-3-flash-preview",
-    )
+    config = RuntimeModeConfig(backend="computer_use", primary_model="gemini-3-flash-preview")
 
     try:
         with (
-            patch("operon.api.runtime.loops.desktop_mode_config", return_value=gemini_config),
-            patch("operon.api.runtime.services.desktop_mode_config", return_value=gemini_config),
+            patch("operon.api.runtime.loops.desktop_mode_config", return_value=config),
+            patch("operon.api.runtime.services.desktop_mode_config", return_value=config),
             patch("operon.api.runtime.loops.desktop_provider"),
             patch("operon.api.runtime.loops.FileBackedRunStore"),
             patch("operon.api.runtime.loops.FileBackedMemoryStore"),
-            patch("operon.api.runtime.services.GeminiHttpClient") as mock_gemini,
             patch("operon.api.runtime.loops.ScreenCaptureService"),
-            patch("operon.api.runtime.services.CombinedPerceptionPolicyService"),
-            patch("operon.api.runtime.loops.PolicyCoordinator"),
-            patch("operon.api.runtime.loops.DeterministicVerifierService"),
-            patch("operon.api.runtime.loops.RuleBasedRecoveryManager"),
-            patch("operon.api.runtime.loops.AgentLoop"),
+            patch("operon.api.runtime.loops.AgentLoop") as mock_loop,
         ):
             routes_module.get_desktop_agent_loop()
 
-            # Gemini path: combined backend + verifier = 2
-            assert mock_gemini.call_count == 2
-            calls = mock_gemini.call_args_list
-            assert all(c.kwargs.get("timeout_seconds") == 120.0 for c in calls)
+            kwargs = mock_loop.call_args.kwargs
+            assert isinstance(kwargs["policy_service"], ThinPolicy)
+            assert isinstance(kwargs["verifier_service"], OwnDoneVerifier)
+            assert isinstance(kwargs["recovery_manager"], ThinRecovery)
+            assert "harness_profile" not in kwargs
     finally:
         current_runtime().desktop_loop = original
 

@@ -39,9 +39,7 @@ def test_override_hints_live_on_the_run_context(fresh_runtime) -> None:
 
 def test_control_settings_are_per_runtime(fresh_runtime) -> None:
     control.set_confidence_threshold(0.7)
-    control.set_disabled_rules(["a"])
     assert fresh_runtime.control.confidence_threshold == 0.7
-    assert fresh_runtime.control.disabled_rules == frozenset({"a"})
     other = OperonRuntime()
     assert other.control.confidence_threshold == 0.0
 

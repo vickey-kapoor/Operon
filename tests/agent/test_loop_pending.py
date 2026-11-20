@@ -1,17 +1,15 @@
-"""PENDING verification back-off, timeout downgrade and SESSION_RESET recovery (loop.py)."""
+"""SESSION_RESET recovery (loop.py)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from unittest.mock import patch as _patch
 
 import pytest
 
-from operon.agent.perception import PerceptionLowQualityError
 from operon.models.capture import CaptureFrame
-from operon.models.common import FailureCategory, RunStatus
+from operon.models.common import RunStatus
 from operon.models.perception import ScreenPerception
 from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.state import AgentState
@@ -49,114 +47,6 @@ def _pending_loop(tmp_path: Path, statuses, *, perceive=None):
         "before_artifact_path": str(tmp_path / "run-1" / "step_1" / "before.png"),
     }
     return loop, state, kwargs
-
-
-@pytest.mark.asyncio
-async def test_pending_resolves_to_success_after_n_polls(tmp_path: Path) -> None:
-    pending, success = VerificationStatus.PENDING, VerificationStatus.SUCCESS
-    loop, state, kwargs = _pending_loop(tmp_path, [pending, pending, success])
-
-    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock) as sleep:
-        result = await loop._wait_for_page_load(**kwargs)
-
-    assert result.status is success
-    assert result.patience_retries == 3
-    assert [c.args[0] for c in sleep.await_args_list] == [2.0, 4.0, 8.0]
-    assert loop.verifier_service.verify.await_count == 3
-    assert len(state.observation_history) == 3
-
-
-@pytest.mark.asyncio
-async def test_pending_stops_polling_as_soon_as_it_resolves(tmp_path: Path) -> None:
-    loop, _state, kwargs = _pending_loop(tmp_path, [VerificationStatus.SUCCESS])
-
-    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock) as sleep:
-        result = await loop._wait_for_page_load(**kwargs)
-
-    assert result.patience_retries == 1
-    assert [c.args[0] for c in sleep.await_args_list] == [2.0]
-
-
-@pytest.mark.asyncio
-async def test_pending_until_budget_exhausted_downgrades_to_uncertain(tmp_path: Path) -> None:
-    pending = VerificationStatus.PENDING
-    loop, _state, kwargs = _pending_loop(tmp_path, [pending, pending, pending])
-
-    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock) as sleep:
-        result = await loop._wait_for_page_load(**kwargs)
-
-    assert result.status is VerificationStatus.UNCERTAIN
-    assert result.expected_outcome_met is False
-    assert result.stop_condition_met is False
-    assert result.failure_category is FailureCategory.UNCERTAIN_SCREEN_STATE
-    assert result.patience_retries == 3
-    assert [c.args[0] for c in sleep.await_args_list] == [2.0, 4.0, 8.0]
-    assert loop.verifier_service.verify.await_count == 3
-
-
-@pytest.mark.asyncio
-async def test_pending_blank_perception_keeps_waiting_without_verifying(tmp_path: Path) -> None:
-    perceive = AsyncMock(side_effect=PerceptionLowQualityError("blank"))
-    loop, state, kwargs = _pending_loop(tmp_path, [], perceive=perceive)
-
-    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock) as sleep:
-        result = await loop._wait_for_page_load(**kwargs)
-
-    assert result.status is VerificationStatus.UNCERTAIN
-    assert result.patience_retries == 3
-    assert sleep.await_count == 3
-    loop.verifier_service.verify.assert_not_awaited()
-    assert state.observation_history == []
-
-
-@pytest.mark.asyncio
-async def test_pending_reverify_forbids_stable_wait(tmp_path: Path) -> None:
-    """Each poll asks the verifier not to answer STABLE_WAIT, which would escape the loop."""
-    modes: list[bool] = []
-
-    async def verify(_state, _decision, _executed, allow_stable_wait: bool = True):
-        modes.append(allow_stable_wait)
-        # A verifier that honors the flag: it would say STABLE_WAIT if allowed.
-        status = VerificationStatus.STABLE_WAIT if allow_stable_wait else VerificationStatus.SUCCESS
-        return _result(status)
-
-    loop, _state, kwargs = _pending_loop(tmp_path, [])
-    loop.verifier_service = SimpleNamespace(verify=verify)
-
-    with _patch("operon.agent.loop.asyncio.sleep", new_callable=AsyncMock):
-        result = await loop._wait_for_page_load(**kwargs)
-
-    assert modes == [False]
-    assert result.status is VerificationStatus.SUCCESS
-
-
-@pytest.mark.asyncio
-async def test_verify_attempt_routes_pending_through_page_load_wait(tmp_path: Path) -> None:
-    loop, state, kwargs = _pending_loop(tmp_path, [])
-    resolved = _result(VerificationStatus.SUCCESS)
-    loop.verifier_service = SimpleNamespace(verify=AsyncMock(return_value=_result(VerificationStatus.PENDING)))
-    loop._wait_for_page_load = AsyncMock(return_value=resolved)
-    loop._wait_for_ui_stable = AsyncMock()
-    loop._resolve_model_debug_artifacts = Mock(return_value=None)
-    ctx = SimpleNamespace(
-        last_attempt=kwargs["executed_action"],
-        state=state,
-        decision=kwargs["decision"],
-        record=state,
-        before_artifact_path=kwargs["before_artifact_path"],
-        run_id="run-1",
-        step_index=1,
-        record_stage=lambda *_a: 0.0,
-    )
-
-    await loop._verify_attempt(ctx)
-
-    assert ctx.verification is resolved
-    loop._wait_for_page_load.assert_awaited_once()
-    loop._wait_for_ui_stable.assert_not_awaited()
-
-
-# -- SESSION_RESET (4th consecutive failure on a subgoal) ---------------------------
 
 
 def _session_state() -> AgentState:

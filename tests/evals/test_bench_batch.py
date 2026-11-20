@@ -31,13 +31,20 @@ def test_a_cell_reads_like_a_bench_comment() -> None:
 
 def test_defaults_match_a_plain_bench_comment() -> None:
     cell = parse_line("desktop azure gemini", 1)
-    assert (cell.profile, cell.suite, cell.repeat, cell.critic, cell.ref, cell.cap) == ("thin", "core", 1, "", "", 3.0)
+    assert (cell.profile, cell.suite, cell.repeat, cell.ref, cell.cap) == ("thin", "core", 1, "", 3.0)
     assert cell.extra == ""
 
 
-def test_same_critic_needs_an_explicit_full() -> None:
-    cell = parse_line("browser full same-critic", 1)
-    assert (cell.profile, cell.critic) == ("full", "same")
+@pytest.mark.parametrize("name", ["live-bench.yml", "live-desktop-bench.yml"])
+def test_live_workflows_pin_older_revisions_to_the_thin_harness(name) -> None:
+    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / name).read_text(encoding="utf-8")
+    assert "      OPERON_HARNESS_PROFILE: thin\n" in text
+
+
+@pytest.mark.parametrize("word", ["full", "same-critic"])
+def test_the_removed_full_harness_words_are_errors(word) -> None:
+    with pytest.raises(BatchError, match=r"Full harness was removed \(KAN-183\)"):
+        parse_line(f"browser {word}", 1)
 
 
 def test_blank_and_comment_lines_are_skipped_and_semicolons_split_cells() -> None:
@@ -60,7 +67,7 @@ def test_tools_word_turns_every_tool_on_and_is_its_own_cell() -> None:
 
 
 def test_ref_keeps_its_case() -> None:
-    assert parse_line("hybrid full ref=claude/Feature-X", 1).ref == "claude/Feature-X"
+    assert parse_line("hybrid thin ref=claude/Feature-X", 1).ref == "claude/Feature-X"
 
 
 @pytest.mark.parametrize(
@@ -71,8 +78,8 @@ def test_ref_keeps_its_case() -> None:
         ("browser grounding", "grounding is not part of a batch"),
         ("desktop apps", "browser only"),
         ("hybrid safety", "Hybrid has no safety suite"),
-        ("browser thin same-critic", "add full"),
-        ("browser same-critic", "add full"),  # thin is the default; same-critic needs an explicit full
+        ("browser thin same-critic", "Full harness was removed"),
+        ("browser full", "Full harness was removed"),
         ("browser season=x", "season="),
         ("browser pr=12a", "pr="),
         ("browser ref=-rf", "ref="),
@@ -102,11 +109,11 @@ def test_the_caps_must_fit_in_the_batch_cap() -> None:
     assert bench_batch.total_cap(parse_batch(cells, 10)) == 9
     with pytest.raises(BatchError, match=r"\$9.00, above the batch cap of \$8.00"):
         parse_batch(cells, 8)
-    assert len(parse_batch(cells + "\nbrowser full cap=50", 0)) == 4  # 0: no batch cap
+    assert len(parse_batch(cells + "\nbrowser thin x2 cap=50", 0)) == 4  # 0: no batch cap
 
 
 def test_pr_cells_are_pinned_to_their_head_once_per_pr() -> None:
-    cells = parse_batch("browser thin pr=242\ndesktop thin pr=242\nhybrid thin pr=7\nbrowser full ref=main", 0)
+    cells = parse_batch("browser thin pr=242\ndesktop thin pr=242\nhybrid thin pr=7\nbrowser thin ref=main", 0)
     calls = []
     resolve_refs(cells, lambda pr: calls.append(pr) or f"sha{pr}")
     assert calls == ["242", "7"]
@@ -114,12 +121,12 @@ def test_pr_cells_are_pinned_to_their_head_once_per_pr() -> None:
 
 
 def test_matrices_split_browser_from_the_vm_and_give_unique_artifact_names() -> None:
-    out = matrices(parse_batch("desktop thin season=2 cap=1.5\nbrowser thin x2\nhybrid full"))
+    out = matrices(parse_batch("desktop thin season=2 cap=1.5\nbrowser thin x2\nhybrid thin"))
     assert out["has_browser"] and out["has_desktop"] and out["total_cap"] == "7.5"
     (browser,) = out["browser"]["include"]
     assert browser == {
         "label": "Gemini · Browser · Thin · x2", "category": "browser", "profile": "thin", "suite": "core",
-        "critic": "", "tools": "off", "zoom": "off", "features": "", "model": "", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
+        "tools": "off", "zoom": "off", "features": "", "model": "", "extra": "--repeat 2", "ref": "", "cap": "1.5", "suffix": "-cell2",
     }
     desktop = out["desktop"]["include"]
     assert [(d["category"], d["cap"], d["suffix"]) for d in desktop] == [("desktop", "1.5", "-cell1"), ("hybrid", "3", "-cell3")]

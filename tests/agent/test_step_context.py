@@ -38,4 +38,3 @@ def test_stage_fields_are_unset_until_their_stage_runs():
         _ = ctx.last_attempt
     assert ctx.executed_action is None
     assert ctx.final_status is RunStatus.RUNNING
-    assert ctx.earlier_attempts == [] and ctx.adaptation_trace == []

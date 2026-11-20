@@ -11,13 +11,14 @@ cost cap::
 
     browser thin season=2 pr=242
     desktop thin season=2 pr=242 cap=1.5
-    hybrid full ref=main
+    hybrid ref=main
 
-Words: ``browser|desktop|hybrid``, ``thin|full``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
-``x2|x3|x5``, ``same-critic``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``, ``settle|note|planner|expect`` (KAN-115/116: perception experiments, browser only)
+Words: ``browser|desktop|hybrid``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
+``x2|x3|x5``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``, ``settle|note|planner|expect`` (KAN-115/116: perception experiments, browser only)
 (KAN-82: OPERON_ZOOM dense or always), ``model=<profile>`` (KAN-168: run Claude or GPT on the same cell, thin with the model's own done; the profile is a key of ``src/operon/agent/backends/model_adapter/models.yaml``, browser and desktop only), ``season=<n>``, ``pr=<number>`` (that PR's head) or
 ``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
-cell's cost cap, default 3, repeats included). ``azure`` and ``gemini`` are accepted and change nothing: batch
+cell's cost cap, default 3, repeats included). ``azure``, ``gemini`` and ``thin`` are accepted and change nothing
+(``full`` and ``same-critic`` are errors: the Full harness was removed, KAN-183): batch
 Desktop and Hybrid cells always run on the Azure VM. Blank lines and ``#`` comments are
 skipped. The batch is refused when its cells' caps add up to more than the batch cap,
 so the most it can spend is known before anything starts.
@@ -74,7 +75,6 @@ class Cell:
     profile: str = "thin"
     suite: str = "core"
     repeat: int = 1
-    critic: str = ""
     tools: str = "off"
     zoom: str = "off"
     model: str = ""  # KAN-168: a registry profile (MODEL_CELLS); empty is Gemini computer use
@@ -110,8 +110,6 @@ class Cell:
             label += f" · Season {self.season}"
         if self.repeat != 1:
             label += f" · x{self.repeat}"
-        if self.critic == "same":
-            label += " · same critic"
         if self.tools != "off":
             label += " · tools"
         if self.zoom != "off":
@@ -142,14 +140,14 @@ def parse_line(line: str, number: int) -> Cell | None:
             category = word
         elif word == "grounding":
             raise BatchError(f"{where}: grounding is not part of a batch; run /bench grounding on its own.")
-        elif word in ("thin", "full"):
-            cell.profile = word
+        elif word == "thin":
+            pass  # the only harness (KAN-183); accepted so earlier batches still parse
+        elif word in ("full", "same-critic"):
+            raise BatchError(f"{where}: the Full harness was removed (KAN-183); {word!r} no longer exists. Runs are thin.")
         elif word in SUITES:
             cell.suite = SUITES[word]
         elif word in ("x2", "x3", "x5"):
             cell.repeat = int(word[1:])
-        elif word == "same-critic":
-            cell.critic = "same"
         elif word == "tools":
             cell.tools = "all"
         elif word in ("zoom", "zoom=dense", "zoom=always"):
@@ -194,13 +192,8 @@ def parse_line(line: str, number: int) -> Cell | None:
     if cell.model:
         if category == "hybrid":
             raise BatchError(f"{where}: model= runs in the browser and on the desktop; Hybrid is Gemini only for now.")
-        if cell.profile == "full" and "full" in text.split():
-            raise BatchError(f"{where}: a model= cell runs thin with the model's own done; drop full.")
-        if cell.critic or cell.features or cell.zoom != "off" or cell.tools != "off":
-            raise BatchError(f"{where}: model= cells take no same-critic, tools, zoom, settle, note, planner or expect.")
-        cell.profile = "thin"
-    if cell.critic == "same" and cell.profile != "full":
-        raise BatchError(f"{where}: same-critic picks the full harness's step critic; thin is the default, so add full.")
+        if cell.features or cell.zoom != "off" or cell.tools != "off":
+            raise BatchError(f"{where}: model= cells take no tools, zoom, settle, note, planner or expect.")
     return cell
 
 
@@ -215,7 +208,7 @@ def parse_batch(text: str, max_total_usd: float = DEFAULT_MAX_TOTAL_USD) -> list
         raise BatchError(f"The batch has {len(cells)} cells; the most is {MAX_CELLS}.")
     seen: set[tuple] = set()
     for cell in cells:
-        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.critic, cell.tools, cell.zoom, cell.features, cell.season, cell.pr, cell.ref, cell.model)
+        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.tools, cell.zoom, cell.features, cell.season, cell.pr, cell.ref, cell.model)
         if key in seen:
             raise BatchError(f"{cell.label} is in the batch twice.")
         seen.add(key)
@@ -265,7 +258,6 @@ def matrices(cells: list[Cell]) -> dict:
             "category": cell.category,
             "profile": cell.profile,
             "suite": cell.suite,
-            "critic": cell.critic,
             "tools": cell.tools,
             "zoom": cell.zoom,
             "features": ",".join(cell.features),

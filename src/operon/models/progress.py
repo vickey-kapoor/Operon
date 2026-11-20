@@ -21,7 +21,7 @@ class ProgressState(StrictModel):
     no_progress_streak: int = Field(default=0, ge=0)
     loop_detected: bool = False
     # Screen change ratio from the most recently completed step (0.0–1.0).
-    # Used by _block_redundant_action to detect a Stalled State when < 0.01 (1%).
+    # Used to detect a Stalled State when < 0.01 (1%).
     last_screen_change_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
     latest_page_signature: str | None = Field(default=None, min_length=1)
     previous_page_signature: str | None = Field(default=None, min_length=1)

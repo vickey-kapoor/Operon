@@ -203,7 +203,7 @@ def test_claude_scrolls_in_wheel_notches_on_the_desktop_and_pixels_in_the_browse
 
 def test_a_middle_click_is_refused_and_not_offered() -> None:
     from operon.agent.actions.translation import translate_claude_computer_calls
-    from operon.agent.backends.fallback import BackendCompatibilityError
+    from operon.agent.backends.base import BackendCompatibilityError
     from operon.clients.anthropic_computer_use import COMPUTER_TOOLSET
 
     assert COMPUTER_TOOLSET["configs"]["middle_click"] == {"enabled": False}

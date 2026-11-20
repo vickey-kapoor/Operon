@@ -50,3 +50,24 @@ async def test_computer_use_click_costs_one_model_turn_per_step() -> None:
 
     assert result.outcome == "success", result.summary()
     assert result.model_calls == result.steps, result.summary()
+
+
+def _flagged_steps(root) -> int:
+    import json
+
+    traces = [json.loads(p.read_text(encoding="utf-8")) for p in root.glob("runs/*/step_*/progress_trace.json")]
+    return sum(1 for t in traces if t.get("final_failure_category"))
+
+
+async def test_the_thin_harness_flags_a_runaway_loop_but_never_stops_it(tmp_path) -> None:
+    """The model's action is never replaced or reset: the runaway runs to the step budget.
+    With OPERON_PROGRESS_REVISIT the progress trace still records the loop."""
+    from evals.scenarios import cu_relaunch_runaway, cu_relaunch_runaway_revisit
+
+    plain = await run_scenario(cu_relaunch_runaway(), root=tmp_path / "plain")
+    revisit = await run_scenario(cu_relaunch_runaway_revisit(), root=tmp_path / "revisit")
+
+    assert plain.outcome == revisit.outcome == "incomplete"
+    assert plain.steps == revisit.steps == 12
+    assert _flagged_steps(tmp_path / "plain") == 0
+    assert _flagged_steps(tmp_path / "revisit") > 0

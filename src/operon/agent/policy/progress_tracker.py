@@ -10,13 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from operon.agent.actions.subgoal_utils import wrap_subgoal
 from operon.core.settings import get_settings
 from operon.models.common import FailureCategory, LoopStage, StopReason
-from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
 from operon.models.progress import ProgressTrace
-from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 
 # Window size for recent_actions / recent_failures — small enough to detect
 # alternating period-2/3 loops but not so large that one bad page early in a
@@ -94,16 +91,6 @@ def stop_reason_for_failure(category: FailureCategory | None) -> StopReason | No
 
 def append_window(entries: list[str], value: str) -> list[str]:
     return [*entries, value][-RECENT_WINDOW_SIZE:]
-
-
-def redundant_action_failure(*, action, category: FailureCategory, detail: str) -> ExecutedAction:
-    return ExecutedAction(
-        action=action,
-        success=False,
-        detail=detail,
-        failure_category=category,
-        failure_stage=LoopStage.EXECUTE,
-    )
 
 
 def alternating_action_loop(recent_actions: list[str]) -> bool:
@@ -226,11 +213,6 @@ class ProgressTracker:
     MAX_NO_PROGRESS_STEPS = 3
     MAX_REPEAT_SAME_FAILURE = 2
 
-    # Below this screen-change ratio AND with consecutive no-progress, treat the
-    # current step as Stalled and force a subgoal reset. 1% is tighter than the
-    # 0.2% progress threshold — catches "screen essentially static after action".
-    STALL_SCREEN_CHANGE_THRESHOLD = 0.01
-
     # RFC 0003: a repeated action whose after-screen is within this ratio of an
     # after-screen it produced before reached a screen it already reached. Calibrated
     # on saved runs: legitimate repeats (scroll, switching back to an app) differ by 3%+.
@@ -250,102 +232,6 @@ class ProgressTracker:
         progress_state.repeated_target_count.clear()
         progress_state.recent_failures = []
         progress_state.loop_detected = False
-
-    def block_redundant_action(self, state, action, step_index: int, logger):
-        progress_state = state.progress_state
-        page_sig = progress_state.latest_page_signature or "unknown_page"
-        action_sig = action_signature(action)
-        target_sig = target_signature(action)
-        subgoal_sig = subgoal_signature(state.current_subgoal)
-
-        # Stalled State check: if the previous action produced < 1% screen change
-        # AND two or more consecutive no-progress steps have occurred, force a
-        # subgoal reset. Requiring streak >= 2 avoids false positives on the first
-        # quiet step where last_screen_change_ratio is at its default 0.0.
-        if (
-            progress_state.last_screen_change_ratio < self.STALL_SCREEN_CHANGE_THRESHOLD
-            and progress_state.no_progress_streak >= 2
-            and action.action_type in {
-                ActionType.CLICK, ActionType.DOUBLE_CLICK,
-                ActionType.TYPE, ActionType.PRESS_KEY, ActionType.HOTKEY,
-            }
-        ):
-            stale_subgoal = state.current_subgoal or "current step"
-            logger.warning(
-                "Stalled State: screen change ratio %.4f < %.2f threshold after %d no-progress steps. "
-                "Forcing subgoal reset from %r.",
-                progress_state.last_screen_change_ratio,
-                self.STALL_SCREEN_CHANGE_THRESHOLD,
-                progress_state.no_progress_streak,
-                stale_subgoal,
-            )
-            state.current_subgoal = wrap_subgoal(
-                "Stalled — choose a completely different approach for: ",
-                stale_subgoal,
-            )
-            return redundant_action_failure(
-                action=action,
-                category=FailureCategory.NO_MEANINGFUL_PROGRESS_ACROSS_STEPS,
-                detail=(
-                    f"Stalled State detected: screen change ratio {progress_state.last_screen_change_ratio:.4f} "
-                    f"< 1% threshold after {progress_state.no_progress_streak} no-progress step(s). "
-                    "Subgoal reset forced — the agent must choose a different strategy."
-                ),
-            )
-
-        if (
-            target_sig is not None
-            and action.action_type in {ActionType.TYPE, ActionType.SELECT}
-            and action.text is not None
-            and progress_state.target_value_history.get(target_sig) == action.text
-            and progress_state.target_completion_page_signatures.get(target_sig) == page_sig
-        ):
-            return redundant_action_failure(
-                action=action,
-                category=FailureCategory.SUBGOAL_ALREADY_COMPLETED,
-                detail="Action blocked: target already has the verified value on the current page.",
-            )
-
-        if (
-            subgoal_sig in progress_state.completed_subgoals
-            and progress_state.subgoal_completion_page_signatures.get(subgoal_sig) == page_sig
-            and action.action_type is not ActionType.CLICK
-        ):
-            return redundant_action_failure(
-                action=action,
-                category=FailureCategory.SUBGOAL_ALREADY_COMPLETED,
-                detail="Action blocked: subgoal is already completed on the current page.",
-            )
-
-        repeated_action_count = progress_state.repeated_action_count.get(action_sig, 0)
-        repeatable_actions = {
-            ActionType.CLICK, ActionType.DOUBLE_CLICK, ActionType.RIGHT_CLICK,
-            ActionType.PRESS_KEY, ActionType.HOTKEY, ActionType.TYPE,
-            ActionType.HOVER, ActionType.SCROLL, ActionType.LAUNCH_APP,
-        }
-        if (
-            action.action_type in repeatable_actions
-            and repeated_action_count >= self.MAX_REPEAT_SAME_ACTION_WITHOUT_PROGRESS
-            and progress_state.no_progress_streak > 0
-        ):
-            return redundant_action_failure(
-                action=action,
-                category=FailureCategory.REPEATED_ACTION_WITHOUT_PROGRESS,
-                detail=f"Action blocked: repeated {action.action_type.value} without meaningful progress.",
-            )
-
-        if (
-            target_sig is not None
-            and progress_state.repeated_target_count.get(target_sig, 0) >= self.MAX_REPEAT_SAME_TARGET_WITHOUT_PROGRESS
-            and progress_state.no_progress_streak > 0
-        ):
-            return redundant_action_failure(
-                action=action,
-                category=FailureCategory.REPEATED_TARGET_WITHOUT_PROGRESS,
-                detail="Action blocked: repeated targeting without meaningful progress.",
-            )
-
-        return None
 
     def update_progress_state(
         self,
@@ -438,8 +324,8 @@ class ProgressTracker:
             )
             progress_state.loop_detected = loop_failure_category is not None
 
-        # Persist the raw screen change ratio so block_redundant_action can
-        # detect a Stalled State on the *next* step without recomputing it.
+        # Persist the raw screen change ratio on the progress state
+        # so later steps and the progress trace can read it.
         if screen_change_ratio is not None:
             progress_state.last_screen_change_ratio = screen_change_ratio
 
@@ -544,17 +430,3 @@ class ProgressTracker:
             if subgoal_sig not in progress_state.completed_subgoals:
                 progress_state.completed_subgoals.append(subgoal_sig)
             progress_state.subgoal_completion_page_signatures[subgoal_sig] = page_sig
-
-    def apply_progress_stop_guard(self, recovery: RecoveryDecision, progress_trace: ProgressTrace) -> RecoveryDecision:
-        if progress_trace.final_failure_category is None:
-            return recovery
-        stop_reason = progress_trace.final_stop_reason or stop_reason_for_failure(progress_trace.final_failure_category)
-        return RecoveryDecision(
-            strategy=RecoveryStrategy.STOP,
-            message=f"Loop suppressed: {progress_trace.final_failure_category.value}.",
-            failure_category=progress_trace.final_failure_category,
-            failure_stage=LoopStage.ORCHESTRATE,
-            terminal=True,
-            recoverable=False,
-            stop_reason=stop_reason,
-        )

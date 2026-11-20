@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
-
 import pytest
 
 from operon.agent import control
 from operon.models.common import RunStatus, StepRequest
 from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction
-from operon.models.recovery import RecoveryDecision, RecoveryStrategy
-from operon.models.verification import VerificationResult, VerificationStatus
-from tests.agent.test_trust_gate_resume import PURCHASE, _loop
+from tests.agent.test_trust_gate_resume import _loop
 
 SAFE = AgentAction(action_type=ActionType.TYPE, text="hello", target_element_id="box")
 
@@ -62,44 +58,6 @@ async def test_a_correction_reaches_the_backend_before_it_decides(monkeypatch: p
 
     assert order[0].startswith("hint:") and "use the second field" in order[0]
     assert "perceive" in order[1:]
-
-
-async def test_a_retry_decision_passes_the_gates(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, execute, state = _loop(monkeypatch, [SAFE, PURCHASE])
-    loop.verifier_service.verify = AsyncMock(
-        return_value=VerificationResult(
-            status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="no"
-        )
-    )
-    loop.recovery_manager.recover = AsyncMock(
-        return_value=RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="go on")
-    )
-
-    response = await loop.step_run(StepRequest(run_id="run-1"))
-
-    # The gated retry never ran and the run pauses for a human; the attempt that
-    # did run is still recorded as the step's action.
-    assert response.status is RunStatus.WAITING_FOR_USER
-    assert [c.args[0].text for c in execute.call_args_list] == ["hello"]
-    assert any(getattr(entry.action, "text", None) == "hello" for entry in state.action_history)
-
-
-async def test_a_retry_asking_for_help_pauses_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    ask = AgentAction(action_type=ActionType.WAIT_FOR_USER, text="Please solve the CAPTCHA")
-    loop, execute, _ = _loop(monkeypatch, [SAFE, ask])
-    loop.verifier_service.verify = AsyncMock(
-        return_value=VerificationResult(
-            status=VerificationStatus.FAILURE, expected_outcome_met=False, stop_condition_met=False, reason="no"
-        )
-    )
-    loop.recovery_manager.recover = AsyncMock(
-        return_value=RecoveryDecision(strategy=RecoveryStrategy.ADVANCE, message="go on")
-    )
-
-    response = await loop.step_run(StepRequest(run_id="run-1"))
-
-    assert response.status is RunStatus.WAITING_FOR_USER
-    assert [c.args[0].text for c in execute.call_args_list] == ["hello"]
 
 
 async def test_each_step_selects_its_run_on_the_executor(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -22,8 +22,7 @@ from typing import Any, Literal
 
 from operon.agent.actions.translation import build_policy_decision
 from operon.agent.app_catalog import launch_targets
-from operon.agent.backends.base import AgentBackend
-from operon.agent.backends.fallback import BackendCompatibilityError
+from operon.agent.backends.base import AgentBackend, BackendCompatibilityError
 from operon.agent.backends.model_adapter.actions import (
     SCROLL_STEP_PX,
     CoordinateMapper,
@@ -33,8 +32,6 @@ from operon.agent.backends.model_adapter.actions import (
 )
 from operon.agent.backends.model_adapter.backend import (
     INVALID_PREFIX,
-    _rejected_outcome,
-    _replaced_outcome,
     _stop,
     _without_images,
 )
@@ -157,10 +154,6 @@ class _Conversation:
     acknowledged_actions: int = 0
     invalid: str | None = None
     not_executed_reason: str | None = None
-    # The full harness ran another action in place of the pending calls (KAN-68).
-    replaced_by: str | None = None
-    # The full harness dropped the pending calls and asked again.
-    rejected_reason: str | None = None
     # Safety checks of a held call, acknowledged when its output is sent.
     held_checks: list[dict[str, Any]] = field(default_factory=list)
     # The held call's actions, run without a new request once the human resumes the run.
@@ -251,7 +244,7 @@ class OpenAIComputerUseBackend(AgentBackend):
         except ModelTransportError as exc:
             # The conversation is left as it was, so a later step answers the same calls.
             raise BackendCompatibilityError(str(exc)) from exc
-        conv.held_checks, conv.not_executed_reason, conv.replaced_by, conv.rejected_reason = [], None, None, None
+        conv.held_checks, conv.not_executed_reason = [], None
         bg_writer.enqueue(raw_path, json.dumps(response, indent=2))
         conv.previous_response_id = response["id"]
         conv.replies += 1
@@ -360,9 +353,6 @@ class OpenAIComputerUseBackend(AgentBackend):
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug
 
-    def supports_resampling(self, run_id: str = "") -> bool:
-        return False
-
     def has_held_actions(self, run_id: str) -> bool:
         """Whether the run is paused on a call the model asked the user to confirm."""
         conv = self._runs.get(run_id)
@@ -392,19 +382,6 @@ class OpenAIComputerUseBackend(AgentBackend):
         conv = self._runs.get(run_id)
         if conv is not None and conv.pending:
             conv.not_executed_reason = reason.strip()[:300] or "blocked by a gate"
-
-    def note_replaced(self, run_id: str, action: str) -> None:
-        conv = self._runs.get(run_id)
-        if conv is not None and conv.pending:
-            conv.replaced_by = action.strip()[:300] or "another action"
-            # A held call was never approved by a human: it must not run on a later step.
-            conv.held_payload, conv.held_checks = None, []
-
-    def note_rejected(self, run_id: str, reason: str) -> None:
-        conv = self._runs.get(run_id)
-        if conv is not None and conv.pending:
-            conv.rejected_reason = reason.strip()[:300] or "rejected by the harness"
-            conv.held_payload, conv.held_checks = None, []
 
     def invalid_reply_counts(self, run_id: str) -> tuple[int, int]:
         conv = self._runs.get(run_id)
@@ -451,10 +428,6 @@ class OpenAIComputerUseBackend(AgentBackend):
                 f"Not executed: the run paused for a human before this action ran ({reason}). "
                 "Check the screen and propose the next action again."
             )
-        if conv.rejected_reason:
-            return _rejected_outcome(conv.rejected_reason)
-        if conv.replaced_by:
-            return _replaced_outcome(conv.replaced_by, state, conv.acknowledged_actions)
         if len(state.action_history) > conv.acknowledged_actions:
             executed = state.action_history[-1]
             if not executed.success:

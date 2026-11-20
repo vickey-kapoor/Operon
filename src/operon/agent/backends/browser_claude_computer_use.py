@@ -15,8 +15,7 @@ from operon.agent.actions.translation import (
     build_policy_decision,
     translate_claude_computer_calls,
 )
-from operon.agent.backends.base import AgentBackend
-from operon.agent.backends.fallback import BackendCompatibilityError
+from operon.agent.backends.base import AgentBackend, BackendCompatibilityError
 from operon.clients.anthropic import AnthropicClientError
 from operon.clients.anthropic_computer_use import (
     TOOLSET_NAME,
@@ -283,10 +282,6 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
 
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         return self._last_debug_artifacts
-
-    def supports_resampling(self, run_id: str = "") -> bool:
-        # Each decision is a turn in one stateful conversation; there is no second sample.
-        return False
 
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         """Reset hints to a known state. Test use only."""

@@ -15,8 +15,7 @@ from operon.agent.actions.translation import (
     build_policy_decision,
     normalize_computer_use_actions,
 )
-from operon.agent.backends.base import AgentBackend
-from operon.agent.backends.fallback import BackendCompatibilityError
+from operon.agent.backends.base import AgentBackend, BackendCompatibilityError
 from operon.clients.gemini_computer_use import (
     GeminiComputerUseClient,
     GeminiComputerUseError,
@@ -58,13 +57,9 @@ class _ConversationState:
     # calls keeps it, so a later gate (the trust gate reads it) still sees it.
     last_rationale: str | None = None
     held_rationale: str | None = None
-    # Why the open calls did not run when Operon set them aside without asking the
-    # person (a rule ran something else, or a guard rejected the call); the next
-    # answer reports it instead of an outcome.
+    # Why the open calls did not run when a gate set them aside; the next answer
+    # reports it instead of an outcome.
     not_run_reason: str | None = None
-    # Why the last attempt failed when it never reached the action history (an
-    # in-step retry asks the model again before the step is recorded).
-    attempt_error: str | None = None
 
 
 def _requires_confirmation(call: dict) -> bool:
@@ -80,10 +75,7 @@ def _without_safety_decision(call: dict) -> dict:
 class BrowserComputerUseBackend(AgentBackend):
     """Browser backend for Google Computer Use models.
 
-    The request/response protocol is intentionally isolated from the existing
-    JSON backend. Until the transport is fully implemented, protocol-level
-    issues are surfaced as compatibility errors so the route-configured JSON
-    fallback can take over.
+    Protocol-level issues are surfaced as ``BackendCompatibilityError``.
     """
 
     _retry_suffix = (
@@ -109,7 +101,6 @@ class BrowserComputerUseBackend(AgentBackend):
         self._prompt_template = prompt_path.read_text(encoding="utf-8")
         self._skill_text = _tools.skill_text(self.tools)
         self._cached_decisions: dict[str, PolicyDecision] = {}
-        self._perception_only = False
         self._last_frames: dict[str, CaptureFrame] = {}
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
@@ -125,11 +116,6 @@ class BrowserComputerUseBackend(AgentBackend):
         raw_path = step_dir / "computer_use_raw.json"
         parsed_path = step_dir / "computer_use_parsed.json"
 
-        if self._perception_only:
-            # A mid-step re-look (an execution retry, a page-load wait): the screen
-            # is all the loop needs. A model turn here would answer the open call
-            # before it was recorded and replace the step's decision.
-            return self._build_perception(payload={}, screenshot_path=screenshot.artifact_path)
         zoom_usage = None
         # The client's answers for this step (retries and zoom included), saved below
         # so the run can be replayed (KAN-167).
@@ -284,39 +270,6 @@ class BrowserComputerUseBackend(AgentBackend):
             return
         conversation.not_run_reason = f"Not executed: {reason}"
 
-    def note_replaced(self, run_id: str, action: str) -> None:
-        """Operon's harness ran ``action`` instead of the model's calls."""
-        self._set_not_run(run_id, f"Not executed: Operon ran {action} instead.")
-
-    def note_rejected(self, run_id: str, reason: str) -> None:
-        """Operon's harness dropped the model's calls without running them."""
-        self._set_not_run(run_id, f"Not executed: {reason}.")
-
-    def note_attempt_failed(self, run_id: str, detail: str) -> None:
-        """The step's attempt failed before it was recorded; the next answer to the
-        model's calls reports it."""
-        conversation = self._conversations.get(run_id)
-        if conversation is not None and detail:
-            conversation.attempt_error = detail
-
-    def set_perception_only(self, value: bool) -> None:
-        """When True, perceive() only wraps the screenshot: no model turn, and the
-        conversation and the step's decision are left as they are."""
-        self._perception_only = value
-
-    def _set_not_run(self, run_id: str, reason: str) -> None:
-        conversation = self._conversations.get(run_id)
-        if conversation is None or not conversation.pending_function_names:
-            return
-        conversation.not_run_reason = reason
-        conversation.last_calls = []
-        conversation.pending_hold = None
-
-    def supports_resampling(self, run_id: str = "") -> bool:
-        # The decision is a function call in a stateful Computer Use conversation;
-        # there is no second sample for the same turn.
-        return False
-
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         """Reset hints to a known state. Test use only."""
         self._advisory_hints = {"": [(h, "") for h in hints if h]}
@@ -437,14 +390,11 @@ class BrowserComputerUseBackend(AgentBackend):
             declined = conversation.declined_reason is not None
             not_run = conversation.not_run_reason
             conversation.not_run_reason = None
-            attempt_error, conversation.attempt_error = conversation.attempt_error, None
             if declined:
                 error = conversation.declined_reason
                 conversation.declined_reason = None
             elif not_run is not None:
                 error = not_run
-            elif attempt_error is not None and len(state.action_history) <= conversation.acknowledged_actions:
-                error = attempt_error
             elif len(state.action_history) > conversation.acknowledged_actions and not state.action_history[-1].success:
                 error = state.action_history[-1].detail
             if not declined and not_run is None and len(state.action_history) > conversation.acknowledged_actions:

@@ -470,7 +470,6 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
         recovery_manager=ThinRecovery(),
         memory_store=memory_store,
         environment=environment,
-        harness_profile="thin",
     )
     terminal = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
     run = await loop.start_run(RunTaskRequest(intent=intent, max_steps=max_steps, permission_mode=permission_mode))
@@ -499,11 +498,15 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
 @contextmanager
 def loop_environment(settings: dict | None = None):
     """The environment a replay runs in: the recorded run's settings (trust gate,
-    permission mode, tools, zoom, ...), the thin harness, and no real waits or alerts."""
-    from operon.core.settings import get_settings
+    permission mode, tools, zoom, ...) and no real waits or alerts."""
+    from operon.core.settings import _REMOVED_FULL_HARNESS_VARS, get_settings
 
-    env = {k: str(v) for k, v in (settings or {}).items() if v is not None}
-    env.update({"OPERON_TEST_SAFE_MODE": "true", "OPERON_HARNESS_PROFILE": "thin"})
+    # Recordings made before the Full harness was removed (KAN-183) still carry its variables.
+    env = {
+        k: str(v) for k, v in (settings or {}).items()
+        if v is not None and k not in _REMOVED_FULL_HARNESS_VARS
+    }
+    env["OPERON_TEST_SAFE_MODE"] = "true"
     with ExitStack() as stack:
         stack.enter_context(patch.dict(os.environ, {}))  # restores anything popped below
         # A setting the run did not have must not leak in from this machine.

@@ -26,7 +26,7 @@ usage file, so a run's total can be slightly low.
 On the Season 1 core sets, Gemini 3.5 Flash costs about $0.03 to $0.14 per task: one
 10-task cell ran $0.30 to $1.40, depending on the category and the harness
 ([Season 1 grid](reports/season-1-grid.md)). Hybrid tasks are the longest and cost the
-most. The full harness adds a per-step Gemini critic call; the thin harness has none.
+most. There is no per-step critic call: the thin harness is the only harness.
 
 ## Levers, cheapest to try first
 

@@ -12,7 +12,9 @@
 
 ## 1. Summary
 
-The full harness decides whether each step made progress, and its loop guards (block a
+> Update (KAN-183): the Full harness and its loop guards were removed; `OPERON_PROGRESS_REVISIT` now only flags a loop in the progress trace.
+
+The full harness decided whether each step made progress, and its loop guards (block a
 repeated action, stop a run that loops) only fire after steps that did not. Today a
 repeated action that changes the screen always counts as progress, so a model that keeps
 relaunching Notepad never trips a guard and runs to `max_steps`.

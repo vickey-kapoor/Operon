@@ -22,8 +22,8 @@ failure and its fix. It is not a consumer product.
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages and native Windows apps.
 - **Gemini computer use.** Every run uses Gemini 3.5 Flash, which has computer use built in.
-- **Two harnesses.** The thin harness (Gemini's default) lets the model make every decision; the full harness (opt in with `OPERON_HARNESS_PROFILE=full`) puts rules, guards, a per-step verifier
-  and recovery around the model.
+- **One thin harness.** The model makes every decision and its own "done" ends the run; no rules,
+  guards or retries replace its action (the earlier Full harness was removed, KAN-183).
 - **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on
   by default) that blocks or asks a human before risky actions.
 - **Measured.** Browser, Desktop and Hybrid benchmarks graded from app and machine state, each

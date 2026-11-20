@@ -10,7 +10,7 @@ It needs a server started with a real ``GEMINI_API_KEY``::
 
 ``--suite core`` (the default) runs the category's core set from ``evals/categories.py``:
 about 10 tasks, all graded from the apps' or the machine's state, one cell of the
-Browser / Desktop x Thin / Full grid. The report names that cell (``"cell"``) and
+Browser / Desktop / Hybrid row of the grid (Thin is the only harness since KAN-183). The report names that cell (``"cell"``) and
 breaks the score down by tag (``summary.by_tag``: short, long and safety).
 ``--suite core2`` runs Season 2's harder core set instead (KAN-78, ``evals/season2/``),
 on the Season 2 site (``evals/season2/apps.py``: Finance, People and Rooms beside the
@@ -384,40 +384,10 @@ def server_mode(mode: str) -> str:
     return "desktop" if mode == "hybrid" else mode
 
 
-def critic_label(mode: str = "browser", profile=None) -> str | None:
-    """Which step critic a full run used, for the report: ``same:<model>`` with
-    OPERON_CRITIC=same (KAN-68), else the verifier model; None for a thin run, which
-    has no step critic. Defaults as in ``operon.api.runtime_config``."""
-    mode = server_mode(mode)
-    if harness_label(mode, profile) != "full":
-        return None
-    env = _server_env()
-    prefix = f"OPERON_{mode.upper()}_"
-    if (env.get("OPERON_CRITIC") or "").strip().lower() == "same":
-        return "same:" + ((env.get(prefix + "MODEL") or "").strip() or DEFAULT_MODEL)
-    return "gemini:" + ((env.get(prefix + "VERIFIER_MODEL") or "").strip() or DEFAULT_MODEL)
-
-
-def _server_backend(env: dict[str, str], mode: str) -> str:
-    """The backend the server runs (operon.api.runtime_config): OPERON_<MODE>_BACKEND,
-    else Gemini computer use, in the browser and on the desktop."""
-    mode = server_mode(mode)
-    return (env.get(f"OPERON_{mode.upper()}_BACKEND") or "").strip().lower() or "computer_use"
-
-
 def harness_label(mode: str = "browser", profile=None) -> str:
-    """The report's harness: ``thin-own`` for a thin run, which takes the model's own
-    "done", or ``full``. Gemini computer use runs thin unless OPERON_HARNESS_PROFILE=full;
-    a registry model (``profile``) always runs thin with its own done.
-    Read from the settings the server sees (shell plus ``.env``)."""
-    if profile is not None:
-        return "thin-own"
-    env = _server_env()
-    requested = (env.get("OPERON_HARNESS_PROFILE") or "").strip().lower()
-    if _server_backend(env, mode) == "computer_use" and requested != "full":
-        # Gemini computer use runs thin unless full is asked for (operon.agent.policy.thin).
-        return "thin-own"
-    return "full"
+    """The report's harness: always ``thin-own`` (the model's own "done" ends the run; the
+    graders decide). The Full harness was removed (KAN-183); old reports still say ``full``."""
+    return "thin-own"
 
 
 def resolve_model_profile(name: str | None, mode: str):
@@ -1072,7 +1042,6 @@ def build_report(
         "judge_model": args.judge_model,
         "backend": os.getenv(f"OPERON_{env_mode}_BACKEND") or "computer_use",
         "harness_profile": harness_label(args.mode, profile),
-        "critic": critic_label(args.mode, profile),
         **(
             {"model_profile": profile.name, "model_adapter": profile.adapter, "model_id": profile.model}
             if profile is not None

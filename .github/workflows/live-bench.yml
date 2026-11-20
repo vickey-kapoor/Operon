@@ -1,25 +1,17 @@
 name: Run browser test tasks (engine)
-run-name: Gemini · Browser · ${{ inputs.harness_profile }} · ${{ inputs.suite }} (manual)
+run-name: Gemini · Browser · Thin · ${{ inputs.suite }} (manual)
 
 # Runs the live web benchmark (evals/live_bench.py) against a real API
 # server and real websites. Manual only: every run spends model credits.
-# Needs the repo secret GEMINI_API_KEY: Gemini is the agent, the critic and the judge.
+# Needs the repo secret GEMINI_API_KEY: Gemini is the agent and the judge.
 # Each backend's run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
 on:
   workflow_dispatch:
     inputs:
       backends:
-        description: "Browser backends to compare, space-separated: computer_use (Gemini computer use) and/or json (Gemini JSON)"
+        description: "Browser backends to compare, space-separated: computer_use (Gemini computer use)"
         default: "computer_use"
-      harness_profile:
-        description: "OPERON_HARNESS_PROFILE: thin or full, for Gemini computer use (thin ends on the model's own done)."
-        type: choice
-        options: [thin, full]
-        default: thin
-      critic:
-        description: "OPERON_CRITIC for the full harness: empty = the Gemini verifier, same = the acting model judges each step"
-        default: ""
       tools:
         description: "OPERON_TOOLS (RFC 0002): off, on, all, or tool names; file tools may use ~/Documents"
         default: "off"
@@ -47,8 +39,6 @@ on:
   workflow_call:
     inputs:
       backends: {type: string, default: "computer_use"}
-      harness_profile: {type: string, default: "thin"}
-      critic: {type: string, default: ""}
       tools: {type: string, default: "off"}
       zoom: {type: string, default: "off"}
       features: {type: string, default: ""}
@@ -97,13 +87,14 @@ jobs:
       UV_PYTHON: "3.14"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPERON_BROWSER_BACKEND: ${{ inputs.model && 'model' || matrix.backend }}
+      # Kept so benchmarks of revisions older than fc3d0ff, which default Gemini computer use to the
+      # Full harness, still run thin (KAN-183). Current code ignores it.
+      OPERON_HARNESS_PROFILE: thin
       # A registry model (KAN-168) acts through the model backend, always thin with its own done.
       OPERON_MODEL_PROFILE: ${{ inputs.model }}
       # Another provider's key reaches a cell only when that cell runs that provider's model.
       ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}
       OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}
-      OPERON_HARNESS_PROFILE: ${{ inputs.harness_profile }}
-      OPERON_CRITIC: ${{ inputs.critic }}
       # Tools next to screen actions (RFC 0002); off unless the run asks for them.
       OPERON_TOOLS: ${{ inputs.tools || 'off' }}
       # Zoom before clicking (KAN-82); off unless the run asks for it.

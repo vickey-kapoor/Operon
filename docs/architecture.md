@@ -13,10 +13,10 @@ FastAPI app
   -> AgentLoop
   -> ScreenCaptureService
   -> Perception/policy backend
-  -> PolicyCoordinator
+  -> ThinPolicy
   -> executor adapter or native executor
-  -> DeterministicVerifierService
-  -> RuleBasedRecoveryManager
+  -> OwnDoneVerifier
+  -> ThinRecovery
   -> FileBackedRunStore
 ```
 
@@ -34,8 +34,8 @@ targeting is fixed by improving perception rather than by reaching into app inte
 
 ```text
 src/
-  agent/      loop, perception, policy, policy rules, recovery, verifier,
-              browser backends, fallback backend, targeting, progress tracking
+  agent/      loop, perception, thin policy, recovery, verifier,
+              browser backends, targeting, progress tracking
   api/        FastAPI server, routes, observer endpoints, runtime config, websocket stream
   browser/    CDP BrowserManager for observable browser mode
   clients/    Gemini and Gemini Computer Use HTTP clients
@@ -60,10 +60,10 @@ methods over a `StepContext` (`agent/step_context.py`, KAN-155). Fields a stage 
 | 1b | `_consume_force_fresh_perception` | When the run record has `force_fresh_perception` set, waits for the UI to settle (1.0 s in a browser, 0.5 s on the desktop; `OPERON_SETTLE_DETECT` swaps the fixed sleep for settle detection), then clears the flag |
 | 2 | `_capture_stage` | `ScreenCaptureService.capture` (`agent/perception/capture.py`) asks the executor for a frame and moves it to `step_N/before.png` |
 | 3 | `_consume_override_hint`, `_add_task_note`, `_add_secrets_hint` | Queue advisory text hints for the model: a user correction, `OPERON_TASK_NOTE`, secret names |
-| 4 | `_perceive_stage` | Memory hints, stagnation hint, then `perception_service.perceive` (with a liveness retry); stamps the monitor origin; saves the observation |
-| 5 | `_decide_stage` | `policy_service.choose_action`; `_attach_target_context` (grounder, monitor origin); Best-of-N (`OPERON_BESTOFN_N`) |
+| 4 | `_perceive_stage` | Memory hints, then `perception_service.perceive` (with a liveness retry); stamps the monitor origin; saves the observation |
+| 5 | `_decide_stage` | `policy_service.choose_action`; `_attach_target_context` (monitor origin) |
 | 6 | `_gate_stage` | Cancel check, then `_gate_pause_decision`: the model asked for a human, coordinate thrash (3 failures at one point), confidence threshold, trust gate, file guard. A blocked action becomes WAIT_FOR_USER and the run pauses |
-| 7 | `_execute_and_verify_stage` | A loop of `_execute_attempt` then `_verify_attempt`. On a hard FAILURE, `_prepare_adaptation_retry` re-captures, re-perceives, re-decides and re-gates (at most `_MAX_ADAPTATION_RETRIES` = 3; never in thin) |
+| 7 | `_execute_and_verify_stage` | `_execute_action` once (no retry), then `verifier_service.verify` and the change note |
 | 8 | `_recover_stage` | `recovery_manager.recover`, then `validate_benchmark_integrity`; progress tracking and `progress_trace.json` |
 | 9 | `_record_step_stage`, `_finish_step_stage` | Writes the `StepLog` to `run.jsonl`; sets SUCCEEDED, FAILED, RUNNING, CANCELLED or WAITING_FOR_USER; applies CONTEXT_RESET and SESSION_RESET side effects; writes `step_timing.json`; on a terminal status writes `efficiency.json` |
 
@@ -89,24 +89,21 @@ A Gemini computer-use click in batch browser mode:
    (`value / 999 * (size - 1)`) against the frame size. Several calls in one turn become one
    `BATCH`; a `click_at` followed by an untargeted `type` is merged into one atomic TYPE at the
    click point. A `require_confirmation` safety decision holds all calls and pauses first.
-4. **Policy.** In the full harness, `PolicyCoordinator.choose_action`
-   (`agent/policy/coordinator.py`) runs `PolicyRuleEngine` first, then the cached model
-   decision, then `_reject_premature_stop`. The loop's `_attach_target_context` applies the
-   grounder (identity for the default `deterministic` grounder) and the monitor origin (0,0 for
-   a browser).
+4. **Policy.** `ThinPolicy.choose_action` (`agent/policy/thin.py`) returns the backend's
+   decision unchanged; the loop's `_attach_target_context` adds the monitor origin (0,0 for a
+   browser).
 5. **Gate.** `_pre_execution_gate_text` evaluates each leaf of a batch with
    `TrustGate.evaluate` (`agent/policy/trust_gate.py`), passing the current URL and the model's
    rationale, then `apply_permission_mode`. A DENY anywhere outranks a CONFIRM. Then the file
    guard (`agent/policy/file_guard.py`).
-6. **Execute.** `_execute_with_hardening` runs the action through the unified adapter into
+6. **Execute.** `_execute_action` runs the action through the unified adapter into
    `NativeBrowserExecutor.execute`, which does `page.mouse.click(x, y)`. The browser executor has
-   no visual servo. On a retryable execution failure (full harness only) the loop re-perceives
-   in perception-only mode, re-resolves the target and retries once.
-7. **Verify.** `DeterministicVerifierService.verify` (`agent/policy/verifier.py`) returns a
-   status. `PENDING` re-verifies after 2 s, 4 s and 8 s (`_wait_for_page_load`); `STABLE_WAIT`
-   waits 200 ms, re-captures, adopts the new frame as `after.png` and re-verifies once with
-   `allow_stable_wait=False` (`_wait_for_ui_stable`).
-8. **Recover.** `RuleBasedRecoveryManager` (`agent/policy/recovery.py`) picks the next move.
+   no visual servo. A failed action is not retried: the backend reports it to the model as the
+   tool result.
+7. **Verify.** `OwnDoneVerifier.verify` (`agent/policy/thin.py`) returns SUCCESS for an executed
+   action and for the model's own "done" (unchecked; graders decide), UNCERTAIN for a failed
+   action, and FAILURE when the model gave up.
+8. **Recover.** `ThinRecovery` (`agent/policy/thin.py`) advances, or stops on the model's own done.
 9. **Persist.** The step log, progress trace and run state are written (see
    [Persistence](#persistence)).
 
@@ -124,12 +121,8 @@ fails the click with `EXECUTION_TARGET_NOT_FOUND`. Input is `pyautogui`.
 ### Browser
 
 Default backend: `BrowserComputerUseBackend` using `GeminiComputerUseHttpClient`
-(`computer_use`, `gemini-3.5-flash`). `OPERON_BROWSER_BACKEND=json` selects `BrowserJsonBackend`
-alone. Gemini is the default model; other models (Claude, OpenAI, open-weight) are selectable
+(`computer_use`, `gemini-3.5-flash`). Gemini is the default model; other models (Claude, OpenAI, open-weight) are selectable
 with `OPERON_BROWSER_BACKEND=model` and a profile from the model registry.
-
-Fallback: with `OPERON_BROWSER_FALLBACK_BACKEND=json` (the default), `FallbackBackend`
-hands a step to the Gemini `BrowserJsonBackend` when the primary backend's call fails.
 
 Executor: `NativeBrowserExecutor`.
 
@@ -137,33 +130,25 @@ Executor: `NativeBrowserExecutor`.
 
 Default backend: the Gemini computer-use desktop backend (`desktop_computer_use.py`,
 `OPERON_DESKTOP_BACKEND=computer_use`, `gemini-3.5-flash`), which adds a `launch_app` function.
-`OPERON_DESKTOP_BACKEND=json` selects the older `CombinedPerceptionPolicyService` using Gemini
-JSON output. The computer-use backend has no fallback.
 
 Executor: `DesktopExecutor`.
 
-### Harness profiles
+### The harness
 
-`OPERON_HARNESS_PROFILE` (`harness_profile()` in `agent/policy/thin.py`) picks how much
-scaffolding surrounds the model per backend; the layers are wired in
-`api/runtime/loops.py:_loop_layers`. Gemini `computer_use` runs **thin** by default (KAN-183).
-`OPERON_HARNESS_PROFILE=full` switches it to **full**. In thin, `ThinPolicy` passes Gemini's action
-through with no rules, guards or retries, and its own "done" ends the run (`OwnDoneVerifier`),
-so the benchmark graders decide success. `json` backends always run full; the `model` backend
-(Claude, OpenAI, open-weight) always runs thin. `OPERON_CRITIC=same` makes the full harness's
-step critic the acting model. [configuration.md](configuration.md) has the details.
+There is one harness, thin (KAN-183 removed the rule-based Full harness, the `json` backends and
+`OPERON_HARNESS_PROFILE`; `OPERON_BROWSER_BACKEND=json` now fails startup). The layers are wired
+in `api/runtime/loops.py:_loop_layers` for every backend (Gemini `computer_use` and `model`).
 
-| | Full (`OPERON_HARNESS_PROFILE=full`; always for `json`) | Thin (default for Gemini `computer_use`; always for `model`) |
-|---|---|---|
-| Policy | `PolicyCoordinator`: memory hints, `PolicyRuleEngine` (two rules: `_task_success_stop_rule`, and `_prefer_launch_app_rule` on desktop), the model, `_reject_premature_stop` | `ThinPolicy`: the backend's decision unchanged |
-| Verifier | `DeterministicVerifierService` with a Gemini critic (`OPERON_*_VERIFIER_MODEL`, or the acting model with `OPERON_CRITIC=same`) | `OwnDoneVerifier`: failures go back to the model as tool results; the model's "done" ends the run |
-| Recovery | `RuleBasedRecoveryManager` ladder plus the progress stop guard | `ThinRecovery`: always hand back to the model |
-| Loop extras | Redundant-action blocking, execution retry, adaptation retry, grounder refinement | All skipped (`self.thin_harness` checks in `loop.py`) |
-| Browser fallback | `FallbackBackend` to JSON when configured | Ignored |
+| Layer | What it does |
+|---|---|
+| Policy | `ThinPolicy`: the backend's decision unchanged |
+| Verifier | `OwnDoneVerifier`: failures go back to the model as tool results; the model's "done" ends the run, unchecked |
+| Recovery | `ThinRecovery`: always hand back to the model, or stop on its own done |
+| Loop | No retries, no redundant-action blocking, no grounder refinement |
 
-Both profiles keep the trust gate, file guard, coordinate-thrash pause and step budget. Advisory
-text (task note, secret names, change note) is allowed in thin because it changes what the model
-sees, not its action.
+The trust gate, file guard, coordinate-thrash pause and step budget stay. Advisory text (task
+note, secret names, change note) is allowed because it changes what the model sees, not its
+action.
 
 ### Observable Browser Mode
 
@@ -229,73 +214,30 @@ There are no active `/benchmark/*`, `/command-center`, `/console`, `/dashboard`,
 
 ## Policy Layer
 
-`PolicyCoordinator` wraps:
-- memory hint lookup from `FileBackedMemoryStore`
-- `PolicyRuleEngine`
-- the configured policy delegate
-- the post-LLM guard `_reject_premature_stop` (re-plans a STOP made before any real action)
-
-Earlier benchmark-plugin registration scaffolding has been removed from `PolicyRuleEngine`; benchmark-specific behavior must not be hardcoded into core policy rules.
-
-Current built-in policy rules:
-- task-success stop (a success phrase in the model's own text; the model confirms it first)
-- desktop app launch preference (Desktop and Hybrid only)
-
-Gemini Computer Use reports no element list and no page type, so rules that needed either
-could never fire. KAN-161 removed them (form fill, dropdown selection, overlay dismissal,
-search query, no-progress recovery, identical type retry, page-type human intervention) along
-with the element-based guards `_semantic_anchor_check` and `_reject_hallucinated_target`.
+`ThinPolicy` passes the backend's decision through. There is no rule engine and no post-model
+guard (KAN-183 removed `PolicyCoordinator`, `PolicyRuleEngine`, site adapters and the
+premature-stop guard). Benchmark-specific behavior must not be hardcoded into core policy.
 
 ## Verification
 
-`DeterministicVerifierService` returns one of six states:
+`OwnDoneVerifier` (`VerifierService` is the interface) returns one of the six states
+(`models/verification.py`); only three are emitted now:
 
 | Status | Produced by | Loop handling |
 |---|---|---|
-| SUCCESS | Terminal-state evidence, an accepted STOP, a goal-completing action, the critic, or a fallback when confidence is at least 0.5 | Advance; a SUCCESS stop with a success stop reason ends the run SUCCEEDED |
-| FAILURE | Executor failure, or a rejected STOP (suspicious early stop, critic rejection, the model gave up) | In-step adaptation retry (full harness), then recovery |
-| UNCERTAIN | A passive wait without progress, low confidence with no critic, a PENDING that never settles | Recovery |
-| PENDING | The page looks like it is loading | Re-verify after 2 s, 4 s, then 8 s |
-| STABLE_WAIT | The action visibly changed the screen | 200 ms settle, one re-verify |
-| PROGRESSING_STABLE | Defined in `models/verification.py` and handled (recovery advances on it), but reserved: no verifier in `src/` currently returns it | Recovery advances |
+| SUCCESS | An executed action, or the model's own "done" (unchecked) | Advance; a "done" ends the run SUCCEEDED |
+| FAILURE | The model gave up (`Model gave up: ...`) | The run stops as not done |
+| UNCERTAIN | A failed action, reported to the model as its tool result | Advance; the model chooses the next step |
+| PENDING, STABLE_WAIT, PROGRESSING_STABLE | Nothing: no longer emitted, the values are kept so old reports and recordings load | The loop still handles them |
 
-The verifier is deterministic and does not use a separate video verifier module.
-
-A `STOP` is the policy's claim that the task is done, and it is verified like any
-other outcome: the critic judges the current screen when it can; if the critic is
-unavailable or unsure, the stop is accepted only when the run has done some work
-and its latest step did not fail. A rejected stop is a `FAILURE` that goes to recovery.
-Only the policy's own STOP ends a run as done: a critic stop signal on any other action is kept
-as a note.
+No second model judges a "done". The benchmark graders (app state, request logs) decide success.
 
 ## Recovery
 
-`RuleBasedRecoveryManager` (`src/operon/agent/policy/recovery.py`) maps failed or
-uncertain steps to recovery decisions, keyed by a retry cluster built from subgoal,
-target, and failure signal.
-
-**Bypass cases** (decided before escalation):
-
-| Condition | Decision |
-|---|---|
-| `verification.stop_condition_met` | `STOP` |
-| `FailureCategory.EXECUTION_NO_PROGRESS` | terminal `STOP` |
-| `VerificationStatus.SUCCESS` with expected outcome met | `ADVANCE` |
-| `VerificationStatus.PROGRESSING_STABLE` | `ADVANCE` |
-| TYPE failed because target was missing/not editable | `WAIT_AND_RETRY` (focus-oriented subgoal) |
-
-**Escalation by failure cluster:**
-
-| Attempt | Strategy | Wait |
-|---|---|---|
-| 1 | `RETRY_SAME_STEP` | none |
-| 2 | `RETRY_DIFFERENT_TACTIC` (the subgoal is rewritten) | none |
-| 3 | `CONTEXT_RESET` (`executor.context_reset()`) | 1000 ms |
-| 4 | `SESSION_RESET` (`executor.session_reset(start_url)`) | 1500 ms |
-| 5 (`MAX_RECOVERY_ATTEMPTS`) | terminal `STOP` (`RETRY_LIMIT_REACHED`) | none |
-
-In the full harness this ladder runs after every step the verifier did not accept. The thin
-harness uses `ThinRecovery` instead, which always hands back to the model.
+`ThinRecovery` (`src/operon/agent/policy/thin.py`) is the only recovery manager: it advances after
+every step and stops only on the model's own "done". The earlier retry ladder (retry, new tactic,
+context reset, session reset) was removed (KAN-183); the `RecoveryManager` interface and the
+`CONTEXT_RESET` and `SESSION_RESET` strategies remain.
 
 **Integrity guard.** `validate_benchmark_integrity()` prevents recovery from claiming
 terminal success unless verification actually returned `SUCCESS`, and prevents
@@ -378,7 +320,7 @@ installed with pip (`OPERON_RUNTIME_ROOT`, `OPERON_RUNS_ROOT`):
     computer_use_answers.json  computer_use_usage.json
     policy_decision.json  verification_result.json  perception_parsed.json
     execution_trace.json  progress_trace.json  step_timing.json
-    task_note.txt  bestofn.json   (when those features are on)
+    task_note.txt   (when that feature is on)
 ```
 
 Memory is stored under `memory/` when enabled by the store:
@@ -412,12 +354,9 @@ Core runtime configuration is in `src/operon/api/runtime_config.py`.
 Important variables:
 - `GOOGLE_API_KEY` / `GEMINI_API_KEY`
 - `OPERON_BROWSER_BACKEND`
-- `OPERON_BROWSER_FALLBACK_BACKEND`
 - `OPERON_BROWSER_MODEL`
-- `OPERON_HARNESS_PROFILE`
 - `OPERON_DESKTOP_BACKEND`
 - `OPERON_DESKTOP_MODEL`
-- `OPERON_BROWSER_VERIFIER_MODEL` / `OPERON_DESKTOP_VERIFIER_MODEL`
 - `OPERON_TRACE`
 - `OPERON_TEST_SAFE_MODE`
 - `BROWSER_HEADLESS`
@@ -431,10 +370,6 @@ Experimental work ships behind an env flag that defaults to off. Defaults are fr
 
 | Flag | Default | Effect |
 |---|---|---|
-| `OPERON_HARNESS_PROFILE` | empty (thin) | `full` runs Gemini computer use in the full harness |
-| `OPERON_CRITIC` | empty | `same` makes the acting model the step critic |
-| `OPERON_BESTOFN_N` / `OPERON_BESTOFN_CONFIDENCE` | 1 / 1.0 | Sample N candidates at uncertain steps and run the best |
-| `OPERON_GROUNDER` | `deterministic` | `snap` moves near-miss clicks onto the nearest element (full only) |
 | `OPERON_PARALLEL_RUNS` | 1 | Batch browser runs that may step at once, each with its own Chromium |
 | `OPERON_SETTLE_DETECT` / `OPERON_SETTLE_MAX_S` | off / 3.0 | Wait for the screen to stop changing instead of a fixed sleep |
 | `OPERON_CHANGE_NOTE` | off | One text line about what changed while the screen settled |
@@ -443,22 +378,21 @@ Experimental work ships behind an env flag that defaults to off. Defaults are fr
 | `OPERON_PLANNER` / `OPERON_PLANNER_MODEL` | off / `gemini-3.5-flash-lite` | One text-only plan at task start |
 | `OPERON_TASK_NOTE` / `OPERON_TASK_NOTE_MAX_ITEMS` | off / 8 | A running task-state note with each step, no model call |
 | `OPERON_CHECKPOINTS` | off | Mark interrupted runs at startup; resume on request |
-| `OPERON_PROGRESS_REVISIT` | off | A repeated action counts as progress only if its after-screen is new (full only) |
+| `OPERON_PROGRESS_REVISIT` | off | A repeated action counts as progress only if its after-screen is new; the thin harness only records the loop in `progress_trace.json` |
 | `OPERON_TRUST_CATEGORIES` / `OPERON_TRUST_CATEGORY_LIST` | off / all five | Named risk categories (payment, send, delete, account, install) need approval |
 | `OPERON_SECRETS` | off | Secrets vault placeholders |
 | `OPERON_AUTO_CONFIRM` | off | `operon run` answers the model's own confirmation (at most 10 per run) |
 | `OPERON_CLICK_TEXT` | off | The trust gate reads the text under a click with OCR (needs the `ocr` extra) |
 | `OPERON_CLAUDE_ZOOM` | off | Lets Claude ask for a zoomed crop of the current screenshot |
-| `OPERON_SITE_ADAPTERS` | empty | Load built-in site adapters (`wikipedia`, `github`, `all`) |
 | `OPERON_*_BACKEND=model` with `OPERON_MODEL_PROFILE` | off | Registry models (Claude, OpenAI, open-weight) |
 
 Defaults that are **on**: `OPERON_TRUST_GATE`, `OPERON_TOOLS=on` (no `run_shell`),
-`OPERON_ZOOM=dense`, `OPERON_BROWSER_FALLBACK_BACKEND=json`.
+`OPERON_ZOOM=dense`.
 
 ## Invariants
 
 - Policy and perception must remain vision-first.
-- Deterministic rules run before LLM fallback.
+- The thin harness never replaces, retries or resets the model's action (KAN-183).
 - TYPE remains atomic at the executor level.
 - Desktop clicks (`DesktopExecutor`, `LinuxDesktopExecutor`) use visual servo checks before input injection; the browser executor has none, and OSWorld runs its own fixed-threshold check (`environments/osworld.py`).
 - One executor serves one run's step at a time (`AgentLoop._executor_lock`). With `OPERON_PARALLEL_RUNS` > 1 each batch browser run gets its own loop and executor (`api/runtime/loops.py`), so the lock is per executor and runs overlap; observable-mode and desktop runs share one executor and take turns (one CDP port, one real screen).
@@ -481,29 +415,25 @@ Defaults that are **on**: `OPERON_TRUST_GATE`, `OPERON_TOOLS=on` (no `run_shell`
 
 The backends take an injected client, so tests script the model: `evals/harness.py` builds a
 real `AgentLoop` with `FakeComputerUseClient` (same `generate_turn` and `run_step` shape as the
-Gemini client), `FakeGeminiClient`, `FakeCriticClient` and a `FakeExecutor` over a scripted
+Gemini client) and a `FakeExecutor` over a scripted
 world. `addopts` in `pyproject.toml` deselects `live_server`, `desktop_container`,
 `windows_sandbox` and `browser_e2e`.
 
 ## Known Limitations
 
-- `PROGRESSING_STABLE` is handled by recovery and the efficiency score, but no verifier in
-  `src/` returns it.
+- `PENDING`, `STABLE_WAIT` and `PROGRESSING_STABLE` are handled by the loop but no verifier in
+  `src/` returns them (kept for old reports).
 - Parallel runs apply only to batch browser runs; observable and desktop runs share one
   executor and take turns.
-- The `model` backend (Claude, OpenAI, open-weight) always runs the thin harness; there is no
-  full-harness configuration for non-Gemini models.
 - Open-weight profiles need an external OpenAI-compatible server; Operon ships no local model
   runtime.
-- The JSON fallback is browser-only, triggers only on `BackendCompatibilityError` from
-  `perceive`, and is ignored under thin.
 - The browser executor has no visual servo; OSWorld uses a fixed threshold, not calibration.
 - Desktop capture is `mss` on every platform; there is no GPU capture path.
 - Windows Sandbox: one sandbox at a time; if it closes before the guest is ready (a busy or
   low-memory PC) the start is retried once (`WindowsSandboxProvider.start`).
 - The focus guard is Windows only (`LinuxDesktopExecutor._focus_guard_platform = False`).
 - Secrets are not encrypted at rest outside Windows.
-- Replay covers only thin-harness runs and compares the action sequence, not screens.
+- Replay covers only thin-harness runs (older recordings of removed Full runs are refused) and compares the action sequence, not screens.
 - `agent/loop.py` is still one file of about 3,000 lines.
 
 ## Not Present / Intentionally Removed

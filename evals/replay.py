@@ -119,7 +119,7 @@ def recordable_settings(settings: dict) -> dict[str, str]:
     """The run's settings as environment values, without the machine-specific ones."""
     out: dict[str, str] = {}
     for name, value in settings.items():
-        if value is None or value == "<set>" or _SETTINGS_SKIPPED.search(name):
+        if value is None or value == "<set>" or name == "harness_profile_resolved" or _SETTINGS_SKIPPED.search(name):
             continue
         if isinstance(value, bool):
             out[name] = "true" if value else "false"

@@ -273,6 +273,11 @@ def test_file_roots_are_kept():
     assert kept == {"OPERON_ALLOWED_FILE_ROOTS": "C:/Users/runner/Documents"}
 
 
+def test_the_resolved_profile_is_not_a_recordable_setting():
+    kept = rp.recordable_settings({"OPERON_HARNESS_PROFILE": "thin", "harness_profile_resolved": "thin"})
+    assert kept == {"OPERON_HARNESS_PROFILE": "thin"}
+
+
 def test_a_secondary_monitor_origin_replays(tmp_path):
     """Clicks on a monitor right of a 1920 px screen carry its offset; the replay must too."""
     on_second = [{"success": True, "monitor_origin": [1920, 0]}] * 3

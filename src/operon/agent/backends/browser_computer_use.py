@@ -15,10 +15,15 @@ from operon.agent.actions.translation import (
     build_policy_decision,
     normalize_computer_use_actions,
 )
-from operon.agent.backends.base import AgentBackend, BackendCompatibilityError
+from operon.agent.backends.base import (
+    AgentBackend,
+    BackendCompatibilityError,
+    ModelBlockedError,
+)
 from operon.clients.gemini_computer_use import (
     GeminiComputerUseClient,
     GeminiComputerUseError,
+    GeminiPromptBlockedError,
 )
 from operon.models.capture import CaptureFrame
 from operon.models.execution import ToolOutput
@@ -26,9 +31,29 @@ from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import PageHint, ScreenPerception
 from operon.models.policy import ActionType, PolicyDecision
 from operon.models.state import AgentState
+from operon.models.usage import ModelUsage
 from operon.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
+
+# When Gemini blocks a request, retry once with only this many recent screenshots.
+BLOCK_RETRY_KEEP_SCREENSHOTS = 3
+
+
+def _with_recent_screenshots_only(contents: list[dict], keep: int = BLOCK_RETRY_KEEP_SCREENSHOTS) -> list[dict]:
+    """Copy of contents with inline screenshots dropped from all but the last ``keep`` turns that have one."""
+    with_image = [
+        i for i, c in enumerate(contents) if any("inline_data" in p for p in c.get("parts", []))
+    ]
+    stale = set(with_image[:-keep] if keep > 0 else with_image)
+    pruned: list[dict] = []
+    for i, content in enumerate(contents):
+        if i not in stale:
+            pruned.append(content)
+            continue
+        parts = [p for p in content["parts"] if "inline_data" not in p]
+        pruned.append({**content, "parts": parts or [{"text": "(earlier screenshot omitted)"}]})
+    return pruned
 
 
 @dataclass(slots=True)
@@ -105,6 +130,8 @@ class BrowserComputerUseBackend(AgentBackend):
         self._last_debug_artifacts: ModelDebugArtifacts | None = None
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._conversations: dict[str, _ConversationState] = {}
+        # Usage of a blocked (then retried) request, merged into the step's usage.
+        self._blocked_usage: dict[str, ModelUsage] = {}
         # Zoom before clicking on dense screens (KAN-82, OPERON_ZOOM; off by default).
         self.zoom = _zoom.zoom_settings()
 
@@ -211,6 +238,11 @@ class BrowserComputerUseBackend(AgentBackend):
         else:
             # The client only remembers the zoom request; the step's turn is the one before it.
             usage = _zoom.merge_usage(zoom_usage[0], zoom_usage[1])
+            if usage is not None:
+                bg_writer.enqueue(usage_path, usage.model_dump_json(indent=2))
+        blocked_usage = self._blocked_usage.pop(state.run_id, None)
+        if blocked_usage is not None:
+            usage = _zoom.merge_usage(blocked_usage, usage)
             if usage is not None:
                 bg_writer.enqueue(usage_path, usage.model_dump_json(indent=2))
         self._last_debug_artifacts = ModelDebugArtifacts(
@@ -336,6 +368,8 @@ class BrowserComputerUseBackend(AgentBackend):
     ) -> dict:
         try:
             response_payload = await self._run_turn(prompt=prompt, screenshot=screenshot, state=state, hints=hints)
+        except ModelBlockedError:
+            raise
         except (GeminiComputerUseError, BackendCompatibilityError) as exc:
             raise BackendCompatibilityError(str(exc)) from exc
 
@@ -452,7 +486,28 @@ class BrowserComputerUseBackend(AgentBackend):
                 )
             )
 
-        response_payload = await self.client.generate_turn(contents=conversation.contents)
+        try:
+            response_payload = await self.client.generate_turn(contents=conversation.contents)
+        except GeminiPromptBlockedError as blocked:
+            # An API-call retry, not a change to any model action: same turn, older
+            # screenshots dropped. The stored history is only replaced if it succeeds.
+            logger.warning(
+                "Gemini blocked the request (%s); retrying once with only the last %d screenshots",
+                blocked.block_reason,
+                BLOCK_RETRY_KEEP_SCREENSHOTS,
+            )
+            pruned = _with_recent_screenshots_only(conversation.contents)
+            if pruned == conversation.contents:
+                # Nothing to drop: an identical request would just be blocked again.
+                raise ModelBlockedError(blocked.block_reason) from blocked
+            first_usage = self.client.latest_usage() if hasattr(self.client, "latest_usage") else None
+            try:
+                response_payload = await self.client.generate_turn(contents=pruned)
+            except GeminiPromptBlockedError as again:
+                raise ModelBlockedError(again.block_reason) from again
+            if isinstance(first_usage, ModelUsage):
+                self._blocked_usage[state.run_id] = first_usage
+            conversation.contents = pruned
         model_content = response_payload.get("model_content")
         if isinstance(model_content, dict):
             conversation.contents.append({"role": "model", "parts": model_content.get("parts", [])})

@@ -15,6 +15,7 @@ from operon.agent import control as run_control
 from operon.agent.actions.grounding import element_center
 from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
+from operon.agent.backends.base import ModelBlockedError
 from operon.agent.efficiency import run_efficiency
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
@@ -1890,6 +1891,9 @@ class AgentLoop:
         if isinstance(error, PerceptionLowQualityError):
             failure_category = error.failure_category
             stop_reason = error.stop_reason
+        elif isinstance(error, ModelBlockedError):
+            failure_category = FailureCategory.MODEL_BLOCKED
+            stop_reason = StopReason.MODEL_BLOCKED
 
         failure = FailureRecord(
             category=failure_category,

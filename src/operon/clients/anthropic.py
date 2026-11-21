@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 from typing import Any
 
 import httpx
 
+from operon.clients.retry import RetrySchedule, pause
 from operon.core.settings import get_settings
 from operon.models.usage import ModelUsage, estimate_usage_cost
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicClientError(RuntimeError):
@@ -44,8 +47,9 @@ class AnthropicHttpClient:
         model: str = "claude-sonnet-5",
         api_base_url: str | None = None,
         timeout_seconds: float = 30.0,
-        max_retries: int = 2,
-        retry_backoff_seconds: float = 0.5,
+        max_retries: int = 3,
+        retry_backoff_seconds: float = 1.0,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -53,6 +57,7 @@ class AnthropicHttpClient:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max(0, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self._transport = transport
         self._client: httpx.AsyncClient | None = None
         self._last_usage: ModelUsage | None = None
 
@@ -62,6 +67,7 @@ class AnthropicHttpClient:
                 timeout=httpx.Timeout(self.timeout_seconds, connect=10.0),
                 limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
                 http2=True,
+                transport=self._transport,
             )
         return self._client
 
@@ -136,10 +142,10 @@ class AnthropicHttpClient:
         self._last_usage = None
         payload_bytes = json.dumps(payload).encode("utf-8")
         client = await self._get_client()
-        attempts = self.max_retries + 1
+        schedule = RetrySchedule(max_retries=self.max_retries, backoff_seconds=self.retry_backoff_seconds)
         last_error: AnthropicClientError | None = None
 
-        for attempt in range(1, attempts + 1):
+        while True:
             try:
                 response = await client.post(
                     self.api_base_url,
@@ -155,8 +161,16 @@ class AnthropicHttpClient:
                     detail = response.text
                     retryable = response.status_code in {408, 429} or 500 <= response.status_code < 600
                     last_error = AnthropicClientError(f"Anthropic HTTP error {response.status_code}: {detail}")
-                    if not retryable or attempt >= attempts:
+                    delay = (
+                        schedule.next_delay(
+                            status=response.status_code, retry_after=response.headers.get("retry-after")
+                        )
+                        if retryable
+                        else None
+                    )
+                    if delay is None:
                         raise last_error
+                    logger.warning("Retrying Anthropic request after http %s in %.1fs.", response.status_code, delay)
                 else:
                     response_payload = response.json()
                     self._last_usage = _extract_usage(payload=response_payload, model=self.model, request_kind=request_kind)
@@ -165,18 +179,18 @@ class AnthropicHttpClient:
                 last_error = AnthropicClientError(
                     f"Anthropic request timed out after {self.timeout_seconds} seconds."
                 )
-                if attempt >= attempts:
+                delay = schedule.next_delay()
+                if delay is None:
                     raise last_error from exc
-            except httpx.ConnectError as exc:
+                logger.warning("Retrying Anthropic request after timeout in %.1fs.", delay)
+            except httpx.TransportError as exc:
                 last_error = AnthropicClientError(f"Anthropic connection failed: {exc}")
-                if attempt >= attempts:
+                delay = schedule.next_delay()
+                if delay is None:
                     raise last_error from exc
+                logger.warning("Retrying Anthropic request after connection error in %.1fs.", delay)
 
-            await asyncio.sleep(self.retry_backoff_seconds * attempt)
-
-        if last_error is not None:
-            raise last_error
-        raise AnthropicClientError("Anthropic request failed before receiving a response.")
+            await pause(delay)
 
 
 def _extract_text(response_payload: dict[str, Any]) -> str:

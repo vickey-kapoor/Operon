@@ -273,3 +273,77 @@ async def test_post_payload_reports_a_dropped_connection_as_a_client_error() -> 
 
     with pytest.raises(GeminiComputerUseError):
         await client._post_payload({"contents": []})
+
+
+# --- retry schedule (KAN-173): Retry-After, Google retryDelay, longer 429 backoff ---
+
+_OK = {"candidates": [{"content": {"parts": [{"text": "done"}]}}]}
+
+
+def _mock_client(monkeypatch, responses, **kwargs):
+    from operon.clients import retry
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(retry.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(retry.random, "random", lambda: 0.0)
+    requests: list[httpx.Request] = []
+    queue = list(responses)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    client = GeminiComputerUseHttpClient(
+        api_key="test-key", model="m", transport=httpx.MockTransport(handler), **kwargs
+    )
+    return client, requests, sleeps
+
+
+@pytest.mark.asyncio
+async def test_429_with_retry_after_header_waits_that_long(monkeypatch) -> None:
+    client, requests, sleeps = _mock_client(
+        monkeypatch, [httpx.Response(429, headers={"Retry-After": "7"}, text="slow"), httpx.Response(200, json=_OK)]
+    )
+    await client._post_payload({"contents": []})
+    assert len(requests) == 2 and sleeps == [7.0]
+
+
+@pytest.mark.asyncio
+async def test_429_with_google_retry_delay_body_waits_that_long(monkeypatch) -> None:
+    body = {"error": {"code": 429, "details": [{"retryDelay": "3s"}]}}
+    client, _, sleeps = _mock_client(monkeypatch, [httpx.Response(429, json=body), httpx.Response(200, json=_OK)])
+    await client._post_payload({"contents": []})
+    assert sleeps == [3.0]
+
+
+@pytest.mark.asyncio
+async def test_5xx_backs_off_exponentially(monkeypatch) -> None:
+    client, requests, sleeps = _mock_client(
+        monkeypatch,
+        [httpx.Response(503, text="x"), httpx.Response(503, text="x"), httpx.Response(200, json=_OK)],
+        retry_backoff_seconds=1.0,
+    )
+    await client._post_payload({"contents": []})
+    assert len(requests) == 3 and sleeps == [1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_429_forever_stops_after_the_rate_limit_retries(monkeypatch) -> None:
+    from operon.clients.retry import RATE_LIMIT_RETRIES
+
+    client, requests, _ = _mock_client(monkeypatch, [httpx.Response(429, text="quota")], retry_backoff_seconds=0.5)
+    with pytest.raises(GeminiComputerUseError, match="429"):
+        await client._post_payload({"contents": []})
+    assert len(requests) == RATE_LIMIT_RETRIES + 1
+
+
+@pytest.mark.asyncio
+async def test_400_is_not_retried(monkeypatch) -> None:
+    client, requests, sleeps = _mock_client(monkeypatch, [httpx.Response(400, text="bad")])
+    with pytest.raises(GeminiComputerUseError, match="400"):
+        await client._post_payload({"contents": []})
+    assert len(requests) == 1 and sleeps == []

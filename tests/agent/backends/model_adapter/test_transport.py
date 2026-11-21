@@ -73,3 +73,34 @@ async def test_a_reply_without_a_message_is_an_error() -> None:
     )
     with pytest.raises(ModelTransportError, match="no message"):
         await client.chat([], tools=None)
+
+
+def _retry_after_transport(monkeypatch, ok_json):
+    from operon.clients import retry
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(retry.asyncio, "sleep", fake_sleep)
+    queue = [httpx.Response(429, headers={"Retry-After": "7"}, text="slow"), httpx.Response(200, json=ok_json)]
+    return httpx.MockTransport(lambda r: queue.pop(0)), sleeps
+
+
+async def test_compat_429_honors_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport, sleeps = _retry_after_transport(monkeypatch, sample("qwen3_vl_click"))
+    await OpenAICompatClient(_profile(), transport=transport).chat([], tools=None)
+    assert sleeps == [7.0]
+
+
+async def test_responses_429_honors_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.agent.backends.model_adapter.transports.openai_responses import (
+        OpenAIResponsesClient,
+    )
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    transport, sleeps = _retry_after_transport(monkeypatch, {"id": "resp_1", "output": [], "usage": {}})
+    client = OpenAIResponsesClient(_profile(adapter="openai_native"), transport=transport)
+    await client.create(input_items=[], tools=[], previous_response_id=None)
+    assert sleeps == [7.0]

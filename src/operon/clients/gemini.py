@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 from PIL import Image
 
+from operon.clients.retry import RetrySchedule, google_retry_delay, pause
 from operon.core.settings import gemini_safety_settings, get_settings
 
 try:
@@ -72,12 +73,13 @@ class GeminiHttpClient(GeminiClient):
         model: str | None = None,
         api_base_url: str | None = None,
         timeout_seconds: float = 30.0,
-        max_retries: int = 2,
-        retry_backoff_seconds: float = 0.5,
+        max_retries: int = 3,
+        retry_backoff_seconds: float = 1.0,
         use_vertex: bool | None = None,
         vertex_project: str | None = None,
         vertex_location: str | None = None,
         thinking: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.api_key = api_key
         # A thinking level ("low", "high") for Gemini 3 models, or a token budget
@@ -105,6 +107,7 @@ class GeminiHttpClient(GeminiClient):
         self.timeout_seconds = timeout_seconds
         self.max_retries = max(0, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self._transport = transport
         self._client: httpx.AsyncClient | None = None
         self._last_usage: ModelUsage | None = None
         self._last_perception_scale_ratio: float = 1.0
@@ -117,6 +120,7 @@ class GeminiHttpClient(GeminiClient):
                 timeout=httpx.Timeout(self.timeout_seconds, connect=10.0),
                 limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
                 http2=True,
+                transport=self._transport,
             )
         return self._client
 
@@ -183,7 +187,7 @@ class GeminiHttpClient(GeminiClient):
             auth_headers = {"x-goog-api-key": api_key}
 
         client = await self._get_client()
-        attempts = self.max_retries + 1
+        schedule = RetrySchedule(max_retries=self.max_retries, backoff_seconds=self.retry_backoff_seconds)
         last_error: GeminiClientError | None = None
         # Pre-serialize once â€” avoids re-encoding base64 payload on retries
         payload_bytes = json.dumps(payload).encode("utf-8")
@@ -192,7 +196,7 @@ class GeminiHttpClient(GeminiClient):
         # that never trigger httpx's per-chunk read timeout.
         hard_timeout = self.timeout_seconds + 30.0
 
-        for attempt in range(1, attempts + 1):
+        while True:
             try:
                 response = await asyncio.wait_for(
                     client.post(
@@ -206,32 +210,39 @@ class GeminiHttpClient(GeminiClient):
                     detail = response.text
                     retryable = self._is_retryable_http_error(response.status_code)
                     last_error = GeminiClientError(f"Gemini HTTP error {response.status_code}: {detail}")
-                    if not retryable or attempt >= attempts:
+                    delay = (
+                        schedule.next_delay(
+                            status=response.status_code,
+                            retry_after=response.headers.get("retry-after"),
+                            server_delay=google_retry_delay(detail),
+                        )
+                        if retryable
+                        else None
+                    )
+                    if delay is None:
                         raise last_error
-                    self._log_retry(attempt, attempts, f"http {response.status_code}")
+                    self._log_retry(delay, f"http {response.status_code}")
                 else:
                     response_body = response.text
                     break
             except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
                 last_error = GeminiClientError(f"Gemini request timed out after {hard_timeout} seconds.")
-                if attempt >= attempts:
+                delay = schedule.next_delay()
+                if delay is None:
                     raise last_error from exc
-                self._log_retry(attempt, attempts, f"timeout after {hard_timeout} seconds")
+                self._log_retry(delay, f"timeout after {hard_timeout} seconds")
             except httpx.TransportError as exc:
                 # Connect failures and dropped keep-alive connections (an HTTP/2
                 # reset surfaces as RemoteProtocolError or ReadError) are retryable.
                 last_error = GeminiClientError(f"Gemini connection failed: {exc!r}")
-                if attempt >= attempts:
+                delay = schedule.next_delay()
+                if delay is None:
                     raise last_error from exc
-                self._log_retry(attempt, attempts, f"connection error: {exc}")
+                self._log_retry(delay, f"connection error: {exc}")
             except GeminiClientError:
                 raise
 
-            await asyncio.sleep(self.retry_backoff_seconds * attempt)
-        else:
-            if last_error is not None:
-                raise last_error
-            raise GeminiClientError("Gemini request failed before receiving a response.")
+            await pause(delay)
 
         try:
             response_payload = json.loads(response_body)
@@ -255,13 +266,8 @@ class GeminiHttpClient(GeminiClient):
     def _is_retryable_http_error(status_code: int) -> bool:
         return status_code == 408 or status_code == 429 or 500 <= status_code < 600
 
-    def _log_retry(self, attempt: int, attempts: int, reason: str) -> None:
-        logger.warning(
-            "Retrying Gemini request after %s (%s/%s).",
-            reason,
-            attempt,
-            attempts,
-        )
+    def _log_retry(self, delay: float, reason: str) -> None:
+        logger.warning("Retrying Gemini request after %s in %.1fs.", reason, delay)
 
     @staticmethod
     def _build_perception_payload(prompt: str, image_bytes: bytes, mime_type: str = "image/jpeg") -> dict[str, Any]:

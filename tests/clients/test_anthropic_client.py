@@ -60,7 +60,8 @@ def _client_with(monkeypatch, responses, **kwargs):
     async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
-    monkeypatch.setattr("operon.clients.anthropic.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("operon.clients.retry.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("operon.clients.retry.random.random", lambda: 0.0)
     client = AnthropicHttpClient(api_key="test-key", model="claude-sonnet-5", **kwargs)
     calls: list[dict] = []
     queue = list(responses)
@@ -93,7 +94,7 @@ async def test_success_returns_text_sends_headers_and_records_usage(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_429_then_success_retries_with_linear_backoff(monkeypatch) -> None:
+async def test_429_then_success_retries_with_longer_exponential_backoff(monkeypatch) -> None:
     client, calls, sleeps = _client_with(
         monkeypatch,
         [httpx.Response(429, text="slow"), httpx.Response(429, text="slow"), httpx.Response(200, json=OK_BODY)],
@@ -104,7 +105,7 @@ async def test_429_then_success_retries_with_linear_backoff(monkeypatch) -> None
     assert await client.generate_policy("plan") == "hello"
 
     assert len(calls) == 3
-    assert sleeps == [0.5, 1.0]
+    assert sleeps == [2.0, 4.0]  # base 0.5 x 4 for rate limits, doubling
 
 
 @pytest.mark.asyncio
@@ -171,7 +172,7 @@ async def test_connect_error_retries_then_raises_typed_error(monkeypatch) -> Non
     with pytest.raises(AnthropicClientError, match="connection failed: refused"):
         await client.generate_policy("plan")
 
-    assert len(calls) == 3 and len(sleeps) == 2
+    assert len(calls) == 3 and sleeps == []  # base 0: no sleeping
 
 
 @pytest.mark.asyncio
@@ -265,3 +266,30 @@ def test_extract_usage_ignores_missing_or_invalid_fields() -> None:
         payload={"usage": {"input_tokens": -1, "output_tokens": 4}}, model="claude-sonnet-5", request_kind="text"
     )
     assert usage is not None and usage.input_tokens is None and usage.total_tokens == 4
+
+
+@pytest.mark.asyncio
+async def test_429_honors_retry_after(monkeypatch) -> None:
+    client, calls, sleeps = _client_with(
+        monkeypatch,
+        [httpx.Response(429, text="slow", headers={"retry-after": "7"}), httpx.Response(200, json=OK_BODY)],
+    )
+
+    assert await client.generate_policy("plan") == "hello"
+
+    assert len(calls) == 2
+    assert sleeps == [7.0]
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_connection_is_retried(monkeypatch) -> None:
+    client, calls, sleeps = _client_with(
+        monkeypatch,
+        [httpx.ReadError("reset"), httpx.Response(200, json=OK_BODY)],
+        retry_backoff_seconds=0.5,
+    )
+
+    assert await client.generate_policy("plan") == "hello"
+
+    assert len(calls) == 2
+    assert sleeps == [0.5]

@@ -181,3 +181,25 @@ async def test_post_json_payload_retries_a_dropped_connection() -> None:
 
     assert await client._post_json_payload(GeminiHttpClient._build_text_payload(prompt="x"), request_kind="text") == "{}"
     assert attempts["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_429_honors_retry_after(monkeypatch) -> None:
+    from operon.clients import retry
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(retry.asyncio, "sleep", fake_sleep)
+    queue = [
+        httpx.Response(429, headers={"Retry-After": "7"}, text="slow"),
+        httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}),
+    ]
+    client = GeminiHttpClient(api_key="test-key", transport=httpx.MockTransport(lambda r: queue.pop(0)))
+
+    text = await client._post_json_payload(GeminiHttpClient._build_text_payload(prompt="x"), request_kind="text")
+
+    assert text == "{}"
+    assert sleeps == [7.0]

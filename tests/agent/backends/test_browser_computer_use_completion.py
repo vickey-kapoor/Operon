@@ -237,13 +237,7 @@ async def test_unclean_finish_is_not_a_stop(tmp_path: Path, finish_reason: str) 
     assert await _decision_for(tmp_path, reply) is ActionType.WAIT
 
 
-async def test_a_question_is_not_a_stop(tmp_path: Path) -> None:
-    reply = _finished("Should I place the order now?", "STOP")
-
-    assert await _decision_for(tmp_path, reply) is ActionType.WAIT
-
-
-async def test_a_report_ending_with_a_polite_question_is_still_a_stop(tmp_path: Path) -> None:
-    reply = _finished("I opened the Products page. Is there anything else you need?", "STOP")
-
-    assert await _decision_for(tmp_path, reply) is ActionType.STOP
+@pytest.mark.parametrize("text", ["Done — anything else?", "Should I place the order now?"])
+async def test_wording_never_overrides_a_clean_finish(tmp_path: Path, text: str) -> None:
+    # Codex review on #345: the thin harness never judges the model's wording.
+    assert await _decision_for(tmp_path, _finished(text, "STOP")) is ActionType.STOP

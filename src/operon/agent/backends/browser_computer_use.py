@@ -92,18 +92,6 @@ class _ConversationState:
 _CLEAN_FINISH_REASONS = frozenset({"STOP", "FINISH_REASON_STOP"})
 
 
-def _is_only_a_question(text: str) -> bool:
-    """A reply that is one question and nothing else, e.g. "Should I place the order?".
-
-    A report that ends with a polite question ("Done. Anything else?") still counts as
-    done, so only a single-sentence question qualifies."""
-    text = text.strip()
-    if not text.endswith("?"):
-        return False
-    body = text.rstrip("?").strip()
-    return not any(mark in body for mark in (".", "!", "?", "\n"))
-
-
 def _requires_confirmation(call: dict) -> bool:
     decision = (call.get("args") or {}).get("safety_decision")
     return isinstance(decision, dict) and decision.get("decision") == "require_confirmation"
@@ -582,8 +570,8 @@ class BrowserComputerUseBackend(AgentBackend):
         """Whether a text-only reply is the model saying the task is done (KAN-102).
 
         Only a clean finish counts: a reply cut off, malformed or stopped by a safety
-        filter is not a "done", nor is a reply that only asks a question. Those stay a
-        wait, and the model gets another turn on a fresh screenshot."""
+        filter is not a "done". It stays a wait, and the model gets another turn on a
+        fresh screenshot. The reply's wording is never judged (thin harness, KAN-183)."""
         if "function_call" in response_payload:
             return False
         if (response_payload.get("action") or {}).get("action_type") != "wait":
@@ -591,8 +579,6 @@ class BrowserComputerUseBackend(AgentBackend):
         finish = (response_payload.get("raw_candidate") or {}).get("finish_reason")
         # A reply with no finish reason (older recordings, scripted replies) is read as before.
         if finish is not None and str(finish).upper() not in _CLEAN_FINISH_REASONS:
-            return False
-        if _is_only_a_question(str(response_payload.get("rationale") or "")):
             return False
         return any(
             executed.success and executed.action.action_type not in {ActionType.WAIT, ActionType.STOP, ActionType.WAIT_FOR_USER}

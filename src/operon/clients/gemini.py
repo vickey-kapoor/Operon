@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 from PIL import Image
 
-from operon.core.settings import get_settings
+from operon.core.settings import gemini_safety_settings, get_settings
 
 try:
     import google.auth
@@ -167,6 +167,9 @@ class GeminiHttpClient(GeminiClient):
         return self._vertex_credentials.token
 
     async def _post_json_payload(self, payload: dict[str, Any], *, request_kind: str) -> str:
+        safety = gemini_safety_settings(get_settings().gemini_safety)
+        if safety:
+            payload["safetySettings"] = safety
         if self.use_vertex:
             token = await asyncio.to_thread(self._vertex_auth_header)
             url = f"{self.api_base_url}/{self.model}:generateContent"

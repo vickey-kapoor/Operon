@@ -120,6 +120,9 @@ class Settings(BaseModel):
     parallel_runs: int = _env_field("OPERON_PARALLEL_RUNS", 1)
     # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
     settle_detect: bool = _env_field("OPERON_SETTLE_DETECT", False)
+    # Gemini's own content filter: "default" sends no safetySettings, "high_only" relaxes it to
+    # BLOCK_ONLY_HIGH. Never touches Operon's safety gates or the safety_decision flow.
+    gemini_safety: str = _env_field("OPERON_GEMINI_SAFETY", "default")
     # Benchmark runs only (KAN-169): answer the model's own "require confirmation" pauses yes.
     auto_confirm: bool = _env_field("OPERON_AUTO_CONFIRM", False)
     settle_max_s: float = _env_field("OPERON_SETTLE_MAX_S", 3.0)
@@ -237,6 +240,22 @@ _REMOVED_FULL_HARNESS_VARS: tuple[str, ...] = (
 )
 
 
+GEMINI_SAFETY_MODES = frozenset({"default", "high_only"})
+_GEMINI_HARM_CATEGORIES = (
+    "HARM_CATEGORY_HARASSMENT",
+    "HARM_CATEGORY_HATE_SPEECH",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+    "HARM_CATEGORY_DANGEROUS_CONTENT",
+)
+
+
+def gemini_safety_settings(mode: str) -> list[dict[str, str]] | None:
+    """The ``safetySettings`` for a Gemini request, or None to send none (``default``)."""
+    if mode != "high_only":
+        return None
+    return [{"category": c, "threshold": "BLOCK_ONLY_HIGH"} for c in _GEMINI_HARM_CATEGORIES]
+
+
 def _split(raw: str, *, lower: bool = False) -> tuple[str, ...]:
     items = (item.strip() for item in raw.split(","))
     return tuple(item.lower() if lower else item for item in items if item)
@@ -307,6 +326,13 @@ class _Parser:
         permission = self.text("OPERON_PERMISSION_MODE").strip().lower()
         permission = self.choice("OPERON_PERMISSION_MODE", permission, {"ask", "risky", "auto"}, "")
 
+        gemini_safety = self.text("OPERON_GEMINI_SAFETY", "default").strip().lower() or "default"
+        if gemini_safety not in GEMINI_SAFETY_MODES:
+            self.errors.append(
+                f"OPERON_GEMINI_SAFETY={gemini_safety!r} is not one of {sorted(GEMINI_SAFETY_MODES)}"
+            )
+            gemini_safety = "default"
+
         platform = (self.raw("OPERON_DESKTOP_PLATFORM") or "").strip().lower()
         platform = "linux" if platform == "linux" else "windows"
 
@@ -359,6 +385,7 @@ class _Parser:
             progress_revisit=self.flag("OPERON_PROGRESS_REVISIT", "off"),
             parallel_runs=max(1, self.number("OPERON_PARALLEL_RUNS", "1", int, fatal=False)),
             settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
+            gemini_safety=gemini_safety,
             auto_confirm=self.flag("OPERON_AUTO_CONFIRM", "off"),
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),
             change_note=self.flag("OPERON_CHANGE_NOTE", "off"),

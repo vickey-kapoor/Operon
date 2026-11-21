@@ -43,6 +43,9 @@ on:
       zoom:
         description: "OPERON_ZOOM (KAN-82): off, dense or always"
         default: "off"
+      gemini_safety:
+        description: "OPERON_GEMINI_SAFETY: default (no safetySettings) or high_only (Gemini blocks only high-probability harm)"
+        default: "default"
       desktop_model:
         description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
         default: ""
@@ -64,6 +67,7 @@ on:
       desktop_backend: {type: string, default: "computer_use"}
       tools: {type: string, default: "off"}
       zoom: {type: string, default: "off"}
+      gemini_safety: {type: string, default: "default"}
       desktop_model: {type: string, default: ""}
       model: {type: string, default: ""}
       args: {type: string, default: ""}
@@ -156,6 +160,8 @@ jobs:
       OPERON_TOOLS: ${{ inputs.tools || 'off' }}
       # Zoom before clicking (KAN-82); off unless the run asks for it.
       OPERON_ZOOM: ${{ inputs.zoom || 'off' }}
+      # Gemini's content filter; default sends no safetySettings.
+      OPERON_GEMINI_SAFETY: ${{ inputs.gemini_safety || 'default' }}
       # The trust gate is on by default (KAN-15); benchmarks keep it off so scores stay comparable.
       OPERON_TRUST_GATE: "off"
       MAX_RUN_COST_USD: ${{ inputs.max_cost_usd }}

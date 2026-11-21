@@ -22,7 +22,12 @@ from typing import Any, Literal
 
 from operon.agent.actions.translation import build_policy_decision
 from operon.agent.app_catalog import launch_targets
-from operon.agent.backends.base import AgentBackend, BackendCompatibilityError
+from operon.agent.backends.base import (
+    AgentBackend,
+    BackendCompatibilityError,
+    restore_hints,
+    snapshot_hints,
+)
 from operon.agent.backends.model_adapter.actions import (
     SCROLL_STEP_PX,
     CoordinateMapper,
@@ -229,6 +234,7 @@ class OpenAIComputerUseBackend(AgentBackend):
             screen_height=screenshot.height or image.source_height,
             scroll_step=SCROLL_STEP_PX,
         )
+        saved_hints = snapshot_hints(self._hints, state.run_id)
         input_items = await self._input(conv, state, image)
         tools = [{"type": "computer"}, *_custom_tools(self.environment)]
         # Instructions do not carry over through previous_response_id, so send them every turn.
@@ -243,6 +249,7 @@ class OpenAIComputerUseBackend(AgentBackend):
             )
         except ModelTransportError as exc:
             # The conversation is left as it was, so a later step answers the same calls.
+            restore_hints(self._hints, saved_hints)
             raise BackendCompatibilityError(str(exc)) from exc
         conv.held_checks, conv.not_executed_reason = [], None
         bg_writer.enqueue(raw_path, json.dumps(response, indent=2))

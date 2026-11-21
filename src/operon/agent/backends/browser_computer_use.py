@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
 import logging
 import mimetypes
@@ -19,6 +20,8 @@ from operon.agent.backends.base import (
     AgentBackend,
     BackendCompatibilityError,
     ModelBlockedError,
+    restore_hints,
+    snapshot_hints,
 )
 from operon.clients.gemini_computer_use import (
     GeminiComputerUseClient,
@@ -177,12 +180,18 @@ class BrowserComputerUseBackend(AgentBackend):
                 "rationale": rationale,
             }
         else:
+            saved_hints = snapshot_hints(self._advisory_hints, state.run_id)
             hints = self._take_hints(state)
             prompt = self._render_prompt(state, hints)
             bg_writer.enqueue(prompt_path, prompt)
-            response_payload = await self._run_with_retry(
-                prompt=prompt, screenshot=screenshot, state=state, hints=hints
-            )
+            try:
+                response_payload = await self._run_with_retry(
+                    prompt=prompt, screenshot=screenshot, state=state, hints=hints
+                )
+            except BaseException:
+                # The model never saw these hints: queue them again for the next try.
+                restore_hints(self._advisory_hints, saved_hints)
+                raise
             if self.zoom.enabled:
                 response_payload, zoom_usage = await self._zoom_first_click(response_payload, screenshot, state)
             function_calls = response_payload.get("function_calls") or []
@@ -384,6 +393,8 @@ class BrowserComputerUseBackend(AgentBackend):
         if state.action_history:
             return response_payload
 
+        # If this stronger retry fails, run_step does not touch the conversation, so
+        # the first turn's conversation (and its answer) stays as _run_turn left it.
         retry_prompt = prompt + self._retry_suffix
         try:
             retry_payload = await self.client.run_step(
@@ -416,6 +427,18 @@ class BrowserComputerUseBackend(AgentBackend):
         self, *, prompt: str, screenshot: CaptureFrame, state: AgentState, hints: list[tuple[str, str]] | None = None
     ) -> dict:
         conversation = self._conversations.setdefault(state.run_id, _ConversationState())
+        # Everything below changes the conversation before the model is asked. If the
+        # call fails, put it back, in place (other code holds this same object), so the
+        # next turn answers the same open calls with the new screenshot. Every field is
+        # a list, scalar or a KeyHold that is replaced rather than mutated, so a shallow
+        # copy of the lists is enough.
+        snapshot = dataclasses.replace(
+            conversation,
+            contents=list(conversation.contents),
+            pending_function_names=list(conversation.pending_function_names),
+            held_calls=list(conversation.held_calls),
+            last_calls=list(conversation.last_calls),
+        )
         if conversation.pending_function_names:
             # Always answer the model's open tool call before asking again: the API
             # rejects a request that ends with a model turn. A mid-step re-look (an
@@ -492,27 +515,32 @@ class BrowserComputerUseBackend(AgentBackend):
             )
 
         try:
-            response_payload = await self.client.generate_turn(contents=conversation.contents)
-        except GeminiPromptBlockedError as blocked:
-            # An API-call retry, not a change to any model action: same turn, older
-            # screenshots dropped. The stored history is only replaced if it succeeds.
-            logger.warning(
-                "Gemini blocked the request (%s); retrying once with only the last %d screenshots",
-                blocked.block_reason,
-                BLOCK_RETRY_KEEP_SCREENSHOTS,
-            )
-            pruned = _with_recent_screenshots_only(conversation.contents)
-            if pruned == conversation.contents:
-                # Nothing to drop: an identical request would just be blocked again.
-                raise ModelBlockedError(blocked.block_reason) from blocked
-            first_usage = self.client.latest_usage() if hasattr(self.client, "latest_usage") else None
             try:
-                response_payload = await self.client.generate_turn(contents=pruned)
-            except GeminiPromptBlockedError as again:
-                raise ModelBlockedError(again.block_reason) from again
-            if isinstance(first_usage, ModelUsage):
-                self._blocked_usage[state.run_id] = first_usage
-            conversation.contents = pruned
+                response_payload = await self.client.generate_turn(contents=conversation.contents)
+            except GeminiPromptBlockedError as blocked:
+                # An API-call retry, not a change to any model action: same turn, older
+                # screenshots dropped. The stored history is only replaced if it succeeds.
+                logger.warning(
+                    "Gemini blocked the request (%s); retrying once with only the last %d screenshots",
+                    blocked.block_reason,
+                    BLOCK_RETRY_KEEP_SCREENSHOTS,
+                )
+                pruned = _with_recent_screenshots_only(conversation.contents)
+                if pruned == conversation.contents:
+                    # Nothing to drop: an identical request would just be blocked again.
+                    raise ModelBlockedError(blocked.block_reason) from blocked
+                first_usage = self.client.latest_usage() if hasattr(self.client, "latest_usage") else None
+                try:
+                    response_payload = await self.client.generate_turn(contents=pruned)
+                except GeminiPromptBlockedError as again:
+                    raise ModelBlockedError(again.block_reason) from again
+                if isinstance(first_usage, ModelUsage):
+                    self._blocked_usage[state.run_id] = first_usage
+                conversation.contents = pruned
+        except BaseException:
+            for f in dataclasses.fields(conversation):
+                setattr(conversation, f.name, getattr(snapshot, f.name))
+            raise
         model_content = response_payload.get("model_content")
         if isinstance(model_content, dict):
             conversation.contents.append({"role": "model", "parts": model_content.get("parts", [])})

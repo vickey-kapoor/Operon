@@ -2,14 +2,15 @@
 
 Benchmarks cost real credits: run only when asked. Paid runs are public benchmarks only (KAN-184): **OSWorld**
 (`evals/osworld.py`, workflow `osworld-bench.yml`) and **ScreenSpot grounding** (`evals/grounding.py`, `grounding.yml`),
-both on Gemini (gemini-3.5-flash). Operon's own suites (browser, desktop, hybrid) no longer run on paid runs. The free
+both on Gemini (gemini-3.5-flash); OSWorld can also run Claude Sonnet 5.5 and GPT computer use (`--model`). Operon's own suites (browser, desktop, hybrid) no longer run on paid runs. The free
 checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are unchanged.
 
 ```powershell
 # Name runs by cell when asking Vickey: "Gemini · OSWorld · 25 tasks · once, about $X" or "Gemini · Grounding · zoom · about $X".
 # Stops once a run has spent its cost cap ($MAX_RUN_COST_USD / --max-cost-usd; 0 = no cap)
 # OSWorld-Verified subset (25 fixed tasks, scored by OSWorld; needs the Linux VM, docs/osworld-runner.md):
-.venv\Scripts\python -m evals.osworld [--limit 5] [--only <task id prefix>] [--max-cost-usd 3] [--list]
+.venv\Scripts\python -m evals.osworld [--limit 5] [--only <task id prefix>] [--max-cost-usd 3] [--model claude-sonnet-5-5|openai-computer-use] [--list]
+# --model (empty = Gemini) runs Claude or GPT through the KAN-168 model adapter (OPERON_DESKTOP_BACKEND=model); they spend Anthropic/OpenAI credits: need Vickey's cost OK (about $3-6 per 25 tasks per model). Batch cell: osworld model=<profile>
 
 # Grounding eval: ScreenSpot-v2/Pro samples, one model call each through the real backend, click scored vs the box
 .venv\Scripts\python -m evals.grounding [--per-set 100] [--set v2-web] [--list] [--zoom off|dense|always]
@@ -56,8 +57,8 @@ checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are 
 #   /bench batch  (then one cell per line): the day's approved queue in one run, caps summed up front
 #     (KAN-105, benchmark.yml, evals/bench_batch.py). Cells:
 #       grounding [zoom|zoom=always] [per_set=<1..500>] [pr=<n>|ref=<ref>] [cap=<USD>]
-#       osworld [limit=<0..25>] [only=<task id prefix>] [steps=<1..200>] [cap=<USD>]   (default branch, own VM; no pr=/ref=)
-#   Own-suite words (browser, desktop, hybrid, core, smoke, ..., model=) are refused with a KAN-184 message.
+#       osworld [limit=<0..25>] [only=<task id prefix>] [steps=<1..200>] [model=claude-sonnet-5-5|openai-computer-use] [cap=<USD>]   (default branch, own VM; no pr=/ref=)
+#   Own-suite words (browser, desktop, hybrid, core, smoke, ...) are refused, with a KAN-184 message. model= is for osworld cells only.
 #   OSWorld by hand: Actions > Run OSWorld test tasks (own VM) > Run workflow (osworld-bench.yml).
 # Record and replay (KAN-167, evals/replay.py): --keep-screens also writes <report>/recordings/<task>.json for each
 # thin-harness run (Gemini's answers + the actions Operon ran). Copy one into evals/recordings/ and every PR

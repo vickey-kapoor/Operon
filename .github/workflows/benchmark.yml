@@ -219,9 +219,13 @@ jobs:
       max_cost_usd: ${{ matrix.cap }}
       artifact_suffix: ${{ matrix.suffix }}
       max_steps: ${{ matrix.steps }}
+      model: ${{ matrix.model }}
       publish_videos: "false"  # publish-videos below keeps every cell's videos in one release
+    # Only the called workflow's bench job decides which key reaches a cell (by its model).
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   grounding:
     name: ${{ needs.parse.outputs.label }}

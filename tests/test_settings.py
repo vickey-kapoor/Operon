@@ -217,7 +217,7 @@ _GRADUATED_ON = [("trust_gate", True), ("zoom", "dense")]
 _GRADUATED_RESOLVED = ["tools"]
 # Plain configuration: models, paths, hosts, keys, timeouts and sizes; no feature to turn on.
 _PLAIN_CONFIG = {
-    "api_keys", "cors_origins", "allowed_hosts", "api_url", "runs_retain_days", "stream_token_ttl_s",
+    "api_keys", "gemini_safety", "cors_origins", "allowed_hosts", "api_url", "runs_retain_days", "stream_token_ttl_s",
     "hitl_webhook_url", "config_dir", "runtime_root", "runs_root", "browser_artifacts_root",
     "desktop_artifacts_root", "test_artifacts_root", "gemini_api_key", "google_api_key", "gemini_model",
     "gemini_api_base_url", "vertex_project", "vertex_location", "model_registry", "anthropic_api_key",

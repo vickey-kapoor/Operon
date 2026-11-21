@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from operon.core.settings import get_settings
+from operon.core.settings import gemini_safety_settings, get_settings
 from operon.models.usage import ModelUsage, estimate_usage_cost
 
 logger = logging.getLogger(__name__)
@@ -124,11 +124,15 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         generation_config: dict[str, Any] = {"temperature": 0}
         if self.thinking_level and not self.model.startswith("gemini-2"):
             generation_config["thinkingConfig"] = {"thinkingLevel": self.thinking_level}
-        return {
+        payload: dict[str, Any] = {
             "contents": contents,
             "tools": tools,
             "generationConfig": generation_config,
         }
+        safety = gemini_safety_settings(get_settings().gemini_safety)
+        if safety:
+            payload["safetySettings"] = safety
+        return payload
 
     @staticmethod
     def _build_user_content(*, prompt: str, image_path: Path) -> dict[str, Any]:

@@ -14,6 +14,7 @@ One cell per line (or separated by ``;``), plus where to run it and its cost cap
     grounding ref=main cap=2
     osworld limit=5
     osworld only=3e5a cap=1
+    osworld model=claude-sonnet-5-5 limit=25
 
 ``grounding`` words: ``zoom|zoom=dense|zoom=always`` (KAN-82: OPERON_ZOOM), ``per_set=<1..500>``
 (samples per set, default 100), ``pr=<number>`` (that PR's head) or ``ref=<branch, tag or commit>``
@@ -21,11 +22,12 @@ One cell per line (or separated by ``;``), plus where to run it and its cost cap
 
 ``osworld`` words: ``limit=<0..25>`` (the first N tasks; 0 or leaving it out runs all 25),
 ``only=<task id prefix>`` (one task; overrides limit), ``steps=<1..200>`` (per task, default 50),
-``cap=<USD>`` (default 3). OSWorld runs the default branch on its own VM, so ``pr=`` and ``ref=`` are refused.
+``model=<profile>`` (``claude-sonnet-5-5`` or ``openai-computer-use`` through the model adapter, KAN-168;
+default Gemini), ``cap=<USD>`` (default 3). OSWorld runs the default branch on its own VM, so ``pr=`` and ``ref=`` are refused.
 
 ``gemini`` and ``thin`` are accepted and change nothing (``full`` and ``same-critic`` are errors:
 the Full harness was removed, KAN-183). A line for Operon's own suites (browser, desktop, hybrid, ...)
-is refused. Blank lines and ``#`` comments are skipped. The batch is refused when its cells' caps
+is refused, and so is ``model=`` on a grounding cell (grounding calls Gemini's API directly). Blank lines and ``#`` comments are skipped. The batch is refused when its cells' caps
 add up to more than the batch cap, so the most it can spend is known before anything starts.
 
 Run it as ``python -m evals.bench_batch --max-total-usd 10 < cells.txt``: it prints a
@@ -44,6 +46,10 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+
+from evals.osworld import (
+    MODEL_LABELS,  # the one allow-list of OSWorld models; the module imports no Operon code
+)
 
 KINDS = ("grounding", "osworld")
 # Words that name one of Operon's own suites (or its per-suite switches): refused since KAN-184.
@@ -81,6 +87,7 @@ class Cell:
     limit: int = OSWORLD_TASKS  # osworld only; 0 is read as all
     only: str = ""  # osworld only: a task id prefix, overrides limit
     steps: int = DEFAULT_STEPS  # osworld only
+    model: str = ""  # osworld only: a registry profile; empty is Gemini
     pr: str = ""
     ref: str = ""
     cap: float = DEFAULT_CAP_USD
@@ -89,7 +96,7 @@ class Cell:
     def label(self) -> str:
         """The cell's name the way runs are named in chat: "Gemini · OSWorld · 25 tasks"."""
         if self.kind == "osworld":
-            label = "Gemini · OSWorld · " + (f"task {self.only}" if self.only else f"{self.limit} tasks")
+            label = f"{MODEL_LABELS.get(self.model, 'Gemini')} · OSWorld · " + (f"task {self.only}" if self.only else f"{self.limit} tasks")
             if self.steps != DEFAULT_STEPS:
                 label += f" · {self.steps} steps"
             return label
@@ -123,7 +130,7 @@ def parse_line(line: str, number: int) -> Cell | None:
     for word in words:
         if word in ("full", "same-critic"):
             raise BatchError(f"{where}: the Full harness was removed (KAN-183); {word!r} no longer exists. Runs are thin.")
-        if word in OWN_SUITE_WORDS or word == "azure" or word.startswith(("season=", "model=")):
+        if word in OWN_SUITE_WORDS or word == "azure" or word.startswith("season="):
             raise BatchError(f"{where}: {OWN_SUITE_MESSAGE}")
     kinds = [w for w in words if w in KINDS]
     if not kinds:
@@ -133,6 +140,13 @@ def parse_line(line: str, number: int) -> Cell | None:
     cell = Cell(kind=kinds[0])
     for word in words:
         if word in KINDS:
+            continue
+        if word.startswith("model="):
+            if cell.kind != "osworld":
+                raise BatchError(f"{where}: model= is for osworld cells; grounding calls Gemini's API directly.")
+            cell.model = word.removeprefix("model=")
+            if cell.model not in MODEL_LABELS:
+                raise BatchError(f"{where}: model= must be one of {', '.join(MODEL_LABELS)}.")
             continue
         if cell.kind == "grounding" and word in ("zoom", "zoom=dense", "zoom=always"):
             cell.zoom = "always" if word == "zoom=always" else "dense"
@@ -181,7 +195,7 @@ def parse_batch(text: str, max_total_usd: float = DEFAULT_MAX_TOTAL_USD) -> list
     seen: set[tuple] = set()
     for cell in cells:
         # only= overrides limit, so limit is not part of the cell's identity then.
-        key = (cell.kind, cell.zoom, cell.per_set, cell.limit if not cell.only else 0, cell.only, cell.steps, cell.pr, cell.ref)
+        key = (cell.kind, cell.zoom, cell.per_set, cell.limit if not cell.only else 0, cell.only, cell.steps, cell.model, cell.pr, cell.ref)
         if key in seen:
             raise BatchError(f"{cell.label} is in the batch twice.")
         seen.add(key)
@@ -234,7 +248,7 @@ def matrices(cells: list[Cell]) -> dict:
             )
         else:
             osworld.append(
-                {"label": cell.label, "limit": str(cell.limit), "only": cell.only, "steps": str(cell.steps), "cap": cap, "suffix": suffix}
+                {"label": cell.label, "limit": str(cell.limit), "only": cell.only, "steps": str(cell.steps), "model": cell.model, "cap": cap, "suffix": suffix}
             )
     return {
         "grounding": {"include": grounding},

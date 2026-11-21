@@ -50,8 +50,7 @@ def test_an_osworld_cell_and_its_defaults() -> None:
 
 
 @pytest.mark.parametrize("word", ["browser", "desktop", "hybrid", "core", "smoke", "all", "safety", "apps", "hard", "long",
-                                  "dynamic", "tools", "settle", "note", "planner", "expect", "x3", "season=2",
-                                  "model=claude-sonnet-5-5"])
+                                  "dynamic", "tools", "settle", "note", "planner", "expect", "x3", "season=2"])
 def test_own_suite_words_are_refused(word) -> None:
     for line in (f"{word} thin", f"grounding {word}", f"osworld {word}"):
         with pytest.raises(BatchError, match=r"own suites no longer run on paid runs \(KAN-184\); use osworld or grounding cells"):
@@ -169,8 +168,8 @@ def test_matrices_split_grounding_from_osworld_and_give_unique_artifact_names() 
         {"label": "Gemini · Grounding · zoom always · 20 per set · abc", "ref": "abc", "zoom": "always", "per_set": "20", "cap": "3", "suffix": "-cell2"}
     ]
     assert out["osworld"]["include"] == [
-        {"label": "Gemini · OSWorld · task 3e5a · 30 steps", "limit": "5", "only": "3e5a", "steps": "30", "cap": "1.5", "suffix": "-cell1"},
-        {"label": "Gemini · OSWorld · 25 tasks", "limit": "25", "only": "", "steps": "50", "cap": "3", "suffix": "-cell3"},
+        {"label": "Gemini · OSWorld · task 3e5a · 30 steps", "limit": "5", "only": "3e5a", "steps": "30", "model": "", "cap": "1.5", "suffix": "-cell1"},
+        {"label": "Gemini · OSWorld · 25 tasks", "limit": "25", "only": "", "steps": "50", "model": "", "cap": "3", "suffix": "-cell3"},
     ]
     only_osworld = matrices(parse_batch("osworld"))
     assert only_osworld["has_grounding"] is False and only_osworld["grounding"] == {"include": []}
@@ -206,13 +205,13 @@ def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() ->
     for job, called in (("batch-grounding", "grounding.yml"), ("batch-osworld", "osworld-bench.yml")):
         inputs = _workflow(called)[True]["workflow_call"]["inputs"]
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
-        # Only the Gemini key reaches a paid run.
-        assert set(jobs[job]["secrets"]) == {"GEMINI_API_KEY"}
+        # The callee decides which key reaches a cell; an OSWorld cell may carry the Claude and OpenAI keys too.
+        assert {"GEMINI_API_KEY"} <= set(jobs[job]["secrets"]) <= set(_workflow(called)[True]["workflow_call"].get("secrets", {}))
         # Each cell's artifact gets its own name; a manual run (empty suffix) keeps today's name.
         assert jobs[job]["with"]["artifact_suffix"] == "${{ matrix.suffix }}"
         assert inputs["artifact_suffix"]["default"] == ""
     # Every matrix field the workflow reads is one the parser writes.
-    fields = {"grounding": ("label", "ref", "zoom", "per_set", "cap", "suffix"), "osworld": ("label", "limit", "only", "steps", "cap", "suffix")}
+    fields = {"grounding": ("label", "ref", "zoom", "per_set", "cap", "suffix"), "osworld": ("label", "limit", "only", "steps", "model", "cap", "suffix")}
     for job, kind in (("batch-grounding", "grounding"), ("batch-osworld", "osworld")):
         text = json.dumps(jobs[job])
         for used in {part.split("}}")[0].strip() for part in text.split("matrix.")[1:]}:
@@ -249,7 +248,7 @@ def test_run_videos_are_kept_for_batch_osworld_cells_only() -> None:
 def test_the_osworld_workflow_can_be_called_and_keeps_its_vm_lock() -> None:
     wf = _workflow("osworld-bench.yml")
     assert set(wf[True]) == {"workflow_dispatch", "workflow_call"}
-    assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps", "artifact_suffix", "publish_videos"}
+    assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps", "model", "artifact_suffix", "publish_videos"}
     assert wf["concurrency"]["group"] == "azure-osworld-vm"
 
 
@@ -297,3 +296,51 @@ def test_batch_jobs_run_past_the_skipped_comment_parser() -> None:
         assert "!cancelled()" in condition, name
         assert "needs.plan.result == 'success'" in condition, name
     assert "!cancelled() && needs.parse.result != 'failure'" in jobs["plan"]["if"]
+
+
+# --- OSWorld cells on Claude and GPT (KAN-184 follow-up) -------------------------------------
+
+
+def test_an_osworld_cell_takes_a_model_profile() -> None:
+    claude = parse_line("osworld model=claude-sonnet-5-5 limit=25", 1)
+    assert claude.model == "claude-sonnet-5-5" and claude.label == "Claude Sonnet 5.5 · OSWorld · 25 tasks"
+    assert parse_line("osworld model=openai-computer-use limit=5 steps=30", 1).label == "GPT computer use · OSWorld · 5 tasks · 30 steps"
+    assert parse_line("osworld", 1).model == "" and parse_line("osworld", 1).label.startswith("Gemini")
+
+
+def test_model_cells_refuse_other_profiles_and_grounding() -> None:
+    with pytest.raises(BatchError, match="model= must be one of"):
+        parse_line("osworld model=claude-opus-5-5", 1)
+    with pytest.raises(BatchError, match="model= must be one of"):
+        parse_line("osworld model=", 1)
+    with pytest.raises(BatchError, match="grounding calls Gemini's API directly"):
+        parse_line("grounding model=claude-sonnet-5-5", 1)
+
+
+def test_the_model_is_part_of_a_cells_identity_and_the_matrix() -> None:
+    cells = parse_batch("osworld limit=5\nosworld limit=5 model=claude-sonnet-5-5\nosworld limit=5 model=openai-computer-use", 0)
+    assert len(cells) == 3
+    with pytest.raises(BatchError, match="twice"):
+        parse_batch("osworld model=claude-sonnet-5-5\nosworld model=claude-sonnet-5-5 cap=1", 0)
+    include = matrices(cells)["osworld"]["include"]
+    assert [c["model"] for c in include] == ["", "claude-sonnet-5-5", "openai-computer-use"]
+    assert len({c["suffix"] for c in include}) == 3  # artifact names never clash
+
+
+def test_osworld_bench_workflow_takes_a_model_and_gates_the_keys() -> None:
+    wf = _workflow("osworld-bench.yml")
+    dispatch = wf[True]["workflow_dispatch"]["inputs"]["model"]
+    assert dispatch["type"] == "choice" and dispatch["options"] == ["", "claude-sonnet-5-5", "openai-computer-use"]
+    assert wf[True]["workflow_call"]["inputs"]["model"] == {"type": "string", "default": ""}
+    assert {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"} <= set(wf[True]["workflow_call"]["secrets"])
+    bench = wf["jobs"]["bench"]
+    env = bench["env"]
+    assert env["ANTHROPIC_API_KEY"] == "${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}"
+    assert env["OPENAI_API_KEY"] == "${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}"
+    steps = {s.get("name"): s.get("run", "") for s in bench["steps"]}
+    assert 'args+=(--model "$MODEL")' in steps["Run the tasks"]
+    assert "claude-sonnet-5-5 | openai-computer-use" in steps["Check the inputs"]
+    jobs = _workflow("benchmark.yml")["jobs"]
+    assert jobs["batch-osworld"]["with"]["model"] == "${{ matrix.model }}"
+    assert {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"} <= set(jobs["batch-osworld"]["secrets"])
+    assert set(jobs["batch-grounding"]["secrets"]) == {"GEMINI_API_KEY"}  # grounding never gets the other keys

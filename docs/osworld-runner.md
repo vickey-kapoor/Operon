@@ -52,6 +52,8 @@ The VM `operon-linux` (Standard_D2s_v4, `operon-bench` resource group) needs KVM
 
 4. The repo secret `GEMINI_API_KEY` is the one the other benchmarks use. The key reaches the run
    as an environment variable of the job; it is not written to the VM's disk by the workflow.
+   A `model` run also uses the repo secret `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY` (GPT); each reaches
+   only a run of that provider's model, never a Gemini or grounding run.
 
 The first run also creates the two Python environments (`~/osw-venv`, Python 3.11 with OSWorld's
 requirements, which pin `torch` below Python 3.14; `~/operon-venv`, Python 3.14 with Operon) and

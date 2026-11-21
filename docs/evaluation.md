@@ -189,7 +189,7 @@ osworld only=2c1ebcd7 cap=1
 
 `grounding` cells take `zoom|zoom=always`, `per_set=<1..500>` (default 100), `pr=<n>` (that PR's head, forks refused) or
 `ref=<branch|tag|commit>` (default: the default branch). `osworld` cells take `limit=<0..25>` (0 or none: all 25), `only=<task id prefix>`
-(overrides limit) and `steps=<1..200>` (default 50); OSWorld runs the default branch on its own VM, so `pr=` and `ref=` are refused.
+(overrides limit) and `steps=<1..200>` (default 50), plus `model=claude-sonnet-5-5` or `model=openai-computer-use` (Claude or GPT through the model adapter, KAN-168; default Gemini; grounding cells refuse `model=`). Other-model runs need Vickey's cost OK first (about $3-6 per 25-task pass per model). OSWorld runs the default branch on its own VM, so `pr=` and `ref=` are refused.
 Both take `cap=<USD>` (the whole cell's cost cap, default $3). A line for an own suite is refused. The batch is refused before anything starts when
 its caps add up to more than `max_total_usd` (default $10), so the most it can spend is known up
 front. Grounding cells run side by side on hosted runners; OSWorld cells run one after another on the OSWorld VM

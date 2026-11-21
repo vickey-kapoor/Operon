@@ -25,7 +25,8 @@ run-name: >-
 #   grounding zoom per_set=50 pr=242; osworld limit=5 cap=1
 #
 # grounding cells take zoom, per_set=<n>, pr=<n> (that PR's head; forks refused) or ref=<branch|tag|commit>
-# and cap=<USD> (default $3). osworld cells take limit=<0..25>, only=<task id prefix>, steps=<n> and
+# and cap=<USD> (default $3). osworld cells take limit=<0..25>, only=<task id prefix>, steps=<n>,
+# model=claude-sonnet-5-5|openai-computer-use (default Gemini; raise cap=, e.g. cap=6, for a 25-task Claude/GPT cell) and
 # cap=<USD>. Grounding cells run side by side on hosted runners; OSWorld cells run one after another
 # on the OSWorld VM (the OSWorld workflow starts and deallocates it). The batch is refused before anything
 # starts when the cells' caps add up to more than the batch cap, so the most it can spend is known up front.
@@ -81,7 +82,7 @@ jobs:
           if [ "$(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z' | sed 's/[[:space:]]*$//')" = "/bench batch" ]; then
             delim="CELLS_$(openssl rand -hex 16)"
             {
-              echo "target=batch"; echo "label=Gemini · Batch"
+              echo "target=batch"; echo "label=Batch"
               echo "cells<<$delim"; printf '%s\n' "$BODY" | tail -n +2 | tr -d '\r'; echo "$delim"
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -219,9 +220,13 @@ jobs:
       max_cost_usd: ${{ matrix.cap }}
       artifact_suffix: ${{ matrix.suffix }}
       max_steps: ${{ matrix.steps }}
+      model: ${{ matrix.model }}
       publish_videos: "false"  # publish-videos below keeps every cell's videos in one release
+    # Only the called workflow's bench job decides which key reaches a cell (by its model).
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
   grounding:
     name: ${{ needs.parse.outputs.label }}

@@ -6,8 +6,9 @@
 # operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
 # docs/osworld-runner.md), upload the report, deallocate the VM.
 #
-# Needs repo secret GEMINI_API_KEY and the Azure OIDC variables the desktop bench already uses.
-# Cost: about $0.06 a task (the 5-task pilot was $0.31). The cap stops starting tasks past it.
+# Needs repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the Azure OIDC variables the desktop bench already uses.
+# Cost: Gemini about $0.12 a task (the last full 25-task run was $3.11); Claude or GPT about $0.12-0.24 a task.
+# The cap is checked between tasks, so a run can overshoot by one task.
 name: Run OSWorld test tasks (own VM)
 
 on:
@@ -25,6 +26,11 @@ on:
       max_steps:
         description: "Step cap per task"
         default: "50"
+      model:
+        description: "Model besides Gemini (empty = Gemini). Spends that provider's credits: needs Vickey's cost OK (about $3-6 per 25 tasks)"
+        type: choice
+        default: ""
+        options: ["", claude-sonnet-5-5, openai-computer-use]
   # Called by benchmark.yml for an osworld batch cell (KAN-184).
   workflow_call:
     inputs:
@@ -32,12 +38,16 @@ on:
       only: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
       max_steps: {type: string, default: "50"}
+      # A registry model profile (KAN-168) instead of Gemini; empty = Gemini.
+      model: {type: string, default: ""}
       # Set by the paid-run workflow (benchmark.yml) so its cells' artifacts do not share a name.
       artifact_suffix: {type: string, default: ""}
       # benchmark.yml keeps the videos of all its cells in one release itself, so it passes "false".
       publish_videos: {type: string, default: "true"}
     secrets:
       GEMINI_API_KEY: {required: false}
+      ANTHROPIC_API_KEY: {required: false}
+      OPENAI_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -78,6 +88,11 @@ jobs:
       contents: read
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # A registry model (KAN-168) acts through the model backend, always thin with its own done.
+      MODEL: ${{ inputs.model }}
+      # Another provider's key reaches a run only when that run uses that provider's model.
+      ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}
+      OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}
       OPERON_TEST_SAFE_MODE: "false"
       LIMIT: ${{ inputs.limit }}
       ONLY: ${{ inputs.only }}
@@ -93,6 +108,7 @@ jobs:
           case "$LIMIT$MAX_STEPS" in (*[!0-9]*) echo "::error::limit and max_steps must be whole numbers"; exit 1;; esac
           case "$MAX_COST" in (*[!0-9.]*|"") echo "::error::max_cost_usd must be a number"; exit 1;; esac
           case "$ONLY" in (*[!0-9a-fA-F-]*) echo "::error::only must be the start of a task id"; exit 1;; esac
+          case "$MODEL" in ("" | claude-sonnet-5-5 | openai-computer-use) ;; (*) echo "::error::model must be empty, claude-sonnet-5-5 or openai-computer-use"; exit 1;; esac
       - name: Set up the VM (idempotent)
         run: scripts/osworld-vm/setup.sh "$GITHUB_WORKSPACE"
       - name: Run the tasks
@@ -100,6 +116,7 @@ jobs:
           ln -sfn "$HOME/osworld-data" docker_vm_data   # OSWorld caches its image under ./docker_vm_data
           args=(--osworld-repo "$HOME/OSWorld" --max-cost-usd "$MAX_COST" --max-steps "$MAX_STEPS"
                 --operon-python "$HOME/operon-venv/bin/python" --out "$PWD/.var/bench")
+          if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
           if [ -n "$ONLY" ]; then args+=(--only "$ONLY"); elif [ "$LIMIT" != "0" ]; then args+=(--limit "$LIMIT"); fi
           OPERON_DESKTOP_PLATFORM=linux "$HOME/osw-venv/bin/python" -m evals.osworld --videos "${args[@]}" | tee osworld.log
       - name: Summary

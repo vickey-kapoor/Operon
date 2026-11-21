@@ -6,7 +6,7 @@
 # Layout under $HOME:
 #   OSWorld/        OSWorld checkout (task files, desktop_env, evaluators)
 #   osw-venv/       Python 3.11 with OSWorld's requirements (torch is pinned < 3.14)
-#   operon-venv/    Python 3.14 with Operon (uv installs the interpreter)
+#   operon-venv/    Python 3.14 with Operon (uv installs the interpreter); the Claude and GPT model adapters (KAN-168) need only httpx, already an Operon dependency
 #   osworld-data/   OSWorld's task image (about 11 GB, downloaded once)
 set -euo pipefail
 

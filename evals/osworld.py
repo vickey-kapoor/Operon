@@ -27,6 +27,9 @@ SUBSET_FILE = Path(__file__).with_name("osworld_subset.json")
 # OSWorld's own runner waits 20 s before evaluating (lib_run_single.py): Chrome saves preference
 # changes to disk with a delay, and file-based checkers read the stale value if we score at once.
 EVALUATE_SETTLE_S = 20.0
+# The registry profiles (KAN-168, models.yaml) an OSWorld run may use besides Gemini, with the names runs
+# carry in chat. The one allow-list: bench_batch.py reads it from here. This file imports no Operon code.
+MODEL_LABELS = {"claude-sonnet-5-5": "Claude Sonnet 5.5", "openai-computer-use": "GPT computer use"}
 RUN_ID_RE = re.compile(r"Run ([0-9a-f]{8}-[0-9a-f-]{27}|[0-9a-f]{8,}) started")
 
 
@@ -49,10 +52,16 @@ def operon_command(instruction: str, max_steps: int, python: str | None = None) 
             "--mode", "auto", "--max-steps", str(max_steps), instruction]
 
 
-def operon_env(server_url: str, runs_root: str | None = None) -> dict[str, str]:
-    return {**os.environ, **({"OPERON_RUNS_ROOT": runs_root} if runs_root else {}), "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
-            "OPERON_AUTO_CONFIRM": "on", "OPERON_TOOLS": "off",
-            "PYTHONUNBUFFERED": "1", "OPERON_DESKTOP_PLATFORM": "linux"}
+def operon_env(server_url: str, runs_root: str | None = None, model: str = "") -> dict[str, str]:
+    """The environment of one ``operon run``. ``model`` (a registry profile; empty is Gemini) selects the
+    model backend (KAN-168) for the desktop; a Gemini run forces computer_use and an empty profile."""
+    env = {**os.environ, **({"OPERON_RUNS_ROOT": runs_root} if runs_root else {}), "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
+           "OPERON_AUTO_CONFIRM": "on", "OPERON_TOOLS": "off",
+           "PYTHONUNBUFFERED": "1", "OPERON_DESKTOP_PLATFORM": "linux"}
+    # Always set both, so a run never inherits the runner's backend settings.
+    env["OPERON_DESKTOP_BACKEND"] = "model" if model else "computer_use"
+    env["OPERON_MODEL_PROFILE"] = model
+    return env
 
 
 def run_cost(run_id: str | None, runs_root: str | Path | None = None) -> float:
@@ -116,7 +125,7 @@ def write_task_log(logs_dir: str | None, task_id: str, header: str, stdout: str,
 
 def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
             python: str | None = None, runs_root: str | None = None, settle_s: float = EVALUATE_SETTLE_S,
-            logs_dir: str | None = None,
+            logs_dir: str | None = None, model: str = "",
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
     started = time.monotonic()
     wall_started = time.time()
@@ -126,7 +135,7 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
     run_id, note = None, ""
     out_text, err_text = "", ""
     try:
-        done = run(operon_command(task["instruction"], max_steps, python), env=operon_env(url, runs_root), capture_output=True,
+        done = run(operon_command(task["instruction"], max_steps, python), env=operon_env(url, runs_root, model), capture_output=True,
                    text=True, timeout=timeout_s, check=False)
         out_text, err_text = done.stdout or "", done.stderr or ""
         run_id = parse_run_id(out_text + err_text)
@@ -213,6 +222,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
     parser.add_argument("--max-cost-usd", type=float, default=8.0, help="stop starting tasks past this spend")
     parser.add_argument("--operon-python", default=sys.executable,
                         help="Python that has Operon installed (3.14); default: this one")
+    parser.add_argument("--model", default="", help="registry model profile (" + ", ".join(MODEL_LABELS)
+                        + "); empty = Gemini. Spends that provider's credits: needs Vickey's OK")
     parser.add_argument("--videos", action="store_true", help="write one MP4 per task under <out>/videos")
     parser.add_argument("--out", default=".var/bench")
     args = parser.parse_args(argv)
@@ -226,6 +237,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
         for t in tasks:
             print(f"{t['domain']:<20} {t['id']}  {t['instruction'][:80]}")
         return 0
+    if args.model and args.model not in MODEL_LABELS:
+        parser.error(f"--model must be one of: {', '.join(MODEL_LABELS)} (or empty for Gemini)")
     if not args.osworld_repo:
         parser.error("--osworld-repo (or $OSWORLD_REPO) is required to run")
     repo = Path(args.osworld_repo).expanduser()
@@ -238,6 +251,7 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
 
     def save() -> dict[str, Any]:
         report = {"benchmark": "osworld-verified-subset", "harness": "thin", "auto_confirm": True,
+                  "model": args.model, "label": f"{MODEL_LABELS.get(args.model, 'Gemini')} · OSWorld",
                   "summary": summarize(results), "results": results}
         target.write_text(json.dumps(report, indent=1), encoding="utf-8")
         return report
@@ -250,7 +264,7 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
             result = run_one(env, task, task_config(repo, task), max_steps=args.max_steps,
                              timeout_s=args.task_timeout, python=args.operon_python,
                              runs_root=str(out / "osworld-runs"),
-                             logs_dir=str(out / "osworld-logs"), run=run)
+                             logs_dir=str(out / "osworld-logs"), model=args.model, run=run)
             spent += result["cost_usd"]
             results.append(result)
             save()  # after every task: a later failure or Ctrl+C must not lose finished scores

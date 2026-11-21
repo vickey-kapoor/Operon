@@ -21,6 +21,14 @@ class GeminiComputerUseError(RuntimeError):
     """Raised when the Computer Use client cannot complete a request."""
 
 
+class GeminiPromptBlockedError(GeminiComputerUseError):
+    """Gemini refused the request itself: no candidates and a promptFeedback blockReason."""
+
+    def __init__(self, message: str, *, block_reason: str) -> None:
+        super().__init__(message)
+        self.block_reason = block_reason
+
+
 class GeminiComputerUseClient(ABC):
     @abstractmethod
     async def generate_turn(self, *, contents: list[dict[str, Any]]) -> dict[str, Any]:
@@ -255,6 +263,13 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         if not isinstance(candidates, list) or not candidates:
             feedback = payload.get("promptFeedback") or payload.get("prompt_feedback")
             detail = f" Prompt feedback: {json.dumps(feedback)}" if feedback else ""
+            if isinstance(feedback, dict):
+                block_reason = feedback.get("blockReason") or feedback.get("block_reason")
+                if block_reason:
+                    raise GeminiPromptBlockedError(
+                        f"Gemini Computer Use response did not include any candidates.{detail}",
+                        block_reason=str(block_reason),
+                    )
             raise GeminiComputerUseError(f"Gemini Computer Use response did not include any candidates.{detail}")
         first_candidate = candidates[0]
         content = first_candidate.get("content")

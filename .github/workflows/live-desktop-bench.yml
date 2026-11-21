@@ -244,7 +244,7 @@ jobs:
           $extra = if ($env:EXTRA_ARGS) { $env:EXTRA_ARGS -split '\s+' } else { @() }
           if ($env:CATEGORY -notin @("desktop", "hybrid")) { Write-Output "::error::category must be desktop or hybrid"; exit 1 }
           # Hybrid tasks also use the browser, on a local site the benchmark serves on 127.0.0.1.
-          uv run python -m evals.live_bench --mode $env:CATEGORY --suite $env:SUITE --keep-screens @extra | Tee-Object -FilePath bench.txt
+          uv run python -m evals.live_bench --mode $env:CATEGORY --suite $env:SUITE --keep-screens --videos @extra | Tee-Object -FilePath bench.txt
           $code = $LASTEXITCODE
           if ($code -ne 0) { Get-Content uvicorn.err.log -Tail 40 -ErrorAction SilentlyContinue }
           exit $code
@@ -268,6 +268,16 @@ jobs:
             uvicorn.log
             uvicorn.err.log
             .var/bench/
+            !.var/bench/**/videos/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload the run videos
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: run-videos-${{ inputs.category || 'desktop' }}${{ inputs.artifact_suffix }}
+          path: .var/bench/**/videos/*.mp4
           if-no-files-found: ignore
           retention-days: 14
 

@@ -681,6 +681,47 @@ async def test_agent_loop_logs_pre_step_low_quality_perception_failure() -> None
     assert payload["perception_debug"]["retry_log_artifact_path"].endswith("perception_retry_log.txt")
 
 
+async def test_agent_loop_ends_the_run_as_model_blocked_when_the_backend_is_blocked() -> None:
+    from operon.agent.backends.base import ModelBlockedError
+
+    run_root = _local_test_dir("test-runs-pre-step-model-blocked")
+    run_store = FileBackedRunStore(root_dir=run_root)
+    created = run_store.create_run("Open the report.")
+    frame = CaptureFrame(
+        artifact_path=str(run_root / created.run_id / "step_1" / "before.png"),
+        width=1280,
+        height=800,
+        mime_type="image/png",
+    )
+    perception_service = SimpleNamespace(
+        perceive=AsyncMock(side_effect=ModelBlockedError("SAFETY")),
+        latest_debug_artifacts=lambda: ModelDebugArtifacts(
+            prompt_artifact_path=str(run_root / created.run_id / "step_1" / "perception_prompt.txt"),
+            raw_response_artifact_path=str(run_root / created.run_id / "step_1" / "perception_raw.txt"),
+            parsed_artifact_path=str(run_root / created.run_id / "step_1" / "perception_parsed.json"),
+        ),
+    )
+    loop = AgentLoop(
+        capture_service=SimpleNamespace(capture=AsyncMock(return_value=frame)),
+        perception_service=perception_service,
+        run_store=run_store,
+        policy_service=Mock(),
+        executor=Mock(),
+        verifier_service=Mock(),
+        recovery_manager=Mock(),
+    )
+
+    response = await loop.step_run(StepRequest(run_id=created.run_id))
+
+    assert response.status is RunStatus.FAILED
+    state = await run_store.get_run(created.run_id)
+    assert state is not None
+    assert state.stop_reason is StopReason.MODEL_BLOCKED
+    payload = json.loads((run_root / created.run_id / "run.jsonl").read_text(encoding="utf-8").strip())
+    assert payload["failure"]["category"] == FailureCategory.MODEL_BLOCKED.value
+    assert "Gemini blocked the request (SAFETY)" in payload["error_message"]
+
+
 def test_verified_type_action_marks_target_complete() -> None:
     loop = _loop()
     state = AgentState(

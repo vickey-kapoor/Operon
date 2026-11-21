@@ -1,7 +1,7 @@
 # OSWorld-Verified subset (KAN-169): Operon on 25 fixed OSWorld tasks, scored by OSWorld itself.
 #
 # Started by hand (Actions > Run OSWorld test tasks (own VM) > Run workflow) or as a cell of the paid-run
-# batch (benchmark.yml, KAN-184). It spends model credits, so nothing starts it for you: you pick how many
+# batch (benchmark.yml, KAN-184); it always runs the default branch. It spends model credits, so nothing starts it for you: you pick how many
 # tasks and the cost cap. Steps: start the Linux VM
 # operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
 # docs/osworld-runner.md), upload the report, deallocate the VM.
@@ -80,6 +80,9 @@ jobs:
       MAX_STEPS: ${{ inputs.max_steps }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # OSWorld always runs the default branch, however it was started (KAN-184).
+          ref: ${{ github.event.repository.default_branch }}
       - name: Check the inputs
         run: |
           case "$LIMIT$MAX_STEPS" in (*[!0-9]*) echo "::error::limit and max_steps must be whole numbers"; exit 1;; esac

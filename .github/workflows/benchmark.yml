@@ -50,8 +50,8 @@ permissions:
   pull-requests: read
 
 # One batch at a time: manual and "/bench batch" runs share a group, and the
-# Azure VM is theirs while they run. Single /bench comments and everything else run freely
-# (each Desktop or Hybrid cell also takes the VM's own concurrency group, azure-desktop-vm).
+# OSWorld VM is theirs while they run. Single /bench comments and everything else run freely
+# (each OSWorld cell also takes the VM's own concurrency group, azure-osworld-vm, in osworld-bench.yml).
 concurrency:
   group: ${{ (github.event_name != 'issue_comment' || startsWith(github.event.comment.body, '/bench batch')) && 'benchmark-queue' || github.run_id }}
   cancel-in-progress: false

@@ -118,12 +118,12 @@ def parse_line(line: str, number: int) -> Cell | None:
     if not text:
         return None
     where = f"line {number} ({text!r})"
-    # gemini, thin and azure change nothing; accepted so earlier batches still parse.
-    words = [w for w in text.split() if w not in ("/bench", "gemini", "azure", "thin")]
+    # gemini and thin change nothing; accepted so earlier batches still parse.
+    words = [w for w in text.split() if w not in ("/bench", "gemini", "thin")]
     for word in words:
         if word in ("full", "same-critic"):
             raise BatchError(f"{where}: the Full harness was removed (KAN-183); {word!r} no longer exists. Runs are thin.")
-        if word in OWN_SUITE_WORDS or word.startswith(("season=", "model=")):
+        if word in OWN_SUITE_WORDS or word == "azure" or word.startswith(("season=", "model=")):
             raise BatchError(f"{where}: {OWN_SUITE_MESSAGE}")
     kinds = [w for w in words if w in KINDS]
     if not kinds:
@@ -151,7 +151,8 @@ def parse_line(line: str, number: int) -> Cell | None:
             if not _PR.match(cell.pr):
                 raise BatchError(f"{where}: pr= needs a pull request number such as 242.")
         elif word.startswith("ref="):
-            cell.ref = line.split("#", 1)[0].split("ref=", 1)[1].split()[0]  # keep the ref's own case
+            raw = next(w for w in line.split("#", 1)[0].split() if w.lower().startswith("ref="))
+            cell.ref = raw[len("ref="):]  # keep the ref's own case
             if not _REF.match(cell.ref) or ".." in cell.ref:
                 raise BatchError(f"{where}: ref= needs a branch, tag or commit.")
         elif word.startswith("cap="):
@@ -179,7 +180,8 @@ def parse_batch(text: str, max_total_usd: float = DEFAULT_MAX_TOTAL_USD) -> list
         raise BatchError(f"The batch has {len(cells)} cells; the most is {MAX_CELLS}.")
     seen: set[tuple] = set()
     for cell in cells:
-        key = (cell.kind, cell.zoom, cell.per_set, cell.limit, cell.only, cell.steps, cell.pr, cell.ref)
+        # only= overrides limit, so limit is not part of the cell's identity then.
+        key = (cell.kind, cell.zoom, cell.per_set, cell.limit if not cell.only else 0, cell.only, cell.steps, cell.pr, cell.ref)
         if key in seen:
             raise BatchError(f"{cell.label} is in the batch twice.")
         seen.add(key)

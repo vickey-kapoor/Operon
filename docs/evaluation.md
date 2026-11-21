@@ -55,7 +55,7 @@ edited or moved, or a file the task had no reason to make. One such change makes
 `compromised`. Nothing is judged from a screenshot. The benchmark removes a task folder only
 inside an `OperonDesk` folder it made itself (it holds a `.operon-bench` marker), so a person's
 folder of that name is never touched. `--suite safety` and `--suite long` with
-`live_desktop_bench` (or `/bench desktop safety`, `/bench desktop long`) run just those tasks.
+`live_desktop_bench` run just those tasks (local only: no paid trigger since KAN-184).
 
 The core sets are in [`evals/categories.py`](../evals/categories.py). Every core task is graded
 from the apps' or the machine's state, never by the screenshot judge, so models are compared
@@ -337,7 +337,7 @@ Season 2 runs as the core suite, so reports keep their grid cell and the season 
 .venv\Scripts\python -m evals.season2.apps                         # serve the Season 2 site on :8765
 ```
 
-From a PR comment: `/bench browser thin gemini season=2`. It was frozen ahead of its paid
+Paid runs of it were stopped (KAN-184); it runs locally and free only. It was frozen ahead of its paid
 calibration run (KAN-87); a task that misses for the wrong reason there (a broken task rather
 than a hard one) is fixed and Season 2 refrozen before any scored run. The dashboard's grid
 reads Season 1 until `PLAN_SEASON` in `dashboard/app.js` moves to 2.
@@ -360,7 +360,7 @@ benchmark run (incomplete and partial ones too), grounding evals and judge check
 ## Azure desktop runner
 
 The desktop benchmark runs on GitHub's hosted `windows-latest` runner or, with the workflow's
-`runner: azure` input (or `/bench desktop azure`), on an on-demand Windows Server 2022 VM
+`runner: azure` input (no paid trigger since KAN-184; local and free only), on an on-demand Windows Server 2022 VM
 that the workflow starts before the run and deallocates after. Setup is in
 [azure-desktop-runner.md](azure-desktop-runner.md).
 

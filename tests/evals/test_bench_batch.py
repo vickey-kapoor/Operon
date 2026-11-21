@@ -119,6 +119,27 @@ def test_a_batch_needs_cells_and_no_repeats() -> None:
     parse_batch("osworld limit=5\nosworld limit=6\nosworld only=3e\nosworld steps=30", 0)
 
 
+def test_only_overrides_limit_so_it_is_not_a_different_cell() -> None:
+    with pytest.raises(BatchError, match="twice"):
+        parse_batch("osworld only=3e5a\nosworld only=3e5a limit=5")
+
+
+def test_ref_keys_are_case_insensitive_but_values_keep_their_case() -> None:
+    assert parse_line("grounding REF=Main", 1).ref == "Main"
+    assert parse_line("grounding Ref=Claude/X cap=1", 1).ref == "Claude/X"
+
+
+def test_azure_is_refused_like_the_bench_comment_parser_does() -> None:
+    with pytest.raises(BatchError, match=r"KAN-184"):
+        parse_line("grounding azure", 1)
+
+
+def test_osworld_checks_out_the_default_branch() -> None:
+    steps = _workflow("osworld-bench.yml")["jobs"]["bench"]["steps"]
+    checkout = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout"))
+    assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
+
+
 def test_a_batch_has_a_most_cells() -> None:
     text = "\n".join(f"grounding per_set={n}" for n in range(1, bench_batch.MAX_CELLS + 2))
     with pytest.raises(BatchError, match="the most is"):

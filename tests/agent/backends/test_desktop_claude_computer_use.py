@@ -188,7 +188,7 @@ async def test_a_click_then_type_run_as_one_type_is_reported_ok(tmp_path: Path) 
     assert [r.get("is_error") for r in results] == [None, None]
 
 
-def test_claude_scrolls_in_wheel_notches_on_the_desktop_and_pixels_in_the_browser() -> None:
+def test_claude_scrolls_in_pixels_on_both_the_desktop_and_the_browser() -> None:
     from operon.agent.actions.translation import translate_claude_computer_calls
     from operon.agent.backends.browser_claude_computer_use import (
         BrowserClaudeComputerUseBackend,
@@ -198,7 +198,7 @@ def test_claude_scrolls_in_wheel_notches_on_the_desktop_and_pixels_in_the_browse
     kwargs = {"scale_x": 1.0, "scale_y": 1.0, "screen_width": 100, "screen_height": 100}
     browser, _ = translate_claude_computer_calls(call, scroll_step=BrowserClaudeComputerUseBackend.scroll_step, **kwargs)
     desktop, _ = translate_claude_computer_calls(call, scroll_step=DesktopClaudeComputerUseBackend.scroll_step, **kwargs)
-    assert browser["scroll_amount"] == -300 and desktop["scroll_amount"] == -3
+    assert browser["scroll_amount"] == -300 and desktop["scroll_amount"] == -300
 
 
 def test_a_middle_click_is_refused_and_not_offered() -> None:

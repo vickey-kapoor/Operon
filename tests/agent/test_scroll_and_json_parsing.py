@@ -136,9 +136,23 @@ def test_desktop_horizontal_scroll_does_not_scroll_vertically(monkeypatch: pytes
     monkeypatch.setattr(desktop.sys, "platform", "win32")
     monkeypatch.setattr(desktop.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
 
-    desktop._hscroll(240, 10, 20)
+    desktop._hscroll(200, 10, 20)  # 200 px = 2 notches = 240 wheel units
 
     fake.moveTo.assert_called_once_with(10, 20)
     user32.mouse_event.assert_called_once_with(desktop._MOUSEEVENTF_HWHEEL, 0, 0, 240, 0)
     fake.scroll.assert_not_called()
     fake.hscroll.assert_not_called()
+
+
+def test_desktop_horizontal_scroll_uses_clicks_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    from operon.executor import desktop
+
+    fake = MagicMock()
+    monkeypatch.setattr(desktop, "pyautogui", fake)
+    monkeypatch.setattr(desktop.sys, "platform", "linux")
+
+    desktop._hscroll(800, 10, 20)
+
+    fake.hscroll.assert_called_once_with(8, x=10, y=20)

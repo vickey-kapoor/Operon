@@ -60,7 +60,7 @@ class CoordinateMapper:
     sent_height: int
     screen_width: int
     screen_height: int
-    # Scroll units per wheel notch: pixels for the browser executor, 1 notch for the desktop's.
+    # Pixels per wheel notch (scroll_amount is pixels on every environment).
     scroll_step: int = SCROLL_STEP_PX
 
     def point(self, x: Any, y: Any) -> tuple[int, int]:
@@ -184,8 +184,8 @@ def to_payload(actions: list[NeutralAction], mapper: CoordinateMapper) -> dict[s
             except (TypeError, ValueError) as exc:
                 raise InvalidAction("scroll amount must be a number of wheel notches") from exc
             magnitude = notches * mapper.scroll_step
-            # Executors scroll up (or right) for a positive amount. 100 per notch suits both:
-            # Chromium scrolls ~100 px per notch, and Windows wheel events take 120 a notch.
+            # Executors scroll up (or right) for a positive amount, in pixels at
+            # 100 per notch; the desktop executor converts to wheel clicks.
             payload = {"action_type": "scroll", "x": point[0], "y": point[1]}
             if direction in {"left", "right"}:
                 payload["horizontal"] = True

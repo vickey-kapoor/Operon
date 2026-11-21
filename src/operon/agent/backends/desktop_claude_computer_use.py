@@ -26,6 +26,6 @@ class DesktopClaudeComputerUseBackend(BrowserClaudeComputerUseBackend):
         )
 
     custom_tool_names = frozenset({"launch_app"})
-    # pyautogui scrolls in wheel notches, not pixels.
-    scroll_step = 1
+    # scroll_amount is pixels, 100 a notch; the desktop executor converts to wheel clicks.
+    scroll_step = 100
     screen_name = "Desktop"

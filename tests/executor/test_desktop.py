@@ -694,9 +694,10 @@ async def test_drag_missing_endpoints_fails() -> None:
 async def test_scroll_success() -> None:
     """Scroll at coordinates should succeed."""
     executor = _make_executor()
-    action = AgentAction(action_type=ActionType.SCROLL, scroll_amount=3, x=100, y=200)
+    action = AgentAction(action_type=ActionType.SCROLL, scroll_amount=300, x=100, y=200)
 
     with (
+        patch("operon.executor.desktop.sys.platform", "linux"),
         patch("operon.executor.desktop.pyautogui.scroll") as mock_scroll,
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
     ):
@@ -704,6 +705,54 @@ async def test_scroll_success() -> None:
 
         assert result.success is True
         mock_scroll.assert_called_once_with(3, x=100, y=200)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [("linux", -8), ("darwin", -8), ("win32", -960)],
+)
+async def test_gemini_scroll_document_pixels_become_wheel_clicks(platform: str, expected: int) -> None:
+    """Gemini's scroll_document is 800 px: 8 clicks off Windows, 8 * 120 on Windows."""
+    from operon.agent.actions.translation import normalize_computer_use_function_call
+
+    payload = normalize_computer_use_function_call(
+        {"name": "scroll_document", "args": {"direction": "down"}}, screen_width=1920, screen_height=1080
+    )
+    action = AgentAction(**payload)
+    executor = _make_executor()
+    with (
+        patch("operon.executor.desktop.sys.platform", platform),
+        patch("operon.executor.desktop.pyautogui.scroll") as mock_scroll,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    assert mock_scroll.call_args.args == (expected,)
+
+
+@pytest.mark.asyncio
+async def test_small_scroll_is_one_click_not_zero() -> None:
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.SCROLL, scroll_amount=-30, x=1, y=2)
+    with (
+        patch("operon.executor.desktop.sys.platform", "linux"),
+        patch("operon.executor.desktop.pyautogui.scroll") as mock_scroll,
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        await executor.execute(action)
+    mock_scroll.assert_called_once_with(-1, x=1, y=2)
+
+
+@pytest.mark.parametrize(
+    ("pixels", "clicks"),
+    [(800, 8), (-800, -8), (30, 1), (-30, -1), (149, 1), (150, 2), (0, 0)],
+)
+def test_wheel_clicks(pixels: int, clicks: int) -> None:
+    from operon.executor.scroll_units import wheel_clicks
+
+    assert wheel_clicks(pixels) == clicks
 
 
 @pytest.mark.asyncio

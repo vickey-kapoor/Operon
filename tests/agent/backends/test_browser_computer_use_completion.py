@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.core.paths import prompts_dir
 from operon.models.capture import CaptureFrame
@@ -208,3 +210,34 @@ async def test_a_confirmed_call_runs_after_resume_and_its_answer_acknowledges_th
     await backend.perceive(_frame(tmp_path, "c.png"), _state(ActionType.CLICK))
     answer = client.turns[-1][-1]
     assert answer["parts"][0]["function_response"]["response"]["safety_acknowledgement"] == "true"
+
+
+# ── Only a clean finish counts as "done" (KAN-102) ────────────────────────
+
+
+def _finished(text: str, finish_reason: str) -> dict:
+    return {**_text_reply(text), "raw_candidate": {"finish_reason": finish_reason, "text_parts": [text], "had_function_call": False}}
+
+
+async def _decision_for(tmp_path: Path, reply: dict) -> ActionType:
+    backend = _backend(ScriptedClient([reply]))
+    state = _state(ActionType.CLICK)
+    perception = await backend.perceive(_frame(tmp_path), state)
+    return (await backend.choose_action(state, perception)).action.action_type
+
+
+async def test_clean_finish_after_acting_is_a_stop(tmp_path: Path) -> None:
+    assert await _decision_for(tmp_path, _finished("The Products page is open.", "STOP")) is ActionType.STOP
+
+
+@pytest.mark.parametrize("finish_reason", ["MAX_TOKENS", "MALFORMED_FUNCTION_CALL", "SAFETY", "RECITATION", "OTHER"])
+async def test_unclean_finish_is_not_a_stop(tmp_path: Path, finish_reason: str) -> None:
+    reply = _finished("I opened the Products page. The task is", finish_reason)
+
+    assert await _decision_for(tmp_path, reply) is ActionType.WAIT
+
+
+@pytest.mark.parametrize("text", ["Done — anything else?", "Should I place the order now?"])
+async def test_wording_never_overrides_a_clean_finish(tmp_path: Path, text: str) -> None:
+    # Codex review on #345: the thin harness never judges the model's wording.
+    assert await _decision_for(tmp_path, _finished(text, "STOP")) is ActionType.STOP

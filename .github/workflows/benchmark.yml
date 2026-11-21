@@ -202,8 +202,11 @@ jobs:
     name: ${{ matrix.label }}
     needs: plan
     if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_osworld == 'true' }}
+    # The called workflow's publish-videos job asks for contents: write and actions: read (it is skipped here,
+    # but a caller must still grant them); its bench job caps itself at contents: read.
     permissions:
-      contents: read
+      contents: write
+      actions: read
       id-token: write
     strategy:
       fail-fast: false
@@ -216,6 +219,7 @@ jobs:
       max_cost_usd: ${{ matrix.cap }}
       artifact_suffix: ${{ matrix.suffix }}
       max_steps: ${{ matrix.steps }}
+      publish_videos: "false"  # publish-videos below keeps every cell's videos in one release
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
@@ -234,8 +238,8 @@ jobs:
   # It only downloads files and uploads them to a release; it never checks out or runs benchmarked code.
   publish-videos:
     name: Keep the run videos
-    needs: [batch-browser, batch-desktop, browser, desktop]
-    # Only when a bench job ran: skipped jobs must not turn every comment into a successful run
+    needs: [batch-osworld]
+    # Only when an OSWorld cell ran (grounding makes no videos): skipped jobs must not turn every comment into a successful run
     # (dashboard-data.yml starts on any run that did not conclude 'skipped').
     if: ${{ !cancelled() && (contains(needs.*.result, 'success') || contains(needs.*.result, 'failure')) }}
     runs-on: ubuntu-latest

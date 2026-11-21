@@ -202,7 +202,7 @@ def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() ->
     batch = _workflow("benchmark.yml")
     jobs = batch["jobs"]
     assert jobs["batch-osworld"]["strategy"]["max-parallel"] == 1
-    assert jobs["batch-osworld"]["permissions"] == {"contents": "read", "id-token": "write"}
+    assert jobs["batch-osworld"]["permissions"] == {"contents": "write", "actions": "read", "id-token": "write"}
     for job, called in (("batch-grounding", "grounding.yml"), ("batch-osworld", "osworld-bench.yml")):
         inputs = _workflow(called)[True]["workflow_call"]["inputs"]
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
@@ -232,10 +232,24 @@ def test_called_workflows_suffix_their_artifact_names(name, artifact) -> None:
         assert "--pattern 'grounding-*'" in (WORKFLOWS / "dashboard-data.yml").read_text(encoding="utf-8")
 
 
+def test_run_videos_are_kept_for_batch_osworld_cells_only() -> None:
+    jobs = _workflow("benchmark.yml")["jobs"]
+    assert jobs["publish-videos"]["needs"] == ["batch-osworld"]
+    assert jobs["batch-osworld"]["with"]["publish_videos"] == "false"
+    # A caller must grant what the called workflow's jobs ask for.
+    assert jobs["batch-osworld"]["permissions"] == {"contents": "write", "actions": "read", "id-token": "write"}
+    osworld = _workflow("osworld-bench.yml")
+    assert osworld["jobs"]["bench"]["permissions"] == {"contents": "read"}
+    assert "publish_videos != 'false'" in osworld["jobs"]["publish-videos"]["if"]
+    text = (WORKFLOWS / "osworld-bench.yml").read_text(encoding="utf-8")
+    assert "name: run-videos-osworld${{ inputs.artifact_suffix }}\n" in text  # still matches 'run-videos-*'
+    assert "--pattern 'run-videos-*'" in (WORKFLOWS / "benchmark.yml").read_text(encoding="utf-8")
+
+
 def test_the_osworld_workflow_can_be_called_and_keeps_its_vm_lock() -> None:
     wf = _workflow("osworld-bench.yml")
     assert set(wf[True]) == {"workflow_dispatch", "workflow_call"}
-    assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps", "artifact_suffix"}
+    assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps", "artifact_suffix", "publish_videos"}
     assert wf["concurrency"]["group"] == "azure-osworld-vm"
 
 
@@ -258,7 +272,7 @@ def test_benchmark_workflow_jobs_only_wait_on_jobs_that_exist() -> None:
     inputs = _workflow("grounding.yml")[True]["workflow_call"]["inputs"]
     assert set(jobs["grounding"]["with"]) <= set(inputs)
     # Paid runs are public benchmarks only: no own-suite job is left.
-    assert set(jobs) == {"parse", "plan", "batch-grounding", "batch-osworld", "grounding"}
+    assert set(jobs) == {"parse", "plan", "batch-grounding", "batch-osworld", "grounding", "publish-videos"}
     assert set(wf[True]) == {"issue_comment", "workflow_dispatch"}  # no schedule
     assert wf[True]["workflow_dispatch"]["inputs"]["cells"]["required"] is True
 

@@ -82,7 +82,7 @@ last frame. $0: no model calls. Held-out season tasks never get a video. Try one
 `python -m evals.run_video --run .var/runs/<run_id> --out run.mp4` (or `--all .var/runs --out-dir videos`).
 With `ffmpeg` on PATH the file is H.264 (plays in browsers, Windows, Loom); without it, mp4v.
 
-- Workflow artifact `run-videos-<cell suffix>` (`run-videos-osworld`), kept 14 days.
+- Workflow artifact `run-videos-<cell suffix>` (`run-videos-osworld`, or `run-videos-osworld-cell2` in a batch), kept 14 days.
 - GitHub prerelease `videos-<bench|osworld>-<run id>-<attempt>` (job "Keep the run videos"), kept
   forever, asset names prefixed by the artifact name.
 - Loom, by hand: ask Claude to download the release asset and upload it with the Atlassian

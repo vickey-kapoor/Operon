@@ -26,6 +26,7 @@ from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
 from operon.core.vault import SecretError, redact, resolve_text, secret_endpoint_ok
 from operon.environments.base import EnvironmentProvider, ProviderCheck
+from operon.executor.scroll_units import wheel_clicks
 from operon.models.capture import CaptureFrame
 from operon.models.common import FailureCategory
 from operon.models.execution import ExecutedAction
@@ -90,7 +91,7 @@ def pyautogui_snippet(action: AgentAction) -> str | None:
     if t is ActionType.SCROLL:
         fn = "hscroll" if action.horizontal else "scroll"
         at = f", x={int(x)}, y={int(y)}" if x is not None and y is not None else ""
-        return f"pyautogui.{fn}({int(action.scroll_amount or 0)}{at})"
+        return f"pyautogui.{fn}({wheel_clicks(int(action.scroll_amount or 0))}{at})"
     if t is ActionType.DRAG:
         return (f"pyautogui.moveTo({pos}); pyautogui.dragTo({int(action.x_end or 0)}, "
                 f"{int(action.y_end or 0)}, duration=0.5, button='left')")

@@ -199,7 +199,7 @@ class ModelAdapterBackend(AgentBackend):
             sent_height=image.height,
             screen_width=screenshot.width or image.source_width,
             screen_height=screenshot.height or image.source_height,
-            scroll_step=1 if self.environment == "desktop" else SCROLL_STEP_PX,
+            scroll_step=SCROLL_STEP_PX,
         )
         task_prompt = self._task_template.format(
             intent=state.intent, environment_rules=PromptContext.environment_rules(self.environment)

@@ -38,6 +38,7 @@ from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
 from operon.core.vault import SecretError, redact, resolve_for_type
 from operon.executor import dpi, sendinput
+from operon.executor.scroll_units import WIN_WHEEL_DELTA, wheel_clicks
 
 # OPERON_DPI_AWARE: pyautogui calls SetProcessDPIAware() when imported, which locks the process
 # at system-aware for good. Per-monitor-v2 has to be set first, so this runs before that import.
@@ -130,14 +131,23 @@ def _sample_box(virtual: dict, x: int, y: int, radius: int) -> dict[str, int]:
     return {"left": left, "top": top, "width": size, "height": size}
 
 
-def _hscroll(amount: int, x: int, y: int) -> None:
-    """Scroll sideways at (x, y); positive = right. pyautogui's hscroll scrolls
-    vertically on Windows, so send a horizontal wheel event there."""
+def _hscroll(pixels: int, x: int, y: int) -> None:
+    """Scroll sideways at (x, y) by a pixel amount (100 a notch); positive = right.
+    pyautogui's hscroll scrolls vertically on Windows, so send a horizontal wheel
+    event there."""
+    clicks = wheel_clicks(pixels)
     pyautogui.moveTo(x, y)
     if sys.platform == "win32":
-        ctypes.windll.user32.mouse_event(_MOUSEEVENTF_HWHEEL, 0, 0, int(amount), 0)  # type: ignore[attr-defined]
+        ctypes.windll.user32.mouse_event(_MOUSEEVENTF_HWHEEL, 0, 0, clicks * WIN_WHEEL_DELTA, 0)  # type: ignore[attr-defined]
     else:
-        pyautogui.hscroll(amount, x=x, y=y)
+        pyautogui.hscroll(clicks, x=x, y=y)
+
+
+def _vscroll(pixels: int, x: int, y: int) -> None:
+    """Scroll vertically at (x, y) by a pixel amount (100 a notch); positive = up.
+    Windows takes 120 a notch, X11 and macOS whole clicks."""
+    clicks = wheel_clicks(pixels)
+    pyautogui.scroll(clicks * WIN_WHEEL_DELTA if sys.platform == "win32" else clicks, x=x, y=y)
 
 
 # Environment variables an app the agent launches must not inherit: a shell the
@@ -1472,7 +1482,7 @@ class DesktopExecutor(Executor):
                 await asyncio.to_thread(_hscroll, action.scroll_amount, action.x, action.y)
                 direction = "right" if action.scroll_amount > 0 else "left"
             else:
-                await asyncio.to_thread(pyautogui.scroll, action.scroll_amount, x=action.x, y=action.y)
+                await asyncio.to_thread(_vscroll, action.scroll_amount, action.x, action.y)
                 direction = "up" if action.scroll_amount > 0 else "down"
             await self.settle_now(self._post_action_delay)
             after_path = await self._capture_after()

@@ -290,9 +290,8 @@ _CLAUDE_KEY_NAMES = {
     "insert": "Insert",
 }
 
-# Pixels per scroll-wheel click, as Chromium scrolls for one notch. The browser executor
-# scrolls in pixels; the desktop executor passes the amount to pyautogui, which takes wheel
-# notches, so desktop backends translate with a step of 1.
+# Pixels per scroll-wheel notch, as Chromium scrolls for one. scroll_amount is pixels on every
+# environment; the desktop executor converts to wheel clicks.
 _CLAUDE_SCROLL_STEP_PX = 100
 
 

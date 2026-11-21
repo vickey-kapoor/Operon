@@ -43,8 +43,10 @@ def test_setting_read(monkeypatch):
         (AgentAction(action_type=ActionType.RIGHT_CLICK, x=1, y=2), "pyautogui.rightClick(1, 2)"),
         (AgentAction(action_type=ActionType.HOTKEY, key="Control+A"), "pyautogui.hotkey('ctrl', 'a')"),
         (AgentAction(action_type=ActionType.PRESS_KEY, key="Return"), "pyautogui.press('enter')"),
-        (AgentAction(action_type=ActionType.SCROLL, x=5, y=6, scroll_amount=-3), "pyautogui.scroll(-3, x=5, y=6)"),
-        (AgentAction(action_type=ActionType.SCROLL, x=5, y=6, scroll_amount=2, horizontal=True),
+        (AgentAction(action_type=ActionType.SCROLL, x=5, y=6, scroll_amount=-300), "pyautogui.scroll(-3, x=5, y=6)"),
+        (AgentAction(action_type=ActionType.SCROLL, x=5, y=6, scroll_amount=-800), "pyautogui.scroll(-8, x=5, y=6)"),
+        (AgentAction(action_type=ActionType.SCROLL, x=5, y=6, scroll_amount=30), "pyautogui.scroll(1, x=5, y=6)"),
+        (AgentAction(action_type=ActionType.SCROLL, x=5, y=6, scroll_amount=200, horizontal=True),
          "pyautogui.hscroll(2, x=5, y=6)"),
     ],
 )

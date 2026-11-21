@@ -69,6 +69,13 @@ async def test_desktop_offers_launch_app_not_navigate(frame) -> None:
     assert decision.action.action_type is ActionType.LAUNCH_APP and decision.action.text == "notepad"
 
 
+async def test_desktop_scroll_notches_are_pixels(frame) -> None:
+    client = ScriptedChat([chat_reply(tool_calls=[tool_call("scroll", x=100, y=100, direction="down", amount=3)])])
+    decision = await _step(_backend(client, environment="desktop"), frame, state(), "s1")
+    assert decision.action.action_type is ActionType.SCROLL
+    assert decision.action.scroll_amount == -300
+
+
 async def test_hermes_tool_call_in_text_is_parsed(frame) -> None:
     client = ScriptedChat([sample("qwen3_vl_hermes_text")])
     decision = await _step(_backend(client), frame, state(), "s1")

@@ -73,3 +73,22 @@ provider; Claude and GPT cells are started by hand (a batch with `model=` cells)
 $env:DATABASE_URL = "postgres://..."; .venv\Scripts\python -m evals.dashboard import .var\bench\full-<stamp>.json
 cd dashboard; npm install; npm run dev   # page + API on :3000, reads $env:DATABASE_URL
 ```
+
+## Run videos (KAN-185)
+
+Every benchmark workflow run makes one short captioned MP4 per task (`--videos` on
+`evals.live_bench` and `evals.osworld`): the screenshots a run already saved, stitched by
+`evals/run_video.py` with the task and "Step N/M: action" as captions and the verdict on the held
+last frame. $0: no model calls. Held-out season tasks never get a video. Try one by hand:
+`python -m evals.run_video --run .var/runs/<run_id> --out run.mp4` (or `--all .var/runs --out-dir videos`).
+With `ffmpeg` on PATH the file is H.264 (plays in browsers, Windows, Loom); without it, mp4v.
+
+- Workflow artifact `run-videos-<cell suffix>` (`run-videos-osworld`), kept 14 days.
+- GitHub prerelease `videos-<bench|osworld>-<run id>-<attempt>` (job "Keep the run videos"), kept
+  forever, asset names prefixed by the artifact name.
+- Loom, by hand: ask Claude to download the release asset and upload it with the Atlassian
+  connector (`createLoomObjectUpload`, then `publishLoomObject`) into the Loom folder "Operon
+  benchmarks". Loom Starter holds 25 videos, so put up the failures and one success, and remove
+  Loom copies older than about two weeks.
+- Captions include the text Operon typed, and release assets are permanent and as visible as the
+  repo, so benchmark tasks must only ever use fake data.

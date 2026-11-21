@@ -145,6 +145,41 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
             "note": note, "log": log}
 
 
+def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
+                     run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> int:
+    """One captioned MP4 per finished task (KAN-185): ``<out>/videos/<id prefix>-<pass|fail>.mp4``.
+
+    Rendered by ``python -m evals.run_video`` under ``python`` (the venv that runs ``operon run``,
+    which has OpenCV), since this script's own venv may not. Never raises."""
+    runs_root = out / "osworld-runs"
+    repo_root = Path(__file__).resolve().parent.parent
+    made = 0
+    for r in results:
+        short = str(r.get("id", ""))[:8]
+        try:
+            run_dir = runs_root / str(r.get("run_id") or "")
+            if not r.get("run_id") or not run_dir.is_dir():
+                continue
+            verdict = "pass" if r.get("passed") else "fail"
+            (out / "videos").mkdir(parents=True, exist_ok=True)
+            target = out / "videos" / f"{short}-{verdict}.mp4"
+            cmd = [python, "-m", "evals.run_video", "--run", str(run_dir.resolve()), "--out", str(target.resolve()),
+                   "--task", f"{r.get('domain', '')}: {short}", "--verdict", verdict]
+            done = run(cmd, cwd=str(repo_root), capture_output=True, text=True, timeout=300)
+            if done.returncode == 0:
+                made += 1
+                continue
+            why = (done.stderr or done.stdout or "").strip()[-200:]
+        except Exception as exc:  # noqa: BLE001
+            why = str(exc)
+        try:
+            target.unlink(missing_ok=True)  # never leave a truncated MP4 to be uploaded
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"::warning::no video for {short}: {why}", flush=True)
+    return made
+
+
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(results)
     passed = sum(1 for r in results if r["passed"])
@@ -178,6 +213,7 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
     parser.add_argument("--max-cost-usd", type=float, default=8.0, help="stop starting tasks past this spend")
     parser.add_argument("--operon-python", default=sys.executable,
                         help="Python that has Operon installed (3.14); default: this one")
+    parser.add_argument("--videos", action="store_true", help="write one MP4 per task under <out>/videos")
     parser.add_argument("--out", default=".var/bench")
     args = parser.parse_args(argv)
 
@@ -222,6 +258,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
                   f"${result['cost_usd']:.3f} {result['seconds']}s")
     finally:
         save()
+        if args.videos:
+            save_task_videos(results, out, args.operon_python)
         close = getattr(env, "close", None)
         if close:
             close()

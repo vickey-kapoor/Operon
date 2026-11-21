@@ -35,7 +35,8 @@ run-name: >-
 # are refused: the run has the repository's API key.
 
 on:
-  issue_comment:
+  # guarded: write-access check, fork PRs refused, parser from the default branch
+  issue_comment: # zizmor: ignore[dangerous-triggers]
     types: [created]
   workflow_dispatch:
     inputs:

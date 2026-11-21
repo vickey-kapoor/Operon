@@ -103,6 +103,7 @@ jobs:
         with:
           # OSWorld always runs the default branch, however it was started (KAN-184).
           ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
       - name: Check the inputs
         run: |
           case "$LIMIT$MAX_STEPS" in (*[!0-9]*) echo "::error::limit and max_steps must be whole numbers"; exit 1;; esac

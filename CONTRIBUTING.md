@@ -26,7 +26,7 @@ that's a bug in the setup instructions — please report it.
   say so in the PR — but that code path won't be covered by CI, so keep it thin.
 
 CI runs the offline suite on Python 3.14 with a coverage report, plus ruff and mypy. It does not run the
-`live_server` suite.
+`live_server` suite. The Security workflow (secret, dependency, code and workflow scans) also runs on every PR; see [Automated checks](SECURITY.md#automated-checks).
 
 ## Reporting bugs
 

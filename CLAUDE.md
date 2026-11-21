@@ -67,6 +67,14 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 # Type check (KAN-159; CI "Type check" job). Baseline modules are listed in [tool.mypy] in
 # pyproject.toml: fix one, delete it from the list. Coverage: add --cov to the pytest command.
 .venv\Scripts\mypy
+
+# Security checks (the Security workflow, KAN-34); each is a CI check on every PR
+uvx zizmor==1.32.0 --offline --no-progress --min-severity medium .github/workflows
+uv export --locked --all-extras --no-hashes --no-emit-project -o $env:TEMP\requirements.txt   # then:
+uvx pip-audit==2.10.1 -r $env:TEMP\requirements.txt --no-deps --disable-pip
+uvx --python 3.14 bandit==1.9.4 -r src -ll -q -b .bandit-baseline.json -f txt   # baseline compare needs Linux/WSL (forward-slash paths)
+(cd dashboard; npm audit --package-lock-only --audit-level=high)
+gitleaks git --no-banner --redact .      # history; `gitleaks dir --no-banner --redact .` scans the working tree
 ```
 
 `addopts` in `pyproject.toml` auto-deselects the `live_server`, `desktop_container`,

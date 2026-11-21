@@ -150,6 +150,15 @@ The trust gate, file guard, coordinate-thrash pause and step budget stay. Adviso
 note, secret names, change note) is allowed because it changes what the model sees, not its
 action.
 
+**Page dialogs (KAN-172).** A JavaScript `alert` is accepted and its text kept. A `confirm`,
+`prompt` or `beforeunload` dialog is a question for the person, so the browser executor cancels
+it and records it; after the action the loop gives the model an advisory hint and pauses the run
+(`WAITING_FOR_USER`, the text names the dialog's message) the way a trust-gate confirmation does.
+Resuming accepts the dialog once and replays the held action (the backend's held calls, the same
+path a gate approval takes); a correction declines it and tells the model so. In `auto`
+permission mode (or with the trust gate off) the dialog is accepted and the run never pauses. A
+popup that closes itself hands the session back to its opener, or the newest open page.
+
 ### Observable Browser Mode
 
 `RunTaskRequest.mode` accepts `batch` or `observable`. Observable browser mode uses `BrowserManager` to attach to Chrome over CDP, publish JPEG frames through `/ws/stream`, and accept `inject_input` control messages.

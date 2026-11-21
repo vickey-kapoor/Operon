@@ -1412,6 +1412,7 @@ def _expect_loop(tmp_path):
     loop._recovered_errors = {}
     loop._expect_reminded = {}
     loop._secret_site_approved = {}
+    loop._dialog_pauses = {}
     loop._artifacts = MagicMock()
     loop._artifacts.before_path.return_value = str(tmp_path / "step_1" / "before.png")
     return loop

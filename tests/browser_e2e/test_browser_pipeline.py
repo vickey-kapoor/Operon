@@ -202,3 +202,49 @@ def test_reliability_five_runs_all_pass(scenario, tmp_path_factory, site, app, c
         durations.append(time.monotonic() - started)
     with capsys.disabled():
         print(f"\n{scenario.__name__}: 5/5 passed, {', '.join(f'{d:.1f}s' for d in durations)}")
+
+
+# -- page dialogs and popups that close themselves (KAN-172) ---------------------------
+
+
+# 12
+def test_a_confirm_dialog_is_accepted_in_auto_mode(tmp_path, site, app):
+    script = [call("click_at", **grid_point("confirm_btn")), DONE]
+    result = run(tmp_path, site, "Delete everything", script, "/t/confirm")
+    assert result.status is RunStatus.SUCCEEDED
+    assert app.state()["events"] == ["confirm:accepted"]
+
+
+# 13
+def test_a_confirm_dialog_waits_for_the_person_and_runs_again_once_approved(tmp_path, site, app):
+    script = [call("click_at", **grid_point("confirm_btn")), DONE]
+    result = run(tmp_path, site, "Delete everything", script, "/t/confirm", permission_mode="risky",
+                 on_pause="approve")
+    assert result.status is RunStatus.SUCCEEDED
+    # The first click's dialog was cancelled; the approved re-run accepted it, once.
+    assert app.state()["events"] == ["confirm:cancelled", "confirm:accepted"]
+    assert len(result.pauses) == 1 and "Delete everything?" in result.pauses[0]
+
+
+# 14
+def test_a_declined_confirm_dialog_is_never_run_again(tmp_path, site, app):
+    script = [call("click_at", **grid_point("confirm_btn")), DONE]
+    result = run(tmp_path, site, "Delete everything", script, "/t/confirm", permission_mode="risky",
+                 on_pause="decline")
+    assert app.state()["events"] == ["confirm:cancelled"]
+    assert len(result.pauses) == 1 and "Delete everything?" in result.pauses[0]
+
+
+# 15
+def test_a_popup_that_closes_itself_hands_the_run_back_to_the_opener(tmp_path, site, app):
+    script = [
+        call("click_at", **grid_point("popup_open")),
+        call("wait_5_seconds"),
+        call("click_at", **grid_point("popup_after")),
+        DONE,
+    ]
+    result = run(tmp_path, site, "Sign in with the popup, then continue", script, "/t/popup")
+    assert result.status is RunStatus.SUCCEEDED, result.stop_reason
+    state = app.state()
+    assert state["events"] == ["popup:opened"]
+    assert state["picks"] == ["after"]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import inspect
 import io
 import json
 import logging
@@ -119,6 +120,16 @@ class NativeBrowserExecutor(Executor):
         # Stores the last JavaScript dialog message per run_id so the loop can
         # surface form-submit success alerts that headless mode auto-dismisses.
         self._last_dialog_message: dict[str, str] = {}
+        # JavaScript dialogs that ask the person something (confirm, prompt, beforeunload)
+        # are cancelled unless the loop says to accept them (KAN-172). Per run_id, cleared
+        # when the run's session closes: the loop's dialog policy for the run (True in auto
+        # permission mode), a one-shot "accept the next dialog" the loop arms after the
+        # person approved, the cancelled dialog waiting for the loop, and the secret values
+        # typed in the run (a page can echo one back in a dialog message).
+        self._dialog_accept_all: dict[str, bool] = {}
+        self._dialog_accept_next: set[str] = set()
+        self._pending_dialogs: dict[str, tuple[str, str]] = {}
+        self._run_secret_values: dict[str, set[str]] = {}
         # Shared Playwright+Browser instance kept alive across observable-mode tasks.
         # Batch-mode runs always launch and close their own isolated instances.
         self._obs_playwright: object | None = None
@@ -150,6 +161,7 @@ class NativeBrowserExecutor(Executor):
         async with self._session_lock:
             session = self._sessions.pop(run_id, None)
             self._run_headless.pop(run_id, None)
+            self._forget_run_dialogs(run_id)
             mode = self._run_mode.pop(run_id, "batch")
             if session is None:
                 return 0
@@ -159,6 +171,7 @@ class NativeBrowserExecutor(Executor):
     def cleanup_run(self, run_id: str) -> int:
         session = self._sessions.pop(run_id, None)
         self._run_headless.pop(run_id, None)
+        self._forget_run_dialogs(run_id)
         mode = self._run_mode.pop(run_id, "batch")
         if session is None:
             return 0
@@ -297,6 +310,8 @@ class NativeBrowserExecutor(Executor):
                 # KAN-103: the value of a {{secret:NAME}} placeholder lives only in this local.
                 try:
                     text, secret_values = resolve_text(action.text)
+                    if secret_values and self._current_run_id is not None:
+                        self._run_secret_values.setdefault(self._current_run_id, set()).update(secret_values)
                 except SecretError as exc:
                     return self._fail(action, f"type failed: {exc}", FailureCategory.EXECUTION_ERROR)
                 point = self._action_point(action)
@@ -525,6 +540,7 @@ class NativeBrowserExecutor(Executor):
         session = self._sessions.get(self._current_run_id)
         if session is None:
             return
+        await self._ensure_open_page(self._current_run_id, session)
         pages = session.context.pages
         if len(pages) <= 1:
             return
@@ -596,6 +612,31 @@ class NativeBrowserExecutor(Executor):
     def pop_last_dialog_message(self, run_id: str) -> str | None:
         """Return and clear the last JS dialog message for a run (or None)."""
         return self._last_dialog_message.pop(run_id, None)
+
+    def set_dialog_policy(self, run_id: str, *, accept: bool) -> None:
+        """The loop's rule for the run's confirm/prompt/beforeunload dialogs (KAN-172).
+
+        ``accept`` is True in auto permission mode (or with the trust gate off); otherwise
+        such a dialog is cancelled and left for the person (see ``pop_pending_dialog``)."""
+        self._dialog_accept_all[run_id] = accept
+
+    def arm_accept_next_dialog(self, run_id: str) -> None:
+        """Accept the next confirm/prompt/beforeunload dialog of the run, once: the person approved it."""
+        self._dialog_accept_next.add(run_id)
+
+    def disarm_accept_next_dialog(self, run_id: str) -> None:
+        self._dialog_accept_next.discard(run_id)
+
+    def pop_pending_dialog(self, run_id: str) -> tuple[str, str] | None:
+        """Return and clear the dialog (type, message) cancelled for the run, or None."""
+        return self._pending_dialogs.pop(run_id, None)
+
+    def _forget_run_dialogs(self, run_id: str) -> None:
+        self._dialog_accept_all.pop(run_id, None)
+        self._dialog_accept_next.discard(run_id)
+        self._pending_dialogs.pop(run_id, None)
+        self._last_dialog_message.pop(run_id, None)
+        self._run_secret_values.pop(run_id, None)
 
     async def get_current_url(self) -> str | None:
         page = await self._current_page()
@@ -725,7 +766,53 @@ class NativeBrowserExecutor(Executor):
         if self._current_run_id is None:
             raise RuntimeError("No active browser run id set.")
         session = await self._ensure_session(self._current_run_id, foreground=foreground)
+        await self._ensure_open_page(self._current_run_id, session)
         return session.page
+
+    @staticmethod
+    def _page_closed(page: object) -> bool:
+        """Whether Playwright reports the page closed (anything else counts as open)."""
+        try:
+            closed = page.is_closed()  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - an unreadable page is treated as open
+            return False
+        if inspect.iscoroutine(closed):  # an async test double, never a real page
+            closed.close()
+            return False
+        return closed is True
+
+    def _open_page_after_close(self, session: _BrowserSession, opener: object | None = None) -> object | None:
+        """The page to work in when the current one closed: the opener when still open,
+        else the most recently opened page that is. None when no page is left."""
+        if opener is not None and opener is not session.page and not self._page_closed(opener):
+            return opener
+        for candidate in reversed(list(session.context.pages)):  # type: ignore[attr-defined]
+            if candidate is not session.page and not self._page_closed(candidate):
+                return candidate
+        return None
+
+    async def _ensure_open_page(self, run_id: str, session: _BrowserSession) -> None:
+        """Make session.page an open page: a popup that closed itself (OAuth, payment)
+        leaves it on a closed one. Fails cleanly when the run has no page left."""
+        if not self._page_closed(session.page):
+            return
+        replacement = self._open_page_after_close(session)
+        if replacement is None:
+            raise RuntimeError(
+                "The browser has no open page left: the last tab was closed "
+                "(for example a popup that closed itself)."
+            )
+        session.page = replacement
+        logger.info("The current tab was closed — switched session to %s", getattr(replacement, "url", "?"))
+        await self._follow_in_live_view(run_id, replacement)
+
+    def _follow_in_live_view_soon(self, run_id: str, page: object) -> None:
+        """Schedule the live view to follow ``page`` (observable mode); keeps a reference to the task."""
+        if self._run_mode.get(run_id) != "observable":
+            return
+        task = asyncio.get_running_loop().create_task(self._follow_in_live_view(run_id, page))
+        self._live_view_tasks.add(task)
+        task.add_done_callback(self._live_view_tasks.discard)
 
     async def _ensure_session(self, run_id: str, *, foreground: bool = True) -> _BrowserSession:
         existing = self._sessions.get(run_id)
@@ -928,32 +1015,61 @@ class NativeBrowserExecutor(Executor):
                 return
             await self._attach_live_view(page, 9222)
 
-    def _attach_page_listeners(self, page: object, run_id: str) -> None:
-        """Wire console/network/dialog listeners onto a newly created page."""
+    def _attach_page_listeners(self, page: object, run_id: str, opener: object | None = None) -> None:
+        """Wire console/network/dialog/close listeners onto a newly created page.
+
+        ``opener`` is the page that opened this one (a popup), where the run goes back to
+        when this page closes itself."""
         def _on_popup(popup) -> None:
             # Chromium can emit the popup after mouse.click() has returned, so
             # the immediate context.pages check in execute() can miss it.
             # Follow the event as well, including popups opened by a popup.
-            self._attach_page_listeners(popup, run_id)
+            self._attach_page_listeners(popup, run_id, opener=page)
             session = self._sessions.get(run_id)
             if session is not None and session.page is page:
                 session.page = popup
-                if self._run_mode.get(run_id) == "observable":
-                    task = asyncio.get_running_loop().create_task(self._follow_in_live_view(run_id, popup))
-                    self._live_view_tasks.add(task)
-                    task.add_done_callback(self._live_view_tasks.discard)
+                self._follow_in_live_view_soon(run_id, popup)
+
+        def _on_close(_closed=None) -> None:
+            # The page the run works in closed (a popup closing itself after OAuth or
+            # payment): go back to the opener, else the newest open page. With none left
+            # session.page stays, and the next _current_page raises a clear error.
+            session = self._sessions.get(run_id)
+            if session is None or session.page is not page:
+                return
+            replacement = self._open_page_after_close(session, opener)
+            if replacement is None:
+                logger.warning("The run's last open page closed")
+                return
+            session.page = replacement
+            logger.info("The current tab closed — switched session to %s", getattr(replacement, "url", "?"))
+            self._follow_in_live_view_soon(run_id, replacement)
 
         page.on("popup", _on_popup)
+        page.on("close", _on_close)
         page.on("console", lambda msg: logger.debug("BROWSER_LOG [%s]: %s", msg.type, msg.text))
         page.on("requestfailed", lambda req: logger.warning(
             "NETWORK_FAIL: %s — %s", req.url, req.failure
         ))
 
         async def _on_dialog(dialog) -> None:
-            msg = dialog.message or ""
-            logger.info("BROWSER_DIALOG [%s]: %s", dialog.type, msg)
-            self._last_dialog_message[run_id] = msg
-            await dialog.accept()
+            kind = dialog.type
+            msg = redact(dialog.message or "", self._run_secret_values.get(run_id, ()))
+            if kind == "alert":
+                accept = True  # nothing to decide: it only informs
+            elif run_id in self._dialog_accept_next:
+                self._dialog_accept_next.discard(run_id)  # the person approved: once
+                accept = True
+            else:
+                accept = self._dialog_accept_all.get(run_id, False)
+            logger.info("BROWSER_DIALOG [%s] %s: %s", kind, "accepted" if accept else "cancelled", msg)
+            if accept:
+                self._last_dialog_message[run_id] = msg
+                await dialog.accept()  # a prompt takes its default value
+            else:
+                # Not the executor's call: cancel it, and leave it for the loop to ask the person.
+                self._pending_dialogs[run_id] = (kind, msg)
+                await dialog.dismiss()
 
         page.on("dialog", _on_dialog)
 
@@ -1167,6 +1283,7 @@ class NativeBrowserExecutor(Executor):
         for stale_run_id in stale_run_ids:
             session = self._sessions.pop(stale_run_id, None)
             self._run_headless.pop(stale_run_id, None)
+            self._forget_run_dialogs(stale_run_id)
             stale_mode = self._run_mode.pop(stale_run_id, "batch")
             if session is None:
                 continue

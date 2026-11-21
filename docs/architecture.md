@@ -411,7 +411,7 @@ Defaults that are **on**: `OPERON_TRUST_GATE`, `OPERON_TOOLS=on` (no `run_shell`
 | Linux desktop container e2e | `tests/desktop_e2e/`, marker `desktop_container` | Free; needs Docker; CI job "Desktop (Linux container)" |
 | Windows Sandbox e2e | `tests/desktop_e2e_windows/`, marker `windows_sandbox` | Free; needs Windows Sandbox; not in CI |
 | Live server tests | marker `live_server` (for example `tests/integration/`) | Need uvicorn on :8080, and some drive the real mouse; deselected by `addopts` |
-| Paid benchmarks | `evals/live_bench.py`, `live_desktop_bench.py`, `live_hybrid_bench.py`, `osworld.py`; workflows `benchmark.yml`, `live-bench.yml`, `live-desktop-bench.yml`, `osworld-bench.yml` | Real model credits; run only on request |
+| Paid benchmarks | `evals/osworld.py`, `grounding.py`; workflows `benchmark.yml`, `osworld-bench.yml`, `grounding.yml` (KAN-184: public benchmarks only; `live_bench.py`, `live_desktop_bench.py`, `live_hybrid_bench.py` are local only until the cleanup PR) | Real model credits; run only on request |
 
 The backends take an injected client, so tests script the model: `evals/harness.py` builds a
 real `AgentLoop` with `FakeComputerUseClient` (same `generate_turn` and `run_step` shape as the

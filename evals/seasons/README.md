@@ -30,7 +30,7 @@ the reference model (Gemini 3.5 Flash) where Season 1's score 9 or 10 out of 10.
 No held-out tasks. The browser and hybrid tasks run on the Season 2 site
 (`evals/season2/apps.py`: Northwind Finance, People and Rooms beside the Season 1 apps), so
 their fingerprints hash that file too. Run them as the core suite, so reports keep their grid
-cell: `python -m evals.live_bench --season 2` (or `/bench browser thin gemini season=2`).
+cell: `python -m evals.live_bench --season 2` (local only: there is no paid trigger for it since KAN-184).
 Frozen with
 `python -m evals.leaderboard.season freeze 2 --suite browser-core2 --suite desktop-core2 --suite hybrid-core2 --suite grounding`.
 It is frozen ahead of its calibration run (KAN-87): if calibration shows a task outside the

@@ -158,7 +158,7 @@ releases). They remain in the git history.
 |---|---|
 | [Configuration](docs/configuration.md) | Model keys, backends, harness profiles, every setting |
 | [HTTP API](docs/api.md) | Routes for browser and desktop runs, the live stream, auth |
-| [Evaluation](docs/evaluation.md) | Latest results, benchmark suites, `/bench` PR commands, cost caps, dashboard |
+| [Evaluation](docs/evaluation.md) | Latest results, benchmark suites, `/bench grounding` and batch commands (paid runs are OSWorld and grounding only), cost caps, dashboard |
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |
 | [Cost](docs/cost.md) | What a run costs and how to cut it |
 | [Azure desktop runner](docs/azure-desktop-runner.md) | Running the desktop benchmark on a cloud Windows VM |

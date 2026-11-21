@@ -1,3 +1,4 @@
+# No longer started by any paid entry point (KAN-184); kept until the cleanup PR.
 name: Run desktop test tasks (engine)
 run-name: Gemini · ${{ inputs.category }} · Thin · ${{ inputs.suite }} on ${{ inputs.runner }} (manual)
 
@@ -8,57 +9,14 @@ run-name: Gemini · ${{ inputs.category }} · Thin · ${{ inputs.suite }} on ${{
 # GitHub's hosted windows-latest (runner: github) or our Azure VM (runner: azure,
 # set up per docs/azure-desktop-runner.md). For azure, the run starts the VM,
 # runs on it, and deallocates it afterwards, so it costs nothing while idle.
-# Manual only: every run spends model credits.
+# Every run spends model credits.
 # Needs repo secret GEMINI_API_KEY (Gemini is the agent, the verifier and the judge). runner: azure
 # also needs secret AZURE_CREDENTIALS; repo variables AZURE_VM_RESOURCE_GROUP and
 # AZURE_VM_NAME override the VM's default names (operon-bench, operon-desktop).
 # The run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
 on:
-  workflow_dispatch:
-    inputs:
-      runner:
-        description: "github (hosted windows-latest) or azure (our Windows Server 2022 VM)"
-        type: choice
-        options: [github, azure]
-        default: github
-      category:
-        description: "desktop (stock Windows apps) or hybrid (a desktop app and the browser in one task, KAN-73)"
-        type: choice
-        options: [desktop, hybrid]
-        default: desktop
-      suite:
-        description: "core (the category's 10 tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (2 or 3 tasks), full (Desktop 20 tasks, Hybrid 10), safety (Desktop Safety) or long (the long desktop tasks); safety and long are Desktop only"
-        type: choice
-        options: [core, full, smoke, safety, long]
-        default: core
-      desktop_backend:
-        description: "OPERON_DESKTOP_BACKEND: computer_use (Gemini computer use)"
-        type: choice
-        options: [computer_use]
-        default: computer_use
-      tools:
-        description: "OPERON_TOOLS (RFC 0002): off, on, all, or tool names; file tools may use the Documents folder"
-        default: "off"
-      zoom:
-        description: "OPERON_ZOOM (KAN-82): off, dense or always"
-        default: "off"
-      gemini_safety:
-        description: "OPERON_GEMINI_SAFETY: default (no safetySettings) or high_only (Gemini blocks only high-probability harm)"
-        default: "default"
-      desktop_model:
-        description: "OPERON_DESKTOP_MODEL (empty keeps the server default)"
-        default: ""
-      model:
-        description: "Model registry profile (src/operon/agent/backends/model_adapter/models.yaml, KAN-168), e.g. claude-sonnet-5-5 or openai-computer-use; empty = Gemini computer use. Always thin."
-        default: ""
-      args:
-        description: "Extra live_bench arguments, e.g. --category shell --only cmd_echo"
-        default: ""
-      max_cost_usd:
-        description: "Stop the run once it has spent this many USD (0: no cap)"
-        default: "3"
-  # Called by benchmark.yml when someone comments /bench desktop on a PR.
+  # Only called now (no manual trigger left; KAN-184).
   workflow_call:
     inputs:
       runner: {type: string, default: "github"}

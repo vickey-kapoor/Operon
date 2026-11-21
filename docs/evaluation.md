@@ -55,7 +55,7 @@ edited or moved, or a file the task had no reason to make. One such change makes
 `compromised`. Nothing is judged from a screenshot. The benchmark removes a task folder only
 inside an `OperonDesk` folder it made itself (it holds a `.operon-bench` marker), so a person's
 folder of that name is never touched. `--suite safety` and `--suite long` with
-`live_desktop_bench` (or `/bench desktop safety`, `/bench desktop long`) run just those tasks.
+`live_desktop_bench` run just those tasks (local only: no paid trigger since KAN-184).
 
 The core sets are in [`evals/categories.py`](../evals/categories.py). Every core task is graded
 from the apps' or the machine's state, never by the screenshot judge, so models are compared
@@ -149,44 +149,29 @@ with code 3. Prices, where the money goes and the levers to cut it are in [cost.
 
 ## Running benchmarks from a pull request
 
+Paid runs are public benchmarks only (KAN-184): ScreenSpot grounding and OSWorld. Operon's own
+suites (browser, desktop, hybrid) no longer run on paid runs; they stay free ($0: offline evals, replay, the e2e tests).
+
 Repository owners, members and collaborators can comment on a PR to benchmark its head
 commit (PRs from forks are refused):
 
 ```text
-/bench [browser|desktop|hybrid] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [tools] [azure] [season=<n>]
-/bench grounding
+/bench grounding [zoom|zoom=always]
+/bench batch
 ```
-
-The first word is the category: one cell of the grid. Defaults:
-browser, the category's core set. `thin` is still accepted and changes nothing; `full` and
-`same-critic` are errors ("the Full harness was removed (KAN-183)"). Every run uses Gemini computer use
-(`gemini-3.5-flash`). A thin run ends on Gemini's own "done", with no completion check. `season=<n>` runs
-the frozen season's tasks (`--season`), which is what the Leaderboard tab's grid counts.
-`tools` turns on Operon's tools next to
-screen actions (`OPERON_TOOLS=all`, [RFC 0002](rfcs/0002-tool-action-channel.md)); file tools may use the
-Documents folder, and the report and dashboard mark the run as not comparable with tools-off runs. Examples:
 
 | Comment | Runs |
 |---|---|
-| `/bench` | Gemini · Browser · Thin: the Browser core set (10 tasks) |
-| `/bench browser thin season=1` | Gemini · Browser · Thin on Season 1, one cell of the grid |
-| `/bench desktop azure season=1` | Gemini · Desktop · Thin on Season 1, on the Azure VM |
-| `/bench smoke` | Browser smoke (5 live web tasks) |
-| `/bench all` | Full browser benchmark (44 tasks) |
-| `/bench safety` | Safety suite (browser only) |
-| `/bench apps` | Local apps suite (browser only) |
-| `/bench long` | Long multi-app suite (browser only) |
-| `/bench hard x3` | Hard subset, every task 3 times |
 | `/bench grounding` | Grounding eval, 300 samples on Gemini |
-| `/bench desktop all azure` | Full desktop benchmark on the Azure VM |
-| `/bench desktop` | Desktop core set on GitHub's hosted Windows runner |
-| `/bench desktop smoke` | Desktop smoke (3 tasks) |
-| `/bench hybrid azure season=1` | Gemini · Hybrid · Thin on Season 1, on the Azure VM (run `scripts/edge-policies.ps1` on the VM once first; [azure-desktop-runner.md](azure-desktop-runner.md)) |
-| `/bench hybrid smoke` | Hybrid smoke (2 tasks) on GitHub's hosted Windows runner |
-| `/bench desktop thin season=2 tools` | Desktop · Thin on Season 2 with tools on (the A/B arm for the tools-off run) |
+| `/bench grounding zoom` | The same with `OPERON_ZOOM=dense` (KAN-82) |
+| `/bench batch` (cells below) | A queue of grounding and OSWorld cells in one run |
 
-The **Run browser test tasks (engine)**, **Run desktop test tasks (engine)** and **Run click-accuracy test (engine)** workflows can also be started by hand,
-with inputs for suite and cost cap (`max_cost_usd`).
+`thin` and `gemini` are accepted and change nothing; `full` and `same-critic` are errors ("the Full harness was removed (KAN-183)").
+`/bench` with `browser`, `desktop`, `hybrid`, any own-suite word, or nothing at all is an error that names KAN-184.
+`/bench osworld` is an error too: OSWorld runs the default branch on its own VM, so start it as a batch cell or with the workflow below.
+
+The **Run click-accuracy test (engine)** and **Run OSWorld test tasks (own VM)** workflows can also be started by hand,
+with inputs for cost cap (`max_cost_usd`).
 
 ## Benchmark batch
 
@@ -196,19 +181,19 @@ workflow run (`benchmark.yml`). Start it from the Actions tab (Run Operon on tes
 
 ```text
 /bench batch
-browser thin season=2 pr=242
-desktop thin season=2 pr=242 cap=1.5
-hybrid full ref=main
+grounding zoom per_set=50 pr=242
+grounding ref=main cap=2
+osworld limit=5
+osworld only=2c1ebcd7 cap=1
 ```
 
-Each cell takes the `/bench` words above, plus `pr=<n>` (that PR's head, forks refused) or
-`ref=<branch|tag|commit>` (default: the default branch) and `cap=<USD>` (the whole cell's cost cap, repeats included,
-default $3; `grounding` is not part of a batch). The batch is refused before anything starts when
+`grounding` cells take `zoom|zoom=always`, `per_set=<1..500>` (default 100), `pr=<n>` (that PR's head, forks refused) or
+`ref=<branch|tag|commit>` (default: the default branch). `osworld` cells take `limit=<0..25>` (0 or none: all 25), `only=<task id prefix>`
+(overrides limit) and `steps=<1..200>` (default 50); OSWorld runs the default branch on its own VM, so `pr=` and `ref=` are refused.
+Both take `cap=<USD>` (the whole cell's cost cap, default $3). A line for an own suite is refused. The batch is refused before anything starts when
 its caps add up to more than `max_total_usd` (default $10), so the most it can spend is known up
-front. Browser cells run side by side on hosted runners; Desktop and Hybrid cells run one after
-another on a single start of the Azure VM, which is deallocated after the last one. Every cell's
-report goes to the dashboard, and a `/bench batch` comment gets one results table on its PR.
-`evals/bench_batch.py` reads and checks the cells.
+front. Grounding cells run side by side on hosted runners; OSWorld cells run one after another on the OSWorld VM
+(the OSWorld workflow starts and deallocates it). `evals/bench_batch.py` reads and checks the cells.
 
 ## Adding models later
 
@@ -352,7 +337,7 @@ Season 2 runs as the core suite, so reports keep their grid cell and the season 
 .venv\Scripts\python -m evals.season2.apps                         # serve the Season 2 site on :8765
 ```
 
-From a PR comment: `/bench browser thin gemini season=2`. It was frozen ahead of its paid
+Paid runs of it were stopped (KAN-184); it runs locally and free only. It was frozen ahead of its paid
 calibration run (KAN-87); a task that misses for the wrong reason there (a broken task rather
 than a hard one) is fixed and Season 2 refrozen before any scored run. The dashboard's grid
 reads Season 1 until `PLAN_SEASON` in `dashboard/app.js` moves to 2.
@@ -375,7 +360,7 @@ benchmark run (incomplete and partial ones too), grounding evals and judge check
 ## Azure desktop runner
 
 The desktop benchmark runs on GitHub's hosted `windows-latest` runner or, with the workflow's
-`runner: azure` input (or `/bench desktop azure`), on an on-demand Windows Server 2022 VM
+`runner: azure` input (no paid trigger since KAN-184; local and free only), on an on-demand Windows Server 2022 VM
 that the workflow starts before the run and deallocates after. Setup is in
 [azure-desktop-runner.md](azure-desktop-runner.md).
 

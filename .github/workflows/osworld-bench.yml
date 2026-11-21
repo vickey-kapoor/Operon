@@ -1,7 +1,8 @@
 # OSWorld-Verified subset (KAN-169): Operon on 25 fixed OSWorld tasks, scored by OSWorld itself.
 #
-# Manual only (Actions > Run OSWorld test tasks (own VM) > Run workflow). It spends model credits, so nothing
-# starts it for you: you pick how many tasks and the cost cap. Steps: start the Linux VM
+# Started by hand (Actions > Run OSWorld test tasks (own VM) > Run workflow) or as a cell of the paid-run
+# batch (benchmark.yml, KAN-184); it always runs the default branch. It spends model credits, so nothing starts it for you: you pick how many
+# tasks and the cost cap. Steps: start the Linux VM
 # operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
 # docs/osworld-runner.md), upload the report, deallocate the VM.
 #
@@ -24,6 +25,19 @@ on:
       max_steps:
         description: "Step cap per task"
         default: "50"
+  # Called by benchmark.yml for an osworld batch cell (KAN-184).
+  workflow_call:
+    inputs:
+      limit: {type: string, default: "25"}
+      only: {type: string, default: ""}
+      max_cost_usd: {type: string, default: "3"}
+      max_steps: {type: string, default: "50"}
+      # Set by the paid-run workflow (benchmark.yml) so its cells' artifacts do not share a name.
+      artifact_suffix: {type: string, default: ""}
+      # benchmark.yml keeps the videos of all its cells in one release itself, so it passes "false".
+      publish_videos: {type: string, default: "true"}
+    secrets:
+      GEMINI_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -59,6 +73,9 @@ jobs:
     # The runner on operon-linux (docs/osworld-runner.md). It comes online a minute or two after the VM boots.
     runs-on: [self-hosted, linux, operon-osworld]
     timeout-minutes: 240
+    # Never more than read, even when a caller grants more (benchmark.yml grants write for the video release).
+    permissions:
+      contents: read
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPERON_TEST_SAFE_MODE: "false"
@@ -68,6 +85,9 @@ jobs:
       MAX_STEPS: ${{ inputs.max_steps }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # OSWorld always runs the default branch, however it was started (KAN-184).
+          ref: ${{ github.event.repository.default_branch }}
       - name: Check the inputs
         run: |
           case "$LIMIT$MAX_STEPS" in (*[!0-9]*) echo "::error::limit and max_steps must be whole numbers"; exit 1;; esac
@@ -96,7 +116,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: osworld-report
+          name: osworld-report${{ inputs.artifact_suffix }}
           path: |
             osworld.log
             .var/bench/osworld-*.json
@@ -109,7 +129,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: run-videos-osworld
+          name: run-videos-osworld${{ inputs.artifact_suffix }}
           path: .var/bench/videos/*.mp4
           if-no-files-found: ignore
           retention-days: 14
@@ -143,7 +163,7 @@ jobs:
   publish-videos:
     name: Keep the run videos
     needs: [bench]
-    if: ${{ !cancelled() && (needs.bench.result == 'success' || needs.bench.result == 'failure') }}
+    if: ${{ !cancelled() && inputs.publish_videos != 'false' && (needs.bench.result == 'success' || needs.bench.result == 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

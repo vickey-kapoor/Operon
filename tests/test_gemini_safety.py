@@ -78,7 +78,7 @@ def test_plain_gemini_client_matches(monkeypatch, mode: str, expected: bool) -> 
 def test_workflow_input_maps_to_env(name: str) -> None:
     text = (WORKFLOWS / name).read_text(encoding="utf-8")
     on = yaml.safe_load(text)[True]
-    assert on["workflow_dispatch"]["inputs"]["gemini_safety"]["default"] == "default"
-    if "workflow_call" in on:
-        assert on["workflow_call"]["inputs"]["gemini_safety"]["default"] == "default"
+    # These engines are only called now (no manual trigger since KAN-184).
+    assert "workflow_dispatch" not in on
+    assert on["workflow_call"]["inputs"]["gemini_safety"]["default"] == "default"
     assert "OPERON_GEMINI_SAFETY: ${{ inputs.gemini_safety || 'default' }}" in text

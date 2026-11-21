@@ -32,6 +32,8 @@ on:
       only: {type: string, default: ""}
       max_cost_usd: {type: string, default: "3"}
       max_steps: {type: string, default: "50"}
+      # Set by the paid-run workflow (benchmark.yml) so its cells' artifacts do not share a name.
+      artifact_suffix: {type: string, default: ""}
     secrets:
       GEMINI_API_KEY: {required: false}
 
@@ -106,7 +108,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: osworld-report
+          name: osworld-report${{ inputs.artifact_suffix }}
           path: |
             osworld.log
             .var/bench/osworld-*.json

@@ -187,6 +187,9 @@ def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() ->
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
         # Only the Gemini key reaches a paid run.
         assert set(jobs[job]["secrets"]) == {"GEMINI_API_KEY"}
+        # Each cell's artifact gets its own name; a manual run (empty suffix) keeps today's name.
+        assert jobs[job]["with"]["artifact_suffix"] == "${{ matrix.suffix }}"
+        assert inputs["artifact_suffix"]["default"] == ""
     # Every matrix field the workflow reads is one the parser writes.
     fields = {"grounding": ("label", "ref", "zoom", "per_set", "cap", "suffix"), "osworld": ("label", "limit", "only", "steps", "cap", "suffix")}
     for job, kind in (("batch-grounding", "grounding"), ("batch-osworld", "osworld")):
@@ -199,10 +202,19 @@ def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() ->
     assert batch["name"] in dashboard[True]["workflow_run"]["workflows"]
 
 
+@pytest.mark.parametrize("name, artifact", [("grounding.yml", "grounding-computer_use"), ("osworld-bench.yml", "osworld-report")])
+def test_called_workflows_suffix_their_artifact_names(name, artifact) -> None:
+    text = (WORKFLOWS / name).read_text(encoding="utf-8")
+    assert f"name: {artifact}${{{{ inputs.artifact_suffix }}}}\n" in text
+    # The dashboard import downloads grounding artifacts by pattern, so a suffix still matches.
+    if artifact.startswith("grounding"):
+        assert "--pattern 'grounding-*'" in (WORKFLOWS / "dashboard-data.yml").read_text(encoding="utf-8")
+
+
 def test_the_osworld_workflow_can_be_called_and_keeps_its_vm_lock() -> None:
     wf = _workflow("osworld-bench.yml")
     assert set(wf[True]) == {"workflow_dispatch", "workflow_call"}
-    assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps"}
+    assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps", "artifact_suffix"}
     assert wf["concurrency"]["group"] == "azure-osworld-vm"
 
 

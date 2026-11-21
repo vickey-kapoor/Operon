@@ -191,6 +191,7 @@ jobs:
       zoom: ${{ matrix.zoom }}
       per_set: ${{ matrix.per_set }}
       max_cost_usd: ${{ matrix.cap }}
+      artifact_suffix: ${{ matrix.suffix }}
     # Named, not inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets.
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -213,6 +214,7 @@ jobs:
       limit: ${{ matrix.limit }}
       only: ${{ matrix.only }}
       max_cost_usd: ${{ matrix.cap }}
+      artifact_suffix: ${{ matrix.suffix }}
       max_steps: ${{ matrix.steps }}
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

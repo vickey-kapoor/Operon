@@ -1,7 +1,8 @@
 # OSWorld-Verified subset (KAN-169): Operon on 25 fixed OSWorld tasks, scored by OSWorld itself.
 #
-# Manual only (Actions > Run OSWorld test tasks (own VM) > Run workflow). It spends model credits, so nothing
-# starts it for you: you pick how many tasks and the cost cap. Steps: start the Linux VM
+# Started by hand (Actions > Run OSWorld test tasks (own VM) > Run workflow) or as a cell of the paid-run
+# batch (benchmark.yml, KAN-184). It spends model credits, so nothing starts it for you: you pick how many
+# tasks and the cost cap. Steps: start the Linux VM
 # operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
 # docs/osworld-runner.md), upload the report, deallocate the VM.
 #
@@ -24,6 +25,15 @@ on:
       max_steps:
         description: "Step cap per task"
         default: "50"
+  # Called by benchmark.yml for an osworld batch cell (KAN-184).
+  workflow_call:
+    inputs:
+      limit: {type: string, default: "25"}
+      only: {type: string, default: ""}
+      max_cost_usd: {type: string, default: "3"}
+      max_steps: {type: string, default: "50"}
+    secrets:
+      GEMINI_API_KEY: {required: false}
 
 permissions:
   contents: read

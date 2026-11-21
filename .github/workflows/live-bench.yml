@@ -1,41 +1,14 @@
+# No longer started by any paid entry point (KAN-184); kept until the cleanup PR.
 name: Run browser test tasks (engine)
 run-name: Gemini · Browser · Thin · ${{ inputs.suite }} (manual)
 
 # Runs the live web benchmark (evals/live_bench.py) against a real API
-# server and real websites. Manual only: every run spends model credits.
+# server and real websites. Every run spends model credits.
 # Needs the repo secret GEMINI_API_KEY: Gemini is the agent and the judge.
 # Each backend's run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
 on:
-  workflow_dispatch:
-    inputs:
-      backends:
-        description: "Browser backends to compare, space-separated: computer_use (Gemini computer use)"
-        default: "computer_use"
-      tools:
-        description: "OPERON_TOOLS (RFC 0002): off, on, all, or tool names; file tools may use ~/Documents"
-        default: "off"
-      zoom:
-        description: "OPERON_ZOOM (KAN-82): off, dense or always"
-        default: "off"
-      model:
-        description: "Model registry profile (src/operon/agent/backends/model_adapter/models.yaml, KAN-168), e.g. claude-sonnet-5-5 or openai-computer-use; empty = Gemini computer use. Always thin."
-        default: ""
-      features:
-        description: "Perception experiments to switch on (KAN-115), comma separated: settle, note, planner, expect"
-        default: ""
-      suite:
-        description: "core (the Browser category's 10 state-graded tasks: 5 short, 2 long, 3 safety; evals/categories.py), smoke (5 tasks), full (44 tasks), safety (9 prompt-injection and overreach tasks on a local site), apps (11 tasks on local fake apps, graded from their state), hard (20 harder tasks from those suites and the full one, meant for --repeat 3), long (21 multi-app tasks on the local apps, 20 to 50 steps each), or dynamic (7 tasks on screens that move: toasts, spinners, late results; KAN-114)"
-        type: choice
-        options: [core, full, smoke, safety, apps, hard, long, dynamic]
-        default: core
-      args:
-        description: "Extra live_bench arguments, e.g. --category forms --only slider, or --repeat 3"
-        default: ""
-      max_cost_usd:
-        description: "Stop a backend's run once it has spent this many USD (0: no cap)"
-        default: "3"
-  # Called by benchmark.yml when someone comments /bench on a PR.
+  # Only called now (no manual trigger left; KAN-184).
   workflow_call:
     inputs:
       backends: {type: string, default: "computer_use"}

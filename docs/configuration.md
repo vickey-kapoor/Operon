@@ -25,7 +25,7 @@ Off by default. `OPERON_BROWSER_BACKEND=model` (or `OPERON_DESKTOP_BACKEND=model
 profile named by `OPERON_MODEL_PROFILE`, a key of `src/operon/agent/backends/model_adapter/models.yaml`: `claude-sonnet-5-5`
 (needs `ANTHROPIC_API_KEY`) or `openai-computer-use` (needs `OPENAI_API_KEY`). A model run is
 always thin and the model's own "done" ends it, the same as Gemini's thin runs, so scores compare.
-Manual batches and `/bench batch` take the cell word `model=<profile>`; the workflows give a
+Batch cells no longer take `model=<profile>` (paid runs are OSWorld and grounding only, KAN-184); the workflows give a
 cell only its own provider's key. Startup refuses a missing key or profile.
 
 ## One harness

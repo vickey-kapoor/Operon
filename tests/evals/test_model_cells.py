@@ -1,4 +1,4 @@
-"""Claude and GPT next to Gemini (KAN-168): the `model=` cell word, `--model`, report labels."""
+"""Claude and GPT next to Gemini (KAN-168): `--model` and report labels."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import httpx
 import pytest
 
 from evals import live_bench
-from evals.bench_batch import BatchError, matrices, parse_batch, parse_line
 
 
 @pytest.fixture(autouse=True)
@@ -19,40 +18,7 @@ def _clean_env(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
 
 
-# --- the batch cell word ----------------------------------------------------
-
-
-def test_a_model_cell_is_named_after_its_model_and_runs_thin() -> None:
-    cell = parse_line("browser model=claude-sonnet-5-5 season=2 cap=1.5", 1)
-    assert cell.model == "claude-sonnet-5-5" and cell.profile == "thin"
-    assert cell.label == "Claude Sonnet 5.5 · Browser · Thin · Season 2"
-    assert parse_line("desktop thin model=openai-computer-use", 1).label.startswith("GPT · Desktop · Thin")
-
-
-def test_the_same_cell_for_each_model_is_not_a_repeat() -> None:
-    text = "browser thin ref=main\nbrowser thin ref=main model=claude-sonnet-5-5\nbrowser thin ref=main model=openai-computer-use"
-    cells = parse_batch(text)
-    assert [c.model for c in cells] == ["", "claude-sonnet-5-5", "openai-computer-use"]
-    entries = matrices(cells)["browser"]["include"]
-    assert [e["model"] for e in entries] == ["", "claude-sonnet-5-5", "openai-computer-use"]
-    with pytest.raises(BatchError, match="twice"):
-        parse_batch("browser thin model=openai-computer-use\nbrowser thin model=openai-computer-use")
-
-
-@pytest.mark.parametrize(
-    "line, why",
-    [
-        ("browser model=gpt-9", "model= needs one of"),
-        ("browser model=qwen3-vl-32b", "model= needs one of"),
-        ("hybrid model=claude-sonnet-5-5", "Hybrid"),
-        ("browser full model=claude-sonnet-5-5", "Full harness was removed"),
-        ("browser model=claude-sonnet-5-5 zoom", "take no tools"),
-        ("browser model=claude-sonnet-5-5 planner", "take no tools"),
-    ],
-)
-def test_a_model_cell_that_cannot_run_is_refused(line, why) -> None:
-    with pytest.raises(BatchError, match=why):
-        parse_line(line, 1)
+# Batch cells no longer take model= (KAN-184); see tests/evals/test_bench_batch.py.
 
 
 # --- --model and the report -------------------------------------------------------------

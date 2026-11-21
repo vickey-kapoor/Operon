@@ -2,7 +2,7 @@
 
 The live desktop benchmark (`.github/workflows/live-desktop-bench.yml`) can run on
 GitHub's hosted `windows-latest` runner or on our own Azure VM. Pick the VM with
-the workflow's `runner: azure` input, or comment `/bench desktop azure` on a PR.
+the workflow's `runner: azure` input. (Paid desktop runs of Operon's own suites were stopped, KAN-184; this runner is kept for the cleanup decision.)
 
 On `azure`, the workflow starts the VM, waits for its runner to come online, runs
 the benchmark, and deallocates the VM again, so the VM costs nothing between runs
@@ -69,7 +69,7 @@ runner's desktop keeps running. Don't sign in as `benchrunner`.
 
 ### Edge for the Hybrid tasks
 
-The Hybrid benchmark (`/bench hybrid azure`, KAN-73) has the agent use Microsoft Edge
+The Hybrid benchmark (KAN-73, no longer a paid run since KAN-184) has the agent use Microsoft Edge
 on the VM. Run `scripts/edge-policies.ps1` once, in an elevated PowerShell as
 `.\operon` (paste it into Notepad as `C:\edge-policies.ps1` like the setup script):
 
@@ -86,7 +86,7 @@ retake the clean snapshot (step 4).
 
 ### Why a standard account
 
-A `/bench desktop azure` run executes the benchmarked branch's code on this VM, and
+A desktop run on the Azure runner executes the benchmarked branch's code on this VM, and
 the VM is not wiped between runs. Under a standard account that code can't install
 services, change system settings or read the admin's files. Each run also starts by
 removing the usual places it could leave something to start later (the account's
@@ -158,7 +158,7 @@ old service principal (`az ad sp delete --id <its appId>`).
 
 ### 4. Save a clean snapshot
 
-Once the runner shows **Idle** and one `/bench desktop azure` run has passed,
+Once the runner shows **Idle** and one desktop run on the runner has passed,
 snapshot the deallocated VM's OS disk. It is the known-good state to go back to
 if an update, a stray dialog or a half-finished run leaves the desktop in a mess.
 A Standard snapshot is billed on the disk's used space, a few dollars a month.

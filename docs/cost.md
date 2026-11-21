@@ -30,8 +30,8 @@ most. There is no per-step critic call: the thin harness is the only harness.
 
 ## Levers, cheapest to try first
 
-1. **Run fewer benchmarks.** Runs happen only on a `/bench` comment. Use smoke for a
-   quick check and `all` only before a decision.
+1. **Run fewer benchmarks.** Paid runs are OSWorld and grounding only (KAN-184) and happen only on a `/bench` comment or a batch.
+   Use a small `limit=` or `per_set=` for a quick check and the full set only before a decision.
 2. **Thin harness.** No per-step critic call. Compare both harnesses on the grid before
    choosing: the critic can save failed tasks, which lowers cost per success.
 3. **Fewer steps.** Each extra turn adds a screenshot and output. Steps per task is

@@ -57,9 +57,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 # Live smoke: a few real browser tasks against a running API (real GEMINI_API_KEY)
 .venv\Scripts\python -m evals.live_smoke
 
-# Benchmarks, seasons, judge check, /bench PR-comment syntax, repo secrets and the eval dashboard:
+# Paid runs are public benchmarks only (KAN-184): OSWorld and grounding. Benchmarks, judge check, /bench PR-comment syntax, repo secrets and the eval dashboard:
 # see evals/CLAUDE.md. Benchmarks cost real credits: run only when asked, and name the run by cell
-# when asking Vickey: "Gemini · Browser · Thin · once, about $X".
+# when asking Vickey: "Gemini · OSWorld · 25 tasks · once, about $X".
 
 # Lint (exactly what CI runs)
 .venv\Scripts\ruff check src tests evals --select E,F,W,I --ignore E501

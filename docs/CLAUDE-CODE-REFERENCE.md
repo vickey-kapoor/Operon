@@ -35,6 +35,8 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 - Experimental features ship behind an env flag, default off.
 
 ### Paid runs and budget
+- **Paid runs are public benchmarks only (KAN-184)**: OSWorld (`osworld-bench.yml`) and ScreenSpot grounding
+  (`grounding.yml`). Operon's own suites no longer run on paid runs; free tests ($0) are unchanged.
 - **No paid runs until the weekend of Sat-Sun Nov 21-22, 2026**, and Vickey starts
   those by hand (Actions > Run Operon on test tasks (paid) > Run workflow, with `cells`).
   The nightly schedule and the nightly queue were removed on purpose (2026-11-18): don't add
@@ -68,7 +70,7 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 | Jira | Site `vickeykapoor11.atlassian.net`, project **KAN**, board 1. Epics: KAN-7 (project), KAN-77 (architecture v2), KAN-113 (self-driving perception), KAN-139 (scaling stages), KAN-149 (audit). |
 | Confluence | Space **OPERON**, home page 295140 (hand-written TOC). |
 | GitHub | `vickey-kapoor/Operon`. API keys (Gemini, Anthropic, OpenAI) are repo secrets. Actions: approval required for all external contributors. |
-| Paid workflow | `benchmark.yml` "Run Operon on test tasks (paid)": manual dispatch (`cells`), or `/bench ...` PR comments. Engines: `live-bench.yml`, `live-desktop-bench.yml`, `grounding.yml`. Syntax in `evals/CLAUDE.md`. |
+| Paid workflow | `benchmark.yml` "Run Operon on test tasks (paid)": manual dispatch (`cells`), `/bench grounding` or `/bench batch` PR comments. Paid runs are OSWorld and grounding only (KAN-184). Engines: `osworld-bench.yml`, `grounding.yml` (`live-bench.yml` and `live-desktop-bench.yml` are no longer startable, kept until the cleanup PR). Syntax in `evals/CLAUDE.md`. |
 | Paid batches | Started by hand with `cells` (Actions > Run Operon on test tasks (paid) > Run workflow). The nightly queue (`evals/nightly-queue.txt`) was removed 2026-11-18; it stays in git history. Older batch log: project file `bench-queue/queue.md`. |
 | OSWorld | `osworld-bench.yml` "Run OSWorld test tasks (own VM)": manual only, runs on Azure VM `operon-linux`, report artifact `osworld-report` (not imported to the dashboard). |
 | Azure Windows VM | `operon-desktop` (westus2, resource group `operon-bench`), self-hosted desktop bench runner, logged in via OIDC. Clean snapshot `operon-desktop-clean` (manual restore point; `az snapshot create` needs `-l westus2`). |
@@ -95,7 +97,7 @@ side-by-side benchmark cells only.
 
 ### Weekend paid queue (Nov 21-22, started by hand)
 
-Cells to enter by hand as `cells` (they were in the removed `evals/nightly-queue.txt`, see git history):
+Superseded by KAN-184: paid runs are OSWorld and grounding cells only, so the own-suite cells below no longer run. Kept as history; they were to be entered by hand as `cells` (from the removed `evals/nightly-queue.txt`, see git history):
 
 - **Sat Nov 21** (caps $9.50): Desktop Thin Season 2 zoom=always (KAN-82); Hybrid Full
   Season 2 (KAN-161, first Full score); Browser Thin dynamic x3 `off` and `settle` arms (KAN-115).

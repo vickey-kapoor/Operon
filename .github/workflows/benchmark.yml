@@ -3,45 +3,35 @@ run-name: >-
   ${{ github.event_name == 'issue_comment' && format('Paid run · from a comment on PR #{0}', github.event.issue.number)
   || 'Paid run · started by hand' }}
 
-# The one place benchmarks start. Every run spends model credits, so nothing runs on a push.
+# The one place paid runs start. Every run spends model credits, so nothing runs on a push.
+# Paid runs are public benchmarks only (KAN-184): OSWorld and ScreenSpot grounding. Operon's own
+# suites (browser, desktop, hybrid) no longer run on paid runs; they stay free (offline evals, replay, e2e tests).
 #
 # 1. By hand (Actions > Run Operon on test tasks (paid) > Run workflow): give cells to run a batch (KAN-105).
 # 2. A comment on a pull request by someone with write access:
 #
-#   /bench [browser|desktop|hybrid] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [tools] [zoom|zoom=always] [azure] [season=<n>]
-#   /bench grounding [zoom|zoom=always]
-#   /bench batch            (then one cell per line)
+#   /bench grounding [zoom|zoom=always]   (the ScreenSpot grounding eval on the PR head)
+#   /bench batch                          (then one cell per line)
 #
-# Runs use Gemini computer use unless a batch cell names a model with model=claude-sonnet-5-5 or
-# model=openai-computer-use (KAN-168): that model runs the same cell, thin with its own done. Each
-# such cell gets only its own provider's key. The first word is the category
-# (KAN-72): browser, desktop or hybrid. Defaults: browser, the category's core set
-# (evals/categories.py). The Full harness was removed (KAN-183): "full" and "same-critic"
-# are errors, "thin" is accepted and changes nothing. A run ends on Gemini's own "done" (KAN-67). hybrid (KAN-73) runs a desktop app and the
-# browser in each task, on the local site the benchmark serves on the runner itself. "smoke"
-# runs a few quick tasks; "all" the full suite; "safety" the prompt-injection and overreach
-# tasks; "apps" the browser tasks on the local fake shop, mailbox, account and forms; "hard" the
-# 20-task hard subset; "long" the multi-app tasks; "dynamic" the 7 browser tasks on screens
-# that move (KAN-114). x2/x3/x5 repeat every task to measure flakiness (the cost cap scales
-# with it). season=<n> runs a frozen season's tasks (evals/seasons/), which is how a grid run
-# counts on the dashboard's Leaderboard tab. "grounding" runs the ScreenSpot grounding eval (one model call per sample, no
-# browser); with "zoom" each click on a dense screen is refined on a zoomed crop (KAN-82).
-# azure runs a desktop benchmark on our Azure VM instead of GitHub's hosted runner.
+# "grounding" runs the ScreenSpot grounding eval (one model call per sample, no browser); with "zoom"
+# each click on a dense screen is refined on a zoomed crop (KAN-82). "thin" and "gemini" are accepted
+# and change nothing; "full" and "same-critic" are errors (the Full harness was removed, KAN-183).
+# /bench with browser, desktop, hybrid or any own-suite word, or with nothing, is an error that says so.
+# OSWorld runs the default branch on its own VM, so it is a batch cell or the OSWorld workflow, not a /bench word.
 #
 # A batch (manual or "/bench batch") is a list of cells, one per line or separated by
-# ";" (evals/bench_batch.py), in the words above plus pr=<n> (that PR's head; forks refused),
-# ref=<branch|tag|commit> and cap=<USD> (default $3):
+# ";" (evals/bench_batch.py):
 #
-#   browser thin season=2 pr=242; desktop thin season=2 pr=242 cap=1.5; hybrid full
+#   grounding zoom per_set=50 pr=242; osworld limit=5 cap=1
 #
-# Browser cells run side by side on hosted runners. Desktop and Hybrid cells run one after
-# another on one start of the Azure VM, which is deallocated after the last one. The batch is
-# refused before anything starts when the cells' caps add up to more than the batch cap, so the
-# most it can spend is known up front. Every cell's report goes to the dashboard ("Save run results
-# to dashboard"); a /bench comment also gets its results table on the PR.
+# grounding cells take zoom, per_set=<n>, pr=<n> (that PR's head; forks refused) or ref=<branch|tag|commit>
+# and cap=<USD> (default $3). osworld cells take limit=<0..25>, only=<task id prefix>, steps=<n> and
+# cap=<USD>. Grounding cells run side by side on hosted runners; OSWorld cells run one after another
+# on the OSWorld VM (the OSWorld workflow starts and deallocates it). The batch is refused before anything
+# starts when the cells' caps add up to more than the batch cap, so the most it can spend is known up front.
 #
-# The engines it calls (live-bench.yml, live-desktop-bench.yml, grounding.yml) are also
-# startable by hand. PRs from forks are refused: the run has the repository's API key.
+# The engines it calls (grounding.yml, osworld-bench.yml) are also startable by hand. PRs from forks
+# are refused: the run has the repository's API key.
 
 on:
   issue_comment:
@@ -49,7 +39,7 @@ on:
   workflow_dispatch:
     inputs:
       cells:
-        description: "Cells, separated by ';', e.g. browser thin season=2 pr=242; desktop thin season=2 pr=242 cap=1.5"
+        description: "Cells, separated by ';', e.g. grounding zoom pr=242; osworld limit=5 cap=1"
         required: true
       max_total_usd:
         description: "Batch cost cap: refuse the batch if its cells' caps add up to more (0: no cap)"
@@ -77,13 +67,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       target: ${{ steps.args.outputs.target }}
-      profile: ${{ steps.args.outputs.profile }}
-      suite: ${{ steps.args.outputs.suite }}
-      runner: ${{ steps.args.outputs.runner }}
-      repeat: ${{ steps.args.outputs.repeat }}
-      tools: ${{ steps.args.outputs.tools }}
       zoom: ${{ steps.args.outputs.zoom }}
-      extra: ${{ steps.args.outputs.extra }}
       label: ${{ steps.args.outputs.label }}
       cells: ${{ steps.args.outputs.cells }}
       sha: ${{ steps.pr.outputs.sha }}
@@ -102,73 +86,32 @@ jobs:
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          target=browser profile=thin suite=core runner=github repeat=1 season= tools=off zoom=off
+          target= zoom=off
+          usage="Use: /bench grounding [zoom|zoom=always], or /bench batch with grounding and osworld cells."
+          own="Operon's own suites no longer run on paid runs (KAN-184). $usage"
           # Only the first line is the command; words after it are ignored.
           for word in $(printf '%s\n' "$BODY" | head -n 1 | tr 'A-Z' 'a-z'); do
             case "$word" in
               /bench) ;;
-              browser|desktop|hybrid|grounding) target=$word ;;
-              thin) ;;  # the only harness; accepted so earlier commands still parse
+              grounding) target=grounding ;;
+              thin|gemini) ;;  # the only harness and model; accepted so earlier commands still parse
               full|same-critic) echo "::error::The Full harness was removed (KAN-183); '$word' no longer exists. Runs are thin."; exit 1 ;;
-              core) suite=core ;;
-              smoke) suite=smoke ;;
-              all) suite=full ;;
-              safety) suite=safety ;;
-              apps) suite=apps ;;
-              hard) suite=hard ;;
-              long) suite=long ;;
-              dynamic) suite=dynamic ;;  # KAN-114: screens that move (toasts, spinners); browser only
-              x2|x3|x5) repeat=${word#x} ;;
-              gemini) ;;  # Operon's only model; accepted so earlier commands still parse
-              tools) tools=all ;;  # RFC 0002: shell, file and HTTP tools next to screen actions
-              azure) runner=azure ;;
+              osworld) echo "::error::OSWorld runs the default branch on its own VM; start it as a batch cell (Actions > this workflow) or with the OSWorld workflow."; exit 1 ;;
+              browser|desktop|hybrid|core|smoke|all|safety|apps|hard|long|dynamic|x2|x3|x5|tools|azure|season=*|model=*) echo "::error::$own"; exit 1 ;;
               zoom|zoom=dense) zoom=dense ;;  # KAN-82: OPERON_ZOOM; dense needs a screen side >= 2000 px
               zoom=always) zoom=always ;;
-              season=*)
-                season=${word#season=}
-                if ! printf '%s' "$season" | grep -Eq '^[1-9][0-9]{0,2}$'; then
-                  echo "::error::season= needs a season number such as 1."; exit 1
-                fi ;;
-              *) echo "::error::Unknown /bench option '$word'. Use: /bench [browser|desktop|hybrid] [core|smoke|all|safety|apps|hard|long|dynamic] [x2|x3|x5] [tools] [zoom|zoom=always] [azure] [season=<n>], or /bench grounding [zoom|zoom=always]"; exit 1 ;;
+              *) echo "::error::Unknown /bench option '$word'. $usage"; exit 1 ;;
             esac
           done
-          # Desktop has its own safety and long tasks (KAN-74); apps, hard and dynamic are browser only.
-          # Hybrid runs its core, smoke or full set (its safety and long tasks are inside them).
-          if { [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = dynamic ]; } && [ "$target" = desktop ]; then
-            echo "::error::The $suite suite is browser only."; exit 1
+          if [ "$target" != grounding ]; then
+            echo "::error::$usage"; exit 1
           fi
-          if { [ "$suite" = safety ] || [ "$suite" = apps ] || [ "$suite" = hard ] || [ "$suite" = long ] || [ "$suite" = dynamic ]; } && [ "$target" = hybrid ]; then
-            echo "::error::Hybrid has no $suite suite; use core, smoke or all (its long and safety tasks are in core)."; exit 1
-          fi
-          if [ -n "$season" ] && [ "$target" = grounding ]; then
-            echo "::error::season= is for /bench browser, desktop and hybrid."; exit 1
-          fi
-          extra=
-          [ "$repeat" != 1 ] && extra="--repeat $repeat"
-          [ -n "$season" ] && extra="${extra:+$extra }--season $season"
-          if [ "$tools" != off ] && [ "$target" = grounding ]; then
-            echo "::error::tools is for /bench browser, desktop and hybrid."; exit 1
-          fi
-          # The run's name in the Actions list, the way runs are named in chat:
-          # "Gemini · Browser · Thin", plus the suite, season and repeats when not the default.
-          cap() { printf '%s' "$1" | sed 's/./\U&/'; }
-          if [ "$target" = grounding ]; then
-            label="Gemini · Grounding"
-            if [ "$zoom" != off ]; then label="$label · zoom $zoom"; fi
-          else
-            label="Gemini · $(cap "$target") · $(cap "$profile")"
-            if [ "$suite" != core ]; then label="$label · $suite"; fi
-            if [ -n "$season" ]; then label="$label · Season $season"; fi
-            if [ "$repeat" != 1 ]; then label="$label · x$repeat"; fi
-            if [ "$tools" != off ]; then label="$label · tools"; fi
-            if [ "$zoom" != off ]; then label="$label · zoom $zoom"; fi
-            if [ "$runner" = azure ]; then label="$label · Azure VM"; fi
-          fi
-          echo "target=$target profile=$profile suite=$suite runner=$runner repeat=$repeat tools=$tools zoom=$zoom extra=$extra label=$label"
+          # The run's name in the Actions list, the way runs are named in chat: "Gemini · Grounding · zoom dense".
+          label="Gemini · Grounding"
+          if [ "$zoom" != off ]; then label="$label · zoom $zoom"; fi
+          echo "target=$target zoom=$zoom label=$label"
           {
-            echo "target=$target"; echo "profile=$profile"; echo "suite=$suite"
-            echo "runner=$runner"; echo "repeat=$repeat"; echo "tools=$tools"; echo "zoom=$zoom"; echo "extra=$extra"
-            echo "label=$label"
+            echo "target=$target"; echo "zoom=$zoom"; echo "label=$label"
           } >> "$GITHUB_OUTPUT"
 
       - id: pr
@@ -218,10 +161,10 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      browser: ${{ steps.read.outputs.browser }}
-      desktop: ${{ steps.read.outputs.desktop }}
-      has_browser: ${{ steps.read.outputs.has_browser }}
-      has_desktop: ${{ steps.read.outputs.has_desktop }}
+      grounding: ${{ steps.read.outputs.grounding }}
+      osworld: ${{ steps.read.outputs.osworld }}
+      has_grounding: ${{ steps.read.outputs.has_grounding }}
+      has_osworld: ${{ steps.read.outputs.has_osworld }}
     steps:
       # The parser always comes from the default branch, never from a benchmarked PR.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -235,163 +178,44 @@ jobs:
           MAX_TOTAL_USD: ${{ inputs.max_total_usd || '10' }}
         run: printf '%s\n' "$CELLS" | python3 -m evals.bench_batch --max-total-usd "$MAX_TOTAL_USD"
 
-  start-vm:
-    name: Start the Azure VM
-    needs: plan
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_desktop == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
-      VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
-    steps:
-      - name: Check the settings
-        run: |
-          if [ -z "$AZURE_CLIENT_ID" ] && [ -z "$AZURE_CREDENTIALS" ]; then
-            echo "::error::Set repo variables AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID (or the older AZURE_CREDENTIALS secret). See docs/azure-desktop-runner.md."
-            exit 1
-          fi
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        if: env.AZURE_CLIENT_ID != ''
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        if: env.AZURE_CLIENT_ID == ''
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-      - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
-
-  batch-browser:
+  batch-grounding:
     name: ${{ matrix.label }}
     needs: plan
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_browser == 'true' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_grounding == 'true' }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.browser) }}
-    uses: ./.github/workflows/live-bench.yml
+      matrix: ${{ fromJSON(needs.plan.outputs.grounding) }}
+    uses: ./.github/workflows/grounding.yml
     with:
-      backends: computer_use
-      tools: ${{ matrix.tools }}
-      zoom: ${{ matrix.zoom }}
-      features: ${{ matrix.features }}
-      model: ${{ matrix.model }}
-      suite: ${{ matrix.suite }}
-      args: ${{ matrix.extra }}
-      max_cost_usd: ${{ matrix.cap }}
-      artifact_suffix: ${{ matrix.suffix }}
       ref: ${{ matrix.ref }}
+      zoom: ${{ matrix.zoom }}
+      per_set: ${{ matrix.per_set }}
+      max_cost_usd: ${{ matrix.cap }}
     # Named, not inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets.
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-  batch-desktop:
+  # OSWorld runs the default branch on its own VM, one cell at a time (max-parallel: 1);
+  # osworld-bench.yml starts the VM, runs, and deallocates it.
+  batch-osworld:
     name: ${{ matrix.label }}
-    needs: [plan, start-vm]
-    if: ${{ !cancelled() && needs.plan.outputs.has_desktop == 'true' && needs.start-vm.result == 'success' }}
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_osworld == 'true' }}
     permissions:
       contents: read
       id-token: write
     strategy:
       fail-fast: false
       max-parallel: 1
-      matrix: ${{ fromJSON(needs.plan.outputs.desktop) }}
-    uses: ./.github/workflows/live-desktop-bench.yml
+      matrix: ${{ fromJSON(needs.plan.outputs.osworld) }}
+    uses: ./.github/workflows/osworld-bench.yml
     with:
-      runner: azure
-      manage_vm: "false"
-      category: ${{ matrix.category }}
-      desktop_backend: computer_use
-      tools: ${{ matrix.tools }}
-      zoom: ${{ matrix.zoom }}
-      model: ${{ matrix.model }}
-      suite: ${{ matrix.suite }}
-      args: ${{ matrix.extra }}
+      limit: ${{ matrix.limit }}
+      only: ${{ matrix.only }}
       max_cost_usd: ${{ matrix.cap }}
-      artifact_suffix: ${{ matrix.suffix }}
-      ref: ${{ matrix.ref }}
+      max_steps: ${{ matrix.steps }}
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-  stop-vm:
-    name: Stop the Azure VM
-    needs: [start-vm, batch-desktop]
-    if: ${{ always() && needs.start-vm.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
-      VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
-    steps:
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        if: env.AZURE_CLIENT_ID != ''
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        if: env.AZURE_CLIENT_ID == ''
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-      # Deallocated, not just stopped: a stopped VM still bills for compute.
-      - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
-
-  browser:
-    name: ${{ needs.parse.outputs.label }}
-    needs: parse
-    if: needs.parse.outputs.target == 'browser'
-    uses: ./.github/workflows/live-bench.yml
-    with:
-      backends: computer_use
-      tools: ${{ needs.parse.outputs.tools }}
-      zoom: ${{ needs.parse.outputs.zoom }}
-      suite: ${{ needs.parse.outputs.suite }}
-      args: ${{ needs.parse.outputs.extra }}
-      ref: ${{ needs.parse.outputs.sha }}
-    # Named, not inherited: the benchmarked branch never sees the dashboard,
-    # Blob, Slack or Azure secrets.
-    secrets:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-
-  # Desktop and Hybrid both run on the Windows desktop; category picks the tasks.
-  desktop:
-    name: ${{ needs.parse.outputs.label }}
-    needs: parse
-    if: needs.parse.outputs.target == 'desktop' || needs.parse.outputs.target == 'hybrid'
-    # id-token reaches only the VM start/stop jobs, which ask for it; the bench job
-    # (the benchmarked branch's code) stays at contents: read.
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/live-desktop-bench.yml
-    with:
-      runner: ${{ needs.parse.outputs.runner }}
-      category: ${{ needs.parse.outputs.target }}
-      desktop_backend: computer_use
-      tools: ${{ needs.parse.outputs.tools }}
-      zoom: ${{ needs.parse.outputs.zoom }}
-      suite: ${{ needs.parse.outputs.suite }}
-      args: ${{ needs.parse.outputs.extra }}
-      ref: ${{ needs.parse.outputs.sha }}
-    # AZURE_CREDENTIALS is used only by the VM start and stop jobs, which run this
-    # repository's default-branch workflow code, never the benchmarked branch.
-    secrets:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
   grounding:
     name: ${{ needs.parse.outputs.label }}

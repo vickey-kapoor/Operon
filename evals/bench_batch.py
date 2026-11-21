@@ -1,27 +1,32 @@
-"""Read a benchmark batch: many grid cells, one GitHub Actions run (KAN-105).
+"""Read a benchmark batch: many paid cells, one GitHub Actions run (KAN-105, KAN-184).
 
-Paid runs are queued during the day and run together once Vickey approves the batch.
-The batch workflow (``.github/workflows/benchmark.yml``: a manual run or a ``/bench batch`` PR
-comment) passes its cell list here; this module checks every line and turns it into
-the job matrices the workflow runs: Browser cells side by side on hosted runners,
-Desktop and Hybrid cells one after another on a single start of the Azure VM.
+Paid runs are public benchmarks only (KAN-184): OSWorld and ScreenSpot grounding. Operon's own
+suites no longer run on paid runs; they stay free ($0: offline evals, replay, the e2e tests).
+Runs are queued during the day and run together once Vickey approves the batch. The batch
+workflow (``.github/workflows/benchmark.yml``: a manual run or a ``/bench batch`` PR comment)
+passes its cell list here; this module checks every line and turns it into the job matrices
+the workflow runs: grounding cells side by side on hosted runners, OSWorld cells one after
+another (one VM).
 
-One cell per line (or separated by ``;``), in the words of a ``/bench`` comment, plus where to run it and its
-cost cap::
+One cell per line (or separated by ``;``), plus where to run it and its cost cap::
 
-    browser thin season=2 pr=242
-    desktop thin season=2 pr=242 cap=1.5
-    hybrid ref=main
+    grounding zoom per_set=50 pr=242
+    grounding ref=main cap=2
+    osworld limit=5
+    osworld only=3e5a cap=1
 
-Words: ``browser|desktop|hybrid``, ``core|smoke|all|safety|apps|hard|long|dynamic``,
-``x2|x3|x5``, ``tools`` (RFC 0002: all tools on), ``zoom|zoom=always``, ``settle|note|planner|expect`` (KAN-115/116: perception experiments, browser only)
-(KAN-82: OPERON_ZOOM dense or always), ``model=<profile>`` (KAN-168: run Claude or GPT on the same cell, thin with the model's own done; the profile is a key of ``src/operon/agent/backends/model_adapter/models.yaml``, browser and desktop only), ``season=<n>``, ``pr=<number>`` (that PR's head) or
-``ref=<branch, tag or commit>`` (default: the default branch), ``cap=<USD>`` (the whole
-cell's cost cap, default 3, repeats included). ``azure``, ``gemini`` and ``thin`` are accepted and change nothing
-(``full`` and ``same-critic`` are errors: the Full harness was removed, KAN-183): batch
-Desktop and Hybrid cells always run on the Azure VM. Blank lines and ``#`` comments are
-skipped. The batch is refused when its cells' caps add up to more than the batch cap,
-so the most it can spend is known before anything starts.
+``grounding`` words: ``zoom|zoom=dense|zoom=always`` (KAN-82: OPERON_ZOOM), ``per_set=<1..500>``
+(samples per set, default 100), ``pr=<number>`` (that PR's head) or ``ref=<branch, tag or commit>``
+(default: the default branch), ``cap=<USD>`` (default 3).
+
+``osworld`` words: ``limit=<0..25>`` (the first N tasks; 0 or leaving it out runs all 25),
+``only=<task id prefix>`` (one task; overrides limit), ``steps=<1..200>`` (per task, default 50),
+``cap=<USD>`` (default 3). OSWorld runs the default branch on its own VM, so ``pr=`` and ``ref=`` are refused.
+
+``gemini`` and ``thin`` are accepted and change nothing (``full`` and ``same-critic`` are errors:
+the Full harness was removed, KAN-183). A line for Operon's own suites (browser, desktop, hybrid, ...)
+is refused. Blank lines and ``#`` comments are skipped. The batch is refused when its cells' caps
+add up to more than the batch cap, so the most it can spend is known before anything starts.
 
 Run it as ``python -m evals.bench_batch --max-total-usd 10 < cells.txt``: it prints a
 summary table, and with ``--github-output`` writes the matrices for the workflow.
@@ -33,7 +38,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import re
 import subprocess
@@ -41,28 +45,28 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
-CATEGORIES = ("browser", "desktop", "hybrid")
-SUITES = {"core": "core", "smoke": "smoke", "all": "full", "safety": "safety", "apps": "apps", "hard": "hard", "long": "long", "dynamic": "dynamic"}
-BROWSER_ONLY_SUITES = {"apps", "hard", "dynamic"}
-HYBRID_SUITES = {"core", "smoke", "full"}
+KINDS = ("grounding", "osworld")
+# Words that name one of Operon's own suites (or its per-suite switches): refused since KAN-184.
+OWN_SUITE_WORDS = {
+    "browser", "desktop", "hybrid", "core", "smoke", "all", "safety", "apps", "hard", "long", "dynamic",
+    "tools", "settle", "note", "planner", "expect", "x2", "x3", "x5",
+}
+OWN_SUITE_MESSAGE = "Operon's own suites no longer run on paid runs (KAN-184); use osworld or grounding cells."
 DEFAULT_CAP_USD = 3.0
 DEFAULT_MAX_TOTAL_USD = 10.0
+DEFAULT_PER_SET = 100
+MAX_PER_SET = 500
+OSWORLD_TASKS = 25
+DEFAULT_STEPS = 50
+MAX_STEPS = 200
 MAX_CELLS = 20
 
-_SEASON = re.compile(r"^[1-9][0-9]{0,2}$")
 _PR = re.compile(r"^[1-9][0-9]{0,6}$")
 # Branch, tag or commit: git ref characters only, no leading dash (it would read as an option).
 _REF = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$")
-# Per-cell switches for the perception experiments (KAN-115): word -> the env flag it turns on.
-# Models a cell may name with model=<profile>: one per provider, picked by Vickey (KAN-168).
-# Other registry profiles are not set up for batch runs.
-MODEL_CELLS = {
-    "claude-sonnet-5-5": "Claude Sonnet 5.5",
-    "openai-computer-use": "GPT",
-}
-FEATURES = {"settle": "OPERON_SETTLE_DETECT", "note": "OPERON_CHANGE_NOTE", "planner": "OPERON_PLANNER", "expect": "OPERON_EXPECT_CHECK"}
-
 _CAP = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,2})?$")
+_NUMBER = re.compile(r"^[0-9]{1,4}$")
+_TASK_PREFIX = re.compile(r"^[0-9a-f][0-9a-f-]{0,35}$")
 
 
 class BatchError(ValueError):
@@ -71,56 +75,41 @@ class BatchError(ValueError):
 
 @dataclass
 class Cell:
-    category: str
-    profile: str = "thin"
-    suite: str = "core"
-    repeat: int = 1
-    tools: str = "off"
-    zoom: str = "off"
-    model: str = ""  # KAN-168: a registry profile (MODEL_CELLS); empty is Gemini computer use
-    features: tuple[str, ...] = ()  # KAN-115: settle, note, planner, expect (the perception flags, off by default)
-    season: str = ""
+    kind: str  # "grounding" or "osworld"
+    zoom: str = "off"  # grounding only
+    per_set: int = DEFAULT_PER_SET  # grounding only
+    limit: int = OSWORLD_TASKS  # osworld only; 0 is read as all
+    only: str = ""  # osworld only: a task id prefix, overrides limit
+    steps: int = DEFAULT_STEPS  # osworld only
     pr: str = ""
     ref: str = ""
     cap: float = DEFAULT_CAP_USD
 
     @property
-    def extra(self) -> str:
-        """The live_bench arguments the workflow passes on, as in a /bench run."""
-        words = []
-        if self.repeat != 1:
-            words += ["--repeat", str(self.repeat)]
-        if self.season:
-            words += ["--season", self.season]
-        return " ".join(words)
-
-    @property
-    def run_cap(self) -> str:
-        """The cap to pass on as max_cost_usd: live_bench multiplies it by --repeat, so divide
-        here and ``cap=`` stays the whole cell's limit (rounded down, never over it)."""
-        return f"{math.floor(self.cap / self.repeat * 10000) / 10000:g}"
-
-    @property
     def label(self) -> str:
-        """The cell's name the way runs are named in chat: "Gemini · Browser · Thin"."""
-        label = f"{MODEL_CELLS.get(self.model, 'Gemini')} · {self.category.capitalize()} · {self.profile.capitalize()}"
-        if self.suite != "core":
-            label += f" · {self.suite}"
-        if self.season:
-            label += f" · Season {self.season}"
-        if self.repeat != 1:
-            label += f" · x{self.repeat}"
-        if self.tools != "off":
-            label += " · tools"
+        """The cell's name the way runs are named in chat: "Gemini · OSWorld · 25 tasks"."""
+        if self.kind == "osworld":
+            label = "Gemini · OSWorld · " + (f"task {self.only}" if self.only else f"{self.limit} tasks")
+            if self.steps != DEFAULT_STEPS:
+                label += f" · {self.steps} steps"
+            return label
+        label = "Gemini · Grounding"
         if self.zoom != "off":
             label += f" · zoom {self.zoom}"
-        if self.features:
-            label += " · " + "+".join(self.features)
+        if self.per_set != DEFAULT_PER_SET:
+            label += f" · {self.per_set} per set"
         if self.pr:
             label += f" · PR #{self.pr}"
         elif self.ref:
             label += f" · {self.ref[:12]}"
         return label
+
+
+def _number(word: str, name: str, low: int, high: int, where: str) -> int:
+    value = word.removeprefix(f"{name}=")
+    if not _NUMBER.match(value) or not low <= int(value) <= high:
+        raise BatchError(f"{where}: {name}= needs a whole number from {low} to {high}.")
+    return int(value)
 
 
 def parse_line(line: str, number: int) -> Cell | None:
@@ -129,40 +118,34 @@ def parse_line(line: str, number: int) -> Cell | None:
     if not text:
         return None
     where = f"line {number} ({text!r})"
-    category = ""
-    cell = Cell(category="browser")
-    for word in text.split():
-        if word in ("/bench", "gemini", "azure"):
-            continue
-        if word in CATEGORIES:
-            if category:
-                raise BatchError(f"{where}: name one category (browser, desktop or hybrid).")
-            category = word
-        elif word == "grounding":
-            raise BatchError(f"{where}: grounding is not part of a batch; run /bench grounding on its own.")
-        elif word == "thin":
-            pass  # the only harness (KAN-183); accepted so earlier batches still parse
-        elif word in ("full", "same-critic"):
+    # gemini, thin and azure change nothing; accepted so earlier batches still parse.
+    words = [w for w in text.split() if w not in ("/bench", "gemini", "azure", "thin")]
+    for word in words:
+        if word in ("full", "same-critic"):
             raise BatchError(f"{where}: the Full harness was removed (KAN-183); {word!r} no longer exists. Runs are thin.")
-        elif word in SUITES:
-            cell.suite = SUITES[word]
-        elif word in ("x2", "x3", "x5"):
-            cell.repeat = int(word[1:])
-        elif word == "tools":
-            cell.tools = "all"
-        elif word in ("zoom", "zoom=dense", "zoom=always"):
+        if word in OWN_SUITE_WORDS or word.startswith(("season=", "model=")):
+            raise BatchError(f"{where}: {OWN_SUITE_MESSAGE}")
+    kinds = [w for w in words if w in KINDS]
+    if not kinds:
+        raise BatchError(f"{where}: start with the kind: osworld or grounding.")
+    if len(kinds) > 1:
+        raise BatchError(f"{where}: name one kind (osworld or grounding).")
+    cell = Cell(kind=kinds[0])
+    for word in words:
+        if word in KINDS:
+            continue
+        if cell.kind == "grounding" and word in ("zoom", "zoom=dense", "zoom=always"):
             cell.zoom = "always" if word == "zoom=always" else "dense"
-        elif word.startswith("model="):
-            cell.model = word.removeprefix("model=")
-            if cell.model not in MODEL_CELLS:
-                raise BatchError(f"{where}: model= needs one of {', '.join(MODEL_CELLS)}.")
-        elif word in FEATURES:
-            if word not in cell.features:
-                cell.features = tuple(f for f in FEATURES if f in (*cell.features, word))
-        elif word.startswith("season="):
-            cell.season = word.removeprefix("season=")
-            if not _SEASON.match(cell.season):
-                raise BatchError(f"{where}: season= needs a season number such as 1.")
+        elif cell.kind == "grounding" and word.startswith("per_set="):
+            cell.per_set = _number(word, "per_set", 1, MAX_PER_SET, where)
+        elif cell.kind == "osworld" and word.startswith("limit="):
+            cell.limit = _number(word, "limit", 0, OSWORLD_TASKS, where) or OSWORLD_TASKS
+        elif cell.kind == "osworld" and word.startswith("only="):
+            cell.only = word.removeprefix("only=")
+            if not _TASK_PREFIX.match(cell.only):
+                raise BatchError(f"{where}: only= needs the start of an OSWorld task id (hex digits and dashes).")
+        elif cell.kind == "osworld" and word.startswith("steps="):
+            cell.steps = _number(word, "steps", 1, MAX_STEPS, where)
         elif word.startswith("pr="):
             cell.pr = word.removeprefix("pr=")
             if not _PR.match(cell.pr):
@@ -177,23 +160,11 @@ def parse_line(line: str, number: int) -> Cell | None:
                 raise BatchError(f"{where}: cap= needs a cost in USD above 0, such as 1.5.")
             cell.cap = float(value)
         else:
-            raise BatchError(f"{where}: unknown word {word!r}.")
-    if not category:
-        raise BatchError(f"{where}: start with the category: browser, desktop or hybrid.")
-    cell.category = category
+            raise BatchError(f"{where}: unknown word {word!r} for a {cell.kind} cell.")
     if cell.pr and cell.ref:
         raise BatchError(f"{where}: give pr= or ref=, not both.")
-    if cell.suite in BROWSER_ONLY_SUITES and category != "browser":
-        raise BatchError(f"{where}: the {cell.suite} suite is browser only.")
-    if category == "hybrid" and cell.suite not in HYBRID_SUITES:
-        raise BatchError(f"{where}: Hybrid has no {cell.suite} suite; use core, smoke or all.")
-    if cell.features and category != "browser":
-        raise BatchError(f"{where}: settle, note, planner and expect are browser only for now.")
-    if cell.model:
-        if category == "hybrid":
-            raise BatchError(f"{where}: model= runs in the browser and on the desktop; Hybrid is Gemini only for now.")
-        if cell.features or cell.zoom != "off" or cell.tools != "off":
-            raise BatchError(f"{where}: model= cells take no tools, zoom, settle, note, planner or expect.")
+    if cell.kind == "osworld" and (cell.pr or cell.ref):
+        raise BatchError(f"{where}: OSWorld runs the default branch on its own VM; pr= and ref= are for grounding cells.")
     return cell
 
 
@@ -203,12 +174,12 @@ def parse_batch(text: str, max_total_usd: float = DEFAULT_MAX_TOTAL_USD) -> list
     lines = text.replace(";", "\n").splitlines()
     cells = [cell for n, line in enumerate(lines, 1) if (cell := parse_line(line, n))]
     if not cells:
-        raise BatchError("The batch has no cells. Put one per line, e.g. 'browser thin season=2 pr=242'.")
+        raise BatchError("The batch has no cells. Put one per line, e.g. 'grounding zoom pr=242' or 'osworld limit=5'.")
     if len(cells) > MAX_CELLS:
         raise BatchError(f"The batch has {len(cells)} cells; the most is {MAX_CELLS}.")
     seen: set[tuple] = set()
     for cell in cells:
-        key = (cell.category, cell.profile, cell.suite, cell.repeat, cell.tools, cell.zoom, cell.features, cell.season, cell.pr, cell.ref, cell.model)
+        key = (cell.kind, cell.zoom, cell.per_set, cell.limit, cell.only, cell.steps, cell.pr, cell.ref)
         if key in seen:
             raise BatchError(f"{cell.label} is in the batch twice.")
         seen.add(key)
@@ -251,31 +222,23 @@ def resolve_refs(cells: list[Cell], head_of: Callable[[str], str]) -> None:
 
 def matrices(cells: list[Cell]) -> dict:
     """The workflow's job matrices; each cell gets its own artifact suffix so names never clash."""
-
-    def entry(index: int, cell: Cell) -> dict:
-        return {
-            "label": cell.label,
-            "category": cell.category,
-            "profile": cell.profile,
-            "suite": cell.suite,
-            "tools": cell.tools,
-            "zoom": cell.zoom,
-            "features": ",".join(cell.features),
-            "model": cell.model,
-            "extra": cell.extra,
-            "ref": cell.ref,
-            "cap": cell.run_cap,
-            "suffix": f"-cell{index}",
-        }
-
-    numbered = list(enumerate(cells, 1))
-    browser = [entry(i, c) for i, c in numbered if c.category == "browser"]
-    desktop = [entry(i, c) for i, c in numbered if c.category != "browser"]
+    grounding: list[dict] = []
+    osworld: list[dict] = []
+    for index, cell in enumerate(cells, 1):
+        cap, suffix = f"{cell.cap:g}", f"-cell{index}"
+        if cell.kind == "grounding":
+            grounding.append(
+                {"label": cell.label, "ref": cell.ref, "zoom": cell.zoom, "per_set": str(cell.per_set), "cap": cap, "suffix": suffix}
+            )
+        else:
+            osworld.append(
+                {"label": cell.label, "limit": str(cell.limit), "only": cell.only, "steps": str(cell.steps), "cap": cap, "suffix": suffix}
+            )
     return {
-        "browser": {"include": browser},
-        "desktop": {"include": desktop},
-        "has_browser": bool(browser),
-        "has_desktop": bool(desktop),
+        "grounding": {"include": grounding},
+        "osworld": {"include": osworld},
+        "has_grounding": bool(grounding),
+        "has_osworld": bool(osworld),
         "total_cap": f"{total_cap(cells):g}",
     }
 
@@ -286,7 +249,7 @@ def summary_markdown(cells: list[Cell], max_total_usd: float) -> str:
         "",
         f"{len(cells)} cells; cost caps add up to ${total_cap(cells):.2f}"
         + (f" (batch cap ${max_total_usd:.2f})." if max_total_usd > 0 else " (no batch cap)."),
-        "Browser cells run side by side; Desktop and Hybrid cells run one after another on one start of the Azure VM.",
+        "Grounding cells run side by side; OSWorld cells run one after another on the OSWorld VM.",
         "",
         "| # | Cell | Code | Cap |",
         "|---|---|---|---|",
@@ -321,9 +284,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.github_output:
         out = matrices(cells)
         with open(args.github_output, "a", encoding="utf-8") as fh:
-            for key in ("browser", "desktop"):
+            for key in ("grounding", "osworld"):
                 fh.write(f"{key}={json.dumps(out[key], separators=(',', ':'))}\n")
-            for key in ("has_browser", "has_desktop"):
+            for key in ("has_grounding", "has_osworld"):
                 fh.write(f"{key}={str(out[key]).lower()}\n")
             fh.write(f"total_cap={out['total_cap']}\n")
     return 0

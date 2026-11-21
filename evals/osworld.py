@@ -54,13 +54,13 @@ def operon_command(instruction: str, max_steps: int, python: str | None = None) 
 
 def operon_env(server_url: str, runs_root: str | None = None, model: str = "") -> dict[str, str]:
     """The environment of one ``operon run``. ``model`` (a registry profile; empty is Gemini) selects the
-    model backend (KAN-168) for the desktop; Gemini runs leave the backend settings as they are."""
+    model backend (KAN-168) for the desktop; a Gemini run forces computer_use and an empty profile."""
     env = {**os.environ, **({"OPERON_RUNS_ROOT": runs_root} if runs_root else {}), "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
            "OPERON_AUTO_CONFIRM": "on", "OPERON_TOOLS": "off",
            "PYTHONUNBUFFERED": "1", "OPERON_DESKTOP_PLATFORM": "linux"}
-    if model:
-        env["OPERON_DESKTOP_BACKEND"] = "model"
-        env["OPERON_MODEL_PROFILE"] = model
+    # Always set both, so a run never inherits the runner's backend settings.
+    env["OPERON_DESKTOP_BACKEND"] = "model" if model else "computer_use"
+    env["OPERON_MODEL_PROFILE"] = model
     return env
 
 

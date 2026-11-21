@@ -7,7 +7,8 @@
 # docs/osworld-runner.md), upload the report, deallocate the VM.
 #
 # Needs repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the Azure OIDC variables the desktop bench already uses.
-# Cost: about $0.06 a task (the 5-task pilot was $0.31). The cap stops starting tasks past it.
+# Cost: Gemini about $0.12 a task (the last full 25-task run was $3.11); Claude or GPT about $0.12-0.24 a task.
+# The cap is checked between tasks, so a run can overshoot by one task.
 name: Run OSWorld test tasks (own VM)
 
 on:

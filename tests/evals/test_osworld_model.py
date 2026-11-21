@@ -11,11 +11,11 @@ import yaml
 from evals import osworld
 
 
-def test_a_gemini_run_leaves_the_backend_alone(monkeypatch) -> None:
-    monkeypatch.delenv("OPERON_DESKTOP_BACKEND", raising=False)
-    monkeypatch.delenv("OPERON_MODEL_PROFILE", raising=False)
+def test_a_gemini_run_does_not_inherit_the_runners_backend(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_DESKTOP_BACKEND", "model")
+    monkeypatch.setenv("OPERON_MODEL_PROFILE", "claude-sonnet-5-5")
     env = osworld.operon_env("http://vm:5000", "/runs")
-    assert "OPERON_DESKTOP_BACKEND" not in env and "OPERON_MODEL_PROFILE" not in env
+    assert env["OPERON_DESKTOP_BACKEND"] == "computer_use" and env["OPERON_MODEL_PROFILE"] == ""
     assert env["OPERON_ENVIRONMENT"] == "osworld" and env["OPERON_DESKTOP_PLATFORM"] == "linux"
 
 
@@ -63,6 +63,7 @@ def test_main_passes_the_model_and_records_it(tmp_path, monkeypatch) -> None:
     assert report["model"] == "claude-sonnet-5-5" and report["label"] == "Claude Sonnet 5.5 · OSWorld"
 
 
-def test_main_refuses_an_unknown_model(tmp_path) -> None:
+def test_main_refuses_an_unknown_model(tmp_path, capsys) -> None:
     with pytest.raises(SystemExit):
         osworld.main(["--osworld-repo", str(tmp_path), "--model", "claude-opus-5-5"], env_factory=lambda r: None)
+    assert "--model must be one of" in capsys.readouterr().err

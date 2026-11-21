@@ -7,7 +7,8 @@ checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are 
 
 ```powershell
 # Name runs by cell when asking Vickey: "Gemini · OSWorld · 25 tasks · once, about $X" or "Gemini · Grounding · zoom · about $X".
-# Stops once a run has spent its cost cap ($MAX_RUN_COST_USD / --max-cost-usd; 0 = no cap)
+# Stops once a run has spent its cost cap ($MAX_RUN_COST_USD / --max-cost-usd; 0 = no cap). The cap is checked between
+# tasks, so a run can overshoot it by one task's spend (Claude/GPT: about $0.12-0.24 a task; use cap=6 for 25 tasks).
 # OSWorld-Verified subset (25 fixed tasks, scored by OSWorld; needs the Linux VM, docs/osworld-runner.md):
 .venv\Scripts\python -m evals.osworld [--limit 5] [--only <task id prefix>] [--max-cost-usd 3] [--model claude-sonnet-5-5|openai-computer-use] [--list]
 # --model (empty = Gemini) runs Claude or GPT through the KAN-168 model adapter (OPERON_DESKTOP_BACKEND=model); they spend Anthropic/OpenAI credits: need Vickey's cost OK (about $3-6 per 25 tasks per model). Batch cell: osworld model=<profile>

@@ -11,6 +11,7 @@ checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are 
 # tasks, so a run can overshoot it by one task's spend (Claude/GPT: about $0.12-0.24 a task; use cap=6 for 25 tasks).
 # OSWorld-Verified subset (25 fixed tasks, scored by OSWorld; needs the Linux VM, docs/osworld-runner.md):
 .venv\Scripts\python -m evals.osworld [--limit 5] [--only <task id prefix>] [--max-cost-usd 3] [--model claude-sonnet-5-5|openai-computer-use] [--list]
+# A task that errors is recorded (status/stop_reason/error per result) and the run goes on; --job-minutes prints the CI job timeout for the chosen tasks (30 + 35 min a task).
 # --model (empty = Gemini) runs Claude or GPT through the KAN-168 model adapter (OPERON_DESKTOP_BACKEND=model); they spend Anthropic/OpenAI credits: need Vickey's cost OK (about $3-6 per 25 tasks per model). Batch cell: osworld model=<profile>
 
 # Grounding eval: ScreenSpot-v2/Pro samples, one model call each through the real backend, click scored vs the box

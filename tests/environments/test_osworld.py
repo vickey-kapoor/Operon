@@ -149,10 +149,17 @@ def test_run_one_waits_for_apps_to_settle_before_the_checker_runs(monkeypatch):
 def test_summarize():
     s = osworld.summarize([
         {"domain": "os", "passed": True, "cost_usd": 0.1},
+        {"domain": "os", "passed": False, "cost_usd": 0.2, "status": "error"},
+        {"domain": "vlc", "passed": True, "cost_usd": 0.0, "status": "passed"},
+        {"domain": "vlc", "passed": False, "cost_usd": 0.0, "status": "timed_out"},
+    ])
+    assert s["errors"] == 1 and s["timed_out"] == 1
+    s = osworld.summarize([
+        {"domain": "os", "passed": True, "cost_usd": 0.1},
         {"domain": "os", "passed": False, "cost_usd": 0.2},
         {"domain": "vlc", "passed": True, "cost_usd": 0.0},
     ])
-    assert s["passed"] == 2 and s["by_domain"] == {"os": "1/2", "vlc": "1/1"} and s["cost_usd"] == 0.3
+    assert s["errors"] == 0 and s["passed"] == 2 and s["by_domain"] == {"os": "1/2", "vlc": "1/1"} and s["cost_usd"] == 0.3
 
 
 def test_wait_for_desktop_polls_until_drawn(monkeypatch):
@@ -288,22 +295,25 @@ def test_timeout_still_counts_the_spend(monkeypatch, tmp_path):
 def test_finished_scores_survive_a_later_failure(monkeypatch, tmp_path):
     (tmp_path / "repo").mkdir()
     monkeypatch.setattr(osworld, "load_subset", lambda: [{"domain": "os", "id": "a", "instruction": "i"},
-                                                           {"domain": "os", "id": "b", "instruction": "j"}])
+                                                           {"domain": "os", "id": "b", "instruction": "j"},
+                                                           {"domain": "os", "id": "c", "instruction": "k"}])
     monkeypatch.setattr(osworld, "task_config", lambda repo, task: {})
-    answers = iter([{"domain": "os", "id": "a", "passed": True, "cost_usd": 0.1, "score": 1.0, "seconds": 1}])
+    seen = []
 
-    def fake_run_one(*a, **k):
-        try:
-            return next(answers)
-        except StopIteration:
-            raise RuntimeError("VM died") from None
+    def fake_run_one(env, task, config, **k):
+        seen.append(task["id"])
+        if task["id"] == "b":
+            raise RuntimeError("VM died")
+        return {"domain": "os", "id": task["id"], "passed": True, "cost_usd": 0.1, "score": 1.0, "seconds": 1,
+                "status": "passed"}
 
     monkeypatch.setattr(osworld, "run_one", fake_run_one)
-    with pytest.raises(RuntimeError):
-        osworld.main(["--osworld-repo", str(tmp_path / "repo"), "--out", str(tmp_path / "out")],
-                     env_factory=lambda repo: SimpleNamespace(close=lambda: None))
+    code = osworld.main(["--osworld-repo", str(tmp_path / "repo"), "--out", str(tmp_path / "out")],
+                        env_factory=lambda repo: SimpleNamespace(close=lambda: None))
+    assert code == 0 and seen == ["a", "b", "c"]
     saved = json.loads(next((tmp_path / "out").glob("osworld-*.json")).read_text())
-    assert saved["summary"]["passed"] == 1
+    assert saved["summary"]["passed"] == 2 and saved["summary"]["errors"] == 1
+    assert saved["results"][1]["status"] == "error" and "VM died" in saved["results"][1]["error"]
 
 
 def _log_env():

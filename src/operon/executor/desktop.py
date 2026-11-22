@@ -9,7 +9,6 @@ import asyncio
 import ctypes
 import logging
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +33,7 @@ from operon.agent.perception.screen_diff import (
     reset_click_candidates,
 )
 from operon.agent.perception.settle import signature_from_rgb
+from operon.core.launch_env import launch_env as _launch_env
 from operon.core.paths import desktop_artifacts_dir
 from operon.core.settings import get_settings
 from operon.core.vault import SecretError, redact, resolve_for_type
@@ -166,17 +166,6 @@ def _vscroll(pixels: int, x: int, y: int) -> None:
     Windows takes 120 a notch, X11 and macOS whole clicks."""
     clicks = wheel_clicks(pixels)
     pyautogui.scroll(clicks * WIN_WHEEL_DELTA if sys.platform == "win32" else clicks, x=x, y=y)
-
-
-# Environment variables an app the agent launches must not inherit: a shell the
-# model (or a prompt injection on screen) drives could otherwise print or send
-# the server's API keys and tokens.
-_SECRET_ENV_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|WEBHOOK|DATABASE_URL", re.IGNORECASE)
-
-
-def _launch_env() -> dict[str, str]:
-    """This process's environment minus anything that looks like a secret."""
-    return {name: value for name, value in os.environ.items() if not _SECRET_ENV_RE.search(name)}
 
 
 def _mss():

@@ -58,8 +58,8 @@ doesn't ask for it.
 | `read_file` | `path` | the file's text (first 20,000 characters) | file guard applies |
 | `list_dir` | `path` | one line per entry: name, `dir` or size in bytes | file guard applies |
 | `write_file` | `path`, `content` | bytes written | file guard applies; creates parent folders |
-| `run_shell` | `command`, optional `timeout_seconds` (max 120) | exit code, stdout, stderr (each cut at 8,000 characters) | PowerShell on Windows, bash on Linux; the trust gate asks for approval |
-| `http_get` | `url` | status code, content type, body text (first 20,000 characters) | the trust gate's domain allowlist applies |
+| `run_shell` | `command`, optional `timeout_seconds` (max 120) | exit code, stdout, stderr (each cut at 8,000 characters) | PowerShell on Windows, bash on Linux; the trust gate asks for approval; runs with no keys or tokens in its environment and is killed on Stop (KAN-181) |
+| `http_get` | `url` | status code, content type, body text (first 20,000 characters) | the trust gate's domain allowlist applies; local, private and cloud-metadata addresses are refused, and a host the task does not name needs approval (KAN-181) |
 
 Relative paths and the shell's working folder are the user's home folder.
 

@@ -130,7 +130,8 @@ class StopReason(StrEnum):
 class RunFailureCause(StrEnum):
     """KAN-175: the one cause a failed run ended with, from a fixed list a bench can group by.
 
-    The loop and API set the first nine (``AgentState.failure_cause``). The last four are
+    The loop and API store the first nine in ``AgentState.failure_cause``, except ``needs_user``
+    and ``cancelled``, which ``cause_from_state`` derives from the run's status. The last four are
     for benchmark reports only: the bench could not finish the task (``timeout``,
     ``bench_error``), the run said done but the grader disagreed (``wrong_result``), or no
     known cause fits (``other``).

@@ -96,7 +96,7 @@ class RunEndLog(StrictModel):
 
     record_type: Literal["run_end"] = "run_end"
     run_id: str = Field(min_length=1)
-    step_index: int = Field(ge=0, description="Steps the run completed before it ended.")
+    step_index: int = Field(ge=0, description="The run's step count when it ended (a step that crashed partway counts).")
     status: RunStatus
     stop_reason: StopReason | None = None
     failure_cause: RunFailureCause | None = None

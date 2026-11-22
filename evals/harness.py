@@ -488,7 +488,7 @@ async def run_scenario(scenario: Scenario, *, root: Path | None = None) -> RunRe
                 reached_goal=world.screen.goal,
                 ended=ended,
             ),
-            status=status.value,
+            status=(state.status if state is not None else status).value,  # the run's final status, after the extra step
             stop_reason=state.stop_reason.value if state is not None and state.stop_reason else None,
             steps=steps,
             pauses=pauses,

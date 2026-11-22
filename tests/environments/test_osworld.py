@@ -526,3 +526,12 @@ def test_no_post_action_wait_when_a_batch_fails_on_its_first_child(tmp_path, sle
     batch = AgentAction(action_type=ActionType.BATCH, actions=[_INPUT_ACTIONS[0], _INPUT_ACTIONS[2]])
     result = asyncio.run(_wait_executor(_vm_error_after_first, tmp_path, 1.5).execute(batch))
     assert not result.success and sleeps == []
+
+
+def test_run_usage_gaps_counts_missing_and_unreadable_usage(tmp_path):
+    (tmp_path / "r1" / "step_1").mkdir(parents=True)
+    (tmp_path / "r1" / "step_1" / "computer_use_raw.json").write_text("{}")
+    (tmp_path / "r1" / "step_2").mkdir()
+    (tmp_path / "r1" / "step_2" / "policy_usage.json").write_text("nope")
+    assert osworld.run_usage_gaps("r1", tmp_path) == {"steps_without_usage": 1, "unreadable_usage_files": 1}
+    assert osworld.run_usage_gaps(None, tmp_path) == {"steps_without_usage": 0, "unreadable_usage_files": 0}

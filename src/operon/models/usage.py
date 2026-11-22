@@ -38,6 +38,10 @@ class UsageAggregate(StrictModel):
     cache_creation_input_tokens: int = Field(default=0, ge=0)
     cache_read_input_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0.0, ge=0)
+    # Calls the cost above could not count (KAN-177): a step with a saved model response but no usage
+    # file, and a usage file that could not be read.
+    steps_without_usage: int = Field(default=0, ge=0)
+    unreadable_usage_files: int = Field(default=0, ge=0)
     by_model: dict[str, "UsageAggregate"] = Field(default_factory=dict)
 
 

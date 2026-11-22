@@ -83,6 +83,27 @@ def run_cost(run_id: str | None, runs_root: str | Path | None = None) -> float:
     return total
 
 
+def run_usage_gaps(run_id: str | None, runs_root: str | Path | None = None) -> dict[str, int]:
+    """Steps with a saved model response (``*_raw.*``) but no ``*_usage.json``, and usage files that
+    cannot be read: calls ``run_cost`` could not count (KAN-177). Import-free, like ``run_cost``."""
+    gaps = {"steps_without_usage": 0, "unreadable_usage_files": 0}
+    if not run_id or runs_root is None:
+        return gaps
+    run_dir = Path(runs_root) / run_id
+    for step in sorted(run_dir.glob("step_*")):
+        if any(not (step / f"{raw.name.split('_raw.', 1)[0]}_usage.json").exists() for raw in step.glob("*_raw.*")):
+            gaps["steps_without_usage"] += 1
+    for path in sorted(run_dir.glob("step_*/*_usage.json")) + [run_dir / "planner_usage.json"]:
+        if not path.exists():
+            continue
+        try:
+            ok = isinstance(json.loads(path.read_text(encoding="utf-8")), dict)
+        except (OSError, ValueError):
+            ok = False
+        gaps["unreadable_usage_files"] += not ok
+    return gaps
+
+
 def find_run_since(runs_root: str | Path | None, since: float) -> str | None:
     """The newest run folder created at or after ``since`` (epoch seconds): the run whose id
     never reached us, for example because the task timed out before the start line was read."""

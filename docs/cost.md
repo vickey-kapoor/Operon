@@ -18,6 +18,10 @@ reports `cost_usd`, token counts and a per-model breakdown for each task, plus
 successes) and the judge's cost in the summary. The eval dashboard stores the same
 fields in its database.
 
+A step with a saved model response (`*_raw.*`) but no `*_usage.json`, and a usage file that
+cannot be read, are counted in `steps_without_usage` and `unreadable_usage_files` (live bench
+per-task and summary, `summarize_run_usage`, `evals.osworld.run_usage_gaps`), because their cost is missing from the total.
+
 Limit: a step that calls the same backend twice (a mid-step re-look) overwrites its
 usage file, so a run's total can be slightly low.
 

@@ -634,6 +634,14 @@ def summarize_run_usage(run_id: str) -> UsageAggregate:
     planner_usage = _usage_from_path(run_dir / "planner_usage.json") if run_dir.exists() else None
     if planner_usage is not None:
         _merge_usage(aggregate, planner_usage)
+    if run_dir.exists():
+        for step in sorted(run_dir.glob("step_*")):
+            raws = {raw.name.split("_raw.", 1)[0] for raw in step.glob("*_raw.*")}
+            if any(not (step / f"{name}_usage.json").exists() for name in raws):
+                aggregate.steps_without_usage += 1
+        for path in run_dir.glob("step_*/*_usage.json"):
+            if _usage_from_path(path) is None:
+                aggregate.unreadable_usage_files += 1
     step_dir = _latest_step_dir(run_dir) if run_dir.exists() else None
     if step_dir is not None:
         step_index = int(step_dir.name.split("_", 1)[1])
@@ -763,6 +771,8 @@ def _merge_aggregate(target: UsageAggregate, source: UsageAggregate) -> None:
         into.cache_creation_input_tokens += src.cache_creation_input_tokens
         into.cache_read_input_tokens += src.cache_read_input_tokens
         into.estimated_cost_usd = round(into.estimated_cost_usd + src.estimated_cost_usd, 8)
+        into.steps_without_usage += src.steps_without_usage
+        into.unreadable_usage_files += src.unreadable_usage_files
 
 
 def _image_dimensions(path_value: str | None) -> dict[str, int] | None:

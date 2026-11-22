@@ -55,6 +55,7 @@ Permission modes (KAN-89) adjust the gate's verdict per run, after the rules abo
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -99,26 +100,63 @@ RISK_CATEGORIES: dict[str, tuple[str, ...]] = {
 }
 
 
+# A short list of shared / public suffixes, NOT the full Public Suffix List: a task that names
+# one of these (or a page under one) must not make every site beneath it on-task.
+_SHARED_SUFFIXES = frozenset({
+    "co.uk", "org.uk", "gov.uk", "ac.uk", "com.au", "co.jp", "co.in", "com.br",
+    "github.io", "gitlab.io", "appspot.com", "herokuapp.com", "vercel.app", "netlify.app",
+    "pages.dev", "workers.dev", "web.app", "firebaseapp.com", "azurewebsites.net",
+    "cloudfront.net", "blogspot.com", "s3.amazonaws.com", "onrender.com", "fly.dev",
+})
+
+
+def _is_shared_suffix(name: str) -> bool:
+    """True for a listed shared suffix or anything shorter (``amazonaws.com`` of ``s3.amazonaws.com``)."""
+    return any(name == entry or entry.endswith("." + name) for entry in _SHARED_SUFFIXES)
+
+
+def _mentioned(needle: str, text: str) -> bool:
+    """``needle`` appears in ``text`` on non-``[\\w.-]`` boundaries (a trailing sentence period is fine)."""
+    return re.search(r"(?<![\w.-])" + re.escape(needle) + r"(?![\w-]|\.\w)", text) is not None
+
+
 def host_is_on_task(host: str, intent: str, current_url: str | None = None, allow_domains: tuple[str, ...] = ()) -> bool:
     """True when ``host`` is one the task plausibly means: any suffix of it with at least two
     labels (``api.weather.gov``, ``weather.gov``) appears in ``intent`` on non-``[\\w.-]``
     boundaries (so ``weather.gov`` never matches inside ``notweather.govx``); or it equals, is a
-    subdomain of, or is the parent domain of the current page's host; or it is on ``allow_domains``."""
-    host = host.lower().strip(".")
+    subdomain of, or is the parent domain of the current page's host; or it is on ``allow_domains``.
+
+    An IP literal is on-task only by exact match (the full address in the intent, the page host,
+    or the allowlist): never by suffix or parent. A suffix that is a shared or public suffix
+    (``github.io``, ``co.uk``) never counts, in the intent or as a page-host parent. The shared
+    list is short, not the full Public Suffix List, so this errs toward asking."""
+    host = host.lower().strip(".").strip("[]")
     if not host:
         return False
     for domain in allow_domains:
         if host == domain or host.endswith("." + domain):
             return True
-    labels = host.split(".")
     lowered = intent.lower()
+    page = (urlparse(current_url).hostname or "").lower().strip(".").strip("[]") if current_url else ""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return _mentioned(host, lowered) or host == page
+    labels = host.split(".")
     for start in range(len(labels) - 1):
         suffix = ".".join(labels[start:])
-        if re.search(r"(?<![\w.-])" + re.escape(suffix) + r"(?![\w-]|\.\w)", lowered):
+        if not _is_shared_suffix(suffix) and _mentioned(suffix, lowered):
             return True
-    page = (urlparse(current_url).hostname or "").lower().strip(".") if current_url else ""
-    if page and (host == page or host.endswith("." + page) or page.endswith("." + host)):
-        return "." in host or host == page
+    if not page:
+        return False
+    if host == page:
+        return True
+    if host.endswith("." + page):
+        return not _is_shared_suffix(page)
+    if page.endswith("." + host):
+        return "." in host and not _is_shared_suffix(host)
     return False
 
 

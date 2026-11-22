@@ -267,3 +267,34 @@ def test_other_tools_and_non_tool_actions_are_not_judged_by_intent() -> None:
     gate = TrustGate(enabled=True)
     nav = _action(url="https://evil.test/x")
     assert gate.evaluate(nav, intent="x").verdict is TrustVerdict.ALLOW
+
+
+def test_ip_literal_host_is_on_task_only_by_exact_match() -> None:
+    from operon.agent.policy.trust_gate import host_is_on_task
+
+    assert not host_is_on_task("1.2.3.4", "what is 3.4 times 2")
+    assert not host_is_on_task("9.9.12.50", "set price to 12.50")
+    assert not host_is_on_task("[::1]", "go to ::1x")
+    assert host_is_on_task("1.2.3.4", "fetch http://1.2.3.4/status please")
+    assert host_is_on_task("1.2.3.4", "x", "http://1.2.3.4:8080/")
+    assert host_is_on_task("1.2.3.4", "x", allow_domains=("1.2.3.4",))
+    assert not host_is_on_task("1.2.3.4", "x", "http://5.1.2.3.4/")
+
+
+def test_shared_suffix_in_the_task_does_not_make_every_site_under_it_on_task() -> None:
+    from operon.agent.policy.trust_gate import host_is_on_task
+
+    for suffix in ("github.io", "gov.uk", "appspot.com", "co.uk", "amazonaws.com"):
+        assert not host_is_on_task("evil." + suffix, f"open a page on {suffix}")
+    assert host_is_on_task("me.github.io", "open me.github.io")
+    assert host_is_on_task("api.me.github.io", "open me.github.io")
+    assert host_is_on_task("www.bbc.co.uk", "read bbc.co.uk")
+
+
+def test_page_host_parent_rule_ignores_shared_suffixes() -> None:
+    from operon.agent.policy.trust_gate import host_is_on_task
+
+    assert not host_is_on_task("github.io", "x", "https://x.github.io/")
+    assert not host_is_on_task("evil.github.io", "x", "https://github.io/")
+    assert host_is_on_task("x.github.io", "x", "https://x.github.io/")
+    assert host_is_on_task("api.x.github.io", "x", "https://x.github.io/")

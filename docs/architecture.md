@@ -154,9 +154,9 @@ action.
 `prompt` or `beforeunload` dialog is a question for the person, so the browser executor cancels
 it and records it; after the action the loop gives the model an advisory hint and pauses the run
 (`WAITING_FOR_USER`, the text names the dialog's message) the way a trust-gate confirmation does.
-Resuming accepts the dialog once and replays the held action (the backend's held calls, the same
+Resuming accepts that very dialog once (a different dialog is cancelled and asked about again) and replays the held action, from the call that raised the dialog on (the backend's held calls, the same
 path a gate approval takes); a correction declines it and tells the model so. In `auto`
-permission mode (or with the trust gate off) the dialog is accepted and the run never pauses. A
+permission mode (or with the trust gate off, unless the mode is `ask`) the dialog is accepted and the run never pauses. A
 popup that closes itself hands the session back to its opener, or the newest open page.
 
 ### Observable Browser Mode

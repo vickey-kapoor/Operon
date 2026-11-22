@@ -127,9 +127,13 @@ class NativeBrowserExecutor(Executor):
         # person approved, the cancelled dialog waiting for the loop, and the secret values
         # typed in the run (a page can echo one back in a dialog message).
         self._dialog_accept_all: dict[str, bool] = {}
-        self._dialog_accept_next: set[str] = set()
-        self._pending_dialogs: dict[str, tuple[str, str]] = {}
+        self._dialog_accept_next: dict[str, tuple[str, str]] = {}  # run -> the approved (type, message)
+        self._pending_dialogs: dict[str, tuple[str, str, int | None]] = {}  # (type, message, batch child)
+        # Plaintext secret values typed in the run, held in memory only for masking dialog
+        # messages; cleared in _forget_run_dialogs when the run's session closes.
         self._run_secret_values: dict[str, set[str]] = {}
+        # The top-level batch child being executed (None outside a batch): where a dialog came from.
+        self._executing_child: int | None = None
         # Shared Playwright+Browser instance kept alive across observable-mode tasks.
         # Batch-mode runs always launch and close their own isolated instances.
         self._obs_playwright: object | None = None
@@ -307,7 +311,8 @@ class NativeBrowserExecutor(Executor):
                 page = await self._current_page()
                 if action.text is None:
                     return self._fail(action, "type requires text", FailureCategory.EXECUTION_ERROR)
-                # KAN-103: the value of a {{secret:NAME}} placeholder lives only in this local.
+                # KAN-103: the value of a {{secret:NAME}} placeholder is resolved here; it is also
+                # kept in memory for the run (_run_secret_values) only to mask it in dialog messages.
                 try:
                     text, secret_values = resolve_text(action.text)
                     if secret_values and self._current_run_id is not None:
@@ -578,7 +583,10 @@ class NativeBrowserExecutor(Executor):
             return self._fail(action, "batch requires actions", FailureCategory.EXECUTION_ERROR)
         completed: list[str] = []
         last_artifact_path: str | None = None
+        outermost = self._executing_child is None
         for index, child_action in enumerate(action.actions):
+            if outermost:
+                self._executing_child = index
             # The first child was checked before the batch started; later ones may
             # run on a page an earlier child opened.
             blocked = None
@@ -593,7 +601,11 @@ class NativeBrowserExecutor(Executor):
                     failure_category=FailureCategory.EXECUTION_ERROR,
                     batch_failed_index=index,
                 )
-            result = await self.execute(child_action)
+            try:
+                result = await self.execute(child_action)
+            finally:
+                if outermost:
+                    self._executing_child = None
             completed.append(f"{child_action.action_type.value}:{'ok' if result.success else 'failed'}")
             if not result.success:
                 return ExecutedAction(
@@ -616,24 +628,26 @@ class NativeBrowserExecutor(Executor):
     def set_dialog_policy(self, run_id: str, *, accept: bool) -> None:
         """The loop's rule for the run's confirm/prompt/beforeunload dialogs (KAN-172).
 
-        ``accept`` is True in auto permission mode (or with the trust gate off); otherwise
+        ``accept`` is True in auto permission mode (or with the trust gate off, unless the mode is ask); otherwise
         such a dialog is cancelled and left for the person (see ``pop_pending_dialog``)."""
         self._dialog_accept_all[run_id] = accept
 
-    def arm_accept_next_dialog(self, run_id: str) -> None:
-        """Accept the next confirm/prompt/beforeunload dialog of the run, once: the person approved it."""
-        self._dialog_accept_next.add(run_id)
+    def arm_accept_next_dialog(self, run_id: str, kind: str, message: str) -> None:
+        """Accept the next dialog of the run, once, if it is this one: the person approved
+        exactly this (type, message). Any other dialog is cancelled and asked about again."""
+        self._dialog_accept_next[run_id] = (kind, message)
 
     def disarm_accept_next_dialog(self, run_id: str) -> None:
-        self._dialog_accept_next.discard(run_id)
+        self._dialog_accept_next.pop(run_id, None)
 
-    def pop_pending_dialog(self, run_id: str) -> tuple[str, str] | None:
-        """Return and clear the dialog (type, message) cancelled for the run, or None."""
+    def pop_pending_dialog(self, run_id: str) -> tuple[str, str, int | None] | None:
+        """Return and clear the dialog cancelled for the run: (type, message, index of the
+        top-level batch child that raised it, or None outside a batch), or None."""
         return self._pending_dialogs.pop(run_id, None)
 
     def _forget_run_dialogs(self, run_id: str) -> None:
         self._dialog_accept_all.pop(run_id, None)
-        self._dialog_accept_next.discard(run_id)
+        self._dialog_accept_next.pop(run_id, None)
         self._pending_dialogs.pop(run_id, None)
         self._last_dialog_message.pop(run_id, None)
         self._run_secret_values.pop(run_id, None)
@@ -1057,8 +1071,8 @@ class NativeBrowserExecutor(Executor):
             msg = redact(dialog.message or "", self._run_secret_values.get(run_id, ()))
             if kind == "alert":
                 accept = True  # nothing to decide: it only informs
-            elif run_id in self._dialog_accept_next:
-                self._dialog_accept_next.discard(run_id)  # the person approved: once
+            elif self._dialog_accept_next.get(run_id) == (kind, msg):
+                del self._dialog_accept_next[run_id]  # the person approved this very dialog: once
                 accept = True
             else:
                 accept = self._dialog_accept_all.get(run_id, False)
@@ -1068,7 +1082,7 @@ class NativeBrowserExecutor(Executor):
                 await dialog.accept()  # a prompt takes its default value
             else:
                 # Not the executor's call: cancel it, and leave it for the loop to ask the person.
-                self._pending_dialogs[run_id] = (kind, msg)
+                self._pending_dialogs[run_id] = (kind, msg, self._executing_child)
                 await dialog.dismiss()
 
         page.on("dialog", _on_dialog)

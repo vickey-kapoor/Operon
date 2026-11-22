@@ -74,7 +74,7 @@ async def test_a_question_dialog_is_cancelled_and_recorded_by_default(executor, 
 
     dialog.dismiss.assert_awaited_once()
     dialog.accept.assert_not_awaited()
-    assert executor.pop_pending_dialog("r1") == (kind, "Delete it?")
+    assert executor.pop_pending_dialog("r1") == (kind, "Delete it?", None)
     assert executor.pop_pending_dialog("r1") is None  # popped
     assert executor.pop_last_dialog_message("r1") is None
 
@@ -94,19 +94,53 @@ async def test_the_auto_policy_accepts_a_question_dialog(executor, kind):
 
 @pytest.mark.asyncio
 async def test_an_armed_accept_covers_exactly_one_dialog(executor):
-    executor.arm_accept_next_dialog("r1")
+    executor.arm_accept_next_dialog("r1", "confirm", "Delete it?")
 
     first = await _raise(executor, "r1", "confirm", "Delete it?")
     second = await _raise(executor, "r1", "confirm", "Delete it?")
 
     first.accept.assert_awaited_once()
     second.dismiss.assert_awaited_once()
-    assert executor.pop_pending_dialog("r1") == ("confirm", "Delete it?")
+    assert executor.pop_pending_dialog("r1") == ("confirm", "Delete it?", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("kind", "message"), [("confirm", "Wipe everything?"), ("prompt", "Delete it?")])
+async def test_an_armed_accept_does_not_cover_a_different_dialog(executor, kind, message):
+    executor.arm_accept_next_dialog("r1", "confirm", "Delete it?")
+
+    other = await _raise(executor, "r1", kind, message)
+
+    other.dismiss.assert_awaited_once()
+    other.accept.assert_not_awaited()
+    assert executor.pop_pending_dialog("r1") == (kind, message, None)  # asked about again
+
+
+@pytest.mark.asyncio
+async def test_a_dialog_in_a_batch_records_which_child_raised_it(executor):
+    from operon.models.execution import ExecutedAction
+    from operon.models.policy import ActionType, AgentAction
+
+    page = _page()
+    executor._attach_page_listeners(page, "r1")
+    executor.set_current_run_id("r1")
+    children = [AgentAction(action_type=ActionType.WAIT, wait_ms=1), AgentAction(action_type=ActionType.WAIT, wait_ms=2)]
+
+    async def run_child(child):
+        if child.wait_ms == 2:
+            await page.handlers["dialog"](_dialog("confirm", "Sure?"))
+        return ExecutedAction(action=child, success=True, detail="ok")
+
+    with patch.object(executor, "execute", new=run_child):
+        await executor._execute_batch(AgentAction(action_type=ActionType.BATCH, actions=children))
+
+    assert executor.pop_pending_dialog("r1") == ("confirm", "Sure?", 1)
+    assert executor._executing_child is None
 
 
 @pytest.mark.asyncio
 async def test_an_alert_does_not_use_up_the_armed_accept(executor):
-    executor.arm_accept_next_dialog("r1")
+    executor.arm_accept_next_dialog("r1", "confirm", "Sure?")
 
     await _raise(executor, "r1", "alert", "Hello")
     confirm = await _raise(executor, "r1", "confirm", "Sure?")
@@ -129,15 +163,15 @@ async def test_a_secret_typed_in_the_run_is_masked_in_the_dialog_message(executo
 
     await _raise(executor, "r1", "confirm", "Use password hunter2-pass?")
 
-    kind, message = executor.pop_pending_dialog("r1")
+    kind, message, _child = executor.pop_pending_dialog("r1")
     assert "hunter2-pass" not in message and vault.REDACTED in message
 
 
 @pytest.mark.asyncio
 async def test_dialog_state_is_cleared_when_the_run_closes(executor):
     executor.set_dialog_policy("r1", accept=True)
-    executor.arm_accept_next_dialog("r1")
-    executor._pending_dialogs["r1"] = ("confirm", "x")
+    executor.arm_accept_next_dialog("r1", "confirm", "x")
+    executor._pending_dialogs["r1"] = ("confirm", "x", None)
     executor._last_dialog_message["r1"] = "y"
 
     await executor.aclose_run("r1")

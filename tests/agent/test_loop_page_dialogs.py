@@ -41,34 +41,44 @@ class DialogExecutor:
     def __init__(self) -> None:
         self.executed: list[AgentAction] = []
         self.accept_all = False
-        self.armed = False
-        self.pending: tuple[str, str] | None = None
+        self.armed: tuple[str, str] | None = None
+        self.pending: tuple[str, str, int | None] | None = None
         self.accepted = 0
+        self.fail_on: AgentAction | None = None
+        # What dialog an action raises: (type, message, batch child) or None.
+        self.dialog_for = lambda action: (
+            ("confirm", ASKED, None) if action.action_type is ActionType.CLICK else None
+        )
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
         self.executed.append(action)
-        if self.accept_all or self.armed:
-            self.armed = False
-            self.accepted += 1
-        else:
-            self.pending = ("confirm", ASKED)
+        if self.fail_on is not None and action == self.fail_on:
+            raise RuntimeError("executor blew up")
+        dialog = self.dialog_for(action)
+        if dialog is not None:
+            kind, message, child = dialog
+            if self.accept_all or self.armed == (kind, message):
+                self.armed = None
+                self.accepted += 1
+            else:
+                self.pending = (kind, message, child)
         return ExecutedAction(action=action, success=True, detail="ok")
 
     def set_dialog_policy(self, run_id: str, *, accept: bool) -> None:
         self.accept_all = accept
 
-    def arm_accept_next_dialog(self, run_id: str) -> None:
-        self.armed = True
+    def arm_accept_next_dialog(self, run_id: str, kind: str, message: str) -> None:
+        self.armed = (kind, message)
 
     def disarm_accept_next_dialog(self, run_id: str) -> None:
-        self.armed = False
+        self.armed = None
 
-    def pop_pending_dialog(self, run_id: str) -> tuple[str, str] | None:
+    def pop_pending_dialog(self, run_id: str):
         pending, self.pending = self.pending, None
         return pending
 
 
-def _loop(monkeypatch: pytest.MonkeyPatch, actions: list[AgentAction], *, mode: str | None = None):
+def _loop(monkeypatch: pytest.MonkeyPatch, actions: list[AgentAction], *, mode: str | None = None, held: bool = True):
     from operon.agent import hitl
 
     monkeypatch.setattr(hitl, "notify_desktop", lambda **_: None)
@@ -104,7 +114,8 @@ def _loop(monkeypatch: pytest.MonkeyPatch, actions: list[AgentAction], *, mode: 
         choose_action=AsyncMock(side_effect=decisions),
         latest_debug_artifacts=_debug,
         note_not_executed=MagicMock(),
-        has_held_actions=lambda run_id: True,
+        has_held_actions=lambda run_id: held,
+        drop_held_calls_before=MagicMock(return_value=True),
         discard_held_actions=MagicMock(),
     )
     loop = AgentLoop(
@@ -132,7 +143,7 @@ def _loop(monkeypatch: pytest.MonkeyPatch, actions: list[AgentAction], *, mode: 
             recover=AsyncMock(return_value=RecoveryDecision(strategy=RecoveryStrategy.WAIT_AND_RETRY, message="m", retry_after_ms=10))
         ),
     )
-    loop._trust_gate = TrustGate(enabled=True)
+    loop._trust_gate = TrustGate(enabled=True, confirm=("purchase",))
     return loop, executor, state, hints, policy
 
 
@@ -157,11 +168,11 @@ async def test_approving_arms_accept_and_reruns_the_held_action_once(monkeypatch
     await loop.step_run(StepRequest(run_id="run-1"))
 
     await loop.resume_run("run-1")
-    assert executor.armed is True
+    assert executor.armed == ("confirm", ASKED)
     second = await loop.step_run(StepRequest(run_id="run-1"))
 
     assert executor.executed == [CLICK, CLICK]
-    assert executor.accepted == 1 and executor.armed is False  # accepted exactly once, then disarmed
+    assert executor.accepted == 1 and executor.armed is None  # accepted exactly once, then disarmed
     assert second.status is RunStatus.RUNNING  # no second pause
 
 
@@ -171,7 +182,7 @@ async def test_declining_does_not_rerun_and_tells_the_model(monkeypatch: pytest.
 
     await loop.resume_run("run-1", approve_gated_action=False)
 
-    assert executor.armed is False and len(executor.executed) == 1
+    assert executor.armed is None and len(executor.executed) == 1
     policy.discard_held_actions.assert_called_once()
     assert "declined" in policy.discard_held_actions.call_args.args[1]
     declined = _hints(hints, "dialog_answer")
@@ -199,3 +210,152 @@ async def test_a_later_dialog_is_not_accepted_without_a_new_approval(monkeypatch
 
     assert third.status is RunStatus.WAITING_FOR_USER
     assert executor.accepted == 1
+
+
+PURCHASE = AgentAction(action_type=ActionType.TYPE, text="purchase now", target_element_id="buy")
+OTHER_CLICK = AgentAction(action_type=ActionType.CLICK, x=70, y=80)
+
+
+async def test_an_accept_never_survives_a_gate_paused_replay_and_a_correction(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Step 2 stands for the replay being gate-paused; the person then sends a correction and the
+    # model's next, different action raises a dialog nobody approved.
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, PURCHASE, OTHER_CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")  # approves the dialog: armed
+    gated = await loop.step_run(StepRequest(run_id="run-1"))
+    assert gated.status is RunStatus.WAITING_FOR_USER and executor.armed is None  # a gate pause disarms
+    await loop.resume_run("run-1", approve_gated_action=False)  # a correction
+
+    third = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert executor.accepted == 0
+    assert third.status is RunStatus.WAITING_FOR_USER  # asked again
+
+
+async def test_a_gate_approved_replay_still_gets_its_dialog_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, PURCHASE, PURCHASE])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    await loop.step_run(StepRequest(run_id="run-1"))  # gate pause on the replay
+    await loop.resume_run("run-1")  # the gate is approved
+
+    assert executor.armed == ("confirm", ASKED)  # the dialog approval is back for the replay
+
+
+async def test_an_execute_that_raises_leaves_nothing_armed(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    executor.fail_on = CLICK
+
+    try:
+        await loop.step_run(StepRequest(run_id="run-1"))
+    except Exception:  # noqa: BLE001 - strict errors may re-raise; only the disarm matters here
+        pass
+
+    assert executor.armed is None
+
+
+async def test_a_different_dialog_than_the_approved_one_is_asked_about(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    executor.dialog_for = lambda action: ("confirm", "Wipe the whole database?", None)
+
+    second = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert executor.accepted == 0
+    assert second.status is RunStatus.WAITING_FOR_USER
+    assert "Wipe the whole database?" in (state.pause_reason or "")
+
+
+async def test_without_held_calls_the_accept_is_still_bound_to_the_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, hints, policy = _loop(monkeypatch, [CLICK, OTHER_CLICK], held=False)
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")
+    assert any("approved" in h for h in _hints(hints, "dialog_answer"))  # the model is told to repeat it
+    executor.dialog_for = lambda action: ("confirm", "Something else?", None)
+
+    second = await loop.step_run(StepRequest(run_id="run-1"))  # the model's next, different action
+
+    assert executor.accepted == 0
+    assert second.status is RunStatus.WAITING_FOR_USER
+
+
+@pytest.mark.parametrize(
+    ("mode", "gate_on", "expected"),
+    [("ask", False, False), ("risky", False, True), ("auto", False, True), ("ask", True, False), ("risky", True, False), ("auto", True, True)],
+)
+def test_the_dialog_policy_follows_the_permission_mode(monkeypatch, mode, gate_on, expected) -> None:
+    loop, executor, _state, _hints_mock, _policy = _loop(monkeypatch, [])
+    loop._trust_gate = TrustGate(enabled=gate_on)
+
+    loop._set_dialog_policy(SimpleNamespace(run_id="run-1", state=SimpleNamespace(permission_mode=mode)))
+
+    assert executor.accept_all is expected
+
+
+async def test_a_turn_replays_only_from_the_call_that_raised_the_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
+    typing = AgentAction(action_type=ActionType.TYPE, text="hello", x=1, y=2)
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[typing, CLICK])
+    loop, executor, state, hints, policy = _loop(monkeypatch, [batch, batch])
+    executor.dialog_for = lambda action: ("confirm", ASKED, 1) if action.action_type is ActionType.BATCH else None
+    await loop.step_run(StepRequest(run_id="run-1"))
+
+    await loop.resume_run("run-1")
+
+    policy.drop_held_calls_before.assert_called_once_with("run-1", 1, 2)  # the type already ran: skipped
+
+
+async def test_when_the_ran_calls_cannot_be_dropped_the_model_repeats_the_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    typing = AgentAction(action_type=ActionType.TYPE, text="hello", x=1, y=2)
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[typing, CLICK])
+    loop, executor, state, hints, policy = _loop(monkeypatch, [batch])
+    policy.drop_held_calls_before.return_value = False
+    executor.dialog_for = lambda action: ("confirm", ASKED, 1) if action.action_type is ActionType.BATCH else None
+    await loop.step_run(StepRequest(run_id="run-1"))
+
+    await loop.resume_run("run-1")
+
+    policy.discard_held_actions.assert_called_once()  # nothing replays: the text is never typed twice
+    assert any("Repeat the action" in h for h in _hints(hints, "dialog_answer"))
+
+
+def test_the_computer_use_backend_drops_only_calls_that_line_up_with_the_actions() -> None:
+    from operon.agent.backends.browser_computer_use import (
+        BrowserComputerUseBackend,
+        _ConversationState,
+    )
+
+    backend = BrowserComputerUseBackend.__new__(BrowserComputerUseBackend)
+    conversation = _ConversationState()
+    conversation.held_calls = [{"name": "type_text_at"}, {"name": "click_at"}]
+    backend._conversations = {"r": conversation}
+
+    assert backend.drop_held_calls_before("r", 1, 3) is False  # a merged click+type: positions differ
+    assert len(conversation.held_calls) == 2
+    assert backend.drop_held_calls_before("r", 1, 2) is True
+    assert conversation.held_calls == [{"name": "click_at"}]
+
+
+async def test_a_dialog_left_over_from_before_the_step_is_not_blamed_on_its_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    wait = AgentAction(action_type=ActionType.WAIT, wait_ms=100)
+    loop, executor, state, hints, policy = _loop(monkeypatch, [wait])
+    executor.pending = ("confirm", "Stale?", None)  # fired after the previous action returned
+
+    first = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert first.status is RunStatus.RUNNING
+    assert _hints(hints, "dialog") == []
+
+
+async def test_the_hint_is_truthful_when_the_step_pauses_for_another_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, hints, policy = _loop(monkeypatch, [CLICK])
+    loop._pause_requests.add("run-1")  # the person pressed Pause while the step ran
+
+    first = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert first.status is RunStatus.WAITING_FOR_USER
+    assert "run-1" not in loop._dialog_pauses
+    texts = _hints(hints, "dialog")
+    assert len(texts) == 1 and "not asked" in texts[0] and "and asked the person" not in texts[0]

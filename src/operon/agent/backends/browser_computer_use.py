@@ -290,6 +290,19 @@ class BrowserComputerUseBackend(AgentBackend):
         conversation = self._conversations.get(run_id)
         return bool(conversation is not None and conversation.held_calls)
 
+    def drop_held_calls_before(self, run_id: str, index: int, action_count: int) -> bool:
+        """Keep only the held calls from ``index`` on: the earlier ones already ran.
+
+        Only when calls and actions are one to one (a click and the type after it can be
+        merged into one action, so their positions would not line up): otherwise False."""
+        conversation = self._conversations.get(run_id)
+        if conversation is None or not conversation.held_calls:
+            return False
+        if len(conversation.held_calls) != action_count or not 0 <= index < action_count:
+            return False
+        conversation.held_calls = conversation.held_calls[index:]
+        return True
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         conversation = self._conversations.get(run_id)
         if conversation is None or not conversation.held_calls:

@@ -82,6 +82,12 @@ class AgentBackend(ABC):
         """Whether the run is paused on calls the model asked the user to confirm."""
         return False
 
+    def drop_held_calls_before(self, run_id: str, index: int, action_count: int) -> bool:
+        """Drop the first ``index`` held calls: they already ran (a dialog stopped the turn
+        part-way). ``action_count`` is how many actions the turn became. True when done;
+        False when the held calls cannot be cut cleanly (the caller then drops them all)."""
+        return False
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         """The user resumed a confirmation pause with a correction instead of an
         approval. Optional hook for backends that hold the paused calls to run them

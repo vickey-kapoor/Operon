@@ -288,8 +288,9 @@ def _failed(action: AgentAction, detail: str,
     return ExecutedAction(action=action, success=False, detail=detail, failure_category=category)
 
 
+# DRAG is gated on its start point (x, y), which is pressed like a click (KAN-174).
 _SERVO_ACTIONS = {ActionType.CLICK, ActionType.DOUBLE_CLICK, ActionType.TRIPLE_CLICK, ActionType.RIGHT_CLICK,
-                  ActionType.TYPE}
+                  ActionType.TYPE, ActionType.DRAG}
 
 
 def region_variance(png: bytes, x: int, y: int, radius: int = _SERVO_RADIUS) -> float | None:

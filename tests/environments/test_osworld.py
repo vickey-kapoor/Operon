@@ -213,6 +213,26 @@ def test_visual_servo_refuses_a_click_on_a_blank_region(tmp_path):
     assert not result.success and "visual servo" in result.detail and posted == []
 
 
+@pytest.mark.parametrize("noisy, ok", [(False, False), (True, True)])
+def test_visual_servo_gates_a_drag_start(tmp_path, noisy, ok):
+    """KAN-174: a drag's start point gets the same servo as a click."""
+    posted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=_png(noisy=noisy))
+        posted.append(1)
+        return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+    result = asyncio.run(_executor(handler, tmp_path).execute(
+        AgentAction(action_type=ActionType.DRAG, x=200, y=150, x_end=50, y_end=50)))
+    assert result.success is ok
+    if ok:
+        assert posted
+    else:
+        assert "visual servo" in result.detail and posted == []
+
+
 def test_visual_servo_allows_content_and_input_zones(tmp_path):
     posted = []
 

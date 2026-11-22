@@ -4,7 +4,9 @@ executor wrapper, the gates, and how the model gets each tool's output back."""
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -164,6 +166,76 @@ async def test_run_shell_returns_when_the_command_leaves_a_program_running(home:
     )
     assert result.ok and result.output.startswith("exit code: 0\nstdout:\nstarted\n")
 
+def _resolve_to(monkeypatch, *addresses: str) -> None:
+    async def resolve(host: str, port: int) -> list[str]:
+        return list(addresses)
+
+    monkeypatch.setattr("operon.agent.tools.runner._resolve", resolve)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/",
+        "http://localhost/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://10.0.0.5/",
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://2130706433/",
+        "http://100.100.100.200/",
+        "http://[::127.0.0.1]/",
+        "http://[64:ff9b::7f00:1]/",
+        "http://[::ffff:0:7f00:1]/",
+        "http://[64:ff9b::a9fe:a9fe]/",
+        "http://[fec0::1]/",
+    ],
+)
+async def test_http_get_refuses_local_private_and_metadata_addresses(monkeypatch, url) -> None:
+    def no_client(**kwargs):
+        raise AssertionError("a connection was opened")
+
+    monkeypatch.setattr("operon.agent.tools.runner.httpx.AsyncClient", no_client)
+    result = await ToolRunner(("http_get",)).run("http_get", {"url": url})
+    assert not result.ok and "refused" in result.output and "private" in result.output
+
+
+async def test_http_get_refuses_a_name_that_resolves_to_a_private_address(monkeypatch) -> None:
+    def no_client(**kwargs):
+        raise AssertionError("a connection was opened")
+
+    monkeypatch.setattr("operon.agent.tools.runner.httpx.AsyncClient", no_client)
+    runner = ToolRunner(("http_get",))
+    _resolve_to(monkeypatch, "192.168.1.1")
+    one = await runner.run("http_get", {"url": "https://intranet.example/"})
+    assert not one.ok and "192.168.1.1" in one.output
+    _resolve_to(monkeypatch, "93.184.216.34", "10.1.2.3")
+    mixed = await runner.run("http_get", {"url": "https://mixed.example/"})
+    assert not mixed.ok and "10.1.2.3" in mixed.output
+
+
+async def test_http_get_connects_to_the_checked_address_with_host_and_sni(monkeypatch) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="hi", headers={"content-type": "text/plain"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        "operon.agent.tools.runner.httpx.AsyncClient",
+        lambda **kwargs: real(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    _resolve_to(monkeypatch, "93.184.216.34")
+    result = await ToolRunner(("http_get",)).run("http_get", {"url": "https://api.example:8443/a?x=1"})
+    assert result.ok
+    request = seen[0]
+    assert request.url.host == "93.184.216.34" and request.url.port == 8443
+    assert request.url.path == "/a" and request.url.query == b"x=1"
+    assert request.headers["host"] == "api.example:8443"
+    assert request.extensions["sni_hostname"] == "api.example"
+
+
 async def test_http_get_returns_status_and_body_and_does_not_follow_redirects(monkeypatch, home) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/moved":
@@ -175,12 +247,158 @@ async def test_http_get_returns_status_and_body_and_does_not_follow_redirects(mo
         "operon.agent.tools.runner.httpx.AsyncClient",
         lambda **kwargs: real(transport=httpx.MockTransport(handler), **kwargs),
     )
+    _resolve_to(monkeypatch, "93.184.216.34")
     runner = ToolRunner(("http_get",))
     ok = await runner.run("http_get", {"url": "https://api.example/a"})
     assert ok.output == "status: 200\ncontent-type: text/plain\n\nhello"
     moved = await runner.run("http_get", {"url": "https://api.example/moved"})
     assert "status: 302" in moved.output and "location: https://elsewhere.example/" in moved.output
     assert not (await runner.run("http_get", {"url": "file:///etc/passwd"})).ok
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the test command is bash")
+async def test_run_shell_does_not_inherit_secret_environment_variables(monkeypatch, home: Path) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "sk-should-not-leak")
+    monkeypatch.setenv("OPERON_X_TOKEN", "tok-should-not-leak")
+    result = await ToolRunner(("run_shell",)).run("run_shell", {"command": "env"})
+    assert result.ok
+    for leaked in ("GEMINI_API_KEY", "OPERON_X_TOKEN", "sk-should-not-leak", "tok-should-not-leak"):
+        assert leaked not in result.output
+    assert "PATH=" in result.output
+
+
+def _pid_file_command(pid_file: Path) -> str:
+    return f"bash -c 'sleep 30 & echo $! > {pid_file}; wait' & wait"
+
+
+def _gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    try:  # a zombie still answers signal 0 until its parent reaps it
+        return Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0] == "Z"
+    except OSError:
+        return True
+
+
+async def _wait_for_file(path: Path) -> int:
+    for _ in range(100):
+        if path.exists() and path.read_text().strip():
+            return int(path.read_text())
+        await asyncio.sleep(0.02)
+    raise AssertionError("the command did not start")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the test command is bash")
+async def test_cancelling_a_run_kills_the_shell_command_and_its_children(home: Path, tmp_path: Path) -> None:
+    pid_file = tmp_path / "pid"
+    runner = ToolRunner(("run_shell",))
+    task = asyncio.create_task(runner.run("run_shell", {"command": _pid_file_command(pid_file)}))
+    grandchild = await _wait_for_file(pid_file)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(50):
+        if _gone(grandchild):
+            break
+        await asyncio.sleep(0.02)
+    assert _gone(grandchild)
+    assert not runner._shells
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the test command is bash")
+async def test_aclose_run_stops_a_running_command_and_forwards_to_the_wrapped_executor(
+    home: Path, tmp_path: Path
+) -> None:
+    class Inner(FakeExecutor):
+        closed: list[str] = []
+
+        async def aclose_run(self, run_id: str) -> None:
+            self.closed.append(run_id)
+
+    executor = ToolExecutor(Inner(), ("run_shell",))
+    pid_file = tmp_path / "pid"
+    task = asyncio.create_task(executor.runner.run("run_shell", {"command": _pid_file_command(pid_file)}, run_id="r1"))
+    grandchild = await _wait_for_file(pid_file)
+    started = time.monotonic()
+    await executor.aclose_run("r1")
+    result = await task
+    assert time.monotonic() - started < 5
+    assert not result.ok and "was stopped" in result.output
+    assert Inner.closed == ["r1"]
+    assert await executor.runner.kill_running() == 0
+    for _ in range(50):
+        if _gone(grandchild):
+            break
+        await asyncio.sleep(0.02)
+    assert _gone(grandchild)
+
+
+async def test_aclose_run_without_a_wrapped_aclose_run_is_harmless() -> None:
+    executor = ToolExecutor(FakeExecutor(), ("run_shell",))
+    await executor.aclose_run("r1")
+
+
+async def test_http_get_ignores_proxy_environment_and_idn_hosts_do_not_crash(monkeypatch) -> None:
+    built: list[dict] = []
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="hi")
+
+    real = httpx.AsyncClient
+
+    def factory(**kwargs):
+        built.append(kwargs)
+        return real(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr("operon.agent.tools.runner.httpx.AsyncClient", factory)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    _resolve_to(monkeypatch, "93.184.216.34")
+    runner = ToolRunner(("http_get",))
+    assert (await runner.run("http_get", {"url": "https://api.example/"})).ok
+    assert built[0]["trust_env"] is False
+    result = await runner.run("http_get", {"url": "https://b\u00fccher.example/"})
+    assert result.ok
+    assert seen[-1].headers["host"] == "xn--bcher-kva.example"
+    assert seen[-1].extensions["sni_hostname"] == "xn--bcher-kva.example"
+    await runner.run("http_get", {"url": "http://exa mple.com:99999999/"})  # may fail, must not raise
+
+
+@pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ConnectTimeout])
+async def test_http_get_tries_the_next_checked_address_when_one_does_not_connect(monkeypatch, error) -> None:
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if request.url.host == "93.184.216.34":
+            raise error("down")
+        return httpx.Response(200, text="ok")
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        "operon.agent.tools.runner.httpx.AsyncClient",
+        lambda **kwargs: real(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    _resolve_to(monkeypatch, "93.184.216.34", "93.184.216.35")
+    assert (await ToolRunner(("http_get",)).run("http_get", {"url": "http://two.example/"})).ok
+    assert hosts == ["93.184.216.34", "93.184.216.35"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the test command is bash")
+async def test_aclose_run_stops_only_that_runs_commands(home: Path) -> None:
+    executor = ToolExecutor(FakeExecutor(), ("run_shell",))
+    one = asyncio.create_task(executor.runner.run("run_shell", {"command": "sleep 30"}, run_id="r1"))
+    two = asyncio.create_task(executor.runner.run("run_shell", {"command": "sleep 30"}, run_id="r2"))
+    await asyncio.sleep(0.3)
+    assert await executor.aclose_run("r1") == 0
+    first = await asyncio.wait_for(one, 5)
+    assert not first.ok and "was stopped" in first.output
+    assert not two.done()
+    assert await executor.runner.kill_running("r2") == 1
+    assert not (await asyncio.wait_for(two, 5)).ok
 
 
 # --- the executor wrapper ---------------------------------------------------------------

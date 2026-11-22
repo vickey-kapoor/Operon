@@ -14,6 +14,10 @@ comparable). When ``on``:
 - **confirm** rules (high-risk) pause for explicit human approval before running.
 - a ``run_shell`` tool call (RFC 0002) always needs approval, since no rule can
   judge what a command does.
+- an ``http_get`` tool call to a host the task does not name needs approval (KAN-181): the
+  host is on-task when the task text names it (or a parent domain of it), it matches the
+  current page's site, or it is on ``OPERON_TRUST_ALLOW_DOMAINS``. Only judged when the
+  caller passes the task's ``intent``.
 
 Rules are case-insensitive substrings matched against a description built from
 the action's ``text``, target ``url``, and resolved target-element name. Deny
@@ -51,6 +55,7 @@ Permission modes (KAN-89) adjust the gate's verdict per run, after the rules abo
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -93,6 +98,66 @@ RISK_CATEGORIES: dict[str, tuple[str, ...]] = {
     "account": ("sign out of all", "change password", "close account", "revoke"),
     "install": ("install", "run as administrator", "allow", "grant access"),
 }
+
+
+# A short list of shared / public suffixes, NOT the full Public Suffix List: a task that names
+# one of these (or a page under one) must not make every site beneath it on-task.
+_SHARED_SUFFIXES = frozenset({
+    "co.uk", "org.uk", "gov.uk", "ac.uk", "com.au", "co.jp", "co.in", "com.br",
+    "github.io", "gitlab.io", "appspot.com", "herokuapp.com", "vercel.app", "netlify.app",
+    "pages.dev", "workers.dev", "web.app", "firebaseapp.com", "azurewebsites.net",
+    "cloudfront.net", "blogspot.com", "s3.amazonaws.com", "onrender.com", "fly.dev",
+})
+
+
+def _is_shared_suffix(name: str) -> bool:
+    """True for a listed shared suffix or anything shorter (``amazonaws.com`` of ``s3.amazonaws.com``)."""
+    return any(name == entry or entry.endswith("." + name) for entry in _SHARED_SUFFIXES)
+
+
+def _mentioned(needle: str, text: str) -> bool:
+    """``needle`` appears in ``text`` on non-``[\\w.-]`` boundaries (a trailing sentence period is fine)."""
+    return re.search(r"(?<![\w.-])" + re.escape(needle) + r"(?![\w-]|\.\w)", text) is not None
+
+
+def host_is_on_task(host: str, intent: str, current_url: str | None = None, allow_domains: tuple[str, ...] = ()) -> bool:
+    """True when ``host`` is one the task plausibly means: any suffix of it with at least two
+    labels (``api.weather.gov``, ``weather.gov``) appears in ``intent`` on non-``[\\w.-]``
+    boundaries (so ``weather.gov`` never matches inside ``notweather.govx``); or it equals, is a
+    subdomain of, or is the parent domain of the current page's host; or it is on ``allow_domains``.
+
+    An IP literal is on-task only by exact match (the full address in the intent, the page host,
+    or the allowlist): never by suffix or parent. A suffix that is a shared or public suffix
+    (``github.io``, ``co.uk``) never counts, in the intent or as a page-host parent. The shared
+    list is short, not the full Public Suffix List, so this errs toward asking."""
+    host = host.lower().strip(".").strip("[]")
+    if not host:
+        return False
+    for domain in allow_domains:
+        if host == domain or host.endswith("." + domain):
+            return True
+    lowered = intent.lower()
+    page = (urlparse(current_url).hostname or "").lower().strip(".").strip("[]") if current_url else ""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return _mentioned(host, lowered) or host == page
+    labels = host.split(".")
+    for start in range(len(labels) - 1):
+        suffix = ".".join(labels[start:])
+        if not _is_shared_suffix(suffix) and _mentioned(suffix, lowered):
+            return True
+    if not page:
+        return False
+    if host == page:
+        return True
+    if host.endswith("." + page):
+        return not _is_shared_suffix(page)
+    if page.endswith("." + host):
+        return "." in host and not _is_shared_suffix(host)
+    return False
 
 
 def _phrase_regex(phrase: str) -> str:
@@ -253,6 +318,7 @@ class TrustGate:
         *,
         stated_reason: str | None = None,
         click_text: str | None = None,
+        intent: str | None = None,
     ) -> TrustResult:
         """``stated_reason`` is the model's own words for the step (KAN-153). Under
         Computer Use a click has coordinates but no element name, so "I'll click
@@ -261,7 +327,10 @@ class TrustGate:
 
         ``click_text`` is the text read off the screenshot around the click point
         (KAN-163, ``OPERON_CLICK_TEXT``). It too only asks for approval, never blocks:
-        the crop can catch a neighbouring label."""
+        the crop can catch a neighbouring label.
+
+        ``intent`` is the run's task text (KAN-181). When given, an ``http_get`` to a host it
+        does not name needs approval; ``None`` (start URL, batch check, reset probe) skips that."""
         if not self.enabled:
             return TrustResult(TrustVerdict.ALLOW)
         description = self.describe(action)
@@ -294,6 +363,10 @@ class TrustGate:
             # No path or domain rule can judge what a command does: a person approves
             # it (``auto`` mode skips this, deny rules above still block).
             return TrustResult(TrustVerdict.CONFIRM, "shell commands need approval", "run_shell")
+        if is_tool and intent is not None and getattr(action, "tool", None) == "http_get":
+            host = (urlparse(str(getattr(action, "url", None) or "")).hostname or "").lower()
+            if not host_is_on_task(host, intent, current_url, self.allow_domains):
+                return TrustResult(TrustVerdict.CONFIRM, "http_get to a host the task does not name", host or "(unparseable url)")
         if not names_no_target(action):
             return TrustResult(TrustVerdict.ALLOW)
         reason = (stated_reason or "").lower()

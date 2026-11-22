@@ -1450,6 +1450,7 @@ class AgentLoop:
                             current_url=current_url,
                             stated_reason=decision.rationale,
                             click_text=click_text if leaf is action else None,
+                            intent=intent,
                         ),
                         leaf,
                         permission_mode,

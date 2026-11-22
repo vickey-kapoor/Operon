@@ -10,22 +10,8 @@ from pathlib import Path
 import pytest
 
 from evals import replay as rp
-
-# Gemini computer-use answers, in the shape the HTTP client normalizes them to.
-_PERCEPTION = {"summary": "screen", "page_hint": "unknown", "visible_elements": [], "confidence": 0.5}
-
-
-def call(name: str, **args) -> dict:
-    fc = {"name": name, "args": args}
-    return {"perception": _PERCEPTION, "function_call": fc, "function_calls": [fc], "rationale": name,
-            "confidence": 0.7, "active_subgoal": name, "model_content": {"parts": [{"function_call": fc}]}}
-
-
-def done() -> dict:
-    return {"perception": _PERCEPTION, "action": {"action_type": "wait", "wait_ms": 1000},
-            "rationale": "The task is complete.", "confidence": 0.5, "active_subgoal": "finish",
-            "model_content": {"parts": [{"text": "The task is complete."}]}}
-
+from evals import scripted_recordings as sr
+from evals.scripted_recordings import call, done
 
 TURNS = [
     call("launch_app", app="notepad"),
@@ -149,11 +135,133 @@ def test_a_copied_run_folder_still_records(tmp_path):
     assert len(recording["turns"]) == 4
 
 
+@pytest.fixture
+def no_model_calls(monkeypatch):
+    """Fail the test on any real model client or HTTP request: replay must cost $0."""
+    import httpx
+
+    from operon.agent.backends.model_adapter.transports.openai_compat import (
+        OpenAICompatClient,
+    )
+    from operon.agent.backends.model_adapter.transports.openai_responses import (
+        OpenAIResponsesClient,
+    )
+    from operon.clients.anthropic_computer_use import AnthropicComputerUseHttpClient
+    from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("a replay tried to call a real model")
+
+    for client in (GeminiComputerUseHttpClient, AnthropicComputerUseHttpClient, OpenAICompatClient,
+                   OpenAIResponsesClient):
+        monkeypatch.setattr(client, "__init__", refuse)
+    monkeypatch.setattr(httpx.AsyncClient, "send", refuse)
+    monkeypatch.setattr(httpx.Client, "send", refuse)
+
+
 @pytest.mark.parametrize("path", rp.recording_paths(), ids=lambda p: p.stem)
-def test_saved_recordings_replay_the_same(path):
-    """Every recording in evals/recordings/ (real Gemini answers from paid runs)."""
-    result = asyncio.run(rp.replay(json.loads(path.read_text(encoding="utf-8"))))
+def test_saved_recordings_replay_the_same(path, no_model_calls):
+    """Every recording in evals/recordings/ (real Gemini runs and scripted ones), with every
+    recorded answer used and no model called."""
+    recording = json.loads(path.read_text(encoding="utf-8"))
+    result = asyncio.run(rp.replay(recording))
     assert result.ok, result.message
+    assert result.turns_used == result.turns_recorded == len(recording["turns"])
+
+
+def test_desktop_and_hybrid_recordings_are_committed():
+    modes = {json.loads(p.read_text(encoding="utf-8"))["mode"] for p in rp.recording_paths()}
+    assert {"browser", "desktop", "hybrid"} <= modes
+
+
+@pytest.mark.parametrize("name", sorted(sr.SCRIPTS))
+def test_scripted_recordings_match_their_script(name, tmp_path):
+    """A committed scripted recording is what its script makes now (re-run
+    ``python -m evals.scripted_recordings`` after changing a script)."""
+    saved = json.loads((rp.RECORDINGS_DIR / f"{name}.json").read_text(encoding="utf-8"))
+    built = sr.build(name, tmp_path)
+    for key in ("task", "mode", "intent", "screen", "turns", "source"):
+        assert saved[key] == built[key], key
+    assert saved["host"] == sr.HOST
+
+
+def test_a_hybrid_recording_replays_through_the_desktop_path(tmp_path):
+    turns = [call("launch_app", app="browser"), call("launch_app", app="notepad"), done()]
+    with rp.loop_environment({"OPERON_DESKTOP_PLATFORM": "windows"}):
+        run = asyncio.run(rp.run_turns(turns, mode="hybrid", intent="site then file", width=1280, height=800,
+                                       root=tmp_path, max_steps=10))
+    assert run.status == "succeeded"
+    recording = rp.record_run(run.run_dir, task="t", mode="hybrid")
+    assert recording["mode"] == "hybrid"
+    assert [s["action"]["action_type"] for s in recording["steps"]] == ["launch_app", "launch_app", "stop"]
+    _replays(recording)
+
+
+def test_an_unknown_mode_is_refused(tmp_path):
+    recording = real_run(tmp_path)
+    run_dir = next((tmp_path / "runs").iterdir())
+    with pytest.raises(rp.RecordingError, match="unknown recording mode 'mobile'"):
+        rp.record_run(run_dir, task="t", mode="mobile")
+    with pytest.raises(rp.RecordingError, match="unknown recording mode 'mobile'"):
+        asyncio.run(rp.replay({**recording, "mode": "mobile"}))
+
+
+def test_a_claude_or_gpt_run_is_refused_at_record_time(tmp_path):
+    real_run(tmp_path)
+    run_dir = _edit_settings(tmp_path, OPERON_DESKTOP_BACKEND="model", OPERON_MODEL_PROFILE="claude-sonnet-5-5")
+    with pytest.raises(rp.RecordingError, match="only Gemini.*claude-sonnet-5-5"):
+        rp.record_run(run_dir, task="t", mode="desktop")
+    with pytest.raises(rp.RecordingError, match="only Gemini"):
+        rp.record_run(run_dir, task="t", mode="hybrid")
+
+
+def test_a_claude_or_gpt_run_is_refused_at_replay_time(tmp_path, monkeypatch):
+    recording = real_run(tmp_path)
+    recording["settings"] = {**recording["settings"], "OPERON_DESKTOP_BACKEND": "model",
+                             "OPERON_MODEL_PROFILE": "openai-computer-use"}
+
+    async def never(*_args, **_kwargs):
+        raise AssertionError("a Claude/GPT recording must not reach the loop")
+
+    monkeypatch.setattr(rp, "run_turns", never)
+    with pytest.raises(rp.RecordingError, match="only Gemini.*openai-computer-use"):
+        asyncio.run(rp.replay(recording))
+
+
+def test_check_reports_a_refused_recording(tmp_path, capsys):
+    recording = real_run(tmp_path / "loop")
+    recording["settings"] = {**recording["settings"], "OPERON_DESKTOP_BACKEND": "model"}
+    path = tmp_path / "refused.json"
+    path.write_text(json.dumps(recording), encoding="utf-8")
+    assert rp.main(["check", str(path)]) == 1
+    assert "FAIL" in capsys.readouterr().out
+
+
+def test_replay_takes_no_real_time_with_settle_detect_on(tmp_path):
+    """Settle detection's waits run on the replay's fake clock, not real seconds."""
+    import time
+
+    from operon.agent.perception import settle
+
+    settings = {"OPERON_DESKTOP_PLATFORM": "windows", "OPERON_SETTLE_DETECT": "on",
+                "OPERON_CHANGE_NOTE": "on", "OPERON_SETTLE_MAX_S": "3"}
+    state = {"n": 0}
+
+    async def never_quiet() -> bytes:  # every frame differs: only max_s can end the wait
+        state["n"] += 1
+        return bytes([state["n"] % 2 * 200]) * (settle.SIGNATURE_SIZE[0] * settle.SIGNATURE_SIZE[1])
+
+    with rp.loop_environment(settings):
+        start = time.perf_counter()
+        result = asyncio.run(settle.settle_after_action(never_quiet, 1.0))
+        elapsed = time.perf_counter() - start
+    assert result is not None and not result.settled and result.waited_s >= 3.0
+    assert elapsed < 0.5
+
+    recording = _record(tmp_path, TURNS, settings=settings, expect="succeeded")
+    start = time.perf_counter()
+    _replays(recording)
+    assert time.perf_counter() - start < 10
 
 
 def test_the_benchmark_saves_a_recording_per_thin_run(tmp_path, monkeypatch):
@@ -172,7 +280,7 @@ def test_the_benchmark_saves_a_recording_per_thin_run(tmp_path, monkeypatch):
     target = tmp_path / "report" / "recordings"
     assert live_bench.save_recordings(results, target, mode="hybrid") == 1
     saved = json.loads((target / "notepad-hello.json").read_text())
-    assert saved["mode"] == "desktop" and saved["outcome"] == "success"
+    assert saved["mode"] == "hybrid" and saved["outcome"] == "success"
     assert asyncio.run(rp.replay(saved)).ok
 
 

@@ -1,0 +1,507 @@
+{
+  "format": 1,
+  "task": "scripted_hybrid_site_to_file",
+  "mode": "hybrid",
+  "intent": "Open http://127.0.0.1:8765/apps/mail/ in the browser, read the order number in the newest email, and write it into a new Notepad file saved with Ctrl+S",
+  "outcome": "success",
+  "status": "succeeded",
+  "stop_reason": "task_completed",
+  "max_steps": 10,
+  "permission_mode": null,
+  "screen": {
+    "width": 1280,
+    "height": 800
+  },
+  "settings": {
+    "BROWSER_HEADLESS": "false",
+    "BROWSER_HEIGHT": "1080",
+    "BROWSER_WIDTH": "1920",
+    "GEMINI_MODEL": "gemini-3.5-flash",
+    "OPERON_ALLOWED_FILE_ROOTS": "",
+    "OPERON_AUTO_CONFIRM": "false",
+    "OPERON_BROWSER_BACKEND": "computer_use",
+    "OPERON_BROWSER_MODEL": "gemini-3.5-flash",
+    "OPERON_BROWSER_THINKING": "low",
+    "OPERON_CHANGE_NOTE": "false",
+    "OPERON_CHECKPOINTS": "false",
+    "OPERON_CLAUDE_ZOOM": "false",
+    "OPERON_CLICK_TEXT": "false",
+    "OPERON_DESKTOP_BACKEND": "computer_use",
+    "OPERON_DESKTOP_MODEL": "gemini-3.5-flash",
+    "OPERON_DESKTOP_PLATFORM": "windows",
+    "OPERON_DESKTOP_THINKING": "low",
+    "OPERON_DPI_AWARE": "false",
+    "OPERON_EXPECT_CHECK": "false",
+    "OPERON_FOCUS_GUARD": "false",
+    "OPERON_GEMINI_SAFETY": "default",
+    "OPERON_KEYRING": "auto",
+    "OPERON_MODEL_PROFILE": "",
+    "OPERON_MODEL_REGISTRY": "",
+    "OPERON_OSWORLD_POST_ACTION_WAIT_S": "0.0",
+    "OPERON_PARALLEL_RUNS": "1",
+    "OPERON_PERMISSION_MODE": "",
+    "OPERON_PLANNER": "false",
+    "OPERON_PLANNER_MODEL": "gemini-3.5-flash-lite",
+    "OPERON_PROGRESS_REVISIT": "false",
+    "OPERON_SANDBOX_MEMORY_MB": "4096",
+    "OPERON_SECRETS": "false",
+    "OPERON_SETTLE_DETECT": "false",
+    "OPERON_SETTLE_MAX_S": "3.0",
+    "OPERON_TASK_NOTE": "false",
+    "OPERON_TASK_NOTE_MAX_ITEMS": "8",
+    "OPERON_TRUST_ALLOW_DOMAINS": "",
+    "OPERON_TRUST_CATEGORIES": "false",
+    "OPERON_TRUST_CATEGORY_LIST": "",
+    "OPERON_TRUST_CONFIRM": "",
+    "OPERON_TRUST_DENY": "",
+    "OPERON_TRUST_GATE": "true",
+    "OPERON_ZOOM": "dense",
+    "OPERON_ZOOM_FACTOR": "2.0",
+    "OPERON_ZOOM_MIN_SIDE": "2000"
+  },
+  "host": {
+    "os": "posix",
+    "home": "/home/replay",
+    "cwd": "/home/replay"
+  },
+  "gate_urls": [],
+  "turns": [
+    {
+      "perception": {
+        "summary": "screen",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "launch_app",
+        "args": {
+          "app": "browser"
+        }
+      },
+      "function_calls": [
+        {
+          "name": "launch_app",
+          "args": {
+            "app": "browser"
+          }
+        }
+      ],
+      "rationale": "launch_app",
+      "confidence": 0.7,
+      "active_subgoal": "launch_app",
+      "model_content": {
+        "parts": [
+          {
+            "function_call": {
+              "name": "launch_app",
+              "args": {
+                "app": "browser"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "screen",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "click_at",
+        "args": {
+          "x": 500,
+          "y": 60
+        }
+      },
+      "function_calls": [
+        {
+          "name": "click_at",
+          "args": {
+            "x": 500,
+            "y": 60
+          }
+        }
+      ],
+      "rationale": "click_at",
+      "confidence": 0.7,
+      "active_subgoal": "click_at",
+      "model_content": {
+        "parts": [
+          {
+            "function_call": {
+              "name": "click_at",
+              "args": {
+                "x": 500,
+                "y": 60
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "screen",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "type_text_at",
+        "args": {
+          "x": 500,
+          "y": 60,
+          "text": "http://127.0.0.1:8765/apps/mail/",
+          "press_enter": true
+        }
+      },
+      "function_calls": [
+        {
+          "name": "type_text_at",
+          "args": {
+            "x": 500,
+            "y": 60,
+            "text": "http://127.0.0.1:8765/apps/mail/",
+            "press_enter": true
+          }
+        }
+      ],
+      "rationale": "type_text_at",
+      "confidence": 0.7,
+      "active_subgoal": "type_text_at",
+      "model_content": {
+        "parts": [
+          {
+            "function_call": {
+              "name": "type_text_at",
+              "args": {
+                "x": 500,
+                "y": 60,
+                "text": "http://127.0.0.1:8765/apps/mail/",
+                "press_enter": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "screen",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "click_at",
+        "args": {
+          "x": 400,
+          "y": 300
+        }
+      },
+      "function_calls": [
+        {
+          "name": "click_at",
+          "args": {
+            "x": 400,
+            "y": 300
+          }
+        }
+      ],
+      "rationale": "click_at",
+      "confidence": 0.7,
+      "active_subgoal": "click_at",
+      "model_content": {
+        "parts": [
+          {
+            "function_call": {
+              "name": "click_at",
+              "args": {
+                "x": 400,
+                "y": 300
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "screen",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "launch_app",
+        "args": {
+          "app": "notepad"
+        }
+      },
+      "function_calls": [
+        {
+          "name": "launch_app",
+          "args": {
+            "app": "notepad"
+          }
+        }
+      ],
+      "rationale": "launch_app",
+      "confidence": 0.7,
+      "active_subgoal": "launch_app",
+      "model_content": {
+        "parts": [
+          {
+            "function_call": {
+              "name": "launch_app",
+              "args": {
+                "app": "notepad"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "screen",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "type_text_at",
+        "args": {
+          "x": 500,
+          "y": 400,
+          "text": "Order 4821",
+          "press_enter": false
+        }
+      },
+      "function_calls": [
+        {
+          "name": "type_text_at",
+          "args": {
+            "x": 500,
+            "y": 400,
+            "text": "Order 4821",
+            "press_enter": false
+          }
+        }
+      ],
+      "rationale": "type_text_at",
+      "confidence": 0.7,
+      "active_subgoal": "type_text_at",
+      "model_content": {
+        "parts": [
+          {
+            "function_call": {
+              "name": "type_text_at",
+              "args": {
+                "x": 500,
+                "y": 400,
+                "text": "Order 4821",
+                "press_enter": false
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "screen",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "function_call": {
+        "name": "key_combination",
+        "args": {
+          "keys": "control+s"
+        }
+      },
+      "function_calls": [
+        {
+          "name": "key_combination",
+          "args": {
+            "keys": "control+s"
+          }
+        }
+      ],
+      "rationale": "key_combination",
+      "confidence": 0.7,
+      "active_subgoal": "key_combination",
+      "model_content": {
+        "parts": [
+          {
+            "function_call": {
+              "name": "key_combination",
+              "args": {
+                "keys": "control+s"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "perception": {
+        "summary": "screen",
+        "page_hint": "unknown",
+        "visible_elements": [],
+        "confidence": 0.5
+      },
+      "action": {
+        "action_type": "wait",
+        "wait_ms": 1000
+      },
+      "rationale": "The task is complete.",
+      "confidence": 0.5,
+      "active_subgoal": "finish",
+      "model_content": {
+        "parts": [
+          {
+            "text": "The task is complete."
+          }
+        ]
+      }
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "action": {
+        "action_type": "launch_app",
+        "text": "browser"
+      },
+      "success": true,
+      "detail": "replayed",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 2,
+      "action": {
+        "action_type": "click",
+        "x": 640,
+        "y": 48
+      },
+      "success": true,
+      "detail": "replayed",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 3,
+      "action": {
+        "action_type": "type",
+        "x": 640,
+        "y": 48,
+        "text": "http://127.0.0.1:8765/apps/mail/",
+        "press_enter": true,
+        "clear_before_typing": true
+      },
+      "success": true,
+      "detail": "replayed",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 4,
+      "action": {
+        "action_type": "click",
+        "x": 512,
+        "y": 240
+      },
+      "success": true,
+      "detail": "replayed",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 5,
+      "action": {
+        "action_type": "launch_app",
+        "text": "notepad"
+      },
+      "success": true,
+      "detail": "replayed",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 6,
+      "action": {
+        "action_type": "type",
+        "x": 640,
+        "y": 320,
+        "text": "Order 4821",
+        "press_enter": false,
+        "clear_before_typing": true
+      },
+      "success": true,
+      "detail": "replayed",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 7,
+      "action": {
+        "action_type": "hotkey",
+        "key": "control+s"
+      },
+      "success": true,
+      "detail": "replayed",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    },
+    {
+      "step": 8,
+      "action": {
+        "action_type": "stop"
+      },
+      "success": true,
+      "detail": "replayed",
+      "failure_category": null,
+      "batch_failed_index": null,
+      "monitor_origin": [
+        0,
+        0
+      ]
+    }
+  ],
+  "source": "scripted"
+}

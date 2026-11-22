@@ -62,3 +62,45 @@ The security boundary is the host, not the agent. Operon does not sandbox itself
 - **Prefer a VM or dedicated machine** for desktop runs. There is no undo.
 - **Run artifacts contain full screenshots** of whatever was on screen, written
   under `.var/runs/<run_id>/`. Treat them as sensitive and scrub before sharing.
+
+## Automated checks
+
+The `Security` workflow (`.github/workflows/security.yml`) runs on every pull request, on every push
+to `main`, and weekly. Each job is a separate check:
+
+- **Secrets (gitleaks):** scans the commits of a PR, the whole history reachable from `HEAD` on a push
+  to `main`, and every branch and tag on a weekly or manual run, for committed secrets. Fails on any finding not
+  allowlisted in `.gitleaks.toml`. Git mode is the authoritative check; run `gitleaks git --redact .`
+  locally. Avoid `gitleaks dir`: it skips allowlisted paths entirely (so it misses real secrets there)
+  and also scans `.claude/worktrees` and `__pycache__` copies.
+- **Python dependencies (pip-audit):** audits the versions pinned in `uv.lock` against known
+  advisories. Fails when any pinned package has one.
+- **Dashboard dependencies (npm audit):** audits `dashboard/package-lock.json`. Fails on a high or
+  critical advisory.
+- **Python code (bandit):** static scan of `src`. Fails on a Medium or higher finding that is not in
+  `.bandit-baseline.json`.
+- **Workflows (zizmor):** audits `.github/workflows` for injection, token and trigger mistakes.
+  Fails on a medium or higher finding.
+- **CodeQL (python, javascript-typescript, actions):** code scanning; results appear under the
+  repository's Security tab.
+
+Updating the checks:
+
+- **bandit baseline.** It holds the findings that were reviewed when the check was added. Bandit
+  matches a finding on its file, test id, issue message, severity, confidence and CWE (not the line
+  number), so on its own it would let a new finding of an already-baselined kind in the same file
+  through. The job therefore also fails when any (file, test id) pair has more findings than the
+  baseline lists. The baseline must be generated on Linux or WSL (forward-slash paths). Regenerate it
+  with the command below, and explain every new entry in the PR:
+
+  ```bash
+  uvx --python 3.14 bandit==1.9.4 -r src -ll -q -f json \
+    | python3 -c "import json,sys; json.dump({'results': json.load(sys.stdin)['results']}, sys.stdout, indent=2)" \
+    > .bandit-baseline.json
+  ```
+
+- **gitleaks allowlist.** Add an `[[allowlists]]` entry to `.gitleaks.toml` with the exact path, the
+  exact value (an anchored regex) and the reason. Do not allowlist a whole directory or rule.
+- **pip-audit can turn red without a code change** when a new advisory lands. Fix it with
+  `uv lock --upgrade-package <name>`. If no fixed version exists, add a commented
+  `--ignore-vuln <ID>` to the job.

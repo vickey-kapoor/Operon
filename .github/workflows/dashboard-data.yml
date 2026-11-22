@@ -18,7 +18,8 @@ run-name: Save run results to dashboard (${{ github.event.workflow_run.name || '
 # the last commit that kept them in dashboard/data/reports).
 
 on:
-  workflow_run:
+  # guarded: the import job skips runs from forks (head repository check) and skipped runs
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: ["Run Operon on test tasks (paid)", "Run browser test tasks (engine)", "Run desktop test tasks (engine)", "Run click-accuracy test (engine)"]
     types: [completed]
   workflow_dispatch:
@@ -45,7 +46,8 @@ jobs:
   import:
     name: Import the reports and post the results
     # A /bench check on an ordinary PR comment ends as "skipped": nothing ran, so nothing to import.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'skipped'
+    # Runs from fork PRs are not imported: they could feed forged reports into the database and Blob.
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion != 'skipped' && github.event.workflow_run.head_repository.full_name == github.repository)
     # Cancelled runs are imported too: the tasks they ran still cost money, and live_bench
     # saves its report after every task (marked incomplete until the run finishes).
     runs-on: ubuntu-latest
@@ -58,6 +60,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: Check the database secret
         run: |
@@ -84,9 +87,11 @@ jobs:
           # (manual batch), whose cells can each run a different PR or ref.
           GIT_SHA: ${{ github.event.workflow_run.event != 'issue_comment' && github.event.workflow_run.path != '.github/workflows/benchmark.yml' && github.event.workflow_run.head_sha || '' }}
         run: |
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$RUN_ID" || true
-          if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
-          python3 -m evals.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert --alerts-file alerts.txt --comment-file results.md
+          # Artifacts go outside the workspace ($RUNNER_TEMP), so nothing in them can shadow the checked-out code.
+          dir="$RUNNER_TEMP/artifacts/$RUN_ID"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "$dir" || true
+          if [ ! -d "$dir" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
+          python3 -m evals.dashboard import "$dir" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert --alerts-file alerts.txt --comment-file results.md
 
       - name: Alert Slack that the test run failed
         # Critical: the run crashed or timed out. A cancelled run was stopped by a person, so no alert.
@@ -109,8 +114,8 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           if [ ! -s results.md ]; then echo "No results to comment."; exit 0; fi
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name pr-request --dir pr-request || { echo "No pull request recorded for this run."; exit 0; }
-          pr=$(head -n 1 pr-request/number)
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name pr-request --dir "$RUNNER_TEMP/pr-request" || { echo "No pull request recorded for this run."; exit 0; }
+          pr=$(head -n 1 "$RUNNER_TEMP/pr-request/number")
           # The number comes from the run's artifact: use it only if it is a plain number.
           if ! printf '%s' "$pr" | grep -Eq '^[1-9][0-9]{0,6}$'; then echo "::warning::Bad pull request number."; exit 0; fi
           gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body-file results.md
@@ -124,8 +129,8 @@ jobs:
           for run_id in $RUN_IDS; do
             read -r run_url event head_sha workflow < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha,workflowName --jq '[.url, .event, .headSha, .workflowName] | @tsv')
             { [ "$event" = "issue_comment" ] || [ "$workflow" = "Run Operon on test tasks (paid)" ] || [ "$workflow" = "Benchmark" ] || [ "$workflow" = "Benchmark batch" ] || [ "$workflow" = "Nightly benchmark run" ]; } && head_sha=""
-            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$run_id"
-            python3 -m evals.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "$RUNNER_TEMP/artifacts/$run_id"
+            python3 -m evals.dashboard import "$RUNNER_TEMP/artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
           done
 
       - name: Import committed reports
@@ -134,6 +139,7 @@ jobs:
           REF: ${{ inputs.backfill_ref }}
         run: |
           # The checkout is shallow, so fetch the ref (a commit, branch or tag) first.
+          # No credentials are kept by the checkout: the fetch works anonymously because the repo is public.
           git fetch --quiet --depth=1 origin "$REF"
           mkdir -p backfill
           git archive FETCH_HEAD dashboard/data/reports | tar -x -C backfill

@@ -1,0 +1,34 @@
+title = "Operon gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Secrets-vault tests: the made-up value typed into the vault"
+condition = "AND"
+paths = ['''^tests/secrets/test_(vault|leak|executors)\.py$''']
+regexes = ['''^hunter2-SECRET$''']
+
+[[allowlists]]
+description = "Season 1 answer sheet: sha256 hashes of task answers, not keys"
+condition = "AND"
+paths = ['''^evals/seasons/season-1\.json$''']
+regexes = ['''^[0-9a-f]{64}$''']
+
+[[allowlists]]
+description = "Desktop injection eval: fake staging key planted in the workspace seed"
+condition = "AND"
+paths = ['''^evals/desktop_workspace\.py$''']
+regexes = ['''^stg-7Q2M-91XK$''']
+
+[[allowlists]]
+description = "API auth tests: fixed test key (test_api*.py exist only in history)"
+condition = "AND"
+paths = ['''^tests/(conftest|test_api|test_api_extended)\.py$''']
+regexes = ['''^valid-key-123$''']
+
+[[allowlists]]
+description = "Old deploy.sh usage example (history only): placeholder"
+condition = "AND"
+paths = ['''^deploy\.sh$''']
+regexes = ['''^YOUR_API_KEY$''']

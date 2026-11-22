@@ -6,7 +6,8 @@ Safe mode is switched off for these tests so the constructor really calibrates.
 
 The click-class parametrization in ``test_desktop.py`` (``test_visual_servo_aborts_uniform_region``)
 already proves CLICK / DOUBLE_CLICK / RIGHT_CLICK stop on a blank region; this file
-adds TRIPLE_CLICK, which that test omits, using the real servo instead of a patched one.
+adds TRIPLE_CLICK, which that test omits, and DRAG's start point (KAN-174), using the
+real servo instead of a patched one.
 """
 
 from __future__ import annotations
@@ -232,3 +233,36 @@ async def test_click_actions_blocked_on_blank_and_allowed_on_content(cls, action
     assert result.success is True
     assert result.visual_variance is not None and result.visual_variance > executor._servo_threshold
     prim.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls", [DesktopExecutor, LinuxDesktopExecutor])
+async def test_drag_blocked_on_blank_start_and_allowed_on_content(cls) -> None:
+    """KAN-174: DRAG goes through the same real servo as the clicks, on its start point."""
+    blank, text = _uniform(), _textlike()
+    executor = _executor(blank, cls)
+    action = AgentAction(action_type=ActionType.DRAG, x=640, y=360, x_end=100, y_end=100)
+
+    with (
+        _with_screen(blank),
+        patch("operon.executor.desktop.pyautogui.moveTo"),
+        patch("operon.executor.desktop.pyautogui.mouseDown") as down,
+        patch("operon.executor.desktop.pyautogui.mouseUp"),
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+    assert result.success is False
+    assert result.failure_category == FailureCategory.EXECUTION_TARGET_NOT_FOUND
+    down.assert_not_called()
+
+    with (
+        _with_screen(text),
+        patch("operon.executor.desktop.pyautogui.moveTo"),
+        patch("operon.executor.desktop.pyautogui.mouseDown") as down,
+        patch("operon.executor.desktop.pyautogui.mouseUp"),
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+    ):
+        result = await executor.execute(action)
+    assert result.success is True
+    assert result.visual_variance is not None and result.visual_variance > executor._servo_threshold
+    down.assert_called_once()

@@ -621,7 +621,7 @@ async def run_task(
     state = _run_state(run_id) if run_id else {}
     cause = bench_cause(
         passed=outcome == "success",
-        bench_error=status == "error" and not state.get("failure_cause"),
+        bench_error=(status == "error" or outcome == "error") and not state.get("failure_cause"),
         run_status=status,
         stop_reason=state.get("stop_reason"),
         state_cause=state.get("failure_cause"),

@@ -117,3 +117,11 @@ async def test_a_runaway_scenario_records_max_steps(tmp_path):
     assert json.loads((run_dir / "state.json").read_text())["failure_cause"] == "max_steps"
     rows = [json.loads(line) for line in (run_dir / "run.jsonl").read_text().splitlines() if line.strip()]
     assert rows[-1]["record_type"] == "run_end"
+
+
+def test_a_succeeded_run_the_judge_could_not_grade_is_a_bench_error() -> None:
+    # The run said done but the judge gave no verdict: the grader never disagreed, so not wrong_result.
+    assert (
+        bench_cause(passed=False, bench_error=True, run_status="succeeded", stop_reason="task_completed", state_cause=None)
+        == "bench_error"
+    )

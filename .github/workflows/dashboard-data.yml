@@ -87,9 +87,11 @@ jobs:
           # (manual batch), whose cells can each run a different PR or ref.
           GIT_SHA: ${{ github.event.workflow_run.event != 'issue_comment' && github.event.workflow_run.path != '.github/workflows/benchmark.yml' && github.event.workflow_run.head_sha || '' }}
         run: |
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$RUN_ID" || true
-          if [ ! -d "artifacts/$RUN_ID" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
-          python3 -m evals.dashboard import "artifacts/$RUN_ID" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert --alerts-file alerts.txt --comment-file results.md
+          # Artifacts go outside the workspace ($RUNNER_TEMP), so nothing in them can shadow the checked-out code.
+          dir="$RUNNER_TEMP/artifacts/$RUN_ID"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "$dir" || true
+          if [ ! -d "$dir" ]; then echo "No benchmark artifacts in this run."; exit 0; fi
+          python3 -m evals.dashboard import "$dir" --run-url "$RUN_URL" --git-sha "$GIT_SHA" --blob --alert --alerts-file alerts.txt --comment-file results.md
 
       - name: Alert Slack that the test run failed
         # Critical: the run crashed or timed out. A cancelled run was stopped by a person, so no alert.
@@ -112,8 +114,8 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           if [ ! -s results.md ]; then echo "No results to comment."; exit 0; fi
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name pr-request --dir pr-request || { echo "No pull request recorded for this run."; exit 0; }
-          pr=$(head -n 1 pr-request/number)
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name pr-request --dir "$RUNNER_TEMP/pr-request" || { echo "No pull request recorded for this run."; exit 0; }
+          pr=$(head -n 1 "$RUNNER_TEMP/pr-request/number")
           # The number comes from the run's artifact: use it only if it is a plain number.
           if ! printf '%s' "$pr" | grep -Eq '^[1-9][0-9]{0,6}$'; then echo "::warning::Bad pull request number."; exit 0; fi
           gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body-file results.md
@@ -127,8 +129,8 @@ jobs:
           for run_id in $RUN_IDS; do
             read -r run_url event head_sha workflow < <(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json url,event,headSha,workflowName --jq '[.url, .event, .headSha, .workflowName] | @tsv')
             { [ "$event" = "issue_comment" ] || [ "$workflow" = "Run Operon on test tasks (paid)" ] || [ "$workflow" = "Benchmark" ] || [ "$workflow" = "Benchmark batch" ] || [ "$workflow" = "Nightly benchmark run" ]; } && head_sha=""
-            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "artifacts/$run_id"
-            python3 -m evals.dashboard import "artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --pattern 'bench-*' --pattern 'grounding-*' --dir "$RUNNER_TEMP/artifacts/$run_id"
+            python3 -m evals.dashboard import "$RUNNER_TEMP/artifacts/$run_id" --run-url "$run_url" --git-sha "$head_sha" --blob
           done
 
       - name: Import committed reports

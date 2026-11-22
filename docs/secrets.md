@@ -14,6 +14,32 @@ operon secrets rm bank_pw
 
 Names are 1 to 64 letters, digits, `_` or `-`.
 
+## Model API keys (KAN-186)
+
+Separate from the vault above: your model keys (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and so on) can live
+in the operating system's credential store instead of a plain-text `.env`. On Windows that is Credential
+Manager. macOS uses Keychain, and desktop Linux its own keystore when `OPERON_KEYRING=on` and the Python
+`keyring` package finds one; a headless Linux box has none and falls back to environment variables and `.env`.
+
+```
+operon keys set GEMINI_API_KEY   # asks for the value (hidden, twice)
+operon keys list                 # where each key comes from; never values
+operon keys rm GEMINI_API_KEY
+operon keys import               # copy the keys in this folder's .env into the store
+```
+
+For these key names the real environment now also beats `.env` in `operon serve` and the API (before, `.env` won
+there), so a stale Windows user environment variable would win over what you stored; check with `operon keys list`.
+On macOS, Keychain may ask you to allow access to an item that a different Python stored.
+
+`import` never edits `.env`: it prints the names to delete by hand. Order, first match wins: real
+environment variables, the credential store, the working folder's `.env`, `~/.operon/operon.env`. A
+blank environment variable counts as unset. A real environment value always wins, whatever `OPERON_KEYRING` says.
+
+`OPERON_KEYRING` is `auto` (the default), `on` or `off`. `auto` reads the store on Windows and macOS only: Linux's
+Secret Service can wait on an unlock prompt with no timeout, so on Linux set `OPERON_KEYRING=on` to use it.
+`off` never reads the store. `operon keys set`, `rm` and `import` follow the same rule and say so when the store is off.
+
 ## Where values are stored
 
 One file per secret under `~/.operon/secrets/` (the `OPERON_CONFIG_DIR` folder).

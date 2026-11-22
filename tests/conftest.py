@@ -19,6 +19,54 @@ os.environ.setdefault("OPERON_ALLOW_UNAUTHENTICATED", "true")
 # Never read the developer's real ~/.operon key file.
 os.environ["OPERON_CONFIG_DIR"] = os.path.join(os.path.dirname(__file__), "..", ".var", "test-user-config")
 
+# KAN-186: never touch a developer's real credential store (Windows Credential Manager, Keychain, ...).
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
+import keyring  # noqa: E402
+import keyring.backends.null  # noqa: E402
+
+keyring.set_keyring(keyring.backends.null.Keyring())
+
+
+class _MemoryKeyring(keyring.backend.KeyringBackend):
+    """A dict-backed keyring for tests that need a working store."""
+
+    priority = 1  # type: ignore[assignment]
+
+    def __init__(self) -> None:
+        self.data: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service, username):
+        return self.data.get((service, username))
+
+    def set_password(self, service, username, password):
+        self.data[(service, username)] = password
+
+    def delete_password(self, service, username):
+        from keyring.errors import PasswordDeleteError
+
+        if (service, username) not in self.data:
+            raise PasswordDeleteError("not found")
+        del self.data[(service, username)]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_key_state():
+    from operon.core import paths
+
+    paths.reset_key_state()
+    yield
+    paths.reset_key_state()
+
+
+@pytest.fixture
+def memory_keyring():
+    previous = keyring.get_keyring()
+    backend = _MemoryKeyring()
+    keyring.set_keyring(backend)
+    yield backend
+    keyring.set_keyring(previous)
+
+
 # Pre-import modules that test stubs (test_phase4_integration.py) replace via
 # sys.modules.setdefault — ensures the real implementations are loaded first so
 # stub injection is a no-op and doesn't break tests that depend on real behaviour.

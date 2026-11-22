@@ -23,7 +23,7 @@ machine. See [configuration.md](configuration.md).
 
 Put your Gemini key in `.env` (or in `~/.operon/operon.env`, an optional per-user file).
 
-`operon serve` starts the API and prints its address and key. Runs are driven through
+`operon serve` starts the API and prints its address and where the key is (`API_KEYS`, or the generated key file; the key itself is never printed). It listens on loopback only: a non-loopback `--host` is refused unless you also pass `--allow-remote`. Clients can read the key from a file with `--api-key-file PATH` (`operon run --request`, `runs`, `resume`). Runs are driven through
 `/app/api/...`, which needs the API key like every other route:
 
 - **Live view.** Browser runs stream frames over `/ws/stream`; desktop runs stream the screen

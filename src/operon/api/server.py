@@ -80,10 +80,14 @@ async def _lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    from operon.core.paths import real_environment
+
+    real = real_environment()  # the first snapshot of this process when `operon serve` already loaded
     load_dotenv(find_dotenv(usecwd=True), override=True)
-    from operon.core.paths import load_user_env
+    from operon.core.paths import load_stored_keys, load_user_env
 
     load_user_env()  # the optional per-user key file (~/.operon/operon.env); never overrides .env or the environment
+    load_stored_keys(real)  # KAN-186: credential store beats .env; the real environment beats both
 
     from operon.api.auth import (
         TrustedHostMiddleware,

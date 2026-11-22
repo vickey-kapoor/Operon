@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -78,6 +80,71 @@ def load_user_env() -> bool:
 
     load_dotenv(path, override=False)
     return True
+
+
+_real_env: dict[str, str] = {}
+_key_sources: dict[str, str] = {}
+_snapshot_taken = False
+
+
+def real_environment() -> dict[str, str]:
+    """The environment as the process started: the first snapshot if the loader ran, else the live one."""
+    return dict(_real_env) if _snapshot_taken else dict(os.environ)
+
+
+def reset_key_state() -> None:
+    global _snapshot_taken
+    _real_env.clear()
+    _key_sources.clear()
+    _snapshot_taken = False
+
+
+def load_stored_keys(real_env: Mapping[str, str]) -> dict[str, str]:
+    """Settle where the known key variables come from (KAN-186); return name -> source.
+
+    ``real_env`` is the environment as the process started, before any .env file was read. Order:
+    real environment, credential store, working-folder .env, ``operon.env``. A non-blank real value
+    is always put back (undoing ``create_app``'s ``override=True``), even with no store or with
+    ``OPERON_KEYRING=off``. The store itself is read only when ``keystore.enabled()`` and a real
+    backend exists. Never raises and never logs a value.
+    """
+    global _snapshot_taken
+    import logging
+
+    _real_env.clear()
+    _real_env.update(real_env)
+    _snapshot_taken = True
+    _key_sources.clear()
+    log = logging.getLogger(__name__)
+    try:
+        from operon.core import keystore
+
+        names = keystore.known_names()
+        for name in names:
+            if real_env.get(name, "").strip():
+                os.environ[name] = real_env[name]
+                _key_sources[name] = "environment"
+        if not keystore.enabled():
+            log.debug("credential store not used (%s)", keystore.mode())
+            return dict(_key_sources)
+        if not keystore.available():
+            log.debug("no credential store available; keys come from the environment and .env files")
+            return dict(_key_sources)
+        for name in names:
+            if name in _key_sources:
+                continue
+            value = keystore.get(name)
+            if value:
+                os.environ[name] = value
+                _key_sources[name] = keystore.store_label()
+    except Exception as exc:
+        log.debug("credential store skipped (%s)", type(exc).__name__)
+    return dict(_key_sources)
+
+
+def loaded_key_state() -> tuple[dict[str, str], dict[str, str]]:
+    """The real-environment snapshot and the sources from the last ``load_stored_keys`` call."""
+    return dict(_real_env), dict(_key_sources)
 
 
 def prompts_dir() -> Path:

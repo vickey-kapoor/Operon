@@ -210,6 +210,17 @@ def test_trust_gate_deny_and_confirm(gate_loop: AgentLoop) -> None:
     assert gate_loop._pre_execution_gate_text(confirm, intent="x", run_id="r").startswith("High-risk action")
 
 
+def test_http_get_intent_reaches_the_trust_gate(gate_loop: AgentLoop) -> None:
+    gate_loop._trust_gate = TrustGate(enabled=True)
+    fetch = _decision(
+        AgentAction(action_type=ActionType.TOOL, tool="http_get", tool_args={"url": "https://api.weather.gov/x"},
+                    url="https://api.weather.gov/x", text="http_get: https://api.weather.gov/x")
+    )
+    assert gate_loop._pre_execution_gate_text(fetch, intent="get weather.gov data", run_id="r") is None
+    text = gate_loop._pre_execution_gate_text(fetch, intent="get the forecast", run_id="r")
+    assert text is not None and text.startswith("High-risk action") and "api.weather.gov" in text
+
+
 def test_file_guard_blocks_unnamed_path(gate_loop: AgentLoop) -> None:
     unnamed = _decision(AgentAction(action_type=ActionType.READ_TEXT, selector="main", text="/etc/hosts"))
     named = _decision(AgentAction(action_type=ActionType.READ_TEXT, selector="main", text="/tmp/a.txt"))

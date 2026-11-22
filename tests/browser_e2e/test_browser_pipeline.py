@@ -21,7 +21,7 @@ import pytest
 
 from operon.models.common import RunStatus
 
-from .harness import Result, call, run_script, say
+from .harness import Result, call, calls, run_script, say
 from .site import grid_point, grid_xy
 
 DONE = say("The task is complete.")
@@ -248,3 +248,39 @@ def test_a_popup_that_closes_itself_hands_the_run_back_to_the_opener(tmp_path, s
     state = app.state()
     assert state["events"] == ["popup:opened"]
     assert state["picks"] == ["after"]
+
+
+def multi_turn():
+    """One turn, three calls: type into field A, click Save (it confirms), type into field B."""
+    return calls(
+        call("type_text_at", **grid_point("multi_a"), text="AB", press_enter=False),
+        call("click_at", **grid_point("multi_btn")),
+        call("type_text_at", **grid_point("multi_b"), text="XY", press_enter=False),
+    )
+
+
+def typed(app, field: str) -> list[str]:
+    return [e.split(":", 1)[1] for e in app.state()["events"] if e.startswith(f"{field}:")]
+
+
+# 16
+def test_a_dialog_in_the_middle_of_a_multi_call_turn_types_each_text_once_after_approval(tmp_path, site, app):
+    result = run(tmp_path, site, "Fill both fields and save", [multi_turn(), DONE], "/t/multi",
+                 permission_mode="risky", on_pause="approve", max_steps=8)
+    assert result.status is RunStatus.SUCCEEDED, result.stop_reason
+    # Field A was typed once (the turn stopped at the dialog), the confirm was cancelled, then
+    # accepted on the approved replay, and field B was typed once after it.
+    assert typed(app, "a") == ["A", "AB"]
+    assert typed(app, "confirm") == ["cancelled", "accepted"]
+    assert typed(app, "b") == ["X", "XY"]
+    assert len(result.pauses) == 1 and "Save changes?" in result.pauses[0]
+
+
+# 17
+def test_a_declined_dialog_in_the_middle_of_a_multi_call_turn_runs_nothing_more(tmp_path, site, app):
+    result = run(tmp_path, site, "Fill both fields and save", [multi_turn(), DONE], "/t/multi",
+                 permission_mode="risky", on_pause="decline", max_steps=8)
+    assert typed(app, "a") == ["A", "AB"]
+    assert typed(app, "confirm") == ["cancelled"]
+    assert typed(app, "b") == []  # the click and the second typing never ran again
+    assert len(result.pauses) == 1

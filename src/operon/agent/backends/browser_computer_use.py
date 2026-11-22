@@ -313,7 +313,7 @@ class BrowserComputerUseBackend(AgentBackend):
         conversation.acknowledge_safety = False
         conversation.declined_reason = reason
 
-    def note_not_executed(self, run_id: str, reason: str) -> None:
+    def note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         """An Operon gate paused the run before the model's calls ran. Hold them:
         the person's approval runs exactly these calls, and a correction declines
         them (``discard_held_actions``), so the model never hears them reported as
@@ -327,7 +327,9 @@ class BrowserComputerUseBackend(AgentBackend):
             conversation.held_calls = list(conversation.last_calls)
             conversation.held_rationale = conversation.last_rationale
             return
-        conversation.not_run_reason = f"Not executed: {reason}"
+        conversation.not_run_reason = f"Not executed: {reason}" + (
+            f"; the first {ran} action(s) of the turn DID run and must not be repeated" if ran else ""
+        )
 
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         """Reset hints to a known state. Test use only."""

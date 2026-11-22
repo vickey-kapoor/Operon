@@ -70,6 +70,8 @@ class _ConversationState:
     # Set when a gate paused the run before the open calls ran: the next answer
     # reports them as not executed instead of "OK".
     not_executed_reason: str | None = None
+    # Actions of the turn that did run before a gate or dialog stopped it (a stopped batch).
+    not_executed_ran: int = 0
 
 
 def encode_screenshot(path: Path, max_long_edge: int = _MAX_LONG_EDGE) -> tuple[str, str, int, int]:
@@ -304,10 +306,11 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._advisory_hints.pop(run_id, None)
 
-    def note_not_executed(self, run_id: str, reason: str) -> None:
+    def note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         conversation = self._conversations.get(run_id)
         if conversation is not None and conversation.pending_calls:
             conversation.not_executed_reason = reason.strip()[:300] or "blocked by a gate"
+            conversation.not_executed_ran = ran
 
     async def _next_user_message(
         self,
@@ -351,6 +354,10 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 f"({conversation.not_executed_reason}). Check the screen and propose the next action again."
             )
             conversation.not_executed_reason = None
+            if conversation.not_executed_ran and conversation.call_spans:
+                # A page dialog stopped a batch part-way: the calls before it ran, answer each for itself.
+                failed_at = conversation.not_executed_ran
+            conversation.not_executed_ran = 0
         elif len(state.action_history) > conversation.acknowledged_actions:
             executed = state.action_history[-1]
             ran = executed.action.action_type

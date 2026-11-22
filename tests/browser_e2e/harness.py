@@ -38,6 +38,11 @@ def call(name: str, **args: Any) -> dict:
     return {"function_call": {"name": name, "args": args}}
 
 
+def calls(*items: dict) -> dict:
+    """One model turn with several function calls (a multi-call turn)."""
+    return {"function_calls": list(items)}
+
+
 def say(text: str) -> dict:
     return {"text": text}
 
@@ -86,6 +91,17 @@ class ScriptedClient:
                 "confidence": 0.4,
                 "active_subgoal": "finish",
                 "model_content": {"parts": [{"text": text}]},
+            }
+        if "function_calls" in reply:
+            fcs = [item["function_call"] for item in reply["function_calls"]]
+            return {
+                "perception": perception,
+                "function_call": fcs[0],
+                "function_calls": fcs,
+                "rationale": "several calls",
+                "confidence": 0.7,
+                "active_subgoal": "several calls",
+                "model_content": {"parts": [{"function_call": fc} for fc in fcs]},
             }
         fc = reply["function_call"]
         return {

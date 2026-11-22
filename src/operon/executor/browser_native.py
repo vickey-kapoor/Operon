@@ -132,6 +132,10 @@ class NativeBrowserExecutor(Executor):
         # Plaintext secret values typed in the run, held in memory only for masking dialog
         # messages; cleared in _forget_run_dialogs when the run's session closes.
         self._run_secret_values: dict[str, set[str]] = {}
+        # Runs whose person is driving (takeover, or input they send through user_input): a dialog
+        # their input raises is theirs to answer, so it is accepted as before.
+        self._person_input: set[str] = set()
+        self._person_driving: set[str] = set()
         # The top-level batch child being executed (None outside a batch): where a dialog came from.
         self._executing_child: int | None = None
         # Shared Playwright+Browser instance kept alive across observable-mode tasks.
@@ -220,6 +224,32 @@ class NativeBrowserExecutor(Executor):
         return await session.page.screenshot(type="png")
 
     async def user_input(
+        self,
+        run_id: str,
+        *,
+        input_type: str,
+        x_ratio: float = 0.0,
+        y_ratio: float = 0.0,
+        text: str = "",
+        key: str = "",
+        delta_y: int = 300,
+    ) -> bool:
+        """The person's input (see ``_user_input``); a dialog it raises is accepted (KAN-172)."""
+        was_input = run_id in self._person_input
+        self._person_input.add(run_id)
+        try:
+            return await self._user_input(
+                run_id, input_type=input_type, x_ratio=x_ratio, y_ratio=y_ratio, text=text, key=key, delta_y=delta_y
+            )
+        finally:
+            if not was_input:
+                self._person_input.discard(run_id)
+
+    def set_person_driving(self, run_id: str, driving: bool) -> None:
+        """The loop's takeover state: while the person drives, their dialogs are accepted."""
+        (self._person_driving.add if driving else self._person_driving.discard)(run_id)
+
+    async def _user_input(
         self,
         run_id: str,
         *,
@@ -670,6 +700,8 @@ class NativeBrowserExecutor(Executor):
         self._pending_dialogs.pop(run_id, None)
         self._last_dialog_message.pop(run_id, None)
         self._run_secret_values.pop(run_id, None)
+        self._person_input.discard(run_id)
+        self._person_driving.discard(run_id)
 
     async def get_current_url(self) -> str | None:
         page = await self._current_page()
@@ -1088,8 +1120,8 @@ class NativeBrowserExecutor(Executor):
         async def _on_dialog(dialog) -> None:
             kind = dialog.type
             msg = redact(dialog.message or "", self._run_secret_values.get(run_id, ()))
-            if kind == "alert":
-                accept = True  # nothing to decide: it only informs
+            if kind == "alert" or run_id in self._person_input or run_id in self._person_driving:
+                accept = True  # it only informs, or the person is driving and answers it themselves
             elif self._dialog_accept_next.get(run_id) == (kind, msg):
                 del self._dialog_accept_next[run_id]  # the person approved this very dialog: once
                 accept = True
@@ -1101,7 +1133,9 @@ class NativeBrowserExecutor(Executor):
                 await dialog.accept()  # a prompt takes its default value
             else:
                 # Not the executor's call: cancel it, and leave it for the loop to ask the person.
-                self._pending_dialogs[run_id] = (kind, msg, self._executing_child)
+                # Two dialogs in one action: the first one is what the person is asked about.
+                # The later one is cancelled; if the action is replayed it asks again.
+                self._pending_dialogs.setdefault(run_id, (kind, msg, self._executing_child))
                 await dialog.dismiss()
 
         page.on("dialog", _on_dialog)

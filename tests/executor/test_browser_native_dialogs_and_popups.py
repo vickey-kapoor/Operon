@@ -358,3 +358,78 @@ async def test_a_focus_click_that_raises_a_dialog_types_nothing_until_approved(e
         await executor.execute(action)  # the approved replay: focus, then type
 
     page.keyboard.type.assert_awaited_once_with("hello")
+
+
+# -- takeover, two dialogs in one action, a dialog on the last child -------------------
+
+
+@pytest.mark.asyncio
+async def test_a_dialog_raised_by_the_persons_takeover_input_is_accepted(executor):
+    page = _page()
+    dialogs = []
+
+    async def click(x, y, **kwargs):
+        dialog = _dialog("confirm", "Leave this page?")
+        dialogs.append(dialog)
+        await page.handlers["dialog"](dialog)
+
+    page.mouse.click = AsyncMock(side_effect=click)
+    executor._attach_page_listeners(page, "r1")
+    executor._sessions["r1"] = _session(page)
+
+    assert await executor.user_input("r1", input_type="click", x_ratio=0.5, y_ratio=0.5)
+
+    dialogs[0].accept.assert_awaited_once()  # the person answers it, as before
+    assert executor.pop_pending_dialog("r1") is None
+    # The same dialog raised by an agent action, outside the person's input, is still cancelled.
+    agent = await _raise(executor, "r1", "confirm", "Leave this page?")
+    agent.dismiss.assert_awaited_once()
+    assert executor.pop_pending_dialog("r1") == ("confirm", "Leave this page?", None)
+
+
+@pytest.mark.asyncio
+async def test_while_the_person_drives_their_dialogs_are_accepted_until_handed_back(executor):
+    executor.set_person_driving("r1", True)
+    driving = await _raise(executor, "r1", "confirm", "Sure?")
+    executor.set_person_driving("r1", False)
+    handed_back = await _raise(executor, "r1", "confirm", "Sure?")
+
+    driving.accept.assert_awaited_once()
+    handed_back.dismiss.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_two_dialogs_in_one_action_keep_the_first(executor):
+    page = _page()
+    executor._attach_page_listeners(page, "r1")
+
+    first = _dialog("confirm", "First question?")
+    second = _dialog("confirm", "Second question?")
+    await page.handlers["dialog"](first)
+    await page.handlers["dialog"](second)
+
+    assert executor.pop_pending_dialog("r1") == ("confirm", "First question?", None)
+    second.dismiss.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_dialog_on_the_last_child_is_attributed_to_it(executor):
+    from operon.models.execution import ExecutedAction
+    from operon.models.policy import ActionType, AgentAction
+
+    page = _page()
+    executor._attach_page_listeners(page, "r1")
+    executor.set_current_run_id("r1")
+    ran: list[int] = []
+
+    async def run_child(child):
+        ran.append(child.wait_ms)
+        if child.wait_ms == 2:
+            await page.handlers["dialog"](_dialog("confirm", "Sure?"))
+        return ExecutedAction(action=child, success=True, detail="ok")
+
+    with patch.object(executor, "execute", new=run_child):
+        result = await executor._execute_batch(AgentAction(action_type=ActionType.BATCH, actions=_wait_children()))
+
+    assert ran == [1, 2] and result.batch_failed_index == 1
+    assert executor.pop_pending_dialog("r1") == ("confirm", "Sure?", 1)

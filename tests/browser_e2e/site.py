@@ -46,6 +46,10 @@ BOX: dict[str, tuple[int, int, int, int]] = {
     "confirm_btn": (100, 200, 300, 70),
     "popup_open": (100, 200, 300, 70),
     "popup_after": (100, 320, 300, 70),
+    # multi-call page: a field, a button that confirms, a second field
+    "multi_a": (100, 150, 500, 50),
+    "multi_btn": (100, 230, 300, 70),
+    "multi_b": (100, 330, 500, 50),
     # delayed page
     "delayed_button": (300, 300, 400, 100),
     # shop workflow
@@ -175,6 +179,8 @@ class TestSite:
             return self._dialog_page()
         if path == "/confirm":
             return self._confirm_page()
+        if path == "/multi":
+            return self._multi_page()
         if path == "/popup":
             return self._popup_page()
         if path == "/popup_child":
@@ -236,6 +242,21 @@ document.getElementById('go').onclick=function(){
   else{ev('confirm','cancelled')}};
 """
         return _page("Danger zone", body, script=script)
+
+    def _multi_page(self) -> Reply:
+        body = (
+            '<input id="fa" type="text" style="' + _box_style("multi_a") + '">'
+            f'<div id="go" class="btn" style="{_box_style("multi_btn")}">Save</div>'
+            '<input id="fb" type="text" style="' + _box_style("multi_b") + '">'
+        )
+        script = """
+function ev(k,v){fetch('/t/event?kind='+k+'&value='+encodeURIComponent(v))}
+document.getElementById('fa').oninput=function(){ev('a',this.value)};
+document.getElementById('fb').oninput=function(){ev('b',this.value)};
+document.getElementById('go').onclick=function(){
+  if(confirm('Save changes?')){ev('confirm','accepted')}else{ev('confirm','cancelled')}};
+"""
+        return _page("Multi", body, script=script)
 
     def _popup_page(self) -> Reply:
         body = (

@@ -45,6 +45,7 @@ class DialogExecutor:
         self.pending: tuple[str, str, int | None] | None = None
         self.accepted = 0
         self.fail_on: AgentAction | None = None
+        self.driving = False
         # What dialog an action raises: (type, message, batch child) or None.
         self.dialog_for = lambda action: (
             ("confirm", ASKED, None) if action.action_type is ActionType.CLICK else None
@@ -72,6 +73,9 @@ class DialogExecutor:
 
     def disarm_accept_next_dialog(self, run_id: str) -> None:
         self.armed = None
+
+    def set_person_driving(self, run_id: str, driving: bool) -> None:
+        self.driving = driving
 
     def pop_pending_dialog(self, run_id: str):
         pending, self.pending = self.pending, None
@@ -390,3 +394,30 @@ async def test_a_dialog_in_the_first_child_replays_from_index_zero(monkeypatch: 
     await loop.resume_run("run-1")
 
     policy.drop_held_calls_before.assert_called_once_with("run-1", 0, 2)  # index 0 is not "no index"
+
+
+async def test_the_executor_is_told_when_the_person_takes_over_and_hands_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))  # paused on the dialog
+
+    await loop.take_over("run-1")
+    assert executor.driving is True  # their dialogs are theirs to answer
+    await loop.hand_back("run-1")
+
+    assert executor.driving is False
+
+
+async def test_a_declined_dialog_in_a_stopped_batch_says_which_actions_ran(monkeypatch: pytest.MonkeyPatch) -> None:
+    typing = AgentAction(action_type=ActionType.TYPE, text="hello", x=1, y=2)
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[typing, CLICK])
+    loop, executor, state, hints, policy = _loop(monkeypatch, [batch])
+    executor.dialog_for = lambda action: ("confirm", ASKED, 1) if action.action_type is ActionType.BATCH else None
+    await loop.step_run(StepRequest(run_id="run-1"))
+    # The backend is told at the pause that the first action ran, not that nothing did.
+    assert policy.note_not_executed.call_args.kwargs == {"ran": 1}
+
+    await loop.resume_run("run-1", approve_gated_action=False)
+
+    reason = policy.discard_held_actions.call_args.args[1]
+    assert "first 1 action(s) of the turn DID run and must not be repeated" in reason
+    assert "declined" in reason

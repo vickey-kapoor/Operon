@@ -490,7 +490,14 @@ class AgentLoop:
             record.in_takeover = True
             record.takeover_count = getattr(record, "takeover_count", 0) + 1
             await self.run_store.save_state(record)
+        self._set_person_driving(run_id, True)
         return record
+
+    def _set_person_driving(self, run_id: str, driving: bool) -> None:
+        """Tell the executor the person has the screen (or gave it back): their dialogs are theirs to answer."""
+        set_driving = getattr(self.executor, "set_person_driving", None)
+        if callable(set_driving):
+            set_driving(run_id, driving)
 
     async def hand_back(self, run_id: str, note: str | None = None) -> RunResponse:
         """End a takeover and let the agent continue from the screen as the person left it.
@@ -511,6 +518,7 @@ class AgentLoop:
             hint += f" The user says: {note.strip()}"
         run_control.set_override_hint(run_id, hint)
         record.in_takeover = False
+        self._set_person_driving(run_id, False)
         record.force_fresh_perception = True
         return await self.resume_run(run_id, approve_gated_action=False)
 
@@ -608,7 +616,9 @@ class AgentLoop:
                 if not self._drop_ran_held_calls(run_id, child_index, action_count):
                     held = False
                     self._discard_held_actions(
-                        run_id, "Not executed again: part of the turn already ran, so the model repeats the action."
+                        run_id,
+                        "Not executed again: part of the turn already ran, so the model repeats the action"
+                        + self._ran_before_text(child_index),
                     )
             if not held and callable(add_hints):
                 add_hints(
@@ -620,7 +630,9 @@ class AgentLoop:
                 )
             return
         self._discard_held_actions(
-            run_id, f"Not executed: the person declined the page's {kind} dialog and it was cancelled."
+            run_id,
+            f"Not executed: the person declined the page's {kind} dialog and it was cancelled"
+            + self._ran_before_text(child_index),
         )
         if callable(add_hints):
             add_hints(
@@ -629,6 +641,16 @@ class AgentLoop:
                 source="dialog_answer",
                 run_id=run_id,
             )
+
+    @staticmethod
+    def _ran_before_text(child_index: int | None) -> str:
+        """What ran before the dialog-raising action of a stopped batch, so the model does not redo it."""
+        if not child_index:
+            return "."
+        return (
+            f"; the first {child_index} action(s) of the turn DID run and must not be repeated, the next one ran "
+            "but its dialog was cancelled, and the rest did not run."
+        )
 
     def _drop_ran_held_calls(self, run_id: str, index: int, action_count: int) -> bool:
         for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():
@@ -1223,7 +1245,9 @@ class AgentLoop:
         shown = message if len(message) <= 300 else message[:300] + "..."
         question = f'The page asked: "{shown}" Accept?' if shown else f"The page showed a {kind} dialog. Accept?"
         gate_text = f"{question} Resume to accept it and run the action again, or correct/stop."
-        self._note_not_executed(ctx.run_id, f"the page's {kind} dialog was cancelled and the person was asked")
+        self._note_not_executed(
+            ctx.run_id, f"the page's {kind} dialog was cancelled and the person was asked", ran=child_index or 0
+        )
         children = ctx.decision.action.actions if ctx.decision.action.action_type is ActionType.BATCH else None
         self._dialog_pauses[ctx.run_id] = _DialogPause(
             kind, message, self._has_held_actions(ctx.run_id), child_index, len(children) if children else 1
@@ -1835,14 +1859,15 @@ class AgentLoop:
 
         self.executor.batch_child_check = check
 
-    def _note_not_executed(self, run_id: str, reason: str) -> None:
+    def _note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         """Tell the policy a gate stopped its decision before it ran, so a backend
         that answers the model's tool calls does not report it as done."""
         note = getattr(self.policy_service, "note_not_executed", None)
         if note is None:
             return
         try:
-            note(run_id, reason)
+            # ``ran``: the first actions of a stopped batch really ran; the backend says so per call.
+            note(run_id, reason, ran=ran) if ran else note(run_id, reason)
         except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
             self._recovered(run_id, "note_not_executed", exc)
 

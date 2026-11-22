@@ -157,7 +157,7 @@ it and records it; after the action the loop gives the model an advisory hint an
 A batch stops at the child that raised it, and an atomic type does not type after a cancelled focus click, so the replay is exact. Resuming accepts that very dialog once (a different dialog is cancelled and asked about again) and replays the held action, from the call that raised the dialog on (the backend's held calls, the same
 path a gate approval takes); a correction declines it and tells the model so. In `auto`
 permission mode (or with the trust gate off, unless the mode is `ask`) the dialog is accepted and the run never pauses. A
-popup that closes itself hands the session back to its opener, or the newest open page.
+Dialogs the person raises while driving (takeover, or input sent through the live view) are accepted: they answer them. When a batch stopped at action i, the backend tells the model that the first i actions ran (per call for Claude, with a count elsewhere), so it does not redo them. Known limit: a `type` whose dialog fires after the text was typed (for example on Enter) is replayed whole and types the text again; the focus-click case is exact. A popup that closes itself hands the session back to its opener, or the newest open page.
 
 ### Observable Browser Mode
 

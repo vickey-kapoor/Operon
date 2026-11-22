@@ -62,9 +62,10 @@ class AgentBackend(ABC):
         """Drop any queued advisory hints. Optional hook."""
         return None
 
-    def note_not_executed(self, run_id: str, reason: str) -> None:
+    def note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         """The last decision was stopped by a gate before it ran. Optional hook for
-        backends that answer the model's calls with their outcome."""
+        backends that answer the model's calls with their outcome. ``ran``: the first
+        actions of a stopped batch that did run (a page dialog stopped it)."""
         return None
 
     # Per-run caches the backends keep, keyed by run_id.

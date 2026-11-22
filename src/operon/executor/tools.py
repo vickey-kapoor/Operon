@@ -28,6 +28,7 @@ class ToolExecutor:
         self.__dict__["inner"] = inner
         self.__dict__["runner"] = ToolRunner(tools)
         self.__dict__["_child_check"] = None
+        self.__dict__["_run_id"] = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.__dict__["inner"], name)
@@ -50,12 +51,20 @@ class ToolExecutor:
         if hasattr(self.inner, "batch_child_check"):
             self.inner.batch_child_check = check
 
-    async def aclose_run(self, run_id: str) -> None:
+    def set_current_run_id(self, run_id: str) -> None:
+        """Remember which run is stepping (tools started now belong to it) and tell the wrapped executor."""
+        self.__dict__["_run_id"] = run_id
+        inner_set = getattr(self.inner, "set_current_run_id", None)
+        if inner_set is not None:
+            inner_set(run_id)
+
+    async def aclose_run(self, run_id: str) -> int:
         """The run ended or was stopped: kill its shell commands, then let the wrapped executor clean up."""
-        await self.runner.kill_running()
+        await self.runner.kill_running(run_id)
         inner_close = getattr(self.inner, "aclose_run", None)
-        if inner_close is not None:
-            await inner_close(run_id)
+        if inner_close is None:
+            return 0
+        return int(await inner_close(run_id) or 0)
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
         if action.action_type is ActionType.TOOL:
@@ -65,7 +74,7 @@ class ToolExecutor:
         return await self.inner.execute(action)
 
     async def _run_tool(self, action: AgentAction) -> ExecutedAction:
-        result = await self.runner.run(action.tool or "", action.tool_args)
+        result = await self.runner.run(action.tool or "", action.tool_args, run_id=self.__dict__["_run_id"])
         detail = f"{summary(action.tool or 'tool', action.tool_args or {})}: " + ("ran" if result.ok else result.output)
         if result.ok:
             return ExecutedAction(action=action, success=True, detail=detail[:500], tool_outputs=[result])

@@ -167,15 +167,10 @@ async def test_run_shell_returns_when_the_command_leaves_a_program_running(home:
     assert result.ok and result.output.startswith("exit code: 0\nstdout:\nstarted\n")
 
 def _resolve_to(monkeypatch, *addresses: str) -> None:
-    monkeypatch.setattr("operon.agent.tools.runner.asyncio.get_running_loop", lambda: _FakeLoop(addresses))
+    async def resolve(host: str, port: int) -> list[str]:
+        return list(addresses)
 
-
-class _FakeLoop:
-    def __init__(self, addresses) -> None:
-        self.addresses = addresses
-
-    async def getaddrinfo(self, host, port, **kwargs):
-        return [(2, 1, 6, "", (a, port)) for a in self.addresses]
+    monkeypatch.setattr("operon.agent.tools.runner._resolve", resolve)
 
 
 @pytest.mark.parametrize(
@@ -189,6 +184,10 @@ class _FakeLoop:
         "http://[::ffff:127.0.0.1]/",
         "http://2130706433/",
         "http://100.100.100.200/",
+        "http://[::127.0.0.1]/",
+        "http://[64:ff9b::7f00:1]/",
+        "http://[64:ff9b::a9fe:a9fe]/",
+        "http://[fec0::1]/",
     ],
 )
 async def test_http_get_refuses_local_private_and_metadata_addresses(monkeypatch, url) -> None:
@@ -319,7 +318,7 @@ async def test_aclose_run_stops_a_running_command_and_forwards_to_the_wrapped_ex
 
     executor = ToolExecutor(Inner(), ("run_shell",))
     pid_file = tmp_path / "pid"
-    task = asyncio.create_task(executor.runner.run("run_shell", {"command": _pid_file_command(pid_file)}))
+    task = asyncio.create_task(executor.runner.run("run_shell", {"command": _pid_file_command(pid_file)}, run_id="r1"))
     grandchild = await _wait_for_file(pid_file)
     started = time.monotonic()
     await executor.aclose_run("r1")
@@ -338,6 +337,66 @@ async def test_aclose_run_stops_a_running_command_and_forwards_to_the_wrapped_ex
 async def test_aclose_run_without_a_wrapped_aclose_run_is_harmless() -> None:
     executor = ToolExecutor(FakeExecutor(), ("run_shell",))
     await executor.aclose_run("r1")
+
+
+async def test_http_get_ignores_proxy_environment_and_idn_hosts_do_not_crash(monkeypatch) -> None:
+    built: list[dict] = []
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="hi")
+
+    real = httpx.AsyncClient
+
+    def factory(**kwargs):
+        built.append(kwargs)
+        return real(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr("operon.agent.tools.runner.httpx.AsyncClient", factory)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    _resolve_to(monkeypatch, "93.184.216.34")
+    runner = ToolRunner(("http_get",))
+    assert (await runner.run("http_get", {"url": "https://api.example/"})).ok
+    assert built[0]["trust_env"] is False
+    result = await runner.run("http_get", {"url": "https://b\u00fccher.example/"})
+    assert result.ok
+    assert seen[-1].headers["host"] == "xn--bcher-kva.example"
+    assert seen[-1].extensions["sni_hostname"] == "xn--bcher-kva.example"
+    await runner.run("http_get", {"url": "http://exa mple.com:99999999/"})  # may fail, must not raise
+
+
+async def test_http_get_tries_the_next_checked_address_when_one_does_not_connect(monkeypatch) -> None:
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if request.url.host == "93.184.216.34":
+            raise httpx.ConnectError("down")
+        return httpx.Response(200, text="ok")
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        "operon.agent.tools.runner.httpx.AsyncClient",
+        lambda **kwargs: real(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    _resolve_to(monkeypatch, "93.184.216.34", "93.184.216.35")
+    assert (await ToolRunner(("http_get",)).run("http_get", {"url": "http://two.example/"})).ok
+    assert hosts == ["93.184.216.34", "93.184.216.35"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the test command is bash")
+async def test_aclose_run_stops_only_that_runs_commands(home: Path) -> None:
+    executor = ToolExecutor(FakeExecutor(), ("run_shell",))
+    one = asyncio.create_task(executor.runner.run("run_shell", {"command": "sleep 30"}, run_id="r1"))
+    two = asyncio.create_task(executor.runner.run("run_shell", {"command": "sleep 30"}, run_id="r2"))
+    await asyncio.sleep(0.3)
+    assert await executor.aclose_run("r1") == 0
+    first = await asyncio.wait_for(one, 5)
+    assert not first.ok and "was stopped" in first.output
+    assert not two.done()
+    assert await executor.runner.kill_running("r2") == 1
+    assert not (await asyncio.wait_for(two, 5)).ok
 
 
 # --- the executor wrapper ---------------------------------------------------------------

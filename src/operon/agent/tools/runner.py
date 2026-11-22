@@ -83,26 +83,43 @@ async def _kill_tree(process: asyncio.subprocess.Process) -> None:
     await process.wait()
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv6Address):
+        # An IPv4 address hidden in an IPv6 one: mapped (::ffff:a.b.c.d), compatible
+        # (::a.b.c.d) or NAT64 (64:ff9b::a.b.c.d): judge the IPv4 address.
+        if ip.ipv4_mapped is not None:
+            return _is_public(ip.ipv4_mapped)
+        if int(ip) >> 32 == 0 and int(ip) > 1:
+            return _is_public(ipaddress.IPv4Address(int(ip)))
+        if ip in _NAT64:
+            return _is_public(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+        if ip.is_site_local:
+            return False
     return ip.is_global and not ip.is_multicast
 
 
-async def _public_address(host: str, port: int) -> str:
-    """Resolve host and return one address to connect to; refuse if any resolved
-    address is local, private or a cloud-metadata address (SSRF)."""
+async def _resolve(host: str, port: int) -> list[str]:
+    """The addresses a host name resolves to (patched in tests)."""
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError as exc:
         raise ToolError(f"failed: could not resolve {host}: {exc}") from None
-    addresses = [str(info[4][0]).split("%")[0] for info in infos]
+    return [str(info[4][0]).split("%")[0] for info in infos]
+
+
+async def _public_addresses(host: str, port: int) -> list[str]:
+    """The addresses to try for a host; refuse if any resolved address is local,
+    private or a cloud-metadata address (SSRF)."""
+    addresses = await _resolve(host, port)
     if not addresses:
         raise ToolError(f"failed: could not resolve {host}")
     for address in addresses:
         if not _is_public(ipaddress.ip_address(address)):
             raise ToolError(f"refused: {host} resolves to a local, private or cloud-metadata address ({address})")
-    return addresses[0]
+    return addresses
 
 
 class ToolRunner:
@@ -110,18 +127,19 @@ class ToolRunner:
 
     def __init__(self, tools: tuple[str, ...]) -> None:
         self.tools = tools
-        self._shells: set[asyncio.subprocess.Process] = set()
+        self._shells: dict[asyncio.subprocess.Process, str | None] = {}
         self._stopped: set[asyncio.subprocess.Process] = set()
 
-    async def kill_running(self) -> int:
-        """Kill every shell command still running (the run was stopped); returns how many."""
-        live = [p for p in self._shells if p.returncode is None]
+    async def kill_running(self, run_id: str | None = None) -> int:
+        """Kill the shell commands still running (of one run, or all when run_id is None)
+        because the run was stopped; returns how many."""
+        live = [p for p, owner in list(self._shells.items()) if p.returncode is None and run_id in (None, owner)]
         self._stopped.update(live)
         for process in live:
             await _kill_tree(process)
         return len(live)
 
-    async def run(self, name: str, args: dict[str, Any] | None) -> ToolOutput:
+    async def run(self, name: str, args: dict[str, Any] | None, run_id: str | None = None) -> ToolOutput:
         args = args or {}
         if name not in TOOL_NAMES:
             return ToolOutput(tool=name, ok=False, output=f"There is no tool named {name}.")
@@ -131,7 +149,7 @@ class ToolRunner:
             READ_FILE: self._read_file,
             LIST_DIR: self._list_dir,
             WRITE_FILE: self._write_file,
-            RUN_SHELL: self._run_shell,
+            RUN_SHELL: lambda a: self._run_shell(a, run_id),
             HTTP_GET: self._http_get,
         }[name]
         try:
@@ -166,7 +184,7 @@ class ToolRunner:
         path.write_bytes(data)
         return f"Wrote {len(data)} bytes to {path}"
 
-    async def _run_shell(self, args: dict[str, Any]) -> str:
+    async def _run_shell(self, args: dict[str, Any], run_id: str | None = None) -> str:
         command = _string_arg(args, "command")
         try:
             timeout = int(args.get("timeout_seconds") or SHELL_TIMEOUT)
@@ -199,7 +217,7 @@ class ToolRunner:
                 stderr=err_file,
                 **group,
             )
-            self._shells.add(process)
+            self._shells[process] = run_id
             try:
                 await asyncio.wait_for(process.wait(), timeout)
             except TimeoutError:
@@ -209,9 +227,10 @@ class ToolRunner:
                 await asyncio.shield(_kill_tree(process))
                 raise
             finally:
-                self._shells.discard(process)
-            if process in self._stopped:
+                self._shells.pop(process, None)
+                stopped = process in self._stopped
                 self._stopped.discard(process)
+            if stopped:
                 raise ToolError("was stopped (the run was stopped)")
             out_file.seek(0)
             err_file.seek(0)
@@ -226,22 +245,34 @@ class ToolRunner:
         try:
             # Redirects are not followed: a redirect could leave the trust gate's domain
             # allowlist, so the model sees where it points and may fetch that URL next.
-            parsed = httpx.URL(url)
-            host = parsed.host
+            try:
+                parsed = httpx.URL(url)
+                host = parsed.raw_host.decode("ascii")
+            except (ValueError, UnicodeError, httpx.InvalidURL):
+                raise ToolError("needs a valid URL") from None
             if not host:
                 raise ToolError("needs a URL with a host")
             https = parsed.scheme == "https"
             port = parsed.port or (443 if https else 80)
-            ip = await _public_address(host, port)
-            # Connect to the address that was checked, not to a second DNS answer
+            addresses = await _public_addresses(host, port)
+            # Connect to an address that was checked, not to a second DNS answer
             # (rebinding); Host and the TLS name stay the real hostname.
-            host_header = host if parsed.port is None else f"{host}:{parsed.port}"
-            if ":" in host:
-                host_header = f"[{host}]" + (f":{parsed.port}" if parsed.port is not None else "")
-            target = parsed.copy_with(host=ip)
+            shown = f"[{host}]" if ":" in host else host
+            host_header = shown if parsed.port is None else f"{shown}:{parsed.port}"
             extensions = {"sni_hostname": host} if https else {}
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=False) as client:
-                response = await client.get(target, headers={"Host": host_header}, extensions=extensions)
+            # trust_env=False: an HTTPS_PROXY would tunnel to the pinned IP (httpcore then
+            # ignores sni_hostname and fails certificate checks), and no environment proxy
+            # may be a way around the address check, so the client always connects directly.
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=False, trust_env=False) as client:
+                for index, ip in enumerate(addresses):
+                    try:
+                        response = await client.get(
+                            parsed.copy_with(host=ip), headers={"Host": host_header}, extensions=extensions
+                        )
+                        break
+                    except httpx.ConnectError:
+                        if index == len(addresses) - 1:
+                            raise
         except httpx.HTTPError as exc:
             raise ToolError(f"failed: {exc.__class__.__name__}: {exc}") from None
         head = f"status: {response.status_code}\ncontent-type: {response.headers.get('content-type', '')}"

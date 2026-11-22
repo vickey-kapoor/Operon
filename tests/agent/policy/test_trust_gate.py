@@ -200,3 +200,101 @@ def test_navigate_back_to_allowlist_is_allowed_from_an_off_list_page() -> None:
 def test_current_page_is_ignored_without_an_allowlist() -> None:
     gate = TrustGate(enabled=True)
     assert gate.evaluate(_action(text="hi"), current_url="https://evil.test/").verdict is TrustVerdict.ALLOW
+
+
+# ── http_get host vs the task (KAN-181) ───────────────────────────────────
+
+
+def _get(url: str):
+    return SimpleNamespace(
+        text=f"http_get: {url}", url=url, target_context=None, tool="http_get",
+        action_type=SimpleNamespace(value="tool"),
+    )
+
+
+def test_http_get_to_a_host_the_task_names_is_allowed() -> None:
+    gate = TrustGate(enabled=True)
+    task = "Fetch the forecast from weather.gov for Boston"
+    assert gate.evaluate(_get("https://weather.gov/x"), intent=task).verdict is TrustVerdict.ALLOW
+    assert gate.evaluate(_get("https://api.weather.gov/x"), intent=task).verdict is TrustVerdict.ALLOW
+    assert gate.evaluate(_get("https://API.Weather.gov/x"), intent="see API.WEATHER.GOV.").verdict is TrustVerdict.ALLOW
+
+
+def test_http_get_to_the_current_page_site_is_allowed() -> None:
+    gate = TrustGate(enabled=True)
+    page = "https://shop.example.com/cart"
+    for url in ("https://shop.example.com/a", "https://api.shop.example.com/a", "https://example.com/a"):
+        assert gate.evaluate(_get(url), page, intent="buy it").verdict is TrustVerdict.ALLOW
+    assert gate.evaluate(_get("https://com/a"), page, intent="buy it").verdict is TrustVerdict.CONFIRM
+
+
+def test_http_get_to_an_off_task_host_asks_and_auto_mode_skips_it() -> None:
+    from operon.agent.policy.trust_gate import apply_permission_mode
+
+    gate = TrustGate(enabled=True)
+    action = _get("https://evil.test/steal")
+    result = gate.evaluate(action, "https://example.com", intent="Summarise example.com")
+    assert result.verdict is TrustVerdict.CONFIRM
+    assert result.matched == "evil.test" and not result.always
+    assert apply_permission_mode(result, action, "auto").verdict is TrustVerdict.ALLOW
+    assert apply_permission_mode(result, action, "risky").verdict is TrustVerdict.CONFIRM
+
+
+def test_http_get_deny_rule_still_wins() -> None:
+    gate = TrustGate(enabled=True, deny=("evil.test",))
+    assert gate.evaluate(_get("https://evil.test/x"), intent="x").verdict is TrustVerdict.DENY
+
+
+def test_http_get_without_intent_is_unchanged() -> None:
+    assert TrustGate(enabled=True).evaluate(_get("https://evil.test/x")).verdict is TrustVerdict.ALLOW
+
+
+def test_http_get_to_an_allowlisted_domain_is_allowed() -> None:
+    gate = TrustGate(enabled=True, allow_domains=("data.org",))
+    assert gate.evaluate(_get("https://api.data.org/x"), intent="anything").verdict is TrustVerdict.ALLOW
+
+
+def test_http_get_host_match_is_bounded_in_the_task_text() -> None:
+    gate = TrustGate(enabled=True)
+    assert gate.evaluate(_get("https://evilweather.gov/x"), intent="use weather.gov").verdict is TrustVerdict.CONFIRM
+    assert gate.evaluate(_get("https://weather.gov/x"), intent="use notweather.govx").verdict is TrustVerdict.CONFIRM
+    assert gate.evaluate(_get("https://weather.gov/x"), intent="use weather.gov.evil.com").verdict is TrustVerdict.CONFIRM
+    # a bare TLD or single label in the task never makes a host on-task
+    assert gate.evaluate(_get("https://evil.gov/x"), intent="a .gov site").verdict is TrustVerdict.CONFIRM
+
+
+def test_other_tools_and_non_tool_actions_are_not_judged_by_intent() -> None:
+    gate = TrustGate(enabled=True)
+    nav = _action(url="https://evil.test/x")
+    assert gate.evaluate(nav, intent="x").verdict is TrustVerdict.ALLOW
+
+
+def test_ip_literal_host_is_on_task_only_by_exact_match() -> None:
+    from operon.agent.policy.trust_gate import host_is_on_task
+
+    assert not host_is_on_task("1.2.3.4", "what is 3.4 times 2")
+    assert not host_is_on_task("9.9.12.50", "set price to 12.50")
+    assert not host_is_on_task("[::1]", "go to ::1x")
+    assert host_is_on_task("1.2.3.4", "fetch http://1.2.3.4/status please")
+    assert host_is_on_task("1.2.3.4", "x", "http://1.2.3.4:8080/")
+    assert host_is_on_task("1.2.3.4", "x", allow_domains=("1.2.3.4",))
+    assert not host_is_on_task("1.2.3.4", "x", "http://5.1.2.3.4/")
+
+
+def test_shared_suffix_in_the_task_does_not_make_every_site_under_it_on_task() -> None:
+    from operon.agent.policy.trust_gate import host_is_on_task
+
+    for suffix in ("github.io", "gov.uk", "appspot.com", "co.uk", "amazonaws.com"):
+        assert not host_is_on_task("evil." + suffix, f"open a page on {suffix}")
+    assert host_is_on_task("me.github.io", "open me.github.io")
+    assert host_is_on_task("api.me.github.io", "open me.github.io")
+    assert host_is_on_task("www.bbc.co.uk", "read bbc.co.uk")
+
+
+def test_page_host_parent_rule_ignores_shared_suffixes() -> None:
+    from operon.agent.policy.trust_gate import host_is_on_task
+
+    assert not host_is_on_task("github.io", "x", "https://x.github.io/")
+    assert not host_is_on_task("evil.github.io", "x", "https://github.io/")
+    assert host_is_on_task("x.github.io", "x", "https://x.github.io/")
+    assert host_is_on_task("api.x.github.io", "x", "https://x.github.io/")

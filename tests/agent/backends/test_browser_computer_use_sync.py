@@ -211,3 +211,34 @@ async def test_a_dialog_stopped_batch_reaches_the_gemini_backend_through_the_pol
 
     assert backend.has_held_actions("run-1")  # held: the person's answer replays from the stopped call
     assert backend.drop_held_calls_before("run-1", 1, 2) is True
+
+
+async def test_a_failed_turn_after_a_declined_dialog_still_reports_the_decline_on_the_retry(tmp_path: Path) -> None:
+    """KAN-173 rolls a failed turn back; the dialog decline (and the count of actions that ran) must survive it."""
+    import pytest
+
+    from operon.agent.backends.base import BackendCompatibilityError
+    from operon.agent.loop import AgentLoop
+
+    class FlakyClient(ScriptedClient):
+        fail_next = False
+
+        async def generate_turn(self, *, contents: list[dict]) -> dict:
+            if self.fail_next:
+                self.fail_next = False
+                raise BackendCompatibilityError("HTTP 503")
+            return await super().generate_turn(contents=contents)
+
+    client = FlakyClient([_two_click_reply(), _click_reply(700)])
+    backend = _backend(client)
+    await _step(backend, _frame(tmp_path, "a.png"), _state())
+    backend.note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
+    backend.discard_held_actions("run-1", "Not executed: the person declined" + AgentLoop._ran_before_text(1))
+
+    client.fail_next = True
+    with pytest.raises(BackendCompatibilityError):
+        await backend.perceive(_frame(tmp_path, "b.png"), _state())
+    await _step(backend, _frame(tmp_path, "c.png"), _state())  # the retry
+
+    error = _last_answer(client)["parts"][0]["function_response"]["response"]["error"]
+    assert "declined" in error and "first 1 action(s) of the turn DID run" in error

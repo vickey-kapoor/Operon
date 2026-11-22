@@ -377,3 +377,47 @@ async def test_the_launch_tools_follow_the_desktop_platform(monkeypatch) -> None
     assert launch_app_tool()["input_schema"]["properties"]["app"]["enum"] == linux
     assert _claude_prompt_name("desktop") == "desktop_claude_computer_use_prompt_linux.txt"
     assert _claude_prompt_name("browser") == "browser_claude_computer_use_prompt.txt"
+
+
+@pytest.mark.parametrize("bucket", ["run-1", ""])
+async def test_a_transport_error_keeps_the_queued_hint_for_the_next_turn(frame, bucket: str) -> None:
+    client = ScriptedResponses([
+        sample("openai_computer_call"),
+        ModelTransportError("HTTP 503"),
+        _response("r3", _message("Done.")),
+        _response("r4", _message("Done.")),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.add_advisory_hints(["use the left menu"], run_id=bucket)
+
+    with pytest.raises(BackendCompatibilityError, match="HTTP 503"):
+        await backend.perceive(frame("s2", size=(1920, 1080)), state((ActionType.CLICK, True)))
+    assert backend._hints[bucket] == [("use the left menu", "")]
+
+    await _step(backend, frame, state((ActionType.CLICK, True)), "s3")
+    await _step(backend, frame, state((ActionType.CLICK, True), (ActionType.WAIT, True)), "s4")
+    assert json.dumps(client.requests[2]["input_items"]).count("use the left menu") == 1
+    assert "use the left menu" not in json.dumps(client.requests[3]["input_items"])
+    assert not backend._hints.get(bucket)
+
+
+async def test_a_failed_request_after_a_correction_still_reports_not_executed(frame) -> None:
+    checks = [{"id": "sc_1", "code": "malicious_instructions", "message": "Looks like an instruction."}]
+    client = ScriptedResponses([
+        _response("r1", _computer("c1", {"type": "click", "x": 10, "y": 10}, checks=checks)),
+        ModelTransportError("HTTP 503"),
+        _response("r3", _message("Done.")),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.add_advisory_hints(["[USER OVERRIDE HINT] use the other button"], source="user_override", run_id="run-1")
+    with pytest.raises(BackendCompatibilityError):
+        await backend.perceive(frame("s2", size=(1920, 1080)), state((ActionType.WAIT, True)))
+
+    await _step(backend, frame, state((ActionType.WAIT, True)), "s3")
+
+    items = client.requests[2]["input_items"]
+    assert "Not executed" in json.dumps(items)
+    assert not items[0].get("acknowledged_safety_checks")
+    assert "use the other button" in json.dumps(items)

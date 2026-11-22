@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from operon.clients.retry import RetrySchedule, google_retry_delay, pause
 from operon.core.settings import gemini_safety_settings, get_settings
 from operon.models.usage import ModelUsage, estimate_usage_cost
 
@@ -60,12 +61,13 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         api_key: str | None = None,
         api_base_url: str | None = None,
         timeout_seconds: float = 60.0,
-        max_retries: int = 2,
-        retry_backoff_seconds: float = 0.5,
+        max_retries: int = 3,
+        retry_backoff_seconds: float = 1.0,
         environment: str = "ENVIRONMENT_BROWSER",
         excluded_predefined_functions: list[str] | None = None,
         thinking_level: str | None = None,
         function_declarations: list[dict[str, Any]] | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.model = model
         self.answers: list[dict[str, Any]] = []
@@ -80,6 +82,7 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         self.excluded_predefined_functions = excluded_predefined_functions or []
         # Custom tools sent next to the computer_use tool, e.g. launch_app on the desktop.
         self.function_declarations = list(function_declarations or [])
+        self._transport = transport
         self._client: httpx.AsyncClient | None = None
         self._last_usage: ModelUsage | None = None
 
@@ -89,6 +92,7 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
                 timeout=httpx.Timeout(self.timeout_seconds, connect=10.0),
                 limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
                 http2=True,
+                transport=self._transport,
             )
         return self._client
 
@@ -197,11 +201,11 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
         # Header rather than ?key= so the key never lands in a logged URL.
         url = f"{self.api_base_url}/{self.model}:generateContent"
         client = await self._get_client()
-        attempts = self.max_retries + 1
+        schedule = RetrySchedule(max_retries=self.max_retries, backoff_seconds=self.retry_backoff_seconds)
         payload_bytes = json.dumps(payload).encode("utf-8")
         last_error: GeminiComputerUseError | None = None
 
-        for attempt in range(1, attempts + 1):
+        while True:
             try:
                 # Hard timeout: a slow-drip response never trips httpx's per-read timeout.
                 response = await asyncio.wait_for(
@@ -218,13 +222,21 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
                     last_error = GeminiComputerUseError(
                         f"Gemini Computer Use HTTP error {response.status_code}: {detail}"
                     )
-                    if not retryable or attempt >= attempts:
+                    delay = (
+                        schedule.next_delay(
+                            status=response.status_code,
+                            retry_after=response.headers.get("retry-after"),
+                            server_delay=google_retry_delay(detail),
+                        )
+                        if retryable
+                        else None
+                    )
+                    if delay is None:
                         raise last_error
                     logger.warning(
-                        "Retrying Gemini Computer Use request after http %s (%s/%s).",
+                        "Retrying Gemini Computer Use request after http %s in %.1fs.",
                         response.status_code,
-                        attempt,
-                        attempts,
+                        delay,
                     )
                 else:
                     try:
@@ -237,29 +249,19 @@ class GeminiComputerUseHttpClient(GeminiComputerUseClient):
                 last_error = GeminiComputerUseError(
                     f"Gemini Computer Use request timed out after {self.timeout_seconds} seconds."
                 )
-                if attempt >= attempts:
+                delay = schedule.next_delay()
+                if delay is None:
                     raise last_error from exc
-                logger.warning(
-                    "Retrying Gemini Computer Use request after timeout (%s/%s).",
-                    attempt,
-                    attempts,
-                )
+                logger.warning("Retrying Gemini Computer Use request after timeout in %.1fs.", delay)
             except httpx.TransportError as exc:
                 # Connect failures and dropped keep-alive connections (an HTTP/2
                 # reset surfaces as RemoteProtocolError or ReadError) are retryable.
                 last_error = GeminiComputerUseError(f"Gemini Computer Use connection failed: {exc!r}")
-                if attempt >= attempts:
+                delay = schedule.next_delay()
+                if delay is None:
                     raise last_error from exc
-                logger.warning(
-                    "Retrying Gemini Computer Use request after connection error (%s/%s).",
-                    attempt,
-                    attempts,
-                )
-            await asyncio.sleep(self.retry_backoff_seconds * attempt)
-
-        if last_error is not None:
-            raise last_error
-        raise GeminiComputerUseError("Gemini Computer Use request failed before receiving a response.")
+                logger.warning("Retrying Gemini Computer Use request after connection error in %.1fs.", delay)
+            await pause(delay)
 
     @staticmethod
     def _normalize_response(payload: dict[str, Any]) -> dict[str, Any]:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import httpx
@@ -11,6 +10,7 @@ from operon.agent.backends.model_adapter.registry import ModelProfile
 from operon.agent.backends.model_adapter.transports.openai_compat import (
     ModelTransportError,
 )
+from operon.clients.retry import RetrySchedule, pause
 from operon.core.settings import get_settings
 from operon.models.usage import ModelUsage
 
@@ -64,20 +64,23 @@ class OpenAIResponsesClient:
                 timeout=httpx.Timeout(self.timeout_seconds, connect=10.0), transport=self._transport
             )
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        attempt = 0
+        schedule = RetrySchedule(max_retries=self.max_retries, backoff_seconds=self.retry_backoff_seconds)
         while True:
             try:
                 response = await self._client.post(self.url, json=payload, headers=headers)
             except httpx.HTTPError as exc:
-                if attempt < self.max_retries:
-                    attempt += 1
-                    await asyncio.sleep(self.retry_backoff_seconds * attempt)
+                delay = schedule.next_delay()
+                if delay is not None:
+                    await pause(delay)
                     continue
                 raise ModelTransportError(f"OpenAI request failed: {exc}") from exc
-            if response.status_code in _RETRY_STATUSES and attempt < self.max_retries:
-                attempt += 1
-                await asyncio.sleep(self.retry_backoff_seconds * attempt)
-                continue
+            if response.status_code in _RETRY_STATUSES:
+                delay = schedule.next_delay(
+                    status=response.status_code, retry_after=response.headers.get("retry-after")
+                )
+                if delay is not None:
+                    await pause(delay)
+                    continue
             if response.status_code >= 400:
                 raise ModelTransportError(f"OpenAI HTTP {response.status_code}: {response.text[:300]}")
             break

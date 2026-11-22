@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from operon.agent.actions.translation import build_policy_decision
-from operon.agent.backends.base import AgentBackend, BackendCompatibilityError
+from operon.agent.backends.base import (
+    AgentBackend,
+    BackendCompatibilityError,
+    restore_hints,
+    snapshot_hints,
+)
 from operon.agent.backends.model_adapter.actions import (
     SCROLL_STEP_PX,
     CoordinateMapper,
@@ -95,6 +100,7 @@ class ModelAdapterBackend(AgentBackend):
         self._settle_last_turn(run, state)
         image = prepare_image(Path(screenshot.artifact_path), self.profile.image)
         ctx = self._context(state, image, screenshot)
+        saved_hints = snapshot_hints(self._hints, state.run_id)
         note = await self._note(state.run_id)
         messages = self._messages(run, ctx, image, note)
         tools = self.format.tools(ctx)
@@ -103,6 +109,7 @@ class ModelAdapterBackend(AgentBackend):
         try:
             response = await self.client.chat(messages, tools=tools)
         except ModelTransportError as exc:
+            restore_hints(self._hints, saved_hints)
             raise BackendCompatibilityError(str(exc)) from exc
         bg_writer.enqueue(raw_path, json.dumps(response, indent=2))
         message = response["choices"][0]["message"]

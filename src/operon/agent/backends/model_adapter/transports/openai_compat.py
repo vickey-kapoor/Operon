@@ -3,13 +3,13 @@ hosted providers)."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
 import httpx
 
 from operon.agent.backends.model_adapter.registry import ModelProfile
+from operon.clients.retry import RetrySchedule, pause
 from operon.models.usage import ModelUsage
 
 logger = logging.getLogger(__name__)
@@ -67,20 +67,23 @@ class OpenAICompatClient:
             headers["Authorization"] = f"Bearer {api_key}"
         url = f"{self.profile.resolved_base_url()}/chat/completions"
         client = await self._get_client()
-        attempt = 0
+        schedule = RetrySchedule(max_retries=self.max_retries, backoff_seconds=self.retry_backoff_seconds)
         while True:
             try:
                 response = await client.post(url, json=payload, headers=headers)
             except httpx.HTTPError as exc:
-                if attempt < self.max_retries:
-                    attempt += 1
-                    await asyncio.sleep(self.retry_backoff_seconds * attempt)
+                delay = schedule.next_delay()
+                if delay is not None:
+                    await pause(delay)
                     continue
                 raise ModelTransportError(f"{self.profile.name}: request failed: {exc}") from exc
-            if response.status_code in _RETRY_STATUSES and attempt < self.max_retries:
-                attempt += 1
-                await asyncio.sleep(self.retry_backoff_seconds * attempt)
-                continue
+            if response.status_code in _RETRY_STATUSES:
+                delay = schedule.next_delay(
+                    status=response.status_code, retry_after=response.headers.get("retry-after")
+                )
+                if delay is not None:
+                    await pause(delay)
+                    continue
             if response.status_code >= 400:
                 raise ModelTransportError(
                     f"{self.profile.name}: HTTP {response.status_code}: {response.text[:300]}"

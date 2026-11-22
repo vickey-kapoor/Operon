@@ -619,3 +619,24 @@ def test_the_zoom_flag_turns_the_zoom_member_on(monkeypatch: pytest.MonkeyPatch)
     toolset = client.build_payload(system="s", messages=[])["tools"][0]
     assert client.zoom is True
     assert "zoom" not in toolset["configs"] and toolset["configs"]["hold_key"] == {"enabled": False}
+
+
+@pytest.mark.parametrize("bucket", ["run-1", ""])
+async def test_a_failed_request_keeps_the_queued_hint_for_the_next_turn(tmp_path: Path, bucket: str) -> None:
+    client = ScriptedClient(
+        [
+            AnthropicClientError("Anthropic HTTP error 529: overloaded"),
+            _reply(_call("screenshot", "t1")),
+            _reply(_call("screenshot", "t2")),
+        ]
+    )
+    backend = _backend(client)
+    backend.add_advisory_hints(["try the left menu"], run_id=bucket)
+
+    with pytest.raises(BackendCompatibilityError):
+        await backend.perceive(_frame(tmp_path, "a.png"), _state())
+    assert backend._advisory_hints[bucket] == [("try the left menu", "")]
+
+    await backend.perceive(_frame(tmp_path, "b.png"), _state())
+    assert not backend._advisory_hints.get(bucket)
+    assert str(client.requests[1]).count("try the left menu") == 1

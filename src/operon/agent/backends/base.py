@@ -21,6 +21,18 @@ class ModelBlockedError(BackendCompatibilityError):
         self.block_reason = block_reason
 
 
+def snapshot_hints(hints: dict[str, list[tuple[str, str]]], run_id: str) -> dict[str, list[tuple[str, str]] | None]:
+    """What is queued for this run and in the shared ``""`` bucket, before a step pops it."""
+    return {key: hints.get(key) for key in (run_id, "")}
+
+
+def restore_hints(hints: dict[str, list[tuple[str, str]]], saved: dict[str, list[tuple[str, str]] | None]) -> None:
+    """Put back hints a failed model call popped, in the bucket they came from, ahead of newer ones."""
+    for key, before in saved.items():
+        if before and hints.get(key) is not before:
+            hints.setdefault(key, [])[:0] = before
+
+
 class AgentBackend(ABC):
     @abstractmethod
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:

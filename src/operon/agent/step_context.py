@@ -63,9 +63,6 @@ class StepContext:
     # A confirm/prompt/beforeunload dialog the executor cancelled this step: (type, message, batch child index).
     # The loop pauses for the person at the end of the step (KAN-172).
     cancelled_dialog: tuple[str, str, int | None] | None = None
-    # The dialogs armed for this step (the person approved them for the replay): kept if the replay
-    # raises a further dialog, so the earlier approvals survive the next pause.
-    replayed_dialogs: tuple[tuple[str, str], ...] = ()
 
     # Recover and finish.
     recovery: RecoveryDecision = field(init=False)

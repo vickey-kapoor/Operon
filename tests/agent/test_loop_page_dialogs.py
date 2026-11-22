@@ -41,8 +41,7 @@ class DialogExecutor:
     def __init__(self) -> None:
         self.executed: list[AgentAction] = []
         self.accept_all = False
-        self.armed: list[tuple[str, str]] | None = None
-        self.accepted_messages: list[str] = []
+        self.armed: tuple[str, str] | None = None
         self.pending: tuple[str, str, int | None] | None = None
         self.accepted = 0
         self.driving_during_execute: bool | None = None
@@ -58,29 +57,21 @@ class DialogExecutor:
         self.driving_during_execute = self.driving
         if self.fail_on is not None and action == self.fail_on:
             raise RuntimeError("executor blew up")
-        raised = self.dialog_for(action)
-        if isinstance(raised, tuple):
-            raised = [raised]  # one dialog; a list is several in turn (the page stops at the first cancelled one)
-        for kind, message, child in raised or []:
-            if self.accept_all or (self.armed is not None and (kind, message) in self.armed):
-                if not self.accept_all:
-                    self.armed.remove((kind, message))
-                    self.armed = self.armed or None
+        dialog = self.dialog_for(action)
+        if dialog is not None:
+            kind, message, child = dialog
+            if self.accept_all or self.armed == (kind, message):
+                self.armed = None
                 self.accepted += 1
-                self.accepted_messages.append(message)
             else:
                 self.pending = (kind, message, child)
-                break
         return ExecutedAction(action=action, success=True, detail="ok")
 
     def set_dialog_policy(self, run_id: str, *, accept: bool) -> None:
         self.accept_all = accept
 
     def arm_accept_next_dialog(self, run_id: str, kind: str, message: str) -> None:
-        self.armed = [(kind, message)]
-
-    def arm_accept_dialogs(self, run_id: str, dialogs: list[tuple[str, str]]) -> None:
-        self.armed = list(dialogs)
+        self.armed = (kind, message)
 
     def disarm_accept_next_dialog(self, run_id: str) -> None:
         self.armed = None
@@ -184,7 +175,7 @@ async def test_approving_arms_accept_and_reruns_the_held_action_once(monkeypatch
 
     await loop.resume_run("run-1")
     assert executor.armed is None  # armed only right before the replay runs
-    assert loop._dialog_approved == {"run-1": [("confirm", ASKED)]}
+    assert loop._dialog_approved == {"run-1": ("confirm", ASKED)}
     second = await loop.step_run(StepRequest(run_id="run-1"))
 
     assert executor.executed == [CLICK, CLICK]
@@ -471,78 +462,17 @@ async def test_a_resume_clears_the_driving_flag(monkeypatch: pytest.MonkeyPatch)
     assert executor.driving is False
 
 
-ASKED_B = "Really delete everything?"
-
-
-def _two_confirms(executor: DialogExecutor) -> None:
-    """``if (confirm(A)) { if (confirm(B)) save(); }``: B is only asked once A was accepted."""
-    executor.dialog_for = lambda action: (
-        [("confirm", ASKED, None), ("confirm", ASKED_B, None)] if action.action_type is ActionType.CLICK else None
-    )
-
-
-@pytest.mark.parametrize("held", [True, False])  # False: the model re-emits the same action itself
-async def test_an_action_that_raises_two_confirms_is_approved_one_after_the_other(
-    monkeypatch: pytest.MonkeyPatch, held: bool
-) -> None:
-    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK, CLICK, CLICK], held=held)
-    _two_confirms(executor)
-
-    first = await loop.step_run(StepRequest(run_id="run-1"))
-    assert first.status is RunStatus.WAITING_FOR_USER and ASKED in (state.pause_reason or "")
+async def test_an_approval_is_armed_for_one_replay_only_not_for_a_different_later_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK, OTHER_CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))  # A asked
     await loop.resume_run("run-1")  # approve A
-    second = await loop.step_run(StepRequest(run_id="run-1"))
-    assert second.status is RunStatus.WAITING_FOR_USER and ASKED_B in (state.pause_reason or "")  # A accepted, B asked
-    assert executor.accepted_messages == [ASKED]
-    await loop.resume_run("run-1")  # approve B
-    assert loop._dialog_approved == {"run-1": [("confirm", ASKED), ("confirm", ASKED_B)]}
+    replay = await loop.step_run(StepRequest(run_id="run-1"))  # the replay: A accepted, once
+    assert replay.status is RunStatus.RUNNING and executor.accepted == 1
 
-    third = await loop.step_run(StepRequest(run_id="run-1"))
+    unrelated = await loop.step_run(StepRequest(run_id="run-1"))  # a different action raises A's text
 
-    assert third.status is RunStatus.RUNNING  # no third pause: the third execution accepts both
-    assert executor.accepted_messages == [ASKED, ASKED, ASKED_B]
-    assert loop._dialog_approved == {} and executor.armed is None  # nothing is left over
-    fourth = await loop.step_run(StepRequest(run_id="run-1"))  # the same action again: asked from scratch
-    assert fourth.status is RunStatus.WAITING_FOR_USER and ASKED in (state.pause_reason or "")
-    assert executor.accepted_messages == [ASKED, ASKED, ASKED_B]
-
-
-async def test_declining_the_second_confirm_clears_every_approval(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK, CLICK])
-    _two_confirms(executor)
-    await loop.step_run(StepRequest(run_id="run-1"))
-    await loop.resume_run("run-1")  # approve A
-    await loop.step_run(StepRequest(run_id="run-1"))  # B is cancelled and asked
-
-    await loop.resume_run("run-1", approve_gated_action=False)  # decline B
-
-    assert loop._dialog_approved == {} and loop._dialog_pauses == {} and executor.armed is None
-    third = await loop.step_run(StepRequest(run_id="run-1"))
-    assert third.status is RunStatus.WAITING_FOR_USER and ASKED in (state.pause_reason or "")  # A asked afresh
-    assert executor.accepted_messages == [ASKED]  # only the one accepted before the decline
-
-
-async def test_approvals_for_one_action_are_not_armed_for_an_unrelated_later_one(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Nothing is held, so the model picks each next action itself: after the person approved A for
-    # CLICK, the model moves on to OTHER_CLICK (asks "Leave this page?"), then to THIRD, which raises
-    # A's text. A was approved for CLICK only: THIRD must be asked about, not accepted.
-    other_click = AgentAction(action_type=ActionType.CLICK, x=500, y=600)
-    third_click = AgentAction(action_type=ActionType.CLICK, x=900, y=900)
-    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, other_click, third_click], held=False)
-    raised = [(CLICK, ("confirm", ASKED, None)), (other_click, ("confirm", "Leave this page?", None)),
-              (third_click, ("confirm", ASKED, None))]
-    executor.dialog_for = lambda action: next(dialog for candidate, dialog in raised if candidate == action)
-    await loop.step_run(StepRequest(run_id="run-1"))
-    await loop.resume_run("run-1")  # approve A (for CLICK)
-    second = await loop.step_run(StepRequest(run_id="run-1"))  # the model chose OTHER_CLICK instead
-    assert second.status is RunStatus.WAITING_FOR_USER and loop._dialog_pauses["run-1"].prior_approved == ()
-    await loop.resume_run("run-1")  # approve "Leave this page?"
-    assert loop._dialog_approved == {"run-1": [("confirm", "Leave this page?")]}
-
-    third = await loop.step_run(StepRequest(run_id="run-1"))
-
-    assert third.status is RunStatus.WAITING_FOR_USER and ASKED in (state.pause_reason or "")
-    assert executor.accepted_messages == []
+    assert unrelated.status is RunStatus.WAITING_FOR_USER and ASKED in (state.pause_reason or "")
+    assert executor.accepted == 1  # cancelled and asked, not accepted
 
 
 async def test_the_pending_dialog_pause_reports_as_an_approval(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -479,19 +479,3 @@ async def test_a_blocked_batch_child_does_not_leak_the_child_index(executor, che
         await executor._execute_batch(batch)  # a later batch: its first child raises a dialog
 
     assert executor.pop_pending_dialog("r1") == ("confirm", "Sure?", 0)  # index 0, not a stale one
-
-
-@pytest.mark.asyncio
-async def test_each_armed_dialog_is_accepted_once_and_others_are_cancelled(executor):
-    executor.arm_accept_dialogs("r1", [("confirm", "A?"), ("confirm", "B?")])
-
-    a = await _raise(executor, "r1", "confirm", "A?")
-    b = await _raise(executor, "r1", "confirm", "B?")
-    a_again = await _raise(executor, "r1", "confirm", "A?")
-    other = await _raise(executor, "r1", "confirm", "C?")
-
-    a.accept.assert_awaited_once()
-    b.accept.assert_awaited_once()
-    a_again.dismiss.assert_awaited_once()  # each entry is used once
-    other.dismiss.assert_awaited_once()
-    assert "r1" not in executor._dialog_accept_next  # spent entries leave nothing behind

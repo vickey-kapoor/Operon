@@ -164,10 +164,6 @@ class _DialogPause(NamedTuple):
     held: bool  # the backend holds the calls that raised it
     child_index: int | None  # top-level batch child that raised it
     action_count: int  # actions in the turn (1 for a single action)
-    # Dialogs the person already approved for this same pending action (an action that raises
-    # several in turn); they stay accepted together with the new one on the replay.
-    prior_approved: tuple[tuple[str, str], ...] = ()
-    action: AgentAction | None = None  # the action that raised it
 
 
 class AgentLoop:
@@ -245,10 +241,7 @@ class AgentLoop:
         self._dialog_pauses: dict[str, _DialogPause] = {}
         # The (type, message) of a dialog the person approved, until its replay has run
         # (kept across a gate pause on the replay, which re-arms the executor on approval).
-        self._dialog_approved: dict[str, list[tuple[str, str]]] = {}
-        # run_id -> the action the approvals belong to, when the model has to repeat
-        # it (the backend does not hold the calls). Absent: the backend replays its own held calls.
-        self._dialog_bind: dict[str, AgentAction] = {}
+        self._dialog_approved: dict[str, tuple[str, str]] = {}
         # KAN-158: errors the loop recovered from, per run and site, not yet saved
         # into the run's state (``AgentState.recovered_errors``). Drained by
         # ``_flush_recovered_errors`` when a step, start or resume ends.
@@ -560,13 +553,12 @@ class AgentLoop:
             await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
         dialog_pause = self._dialog_pauses.pop(run_id, None)
         approved_dialog = self._dialog_approved.pop(run_id, None)
-        approved_bind = self._dialog_bind.pop(run_id, None)
         self._disarm_dialog_accept(run_id)  # nothing stays armed across a resume
         if dialog_pause is not None:
             self._answer_dialog_pause(run_id, dialog_pause, approved=approve_gated_action)
         elif approved_dialog is not None and approve_gated_action and run_id in self._pending_gate_approvals:
             # The replay of an approved dialog was gate-paused and the gate is approved now.
-            self._approve_dialog(run_id, *approved_dialog, bind=approved_bind)
+            self._approve_dialog(run_id, approved_dialog)
         elif not approve_gated_action:
             # A correction is not an approval: a backend holding the calls it paused
             # on (Gemini's require_confirmation) must not run them on the next step.
@@ -614,18 +606,11 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
-    def _approve_dialog(self, run_id: str, *dialogs: tuple[str, str], bind: AgentAction | None = None) -> None:
-        """Remember the dialogs the person approved for the pending action (the earlier ones
-        and the newest). The executor is armed for them only right before the replay runs
-        (``_set_dialog_policy``), never earlier."""
-        if callable(getattr(self.executor, "arm_accept_dialogs", None)) or callable(
-            getattr(self.executor, "arm_accept_next_dialog", None)
-        ):
-            self._dialog_approved[run_id] = list(dialogs)
-            if bind is not None:
-                self._dialog_bind[run_id] = bind
-            else:
-                self._dialog_bind.pop(run_id, None)
+    def _approve_dialog(self, run_id: str, dialog: tuple[str, str]) -> None:
+        """Remember the dialog the person approved. The executor is armed for it only right
+        before the replay runs (``_set_dialog_policy``), never earlier."""
+        if callable(getattr(self.executor, "arm_accept_next_dialog", None)):
+            self._dialog_approved[run_id] = dialog
 
     def _answer_dialog_pause(self, run_id: str, pause: _DialogPause, *, approved: bool) -> None:
         """The person's answer to a page dialog the executor cancelled (KAN-172).
@@ -635,9 +620,10 @@ class AgentLoop:
         calls it holds from the one that raised the dialog on (the same path a gate approval
         takes); without held calls the model is told to repeat the action. No: the held
         calls are dropped and the model is told the person declined."""
-        kind, message, held, child_index, action_count, prior_approved, raised_by = pause
+        kind, message, held, child_index, action_count = pause
         add_hints = getattr(self.perception_service, "add_advisory_hints", None)
         if approved:
+            self._approve_dialog(run_id, (kind, message))
             if held and child_index is not None:
                 # Calls before the dialog-raising one already ran: replay from it on.
                 if not self._drop_ran_held_calls(run_id, child_index, action_count):
@@ -647,9 +633,6 @@ class AgentLoop:
                         "Not executed again: part of the turn already ran, so the model repeats the action"
                         + self._ran_before_text(child_index),
                     )
-            # The earlier approvals of this pending action stay with it. When the model has to repeat
-            # the action (nothing held), they carry on only to a step with the same action.
-            self._approve_dialog(run_id, *prior_approved, (kind, message), bind=None if held else raised_by)
             if not held and callable(add_hints):
                 add_hints(
                     [f"The person approved the page's {kind} dialog: {message!r}. "
@@ -1022,11 +1005,7 @@ class AgentLoop:
             await self._execute_attempt(ctx)
         finally:
             # A person's yes covers the one action it was given for, whatever happened to it.
-            # (A replay that raises a further dialog carries them into that pause, below.)
-            replayed = tuple(self._dialog_approved.pop(ctx.run_id, ()))
-            bound = self._dialog_bind.pop(ctx.run_id, None)
-            if bound is None or self._same_pending_action(bound, ctx.decision.action):
-                ctx.replayed_dialogs = replayed  # the same pending action; else an unrelated one: nothing carries
+            self._dialog_approved.pop(ctx.run_id, None)
             self._disarm_dialog_accept(ctx.run_id)
         self._absorb_dialog_message(ctx)
         self._note_cancelled_dialog(ctx)
@@ -1218,13 +1197,9 @@ class AgentLoop:
         )
         # The person approved a dialog: accept that one (type and message), once, in this step only.
         approved = self._dialog_approved.get(ctx.run_id)
-        if approved:
-            arm_many = getattr(self.executor, "arm_accept_dialogs", None)
-            arm = getattr(self.executor, "arm_accept_next_dialog", None)
-            if callable(arm_many):
-                arm_many(ctx.run_id, list(approved))
-            elif callable(arm):
-                arm(ctx.run_id, approved[-1][0], approved[-1][1])
+        arm = getattr(self.executor, "arm_accept_next_dialog", None)
+        if approved is not None and callable(arm):
+            arm(ctx.run_id, approved[0], approved[1])
 
     def _drop_stale_dialog(self, ctx: StepContext) -> None:
         """Forget a dialog that fired after the previous action returned: it is not this action's."""
@@ -1290,13 +1265,7 @@ class AgentLoop:
         )
         children = ctx.decision.action.actions if ctx.decision.action.action_type is ActionType.BATCH else None
         self._dialog_pauses[ctx.run_id] = _DialogPause(
-            kind,
-            message,
-            self._has_held_actions(ctx.run_id),
-            child_index,
-            len(children) if children else 1,
-            ctx.replayed_dialogs[-8:],
-            ctx.decision.action,
+            kind, message, self._has_held_actions(ctx.run_id), child_index, len(children) if children else 1
         )
         pause = ctx.decision.model_copy(
             update={"action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)}
@@ -1802,16 +1771,6 @@ class AgentLoop:
             return frozenset()
         return prior[1]
 
-    def _same_pending_action(self, approved: AgentAction, current: AgentAction) -> bool:
-        """Whether ``current`` is the action the person approved a dialog for, repeated: the gate
-        fingerprint (type, text, URL, target) plus, for a click-like action, the same spot
-        (coordinates shift a little between looks at the screen, not by a whole control)."""
-        if self._gate_fingerprint(approved) != self._gate_fingerprint(current):
-            return False
-        if approved.action_type is ActionType.BATCH or approved.x is None or current.x is None:
-            return True
-        return abs(approved.x - current.x) <= 30 and abs((approved.y or 0) - (current.y or 0)) <= 30
-
     def _gate_fingerprint(self, action: AgentAction) -> str:
         """What a human approves at a gate pause: the action's type plus the text, URL
         and target name the trust gate judges — not coordinates, which shift between
@@ -2301,7 +2260,6 @@ class AgentLoop:
         self._secret_site_approved.pop(run_id, None)
         self._dialog_pauses.pop(run_id, None)
         self._dialog_approved.pop(run_id, None)
-        self._dialog_bind.pop(run_id, None)
         services = {id(s): s for s in (self.perception_service, self.policy_service)}.values()
         for service in services:
             for target in (service, getattr(service, "delegate", None)):

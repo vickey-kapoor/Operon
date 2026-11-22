@@ -22,7 +22,7 @@ def isolated(tmp_path, monkeypatch):
     config.mkdir()
     monkeypatch.chdir(work)
     monkeypatch.setenv("OPERON_CONFIG_DIR", str(config))
-    monkeypatch.delenv("OPERON_KEYRING", raising=False)
+    monkeypatch.setenv("OPERON_KEYRING", "on")
     for name in keystore.KNOWN_KEYS:
         monkeypatch.delenv(name, raising=False)
     from operon.core import paths
@@ -110,3 +110,42 @@ def test_import_copies_known_names_only_and_leaves_env_alone(memory_keyring, iso
     assert str(env_file) in out.out
     assert SECRET not in out.out + out.err
     assert keyring.get_keyring() is memory_keyring
+
+
+def test_unknown_name_and_extra_args_are_never_echoed(memory_keyring, monkeypatch, capsys) -> None:
+    _answers(monkeypatch)
+    assert cli.main(["keys", "set", SECRET]) == 2
+    assert cli.main(["keys", "set", "GEMINI_API_KEY", SECRET]) == 2
+    assert cli.main(["keys", "rm", SECRET]) == 2
+    assert cli.main(["keys", "rm", "GEMINI_API_KEY", SECRET]) == 2
+    out = capsys.readouterr()
+    assert SECRET not in out.out + out.err
+    assert "never pass a key value on the command line" in out.err
+    assert memory_keyring.data == {}
+
+
+@pytest.mark.parametrize("command", [["set", "GEMINI_API_KEY"], ["rm", "GEMINI_API_KEY"], ["import"]])
+def test_store_off_on_linux_by_default(memory_keyring, isolated, monkeypatch, capsys, command) -> None:
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("OPERON_KEYRING")
+    (isolated / ".env").write_text(f"GEMINI_API_KEY={SECRET}\n")
+    _answers(monkeypatch)
+    assert cli.main(["keys", *command]) == 1
+    err = capsys.readouterr().err
+    assert "OPERON_KEYRING=on" in err
+    assert memory_keyring.data == {}
+
+
+def test_rm_without_a_store_says_so(capsys) -> None:
+    assert cli.main(["keys", "rm", "GEMINI_API_KEY"]) == 1
+    assert "no credential store available here" in capsys.readouterr().err
+
+
+def test_list_does_not_read_the_store_when_it_is_off(memory_keyring, monkeypatch, capsys) -> None:
+    memory_keyring.set_password("operon", "GEMINI_API_KEY", SECRET)
+    monkeypatch.setenv("OPERON_KEYRING", "off")
+    monkeypatch.setattr(keystore, "get", lambda name: pytest.fail("store read while off"))
+    assert cli.main(["keys", "list"]) == 0
+    assert "GEMINI_API_KEY: not set" in capsys.readouterr().out

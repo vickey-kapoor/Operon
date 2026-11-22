@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from dotenv import find_dotenv, load_dotenv
@@ -81,7 +80,9 @@ async def _lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    real = dict(os.environ)
+    from operon.core.paths import real_environment
+
+    real = real_environment()  # the first snapshot of this process when `operon serve` already loaded
     load_dotenv(find_dotenv(usecwd=True), override=True)
     from operon.core.paths import load_stored_keys, load_user_env
 

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import os
 import sys
 from pathlib import Path
 
@@ -16,19 +15,32 @@ from operon.core import keystore
 _NO_STORE = "no credential store available here; keep using .env or environment variables"
 
 
-def _check_name(name: str) -> bool:
+def _check_args(args: argparse.Namespace) -> bool:
+    """Refuse extra words and unknown names without echoing either: a key may have been pasted there."""
+    if getattr(args, "extra", None):
+        print("never pass a key value on the command line; the value is asked for, hidden", file=sys.stderr)
+        return False
     names = keystore.known_names()
-    if name in names:
+    if args.name in names:
         return True
-    print(f"{name!r} is not a model key Operon reads. Known names: {', '.join(names)}", file=sys.stderr)
+    print(f"unknown key name. Known names: {', '.join(names)}", file=sys.stderr)
     return False
 
 
-def _set(args: argparse.Namespace) -> int:
-    if not _check_name(args.name):
-        return 2
+def _store_ready() -> bool:
+    if not keystore.enabled():
+        print(f"{keystore.disabled_reason()}; keep using .env or environment variables", file=sys.stderr)
+        return False
     if not keystore.available():
         print(_NO_STORE, file=sys.stderr)
+        return False
+    return True
+
+
+def _set(args: argparse.Namespace) -> int:
+    if not _check_args(args):
+        return 2
+    if not _store_ready():
         return 1
     value = getpass.getpass(f"Value for {args.name} (hidden): ")
     if getpass.getpass("Again to confirm: ") != value:
@@ -57,14 +69,13 @@ def _file_values(path: str | Path | None) -> dict[str, str | None]:
 def _list(_args: argparse.Namespace) -> int:
     from dotenv import find_dotenv
 
-    from operon.core.paths import loaded_key_state, user_env_file
+    from operon.core.paths import loaded_key_state, real_environment, user_env_file
 
-    real, sources = loaded_key_state()
-    if not real and not sources:
-        real = dict(os.environ)  # the loader has not run in this process: the environment is what it is now
+    sources = loaded_key_state()[1]
+    real = real_environment()  # the loader's first snapshot, or the environment as it is now
     dotenv = _file_values(find_dotenv(usecwd=True))
     user_file = _file_values(user_env_file())
-    store = keystore.available()
+    store = keystore.enabled() and keystore.available()
     for name in keystore.known_names():
         if (real.get(name) or "").strip():
             source = "environment"
@@ -81,10 +92,12 @@ def _list(_args: argparse.Namespace) -> int:
 
 
 def _remove(args: argparse.Namespace) -> int:
-    if not _check_name(args.name):
+    if not _check_args(args):
         return 2
+    if not _store_ready():
+        return 1
     try:
-        removed = keystore.delete(args.name) if keystore.available() else False
+        removed = keystore.delete(args.name)
     except keystore.KeystoreError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -102,8 +115,7 @@ def _import(_args: argparse.Namespace) -> int:
     if not path:
         print("No .env in this folder or above; nothing to import.", file=sys.stderr)
         return 1
-    if not keystore.available():
-        print(_NO_STORE, file=sys.stderr)
+    if not _store_ready():
         return 1
     values = _file_values(path)
     copied: list[str] = []
@@ -132,9 +144,11 @@ def add_parser(sub) -> None:
     actions = parser.add_subparsers(dest="keys_command", required=True)
     set_parser = actions.add_parser("set", help="store a key (the value is asked for, hidden)")
     set_parser.add_argument("name")
+    set_parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
     set_parser.set_defaults(func=_set)
     actions.add_parser("list", help="show where each key comes from (never values)").set_defaults(func=_list)
     remove = actions.add_parser("rm", help="delete a stored key")
     remove.add_argument("name")
+    remove.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
     remove.set_defaults(func=_remove)
     actions.add_parser("import", help="copy the keys in this folder's .env into the credential store").set_defaults(func=_import)

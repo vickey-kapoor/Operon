@@ -213,7 +213,7 @@ _PLAIN_SWITCHES_OFF = [
     "trace",
 ]
 # Graduated: on by default on purpose. (`tools` is unset by default and resolves to on.)
-_GRADUATED_ON = [("trust_gate", True), ("zoom", "dense"), ("keyring", True)]
+_GRADUATED_ON = [("trust_gate", True), ("zoom", "dense")]
 _GRADUATED_RESOLVED = ["tools"]
 # Plain configuration: models, paths, hosts, keys, timeouts and sizes; no feature to turn on.
 _PLAIN_CONFIG = {
@@ -224,7 +224,7 @@ _PLAIN_CONFIG = {
     "anthropic_api_base_url", "openai_api_key", "openai_api_base_url", "desktop_backend", "desktop_model",
     "desktop_thinking", "browser_backend", "browser_model", "browser_thinking", "settle_max_s",
     "planner_model", "task_note_max_items", "trust_deny", "trust_confirm", "trust_allow_domains", "trust_category_list",
-    "permission_mode",
+    "permission_mode", "keyring",
     "allowed_file_roots", "zoom_min_side", "zoom_factor", "environment", "desktop_platform",
     "sandbox_memory_mb", "sandbox_start_timeout", "container_image", "container_start_timeout",
     "container_ca_bundle", "osworld_url", "osworld_post_action_wait_s", "browser_width", "browser_height",
@@ -270,12 +270,17 @@ def test_every_setting_is_classified() -> None:
     )
 
 
-def test_keyring_flag_parses_and_defaults_on() -> None:
-    assert Settings.from_env({}).keyring is True
-    assert Settings.from_env({"OPERON_KEYRING": ""}).keyring is True
-    assert Settings.from_env({"OPERON_KEYRING": "on"}).keyring is True
+def test_keyring_setting_is_auto_on_or_off() -> None:
+    assert Settings.from_env({}).keyring == "auto"
+    assert Settings.from_env({"OPERON_KEYRING": " "}).keyring == "auto"
+    assert Settings.from_env({"OPERON_KEYRING": "auto"}).keyring == "auto"
+    for on in ("on", "ON", "true", "1", "yes"):
+        assert Settings.from_env({"OPERON_KEYRING": on}).keyring == "on"
     for off in ("off", "OFF", "false", "0", "no"):
-        assert Settings.from_env({"OPERON_KEYRING": off}).keyring is False
+        assert Settings.from_env({"OPERON_KEYRING": off}).keyring == "off"
+    bad = Settings.from_env({"OPERON_KEYRING": "disable"})
+    assert bad.keyring == "auto"
+    assert any("OPERON_KEYRING" in w for w in bad.warnings)
 
 
 def test_a_keyring_loaded_key_is_masked(memory_keyring, monkeypatch, tmp_path) -> None:
@@ -285,7 +290,7 @@ def test_a_keyring_loaded_key_is_masked(memory_keyring, monkeypatch, tmp_path) -
 
     memory_keyring.set_password("operon", "GEMINI_API_KEY", "keyring-sekrit")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("OPERON_KEYRING", raising=False)
+    monkeypatch.setenv("OPERON_KEYRING", "on")
     try:
         load_stored_keys({})
         assert os.environ["GEMINI_API_KEY"] == "keyring-sekrit"

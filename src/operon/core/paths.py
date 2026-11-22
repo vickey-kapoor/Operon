@@ -84,36 +84,54 @@ def load_user_env() -> bool:
 
 _real_env: dict[str, str] = {}
 _key_sources: dict[str, str] = {}
+_snapshot_taken = False
+
+
+def real_environment() -> dict[str, str]:
+    """The environment as the process started: the first snapshot if the loader ran, else the live one."""
+    return dict(_real_env) if _snapshot_taken else dict(os.environ)
+
+
+def reset_key_state() -> None:
+    global _snapshot_taken
+    _real_env.clear()
+    _key_sources.clear()
+    _snapshot_taken = False
 
 
 def load_stored_keys(real_env: Mapping[str, str]) -> dict[str, str]:
-    """Fill known key variables from the OS credential store (KAN-186); return name -> source.
+    """Settle where the known key variables come from (KAN-186); return name -> source.
 
-    ``real_env`` is the environment as the process started, before any .env file was read. A
-    non-blank value there wins over the store, which undoes ``create_app``'s ``override=True``
-    for these names only. Order: real environment, credential store, working-folder .env,
-    ``operon.env``. Never raises and never logs a value.
+    ``real_env`` is the environment as the process started, before any .env file was read. Order:
+    real environment, credential store, working-folder .env, ``operon.env``. A non-blank real value
+    is always put back (undoing ``create_app``'s ``override=True``), even with no store or with
+    ``OPERON_KEYRING=off``. The store itself is read only when ``keystore.enabled()`` and a real
+    backend exists. Never raises and never logs a value.
     """
+    global _snapshot_taken
     import logging
-
-    from operon.core.settings import get_settings
 
     _real_env.clear()
     _real_env.update(real_env)
+    _snapshot_taken = True
     _key_sources.clear()
-    if not get_settings().keyring:
-        return {}
     log = logging.getLogger(__name__)
     try:
         from operon.core import keystore
 
-        if not keystore.available():
-            log.debug("no credential store available; keys come from the environment and .env files")
-            return {}
-        for name in keystore.known_names():
+        names = keystore.known_names()
+        for name in names:
             if real_env.get(name, "").strip():
                 os.environ[name] = real_env[name]
                 _key_sources[name] = "environment"
+        if not keystore.enabled():
+            log.debug("credential store not used (%s)", keystore.mode())
+            return dict(_key_sources)
+        if not keystore.available():
+            log.debug("no credential store available; keys come from the environment and .env files")
+            return dict(_key_sources)
+        for name in names:
+            if name in _key_sources:
                 continue
             value = keystore.get(name)
             if value:

@@ -26,7 +26,7 @@ def folder(tmp_path, monkeypatch):
     monkeypatch.setenv("OPERON_CONFIG_DIR", str(config))
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPERON_KEYRING", raising=False)
+    monkeypatch.setenv("OPERON_KEYRING", "on")
     return work
 
 
@@ -101,4 +101,22 @@ def test_create_app_survives_a_raising_backend(folder, monkeypatch) -> None:
     assert client.get("/health").status_code == 200
     assert os.environ["GEMINI_API_KEY"] == "from-dotenv"
     monkeypatch.delenv("GEMINI_API_KEY")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
+def test_create_app_real_env_beats_dotenv_with_no_store(folder, monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "from-real-env")  # null backend: no store at all
+    create_app()
+    assert os.environ["GEMINI_API_KEY"] == "from-real-env"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
+def test_serve_path_reuses_the_first_snapshot(folder, monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "from-real-env")
+    cli._load_env()  # then create_app sees the already-loaded environment, not a new snapshot
+    create_app()
+    from operon.core.paths import loaded_key_state
+
+    assert loaded_key_state()[1]["GEMINI_API_KEY"] == "environment"
+    assert os.environ["GEMINI_API_KEY"] == "from-real-env"
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

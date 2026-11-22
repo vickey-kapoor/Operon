@@ -22,6 +22,7 @@ SECRET = "sk-test-secret-value-123"
 def clean_env(monkeypatch):
     for name in (*keystore.KNOWN_KEYS, "OPERON_KEYRING", "MY_CUSTOM_KEY", "OPERON_MODEL_REGISTRY"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPERON_KEYRING", "on")  # auto is off on Linux; these tests exercise the store
 
 
 def test_loader_sets_env_from_keyring(memory_keyring, monkeypatch) -> None:
@@ -115,3 +116,49 @@ def test_registry_key_variable_is_picked_up(memory_keyring, monkeypatch) -> None
     load_stored_keys({})
     assert os.environ["MY_CUSTOM_KEY"] == SECRET
     monkeypatch.delenv("MY_CUSTOM_KEY")
+
+
+@pytest.mark.parametrize(
+    ("platform", "setting", "expected"),
+    [
+        ("win32", None, True), ("darwin", None, True), ("linux", None, False),
+        ("linux", "auto", False), ("linux", "on", True), ("win32", "off", False), ("darwin", "off", False),
+    ],
+)
+def test_store_use_by_platform(monkeypatch, platform, setting, expected) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+    if setting is None:
+        monkeypatch.delenv("OPERON_KEYRING")
+    else:
+        monkeypatch.setenv("OPERON_KEYRING", setting)
+    assert keystore.enabled() is expected
+
+
+def test_linux_auto_never_calls_the_backend_but_restores_real_env(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("OPERON_KEYRING")
+    monkeypatch.setattr(keystore, "available", lambda: pytest.fail("backend touched"))
+    monkeypatch.setenv("GEMINI_API_KEY", "from-file")
+    assert load_stored_keys({"GEMINI_API_KEY": "from-real-env"}) == {"GEMINI_API_KEY": "environment"}
+    assert os.environ["GEMINI_API_KEY"] == "from-real-env"
+
+
+def test_real_env_restored_when_keyring_off_or_no_store(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "from-file")
+    monkeypatch.setenv("OPERON_KEYRING", "off")
+    load_stored_keys({"GEMINI_API_KEY": "real"})
+    assert os.environ["GEMINI_API_KEY"] == "real"
+    monkeypatch.setenv("GEMINI_API_KEY", "from-file")
+    monkeypatch.setenv("OPERON_KEYRING", "on")  # null backend: no store
+    load_stored_keys({"GEMINI_API_KEY": "real"})
+    assert os.environ["GEMINI_API_KEY"] == "real"
+
+
+def test_operon_prefixed_registry_variables_are_ignored(monkeypatch) -> None:
+    from operon.agent.backends.model_adapter import registry as reg
+
+    class Profile:
+        api_key_env = "OPERON_SECRET_THING"
+
+    monkeypatch.setattr(reg, "load_registry", lambda path=None: {"p": Profile()})
+    assert "OPERON_SECRET_THING" not in keystore.known_names()

@@ -49,6 +49,15 @@ class _MemoryKeyring(keyring.backend.KeyringBackend):
         del self.data[(service, username)]
 
 
+@pytest.fixture(autouse=True)
+def _fresh_key_state():
+    from operon.core import paths
+
+    paths.reset_key_state()
+    yield
+    paths.reset_key_state()
+
+
 @pytest.fixture
 def memory_keyring():
     previous = keyring.get_keyring()

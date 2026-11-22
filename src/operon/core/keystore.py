@@ -8,6 +8,7 @@ Python ``keyring`` package. Nothing here prints or logs a value: failures log th
 from __future__ import annotations
 
 import logging
+import sys
 
 SERVICE = "operon"
 
@@ -36,11 +37,35 @@ def known_names() -> tuple[str, ...]:
         from operon.agent.backends.model_adapter.registry import load_registry
 
         for profile in load_registry().values():
-            if profile.api_key_env not in names:
+            if profile.api_key_env not in names and not profile.api_key_env.startswith("OPERON_"):
                 names.append(profile.api_key_env)
     except Exception as exc:  # a bad registry must not hide the fixed names
         _log.debug("keystore: registry names skipped (%s)", type(exc).__name__)
     return tuple(names)
+
+
+def mode() -> str:
+    """``OPERON_KEYRING``: ``auto`` (the default), ``on`` or ``off``."""
+    from operon.core.settings import get_settings
+
+    return get_settings().keyring
+
+
+def enabled() -> bool:
+    """Whether the store is used: ``on``; ``auto`` on Windows and macOS only; never ``off``.
+
+    Linux needs ``OPERON_KEYRING=on``: its Secret Service can wait on an unlock prompt with no timeout.
+    """
+    chosen = mode()
+    if chosen == "auto":
+        return sys.platform in {"win32", "darwin"}
+    return chosen == "on"
+
+
+def disabled_reason() -> str:
+    if mode() == "off":
+        return "the credential store is off (OPERON_KEYRING=off)"
+    return "the credential store is off on this platform by default; set OPERON_KEYRING=on to use it"
 
 
 def _backend():

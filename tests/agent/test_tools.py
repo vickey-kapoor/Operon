@@ -367,13 +367,14 @@ async def test_http_get_ignores_proxy_environment_and_idn_hosts_do_not_crash(mon
     await runner.run("http_get", {"url": "http://exa mple.com:99999999/"})  # may fail, must not raise
 
 
-async def test_http_get_tries_the_next_checked_address_when_one_does_not_connect(monkeypatch) -> None:
+@pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ConnectTimeout])
+async def test_http_get_tries_the_next_checked_address_when_one_does_not_connect(monkeypatch, error) -> None:
     hosts: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         hosts.append(request.url.host)
         if request.url.host == "93.184.216.34":
-            raise httpx.ConnectError("down")
+            raise error("down")
         return httpx.Response(200, text="ok")
 
     real = httpx.AsyncClient

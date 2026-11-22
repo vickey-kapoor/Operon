@@ -115,7 +115,12 @@ async def _resolve(host: str, port: int) -> list[str]:
 async def _public_addresses(host: str, port: int) -> list[str]:
     """The addresses to try for a host; refuse if any resolved address is local,
     private or a cloud-metadata address (SSRF)."""
-    addresses = await _resolve(host, port)
+    if host.isdigit() and int(host) < 2**32:
+        # A bare decimal IPv4 address (http://2130706433/ is 127.0.0.1): read it here, since
+        # not every OS resolver does (Windows does not).
+        addresses = [str(ipaddress.IPv4Address(int(host)))]
+    else:
+        addresses = await _resolve(host, port)
     if not addresses:
         raise ToolError(f"failed: could not resolve {host}")
     for address in addresses:
@@ -272,7 +277,7 @@ class ToolRunner:
                             parsed.copy_with(host=ip), headers={"Host": host_header}, extensions=extensions
                         )
                         break
-                    except httpx.ConnectError:
+                    except (httpx.ConnectError, httpx.ConnectTimeout):
                         if index == len(addresses) - 1:
                             raise
         except httpx.HTTPError as exc:

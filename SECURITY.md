@@ -69,7 +69,7 @@ The `Security` workflow (`.github/workflows/security.yml`) runs on every pull re
 to `main`, and weekly. Each job is a separate check:
 
 - **Secrets (gitleaks):** scans the commits of a PR, the whole history reachable from `HEAD` on a push
-  to `main`, and every ref on a weekly or manual run, for committed secrets. Fails on any finding not
+  to `main`, and every branch and tag on a weekly or manual run, for committed secrets. Fails on any finding not
   allowlisted in `.gitleaks.toml`. Git mode is the authoritative check; run `gitleaks git --redact .`
   locally. Avoid `gitleaks dir`: it skips allowlisted paths entirely (so it misses real secrets there)
   and also scans `.claude/worktrees` and `__pycache__` copies.

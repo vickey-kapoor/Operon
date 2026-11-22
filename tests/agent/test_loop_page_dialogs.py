@@ -44,6 +44,7 @@ class DialogExecutor:
         self.armed: tuple[str, str] | None = None
         self.pending: tuple[str, str, int | None] | None = None
         self.accepted = 0
+        self.driving_during_execute: bool | None = None
         self.fail_on: AgentAction | None = None
         self.driving = False
         # What dialog an action raises: (type, message, batch child) or None.
@@ -53,6 +54,7 @@ class DialogExecutor:
 
     async def execute(self, action: AgentAction) -> ExecutedAction:
         self.executed.append(action)
+        self.driving_during_execute = self.driving
         if self.fail_on is not None and action == self.fail_on:
             raise RuntimeError("executor blew up")
         dialog = self.dialog_for(action)
@@ -421,3 +423,40 @@ async def test_a_declined_dialog_in_a_stopped_batch_says_which_actions_ran(monke
     reason = policy.discard_held_actions.call_args.args[1]
     assert "first 1 action(s) of the turn DID run and must not be repeated" in reason
     assert "declined" in reason
+
+
+async def test_a_run_under_takeover_cannot_be_resumed_only_handed_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.agent.loop import TakeoverActiveError
+
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.take_over("run-1")
+
+    for approve in (True, False):
+        with pytest.raises(TakeoverActiveError, match="hand it back"):
+            await loop.resume_run("run-1", approve_gated_action=approve)
+    assert state.status is RunStatus.WAITING_FOR_USER and executor.driving is True  # nothing changed
+
+    resumed = await loop.hand_back("run-1")  # the person's way back still works
+
+    assert resumed.status is RunStatus.RUNNING and executor.driving is False
+
+
+async def test_the_agent_never_runs_an_action_with_the_driving_flag_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK])
+    loop._set_person_driving("run-1", True)  # forced on, as a leaked flag would be
+
+    first = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert executor.driving_during_execute is False
+    assert executor.accepted == 0 and first.status is RunStatus.WAITING_FOR_USER  # cancelled and asked about
+
+
+async def test_a_resume_clears_the_driving_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    loop._set_person_driving("run-1", True)
+
+    await loop.resume_run("run-1")
+
+    assert executor.driving is False

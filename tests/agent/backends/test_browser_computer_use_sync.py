@@ -198,3 +198,16 @@ async def test_an_approved_dialog_replays_only_the_calls_from_the_stopped_one(tm
     replay = await _step(backend, _frame(tmp_path, "b.png"), _state())
 
     assert replay.action.x is not None and len(client.turns) == 1  # one click replayed, no model turn
+
+
+async def test_a_dialog_stopped_batch_reaches_the_gemini_backend_through_the_policy(tmp_path: Path) -> None:
+    from operon.agent.policy.thin import ThinPolicy
+
+    client = ScriptedClient([_two_click_reply(), _click_reply(700)])
+    backend = _backend(client)
+    await _step(backend, _frame(tmp_path, "a.png"), _state())
+
+    ThinPolicy(backend).note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
+
+    assert backend.has_held_actions("run-1")  # held: the person's answer replays from the stopped call
+    assert backend.drop_held_calls_before("run-1", 1, 2) is True

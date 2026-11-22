@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import ValidationError
 
 from operon.agent.efficiency import efficiency_for_response
-from operon.agent.loop import StartUrlBlockedError
+from operon.agent.loop import StartUrlBlockedError, TakeoverActiveError
 from operon.api import ws_stream as _ws_stream
 from operon.api.dependencies import (
     cancel_auto_run,
@@ -113,6 +113,8 @@ async def resume_run(request: ResumeRequest) -> RunResponse:
     validate_run_id(request.run_id)
     try:
         return await resume_and_schedule(_loop_of_run(request.run_id), request.run_id)
+    except TakeoverActiveError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 

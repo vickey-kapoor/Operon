@@ -152,6 +152,10 @@ class StartUrlBlockedError(ValueError):
     """``start_url`` is outside ``OPERON_TRUST_ALLOW_DOMAINS``; the run is not created."""
 
 
+class TakeoverActiveError(ValueError):
+    """The run is under the person's control: only a hand-back resumes it (KAN-172)."""
+
+
 class _DialogPause(NamedTuple):
     """A run paused on a page dialog the executor cancelled (KAN-172)."""
 
@@ -535,6 +539,11 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} not found")
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        if getattr(record, "in_takeover", False):
+            # A resume would put the agent back in charge with the person's dialog rule (they
+            # answer their own dialogs) still on; only hand_back ends a takeover.
+            raise TakeoverActiveError(f"Run {run_id!r} is under the user's control; hand it back instead")
+        self._set_person_driving(run_id, False)
         self.check_resume_environment(record)
         if record.stop_reason is StopReason.INTERRUPTED:
             await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
@@ -1171,6 +1180,8 @@ class AgentLoop:
 
         Mirrors the trust gate's confirmations: ``auto`` permission mode (or the gate
         turned off) accepts them, anything else cancels them and asks the person."""
+        # The agent acts now: nothing it does runs with the person's "I am driving" rule on.
+        self._set_person_driving(ctx.run_id, False)
         set_policy = getattr(self.executor, "set_dialog_policy", None)
         if not callable(set_policy):
             return

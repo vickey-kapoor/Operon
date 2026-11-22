@@ -659,3 +659,23 @@ async def test_a_batch_stopped_by_a_dialog_answers_the_calls_that_ran_as_ok(tmp_
     assert results["t1"]["content"] == [{"type": "text", "text": "OK"}] and not results["t1"].get("is_error")
     assert results["t2"]["is_error"] and "paused for a human" in results["t2"]["content"]
     assert results["t3"]["is_error"] and "not" in results["t3"]["content"].lower()
+
+
+async def test_a_dialog_stopped_batch_is_answered_per_call_through_the_policy(tmp_path: Path) -> None:
+    from operon.agent.policy.thin import ThinPolicy
+
+    client = ScriptedClient(
+        [
+            _reply(_call("key", "t1", text="Return"), _call("key", "t2", text="Tab")),
+            _reply(_call("screenshot", "t3")),
+        ]
+    )
+    backend = _backend(client)
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+
+    ThinPolicy(backend).note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
+    await backend.perceive(_frame(tmp_path, "b.png"), _state())
+
+    results = {b["tool_use_id"]: b for b in client.requests[1][-1]["content"] if b["type"] == "tool_result"}
+    assert results["t1"]["content"] == [{"type": "text", "text": "OK"}] and not results["t1"].get("is_error")
+    assert results["t2"]["is_error"]

@@ -205,3 +205,15 @@ def test_pause_reports_the_new_status(client: TestClient) -> None:
         resp = client.post("/run/run-1/pause")
 
     assert resp.json() == {"run_id": "run-1", "status": "waiting_for_user"}
+
+
+def test_resume_of_a_run_under_takeover_is_a_409(client: TestClient) -> None:
+    from operon.agent.loop import TakeoverActiveError
+
+    with (
+        patch(f"{ROUTES}.get_agent_loop"),
+        patch(f"{ROUTES}.resume_and_schedule", new=AsyncMock(side_effect=TakeoverActiveError("hand it back"))),
+    ):
+        resp = client.post("/resume", json={"run_id": "run-1"})
+
+    assert resp.status_code == 409 and "hand it back" in resp.json()["detail"]

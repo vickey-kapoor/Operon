@@ -549,3 +549,13 @@ def test_desktop_stop_leaves_a_finished_run_alone(client: TestClient) -> None:
     assert resp.json()["status"] == "succeeded"
     mock_loop.run_store.set_status.assert_not_awaited()
     mock_loop._cleanup_completed_run.assert_not_awaited()
+
+
+def test_desktop_resume_of_a_run_under_takeover_is_a_409(client: TestClient) -> None:
+    from operon.agent.loop import TakeoverActiveError
+
+    with patch("operon.api.routes.desktop.get_desktop_agent_loop") as mock_loop:
+        mock_loop.return_value.resume_run = AsyncMock(side_effect=TakeoverActiveError("hand it back"))
+        resp = client.post("/desktop/resume", json={"run_id": "run-1"})
+
+    assert resp.status_code == 409

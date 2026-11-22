@@ -315,18 +315,37 @@ def cmd_set_key(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_co
     return 0
 
 
+def _write_key_file(path: Path, key: str) -> None:
+    """Write the API key to a file only the current user can read (it never goes to the terminal)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.chmod(path, 0o600)  # an existing file keeps its old mode; Windows ignores this
+    except OSError:
+        pass
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(key)
+
+
 def cmd_open(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_command, out=print) -> int:
-    with _Session(cfg, run, keep=args.keep, update=getattr(args, "update", False), out=out) as session:
-        out(f"API: {session.base_url}")
-        out(f"API key: {session.api_key}")
-        out(f'Start a desktop task: operon run --request --desktop --api {session.base_url} --api-key <key above> "task"')
-        out("Press Ctrl+C here when you are done.")
-        try:
-            while session.tunnel is not None and session.tunnel.poll() is None:
-                time.sleep(1)
-            out("The tunnel closed.")
-        except KeyboardInterrupt:
-            out("")
+    from operon.core.paths import runtime_dir
+
+    key_file = runtime_dir() / "cloud-api-key"
+    try:
+        with _Session(cfg, run, keep=args.keep, update=getattr(args, "update", False), out=out) as session:
+            _write_key_file(key_file, session.api_key)
+            out(f"API: {session.base_url}")
+            out(f"API key file: {key_file}")
+            out(f'Start a desktop task: operon run --request --desktop --api {session.base_url} --api-key-file {key_file} "task"')
+            out("Press Ctrl+C here when you are done.")
+            try:
+                while session.tunnel is not None and session.tunnel.poll() is None:
+                    time.sleep(1)
+                out("The tunnel closed.")
+            except KeyboardInterrupt:
+                out("")
+    finally:
+        key_file.unlink(missing_ok=True)
     return 0
 
 

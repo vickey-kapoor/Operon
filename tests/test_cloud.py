@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import pytest
@@ -358,3 +359,41 @@ def test_cloud_init_keeps_the_api_key_root_only() -> None:
 
 def test_update_script_tightens_an_old_api_key_file_without_failing() -> None:
     assert "{ sudo chmod 600 /etc/operon/api-key 2>/dev/null || true; }" in cloud.UPDATE_SCRIPT
+
+
+def test_open_keeps_the_api_key_in_a_file_not_on_screen(monkeypatch, tmp_path) -> None:
+    import contextlib
+    import stat
+
+    monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path))
+    key_file = tmp_path / "cloud-api-key"
+    seen: dict = {}
+
+    class DoneTunnel:
+        def poll(self) -> int:
+            return 0
+
+    @contextlib.contextmanager
+    def fake_session(cfg, run, *, keep=False, update=False, out=print):
+        yield argparse.Namespace(base_url="http://127.0.0.1:8090", api_key="k3y", tunnel=DoneTunnel())
+
+    lines: list[str] = []
+
+    def out(line: str = "") -> None:
+        lines.append(line)
+        if "API key file" in line:
+            seen["content"] = key_file.read_text(encoding="utf-8")
+            seen["mode"] = stat.S_IMODE(key_file.stat().st_mode)
+
+    monkeypatch.setattr(cloud, "_Session", fake_session)
+    args = argparse.Namespace(keep=False, update=False)
+
+    assert cloud.cmd_open(args, CFG, FakeRunner(), out=out) == 0
+    text = "\n".join(lines)
+    assert "k3y" not in text
+    assert f"API key file: {key_file}" in text
+    assert f'--api-key-file {key_file} "task"' in text
+    assert seen["content"] == "k3y"
+    if os.name != "nt":
+        assert seen["mode"] == 0o600
+    assert not key_file.exists()

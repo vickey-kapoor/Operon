@@ -218,7 +218,7 @@ def test_http_get_intent_reaches_the_trust_gate(gate_loop: AgentLoop) -> None:
     )
     assert gate_loop._pre_execution_gate_text(fetch, intent="get weather.gov data", run_id="r") is None
     text = gate_loop._pre_execution_gate_text(fetch, intent="get the forecast", run_id="r")
-    assert text is not None and text.startswith("High-risk action") and "api.weather.gov" in text
+    assert text is not None and text.startswith("High-risk action") and "(matched 'api.weather.gov')" in text
 
 
 def test_file_guard_blocks_unnamed_path(gate_loop: AgentLoop) -> None:

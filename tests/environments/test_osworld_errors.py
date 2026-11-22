@@ -37,9 +37,9 @@ def _ok_run(cmd, **kw):
 
 
 def test_state_fields_are_read_from_state_json(tmp_path):
-    _write_run(tmp_path / "runs", {"status": "completed", "stop_reason": "model_done"})
+    _write_run(tmp_path / "runs", {"status": "succeeded", "stop_reason": "task_completed"})
     r = osworld.run_one(_env(), TASK, {}, max_steps=1, timeout_s=9, settle_s=0, runs_root=str(tmp_path / "runs"), run=_ok_run)
-    assert (r["status"], r["run_status"], r["stop_reason"], r["error"]) == ("passed", "completed", "model_done", None)
+    assert (r["status"], r["run_status"], r["stop_reason"], r["error"]) == ("passed", "succeeded", "task_completed", None)
     assert r["cost_usd"] == 0.4
 
 
@@ -62,12 +62,12 @@ def test_error_after_operon_ran_keeps_run_id_and_cost(tmp_path):
     def boom():
         raise ValueError("checker crashed")
 
-    _write_run(tmp_path / "runs", {"status": "completed", "stop_reason": "model_done"})
+    _write_run(tmp_path / "runs", {"status": "succeeded", "stop_reason": "task_completed"})
     r = osworld.run_one(_env(boom), TASK, {}, max_steps=1, timeout_s=9, settle_s=0,
                         runs_root=str(tmp_path / "runs"), logs_dir=str(tmp_path / "logs"), run=_ok_run)
     assert r["status"] == "error" and r["score"] == 0.0 and not r["passed"]
     assert r["note"] == "evaluate error: ValueError: checker crashed" and r["error"] == "ValueError: checker crashed"
-    assert r["run_id"] == RID and r["cost_usd"] == 0.4 and r["stop_reason"] == "model_done"
+    assert r["run_id"] == RID and r["cost_usd"] == 0.4 and r["stop_reason"] == "task_completed"
     assert r["log"] and (tmp_path / "logs" / "t.log").exists()
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -535,3 +536,68 @@ def test_run_usage_gaps_counts_missing_and_unreadable_usage(tmp_path):
     (tmp_path / "r1" / "step_2" / "policy_usage.json").write_text("nope")
     assert osworld.run_usage_gaps("r1", tmp_path) == {"steps_without_usage": 1, "unreadable_usage_files": 1}
     assert osworld.run_usage_gaps(None, tmp_path) == {"steps_without_usage": 0, "unreadable_usage_files": 0}
+
+
+def test_after_screenshot_uses_a_short_timeout_and_never_fails_the_action(tmp_path):
+    shot_timeouts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/screenshot":
+            shot_timeouts.append(request.extensions["timeout"])
+            return httpx.Response(200, content=b"png")
+        return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+    executor = OSWorldExecutor("http://vm:5000", artifact_dir=tmp_path, transport=httpx.MockTransport(handler),
+                               post_action_wait_s=0)
+    result = asyncio.run(executor.execute(AgentAction(action_type=ActionType.CLICK, x=7, y=8)))
+    assert result.success and Path(result.artifact_path).read_bytes() == b"png"
+    # A stuck VM holds the action at most 15 s here, not the 120 s of an action request.
+    assert shot_timeouts[-1] == {"connect": 5.0, "read": 15.0, "write": 15.0, "pool": 15.0}
+
+    def stuck(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/screenshot":
+            raise httpx.ReadTimeout("stuck", request=request)
+        return httpx.Response(200, json={"status": "success", "returncode": 0})
+
+    executor = OSWorldExecutor("http://vm:5000", artifact_dir=tmp_path, transport=httpx.MockTransport(stuck),
+                               post_action_wait_s=0)
+    result = asyncio.run(executor.execute(AgentAction(action_type=ActionType.CLICK, x=7, y=8)))
+    assert result.success and not result.artifact_path
+
+
+def test_a_step_that_made_no_model_call_is_no_usage_gap(tmp_path):
+    from operon.models.usage import NO_MODEL_CALL, step_missing_usage
+
+    step = tmp_path / "r1" / "step_1"
+    step.mkdir(parents=True)
+    (step / "computer_use_raw.json").write_text("{}")
+    (step / "computer_use_prompt.txt").write_text(f"{NO_MODEL_CALL}: running the calls the person approved.\n")
+    assert osworld.NO_MODEL_CALL == NO_MODEL_CALL
+    assert osworld.run_usage_gaps("r1", tmp_path)["steps_without_usage"] == 0
+    assert not step_missing_usage(step)
+    (step / "computer_use_prompt.txt").write_text("a real prompt")
+    assert osworld.run_usage_gaps("r1", tmp_path)["steps_without_usage"] == 1
+    assert step_missing_usage(step)
+
+
+def test_usage_gaps_reach_the_task_row_the_summary_and_the_dashboard_flag(monkeypatch, tmp_path):
+    from evals import dashboard
+
+    (tmp_path / "r1" / "step_1").mkdir(parents=True)
+    (tmp_path / "r1" / "step_1" / "computer_use_raw.json").write_text("{}")
+    (tmp_path / "r1" / "step_2").mkdir()
+    (tmp_path / "r1" / "step_2" / "policy_usage.json").write_text("nope")
+    monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
+    monkeypatch.setattr(osworld, "parse_run_id", lambda text: "r1")
+    env = SimpleNamespace(vm_ip="10.1.1.1", server_port=5000, reset=lambda task_config: None, evaluate=lambda: 0.0)
+    row = osworld.run_one(env, {"domain": "os", "id": "abc", "instruction": "x"}, {}, max_steps=5, timeout_s=9,
+                          settle_s=0, runs_root=str(tmp_path),
+                          run=lambda *a, **k: SimpleNamespace(stdout="", stderr="", returncode=0))
+    assert row["run_id"] == "r1"
+    assert row["steps_without_usage"] == 1 and row["unreadable_usage_files"] == 1
+    summary = osworld.summarize([row, {**row, "id": "def"}])
+    assert summary["steps_without_usage"] == 2 and summary["unreadable_usage_files"] == 2
+    assert osworld.summarize([{"domain": "os", "passed": True, "cost_usd": 0.0}])["steps_without_usage"] == 0
+    # The dashboard reads the same summary keys to flag the run.
+    prepared = dashboard.prepare({"suite": "osworld", "summary": summary, "results": []}, {})
+    assert "2 steps had no usage file and 2 usage files were unreadable" in prepared["config"]["flagged"]

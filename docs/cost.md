@@ -20,7 +20,11 @@ fields in its database.
 
 A step with a saved model response (`*_raw.*`) but no `*_usage.json`, and a usage file that
 cannot be read, are counted in `steps_without_usage` and `unreadable_usage_files` (live bench
-per-task and summary, `summarize_run_usage`, `evals.osworld.run_usage_gaps`), because their cost is missing from the total.
+per-task and summary, `summarize_run_usage`, and each OSWorld task row and report summary via
+`evals.osworld.run_usage_gaps`), because their cost is missing from the total. The eval dashboard
+flags a run whose summary has either count above zero. A step that made no model call (Gemini
+running calls the person approved; its prompt file starts with "No model call") writes no usage
+file and is not counted.
 
 Limit: a step that calls the same backend twice (a mid-step re-look) overwrites its
 usage file, so a run's total can be slightly low.

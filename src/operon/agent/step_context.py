@@ -29,7 +29,10 @@ from operon.models.verification import VerificationResult
 
 
 class StepTiming(TypedDict):
-    """The timing fields of one step's log record (``StepLog``)."""
+    """The timing fields of one step's log record (``StepLog``).
+
+    ``model_latency_ms`` is the time spent in the perceive and policy stages (the stages that
+    wait on the model, local work in them included), capped at ``step_latency_ms``."""
 
     started_at: datetime
     finished_at: datetime
@@ -95,7 +98,7 @@ class StepContext:
     MODEL_STAGES = ("perceive", "policy")
 
     def timing_fields(self) -> StepTiming:
-        """Start/end time, step latency and model latency for this step's log record."""
+        """Start/end time, step latency and model latency (the perceive + policy stages) for this step's log record."""
         step_latency_ms = (time.perf_counter() - self.started_perf) * 1000.0
         model_latency_ms = sum(self.stage_timings.get(name, 0.0) for name in self.MODEL_STAGES)
         return {

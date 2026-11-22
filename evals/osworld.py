@@ -34,6 +34,9 @@ MODEL_LABELS = {"claude-sonnet-5-5": "Claude Sonnet 5.5", "openai-computer-use":
 RUN_ID_RE = re.compile(r"Run ([0-9a-f]{8}-[0-9a-f-]{27}|[0-9a-f]{8,}) started")
 
 
+# The first words of a step prompt file when the backend made no model call (replayed approved calls).
+NO_MODEL_CALL = "No model call"
+
 def load_subset(path: Path = SUBSET_FILE) -> list[dict[str, str]]:
     return json.loads(path.read_text(encoding="utf-8"))["tasks"]
 
@@ -83,6 +86,16 @@ def run_cost(run_id: str | None, runs_root: str | Path | None = None) -> float:
     return total
 
 
+def _no_model_call(step: Path, name: str) -> bool:
+    """The step's ``<name>_prompt.txt`` says no model call was made (approved calls replayed), so its
+    saved answer has, rightly, no usage file."""
+    try:
+        with (step / f"{name}_prompt.txt").open(encoding="utf-8") as handle:
+            return handle.read(len(NO_MODEL_CALL)) == NO_MODEL_CALL
+    except OSError:
+        return False
+
+
 def run_usage_gaps(run_id: str | None, runs_root: str | Path | None = None) -> dict[str, int]:
     """Steps with a saved model response (``*_raw.*``) but no ``*_usage.json``, and usage files that
     cannot be read: calls ``run_cost`` could not count (KAN-177). Import-free, like ``run_cost``."""
@@ -91,7 +104,8 @@ def run_usage_gaps(run_id: str | None, runs_root: str | Path | None = None) -> d
         return gaps
     run_dir = Path(runs_root) / run_id
     for step in sorted(run_dir.glob("step_*")):
-        if any(not (step / f"{raw.name.split('_raw.', 1)[0]}_usage.json").exists() for raw in step.glob("*_raw.*")):
+        names = {raw.name.split("_raw.", 1)[0] for raw in step.glob("*_raw.*")}
+        if any(not (step / f"{n}_usage.json").exists() and not _no_model_call(step, n) for n in names):
             gaps["steps_without_usage"] += 1
     for path in sorted(run_dir.glob("step_*/*_usage.json")) + [run_dir / "planner_usage.json"]:
         if not path.exists():
@@ -218,7 +232,7 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
     return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0 and not error,
             "run_id": run_id, "cost_usd": round(run_cost(run_id, runs_root), 4), "seconds": round(time.monotonic() - started),
             "note": note, "log": log, "status": status, "stop_reason": stop_reason, "run_status": run_status,
-            "error": error}
+            "error": error, **run_usage_gaps(run_id, runs_root)}
 
 
 def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
@@ -268,6 +282,9 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     timed_out = sum(1 for r in results if r.get("status") == "timed_out")
     return {"tasks": n, "passed": passed, "errors": errors, "timed_out": timed_out, "success_rate": round(passed / n, 3) if n else 0.0,
             "cost_usd": round(sum(r["cost_usd"] for r in results), 4),
+            # KAN-177: calls run_cost could not count; evals/dashboard.py flags a run with any.
+            "steps_without_usage": sum(r.get("steps_without_usage", 0) for r in results),
+            "unreadable_usage_files": sum(r.get("unreadable_usage_files", 0) for r in results),
             "by_domain": {d: f"{p}/{t}" for d, (p, t) in sorted(by_domain.items())}}
 
 

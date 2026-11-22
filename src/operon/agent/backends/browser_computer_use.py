@@ -34,7 +34,7 @@ from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import PageHint, ScreenPerception
 from operon.models.policy import ActionType, PolicyDecision
 from operon.models.state import AgentState
-from operon.models.usage import ModelUsage
+from operon.models.usage import NO_MODEL_CALL, ModelUsage
 from operon.store.background_writer import bg_writer
 
 logger = logging.getLogger(__name__)
@@ -165,11 +165,12 @@ class BrowserComputerUseBackend(AgentBackend):
             answers.clear()
 
         conversation = self._conversations.get(state.run_id)
-        if conversation is not None and conversation.held_calls:
+        model_turn = not (conversation is not None and conversation.held_calls)
+        if not model_turn:
             # The run paused before these calls ran (the model's require_confirmation,
             # or an Operon gate) and the person approved: run them now, with no
             # model turn. Queued hints stay queued for the next turn.
-            bg_writer.enqueue(prompt_path, "No model call: running the calls the person approved.\n")
+            bg_writer.enqueue(prompt_path, f"{NO_MODEL_CALL}: running the calls the person approved.\n")
             held = conversation.held_calls
             function_calls = [_without_safety_decision(call) for call in held]
             conversation.held_calls = []
@@ -253,7 +254,11 @@ class BrowserComputerUseBackend(AgentBackend):
             ),
         )
         usage_path = step_dir / "computer_use_usage.json"
-        if zoom_usage is None:
+        if not model_turn:
+            # No model call this step: the client's latest usage is the previous turn's,
+            # and recording it again would count that turn twice.
+            usage = None
+        elif zoom_usage is None:
             usage = collect_latest_usage(self.client, usage_path)
         else:
             # The client only remembers the zoom request; the step's turn is the one before it.
@@ -269,7 +274,7 @@ class BrowserComputerUseBackend(AgentBackend):
             prompt_artifact_path=str(prompt_path),
             raw_response_artifact_path=str(raw_path),
             parsed_artifact_path=str(parsed_path),
-            usage_artifact_path=str(usage_path),
+            usage_artifact_path=str(usage_path) if usage is not None else None,
             usage=usage,
         )
         return perception

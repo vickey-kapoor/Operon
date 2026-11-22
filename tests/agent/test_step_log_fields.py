@@ -61,6 +61,56 @@ def test_every_step_log_is_complete(tmp_path: Path, scenario) -> None:
         assert StepLog.model_validate(old).started_at is None
 
 
+def test_a_paused_step_logs_no_after_screenshot(tmp_path: Path) -> None:
+    asyncio.run(run_scenario(trust_gate_approved(), root=tmp_path))
+    logs = [StepLog.model_validate(entry) for entry in _run_log_lines(tmp_path)]
+    paused = [log for log in logs if (log.executed_action.detail or "").startswith("Paused for user")]
+    ran = [log for log in logs if log not in paused]
+    assert paused and ran
+    # Nothing ran before the pause, so there is no after screenshot to name.
+    assert all(log.after_artifact_path is None for log in paused)
+    assert all(log.after_artifact_path and Path(log.after_artifact_path).exists() for log in ran)
+    # Readers fall back to the before screenshot.
+    from operon.api.frontdoor import _screenshot
+    from operon.store.replay import render_run_replay
+
+    assert _screenshot(paused[0]) == paused[0].before_artifact_path
+    run_id = paused[0].run_id
+    assert "after: none" in render_run_replay(run_id, root_dir=tmp_path / "runs")
+
+
+def test_a_failed_perceive_step_names_only_files_that_exist(tmp_path: Path, monkeypatch) -> None:
+    from evals.harness import FakeComputerUseClient
+    from operon.clients.gemini_computer_use import GeminiComputerUseError
+    from operon.store.replay import render_run_replay
+
+    async def fail(self, **_kwargs):
+        raise GeminiComputerUseError("model unavailable")
+
+    monkeypatch.setattr(FakeComputerUseClient, "generate_turn", fail)
+    monkeypatch.setattr(FakeComputerUseClient, "run_step", fail)
+    asyncio.run(run_scenario(cu_click_then_done(), root=tmp_path))
+    entries = _run_log_lines(tmp_path)
+    assert [entry.get("record_type") for entry in entries] == ["pre_step_failure"]
+    failure = PreStepFailureLog.model_validate(entries[0])
+    # The backend reported no files of its own, so none are named that were never written.
+    assert failure.perception_debug is None
+    state = json.loads(next((tmp_path / "runs").glob("*/state.json")).read_text(encoding="utf-8"))
+    paths = state["artifact_paths"]
+    assert failure.before_artifact_path in paths
+    assert all(Path(path).is_file() for path in paths)
+    names = {Path(path).name for path in paths}
+    assert "computer_use_prompt.txt" in names  # what the backend did write before it failed
+    assert not names & {"perception_prompt.txt", "perception_raw.txt", "perception_parsed.json"}
+    assert "perception: none" in render_run_replay(failure.run_id, root_dir=tmp_path / "runs")
+    from operon.api import observer
+
+    monkeypatch.setattr(observer, "runs_root", lambda: tmp_path / "runs")
+    snapshot = observer.load_run_snapshot(failure.run_id)
+    assert snapshot["pre_step_failures"][0]["perception"]["usage"] is None
+    assert observer.summarize_run_usage(failure.run_id).request_count == 0
+
+
 def test_old_run_log_lines_still_load() -> None:
     debug = {
         "prompt_artifact_path": "runs/r/step_1/p.txt",

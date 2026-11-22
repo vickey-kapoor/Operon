@@ -34,6 +34,8 @@ from operon.models.policy import ActionType, AgentAction
 
 logger = logging.getLogger(__name__)
 _TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+# The after-action screenshot is a best-effort record: a stuck VM must not hold the action this long.
+_AFTER_SHOT_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 _SERVO_RADIUS = 50
 _SERVO_THRESHOLD = 20.0  # DesktopExecutor._SERVO_THRESHOLD_DEFAULT: the uncalibrated visual-servo variance gate
 _KEY_ALIASES = {
@@ -181,7 +183,7 @@ class OSWorldExecutor:
 
     async def _capture_after(self) -> str | None:
         try:
-            response = await self._http().get("/screenshot")
+            response = await self._http().get("/screenshot", timeout=_AFTER_SHOT_TIMEOUT)
             response.raise_for_status()
             path = self._dir / f"osworld_after_{uuid4().hex[:8]}.png"
             path.write_bytes(response.content)

@@ -49,7 +49,8 @@ class StepLog(StrictModel):
     step_id: str = Field(min_length=1)
     step_index: int = Field(ge=1)
     before_artifact_path: str = Field(min_length=1)
-    after_artifact_path: str = Field(min_length=1)
+    # None when nothing ran in the step (a pause before the action), so no after screenshot exists.
+    after_artifact_path: str | None = Field(default=None, min_length=1)
     perception_debug: ModelDebugArtifacts
     policy_debug: ModelDebugArtifacts
     verification_debug: ModelDebugArtifacts | None = None
@@ -82,7 +83,8 @@ class PreStepFailureLog(StrictModel):
     step_id: str = Field(min_length=1)
     step_index: int = Field(ge=1)
     before_artifact_path: str = Field(min_length=1)
-    perception_debug: ModelDebugArtifacts
+    # None when the perception backend failed before it reported any files of its own.
+    perception_debug: ModelDebugArtifacts | None = None
     failure: FailureRecord
     error_message: str = Field(min_length=1)
     # Wall-clock UTC time the failure was logged. Absent in older run.jsonl files.

@@ -876,7 +876,6 @@ class AgentLoop:
             policy_debug=ctx.policy_debug,
             step_index=ctx.step_index,
             before_artifact_path=ctx.before_artifact_path,
-            after_artifact_path=ctx.after_artifact_path,
             step_ctx=ctx,
         )
 
@@ -1696,7 +1695,6 @@ class AgentLoop:
         policy_debug,
         step_index: int,
         before_artifact_path: str,
-        after_artifact_path: str,
         log_step: bool = True,
         step_ctx: StepContext | None = None,
     ) -> RunResponse:
@@ -1746,9 +1744,8 @@ class AgentLoop:
                     step_id=f"step_{step_index}",
                     step_index=step_index,
                     before_artifact_path=before_artifact_path,
-                    # Nothing ran before the pause, so no after.png was taken: the
-                    # screen after this step is the one it started from.
-                    after_artifact_path=before_artifact_path,
+                    # Nothing ran before the pause, so no after screenshot was taken.
+                    after_artifact_path=None,
                     perception_debug=perception_debug,
                     policy_debug=policy_debug,
                     perception=perception,
@@ -1898,7 +1895,9 @@ class AgentLoop:
         before_artifact_path: str,
         error: Exception,
     ) -> RunResponse:
-        perception_debug = self._resolve_model_debug_artifacts(record.run_id, step_index, "perception", self.perception_service)
+        # Only what the backend reported for this call: a backend that failed before it
+        # finished reports nothing, and the fallback names would be files never written.
+        perception_debug = self._latest_debug_artifacts(self.perception_service)
         failure_category = FailureCategory.PRE_STEP_PERCEPTION_FAILED
         stop_reason = StopReason.PRE_STEP_PERCEPTION_FAILED
         if isinstance(error, PerceptionLowQualityError):
@@ -1930,17 +1929,7 @@ class AgentLoop:
                 logged_at=datetime.now(UTC),
             ),
         )
-        record.artifact_paths.extend(
-            [
-                before_artifact_path,
-                perception_debug.prompt_artifact_path,
-                perception_debug.raw_response_artifact_path,
-                perception_debug.parsed_artifact_path,
-                *( [perception_debug.usage_artifact_path] if perception_debug.usage_artifact_path else [] ),
-                *( [perception_debug.diagnostics_artifact_path] if perception_debug.diagnostics_artifact_path else [] ),
-                *( [perception_debug.retry_log_artifact_path] if perception_debug.retry_log_artifact_path else [] ),
-            ]
-        )
+        record.artifact_paths.extend(await self._pre_step_failure_files(before_artifact_path, perception_debug))
         record.stop_reason = stop_reason
         updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
         try:
@@ -1954,6 +1943,27 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    @staticmethod
+    async def _pre_step_failure_files(before_artifact_path: str, debug: ModelDebugArtifacts | None) -> list[str]:
+        """The files a failed perceive step actually left: the reported debug files and
+        whatever the backend wrote in the step folder before it failed, if they exist."""
+        await bg_writer.flush()  # the backend's queued writes (its prompt) land first
+        named = [before_artifact_path]
+        if debug is not None:
+            named += [
+                path
+                for key, path in debug.model_dump().items()
+                if key.endswith("_artifact_path") and isinstance(path, str) and path
+            ]
+        step_dir = Path(before_artifact_path).parent
+        if step_dir.is_dir():
+            named += sorted(str(path) for path in step_dir.iterdir() if path.is_file())
+        files: list[str] = []
+        for path in named:
+            if path not in files and Path(path).is_file():
+                files.append(path)
+        return files
 
     def _prepare_step_artifacts(self, run_id: str, step_index: int, before_artifact_path: str, after_artifact_path: str) -> None:
         self._artifacts.prepare(run_id, step_index, before_artifact_path, after_artifact_path)

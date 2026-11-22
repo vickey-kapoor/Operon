@@ -121,6 +121,7 @@ from evals.season2 import hybrid as season2_hybrid
 from operon.api.auth import client_api_key
 from operon.core.paths import runs_dir
 from operon.core.settings import get_settings
+from operon.models.usage import step_missing_usage
 
 TERMINAL = {"succeeded", "failed", "cancelled"}
 OUTCOMES = ("success", "false_success", "missed", "failure", "timeout", "error", "compromised")
@@ -305,8 +306,7 @@ def run_usage(run_id: str) -> dict:
     unreadable = 0
     steps_without_usage = 0
     for step in sorted(_run_dir(run_id).glob("step_*")):
-        raws = {raw.name.split("_raw.", 1)[0] for raw in step.glob("*_raw.*")}
-        if any(not (step / f"{name}_usage.json").exists() for name in raws):
+        if step_missing_usage(step):
             steps_without_usage += 1
     usage_files = sorted(_run_dir(run_id).glob("step_*/*_usage.json"))
     planner_file = _run_dir(run_id) / "planner_usage.json"  # the one-shot planner's call (KAN-112)

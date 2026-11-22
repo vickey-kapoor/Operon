@@ -39,7 +39,7 @@ def render_run_replay(run_id: str, root_dir: str | Path | None = None) -> str:
                 "",
                 f"Step {entry.step_index}: {entry.step_id}",
                 f"  before: {entry.before_artifact_path}",
-                f"  after: {entry.after_artifact_path}",
+                f"  after: {entry.after_artifact_path or 'none'}",
                 f"  perception_prompt: {entry.perception_debug.prompt_artifact_path}",
                 f"  perception_raw: {entry.perception_debug.raw_response_artifact_path}",
                 f"  perception_parsed: {entry.perception_debug.parsed_artifact_path}",
@@ -72,11 +72,17 @@ def render_run_replay(run_id: str, root_dir: str | Path | None = None) -> str:
                 "",
                 f"Pre-step failure {entry.step_index}: {entry.step_id}",
                 f"  before: {entry.before_artifact_path}",
-                f"  perception_prompt: {entry.perception_debug.prompt_artifact_path}",
-                f"  perception_raw: {entry.perception_debug.raw_response_artifact_path}",
-                f"  perception_parsed: {entry.perception_debug.parsed_artifact_path}",
-                f"  perception_retry_log: {(entry.perception_debug.retry_log_artifact_path or 'none')}",
-                f"  perception_selector_trace: {(entry.perception_debug.selector_trace_artifact_path or 'none')}",
+                *(
+                    [
+                        f"  perception_prompt: {debug.prompt_artifact_path}",
+                        f"  perception_raw: {debug.raw_response_artifact_path}",
+                        f"  perception_parsed: {debug.parsed_artifact_path}",
+                        f"  perception_retry_log: {(debug.retry_log_artifact_path or 'none')}",
+                        f"  perception_selector_trace: {(debug.selector_trace_artifact_path or 'none')}",
+                    ]
+                    if (debug := entry.perception_debug) is not None
+                    else ["  perception: none (the backend failed before it reported its files)"]
+                ),
                 f"  failure_stage: {entry.failure.stage.value}",
                 f"  failure_category: {entry.failure.category.value}",
                 f"  failure_stop_reason: {(entry.failure.stop_reason.value if entry.failure.stop_reason is not None else 'none')}",

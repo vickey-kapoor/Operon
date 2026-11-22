@@ -88,10 +88,12 @@ _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 
 def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if isinstance(ip, ipaddress.IPv6Address):
-        # An IPv4 address hidden in an IPv6 one: mapped (::ffff:a.b.c.d), compatible
-        # (::a.b.c.d) or NAT64 (64:ff9b::a.b.c.d): judge the IPv4 address.
+        # An IPv4 address hidden in an IPv6 one: mapped (::ffff:a.b.c.d), translated
+        # (::ffff:0:a.b.c.d), compatible (::a.b.c.d) or NAT64 (64:ff9b::a.b.c.d): judge the IPv4 address.
         if ip.ipv4_mapped is not None:
             return _is_public(ip.ipv4_mapped)
+        if int(ip) >> 32 == 0xFFFF0000:
+            return _is_public(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
         if int(ip) >> 32 == 0 and int(ip) > 1:
             return _is_public(ipaddress.IPv4Address(int(ip)))
         if ip in _NAT64:

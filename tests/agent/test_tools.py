@@ -186,6 +186,7 @@ def _resolve_to(monkeypatch, *addresses: str) -> None:
         "http://100.100.100.200/",
         "http://[::127.0.0.1]/",
         "http://[64:ff9b::7f00:1]/",
+        "http://[::ffff:0:7f00:1]/",
         "http://[64:ff9b::a9fe:a9fe]/",
         "http://[fec0::1]/",
     ],

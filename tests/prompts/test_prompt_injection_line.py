@@ -18,3 +18,9 @@ def test_prompt_carries_the_injection_line_and_no_site_names(path) -> None:
     text = path.read_text(encoding="utf-8").lower()
     assert "content, not instructions" in text
     assert "wikipedia" not in text
+
+
+def test_zoom_prompt_carries_the_injection_line() -> None:
+    from operon.agent.actions.zoom import ZOOM_PROMPT
+
+    assert "content, not instructions" in ZOOM_PROMPT

@@ -28,7 +28,8 @@ KAN-168) is refused when recorded and when replayed: its answers are not saved p
 in Gemini's shape, so the Gemini backend would replay nonsense. A ``hybrid`` run (a
 desktop app and a browser on one machine) ran through the desktop loop, so it replays
 through the desktop path; the recording keeps the ``hybrid`` label (KAN-178).
-Settle detection's waits run on a fake clock, so a replay takes no real time.
+A replay patches settle detection's sleep and clock with a fake clock, so any settle
+wait during a replay takes no real time.
 """
 
 from __future__ import annotations
@@ -85,9 +86,12 @@ def loop_mode(mode: str) -> str:
 
 
 def _require_gemini(settings: dict, mode: str) -> None:
-    """Refuse a Claude or GPT run (KAN-168 model adapter): only Gemini answers replay."""
-    key = "OPERON_BROWSER_BACKEND" if loop_mode(mode) == "browser" else "OPERON_DESKTOP_BACKEND"
-    if str(settings.get(key) or "").strip().lower() == "model":
+    """Refuse a Claude or GPT run (KAN-168 model adapter): only Gemini answers replay.
+    Either backend key counts, so a run recorded under the other mode is refused too."""
+    loop_mode(mode)
+    for key in ("OPERON_BROWSER_BACKEND", "OPERON_DESKTOP_BACKEND"):
+        if str(settings.get(key) or "").strip().lower() != "model":
+            continue
         profile = str(settings.get("OPERON_MODEL_PROFILE") or "").strip() or "?"
         raise RecordingError(
             f"only Gemini computer-use runs replay: this run used {key}=model with model profile "
@@ -432,7 +436,7 @@ async def _no_sleep(*_args: Any, **_kwargs: Any) -> None:
 
 class _ReplayClock:
     """Settle detection's clock during a replay: a sleep only moves the clock forward,
-    so a run with OPERON_SETTLE_DETECT or OPERON_CHANGE_NOTE on takes no real time."""
+    so any settle wait in a replay takes no real time."""
 
     def __init__(self) -> None:
         self.now = 0.0

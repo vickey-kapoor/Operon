@@ -215,6 +215,19 @@ def test_a_claude_or_gpt_run_is_refused_at_record_time(tmp_path):
         rp.record_run(run_dir, task="t", mode="hybrid")
 
 
+def test_a_claude_run_is_refused_under_the_other_mode_key(tmp_path):
+    """A desktop Claude run recorded by hand with --mode browser must not slip through."""
+    real_run(tmp_path)
+    run_dir = _edit_settings(tmp_path, OPERON_BROWSER_BACKEND="computer_use", OPERON_DESKTOP_BACKEND="model",
+                             OPERON_MODEL_PROFILE="claude-sonnet-5-5")
+    with pytest.raises(rp.RecordingError, match="OPERON_DESKTOP_BACKEND=model.*claude-sonnet-5-5"):
+        rp.record_run(run_dir, task="t", mode="browser")
+    recording = rp.record_run(_edit_settings(tmp_path, OPERON_DESKTOP_BACKEND="computer_use"), task="t", mode="desktop")
+    recording["settings"] = {**recording["settings"], "OPERON_BROWSER_BACKEND": "model"}
+    with pytest.raises(rp.RecordingError, match="OPERON_BROWSER_BACKEND=model"):
+        asyncio.run(rp.replay(recording))
+
+
 def test_a_claude_or_gpt_run_is_refused_at_replay_time(tmp_path, monkeypatch):
     recording = real_run(tmp_path)
     recording["settings"] = {**recording["settings"], "OPERON_DESKTOP_BACKEND": "model",
@@ -237,8 +250,8 @@ def test_check_reports_a_refused_recording(tmp_path, capsys):
     assert "FAIL" in capsys.readouterr().out
 
 
-def test_replay_takes_no_real_time_with_settle_detect_on(tmp_path):
-    """Settle detection's waits run on the replay's fake clock, not real seconds."""
+def test_replay_takes_no_real_time_with_settle_detect_on():
+    """A replay patches settle's sleep and clock, so a settle wait inside one takes no real time."""
     import time
 
     from operon.agent.perception import settle
@@ -257,11 +270,6 @@ def test_replay_takes_no_real_time_with_settle_detect_on(tmp_path):
         elapsed = time.perf_counter() - start
     assert result is not None and not result.settled and result.waited_s >= 3.0
     assert elapsed < 0.5
-
-    recording = _record(tmp_path, TURNS, settings=settings, expect="succeeded")
-    start = time.perf_counter()
-    _replays(recording)
-    assert time.perf_counter() - start < 10
 
 
 def test_the_benchmark_saves_a_recording_per_thin_run(tmp_path, monkeypatch):

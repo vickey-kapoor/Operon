@@ -209,3 +209,13 @@ def test_settings_defaults_and_clamps() -> None:
     on = Settings.from_env({"OPERON_SETTLE_DETECT": "on", "OPERON_SETTLE_MAX_S": "99"})
     assert on.settle_detect is True and on.settle_max_s == 15.0
     assert Settings.from_env({"OPERON_SETTLE_MAX_S": "0"}).settle_max_s == 0.5
+
+
+async def test_default_sleep_and_clock_resolve_at_call_time(monkeypatch) -> None:
+    """KAN-178: the defaults are looked up when called, so a replay can swap in a fake clock."""
+    clock = FakeClock()
+    monkeypatch.setattr(settle, "_sleep", clock.sleep)
+    monkeypatch.setattr(settle, "_clock", clock.time)
+    result = await wait_until_settled(_grabber([_STILL]), min_s=0.2, max_s=3.0)
+    assert result.settled
+    assert clock.sleeps and clock.now >= 0.2

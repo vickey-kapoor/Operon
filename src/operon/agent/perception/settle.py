@@ -98,6 +98,16 @@ def change_ratio(a: bytes, b: bytes) -> float:
     return changed / len(a)
 
 
+async def _sleep(seconds: float) -> None:
+    """The default wait (a hook: the free replay swaps it for a fake clock, KAN-178)."""
+    await asyncio.sleep(seconds)
+
+
+def _clock() -> float:
+    """The default clock (a hook, like :func:`_sleep`)."""
+    return time.monotonic()
+
+
 async def wait_until_settled(
     grab: FrameGrab,
     *,
@@ -108,8 +118,8 @@ async def wait_until_settled(
     quiet_frames: int = QUIET_FRAMES,
     threshold: float = QUIET_THRESHOLD,
     observers: Sequence[FrameObserver] = (),
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> SettleResult:
     """Sample frames until the screen is quiet for ``quiet_frames`` in a row.
 
@@ -117,8 +127,11 @@ async def wait_until_settled(
     (it fails, or takes longer than the time left) the wait falls back to a plain sleep
     of ``fail_wait_s`` in total (default ``min_s``): with no evidence the screen settled,
     the caller's old fixed delay is the safe wait. A broken grab never fails an action,
-    and no grab can hold one past ``max_s``.
+    and no grab can hold one past ``max_s``. ``sleep`` and ``clock`` default to this
+    module's ``_sleep`` and ``_clock``, looked up at call time so a replay can patch them.
     """
+    sleep = sleep or _sleep
+    clock = clock or _clock
     start = clock()
     fail_wait = min_s if fail_wait_s is None else fail_wait_s
 

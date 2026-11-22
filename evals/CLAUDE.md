@@ -66,6 +66,7 @@ checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are 
 # thin-harness run (Gemini's answers + the actions Operon ran). Copy one into evals/recordings/ and every PR
 # replays it through the real loop for $0 (tests/evals/test_replay.py); a changed action fails with the step.
 #   python -m evals.replay check [evals/recordings/*.json]
+# Gemini runs only (Claude/GPT refused); hybrid replays via the desktop path. Scripted desktop/hybrid recordings ($0, KAN-178): python -m evals.scripted_recordings [--check]
 # Repo secrets: GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard.

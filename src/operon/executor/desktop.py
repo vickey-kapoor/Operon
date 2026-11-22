@@ -143,6 +143,24 @@ def _hscroll(pixels: int, x: int, y: int) -> None:
         pyautogui.hscroll(clicks, x=x, y=y)
 
 
+_DEFAULT_DOUBLE_CLICK_S = 0.5  # Windows default; GNOME and XFCE use 0.4
+_MAX_DOUBLE_CLICK_S = 2.0  # cap so an odd user setting can't stall a TYPE for seconds
+_DOUBLE_CLICK_MARGIN_S = 0.1
+
+
+def _double_click_interval_s() -> float:
+    """The OS double-click time in seconds: two clicks closer than this count as one
+    double-click. Windows reports the user's setting; elsewhere use the common default."""
+    if sys.platform == "win32":
+        try:
+            ms = int(ctypes.windll.user32.GetDoubleClickTime())  # type: ignore[attr-defined]
+            if ms > 0:
+                return min(ms / 1000.0, _MAX_DOUBLE_CLICK_S)
+        except Exception as exc:
+            logger.debug("GetDoubleClickTime failed, using the default: %s", exc)
+    return _DEFAULT_DOUBLE_CLICK_S
+
+
 def _vscroll(pixels: int, x: int, y: int) -> None:
     """Scroll vertically at (x, y) by a pixel amount (100 a notch); positive = up.
     Windows takes 120 a notch, X11 and macOS whole clicks."""
@@ -1209,20 +1227,30 @@ class DesktopExecutor(Executor):
                 # (bytes always differ); compare region means with a tolerance.
                 pre_pixels = await asyncio.to_thread(self._sample_region, action.x, action.y)
                 await asyncio.to_thread(pyautogui.click, action.x, action.y)
+                first_click_at = time.monotonic()
                 await asyncio.sleep(0.15)
                 post_pixels = await asyncio.to_thread(self._sample_region, action.x, action.y)
                 pre_mean = self._region_mean(pre_pixels)
-                post_mean = self._region_mean(post_pixels)
                 # Threshold: 1.5 mean intensity units (out of 255). Cursor blink
                 # alone moves the mean by ~3-5; a focus-stealing transition is
                 # much larger. Below 1.5 means nothing meaningful changed.
-                if abs(post_mean - pre_mean) < 1.5:
-                    logger.debug(
-                        "Focus verification: no visual change at (%d, %d) (mean delta=%.2f), retrying click",
-                        action.x, action.y, abs(post_mean - pre_mean),
-                    )
-                    await asyncio.to_thread(pyautogui.click, action.x, action.y)
-                    await asyncio.sleep(0.25)
+                if abs(self._region_mean(post_pixels) - pre_mean) < 1.5:
+                    # KAN-174: no blind retry. A second click inside the OS
+                    # double-click window would select a word that the typed text
+                    # then replaces, so wait past that window, look again (slow
+                    # apps paint focus late), and click again only if still unchanged.
+                    wait = _double_click_interval_s() + _DOUBLE_CLICK_MARGIN_S - (time.monotonic() - first_click_at)
+                    if wait > 0:
+                        await asyncio.sleep(wait)
+                    recheck = await asyncio.to_thread(self._sample_region, action.x, action.y)
+                    delta = abs(self._region_mean(recheck) - pre_mean)
+                    if delta < 1.5:
+                        logger.debug(
+                            "Focus verification: no visual change at (%d, %d) (mean delta=%.2f), retrying click",
+                            action.x, action.y, delta,
+                        )
+                        await asyncio.to_thread(pyautogui.click, action.x, action.y)
+                        await asyncio.sleep(0.25)
             if action.clear_before_typing:
                 await asyncio.to_thread(pyautogui.hotkey, 'ctrl', 'a')
                 await asyncio.sleep(0.05)
@@ -1447,6 +1475,12 @@ class DesktopExecutor(Executor):
     async def _exec_drag(self, action: AgentAction) -> ExecutedAction:
         if action.x is None or action.y is None or action.x_end is None or action.y_end is None:
             return self._fail(action, "drag requires x, y, x_end, y_end", FailureCategory.EXECUTION_TARGET_NOT_FOUND)
+        # KAN-174: the drag's start point is pressed like a click, so it gets the
+        # clicks' bounds + visual-servo gate. The drop point is not gated: dropping
+        # onto empty space (a blank folder, an empty canvas area) is a normal drag.
+        gate, variance = await self._click_preamble(action, "drag")
+        if gate is not None:
+            return gate
         try:
             # Use explicit mouseDown/moveTo/mouseUp for reliable drags on Windows.
             # pyautogui.dragTo can fail when DPI scaling or focus issues occur.
@@ -1463,7 +1497,7 @@ class DesktopExecutor(Executor):
                 action,
                 f"Dragged from ({action.x}, {action.y}) to ({action.x_end}, {action.y_end})",
                 after_path,
-            )
+            ).model_copy(update={"visual_variance": variance})
         except Exception as exc:
             # Ensure mouse is released on failure
             try:

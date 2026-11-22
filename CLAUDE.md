@@ -143,7 +143,7 @@ These are load-bearing — violating them silently breaks the agent.
 - **Atomic TYPE.** The executor merges focus+type into one call. Policy must never
   emit a CLICK immediately followed by a TYPE on the same element.
 - **Visual servo.** On the desktop executors (`DesktopExecutor` and `LinuxDesktopExecutor`;
-  the browser executor has none; OSWorld runs its own fixed-threshold check), `_region_has_content()` runs before every click with an
+  the browser executor has none; OSWorld runs its own fixed-threshold check), `_region_has_content()` runs before every click and every drag start with an
   adaptively calibrated threshold. Never bypass it.
 - **Verification states.** SUCCESS / FAILURE / UNCERTAIN / PENDING /
   PROGRESSING_STABLE / STABLE_WAIT. The thin harness's `OwnDoneVerifier` emits SUCCESS, FAILURE

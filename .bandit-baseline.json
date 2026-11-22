@@ -1,26 +1,6 @@
 {
   "results": [
     {
-      "code": "444     key = keys[0] if keys else (None if auth_disabled() else local_api_key())\n445     url = f\"http://{'127.0.0.1' if args.host in {'0.0.0.0', '::'} else args.host}:{args.port}\"\n446     print(f\"API: {url}\")\n",
-      "col_offset": 49,
-      "end_col_offset": 58,
-      "filename": "src/operon/cli.py",
-      "issue_confidence": "MEDIUM",
-      "issue_cwe": {
-        "id": 605,
-        "link": "https://cwe.mitre.org/data/definitions/605.html"
-      },
-      "issue_severity": "MEDIUM",
-      "issue_text": "Possible binding to all interfaces.",
-      "line_number": 445,
-      "line_range": [
-        445
-      ],
-      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b104_hardcoded_bind_all_interfaces.html",
-      "test_id": "B104",
-      "test_name": "hardcoded_bind_all_interfaces"
-    },
-    {
       "code": "215         try:\n216             with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 - fixed localhost URL\n217                 if response.status < 500:\n",
       "col_offset": 17,
       "end_col_offset": 55,

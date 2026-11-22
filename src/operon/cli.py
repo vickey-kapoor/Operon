@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import os
 import signal
 import sys
+from pathlib import Path
 from typing import Any, Callable
 
 from operon.core.settings import get_settings
@@ -311,7 +313,12 @@ def _checkpoint_client(args: argparse.Namespace, *, resume_id: str | None = None
     if args.request:
         from operon.api.auth import client_api_key
 
-        return RemoteClient(args.api, args.api_key or client_api_key())
+        try:
+            key = _resolve_api_key(args)
+        except ValueError as exc:
+            print(f"operon: {exc}", file=sys.stderr)
+            return None
+        return RemoteClient(args.api, key or client_api_key())
     if not get_settings().checkpoints:
         print("operon: checkpoints are off; set OPERON_CHECKPOINTS=on (and restart `operon serve`).", file=sys.stderr)
         return None
@@ -332,6 +339,8 @@ def _checkpoint_client(args: argparse.Namespace, *, resume_id: str | None = None
 async def _runs(args: argparse.Namespace) -> int:
     if args.request:
         client = _checkpoint_client(args)
+        if client is None:
+            return 2
         try:
             runs = await client.interrupted()
         except Exception as exc:  # noqa: BLE001 - an unreachable API ends the command
@@ -397,7 +406,12 @@ async def _run(args: argparse.Namespace) -> int:
     if args.request:
         from operon.api.auth import client_api_key
 
-        client = RemoteClient(args.api or get_settings().api_url or _DEFAULT_API, args.api_key or client_api_key())
+        try:
+            key = _resolve_api_key(args)
+        except ValueError as exc:
+            print(f"operon run: {exc}", file=sys.stderr)
+            return 2
+        client = RemoteClient(args.api or get_settings().api_url or _DEFAULT_API, key or client_api_key())
     else:
         from operon.core.settings import startup_problems
 
@@ -435,18 +449,55 @@ def _run_entry(args: argparse.Namespace) -> int:
     return asyncio.run(_run(args))
 
 
+def _is_loopback(host: str) -> bool:
+    return host.strip().lower() in {"127.0.0.1", "localhost", "::1"}
+
+
+def _display_host(host: str) -> str:
+    try:
+        unspecified = ipaddress.ip_address(host.strip("[]")).is_unspecified
+    except ValueError:
+        unspecified = False
+    return "127.0.0.1" if unspecified else host
+
+
 def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
-    from operon.api.auth import auth_disabled, local_api_key
+    from operon.api.auth import api_key_file, auth_disabled, local_api_key
 
-    keys = list(get_settings().api_keys)
-    key = keys[0] if keys else (None if auth_disabled() else local_api_key())
-    url = f"http://{'127.0.0.1' if args.host in {'0.0.0.0', '::'} else args.host}:{args.port}"
-    print(f"API: {url}")
-    print(f"API key: {key}" if key else "Authentication is off")
+    if not _is_loopback(args.host):
+        if not args.allow_remote:
+            print(
+                f"operon serve: refusing to listen on {args.host}; this API can drive your computer. "
+                "Pass --allow-remote to allow it.",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"operon serve: warning: listening on {args.host}; anyone who can reach this port and has the API key can drive this computer.", file=sys.stderr)
+    print(f"API: http://{_display_host(args.host)}:{args.port}")
+    if get_settings().api_keys:
+        print("API key: from API_KEYS")
+    elif not auth_disabled():
+        local_api_key()  # creates the file
+        print(f"API key file: {api_key_file()}")
+    else:
+        print("Authentication is off")
     uvicorn.run("operon.api.server:app", host=args.host, port=args.port)
     return 0
+
+
+def _resolve_api_key(args: argparse.Namespace) -> str | None:
+    """--api-key wins; else the contents of --api-key-file; raises ValueError when that file is unusable."""
+    if args.api_key or not getattr(args, "api_key_file", None):
+        return args.api_key
+    try:
+        key = Path(args.api_key_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(f"cannot read --api-key-file {args.api_key_file}: {exc.strerror or exc}") from exc
+    if not key:
+        raise ValueError(f"--api-key-file {args.api_key_file} is empty")
+    return key
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -461,6 +512,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--request", action="store_true", help="send the task to a running API instead of running it here")
     run.add_argument("--api", default=None, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
     run.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
+    run.add_argument("--api-key-file", default=None, help="file holding the API key for --request (used when --api-key is not given)")
     run.add_argument("--desktop", action="store_true", help="run on the desktop instead of in the browser")
     run.add_argument("--env", default=None, help="desktop run environment (default $OPERON_ENVIRONMENT, else live; see `operon envs`)")
     run.add_argument("--url", default=None, help="page to open first (browser)")
@@ -479,11 +531,13 @@ def build_parser() -> argparse.ArgumentParser:
         cp.add_argument("--request", action="store_true", help="ask a running API instead of this process")
         cp.add_argument("--api", default=get_settings().api_url or _DEFAULT_API, help=f"API address for --request (default $OPERON_API_URL or {_DEFAULT_API})")
         cp.add_argument("--api-key", default=None, help="API key for --request (default: API_KEYS, else .var/api-key)")
+        cp.add_argument("--api-key-file", default=None, help="file holding the API key for --request (used when --api-key is not given)")
         cp.set_defaults(func=(lambda a: asyncio.run(_runs(a))) if name == "runs" else (lambda a: asyncio.run(_resume(a))))
 
     serve = sub.add_parser("serve", help="start the API")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
+    serve.add_argument("--allow-remote", action="store_true", help="allow a non-loopback --host; this exposes the API beyond this machine")
     serve.set_defaults(func=_serve)
 
     from operon import cloud, secrets_command

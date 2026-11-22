@@ -205,14 +205,122 @@ async def test_remote_errors_carry_the_api_detail() -> None:
         await client.close()
 
 
-def test_serve_prints_the_api_address_and_key(monkeypatch, capsys) -> None:
+def _serve_calls(monkeypatch) -> list:
     import uvicorn
 
+    calls: list = []
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: calls.append((a, k)))
+    return calls
+
+
+def test_serve_prints_the_api_address_and_where_the_key_comes_from(monkeypatch, capsys) -> None:
     monkeypatch.setenv("API_KEYS", "k1,k2")
-    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    calls = _serve_calls(monkeypatch)
 
     assert cli.main(["serve", "--port", "9000"]) == 0
-    assert capsys.readouterr().out.splitlines() == ["API: http://127.0.0.1:9000", "API key: k1"]
+    out = capsys.readouterr().out
+    assert out.splitlines() == ["API: http://127.0.0.1:9000", "API key: from API_KEYS"]
+    assert "k1" not in out and len(calls) == 1
+
+
+def test_serve_never_prints_a_generated_key(monkeypatch, capsys, tmp_path) -> None:
+    from operon.api import auth
+
+    monkeypatch.delenv("API_KEYS", raising=False)
+    monkeypatch.delenv("OPERON_AUTH_DISABLED", raising=False)
+    monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path))
+    monkeypatch.setattr(auth, "auth_disabled", lambda: False)
+    _serve_calls(monkeypatch)
+
+    assert cli.main(["serve"]) == 0
+    out = capsys.readouterr().out
+    key_file = auth.api_key_file()
+    key = key_file.read_text(encoding="utf-8").strip()
+    assert key and key not in out
+    assert f"API key file: {key_file}" in out
+
+
+def test_serve_says_when_authentication_is_off(monkeypatch, capsys) -> None:
+    from operon.api import auth
+
+    monkeypatch.delenv("API_KEYS", raising=False)
+    monkeypatch.setattr(auth, "auth_disabled", lambda: True)
+    _serve_calls(monkeypatch)
+
+    assert cli.main(["serve"]) == 0
+    assert "Authentication is off" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.5", "example.com"])
+def test_serve_refuses_a_non_loopback_host(monkeypatch, capsys, host) -> None:
+    calls = _serve_calls(monkeypatch)
+
+    assert cli.main(["serve", "--host", host]) == 2
+    captured = capsys.readouterr()
+    assert f"refusing to listen on {host}" in captured.err and "--allow-remote" in captured.err
+    assert captured.out == "" and calls == []
+
+
+def test_serve_allow_remote_warns_and_starts(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("API_KEYS", "k1")
+    calls = _serve_calls(monkeypatch)
+
+    assert cli.main(["serve", "--host", "0.0.0.0", "--allow-remote", "--port", "9001"]) == 0
+    captured = capsys.readouterr()
+    assert "warning" in captured.err and "0.0.0.0" in captured.err
+    assert "API: http://127.0.0.1:9001" in captured.out
+    assert calls and calls[0][1]["host"] == "0.0.0.0"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "LocalHost"])
+def test_serve_allows_loopback_hosts(monkeypatch, capsys, host) -> None:
+    monkeypatch.setenv("API_KEYS", "k1")
+    calls = _serve_calls(monkeypatch)
+
+    assert cli.main(["serve", "--host", host]) == 0
+    assert capsys.readouterr().err == "" and len(calls) == 1
+
+
+def _run_args(*extra: str):
+    return cli.build_parser().parse_args(["run", "--request", *extra, "task"])
+
+
+def test_api_key_file_is_read_and_stripped(tmp_path) -> None:
+    key_file = tmp_path / "key"
+    key_file.write_text("  filekey\n", encoding="utf-8")
+
+    assert cli._resolve_api_key(_run_args("--api-key-file", str(key_file))) == "filekey"
+
+
+def test_api_key_wins_over_api_key_file(tmp_path) -> None:
+    key_file = tmp_path / "key"
+    key_file.write_text("filekey", encoding="utf-8")
+
+    assert cli._resolve_api_key(_run_args("--api-key", "flag", "--api-key-file", str(key_file))) == "flag"
+
+
+def test_no_key_flags_resolve_to_none() -> None:
+    assert cli._resolve_api_key(_run_args()) is None
+
+
+@pytest.mark.parametrize("content", ["", "  \n"])
+def test_run_with_an_empty_api_key_file_exits_2(tmp_path, capsys, content) -> None:
+    key_file = tmp_path / "key"
+    key_file.write_text(content, encoding="utf-8")
+
+    assert cli.main(["run", "--request", "--api-key-file", str(key_file), "task"]) == 2
+    assert "empty" in capsys.readouterr().err
+
+
+def test_run_with_an_unreadable_api_key_file_exits_2(tmp_path, capsys) -> None:
+    assert cli.main(["run", "--request", "--api-key-file", str(tmp_path / "missing"), "task"]) == 2
+    assert "cannot read --api-key-file" in capsys.readouterr().err
+
+
+def test_resume_and_runs_accept_api_key_file() -> None:
+    parser = cli.build_parser()
+    assert parser.parse_args(["runs", "--interrupted", "--api-key-file", "p"]).api_key_file == "p"
+    assert parser.parse_args(["resume", "r1", "--api-key-file", "p"]).api_key_file == "p"
 
 
 async def test_settle_subprocess_pipes_waits_only_on_windows(monkeypatch) -> None:

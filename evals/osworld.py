@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -123,35 +124,80 @@ def write_task_log(logs_dir: str | None, task_id: str, header: str, stdout: str,
     return str(path)
 
 
+def run_state(run_id: str | None, runs_root: str | Path | None = None) -> tuple[str | None, str | None]:
+    """``(status, stop_reason)`` from ``<runs_root>/<run_id>/state.json``; (None, None) if unreadable.
+
+    Reads the file directly, like ``run_cost``, so this runner needs no Operon import."""
+    if not run_id or runs_root is None:
+        return None, None
+    try:
+        data = json.loads((Path(runs_root) / run_id / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    status, reason = data.get("status"), data.get("stop_reason")
+    return (str(status) if status else None), (str(reason) if reason else None)
+
+
+def error_result(task: dict[str, str], note: str, error: str, *, seconds: int = 0, run_id: str | None = None,
+                 cost_usd: float = 0.0, log: str | None = None) -> dict[str, Any]:
+    """The result of a task that raised before it could be scored (score 0)."""
+    return {"domain": task["domain"], "id": task["id"], "score": 0.0, "passed": False, "run_id": run_id,
+            "cost_usd": round(cost_usd, 4), "seconds": seconds, "note": note, "log": log, "status": "error",
+            "stop_reason": None, "run_status": None, "error": error}
+
+
 def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
             python: str | None = None, runs_root: str | None = None, settle_s: float = EVALUATE_SETTLE_S,
             logs_dir: str | None = None, model: str = "",
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
+    """One task. An ``Exception`` in reset, Operon or evaluate is recorded as an error result (score 0, the
+    cost and run id so far kept); ``BaseException`` (Ctrl+C) still propagates."""
     started = time.monotonic()
     wall_started = time.time()
-    env.reset(task_config=config)
-    url = f"http://{env.vm_ip}:{env.server_port}"
-    wait_for_desktop(url)
-    run_id, note = None, ""
+    phase = "reset"
+    run_id, note, error = None, "", None
     out_text, err_text = "", ""
+    timed_out, ran, score = False, False, 0.0
+    log = None
     try:
-        done = run(operon_command(task["instruction"], max_steps, python), env=operon_env(url, runs_root, model), capture_output=True,
-                   text=True, timeout=timeout_s, check=False)
-        out_text, err_text = done.stdout or "", done.stderr or ""
-        run_id = parse_run_id(out_text + err_text)
-        note = f"operon exit {done.returncode}"
-    except subprocess.TimeoutExpired as exc:
-        partial = [(x.decode("utf-8", "replace") if isinstance(x, bytes) else x or "") for x in (exc.stdout, exc.stderr)]
-        out_text, err_text = partial
-        run_id = parse_run_id("".join(partial))
-        note = f"operon timed out after {timeout_s:.0f}s"
-    log = write_task_log(logs_dir, task["id"], note, out_text, err_text)
-    run_id = run_id or find_run_since(runs_root, wall_started)
-    time.sleep(settle_s)  # let the apps flush their state to disk before the checker reads it
-    score = float(env.evaluate())  # OSWorld's evaluator decides
-    return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0,
+        env.reset(task_config=config)
+        url = f"http://{env.vm_ip}:{env.server_port}"
+        wait_for_desktop(url)
+        phase = "operon"
+        try:
+            ran = True
+            done = run(operon_command(task["instruction"], max_steps, python), env=operon_env(url, runs_root, model),
+                       capture_output=True, text=True, timeout=timeout_s, check=False)
+            out_text, err_text = done.stdout or "", done.stderr or ""
+            run_id = parse_run_id(out_text + err_text)
+            note = f"operon exit {done.returncode}"
+        except subprocess.TimeoutExpired as exc:
+            partial = [(x.decode("utf-8", "replace") if isinstance(x, bytes) else x or "") for x in (exc.stdout, exc.stderr)]
+            out_text, err_text = partial
+            run_id = parse_run_id("".join(partial))
+            timed_out = True
+            note = f"operon timed out after {timeout_s:.0f}s"
+        log = write_task_log(logs_dir, task["id"], note, out_text, err_text)
+        run_id = run_id or find_run_since(runs_root, wall_started)
+        phase = "evaluate"
+        time.sleep(settle_s)  # let the apps flush their state to disk before the checker reads it
+        score = float(env.evaluate())  # OSWorld's evaluator decides
+    except Exception as exc:  # noqa: BLE001 - one task's failure must not stop the others
+        error = f"{type(exc).__name__}: {exc}"[:300]
+        note = f"{phase} error: {error}"
+        score = 0.0
+        if ran and not log:
+            log = write_task_log(logs_dir, task["id"], note, out_text, err_text)
+    if ran:
+        run_id = run_id or find_run_since(runs_root, wall_started)
+    run_status, stop_reason = run_state(run_id, runs_root)
+    status = "error" if error else "passed" if score >= 1.0 else "timed_out" if timed_out else "failed"
+    return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0 and not error,
             "run_id": run_id, "cost_usd": round(run_cost(run_id, runs_root), 4), "seconds": round(time.monotonic() - started),
-            "note": note, "log": log}
+            "note": note, "log": log, "status": status, "stop_reason": stop_reason, "run_status": run_status,
+            "error": error}
 
 
 def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
@@ -197,9 +243,19 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         row = by_domain.setdefault(r["domain"], [0, 0])
         row[0] += int(r["passed"])
         row[1] += 1
-    return {"tasks": n, "passed": passed, "success_rate": round(passed / n, 3) if n else 0.0,
+    errors = sum(1 for r in results if r.get("status") == "error")
+    timed_out = sum(1 for r in results if r.get("status") == "timed_out")
+    return {"tasks": n, "passed": passed, "errors": errors, "timed_out": timed_out, "success_rate": round(passed / n, 3) if n else 0.0,
             "cost_usd": round(sum(r["cost_usd"] for r in results), 4),
             "by_domain": {d: f"{p}/{t}" for d, (p, t) in sorted(by_domain.items())}}
+
+
+def job_minutes(n_tasks: int, task_timeout_s: float = 1500.0) -> int:
+    """Minutes the CI job needs for ``n_tasks``: 30 for setup.sh plus, per task, its timeout and 600 s for
+    the VM reset and boot, wait_for_desktop (150 s), the 20 s settle, evaluate and the video render."""
+    if n_tasks <= 0:
+        return 30
+    return 30 + n_tasks * math.ceil((task_timeout_s + 600) / 60)
 
 
 def make_env(repo: Path):  # pragma: no cover - needs OSWorld and a VM
@@ -224,6 +280,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
                         help="Python that has Operon installed (3.14); default: this one")
     parser.add_argument("--model", default="", help="registry model profile (" + ", ".join(MODEL_LABELS)
                         + "); empty = Gemini. Spends that provider's credits: needs Vickey's OK")
+    parser.add_argument("--job-minutes", action="store_true",
+                        help="print the CI job timeout in minutes for the chosen tasks and exit (free)")
     parser.add_argument("--videos", action="store_true", help="write one MP4 per task under <out>/videos")
     parser.add_argument("--out", default=".var/bench")
     args = parser.parse_args(argv)
@@ -236,6 +294,9 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
     if args.list:
         for t in tasks:
             print(f"{t['domain']:<20} {t['id']}  {t['instruction'][:80]}")
+        return 0
+    if args.job_minutes:
+        print(job_minutes(len(tasks), args.task_timeout))
         return 0
     if args.model and args.model not in MODEL_LABELS:
         parser.error(f"--model must be one of: {', '.join(MODEL_LABELS)} (or empty for Gemini)")
@@ -261,15 +322,23 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
             if args.max_cost_usd and spent >= args.max_cost_usd:
                 print(f"cost cap ${args.max_cost_usd} reached; stopping before {task['id']}")
                 break
-            result = run_one(env, task, task_config(repo, task), max_steps=args.max_steps,
-                             timeout_s=args.task_timeout, python=args.operon_python,
-                             runs_root=str(out / "osworld-runs"),
-                             logs_dir=str(out / "osworld-logs"), model=args.model, run=run)
+            started = time.monotonic()
+            try:
+                result = run_one(env, task, task_config(repo, task), max_steps=args.max_steps,
+                                 timeout_s=args.task_timeout, python=args.operon_python,
+                                 runs_root=str(out / "osworld-runs"),
+                                 logs_dir=str(out / "osworld-logs"), model=args.model, run=run)
+            except Exception as exc:  # noqa: BLE001 - keep going with the next task
+                error = f"{type(exc).__name__}: {exc}"[:300]
+                result = error_result(task, f"setup error: {error}", error, seconds=round(time.monotonic() - started))
+            if result.get("error"):
+                print(f"::warning::task {task['id']} errored: {result['error']}", flush=True)
             spent += result["cost_usd"]
             results.append(result)
             save()  # after every task: a later failure or Ctrl+C must not lose finished scores
-            print(f"{'PASS' if result['passed'] else 'fail'} {task['domain']} {task['id'][:8]} "
-                  f"${result['cost_usd']:.3f} {result['seconds']}s")
+            label = ("ERROR" if result.get("status") == "error" else "TIMEOUT" if result.get("status") == "timed_out"
+                     else "PASS" if result["passed"] else "fail")
+            print(f"{label} {task['domain']} {task['id'][:8]} ${result['cost_usd']:.3f} {result['seconds']}s")
     finally:
         save()
         if args.videos:

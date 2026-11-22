@@ -17,6 +17,18 @@ Inputs: `limit` (first N tasks; 5 = the pilot, 25 or 0 = all), `only` (one task 
 (screenshots of the task VM, model I/O, traces) are uploaded as the `osworld-report` artifact, so a failed task can be diagnosed from it.
 Each task's Operon output (the exit code or a timeout note, then stdout and stderr) is saved in `osworld-logs/<task id>.log` and uploaded too, so a task that fails at startup still shows its error. The log's tail is on the run's summary page.
 
+A task that raises (VM reset, `wait_for_desktop`, Operon, `evaluate`, or a missing task file) does not stop the run: it is
+recorded with score 0 and `status: "error"`, a `::warning::` is printed, and the next task starts. Ctrl+C
+still stops the run, and the report is saved. Each result has `status` (`passed`, `failed`, `timed_out` or `error`),
+`error` (the exception, or null), `run_status` and `stop_reason` (read from the Operon run's `state.json`, null if
+it has none), plus `run_id`, `cost_usd`, `seconds`, `note` and `log`. An error after Operon ran keeps its cost and
+run id, so it still counts toward the cost cap. The summary adds `errors` and `timed_out` counts.
+
+Timeout: the `bench` job's `timeout-minutes` is sized to the tasks chosen, `30 + 35 * tasks` (30 min for
+`setup.sh`; 25 min task timeout plus 10 min for VM reset and boot, desktop wait, settle, evaluate and video
+render per task): 905 for 25 tasks, 205 for 5, 65 for 1. The `start-vm` job computes it with
+`python -m evals.osworld --job-minutes [--limit N | --only ID]`, which is free and needs no VM.
+
 Scoring: OSWorld's `DesktopEnv.evaluate()` decides pass or fail, never Operon's own done-check.
 Runs use the thin harness with `OPERON_AUTO_CONFIRM=on` (Operon answers the model's own
 "require confirmation" pause, because nobody can click Resume), `OPERON_TOOLS=off` and the

@@ -4,7 +4,8 @@
 # batch (benchmark.yml, KAN-184); it always runs the default branch. It spends model credits, so nothing starts it for you: you pick how many
 # tasks and the cost cap. Steps: start the Linux VM
 # operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
-# docs/osworld-runner.md), upload the report, deallocate the VM.
+# docs/osworld-runner.md), upload the report, deallocate the VM. The bench job's timeout is sized to the
+# tasks chosen (`python -m evals.osworld --job-minutes`, computed in start-vm: 30 min + 35 min a task), not a flat number.
 #
 # Needs repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the Azure OIDC variables the desktop bench already uses.
 # Cost: Gemini about $0.12 a task (the last full 25-task run was $3.11); Claude or GPT about $0.12-0.24 a task.
@@ -68,7 +69,24 @@ jobs:
     env:
       RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
       VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-linux' }}
+      LIMIT: ${{ inputs.limit }}
+      ONLY: ${{ inputs.only }}
+    outputs:
+      bench_minutes: ${{ steps.minutes.outputs.minutes }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Size the bench job's timeout
+        id: minutes
+        run: |
+          case "$LIMIT" in (*[!0-9]*) echo "::error::limit must be a whole number"; exit 1;; esac
+          case "$ONLY" in (*[!0-9a-fA-F-]*) echo "::error::only must be the start of a task id"; exit 1;; esac
+          args=(--job-minutes)
+          if [ -n "$ONLY" ]; then args+=(--only "$ONLY"); elif [ "$LIMIT" != "0" ]; then args+=(--limit "$LIMIT"); fi
+          minutes="$(python3 -m evals.osworld "${args[@]}")"
+          echo "bench job timeout: $minutes minutes"
+          echo "minutes=$minutes" >> "$GITHUB_OUTPUT"
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -82,7 +100,8 @@ jobs:
     if: ${{ !cancelled() && needs.start-vm.result == 'success' }}
     # The runner on operon-linux (docs/osworld-runner.md). It comes online a minute or two after the VM boots.
     runs-on: [self-hosted, linux, operon-osworld]
-    timeout-minutes: 240
+    # 30 min setup + 35 min a task (start-vm sizes it); the fallback is the 25-task worst case.
+    timeout-minutes: ${{ fromJSON(needs.start-vm.outputs.bench_minutes || '905') }}
     # Never more than read, even when a caller grants more (benchmark.yml grants write for the video release).
     permissions:
       contents: read

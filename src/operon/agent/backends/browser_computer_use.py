@@ -143,7 +143,13 @@ class BrowserComputerUseBackend(AgentBackend):
         # Zoom before clicking on dense screens (KAN-82, OPERON_ZOOM; off by default).
         self.zoom = _zoom.zoom_settings()
 
+    @property
+    def model_label(self) -> str | None:
+        return getattr(self.client, "model", None) or None
+
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        # A step that fails before this ends must not report the previous step's files.
+        self._last_debug_artifacts = None
         self._last_frames[state.run_id] = screenshot
         step_dir = Path(screenshot.artifact_path).resolve().parent
         step_dir.mkdir(parents=True, exist_ok=True)
@@ -377,6 +383,9 @@ class BrowserComputerUseBackend(AgentBackend):
             usages,
         )
 
+    def _add_retry_usage(self, run_id: str, usage: ModelUsage) -> None:
+        self._blocked_usage[run_id] = _zoom.merge_usage(self._blocked_usage.get(run_id), usage) or usage
+
     async def _run_with_retry(
         self, *, prompt: str, screenshot: CaptureFrame, state: AgentState, hints: list[tuple[str, str]] | None = None
     ) -> dict:
@@ -396,13 +405,22 @@ class BrowserComputerUseBackend(AgentBackend):
         # If this stronger retry fails, run_step does not touch the conversation, so
         # the first turn's conversation (and its answer) stays as _run_turn left it.
         retry_prompt = prompt + self._retry_suffix
+        first_usage = self.client.latest_usage() if hasattr(self.client, "latest_usage") else None
         try:
             retry_payload = await self.client.run_step(
                 prompt=retry_prompt,
                 screenshot_path=screenshot.artifact_path,
             )
         except (GeminiComputerUseError, BackendCompatibilityError):
+            # The first turn's usage is already what the client holds unless the failed
+            # retry recorded its own: then both were paid for and perceive sums them.
+            if isinstance(first_usage, ModelUsage) and self.client.latest_usage() is not first_usage:
+                self._add_retry_usage(state.run_id, first_usage)
             return response_payload
+        # Both turns were paid for: the step's usage is this first turn plus the retry
+        # (the client's latest), whichever answer is kept.
+        if isinstance(first_usage, ModelUsage):
+            self._add_retry_usage(state.run_id, first_usage)
         if not self._needs_stronger_retry(retry_payload):
             conversation = _ConversationState()
             conversation.contents.append(

@@ -190,7 +190,13 @@ class OpenAIComputerUseBackend(AgentBackend):
         # Runs where the human resumed with a correction rather than an approval.
         self._corrected: set[str] = set()
 
+    @property
+    def model_label(self) -> str | None:
+        return self.profile.name or None
+
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        # A step that fails before this ends must not report the previous step's files.
+        self._last_debug = None
         self._last_frames[state.run_id] = screenshot
         step_dir = Path(screenshot.artifact_path).resolve().parent
         step_dir.mkdir(parents=True, exist_ok=True)

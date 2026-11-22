@@ -640,3 +640,28 @@ async def test_a_failed_request_keeps_the_queued_hint_for_the_next_turn(tmp_path
     await backend.perceive(_frame(tmp_path, "b.png"), _state())
     assert not backend._advisory_hints.get(bucket)
     assert str(client.requests[1]).count("try the left menu") == 1
+
+
+async def test_every_zoom_turn_is_kept_and_the_raw_file_is_the_final_turn(tmp_path: Path) -> None:
+    import json
+
+    from operon.store.background_writer import bg_writer
+
+    client = _zoom_client(
+        [
+            _reply(_call("zoom", "z1", region=[0, 0, 640, 360])),
+            _reply(_call("left_click", "t1", coordinate=[100, 50])),
+        ]
+    )
+    backend = _backend(client)
+    state = _state()
+    frame = _frame(tmp_path)
+
+    await backend.perceive(frame, state)
+    await bg_writer.flush()
+
+    turns = json.loads((tmp_path / "computer_use_turns.json").read_text())
+    raw = json.loads((tmp_path / "computer_use_raw.json").read_text())
+    assert len(turns) == 2
+    assert raw == turns[-1]
+    assert not (tmp_path / "computer_use_answers.json").exists()

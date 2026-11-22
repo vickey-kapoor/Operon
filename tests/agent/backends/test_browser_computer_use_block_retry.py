@@ -159,3 +159,56 @@ async def test_retry_keeps_the_conversation_valid_after_a_function_response_turn
     # the step's usage counts the blocked request and the retry
     usage = backend.latest_debug_artifacts().usage
     assert usage is not None and usage.input_tokens == 300
+
+
+class WeakFirstClient:
+    """First answer has no function call (needs the stronger retry); the retry gives `second`."""
+
+    model = "model-x"
+
+    def __init__(self, second) -> None:
+        self.second = second
+        self.runs = 0
+        self._usage: ModelUsage | None = None
+
+    def latest_usage(self) -> ModelUsage | None:
+        return self._usage
+
+    async def run_step(self, *, prompt: str, screenshot_path: str) -> dict:
+        self.runs += 1
+        self._usage = ModelUsage(provider="gemini", model="m", request_kind="computer_use", input_tokens=100 * self.runs)
+        if self.runs == 1:
+            return {"action": {"action_type": "wait"}, "perception": {}, "function_calls": [], "confidence": 0.1}
+        if isinstance(self.second, Exception):
+            raise self.second
+        return self.second
+
+
+async def _first_turn(backend, client, tmp_path: Path) -> dict:
+    async def fake_turn(**_kwargs) -> dict:
+        return await client.run_step(prompt="p", screenshot_path="s")
+
+    backend._run_turn = fake_turn  # type: ignore[method-assign]
+    return await _call(backend, tmp_path)
+
+
+async def test_stronger_retry_usage_is_summed_with_the_first_turn(tmp_path: Path) -> None:
+    client = WeakFirstClient(_reply())
+    backend = _backend(client)
+
+    await _first_turn(backend, client, tmp_path)
+
+    # The first turn (100) is carried; perceive adds the client's latest (the retry, 200).
+    assert backend._blocked_usage["run-1"].input_tokens == 100
+    assert client.latest_usage().input_tokens == 200
+
+
+async def test_failed_stronger_retry_sums_each_paid_turn_once(tmp_path: Path) -> None:
+    client = WeakFirstClient(GeminiPromptBlockedError("x", block_reason="SAFETY"))
+    backend = _backend(client)
+
+    payload = await _first_turn(backend, client, tmp_path)
+
+    assert payload["confidence"] == 0.1  # the first answer is kept
+    assert backend._blocked_usage["run-1"].input_tokens == 100
+    assert backend.model_label == "model-x"

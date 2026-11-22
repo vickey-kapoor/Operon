@@ -16,7 +16,7 @@ permissions:
 
 # A newer push to the same PR or branch cancels the run it replaces.
 concurrency:
-  group: security-${{ github.event.pull_request.number || github.ref }}
+  group: security-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -102,6 +102,22 @@ jobs:
 
       - name: Scan
         run: uvx --python 3.14 bandit==1.9.4 -r src -ll -q -b .bandit-baseline.json -f txt
+
+      - name: Count findings per file and test
+        # Bandit's baseline compare is a set match, so a new finding of an already-baselined kind in
+        # the same file would pass. This fails when any (file, test id) has more findings than the baseline.
+        run: |
+          uvx --python 3.14 bandit==1.9.4 -r src -ll -q -f json > "$RUNNER_TEMP/bandit.json" || true
+          python3 - "$RUNNER_TEMP/bandit.json" .bandit-baseline.json <<'PY'
+          import collections, json, sys
+          def count(path):
+              return collections.Counter((r["filename"], r["test_id"]) for r in json.load(open(path))["results"])
+          now, base = count(sys.argv[1]), count(sys.argv[2])
+          bad = {k: (n, base[k]) for k, n in now.items() if n > base[k]}
+          for (f, t), (n, b) in sorted(bad.items()):
+              print(f"{f} {t}: {n} findings, baseline allows {b}")
+          sys.exit(1 if bad else 0)
+          PY
 
   zizmor:
     name: Workflows (zizmor)

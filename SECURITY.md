@@ -68,8 +68,11 @@ The security boundary is the host, not the agent. Operon does not sandbox itself
 The `Security` workflow (`.github/workflows/security.yml`) runs on every pull request, on every push
 to `main`, and weekly. Each job is a separate check:
 
-- **Secrets (gitleaks):** scans the commits of a PR (the whole history on a weekly or manual run) for
-  committed secrets. Fails on any finding not allowlisted in `.gitleaks.toml`.
+- **Secrets (gitleaks):** scans the commits of a PR, the whole history reachable from `HEAD` on a push
+  to `main`, and every ref on a weekly or manual run, for committed secrets. Fails on any finding not
+  allowlisted in `.gitleaks.toml`. Git mode is the authoritative check; run `gitleaks git --redact .`
+  locally. Avoid `gitleaks dir`: it skips allowlisted paths entirely (so it misses real secrets there)
+  and also scans `.claude/worktrees` and `__pycache__` copies.
 - **Python dependencies (pip-audit):** audits the versions pinned in `uv.lock` against known
   advisories. Fails when any pinned package has one.
 - **Dashboard dependencies (npm audit):** audits `dashboard/package-lock.json`. Fails on a high or
@@ -84,9 +87,11 @@ to `main`, and weekly. Each job is a separate check:
 Updating the checks:
 
 - **bandit baseline.** It holds the findings that were reviewed when the check was added. Bandit
-  matches a finding on file, test id and code text (not the line number), and the baseline must be
-  generated on Linux or WSL (forward-slash paths). Regenerate it with the command below, and explain
-  every new entry in the PR:
+  matches a finding on its file, test id, issue message, severity, confidence and CWE (not the line
+  number), so on its own it would let a new finding of an already-baselined kind in the same file
+  through. The job therefore also fails when any (file, test id) pair has more findings than the
+  baseline lists. The baseline must be generated on Linux or WSL (forward-slash paths). Regenerate it
+  with the command below, and explain every new entry in the PR:
 
   ```bash
   uvx --python 3.14 bandit==1.9.4 -r src -ll -q -f json \

@@ -51,7 +51,7 @@ The security boundary is the host, not the agent. Operon does not sandbox itself
   `.var/api-key`; set your own `API_KEYS` before the port is reachable by anything
   but localhost, and never set `OPERON_ALLOW_UNAUTHENTICATED` there.
 - **Set `CORS_ORIGINS` explicitly.** Empty means no origins are allowed, which is
-  the safe default — do not widen it to `*`.
+  the safe default — `*` is refused at startup.
 - **Keep the trust gate on** (the default; `OPERON_TRUST_GATE=off` disables it),
   and for anything unattended add `OPERON_TRUST_ALLOW_DOMAINS` to fail closed on navigation.
   `OPERON_TRUST_CATEGORIES=on` (experimental) also asks before buttons that name a payment,

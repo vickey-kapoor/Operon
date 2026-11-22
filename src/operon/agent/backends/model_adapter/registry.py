@@ -110,6 +110,8 @@ class ModelProfile(_Strict):
         return url.rstrip("/")
 
     def api_key(self) -> str | None:
+        if self.api_key_env == DEFAULT_API_KEY_ENV:
+            return get_settings().openweight_api_key
         return (os.getenv(self.api_key_env) or "").strip() or None
 
 

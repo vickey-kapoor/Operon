@@ -330,7 +330,7 @@ def _write_key_file(path: Path, key: str) -> None:
 def cmd_open(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_command, out=print) -> int:
     from operon.core.paths import runtime_dir
 
-    key_file = runtime_dir() / "cloud-api-key"
+    key_file = runtime_dir() / f"cloud-api-key-{cfg.local_port}"  # per port: two sessions must not share one file
     try:
         with _Session(cfg, run, keep=args.keep, update=getattr(args, "update", False), out=out) as session:
             _write_key_file(key_file, session.api_key)

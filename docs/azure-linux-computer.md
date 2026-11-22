@@ -32,7 +32,7 @@ API: http://127.0.0.1:8090 (X-API-Key header)
 |---|---|
 | `operon cloud create [--ref BRANCH]` | Creates the VM once (about 10 minutes of setup). Allows SSH from this PC's IP only and sets the daily auto-deallocate. |
 | `operon cloud set-key` | Saves `GEMINI_API_KEY` on the VM, then deallocates it. |
-| `operon cloud open` | Starts the VM, opens the tunnel and prints the API address and the path of a local key file (`cloud-api-key` in the runtime folder, mode 600, deleted when the session ends; the key itself is never printed). Start a desktop run with `operon run --request --desktop --api http://127.0.0.1:8090 --api-key-file <the printed path> "task"` (8090 is `OPERON_CLOUD_LOCAL_PORT`, the default tunnel port). Ctrl+C deallocates. |
+| `operon cloud open` | Starts the VM, opens the tunnel and prints the API address and the path of a local key file (`cloud-api-key-<port>` in the runtime folder, e.g. `cloud-api-key-8090`, so two sessions on different ports do not share one; mode 600 on Linux and macOS, while on Windows it keeps the folder's permissions; deleted when the session ends; the key itself is never printed). Start a desktop run with `operon run --request --desktop --api http://127.0.0.1:8090 --api-key-file <the printed path> "task"` (8090 is `OPERON_CLOUD_LOCAL_PORT`, the default tunnel port). Ctrl+C deallocates. |
 | `operon cloud run "task"` | Starts the VM, runs one desktop task (run id printed), then deallocates. Add `--browser` to use the VM's browser instead. |
 | `operon cloud stop` | Deallocates the VM now. |
 

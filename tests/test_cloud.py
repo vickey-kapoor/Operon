@@ -366,7 +366,7 @@ def test_open_keeps_the_api_key_in_a_file_not_on_screen(monkeypatch, tmp_path) -
     import stat
 
     monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path))
-    key_file = tmp_path / "cloud-api-key"
+    key_file = tmp_path / "cloud-api-key-8090"
     seen: dict = {}
 
     class DoneTunnel:

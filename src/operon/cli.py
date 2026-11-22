@@ -372,7 +372,7 @@ async def _runs(args: argparse.Namespace) -> int:
 async def _resume(args: argparse.Namespace) -> int:
     client = _checkpoint_client(args, resume_id=args.run_id)
     if client is None:
-        return 1
+        return 2 if args.request else 1  # a bad --api-key-file is a usage error, as in `run` and `runs`
     if not args.request:
         from operon.core.settings import startup_problems
 
@@ -454,11 +454,14 @@ def _is_loopback(host: str) -> bool:
 
 
 def _display_host(host: str) -> str:
+    host = host.strip().strip("[]")
     try:
-        unspecified = ipaddress.ip_address(host.strip("[]")).is_unspecified
+        address = ipaddress.ip_address(host)
     except ValueError:
-        unspecified = False
-    return "127.0.0.1" if unspecified else host
+        return host or "127.0.0.1"
+    if address.is_unspecified:
+        return "127.0.0.1"
+    return f"[{host}]" if address.version == 6 else host
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -471,6 +474,13 @@ def _serve(args: argparse.Namespace) -> int:
             print(
                 f"operon serve: refusing to listen on {args.host}; this API can drive your computer. "
                 "Pass --allow-remote to allow it.",
+                file=sys.stderr,
+            )
+            return 2
+        if auth_disabled() and not get_settings().api_keys:
+            print(
+                f"operon serve: refusing to listen on {args.host} with authentication off; "
+                "set API_KEYS or unset OPERON_AUTH_DISABLED.",
                 file=sys.stderr,
             )
             return 2

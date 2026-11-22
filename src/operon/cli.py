@@ -466,9 +466,15 @@ def _display_host(host: str) -> str:
 
 def _serve(args: argparse.Namespace) -> int:
     import uvicorn
+    from dotenv import find_dotenv, load_dotenv
 
     from operon.api.auth import api_key_file, auth_disabled, local_api_key
+    from operon.core.paths import load_user_env
 
+    # The server's create_app() reloads .env with override=True; do the same first, so the checks
+    # below judge the configuration the server will actually run with.
+    load_dotenv(find_dotenv(usecwd=True), override=True)
+    load_user_env()  # as create_app() does next; never overrides
     if not _is_loopback(args.host):
         if not args.allow_remote:
             print(

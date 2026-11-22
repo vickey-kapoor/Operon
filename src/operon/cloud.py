@@ -331,12 +331,14 @@ def cmd_open(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_comma
     from operon.core.paths import runtime_dir
 
     key_file = runtime_dir() / f"cloud-api-key-{cfg.local_port}"  # per port: two sessions must not share one file
+    wrote_key_file = False
     try:
         with _Session(cfg, run, keep=args.keep, update=getattr(args, "update", False), out=out) as session:
             _write_key_file(key_file, session.api_key)
+            wrote_key_file = True
             out(f"API: {session.base_url}")
             out(f"API key file: {key_file}")
-            out(f'Start a desktop task: operon run --request --desktop --api {session.base_url} --api-key-file {key_file} "task"')
+            out(f'Start a desktop task: operon run --request --desktop --api {session.base_url} --api-key-file "{key_file}" "task"')
             out("Press Ctrl+C here when you are done.")
             try:
                 while session.tunnel is not None and session.tunnel.poll() is None:
@@ -345,7 +347,8 @@ def cmd_open(args: argparse.Namespace, cfg: CloudConfig, run: Runner = run_comma
             except KeyboardInterrupt:
                 out("")
     finally:
-        key_file.unlink(missing_ok=True)
+        if wrote_key_file:  # a session that failed to start must not delete another session's file
+            key_file.unlink(missing_ok=True)
     return 0
 
 

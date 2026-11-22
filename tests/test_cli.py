@@ -295,6 +295,19 @@ def test_serve_refuses_remote_when_authentication_is_off(monkeypatch, capsys, ho
     assert captured.out == "" and calls == []
 
 
+def test_serve_remote_guard_sees_the_env_file_the_server_will_load(monkeypatch, capsys, tmp_path) -> None:
+    # create_app() reloads .env with override=True, so an .env that clears API_KEYS and turns
+    # auth off must be judged before the remote bind is allowed.
+    monkeypatch.setenv("API_KEYS", "from-environment")
+    monkeypatch.setenv("OPERON_ALLOW_UNAUTHENTICATED", "false")  # so teardown restores whatever .env writes
+    (tmp_path / ".env").write_text("API_KEYS=\nOPERON_ALLOW_UNAUTHENTICATED=true\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    calls = _serve_calls(monkeypatch)
+
+    assert cli.main(["serve", "--host", "0.0.0.0", "--allow-remote"]) == 2
+    assert "authentication off" in capsys.readouterr().err and calls == []
+
+
 @pytest.mark.parametrize(
     ("host", "shown"),
     [

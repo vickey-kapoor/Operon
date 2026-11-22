@@ -392,8 +392,26 @@ def test_open_keeps_the_api_key_in_a_file_not_on_screen(monkeypatch, tmp_path) -
     text = "\n".join(lines)
     assert "k3y" not in text
     assert f"API key file: {key_file}" in text
-    assert f'--api-key-file {key_file} "task"' in text
+    assert f'--api-key-file "{key_file}" "task"' in text
     assert seen["content"] == "k3y"
     if os.name != "nt":
         assert seen["mode"] == 0o600
     assert not key_file.exists()
+
+
+def test_open_that_fails_to_start_keeps_another_sessions_key_file(monkeypatch, tmp_path) -> None:
+    import contextlib
+
+    monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path))
+    key_file = tmp_path / "cloud-api-key-8090"
+    key_file.write_text("other-session", encoding="utf-8")
+
+    @contextlib.contextmanager
+    def busy_session(cfg, run, *, keep=False, update=False, out=print):
+        raise RuntimeError("local port 8090 is in use")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(cloud, "_Session", busy_session)
+    with pytest.raises(RuntimeError, match="in use"):
+        cloud.cmd_open(argparse.Namespace(keep=False, update=False), CFG, FakeRunner(), out=lambda *_: None)
+    assert key_file.read_text(encoding="utf-8") == "other-session"

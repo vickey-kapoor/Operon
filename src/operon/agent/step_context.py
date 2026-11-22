@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import TypedDict
 
 from operon.models.capture import CaptureFrame
 from operon.models.common import RunStatus
@@ -24,6 +26,15 @@ from operon.models.policy import PolicyDecision
 from operon.models.recovery import RecoveryDecision
 from operon.models.state import AgentState
 from operon.models.verification import VerificationResult
+
+
+class StepTiming(TypedDict):
+    """The timing fields of one step's log record (``StepLog``)."""
+
+    started_at: datetime
+    finished_at: datetime
+    step_latency_ms: float
+    model_latency_ms: float
 
 
 @dataclass
@@ -37,6 +48,9 @@ class StepContext:
     after_artifact_path: str
     # Per-stage durations in milliseconds, written to step_timing.json at the end.
     stage_timings: dict[str, float] = field(default_factory=dict)
+    # When the step began: wall-clock UTC for the log, and a monotonic clock for its duration.
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    started_perf: float = field(default_factory=time.perf_counter)
 
     # Capture and the user's correction (consumed before perceive).
     frame: CaptureFrame = field(init=False)
@@ -55,7 +69,8 @@ class StepContext:
     # Execute / verify.
     executed_action: ExecutedAction | None = None
     verification: VerificationResult = field(init=False)
-    verification_debug: ModelDebugArtifacts = field(init=False)
+    # None when the verifier makes no model call (OwnDoneVerifier).
+    verification_debug: ModelDebugArtifacts | None = None
     screen_change_ratio: float | None = None
     # A JS dialog was auto-accepted this step: the screen change says nothing about the
     # model's expectation then (KAN-116).
@@ -75,6 +90,20 @@ class StepContext:
         elapsed = time.perf_counter() - t0
         self.stage_timings[name] = self.stage_timings.get(name, 0.0) + elapsed * 1000.0
         return elapsed
+
+    # Stages that wait on the model; their sum is the step's model latency.
+    MODEL_STAGES = ("perceive", "policy")
+
+    def timing_fields(self) -> StepTiming:
+        """Start/end time, step latency and model latency for this step's log record."""
+        step_latency_ms = (time.perf_counter() - self.started_perf) * 1000.0
+        model_latency_ms = sum(self.stage_timings.get(name, 0.0) for name in self.MODEL_STAGES)
+        return {
+            "started_at": self.started_at,
+            "finished_at": datetime.now(UTC),
+            "step_latency_ms": round(step_latency_ms, 3),
+            "model_latency_ms": round(min(model_latency_ms, step_latency_ms), 3),
+        }
 
     @property
     def last_attempt(self) -> ExecutedAction:

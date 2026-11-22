@@ -140,6 +140,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         history_length = len(conversation.messages)
         open_spans, open_unknown = dict(conversation.call_spans), conversation.unknown_call_ids
         not_executed_reason = conversation.not_executed_reason
+        not_executed_ran = conversation.not_executed_ran  # _next_user_message resets it
         image, media_type, sent_width, sent_height = encode_screenshot(Path(screenshot.artifact_path))
         saved_hints = snapshot_hints(self._advisory_hints, state.run_id)
         user_message = await self._next_user_message(
@@ -159,6 +160,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
                 conversation.call_spans, conversation.unknown_call_ids = open_spans, open_unknown
                 conversation.not_executed_reason = not_executed_reason
+                conversation.not_executed_ran = not_executed_ran
                 restore_hints(self._advisory_hints, saved_hints)
                 raise BackendCompatibilityError(str(exc)) from exc
             if isinstance(usage := self.client.latest_usage(), ModelUsage):
@@ -170,6 +172,7 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 conversation.pending_calls, conversation.acknowledged_actions = open_calls, acknowledged
                 conversation.call_spans, conversation.unknown_call_ids = open_spans, open_unknown
                 conversation.not_executed_reason = not_executed_reason
+                conversation.not_executed_ran = not_executed_ran
                 details = response.get("stop_details") or {}
                 raise BackendCompatibilityError(f"Claude declined the turn ({details.get('category') or 'refusal'}).")
 

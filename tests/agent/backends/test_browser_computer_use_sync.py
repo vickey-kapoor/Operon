@@ -230,6 +230,14 @@ async def test_a_failed_turn_after_a_declined_dialog_still_reports_the_decline_o
             return await super().generate_turn(contents=contents)
 
     client = FlakyClient([_two_click_reply(), _click_reply(700)])
+    answered_with: list[str] = []
+    plain_build = client.build_function_response_content
+
+    def recording_build(**kwargs):
+        answered_with.append(kwargs["screenshot_path"])
+        return plain_build(**kwargs)
+
+    client.build_function_response_content = recording_build
     backend = _backend(client)
     await _step(backend, _frame(tmp_path, "a.png"), _state())
     backend.note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
@@ -242,3 +250,5 @@ async def test_a_failed_turn_after_a_declined_dialog_still_reports_the_decline_o
 
     error = _last_answer(client)["parts"][0]["function_response"]["response"]["error"]
     assert "declined" in error and "first 1 action(s) of the turn DID run" in error
+    # The failed attempt answered with b.png and was rolled back; the retry carries the fresh screen.
+    assert answered_with[-1].endswith("c.png") and answered_with.count(answered_with[-1]) == 1

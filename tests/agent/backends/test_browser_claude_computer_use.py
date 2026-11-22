@@ -641,6 +641,7 @@ async def test_a_failed_request_keeps_the_queued_hint_for_the_next_turn(tmp_path
     assert not backend._advisory_hints.get(bucket)
     assert str(client.requests[1]).count("try the left menu") == 1
 
+
 async def test_a_batch_stopped_by_a_dialog_answers_the_calls_that_ran_as_ok(tmp_path: Path) -> None:
     """KAN-172: the first calls ran, the dialog-raising one and the rest did not complete."""
     client = ScriptedClient(
@@ -679,3 +680,25 @@ async def test_a_dialog_stopped_batch_is_answered_per_call_through_the_policy(tm
     results = {b["tool_use_id"]: b for b in client.requests[1][-1]["content"] if b["type"] == "tool_result"}
     assert results["t1"]["content"] == [{"type": "text", "text": "OK"}] and not results["t1"].get("is_error")
     assert results["t2"]["is_error"]
+
+
+async def test_a_failed_request_keeps_the_count_of_actions_that_ran(tmp_path: Path) -> None:
+    """KAN-172: the retry after a 529 still answers call 1 OK and call 2 as not executed."""
+    client = ScriptedClient(
+        [
+            _reply(_call("key", "t1", text="Return"), _call("key", "t2", text="Tab")),
+            AnthropicClientError("Anthropic HTTP error 529: overloaded"),
+            _reply(_call("screenshot", "t3")),
+        ]
+    )
+    backend = _backend(client)
+    await backend.perceive(_frame(tmp_path, "a.png"), _state())
+    backend.note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
+
+    with pytest.raises(BackendCompatibilityError):
+        await backend.perceive(_frame(tmp_path, "b.png"), _state())
+    await backend.perceive(_frame(tmp_path, "c.png"), _state())  # the retry
+
+    results = {b["tool_use_id"]: b for b in client.requests[2][-1]["content"] if b["type"] == "tool_result"}
+    assert results["t1"]["content"] == [{"type": "text", "text": "OK"}] and not results["t1"].get("is_error")
+    assert results["t2"]["is_error"] and "paused for a human" in results["t2"]["content"]

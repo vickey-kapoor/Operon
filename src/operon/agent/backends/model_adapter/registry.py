@@ -111,7 +111,7 @@ class ModelProfile(_Strict):
 
     def api_key(self) -> str | None:
         if self.api_key_env == DEFAULT_API_KEY_ENV:
-            return get_settings().openweight_api_key
+            return get_settings().openweight_api_key or None
         return (os.getenv(self.api_key_env) or "").strip() or None
 
 

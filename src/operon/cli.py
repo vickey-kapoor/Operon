@@ -480,7 +480,7 @@ def _serve(args: argparse.Namespace) -> int:
         if auth_disabled() and not get_settings().api_keys:
             print(
                 f"operon serve: refusing to listen on {args.host} with authentication off; "
-                "set API_KEYS or unset OPERON_AUTH_DISABLED.",
+                "set API_KEYS or unset OPERON_ALLOW_UNAUTHENTICATED.",
                 file=sys.stderr,
             )
             return 2

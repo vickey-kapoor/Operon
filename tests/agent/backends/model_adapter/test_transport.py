@@ -107,7 +107,13 @@ async def test_responses_429_honors_retry_after(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_api_key_default_env_comes_from_settings(monkeypatch) -> None:
-    monkeypatch.setenv("OPENWEIGHT_API_KEY", "  from-settings ")
+    from operon.agent.backends.model_adapter import registry
+    from operon.core.settings import Settings
+
+    monkeypatch.setenv("OPENWEIGHT_API_KEY", "from-env")
+    patched = Settings.from_env({"OPENWEIGHT_API_KEY": "from-settings"})
+    monkeypatch.setattr(registry, "get_settings", lambda: patched)
     assert _profile().api_key() == "from-settings"
-    monkeypatch.delenv("OPENWEIGHT_API_KEY")
+
+    monkeypatch.setattr(registry, "get_settings", lambda: Settings.from_env({}))
     assert _profile().api_key() is None

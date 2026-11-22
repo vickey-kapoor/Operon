@@ -227,7 +227,7 @@ def test_serve_never_prints_a_generated_key(monkeypatch, capsys, tmp_path) -> No
     from operon.api import auth
 
     monkeypatch.delenv("API_KEYS", raising=False)
-    monkeypatch.delenv("OPERON_AUTH_DISABLED", raising=False)
+    monkeypatch.delenv("OPERON_ALLOW_UNAUTHENTICATED", raising=False)
     monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path))
     monkeypatch.setattr(auth, "auth_disabled", lambda: False)
     _serve_calls(monkeypatch)
@@ -281,6 +281,36 @@ def test_serve_allows_loopback_hosts(monkeypatch, capsys, host) -> None:
     assert capsys.readouterr().err == "" and len(calls) == 1
 
 
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5", "example.com"])
+def test_serve_refuses_remote_when_authentication_is_off(monkeypatch, capsys, host) -> None:
+    from operon.api import auth
+
+    monkeypatch.delenv("API_KEYS", raising=False)
+    monkeypatch.setattr(auth, "auth_disabled", lambda: True)
+    calls = _serve_calls(monkeypatch)
+
+    assert cli.main(["serve", "--host", host, "--allow-remote"]) == 2
+    captured = capsys.readouterr()
+    assert "authentication off" in captured.err and "OPERON_ALLOW_UNAUTHENTICATED" in captured.err
+    assert captured.out == "" and calls == []
+
+
+@pytest.mark.parametrize(
+    ("host", "shown"),
+    [
+        ("0.0.0.0", "127.0.0.1"),
+        ("::", "127.0.0.1"),
+        ("", "127.0.0.1"),
+        ("127.0.0.1", "127.0.0.1"),
+        ("::1", "[::1]"),
+        ("fe80::1", "[fe80::1]"),
+        ("example.com", "example.com"),
+    ],
+)
+def test_display_host(host, shown) -> None:
+    assert cli._display_host(host) == shown
+
+
 def _run_args(*extra: str):
     return cli.build_parser().parse_args(["run", "--request", *extra, "task"])
 
@@ -314,6 +344,11 @@ def test_run_with_an_empty_api_key_file_exits_2(tmp_path, capsys, content) -> No
 
 def test_run_with_an_unreadable_api_key_file_exits_2(tmp_path, capsys) -> None:
     assert cli.main(["run", "--request", "--api-key-file", str(tmp_path / "missing"), "task"]) == 2
+    assert "cannot read --api-key-file" in capsys.readouterr().err
+
+
+def test_resume_with_an_unreadable_api_key_file_exits_2(tmp_path, capsys) -> None:
+    assert cli.main(["resume", "r1", "--request", "--api-key-file", str(tmp_path / "missing")]) == 2
     assert "cannot read --api-key-file" in capsys.readouterr().err
 
 

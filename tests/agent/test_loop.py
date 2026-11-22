@@ -12,6 +12,7 @@ from operon.agent.perception import PerceptionError, PerceptionLowQualityError
 from operon.models.capture import CaptureFrame
 from operon.models.common import (
     FailureCategory,
+    RunFailureCause,
     RunStatus,
     RunTaskRequest,
     StepRequest,
@@ -628,6 +629,8 @@ async def test_agent_loop_logs_pre_step_perception_failure_for_observability() -
     assert "strict schema" in payload["error_message"]
     assert payload["perception_debug"]["raw_response_artifact_path"].endswith("perception_raw.txt")
     assert state.stop_reason is StopReason.PRE_STEP_PERCEPTION_FAILED
+    assert state.failure_cause is RunFailureCause.PERCEPTION_FAILED  # KAN-175
+    assert "strict schema" in (state.failure_detail or "")
     policy_service.choose_action.assert_not_called()
 
 
@@ -717,6 +720,7 @@ async def test_agent_loop_ends_the_run_as_model_blocked_when_the_backend_is_bloc
     state = await run_store.get_run(created.run_id)
     assert state is not None
     assert state.stop_reason is StopReason.MODEL_BLOCKED
+    assert state.failure_cause is RunFailureCause.MODEL_BLOCKED  # KAN-175
     payload = json.loads((run_root / created.run_id / "run.jsonl").read_text(encoding="utf-8").strip())
     assert payload["failure"]["category"] == FailureCategory.MODEL_BLOCKED.value
     assert "Gemini blocked the request (SAFETY)" in payload["error_message"]

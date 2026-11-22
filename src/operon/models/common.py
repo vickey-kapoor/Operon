@@ -79,6 +79,8 @@ class FailureCategory(StrEnum):
     UNCERTAIN_SCREEN_STATE = "uncertain_screen_state"
     RETRY_LIMIT_REACHED = "retry_limit_reached"
     MAX_STEP_LIMIT_REACHED = "max_step_limit_reached"
+    # KAN-175: the model itself called the run a failure (thin harness "gave up").
+    MODEL_GAVE_UP = "model_gave_up"
     HUMAN_INTERVENTION_REQUIRED = "human_intervention_required"
 
 
@@ -123,6 +125,30 @@ class StopReason(StrEnum):
     # The process died while the run was in flight (OPERON_CHECKPOINTS, KAN-80); the run
     # waits, with this reason, for an explicit resume.
     INTERRUPTED = "interrupted"
+
+
+class RunFailureCause(StrEnum):
+    """KAN-175: the one cause a failed run ended with, from a fixed list a bench can group by.
+
+    The loop and API set the first nine (``AgentState.failure_cause``). The last four are
+    for benchmark reports only: the bench could not finish the task (``timeout``,
+    ``bench_error``), the run said done but the grader disagreed (``wrong_result``), or no
+    known cause fits (``other``).
+    """
+
+    MAX_STEPS = "max_steps"
+    MODEL_GAVE_UP = "model_gave_up"
+    API_ERROR = "api_error"
+    MODEL_BLOCKED = "model_blocked"
+    PERCEPTION_FAILED = "perception_failed"
+    RUN_CRASHED = "run_crashed"
+    NEEDS_USER = "needs_user"
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+    TIMEOUT = "timeout"
+    BENCH_ERROR = "bench_error"
+    WRONG_RESULT = "wrong_result"
+    OTHER = "other"
 
 
 class ResumeRequest(StrictModel):

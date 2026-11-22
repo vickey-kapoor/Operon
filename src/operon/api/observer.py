@@ -9,8 +9,9 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from operon.agent.failure_cause import note_failure
 from operon.core.paths import browser_artifacts_dir, desktop_artifacts_dir, runs_dir
-from operon.models.common import RunStatus, StopReason
+from operon.models.common import RunFailureCause, RunStatus, StopReason
 from operon.models.logs import PreStepFailureLog, StepLog
 from operon.models.state import AgentState
 from operon.models.usage import ModelUsage, UsageAggregate
@@ -53,6 +54,7 @@ def list_runs(limit: int = 20) -> list[dict[str, Any]]:
                 "status": state.status.value,
                 "step_count": state.step_count,
                 "stop_reason": state.stop_reason.value if state.stop_reason is not None else None,
+                "failure_cause": state.failure_cause.value if state.failure_cause is not None else None,
                 "updated_at": state_path.stat().st_mtime,
                 "usage": summarize_run_usage(state.run_id).model_dump(mode="json"),
             }
@@ -101,6 +103,8 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
             "step_count": state.step_count,
             "headless": state.headless,
             "stop_reason": state.stop_reason.value if state.stop_reason is not None else None,
+            "failure_cause": state.failure_cause.value if state.failure_cause is not None else None,
+            "failure_detail": state.failure_detail,
             "current_subgoal": state.current_subgoal,
             "current_task_id": state.benchmark or "ad_hoc_run",
             "current_phase": phase,
@@ -170,6 +174,7 @@ def reconcile_orphaned_browser_run(run_id: str, *, has_live_session: bool) -> Ag
     state.status = RunStatus.FAILED
     if state.stop_reason is None:
         state.stop_reason = StopReason.EXECUTION_NO_PROGRESS
+    note_failure(state, cause=RunFailureCause.INTERRUPTED, detail="the run's browser session is gone (server restarted or browser closed)")
     state_path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
     return state
 
@@ -627,6 +632,8 @@ def summarize_run_usage(run_id: str) -> UsageAggregate:
         entries = []
     latest_logged_step_index = 0
     for entry in entries:
+        if not isinstance(entry, (StepLog, PreStepFailureLog)):
+            continue  # KAN-175: a run_end row carries no model usage
         latest_logged_step_index = max(latest_logged_step_index, entry.step_index)
         for usage in _entry_usages(entry):
             _merge_usage(aggregate, usage)

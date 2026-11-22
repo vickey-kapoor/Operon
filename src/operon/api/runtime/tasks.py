@@ -13,7 +13,7 @@ from operon.api.runtime.events import (
 )
 from operon.api.runtime.loops import release_parallel_run
 from operon.core.runtime import current_runtime
-from operon.models.common import RunResponse, RunStatus, StepRequest, StopReason
+from operon.models.common import RunResponse, RunStatus, StepRequest
 
 logger = logging.getLogger(__name__)
 
@@ -136,8 +136,7 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
             break
         if state.step_count >= max_steps:
             logger.warning("[loop] run %s hit max_steps=%d; stopping", run_id, max_steps)
-            state.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
-            await loop.run_store.set_status(run_id, RunStatus.FAILED)
+            await loop.fail_for_max_steps(state)
             publish_run_completed(run_id, RunStatus.FAILED)
             try:
                 await loop._cleanup_completed_run(run_id)
@@ -150,10 +149,10 @@ async def auto_run_loop(loop: AgentLoop, run_id: str, max_steps: int) -> None:
             response = await loop.step_run(StepRequest(run_id=run_id))
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             # Without this the task dies and the run is stuck in RUNNING forever.
             logger.exception("[loop] run %s step crashed; marking failed", run_id)
-            await mark_run_failed(loop, run_id)
+            await mark_run_failed(loop, run_id, exc)
             await release_parallel_run(loop, run_id)
             current_runtime().finish_run(run_id)
             break

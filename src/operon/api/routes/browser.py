@@ -100,7 +100,7 @@ async def step_run(request: StepRequest) -> RunResponse:
         crash = exc
     logger.error("unhandled exception in step_run for %s: %s", request.run_id, crash, exc_info=crash)
     crashed_loop = _loop_of_run(request.run_id)
-    failed = await mark_run_failed(crashed_loop, request.run_id)
+    failed = await mark_run_failed(crashed_loop, request.run_id, crash)
     await _loops.release_parallel_run(crashed_loop, request.run_id)
     if failed is not None:
         return failed

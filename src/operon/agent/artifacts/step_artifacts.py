@@ -7,7 +7,7 @@ and writes.
 
 The manager prefers the run_store's path methods when available (lets tests
 inject in-memory stores with custom layouts), falling back to a plain
-`runs/<run_id>/step_<n>/...` shape otherwise.
+`<runs_dir()>/<run_id>/step_<n>/...` shape otherwise (``OPERON_RUNS_ROOT`` honored).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import json
 import shutil
 from pathlib import Path
 
+from operon.core.paths import runs_dir
 from operon.models.progress import ProgressTrace
 from operon.store.background_writer import bg_writer
 
@@ -27,17 +28,17 @@ class StepArtifactsManager:
     def before_path(self, run_id: str, step_index: int) -> str:
         if hasattr(self.run_store, "before_artifact_path"):
             return str(self.run_store.before_artifact_path(run_id, step_index))
-        return str(Path("runs") / run_id / f"step_{step_index}" / "before.png")
+        return str(runs_dir() / run_id / f"step_{step_index}" / "before.png")
 
     def after_path(self, run_id: str, step_index: int) -> str:
         if hasattr(self.run_store, "after_artifact_path"):
             return str(self.run_store.after_artifact_path(run_id, step_index))
-        return str(Path("runs") / run_id / f"step_{step_index}" / "after.png")
+        return str(runs_dir() / run_id / f"step_{step_index}" / "after.png")
 
     def run_log_path(self, run_id: str) -> str:
         if hasattr(self.run_store, "run_log_path"):
             return str(self.run_store.run_log_path(run_id))
-        return str(Path("runs") / run_id / "run.jsonl")
+        return str(runs_dir() / run_id / "run.jsonl")
 
     def prepare(self, run_id: str, step_index: int, before_path: str, after_path: str) -> None:
         Path(before_path).parent.mkdir(parents=True, exist_ok=True)

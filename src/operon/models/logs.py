@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -65,6 +66,12 @@ class StepLog(StrictModel):
     # Actions this step ran before ``executed_action`` that failed their check and
     # were retried in the same step (full harness), oldest first.
     earlier_attempts: list[ExecutedAction] = Field(default_factory=list)
+    # Wall-clock UTC start and end of the step, the step's duration, and the part of it
+    # spent waiting on the model (perceive + policy stages). Absent in older run.jsonl files.
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    step_latency_ms: float | None = Field(default=None, ge=0)
+    model_latency_ms: float | None = Field(default=None, ge=0)
 
 
 class PreStepFailureLog(StrictModel):
@@ -78,6 +85,8 @@ class PreStepFailureLog(StrictModel):
     perception_debug: ModelDebugArtifacts
     failure: FailureRecord
     error_message: str = Field(min_length=1)
+    # Wall-clock UTC time the failure was logged. Absent in older run.jsonl files.
+    logged_at: datetime | None = None
 
 
 RunLogEntry = StepLog | PreStepFailureLog

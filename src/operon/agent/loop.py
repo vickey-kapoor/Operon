@@ -7,6 +7,7 @@ import logging
 import time
 import weakref
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -876,6 +877,7 @@ class AgentLoop:
             step_index=ctx.step_index,
             before_artifact_path=ctx.before_artifact_path,
             after_artifact_path=ctx.after_artifact_path,
+            step_ctx=ctx,
         )
 
     async def _execute_and_verify_stage(self, ctx: StepContext) -> None:
@@ -1084,7 +1086,8 @@ class AgentLoop:
         verification = await self.verifier_service.verify(ctx.state, ctx.decision, executed_action)
         ctx.verification = verification
         _trace("  5 VERIFY OK", f"{ctx.record_stage('verify', _t0):.2f}s  status={verification.status.value!r}  stop={verification.stop_condition_met}  stop_reason={verification.stop_reason!r}")
-        ctx.verification_debug = self._resolve_model_debug_artifacts(ctx.run_id, ctx.step_index, "verification", self.verifier_service)
+        # A verifier with no model call (OwnDoneVerifier) has no debug artifacts: log none.
+        ctx.verification_debug = self._latest_debug_artifacts(self.verifier_service)
 
         # Compute screen change ratio for progress tracking.
         from operon.agent.perception.screen_diff import (
@@ -1148,7 +1151,6 @@ class AgentLoop:
 
         failure = self._build_failure_record(state, decision, executed_action, verification, recovery)
 
-        _decision_source = f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini"
         step_log = StepLog(
             run_id=ctx.run_id,
             step_id=f"step_{ctx.step_index}",
@@ -1166,8 +1168,9 @@ class AgentLoop:
             progress_state=state.progress_state,
             progress_trace_artifact_path=ctx.progress_trace_artifact_path,
             failure=failure,
-            decision_source=_decision_source,
+            decision_source=self._decision_source(decision, policy_debug, perception_debug),
             visual_variance=executed_action.visual_variance,
+            **ctx.timing_fields(),
         )
         append_step_log(self._run_log_path(ctx.run_id), step_log)
 
@@ -1199,11 +1202,17 @@ class AgentLoop:
                 policy_debug.raw_response_artifact_path,
                 policy_debug.parsed_artifact_path,
                 *( [policy_debug.usage_artifact_path] if policy_debug.usage_artifact_path else [] ),
-                verification_debug.prompt_artifact_path,
-                verification_debug.raw_response_artifact_path,
-                verification_debug.parsed_artifact_path,
-                *( [verification_debug.usage_artifact_path] if verification_debug.usage_artifact_path else [] ),
-                *( [verification_debug.diagnostics_artifact_path] if verification_debug.diagnostics_artifact_path else [] ),
+                *(
+                    [
+                        verification_debug.prompt_artifact_path,
+                        verification_debug.raw_response_artifact_path,
+                        verification_debug.parsed_artifact_path,
+                        *( [verification_debug.usage_artifact_path] if verification_debug.usage_artifact_path else [] ),
+                        *( [verification_debug.diagnostics_artifact_path] if verification_debug.diagnostics_artifact_path else [] ),
+                    ]
+                    if verification_debug is not None
+                    else []
+                ),
                 *( [executed_action.execution_trace_artifact_path] if executed_action.execution_trace_artifact_path else [] ),
                 ctx.progress_trace_artifact_path,
             ]
@@ -1689,6 +1698,7 @@ class AgentLoop:
         before_artifact_path: str,
         after_artifact_path: str,
         log_step: bool = True,
+        step_ctx: StepContext | None = None,
     ) -> RunResponse:
         """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer.
 
@@ -1736,7 +1746,9 @@ class AgentLoop:
                     step_id=f"step_{step_index}",
                     step_index=step_index,
                     before_artifact_path=before_artifact_path,
-                    after_artifact_path=after_artifact_path,
+                    # Nothing ran before the pause, so no after.png was taken: the
+                    # screen after this step is the one it started from.
+                    after_artifact_path=before_artifact_path,
                     perception_debug=perception_debug,
                     policy_debug=policy_debug,
                     perception=perception,
@@ -1744,7 +1756,8 @@ class AgentLoop:
                     executed_action=executed_action,
                     verification_result=verification,
                     recovery_decision=recovery,
-                    decision_source=f"[RULE] {decision.rule_name}" if decision.rule_name else "[LLM] gemini",
+                    decision_source=self._decision_source(decision, policy_debug, perception_debug),
+                    **(step_ctx.timing_fields() if step_ctx is not None else {}),
                 ),
             )
         state.stop_reason = StopReason.WAITING_FOR_USER
@@ -1914,6 +1927,7 @@ class AgentLoop:
                 perception_debug=perception_debug,
                 failure=failure,
                 error_message=str(error) or type(error).__name__,
+                logged_at=datetime.now(UTC),
             ),
         )
         record.artifact_paths.extend(
@@ -2065,18 +2079,57 @@ class AgentLoop:
         stage_name: str,
         service,
     ) -> ModelDebugArtifacts:
-        if hasattr(service, "latest_debug_artifacts"):
-            debug_artifacts = service.latest_debug_artifacts()
-            if debug_artifacts is not None:
-                return debug_artifacts
+        debug_artifacts = self._latest_debug_artifacts(service)
+        if debug_artifacts is not None:
+            return debug_artifacts
 
-        step_dir = Path("runs") / run_id / f"step_{step_index}"
+        # The service wrote no artifacts of its own: name the files in this run's real
+        # step directory (where before.png goes), not a path relative to the cwd.
+        step_dir = Path(self._before_artifact_path(run_id, step_index)).parent
         return ModelDebugArtifacts(
             prompt_artifact_path=str(step_dir / f"{stage_name}_prompt.txt"),
             raw_response_artifact_path=str(step_dir / f"{stage_name}_raw.txt"),
             parsed_artifact_path=str(step_dir / ("policy_decision.json" if stage_name == "policy" else "verification_result.json" if stage_name == "verification" else "perception_parsed.json")),
             diagnostics_artifact_path=str(step_dir / f"{stage_name}_diagnostics.json") if stage_name in {"perception", "verification"} else None,
         )
+
+    @staticmethod
+    def _latest_debug_artifacts(service) -> ModelDebugArtifacts | None:
+        """The debug artifacts the service wrote for its latest call, or None."""
+        getter = getattr(service, "latest_debug_artifacts", None)
+        debug = getter() if callable(getter) else None
+        if debug is not None and debug.usage is None and debug.usage_artifact_path:
+            # Backends write the usage file only when the call reported usage: don't
+            # point the step log at a file that was never written.
+            debug = debug.model_copy(update={"usage_artifact_path": None})
+        return debug
+
+    def _model_label(self) -> str | None:
+        """The name of the model behind the policy, when the policy or its backend says."""
+        for candidate in (self.policy_service, getattr(self.policy_service, "delegate", None)):
+            label = getattr(candidate, "model_label", None)
+            if isinstance(label, str) and label:
+                return label
+        return None
+
+    def _decision_source(
+        self,
+        decision: PolicyDecision,
+        policy_debug: ModelDebugArtifacts | None,
+        perception_debug: ModelDebugArtifacts | None = None,
+    ) -> str:
+        """Who chose the step's action: ``[RULE] name`` or ``[LLM] provider:model``.
+
+        The model comes from the call's reported usage, else the backend's own label;
+        ``[LLM] unknown`` when neither says. Readers match the ``[LLM] `` prefix."""
+        if decision.rule_name:
+            return f"[RULE] {decision.rule_name}"
+        for debug in (policy_debug, perception_debug):
+            usage = debug.usage if debug is not None else None
+            if usage is not None:
+                return f"[LLM] {usage.provider}:{usage.model}"
+        label = self._model_label()
+        return f"[LLM] {label}" if label else "[LLM] unknown"
 
     async def _execute_action(
         self,

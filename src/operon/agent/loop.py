@@ -532,12 +532,12 @@ class AgentLoop:
             await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
         dialog_pause = self._dialog_pauses.pop(run_id, None)
         approved_dialog = self._dialog_approved.pop(run_id, None)
-        self._disarm_dialog_accept(run_id)  # only this dialog's approval (below) arms it again
+        self._disarm_dialog_accept(run_id)  # nothing stays armed across a resume
         if dialog_pause is not None:
             self._answer_dialog_pause(run_id, dialog_pause, approved=approve_gated_action)
         elif approved_dialog is not None and approve_gated_action and run_id in self._pending_gate_approvals:
             # The replay of an approved dialog was gate-paused and the gate is approved now.
-            self._arm_dialog_accept(run_id, approved_dialog)
+            self._approve_dialog(run_id, approved_dialog)
         elif not approve_gated_action:
             # A correction is not an approval: a backend holding the calls it paused
             # on (Gemini's require_confirmation) must not run them on the next step.
@@ -585,11 +585,11 @@ class AgentLoop:
             step_count=updated.step_count,
         )
 
-    def _arm_dialog_accept(self, run_id: str, dialog: tuple[str, str]) -> None:
-        arm = getattr(self.executor, "arm_accept_next_dialog", None)
-        if callable(arm):
+    def _approve_dialog(self, run_id: str, dialog: tuple[str, str]) -> None:
+        """Remember the dialog the person approved. The executor is armed for it only right
+        before the replay runs (``_set_dialog_policy``), never earlier."""
+        if callable(getattr(self.executor, "arm_accept_next_dialog", None)):
             self._dialog_approved[run_id] = dialog
-            arm(run_id, dialog[0], dialog[1])
 
     def _answer_dialog_pause(self, run_id: str, pause: _DialogPause, *, approved: bool) -> None:
         """The person's answer to a page dialog the executor cancelled (KAN-172).
@@ -602,8 +602,8 @@ class AgentLoop:
         kind, message, held, child_index, action_count = pause
         add_hints = getattr(self.perception_service, "add_advisory_hints", None)
         if approved:
-            self._arm_dialog_accept(run_id, (kind, message))
-            if held and child_index:
+            self._approve_dialog(run_id, (kind, message))
+            if held and child_index is not None:
                 # Calls before the dialog-raising one already ran: replay from it on.
                 if not self._drop_ran_held_calls(run_id, child_index, action_count):
                     held = False
@@ -1158,12 +1158,21 @@ class AgentLoop:
             ctx.run_id,
             accept=mode is PermissionMode.AUTO or (not self._trust_gate.enabled and mode is not PermissionMode.ASK),
         )
+        # The person approved a dialog: accept that one (type and message), once, in this step only.
+        approved = self._dialog_approved.get(ctx.run_id)
+        arm = getattr(self.executor, "arm_accept_next_dialog", None)
+        if approved is not None and callable(arm):
+            arm(ctx.run_id, approved[0], approved[1])
 
     def _drop_stale_dialog(self, ctx: StepContext) -> None:
         """Forget a dialog that fired after the previous action returned: it is not this action's."""
         pop = getattr(self.executor, "pop_pending_dialog", None)
-        if callable(pop) and pop(ctx.run_id):
-            logger.info("Dropped a page dialog left over from before this step")
+        stale = pop(ctx.run_id) if callable(pop) else None
+        if isinstance(stale, tuple) and len(stale) == 3:
+            logger.info("Cancelled a page dialog that fired after the previous action returned")
+            ctx.cancelled_dialog = stale
+            self._hint_cancelled_dialog(ctx, asked=False)
+            ctx.cancelled_dialog = None
 
     def _disarm_dialog_accept(self, run_id: str) -> None:
         disarm = getattr(self.executor, "disarm_accept_next_dialog", None)

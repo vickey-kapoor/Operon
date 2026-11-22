@@ -262,3 +262,99 @@ async def test_with_no_page_left_the_error_is_clear(executor):
 
     with pytest.raises(RuntimeError, match="no open page left"):
         await executor._current_page()
+
+
+# -- a dialog stops the batch / the atomic type ----------------------------------------
+
+
+def _wait_children():
+    from operon.models.policy import ActionType, AgentAction
+
+    return [AgentAction(action_type=ActionType.WAIT, wait_ms=1), AgentAction(action_type=ActionType.WAIT, wait_ms=2)]
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_dialog_stops_the_batch_and_the_replay_runs_each_child_once(executor):
+    from operon.models.execution import ExecutedAction
+    from operon.models.policy import ActionType, AgentAction
+
+    page = _page()
+    executor._attach_page_listeners(page, "r1")
+    executor.set_current_run_id("r1")
+    children = _wait_children()
+    ran: list[int] = []
+
+    async def run_child(child):
+        ran.append(child.wait_ms)
+        if child.wait_ms == 1:
+            await page.handlers["dialog"](_dialog("confirm", "Sure?"))
+        return ExecutedAction(action=child, success=True, detail="ok")
+
+    batch = AgentAction(action_type=ActionType.BATCH, actions=children)
+    with patch.object(executor, "execute", new=run_child):
+        first = await executor._execute_batch(batch)
+
+        assert ran == [1]  # child 1 never ran
+        assert first.success and first.batch_failed_index == 0 and "asked a question" in first.detail
+        assert executor.pop_pending_dialog("r1") == ("confirm", "Sure?", 0)
+
+        executor.arm_accept_next_dialog("r1", "confirm", "Sure?")  # the person approved: replay from child 0
+        second = await executor._execute_batch(batch)
+
+    assert ran == [1, 1, 2]  # child 0 again (accepted this time), then child 1, once each
+    assert second.success and second.batch_failed_index is None
+    assert executor.pop_pending_dialog("r1") is None
+
+
+@pytest.mark.asyncio
+async def test_a_second_dialog_in_a_batch_cannot_overwrite_the_first(executor):
+    from operon.models.execution import ExecutedAction
+    from operon.models.policy import ActionType, AgentAction
+
+    page = _page()
+    executor._attach_page_listeners(page, "r1")
+    executor.set_current_run_id("r1")
+
+    async def run_child(child):
+        await page.handlers["dialog"](_dialog("confirm", f"Question {child.wait_ms}?"))
+        return ExecutedAction(action=child, success=True, detail="ok")
+
+    with patch.object(executor, "execute", new=run_child):
+        await executor._execute_batch(AgentAction(action_type=ActionType.BATCH, actions=_wait_children()))
+
+    assert executor.pop_pending_dialog("r1") == ("confirm", "Question 1?", 0)
+
+
+@pytest.mark.asyncio
+async def test_a_focus_click_that_raises_a_dialog_types_nothing_until_approved(executor):
+    from operon.models.policy import ActionType, AgentAction
+
+    page = _page()
+    page.keyboard.type = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    state = {"first": True}
+
+    async def click(x, y, **kwargs):
+        if state["first"]:
+            state["first"] = False
+        await page.handlers["dialog"](_dialog("confirm", "Leave this field?"))
+
+    page.mouse.click = AsyncMock(side_effect=click)
+    executor._attach_page_listeners(page, "r1")
+    executor._sessions["r1"] = _session(page)
+    executor.set_current_run_id("r1")
+    action = AgentAction(action_type=ActionType.TYPE, x=10, y=20, text="hello")
+
+    first = await executor.execute(action)
+
+    page.keyboard.type.assert_not_awaited()
+    assert first.success and "asked a question" in first.detail
+    assert executor.pop_pending_dialog("r1") == ("confirm", "Leave this field?", None)
+
+    executor.arm_accept_next_dialog("r1", "confirm", "Leave this field?")
+    with patch.object(executor, "settle_now", new=AsyncMock()), patch.object(
+        executor, "_capture_after", new=AsyncMock(return_value="after.png")
+    ):
+        await executor.execute(action)  # the approved replay: focus, then type
+
+    page.keyboard.type.assert_awaited_once_with("hello")

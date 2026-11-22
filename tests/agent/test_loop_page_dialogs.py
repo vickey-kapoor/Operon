@@ -168,7 +168,8 @@ async def test_approving_arms_accept_and_reruns_the_held_action_once(monkeypatch
     await loop.step_run(StepRequest(run_id="run-1"))
 
     await loop.resume_run("run-1")
-    assert executor.armed == ("confirm", ASKED)
+    assert executor.armed is None  # armed only right before the replay runs
+    assert loop._dialog_approved == {"run-1": ("confirm", ASKED)}
     second = await loop.step_run(StepRequest(run_id="run-1"))
 
     assert executor.executed == [CLICK, CLICK]
@@ -233,13 +234,17 @@ async def test_an_accept_never_survives_a_gate_paused_replay_and_a_correction(mo
 
 
 async def test_a_gate_approved_replay_still_gets_its_dialog_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, PURCHASE, PURCHASE])
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK, CLICK])
     await loop.step_run(StepRequest(run_id="run-1"))
     await loop.resume_run("run-1")
-    await loop.step_run(StepRequest(run_id="run-1"))  # gate pause on the replay
+    state.permission_mode = "ask"  # every action is gated now, the replay too
+    gated = await loop.step_run(StepRequest(run_id="run-1"))
+    assert gated.status is RunStatus.WAITING_FOR_USER and executor.armed is None
     await loop.resume_run("run-1")  # the gate is approved
 
-    assert executor.armed == ("confirm", ASKED)  # the dialog approval is back for the replay
+    third = await loop.step_run(StepRequest(run_id="run-1"))
+
+    assert executor.accepted == 1 and third.status is RunStatus.RUNNING  # the dialog approval survived the gate
 
 
 async def test_an_execute_that_raises_leaves_nothing_armed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -346,7 +351,8 @@ async def test_a_dialog_left_over_from_before_the_step_is_not_blamed_on_its_acti
     first = await loop.step_run(StepRequest(run_id="run-1"))
 
     assert first.status is RunStatus.RUNNING
-    assert _hints(hints, "dialog") == []
+    texts = _hints(hints, "dialog")
+    assert len(texts) == 1 and "Stale?" in texts[0] and "not asked" in texts[0]
 
 
 async def test_the_hint_is_truthful_when_the_step_pauses_for_another_reason(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -359,3 +365,28 @@ async def test_the_hint_is_truthful_when_the_step_pauses_for_another_reason(monk
     assert "run-1" not in loop._dialog_pauses
     texts = _hints(hints, "dialog")
     assert len(texts) == 1 and "not asked" in texts[0] and "and asked the person" not in texts[0]
+
+
+async def test_approve_takeover_hand_back_leaves_nothing_approved_and_asks_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    await loop.resume_run("run-1")  # the dialog is approved, the replay has not run yet
+    await loop.take_over("run-1")
+
+    await loop.hand_back("run-1")  # resumes without approving anything
+
+    assert loop._dialog_approved == {} and executor.armed is None
+    replay = await loop.step_run(StepRequest(run_id="run-1"))
+    assert executor.accepted == 0
+    assert replay.status is RunStatus.WAITING_FOR_USER  # cancelled and asked about again
+
+
+async def test_a_dialog_in_the_first_child_replays_from_index_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    batch = AgentAction(action_type=ActionType.BATCH, actions=[CLICK, OTHER_CLICK])
+    loop, executor, state, hints, policy = _loop(monkeypatch, [batch])
+    executor.dialog_for = lambda action: ("confirm", ASKED, 0) if action.action_type is ActionType.BATCH else None
+    await loop.step_run(StepRequest(run_id="run-1"))
+
+    await loop.resume_run("run-1")
+
+    policy.drop_held_calls_before.assert_called_once_with("run-1", 0, 2)  # index 0 is not "no index"

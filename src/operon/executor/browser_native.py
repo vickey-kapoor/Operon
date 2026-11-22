@@ -323,6 +323,10 @@ class NativeBrowserExecutor(Executor):
                 if point is not None:
                     await page.mouse.click(*point)
                     await asyncio.sleep(0.05)
+                    if self._dialog_pending():
+                        # The focus click raised a dialog that was cancelled: type nothing. The
+                        # approved replay then focuses and types, once.
+                        return self._ok(action, "Stopped before typing: the page asked a question", None)
                 if action.clear_before_typing:
                     await page.keyboard.press("Control+A")
                     await page.keyboard.press("Backspace")
@@ -619,7 +623,22 @@ class NativeBrowserExecutor(Executor):
                     batch_failed_index=index,
                 )
             last_artifact_path = result.artifact_path
+            if self._dialog_pending():
+                # A dialog was cancelled in this child: the later children must not run. The
+                # person's answer then replays from this index exactly, and "not executed"
+                # is true for the rest. (A second dialog cannot overwrite the first.)
+                stopped = self._ok(
+                    action,
+                    f"Batch stopped after {child_action.action_type.value}: the page asked a question "
+                    f"({', '.join(completed)})",
+                    last_artifact_path,
+                )
+                return stopped.model_copy(update={"batch_failed_index": index})
         return self._ok(action, f"Executed batch: {', '.join(completed)}", last_artifact_path)
+
+    def _dialog_pending(self) -> bool:
+        """Whether a dialog was cancelled for the current run and not yet taken by the loop."""
+        return self._current_run_id is not None and self._current_run_id in self._pending_dialogs
 
     def pop_last_dialog_message(self, run_id: str) -> str | None:
         """Return and clear the last JS dialog message for a run (or None)."""

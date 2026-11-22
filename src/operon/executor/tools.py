@@ -50,6 +50,13 @@ class ToolExecutor:
         if hasattr(self.inner, "batch_child_check"):
             self.inner.batch_child_check = check
 
+    async def aclose_run(self, run_id: str) -> None:
+        """The run ended or was stopped: kill its shell commands, then let the wrapped executor clean up."""
+        await self.runner.kill_running()
+        inner_close = getattr(self.inner, "aclose_run", None)
+        if inner_close is not None:
+            await inner_close(run_id)
+
     async def execute(self, action: AgentAction) -> ExecutedAction:
         if action.action_type is ActionType.TOOL:
             return await self._run_tool(action)

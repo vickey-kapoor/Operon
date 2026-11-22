@@ -170,6 +170,10 @@ class TaskResult:
     # count as $0, so the report says how many there were and for which models.
     unpriced_calls: int = 0
     unpriced_models: list = field(default_factory=list)
+    # Steps whose model response was saved (``*_raw.*``) with no ``*_usage.json`` beside it, and usage
+    # files that could not be read: their cost is missing from the total (KAN-177).
+    steps_without_usage: int = 0
+    unreadable_usage_files: int = 0
     # Which pass of a --repeat run this result is from (1 when not repeated).
     attempt: int = 1
     # The task's length ("short" / "long") and "safety" if it is one (evals/categories.py).
@@ -272,7 +276,11 @@ def _run_dir(run_id: str) -> Path:
 
 def _backends_used(run_id: str) -> tuple[int, int]:
     steps = sorted(_run_dir(run_id).glob("step_*"))
-    cu = sum((step / "computer_use_raw.json").exists() or (step / "model_raw.json").exists() for step in steps)
+    # combined_raw.* is what the legacy combined backend wrote; nothing writes it now.
+    cu = sum(
+        (step / "computer_use_raw.json").exists() or (step / "model_raw.json").exists() or any(step.glob("combined_raw.*"))
+        for step in steps
+    )
     return cu, len(steps) - cu
 
 
@@ -287,11 +295,19 @@ def run_usage(run_id: str) -> dict:
 
     A call that used tokens but has no estimated cost is counted in ``unpriced_calls``:
     its model is missing from the price table, so it would otherwise add $0 silently.
+    A step with a saved model response but no usage file counts in ``steps_without_usage``, and a
+    usage file that cannot be read in ``unreadable_usage_files``: both leave the total low.
     """
     total = dict.fromkeys(USAGE_FIELDS, 0)
     by_model: dict[str, dict] = {}
     unpriced = 0
     unpriced_models: set[str] = set()
+    unreadable = 0
+    steps_without_usage = 0
+    for step in sorted(_run_dir(run_id).glob("step_*")):
+        raws = {raw.name.split("_raw.", 1)[0] for raw in step.glob("*_raw.*")}
+        if any(not (step / f"{name}_usage.json").exists() for name in raws):
+            steps_without_usage += 1
     usage_files = sorted(_run_dir(run_id).glob("step_*/*_usage.json"))
     planner_file = _run_dir(run_id) / "planner_usage.json"  # the one-shot planner's call (KAN-112)
     if planner_file.exists():
@@ -300,8 +316,10 @@ def run_usage(run_id: str) -> dict:
         try:
             usage = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            unreadable += 1
             continue
         if not isinstance(usage, dict):
+            unreadable += 1
             continue
         row = {
             "input_tokens": usage.get("input_tokens") or 0,
@@ -321,7 +339,8 @@ def run_usage(run_id: str) -> dict:
             bucket[key] += value
     for bucket in (total, *by_model.values()):
         bucket["cost_usd"] = round(bucket["cost_usd"], 6)
-    return {**total, "by_model": by_model, "unpriced_calls": unpriced, "unpriced_models": sorted(unpriced_models)}
+    return {**total, "by_model": by_model, "unpriced_calls": unpriced, "unpriced_models": sorted(unpriced_models),
+            "steps_without_usage": steps_without_usage, "unreadable_usage_files": unreadable}
 
 
 def _server_env() -> dict[str, str]:
@@ -630,6 +649,8 @@ async def run_task(
         by_model=usage["by_model"],
         unpriced_calls=usage.get("unpriced_calls", 0) + len(judge_unpriced),
         unpriced_models=sorted({*usage.get("unpriced_models", []), *judge_unpriced}),
+        steps_without_usage=usage.get("steps_without_usage", 0),
+        unreadable_usage_files=usage.get("unreadable_usage_files", 0),
         tags=tags_of(task),
         recovered_errors=_recovered_errors(run_id) if run_id else {},
         **_efficiency(run_id),
@@ -665,6 +686,8 @@ def interrupted_result(active: dict) -> TaskResult:
         by_model=usage["by_model"],
         unpriced_calls=usage.get("unpriced_calls", 0),
         unpriced_models=usage.get("unpriced_models", []),
+        steps_without_usage=usage.get("steps_without_usage", 0),
+        unreadable_usage_files=usage.get("unreadable_usage_files", 0),
         attempt=active["attempt"],
         tags=tags_of(task),
     )
@@ -775,6 +798,8 @@ def cost_summary(results: list[TaskResult], successes: int) -> dict:
         "by_model": by_model,
         "unpriced_calls": sum(r.unpriced_calls for r in results),
         "unpriced_models": sorted({m for r in results for m in r.unpriced_models}),
+        "steps_without_usage": sum(r.steps_without_usage for r in results),
+        "unreadable_usage_files": sum(r.unreadable_usage_files for r in results),
     }
 
 

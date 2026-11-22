@@ -172,7 +172,23 @@ class OSWorldExecutor:
             # still opening), so let it settle before the loop's next screenshot. Once per action,
             # once per batch; also after a batch that failed part-way, since its earlier input ran.
             await asyncio.sleep(self._post_action_wait_s)
+        if did_input:
+            # The loop moves this file to the step's after.png. A failed capture never fails the action.
+            after = await self._capture_after()
+            if after is not None:
+                result = result.model_copy(update={"artifact_path": after})
         return result
+
+    async def _capture_after(self) -> str | None:
+        try:
+            response = await self._http().get("/screenshot")
+            response.raise_for_status()
+            path = self._dir / f"osworld_after_{uuid4().hex[:8]}.png"
+            path.write_bytes(response.content)
+            return str(path)
+        except Exception:  # noqa: BLE001 - the after shot is a record; losing it must not fail the action
+            logger.debug("OSWorld after screenshot skipped", exc_info=True)
+            return None
 
     async def _execute_one(self, action: AgentAction) -> tuple[ExecutedAction, bool]:
         """Run one action; the flag says whether it sent input to the VM (so a post-action wait applies).

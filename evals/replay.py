@@ -22,8 +22,14 @@ kept: a recording holds only the model's text and actions.
     python -m evals.replay record .var/runs/<run_id> --task NAME --mode desktop > rec.json
     python -m evals.replay check evals/recordings/*.json
 
-Only thin-harness runs replay (the full harness also asks a Gemini critic, which is
-not recorded).
+Only thin-harness Gemini computer-use runs replay (the full harness also asked a
+Gemini critic, which is not recorded). A Claude or GPT run (``OPERON_*_BACKEND=model``,
+KAN-168) is refused when recorded and when replayed: its answers are not saved per turn
+in Gemini's shape, so the Gemini backend would replay nonsense. A ``hybrid`` run (a
+desktop app and a browser on one machine) ran through the desktop loop, so it replays
+through the desktop path; the recording keeps the ``hybrid`` label (KAN-178).
+A replay patches settle detection's sleep and clock with a fake clock, so any settle
+wait during a replay takes no real time.
 """
 
 from __future__ import annotations
@@ -64,6 +70,32 @@ _WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 
 class RecordingError(ValueError):
     """The run folder cannot be turned into a recording that replays."""
+
+
+# The recording modes; a hybrid run used the desktop loop (KAN-178).
+MODES = ("browser", "desktop", "hybrid")
+
+
+def loop_mode(mode: str) -> str:
+    """The loop a recording of ``mode`` runs through: hybrid runs used the desktop loop."""
+    if mode == "hybrid":
+        return "desktop"
+    if mode in ("browser", "desktop"):
+        return mode
+    raise RecordingError(f"unknown recording mode {mode!r}; use browser, desktop or hybrid")
+
+
+def _require_gemini(settings: dict, mode: str) -> None:
+    """Refuse a Claude or GPT run (KAN-168 model adapter): only Gemini answers replay.
+    Either backend key counts, so a run recorded under the other mode is refused too."""
+    loop_mode(mode)
+    for key in ("OPERON_BROWSER_BACKEND", "OPERON_DESKTOP_BACKEND"):
+        if str(settings.get(key) or "").strip().lower() != "model":
+            continue
+        profile = str(settings.get("OPERON_MODEL_PROFILE") or "").strip() or "?"
+        raise RecordingError(
+            f"only Gemini computer-use runs replay: this run used {key}=model with model profile "
+            f"{profile} (Claude and GPT answers are not recorded per turn)")
 
 
 # ── record ──────────────────────────────────────────────────────────────────
@@ -178,18 +210,20 @@ def record_run(run_dir: Path, *, task: str, mode: str, intent: str | None = None
                outcome: str | None = None) -> dict:
     """One run folder as a replayable recording (raises :class:`RecordingError`)."""
     run_dir = Path(run_dir)
+    run_mode = loop_mode(mode)
     settings = _read_json(run_dir / "settings.json") if (run_dir / "settings.json").is_file() else {}
+    _require_gemini(settings, mode)
     # New runs record the profile they resolved to; older ones only the raw env, where an
     # unset value meant the full harness for Gemini computer use (the json backend and any
     # other value never replay either).
-    backend_key = "OPERON_BROWSER_BACKEND" if mode == "browser" else "OPERON_DESKTOP_BACKEND"
+    backend_key = "OPERON_BROWSER_BACKEND" if run_mode == "browser" else "OPERON_DESKTOP_BACKEND"
     backend = (settings.get(backend_key) or "computer_use").lower()
     resolved = (settings.get("harness_profile_resolved") or "").lower()
     requested = (settings.get("OPERON_HARNESS_PROFILE") or "").lower()
     if resolved:
         thin = resolved == "thin" and backend != "json"
     else:
-        thin = backend == "model" or (backend == "computer_use" and requested == "thin")
+        thin = backend == "computer_use" and requested == "thin"
     if not thin:
         raise RecordingError(
             "only thin-harness runs replay (the full harness's critic is not recorded); runs saved "
@@ -350,6 +384,8 @@ class ReplayResult:
     status: str = ""
     recorded: list[dict | None] = field(default_factory=list)
     replayed: list[dict | None] = field(default_factory=list)
+    turns_used: int = 0  # recorded model answers the replay asked for
+    turns_recorded: int = 0
 
 
 def _describe(action: dict | None) -> str:
@@ -398,6 +434,20 @@ async def _no_sleep(*_args: Any, **_kwargs: Any) -> None:
     return None
 
 
+class _ReplayClock:
+    """Settle detection's clock during a replay: a sleep only moves the clock forward,
+    so any settle wait in a replay takes no real time."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def time(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.now += max(0.0, float(seconds))
+
+
 def executed_outcomes(steps: list[dict]) -> list[dict]:
     """The execution outcomes of the recorded steps that reached the executor (a pause
     for the person is logged as a step but never executed)."""
@@ -417,13 +467,15 @@ class LoopRun:
     status: str
     actions: list[dict | None]
     extra_turns: int
+    turns_used: int = 0
 
 
 async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, height: int, root: Path,
                     max_steps: int, outcomes: list[dict] | None = None, permission_mode: str | None = None,
                     resumes_allowed: int = 10, gate_urls: list[str | None] | None = None) -> LoopRun:
     """Drive the real thin-harness loop with ``turns`` as the model's answers on a blank
-    screen, in run folders under ``root`` (the caller sets the environment)."""
+    screen, in run folders under ``root`` (the caller sets the environment). A ``hybrid``
+    ``mode`` runs through the desktop loop."""
     from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
     from operon.agent.backends.desktop_computer_use import (
         DESKTOP_ENVIRONMENT,
@@ -442,6 +494,7 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
     from operon.store.memory import FileBackedMemoryStore
     from operon.store.run_store import FileBackedRunStore
 
+    mode = loop_mode(mode)
     (root / "frames").mkdir(parents=True, exist_ok=True)
     executor = ReplayExecutor(width, height, root / "frames", outcomes, gate_urls)
     tools = enabled_tools()
@@ -453,11 +506,13 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
             browser_runtime=executor, tools=tools,
         )
         environment = Environment.BROWSER
-    else:
+    elif mode == "desktop":
         client = ReplayClient(turns, environment=DESKTOP_ENVIRONMENT,
                               function_declarations=[launch_app_function(), *function_declarations(tools)])
         backend = DesktopComputerUseBackend(client=client, prompt_path=prompts_dir() / desktop_prompt_name(), tools=tools)
         environment = Environment.DESKTOP
+    else:  # loop_mode() allows nothing else
+        raise RecordingError(f"unknown loop mode {mode!r}")
     run_store = FileBackedRunStore(root / "runs")
     memory_store = FileBackedMemoryStore(root / "memory")
     loop = AgentLoop(
@@ -492,6 +547,7 @@ async def run_turns(turns: list[dict], *, mode: str, intent: str, width: int, he
         # The logged steps, as a recording reads them (a pause is a step too).
         actions=[s["action"] for s in logged_steps(Path(run_store.root_dir) / run.run_id)],
         extra_turns=client.extra_turns,
+        turns_used=client.used,
     )
 
 
@@ -513,7 +569,14 @@ def loop_environment(settings: dict | None = None):
         for name in recordable_settings(get_settings().effective()):
             os.environ.pop(name, None)
         stack.enter_context(patch.dict(os.environ, env))
+        # This patches the asyncio module's sleep (loop.asyncio is that module), so every
+        # asyncio.sleep in the process is a no-op while the replay runs.
         stack.enter_context(patch("operon.agent.loop.asyncio.sleep", _no_sleep))
+        # Settle detection (KAN-110) waits and times on its own hooks: a fake clock, so
+        # its max_s timeout passes at once instead of in real seconds (KAN-178).
+        clock = _ReplayClock()
+        stack.enter_context(patch("operon.agent.perception.settle._sleep", clock.sleep))
+        stack.enter_context(patch("operon.agent.perception.settle._clock", clock.time))
         stack.enter_context(patch("operon.agent.hitl.notify_desktop", lambda **_: None))
         stack.enter_context(patch("operon.agent.hitl.post_hitl_webhook", _no_sleep))
         stack.enter_context(patch("operon.agent.hitl.start_escalation_timer", _no_sleep))
@@ -571,6 +634,8 @@ async def replay(recording: dict) -> ReplayResult:
     """Run ``recording`` through the real loop with its recorded answers and compare."""
     if recording.get("format") != FORMAT:
         raise RecordingError(f"unknown recording format {recording.get('format')!r}")
+    loop_mode(recording["mode"])
+    _require_gemini(recording.get("settings") or {}, recording["mode"])
     task = recording["task"]
     recorded = [s["action"] for s in recording["steps"]]
     screen = recording["screen"]
@@ -589,7 +654,9 @@ async def replay(recording: dict) -> ReplayResult:
             resumes_allowed=resumes_in(recording),
             gate_urls=recording.get("gate_urls"),
         )
-    return compare(task, recorded, run.actions, extra_turns=run.extra_turns, status=run.status)
+    result = compare(task, recorded, run.actions, extra_turns=run.extra_turns, status=run.status)
+    result.turns_used, result.turns_recorded = run.turns_used, len(recording["turns"])
+    return result
 
 
 # ── command line ────────────────────────────────────────────────────────────
@@ -607,7 +674,7 @@ def main(argv: list[str] | None = None) -> int:
     rec = sub.add_parser("record", help="print one run folder as a recording")
     rec.add_argument("run_dir", type=Path)
     rec.add_argument("--task", required=True)
-    rec.add_argument("--mode", choices=("browser", "desktop", "hybrid"), default="desktop")
+    rec.add_argument("--mode", choices=MODES, default="desktop")
     chk = sub.add_parser("check", help="replay recordings; exit 1 if any no longer matches")
     chk.add_argument("paths", nargs="*", type=Path)
     args = parser.parse_args(argv)
@@ -620,7 +687,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     failed = 0
     for path in args.paths or recording_paths():
-        result = asyncio.run(replay(_read_json(path)))
+        try:
+            result = asyncio.run(replay(_read_json(path)))
+        except RecordingError as exc:
+            print(f"FAIL  {path}: {exc}")
+            failed += 1
+            continue
         print(("ok    " if result.ok else "FAIL  ") + result.message)
         failed += not result.ok
     return 1 if failed else 0

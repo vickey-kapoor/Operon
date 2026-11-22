@@ -127,7 +127,7 @@ class NativeBrowserExecutor(Executor):
         # person approved, the cancelled dialog waiting for the loop, and the secret values
         # typed in the run (a page can echo one back in a dialog message).
         self._dialog_accept_all: dict[str, bool] = {}
-        self._dialog_accept_next: dict[str, tuple[str, str]] = {}  # run -> the approved (type, message)
+        self._dialog_accept_next: dict[str, list[tuple[str, str]]] = {}  # run -> the approved (type, message) entries, each used once
         self._pending_dialogs: dict[str, tuple[str, str, int | None]] = {}  # (type, message, batch child)
         # Plaintext secret values typed in the run, held in memory only for masking dialog
         # messages; cleared in _forget_run_dialogs when the run's session closes.
@@ -615,9 +615,18 @@ class NativeBrowserExecutor(Executor):
     async def _execute_batch(self, action: AgentAction) -> ExecutedAction:
         if not action.actions:
             return self._fail(action, "batch requires actions", FailureCategory.EXECUTION_ERROR)
+        outermost = self._executing_child is None
+        try:
+            return await self._execute_batch_children(action, outermost)
+        finally:
+            # Every exit (blocked child, a raising check, a failure) clears the index, or it
+            # would leak and mislabel the next batch's dialogs.
+            if outermost:
+                self._executing_child = None
+
+    async def _execute_batch_children(self, action: AgentAction, outermost: bool) -> ExecutedAction:
         completed: list[str] = []
         last_artifact_path: str | None = None
-        outermost = self._executing_child is None
         for index, child_action in enumerate(action.actions):
             if outermost:
                 self._executing_child = index
@@ -684,7 +693,12 @@ class NativeBrowserExecutor(Executor):
     def arm_accept_next_dialog(self, run_id: str, kind: str, message: str) -> None:
         """Accept the next dialog of the run, once, if it is this one: the person approved
         exactly this (type, message). Any other dialog is cancelled and asked about again."""
-        self._dialog_accept_next[run_id] = (kind, message)
+        self._dialog_accept_next[run_id] = [(kind, message)]
+
+    def arm_accept_dialogs(self, run_id: str, dialogs: list[tuple[str, str]]) -> None:
+        """Like ``arm_accept_next_dialog`` for an action that raises several dialogs in turn:
+        each approved (type, message) is accepted once, in any order; anything else is cancelled."""
+        self._dialog_accept_next[run_id] = list(dialogs)
 
     def disarm_accept_next_dialog(self, run_id: str) -> None:
         self._dialog_accept_next.pop(run_id, None)
@@ -1122,8 +1136,11 @@ class NativeBrowserExecutor(Executor):
             msg = redact(dialog.message or "", self._run_secret_values.get(run_id, ()))
             if kind == "alert" or run_id in self._person_input or run_id in self._person_driving:
                 accept = True  # it only informs, or the person is driving and answers it themselves
-            elif self._dialog_accept_next.get(run_id) == (kind, msg):
-                del self._dialog_accept_next[run_id]  # the person approved this very dialog: once
+            elif (kind, msg) in self._dialog_accept_next.get(run_id, []):
+                armed = self._dialog_accept_next[run_id]
+                armed.remove((kind, msg))  # the person approved this very dialog: once
+                if not armed:
+                    del self._dialog_accept_next[run_id]
                 accept = True
             else:
                 accept = self._dialog_accept_all.get(run_id, False)

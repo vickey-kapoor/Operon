@@ -433,3 +433,65 @@ async def test_a_dialog_on_the_last_child_is_attributed_to_it(executor):
 
     assert ran == [1, 2] and result.batch_failed_index == 1
     assert executor.pop_pending_dialog("r1") == ("confirm", "Sure?", 1)
+
+
+# -- the batch child index never leaks; several approved dialogs (KAN-172) ------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check_raises", [False, True])
+async def test_a_blocked_batch_child_does_not_leak_the_child_index(executor, check_raises):
+    from operon.models.execution import ExecutedAction
+    from operon.models.policy import ActionType, AgentAction
+
+    page = _page()
+    executor._attach_page_listeners(page, "r1")
+    executor.set_current_run_id("r1")
+    children = [AgentAction(action_type=ActionType.WAIT, wait_ms=n) for n in (1, 2, 3)]
+    batch = AgentAction(action_type=ActionType.BATCH, actions=children)
+    ran: list[int] = []
+
+    async def run_child(child):
+        ran.append(child.wait_ms)
+        if child.wait_ms == 1 and len(ran) > 1:
+            await page.handlers["dialog"](_dialog("confirm", "Sure?"))  # the later batch's child 0
+        return ExecutedAction(action=child, success=True, detail="ok")
+
+    async def check(child):
+        if child.wait_ms == 3:
+            return None
+        if check_raises:
+            raise RuntimeError("check blew up")
+        return "blocked"
+
+    executor.batch_child_check = check
+    with patch.object(executor, "execute", new=run_child):
+        if check_raises:
+            with pytest.raises(RuntimeError):
+                await executor._execute_batch(batch)
+        else:
+            blocked = await executor._execute_batch(batch)
+            assert not blocked.success and blocked.batch_failed_index == 1
+        assert executor._executing_child is None  # the early exit cleared it
+        assert ran == [1]
+
+        executor.batch_child_check = None
+        await executor._execute_batch(batch)  # a later batch: its first child raises a dialog
+
+    assert executor.pop_pending_dialog("r1") == ("confirm", "Sure?", 0)  # index 0, not a stale one
+
+
+@pytest.mark.asyncio
+async def test_each_armed_dialog_is_accepted_once_and_others_are_cancelled(executor):
+    executor.arm_accept_dialogs("r1", [("confirm", "A?"), ("confirm", "B?")])
+
+    a = await _raise(executor, "r1", "confirm", "A?")
+    b = await _raise(executor, "r1", "confirm", "B?")
+    a_again = await _raise(executor, "r1", "confirm", "A?")
+    other = await _raise(executor, "r1", "confirm", "C?")
+
+    a.accept.assert_awaited_once()
+    b.accept.assert_awaited_once()
+    a_again.dismiss.assert_awaited_once()  # each entry is used once
+    other.dismiss.assert_awaited_once()
+    assert "r1" not in executor._dialog_accept_next  # spent entries leave nothing behind

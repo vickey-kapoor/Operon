@@ -327,3 +327,19 @@ def test_version_flag(capsys) -> None:
         cli.build_parser().parse_args(["--version"])
     assert exit_info.value.code == 0
     assert capsys.readouterr().out.strip() == f"operon {__version__}"
+
+
+async def test_auto_confirm_never_answers_a_page_dialog_pause(monkeypatch) -> None:
+    # A page confirm the executor cancelled waits as an approval (the "dialog" gate): auto-confirm
+    # answers only the model's own confirmation pause, never an approval.
+    monkeypatch.setenv("OPERON_AUTO_CONFIRM", "on")
+
+    class _DialogClient(_FakeClient):
+        async def start(self, payload):
+            status = await super().start(payload)
+            status["waiting"] = {"kind": "approval", "gate": "dialog", "reason": 'The page asked: "Delete?" Accept?'}
+            return status
+
+    client = _DialogClient()
+    await cli.drive(client, {"intent": "x"}, ask=lambda _: "n", out=lambda _: None, interactive=False, poll_s=0.01)
+    assert client.approved == 0

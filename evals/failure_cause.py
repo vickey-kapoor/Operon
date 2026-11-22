@@ -1,4 +1,9 @@
-"""KAN-175: shared failure-cause helpers for the benchmarks (labelling and grading input only)."""
+"""KAN-175: shared failure-cause helpers for the benchmarks (labelling and grading input only).
+
+Dependency-free on purpose: the OSWorld runner's venv (osw-venv) has no Operon install, so this
+module must not import ``operon``. ``state_cause_value`` mirrors
+``operon.agent.failure_cause.cause_from_state``; tests/evals/test_failure_cause.py checks the two
+agree for every run status and stop reason."""
 
 from __future__ import annotations
 
@@ -6,8 +11,37 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
-from operon.agent.failure_cause import cause_from_state
-from operon.models.common import RunFailureCause
+# Values of operon.models.common.RunFailureCause / StopReason / RunStatus, as plain strings.
+_CAUSE_BY_STOP_REASON = {
+    "max_step_limit_reached": "max_steps",
+    "completion_unverified": "model_gave_up",
+    "model_blocked": "model_blocked",
+    "pre_step_perception_failed": "perception_failed",
+    "perception_low_quality": "perception_failed",
+    "interrupted": "interrupted",
+}
+
+
+def _value(item: object) -> str | None:
+    value = getattr(item, "value", item)
+    return str(value) if value else None
+
+
+def state_cause_value(status: object, stop_reason: object, failure_cause: object = None) -> str | None:
+    """The cause for a run's final state (stored cause wins), or None when the run did not fail."""
+    stored = _value(failure_cause)
+    if stored:
+        return stored
+    status_value, reason = _value(status), _value(stop_reason)
+    if status_value == "cancelled":
+        return "cancelled"
+    if reason == "interrupted":
+        return "interrupted"
+    if status_value == "waiting_for_user":
+        return "needs_user"
+    if status_value != "failed":
+        return None
+    return _CAUSE_BY_STOP_REASON.get(reason or "", "other")
 
 _STEP_DIR = re.compile(r"^step_(\d+)$")
 
@@ -25,17 +59,17 @@ def bench_cause(
     if passed:
         return None
     if bench_error:
-        return RunFailureCause.BENCH_ERROR.value
+        return "bench_error"
     if timed_out:
-        return RunFailureCause.TIMEOUT.value
-    if str(getattr(stop_reason, "value", stop_reason)) == "interrupted":
-        return RunFailureCause.INTERRUPTED.value
-    cause = cause_from_state(run_status, stop_reason, state_cause)
+        return "timeout"
+    if _value(stop_reason) == "interrupted":
+        return "interrupted"
+    cause = state_cause_value(run_status, stop_reason, state_cause)
     if cause:
         return cause
-    if str(getattr(run_status, "value", run_status)) == "succeeded":
-        return RunFailureCause.WRONG_RESULT.value
-    return RunFailureCause.OTHER.value
+    if _value(run_status) == "succeeded":
+        return "wrong_result"
+    return "other"
 
 
 def by_cause(causes: Iterable[str | None]) -> dict[str, int]:

@@ -125,3 +125,38 @@ def test_a_succeeded_run_the_judge_could_not_grade_is_a_bench_error() -> None:
         bench_cause(passed=False, bench_error=True, run_status="succeeded", stop_reason="task_completed", state_cause=None)
         == "bench_error"
     )
+
+
+def test_the_bench_cause_table_matches_operons_own() -> None:
+    # evals/failure_cause.py must not import operon (the OSWorld runner's venv has none), so it keeps
+    # its own copy of the stop-reason table; it must agree with the loop's for every state.
+    from evals.failure_cause import state_cause_value
+    from operon.agent.failure_cause import cause_from_state
+    from operon.models.common import RunStatus, StopReason
+
+    for status in [*RunStatus, None]:
+        for reason in [*StopReason, None]:
+            assert state_cause_value(status, reason) == cause_from_state(status, reason), (status, reason)
+
+
+def test_the_bench_helpers_import_without_operon() -> None:
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # Block every operon import, as on the OSWorld runner's own venv.
+    code = (
+        "import sys\n"
+        "class Block:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'operon' or name.startswith('operon.'):\n"
+        "            raise ImportError(name)\n"
+        "sys.meta_path.insert(0, Block())\n"
+        "import evals.osworld as o\n"
+        "assert o.failure_cause(passed=False, bench_error=False, timed_out=False, run_status='succeeded',"
+        " stop_reason='task_completed', state_cause=None) == 'wrong_result'\n"
+        "assert o.failure_cause(passed=False, bench_error=False, timed_out=False, run_status='cancelled',"
+        " stop_reason=None, state_cause=None) == 'cancelled'\n"
+    )
+    root = Path(__file__).resolve().parents[2]
+    subprocess.run([sys.executable, "-c", code], cwd=root, check=True)

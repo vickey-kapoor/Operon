@@ -24,6 +24,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from evals.failure_cause import bench_cause, by_cause
+
 SUBSET_FILE = Path(__file__).with_name("osworld_subset.json")
 # OSWorld's own runner waits 20 s before evaluating (lib_run_single.py): Chrome saves preference
 # changes to disk with a delay, and file-based checkers read the stale value if we score at once.
@@ -156,16 +158,7 @@ def run_failure(run_id: str | None, runs_root: str | Path | None = None) -> tupl
 
 def failure_cause(*, passed: bool, bench_error: bool, timed_out: bool, run_status: str | None,
                   stop_reason: str | None, state_cause: str | None) -> str | None:
-    """The one cause for a non-passing task (evals.failure_cause.bench_cause).
-
-    This runner's own venv may not have Operon, so the import is lazy: without it a failed task
-    is labelled from the state cause alone, else bench_error / timeout / other."""
-    try:
-        from evals.failure_cause import bench_cause
-    except ImportError:
-        if passed:
-            return None
-        return state_cause or ("bench_error" if bench_error else "timeout" if timed_out else "other")
+    """The one cause for a non-passing task (evals.failure_cause.bench_cause, which needs no Operon install)."""
     return bench_cause(passed=passed, bench_error=bench_error, run_status=run_status, stop_reason=stop_reason,
                        state_cause=state_cause, timed_out=timed_out)
 
@@ -270,14 +263,6 @@ def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
     return made
 
 
-def _by_cause(causes: Any) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for cause in causes:
-        if cause:
-            counts[cause] = counts.get(cause, 0) + 1
-    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
-
-
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(results)
     passed = sum(1 for r in results if r["passed"])
@@ -289,7 +274,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     errors = sum(1 for r in results if r.get("status") == "error")
     timed_out = sum(1 for r in results if r.get("status") == "timed_out")
     return {"tasks": n, "passed": passed, "errors": errors, "timed_out": timed_out,
-            "by_cause": _by_cause(r.get("failure_cause") for r in results if not r["passed"]),
+            "by_cause": by_cause(r.get("failure_cause") for r in results if not r["passed"]),
             "success_rate": round(passed / n, 3) if n else 0.0,
             "cost_usd": round(sum(r["cost_usd"] for r in results), 4),
             "by_domain": {d: f"{p}/{t}" for d, (p, t) in sorted(by_domain.items())}}

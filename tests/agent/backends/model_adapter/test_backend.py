@@ -226,3 +226,20 @@ async def test_screenshots_outside_the_history_window_are_freed(frame) -> None:
     # history_screens=2: only the last two turns keep their image.
     assert [turn.image is not None for turn in turns] == [False, False, True, True]
 
+
+
+@pytest.mark.parametrize("bucket", ["run-1", ""])
+async def test_a_transport_error_keeps_the_queued_hint_for_the_next_turn(frame, bucket: str) -> None:
+    client = ScriptedChat([ModelTransportError("HTTP 503"), sample("qwen3_vl_click"), sample("qwen3_vl_click")])
+    backend = _backend(client)
+    backend.add_advisory_hints(["use the left menu"], run_id=bucket)
+
+    with pytest.raises(BackendCompatibilityError, match="HTTP 503"):
+        await backend.perceive(frame("s1"), state())
+    assert backend._hints[bucket] == [("use the left menu", "")]
+
+    await _step(backend, frame, state(), "s2")
+    await _step(backend, frame, state(), "s3")
+    assert json.dumps(client.requests[1]).count("use the left menu") == 1
+    assert json.dumps(client.requests[2]).count("use the left menu") == 1  # history replay, not a second send
+    assert not backend._hints.get(bucket)

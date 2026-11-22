@@ -111,7 +111,8 @@ async def test_second_block_raises_model_blocked_and_keeps_history(tmp_path: Pat
         await _call(backend, tmp_path)
 
     assert len(client.turns) == 2
-    assert _shots(backend._conversations["run-1"].contents) == 7
+    # the failed turn is rolled back: only the six seeded screenshots remain
+    assert _shots(backend._conversations["run-1"].contents) == 6
 
 
 async def test_no_retry_when_there_are_no_older_screenshots_to_drop(tmp_path: Path) -> None:

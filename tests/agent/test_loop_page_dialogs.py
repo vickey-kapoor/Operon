@@ -481,8 +481,11 @@ def _two_confirms(executor: DialogExecutor) -> None:
     )
 
 
-async def test_an_action_that_raises_two_confirms_is_approved_one_after_the_other(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK, CLICK, CLICK])
+@pytest.mark.parametrize("held", [True, False])  # False: the model re-emits the same action itself
+async def test_an_action_that_raises_two_confirms_is_approved_one_after_the_other(
+    monkeypatch: pytest.MonkeyPatch, held: bool
+) -> None:
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK, CLICK, CLICK], held=held)
     _two_confirms(executor)
 
     first = await loop.step_run(StepRequest(run_id="run-1"))
@@ -520,21 +523,26 @@ async def test_declining_the_second_confirm_clears_every_approval(monkeypatch: p
 
 
 async def test_approvals_for_one_action_are_not_armed_for_an_unrelated_later_one(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, CLICK, OTHER_CLICK, CLICK])
-    _two_confirms(executor)
-    other_dialog = ("confirm", "Leave this page?", None)
-    base = executor.dialog_for
-    executor.dialog_for = lambda action: other_dialog if action == OTHER_CLICK else base(action)
+    # Nothing is held, so the model picks each next action itself: after the person approved A for
+    # CLICK, the model moves on to OTHER_CLICK (asks "Leave this page?"), then to THIRD, which raises
+    # A's text. A was approved for CLICK only: THIRD must be asked about, not accepted.
+    other_click = AgentAction(action_type=ActionType.CLICK, x=500, y=600)
+    third_click = AgentAction(action_type=ActionType.CLICK, x=900, y=900)
+    loop, executor, state, _hints_mock, _policy = _loop(monkeypatch, [CLICK, other_click, third_click], held=False)
+    raised = [(CLICK, ("confirm", ASKED, None)), (other_click, ("confirm", "Leave this page?", None)),
+              (third_click, ("confirm", ASKED, None))]
+    executor.dialog_for = lambda action: next(dialog for candidate, dialog in raised if candidate == action)
     await loop.step_run(StepRequest(run_id="run-1"))
-    await loop.resume_run("run-1")  # approve A
-    await loop.step_run(StepRequest(run_id="run-1"))  # replay; B asked
-    await loop.resume_run("run-1", approve_gated_action=False)  # a correction instead
+    await loop.resume_run("run-1")  # approve A (for CLICK)
+    second = await loop.step_run(StepRequest(run_id="run-1"))  # the model chose OTHER_CLICK instead
+    assert second.status is RunStatus.WAITING_FOR_USER and loop._dialog_pauses["run-1"].prior_approved == ()
+    await loop.resume_run("run-1")  # approve "Leave this page?"
+    assert loop._dialog_approved == {"run-1": [("confirm", "Leave this page?")]}
 
-    unrelated = await loop.step_run(StepRequest(run_id="run-1"))  # a different action with its own dialog
+    third = await loop.step_run(StepRequest(run_id="run-1"))
 
-    assert executor.armed is None
-    assert unrelated.status is RunStatus.WAITING_FOR_USER and "Leave this page?" in (state.pause_reason or "")
-    assert executor.accepted_messages == [ASKED]
+    assert third.status is RunStatus.WAITING_FOR_USER and ASKED in (state.pause_reason or "")
+    assert executor.accepted_messages == []
 
 
 async def test_the_pending_dialog_pause_reports_as_an_approval(monkeypatch: pytest.MonkeyPatch) -> None:

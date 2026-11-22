@@ -941,8 +941,10 @@ def save_final_screens(results: list[TaskResult], target: Path) -> None:
 
 def save_recordings(results: list[TaskResult], target: Path, *, mode: str) -> int:
     """Write each thin-harness Gemini run as a replayable recording (KAN-167,
-    ``evals/replay.py``) to ``target/<task>.json``. Runs that cannot replay (the full
-    harness) are left out. Returns how many were written."""
+    ``evals/replay.py``) to ``target/<task>.json``, labelled with the run's ``mode``
+    (a hybrid run replays through the desktop path). Runs that cannot replay (the full
+    harness, a Claude or GPT run) are left out, with the reason printed. Returns how many
+    were written."""
     from evals.replay import RecordingError, record_run
 
     written = 0
@@ -951,8 +953,7 @@ def save_recordings(results: list[TaskResult], target: Path, *, mode: str) -> in
             continue
         name = r.task if r.attempt == 1 else f"{r.task}-try{r.attempt}"
         try:
-            recording = record_run(_run_dir(r.run_id), task=r.task, mode="browser" if mode == "browser" else "desktop",
-                                   outcome=r.outcome)
+            recording = record_run(_run_dir(r.run_id), task=r.task, mode=mode, outcome=r.outcome)
         except (RecordingError, OSError, ValueError) as exc:
             print(f"  {name}: no recording ({exc})", file=sys.stderr)
             continue

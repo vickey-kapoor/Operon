@@ -126,7 +126,7 @@ async def test_type_with_coords() -> None:
 
 @pytest.mark.asyncio
 async def test_type_with_coords_retries_click_when_focus_not_detected() -> None:
-    """Type should retry click once when pre/post pixel region is unchanged (focus stolen)."""
+    """Type should retry click once when pre/post pixel region stays unchanged (focus stolen)."""
     executor = _make_executor()
     action = AgentAction(action_type=ActionType.TYPE, text="hello", x=100, y=200)
 
@@ -134,6 +134,7 @@ async def test_type_with_coords_retries_click_when_focus_not_detected() -> None:
         patch("operon.executor.desktop.pyautogui.click") as mock_click,
         patch("operon.executor.desktop.pyautogui.hotkey"),
         patch("operon.executor.desktop.pyperclip.copy"),
+        patch("operon.executor.desktop._double_click_interval_s", return_value=0.0),
         patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
         # Return identical bytes to simulate no visual change (focus stolen → retry)
         patch.object(executor, "_sample_region", return_value=b"\x00" * 100),
@@ -142,6 +143,70 @@ async def test_type_with_coords_retries_click_when_focus_not_detected() -> None:
 
         assert result.success is True
         assert mock_click.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_type_retry_click_waits_past_the_double_click_window() -> None:
+    """KAN-174: the retry click must land after the OS double-click time, or the two
+    clicks form a double-click that selects a word the typed text then replaces."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.TYPE, text="hello", x=100, y=200)
+    events: list[tuple[str, float]] = []
+    clock = [0.0]
+
+    async def fake_sleep(seconds: float) -> None:
+        clock[0] += seconds
+        events.append(("sleep", seconds))
+
+    def fake_click(*_args: object) -> None:
+        events.append(("click", clock[0]))
+
+    with (
+        patch("operon.executor.desktop.pyautogui.click", side_effect=fake_click),
+        patch("operon.executor.desktop.pyautogui.hotkey"),
+        patch("operon.executor.desktop.pyperclip.copy"),
+        patch("operon.executor.desktop.asyncio.sleep", side_effect=fake_sleep),
+        patch("operon.executor.desktop.time.monotonic", side_effect=lambda: clock[0]),
+        patch("operon.executor.desktop._double_click_interval_s", return_value=0.5),
+        patch.object(executor, "settle_now", new_callable=AsyncMock),
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        patch.object(executor, "_sample_region", return_value=b"\x00" * 100),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    clicks = [t for kind, t in events if kind == "click"]
+    assert len(clicks) == 2
+    assert clicks[1] - clicks[0] > 0.5
+
+
+@pytest.mark.asyncio
+async def test_type_no_retry_click_when_focus_shows_on_recheck() -> None:
+    """KAN-174: a field that paints focus late is re-checked, not clicked again."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.TYPE, text="hello", x=100, y=200)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.click") as mock_click,
+        patch("operon.executor.desktop.pyautogui.hotkey"),
+        patch("operon.executor.desktop.pyperclip.copy") as mock_copy,
+        patch("operon.executor.desktop._double_click_interval_s", return_value=0.0),
+        patch.object(executor, "_capture_after", new_callable=AsyncMock, return_value="after.png"),
+        # pre, post (unchanged), re-check (focus now visible)
+        patch.object(executor, "_sample_region", side_effect=[b"\x00" * 100, b"\x00" * 100, b"\xff" * 100]),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is True
+    mock_click.assert_called_once_with(100, 200)
+    mock_copy.assert_called_once_with("hello")
+
+
+def test_double_click_interval_falls_back_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.executor import desktop
+
+    monkeypatch.setattr(desktop.sys, "platform", "linux")
+    assert desktop._double_click_interval_s() == desktop._DEFAULT_DOUBLE_CLICK_S
 
 
 @pytest.mark.asyncio
@@ -678,6 +743,43 @@ async def test_drag_success() -> None:
         mock_move.assert_any_call(300, 400, duration=0.6)
         mock_down.assert_called_once()
         mock_up.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_drag_blocked_on_blank_start_point() -> None:
+    """KAN-174: a drag presses its start point like a click, so the visual servo gates it."""
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.DRAG, x=100, y=200, x_end=300, y_end=400)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.moveTo") as mock_move,
+        patch("operon.executor.desktop.pyautogui.mouseDown") as mock_down,
+        patch.object(executor, "_coord_in_monitor_bounds", return_value=(True, [])),
+        patch.object(executor, "_region_has_content", return_value=(False, 5.0)),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is False
+    assert result.failure_category == FailureCategory.EXECUTION_TARGET_NOT_FOUND
+    assert "visual servo" in result.detail.lower()
+    assert result.visual_variance == pytest.approx(5.0)
+    mock_move.assert_not_called()
+    mock_down.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_drag_start_off_every_monitor_is_skipped() -> None:
+    executor = _make_executor()
+    action = AgentAction(action_type=ActionType.DRAG, x=5000, y=200, x_end=300, y_end=400)
+
+    with (
+        patch("operon.executor.desktop.pyautogui.mouseDown") as mock_down,
+        patch.object(executor, "_coord_in_monitor_bounds", return_value=(False, [])),
+    ):
+        result = await executor.execute(action)
+
+    assert result.success is False and "outside all monitor bounds" in result.detail
+    mock_down.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -23,7 +23,7 @@ settings it started with in `settings.json` in its run folder, with keys shown o
 
 Off by default. `OPERON_BROWSER_BACKEND=model` (or `OPERON_DESKTOP_BACKEND=model`) runs the
 profile named by `OPERON_MODEL_PROFILE`, a key of `src/operon/agent/backends/model_adapter/models.yaml`: `claude-sonnet-5-5`
-(needs `ANTHROPIC_API_KEY`) or `openai-computer-use` (needs `OPENAI_API_KEY`). A model run is
+(needs `ANTHROPIC_API_KEY`) or `openai-computer-use` (needs `OPENAI_API_KEY`); an `openai_compat` profile reads `OPENWEIGHT_BASE_URL` and `OPENWEIGHT_API_KEY` (the key is masked in `settings.json`). A model run is
 always thin and the model's own "done" ends it, the same as Gemini's thin runs, so scores compare.
 Batch cells no longer take `model=<profile>` (paid runs are OSWorld and grounding only, KAN-184); the workflows give a
 cell only its own provider's key. Startup refuses a missing key or profile.
@@ -48,7 +48,7 @@ saying json was removed.
 | `API_KEYS` | unset | Comma-separated API keys. Every HTTP route except `/health` requires a matching `X-API-Key` header, and the `/ws/stream` WebSocket requires it as an `x-api-key` subprotocol (`["x-api-key", "<key>"]`). Unset = the server generates one key on first start in `.var/api-key` (mode 0600), which the benchmark harness reads. |
 | `OPERON_ALLOW_UNAUTHENTICATED` | `false` | With `API_KEYS` unset, `true` turns authentication off. Only safe on a throwaway machine, since the API can drive a real browser/desktop. |
 | `OPERON_ALLOWED_HOSTS` | unset | Extra host names the API answers to. Loopback names are always allowed; any other `Host` gets 400, which blocks DNS rebinding. |
-| `CORS_ORIGINS` | empty | Comma-separated exact origins (`scheme://host:port`) allowed to call the API from a browser, e.g. `http://localhost:3000`. `http://127.0.0.1:3000` is a different origin and needs its own entry. Also gates `/ws/stream`, which otherwise accepts only clients that send no `Origin` and loopback pages served from the API's own host and port. `*` allows any origin over HTTP but not on `/ws/stream`. Empty = no cross-origin access. |
+| `CORS_ORIGINS` | empty | Comma-separated exact origins (`scheme://host:port`) allowed to call the API from a browser, e.g. `http://localhost:3000`. `http://127.0.0.1:3000` is a different origin and needs its own entry. Also gates `/ws/stream`, which otherwise accepts only clients that send no `Origin` and loopback pages served from the API's own host and port. `*` is refused at startup (this API can drive your computer). Empty = no cross-origin access. |
 | `OPERON_BROWSER_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `model` (see above) |
 | `OPERON_DESKTOP_BACKEND` | `computer_use` | `computer_use` (Gemini computer use) or `model` (see above) |
 | `OPERON_ENVIRONMENT` | `live` | Where desktop runs happen (KAN-80). `live` is this machine's own screen; `operon envs` lists every environment and whether it can run here, and `operon run --env NAME` picks one for a single local run. `windows-sandbox` runs desktop tasks in a throwaway Windows Sandbox, `linux-container` in a Linux desktop in Docker. See [environments.md](environments.md). |

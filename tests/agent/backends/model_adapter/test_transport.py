@@ -104,3 +104,16 @@ async def test_responses_429_honors_retry_after(monkeypatch: pytest.MonkeyPatch)
     client = OpenAIResponsesClient(_profile(adapter="openai_native"), transport=transport)
     await client.create(input_items=[], tools=[], previous_response_id=None)
     assert sleeps == [7.0]
+
+
+def test_api_key_default_env_comes_from_settings(monkeypatch) -> None:
+    from operon.agent.backends.model_adapter import registry
+    from operon.core.settings import Settings
+
+    monkeypatch.setenv("OPENWEIGHT_API_KEY", "from-env")
+    patched = Settings.from_env({"OPENWEIGHT_API_KEY": "from-settings"})
+    monkeypatch.setattr(registry, "get_settings", lambda: patched)
+    assert _profile().api_key() == "from-settings"
+
+    monkeypatch.setattr(registry, "get_settings", lambda: Settings.from_env({}))
+    assert _profile().api_key() is None

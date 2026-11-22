@@ -56,7 +56,7 @@ DIRECT_READS: dict[str, str] = {
 
 # Values never written to a run's settings.json or a log.
 SECRET_VARIABLES = frozenset(
-    {"API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY", "HITL_WEBHOOK_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
+    {"API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY", "HITL_WEBHOOK_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENWEIGHT_API_KEY"}
 )
 
 
@@ -102,6 +102,7 @@ class Settings(BaseModel):
     model_profile: str = _env_field("OPERON_MODEL_PROFILE", "")
     model_registry: str = _env_field("OPERON_MODEL_REGISTRY", "")
     anthropic_api_key: str | None = _env_field("ANTHROPIC_API_KEY")
+    openweight_api_key: str | None = _env_field("OPENWEIGHT_API_KEY")
     anthropic_api_base_url: str = _env_field("ANTHROPIC_API_BASE_URL", "https://api.anthropic.com/v1/messages")
     claude_zoom: bool = _env_field("OPERON_CLAUDE_ZOOM", False)
     openai_api_key: str | None = _env_field("OPENAI_API_KEY")
@@ -285,6 +286,15 @@ class _Parser:
     def stripped(self, name: str, default: str = "") -> str:
         return (self.env.get(name) or "").strip() or default
 
+    def cors_origins(self) -> tuple[str, ...]:
+        origins = _split(self.text("CORS_ORIGINS"))
+        if "*" in origins:
+            self.errors.append(
+                "CORS_ORIGINS=* is not allowed: this API can drive your computer. "
+                "List exact origins, such as http://localhost:3000"
+            )
+        return tuple(origin for origin in origins if origin != "*")
+
     def flag(self, name: str, default: str = "", *, on: set[str] | None = None) -> bool:
         return self.env.get(name, default).strip().lower() in (on or _TRUE)
 
@@ -354,7 +364,7 @@ class _Parser:
         values: dict[str, Any] = dict(
             api_keys=_split(self.text("API_KEYS")),
             allow_unauthenticated=self.flag("OPERON_ALLOW_UNAUTHENTICATED", "false"),
-            cors_origins=_split(self.text("CORS_ORIGINS")),
+            cors_origins=self.cors_origins(),
             allowed_hosts=_split(self.text("OPERON_ALLOWED_HOSTS"), lower=True),
             api_url=self.raw("OPERON_API_URL"),
             runs_retain_days=self.number("OPERON_RUNS_RETAIN_DAYS", "14", int, fatal=True),
@@ -376,6 +386,7 @@ class _Parser:
             model_profile=self.stripped("OPERON_MODEL_PROFILE"),
             model_registry=self.stripped("OPERON_MODEL_REGISTRY"),
             anthropic_api_key=self.raw("ANTHROPIC_API_KEY"),
+            openweight_api_key=self.stripped("OPENWEIGHT_API_KEY") or None,
             anthropic_api_base_url=self.or_default("ANTHROPIC_API_BASE_URL", "https://api.anthropic.com/v1/messages"),
             claude_zoom=self.flag("OPERON_CLAUDE_ZOOM"),
             openai_api_key=self.raw("OPENAI_API_KEY"),

@@ -433,7 +433,7 @@ class TestFix6CorsMiddleware:
             timeout=10,
         )
         assert resp.status_code == 200
-        # With CORS_ORIGINS=* in .env, the header should be present
+        # With the origin listed in CORS_ORIGINS in .env, the header should be present
         cors_header = resp.headers.get("Access-Control-Allow-Origin", "")
         assert cors_header, (
             f"FIX6 FAIL: No Access-Control-Allow-Origin header on GET /health. "

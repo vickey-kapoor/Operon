@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
+_KEYRING_ALIASES = {"true": "on", "1": "on", "yes": "on", "false": "off", "0": "off", "no": "off"}
 _TRUE = {"1", "true", "yes", "on"}
 
 # Variables some module still reads itself, and why (the contract test allows these).
@@ -154,6 +155,8 @@ class Settings(BaseModel):
     trust_categories: bool = _env_field("OPERON_TRUST_CATEGORIES", False)
     # Secrets vault (KAN-103): experimental, off by default.
     secrets: bool = _env_field("OPERON_SECRETS", False)
+    # Model API keys from the OS credential store (KAN-186): auto (Windows and macOS only), on, or off.
+    keyring: str = _env_field("OPERON_KEYRING", "auto")
     # Empty: all five categories.
     trust_category_list: tuple[str, ...] = _env_field("OPERON_TRUST_CATEGORY_LIST", ())
     # "" when unset or not a known mode: the server default (risky).
@@ -309,6 +312,7 @@ class _Parser:
         return fallback
 
     def build(self) -> Settings:
+        keyring_raw = self.text("OPERON_KEYRING").strip().lower()
         from operon.agent.actions import zoom as zoom_mod
 
         for name in _REMOVED_FULL_HARNESS_VARS:
@@ -404,6 +408,9 @@ class _Parser:
             trust_allow_domains=_split(self.text("OPERON_TRUST_ALLOW_DOMAINS"), lower=True),
             trust_categories=self.flag("OPERON_TRUST_CATEGORIES", "off"),
             secrets=self.flag("OPERON_SECRETS", "off"),
+            keyring=self.choice(
+                "OPERON_KEYRING", _KEYRING_ALIASES.get(keyring_raw, keyring_raw), {"auto", "on", "off"}, "auto"
+            ),
             trust_category_list=_split(self.text("OPERON_TRUST_CATEGORY_LIST"), lower=True),
             permission_mode=permission,
             allowed_file_roots=_split(self.text("OPERON_ALLOWED_FILE_ROOTS")),

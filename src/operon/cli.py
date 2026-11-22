@@ -272,10 +272,12 @@ async def _answer(client, run_id: str, waiting: dict[str, Any], ask, out) -> dic
 def _load_env() -> None:
     from dotenv import find_dotenv, load_dotenv
 
-    from operon.core.paths import load_user_env
+    from operon.core.paths import load_stored_keys, load_user_env, real_environment
 
+    real = real_environment()
     load_dotenv(find_dotenv(usecwd=True), override=False)
     load_user_env()  # the optional per-user key file (~/.operon/operon.env), for a run with no .env here
+    load_stored_keys(real)  # KAN-186: OS credential store beats both files, the real environment beats it
 
 
 def _payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -486,11 +488,12 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8080)
     serve.set_defaults(func=_serve)
 
-    from operon import cloud, secrets_command
+    from operon import cloud, keys_command, secrets_command
     from operon.environments import cli as environments_cli
     from operon.environments import guest
 
     secrets_command.add_parser(sub)
+    keys_command.add_parser(sub)
     cloud.add_parser(sub)
     environments_cli.add_parser(sub)
     guest.add_parser(sub)

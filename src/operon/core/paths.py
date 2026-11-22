@@ -136,7 +136,7 @@ def load_stored_keys(real_env: Mapping[str, str]) -> dict[str, str]:
             value = keystore.get(name)
             if value:
                 os.environ[name] = value
-                _key_sources[name] = "Credential Manager"
+                _key_sources[name] = keystore.store_label()
     except Exception as exc:
         log.debug("credential store skipped (%s)", type(exc).__name__)
     return dict(_key_sources)

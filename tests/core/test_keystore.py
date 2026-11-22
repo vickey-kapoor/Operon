@@ -29,7 +29,7 @@ def test_loader_sets_env_from_keyring(memory_keyring, monkeypatch) -> None:
     memory_keyring.set_password("operon", "GEMINI_API_KEY", SECRET)
     sources = load_stored_keys({})
     assert os.environ["GEMINI_API_KEY"] == SECRET
-    assert sources == {"GEMINI_API_KEY": "Credential Manager"}
+    assert sources == {"GEMINI_API_KEY": keystore.store_label()}
     monkeypatch.delenv("GEMINI_API_KEY")
 
 

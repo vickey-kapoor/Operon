@@ -111,12 +111,16 @@ def test_create_app_real_env_beats_dotenv_with_no_store(folder, monkeypatch) -> 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
 
-def test_serve_path_reuses_the_first_snapshot(folder, monkeypatch) -> None:
-    monkeypatch.setenv("GEMINI_API_KEY", "from-real-env")
-    cli._load_env()  # then create_app sees the already-loaded environment, not a new snapshot
+def test_serve_path_reuses_the_first_snapshot(folder, memory_keyring, monkeypatch) -> None:
+    # The key is only in .env, the keyring is empty. If create_app took a fresh snapshot after
+    # cli._load_env had put the .env value into the environment, it would be mislabelled "environment".
+    assert "GEMINI_API_KEY" not in os.environ
+    cli._load_env()
     create_app()
     from operon.core.paths import loaded_key_state
 
-    assert loaded_key_state()[1]["GEMINI_API_KEY"] == "environment"
-    assert os.environ["GEMINI_API_KEY"] == "from-real-env"
+    assert "GEMINI_API_KEY" not in loaded_key_state()[1]
+    assert loaded_key_state()[0].get("GEMINI_API_KEY") is None
+    assert os.environ["GEMINI_API_KEY"] == "from-dotenv"
+    monkeypatch.delenv("GEMINI_API_KEY")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

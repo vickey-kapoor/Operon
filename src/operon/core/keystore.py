@@ -62,6 +62,11 @@ def enabled() -> bool:
     return chosen == "on"
 
 
+def store_label() -> str:
+    """What to call the store in messages: the platform's own name."""
+    return {"win32": "Credential Manager", "darwin": "Keychain"}.get(sys.platform, "keyring")
+
+
 def disabled_reason() -> str:
     if mode() == "off":
         return "the credential store is off (OPERON_KEYRING=off)"

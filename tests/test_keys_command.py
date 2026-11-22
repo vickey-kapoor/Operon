@@ -77,7 +77,7 @@ def test_list_shows_sources_and_no_values(memory_keyring, isolated, tmp_path, mo
     out = capsys.readouterr().out
     lines = dict(line.split(": ") for line in out.strip().splitlines())
     assert lines["GEMINI_API_KEY"] == "environment"
-    assert lines["ANTHROPIC_API_KEY"] == "Credential Manager"
+    assert lines["ANTHROPIC_API_KEY"] == keystore.store_label()
     assert lines["OPENAI_API_KEY"] == ".env"
     assert lines["GOOGLE_API_KEY"] == "operon.env"
     assert lines["API_KEYS"] == "not set"
@@ -149,3 +149,44 @@ def test_list_does_not_read_the_store_when_it_is_off(memory_keyring, monkeypatch
     monkeypatch.setattr(keystore, "get", lambda name: pytest.fail("store read while off"))
     assert cli.main(["keys", "list"]) == 0
     assert "GEMINI_API_KEY: not set" in capsys.readouterr().out
+
+
+def test_import_skips_env_example_placeholders(memory_keyring, isolated, capsys) -> None:
+    (isolated / ".env").write_text(f"GEMINI_API_KEY=your-gemini-api-key-here\nOPENAI_API_KEY={SECRET}\n")
+    assert cli.main(["keys", "import"]) == 0
+    out = capsys.readouterr().out
+    assert memory_keyring.get_password("operon", "GEMINI_API_KEY") is None
+    assert memory_keyring.get_password("operon", "OPENAI_API_KEY") == SECRET
+    assert "Skipped placeholder values (not real keys): GEMINI_API_KEY" in out
+    assert "your-gemini" not in out and SECRET not in out
+
+
+def test_set_hints_when_the_environment_still_wins(memory_keyring, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "stale-env-value")
+    _answers(monkeypatch, SECRET, SECRET)
+    assert cli.main(["keys", "set", "GEMINI_API_KEY"]) == 0
+    out = capsys.readouterr()
+    assert "environment variable GEMINI_API_KEY is set and still wins" in out.out
+    assert SECRET not in out.out + out.err and "stale-env-value" not in out.out + out.err
+
+
+def test_set_has_no_hint_without_an_environment_variable(memory_keyring, monkeypatch, capsys) -> None:
+    _answers(monkeypatch, SECRET, SECRET)
+    assert cli.main(["keys", "set", "GEMINI_API_KEY"]) == 0
+    assert "still wins" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("command", ["list", "import"])
+def test_list_and_import_refuse_extra_args_without_echo(memory_keyring, command, capsys) -> None:
+    assert cli.main(["keys", command, SECRET]) == 2
+    out = capsys.readouterr()
+    assert SECRET not in out.out + out.err
+    assert "never pass a key value on the command line" in out.err
+
+
+def test_store_label_follows_the_platform(monkeypatch) -> None:
+    import sys
+
+    for platform, label in (("win32", "Credential Manager"), ("darwin", "Keychain"), ("linux", "keyring")):
+        monkeypatch.setattr(sys, "platform", platform)
+        assert keystore.store_label() == label

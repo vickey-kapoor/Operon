@@ -28,6 +28,10 @@ operon keys rm GEMINI_API_KEY
 operon keys import               # copy the keys in this folder's .env into the store
 ```
 
+For these key names the real environment now also beats `.env` in `operon serve` and the API (before, `.env` won
+there), so a stale Windows user environment variable would win over what you stored; check with `operon keys list`.
+On macOS, Keychain may ask you to allow access to an item that a different Python stored.
+
 `import` never edits `.env`: it prints the names to delete by hand. Order, first match wins: real
 environment variables, the credential store, the working folder's `.env`, `~/.operon/operon.env`. A
 blank environment variable counts as unset. A real environment value always wins, whatever `OPERON_KEYRING` says.

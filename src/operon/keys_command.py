@@ -11,14 +11,27 @@ import sys
 from pathlib import Path
 
 from operon.core import keystore
+from operon.core.paths import real_environment
 
 _NO_STORE = "no credential store available here; keep using .env or environment variables"
 
 
-def _check_args(args: argparse.Namespace) -> bool:
-    """Refuse extra words and unknown names without echoing either: a key may have been pasted there."""
+def _no_extra(args: argparse.Namespace) -> bool:
     if getattr(args, "extra", None):
         print("never pass a key value on the command line; the value is asked for, hidden", file=sys.stderr)
+        return False
+    return True
+
+
+def _is_placeholder(value: str) -> bool:
+    """The `your-...-here` text .env.example ships with."""
+    low = value.strip().lower()
+    return low.startswith("your-") and low.endswith("-here")
+
+
+def _check_args(args: argparse.Namespace) -> bool:
+    """Refuse extra words and unknown names without echoing either: a key may have been pasted there."""
+    if not _no_extra(args):
         return False
     names = keystore.known_names()
     if args.name in names:
@@ -55,6 +68,8 @@ def _set(args: argparse.Namespace) -> int:
         print(f"Not saved: {exc}", file=sys.stderr)
         return 1
     print(f"Saved {args.name} in the credential store.")
+    if (real_environment().get(args.name) or "").strip():
+        print(f"Note: the environment variable {args.name} is set and still wins until you remove it.")
     return 0
 
 
@@ -66,10 +81,12 @@ def _file_values(path: str | Path | None) -> dict[str, str | None]:
     return dict(dotenv_values(path))
 
 
-def _list(_args: argparse.Namespace) -> int:
+def _list(args: argparse.Namespace) -> int:
+    if not _no_extra(args):
+        return 2
     from dotenv import find_dotenv
 
-    from operon.core.paths import loaded_key_state, real_environment, user_env_file
+    from operon.core.paths import loaded_key_state, user_env_file
 
     sources = loaded_key_state()[1]
     real = real_environment()  # the loader's first snapshot, or the environment as it is now
@@ -79,8 +96,8 @@ def _list(_args: argparse.Namespace) -> int:
     for name in keystore.known_names():
         if (real.get(name) or "").strip():
             source = "environment"
-        elif sources.get(name) == "Credential Manager" or (store and keystore.get(name)):
-            source = "Credential Manager"
+        elif sources.get(name) == keystore.store_label() or (store and keystore.get(name)):
+            source = keystore.store_label()
         elif (dotenv.get(name) or "").strip():
             source = ".env"
         elif (user_file.get(name) or "").strip():
@@ -108,7 +125,9 @@ def _remove(args: argparse.Namespace) -> int:
     return 0
 
 
-def _import(_args: argparse.Namespace) -> int:
+def _import(args: argparse.Namespace) -> int:
+    if not _no_extra(args):
+        return 2
     from dotenv import find_dotenv
 
     path = find_dotenv(usecwd=True)
@@ -119,9 +138,13 @@ def _import(_args: argparse.Namespace) -> int:
         return 1
     values = _file_values(path)
     copied: list[str] = []
+    skipped: list[str] = []
     for name in keystore.known_names():
         value = (values.get(name) or "").strip()
         if not value:
+            continue
+        if _is_placeholder(value):
+            skipped.append(name)
             continue
         try:
             keystore.set(name, value)
@@ -129,6 +152,8 @@ def _import(_args: argparse.Namespace) -> int:
             print(f"Not saved: {exc}", file=sys.stderr)
             return 1
         copied.append(name)
+    if skipped:
+        print(f"Skipped placeholder values (not real keys): {', '.join(skipped)}")
     if not copied:
         print(f"No model keys found in {path}.")
         return 0
@@ -146,9 +171,13 @@ def add_parser(sub) -> None:
     set_parser.add_argument("name")
     set_parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
     set_parser.set_defaults(func=_set)
-    actions.add_parser("list", help="show where each key comes from (never values)").set_defaults(func=_list)
+    list_parser = actions.add_parser("list", help="show where each key comes from (never values)")
+    list_parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
+    list_parser.set_defaults(func=_list)
     remove = actions.add_parser("rm", help="delete a stored key")
     remove.add_argument("name")
     remove.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
     remove.set_defaults(func=_remove)
-    actions.add_parser("import", help="copy the keys in this folder's .env into the credential store").set_defaults(func=_import)
+    import_parser = actions.add_parser("import", help="copy the keys in this folder's .env into the credential store")
+    import_parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
+    import_parser.set_defaults(func=_import)

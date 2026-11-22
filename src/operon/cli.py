@@ -274,10 +274,12 @@ async def _answer(client, run_id: str, waiting: dict[str, Any], ask, out) -> dic
 def _load_env() -> None:
     from dotenv import find_dotenv, load_dotenv
 
-    from operon.core.paths import load_user_env
+    from operon.core.paths import load_stored_keys, load_user_env, real_environment
 
+    real = real_environment()
     load_dotenv(find_dotenv(usecwd=True), override=False)
     load_user_env()  # the optional per-user key file (~/.operon/operon.env), for a run with no .env here
+    load_stored_keys(real)  # KAN-186: OS credential store beats both files, the real environment beats it
 
 
 def _payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -469,12 +471,14 @@ def _serve(args: argparse.Namespace) -> int:
     from dotenv import find_dotenv, load_dotenv
 
     from operon.api.auth import api_key_file, auth_disabled, local_api_key
-    from operon.core.paths import load_user_env
+    from operon.core.paths import load_stored_keys, load_user_env, real_environment
 
     # The server's create_app() reloads .env with override=True; do the same first, so the checks
     # below judge the configuration the server will actually run with.
+    real = real_environment()
     load_dotenv(find_dotenv(usecwd=True), override=True)
     load_user_env()  # as create_app() does next; never overrides
+    load_stored_keys(real)  # KAN-186, as create_app() does
     if not _is_loopback(args.host):
         if not args.allow_remote:
             print(
@@ -556,11 +560,12 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--allow-remote", action="store_true", help="allow a non-loopback --host; this exposes the API beyond this machine")
     serve.set_defaults(func=_serve)
 
-    from operon import cloud, secrets_command
+    from operon import cloud, keys_command, secrets_command
     from operon.environments import cli as environments_cli
     from operon.environments import guest
 
     secrets_command.add_parser(sub)
+    keys_command.add_parser(sub)
     cloud.add_parser(sub)
     environments_cli.add_parser(sub)
     guest.add_parser(sub)

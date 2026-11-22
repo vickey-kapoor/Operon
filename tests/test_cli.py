@@ -296,11 +296,13 @@ def test_serve_refuses_remote_when_authentication_is_off(monkeypatch, capsys, ho
 
 
 def test_serve_remote_guard_sees_the_env_file_the_server_will_load(monkeypatch, capsys, tmp_path) -> None:
-    # create_app() reloads .env with override=True, so an .env that clears API_KEYS and turns
-    # auth off must be judged before the remote bind is allowed.
-    monkeypatch.setenv("API_KEYS", "from-environment")
+    # create_app() reloads .env with override=True, so an .env that turns auth off must be judged
+    # before the remote bind is allowed, even when the environment says auth is on. (API_KEYS from the
+    # real environment is put back by load_stored_keys, so that one cannot be cleared this way.)
+    monkeypatch.delenv("API_KEYS", raising=False)
     monkeypatch.setenv("OPERON_ALLOW_UNAUTHENTICATED", "false")  # so teardown restores whatever .env writes
-    (tmp_path / ".env").write_text("API_KEYS=\nOPERON_ALLOW_UNAUTHENTICATED=true\n", encoding="utf-8")
+    monkeypatch.setenv("OPERON_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    (tmp_path / ".env").write_text("OPERON_ALLOW_UNAUTHENTICATED=true\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     calls = _serve_calls(monkeypatch)
 

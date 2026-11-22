@@ -12,7 +12,7 @@ import sys
 
 SERVICE = "operon"
 
-# Variables the loader may fill from the store. Profiles in the model registry add their own key variable.
+# Variables the loader may fill from the store. Fixed on purpose: nothing else can be filled from it.
 KNOWN_KEYS: tuple[str, ...] = (
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
@@ -31,17 +31,11 @@ class KeystoreError(RuntimeError):
 
 
 def known_names() -> tuple[str, ...]:
-    """The names that may live in the store: the fixed list plus each registry profile's key variable."""
-    names = list(KNOWN_KEYS)
-    try:
-        from operon.agent.backends.model_adapter.registry import load_registry
+    """The names that may live in the store: a fixed list, so the store can never fill any other variable.
 
-        for profile in load_registry().values():
-            if profile.api_key_env not in names and not profile.api_key_env.startswith("OPERON_"):
-                names.append(profile.api_key_env)
-    except Exception as exc:  # a bad registry must not hide the fixed names
-        _log.debug("keystore: registry names skipped (%s)", type(exc).__name__)
-    return tuple(names)
+    A custom ``api_key_env`` in a model profile is not included: set that key in the environment or ``.env``.
+    """
+    return KNOWN_KEYS
 
 
 def mode() -> str:

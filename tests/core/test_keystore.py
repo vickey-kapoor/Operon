@@ -104,18 +104,14 @@ def test_keyring_off_never_calls_the_backend(monkeypatch) -> None:
     assert called == []
 
 
-def test_registry_key_variable_is_picked_up(memory_keyring, monkeypatch) -> None:
+def test_known_names_are_the_fixed_list_only(monkeypatch) -> None:
     from operon.agent.backends.model_adapter import registry as reg
 
     class Profile:
         api_key_env = "MY_CUSTOM_KEY"
 
     monkeypatch.setattr(reg, "load_registry", lambda path=None: {"custom": Profile()})
-    assert "MY_CUSTOM_KEY" in keystore.known_names()
-    memory_keyring.set_password("operon", "MY_CUSTOM_KEY", SECRET)
-    load_stored_keys({})
-    assert os.environ["MY_CUSTOM_KEY"] == SECRET
-    monkeypatch.delenv("MY_CUSTOM_KEY")
+    assert keystore.known_names() == keystore.KNOWN_KEYS
 
 
 @pytest.mark.parametrize(
@@ -152,13 +148,3 @@ def test_real_env_restored_when_keyring_off_or_no_store(monkeypatch) -> None:
     monkeypatch.setenv("OPERON_KEYRING", "on")  # null backend: no store
     load_stored_keys({"GEMINI_API_KEY": "real"})
     assert os.environ["GEMINI_API_KEY"] == "real"
-
-
-def test_operon_prefixed_registry_variables_are_ignored(monkeypatch) -> None:
-    from operon.agent.backends.model_adapter import registry as reg
-
-    class Profile:
-        api_key_env = "OPERON_SECRET_THING"
-
-    monkeypatch.setattr(reg, "load_registry", lambda path=None: {"p": Profile()})
-    assert "OPERON_SECRET_THING" not in keystore.known_names()

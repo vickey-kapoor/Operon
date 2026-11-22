@@ -109,6 +109,7 @@ from evals.categories import (
 )
 from evals.desktop_tasks import DESKTOP_TASKS
 from evals.dynamic_tasks import DYNAMIC_TASKS
+from evals.failure_cause import bench_cause, by_cause, final_screenshot
 from evals.fixture_site import FixtureSite
 from evals.hard_tasks import HARD_TASK_NAMES
 from evals.hybrid_tasks import HYBRID_TASKS, HybridTask
@@ -182,6 +183,10 @@ class TaskResult:
     wasted_steps: int | None = None
     wasted_ratio: float | None = None
     step_seconds: float | None = None
+    # KAN-175: the one cause a non-passing task ended with (operon.models.common.RunFailureCause
+    # values) and the error text behind it. Absent in old reports.
+    failure_cause: str | None = None
+    error: str | None = None
 
 
 def _efficiency(run_id: str | None) -> dict:
@@ -417,8 +422,8 @@ def resolve_model_profile(name: str | None, mode: str):
 
 
 def _final_screenshot(run_id: str) -> str | None:
-    frames = sorted(_run_dir(run_id).glob("step_*/*.png"), key=lambda p: p.stat().st_mtime)
-    return str(frames[-1]) if frames else None
+    frame = final_screenshot(_run_dir(run_id))
+    return str(frame) if frame else None
 
 
 def _run_state(run_id: str) -> dict:
@@ -482,6 +487,7 @@ async def run_task(
             reset_error = str(exc)
             print(f"  {name}: {exc}", file=sys.stderr)
     run_id, status, steps, pauses = None, "error", 0, 0
+    error: str | None = reset_error[:300] if reset_error else None
     payload: dict = {"intent": task.intent, "max_steps": task.max_steps}
     local = isinstance(task, LOCAL_TASKS)
     hybrid = isinstance(task, HybridTask)
@@ -532,6 +538,7 @@ async def run_task(
         status = "error"
     except httpx.HTTPError as exc:
         status = "error"
+        error = f"{type(exc).__name__}: {exc}"[:300]
         print(f"  {name}: API error: {exc}", file=sys.stderr)
         if run_id:
             # The run may still be going on the server (a failed poll is not a
@@ -611,6 +618,15 @@ async def run_task(
             print(f"  {name}: cleanup failed: {exc}", file=sys.stderr)
     usage = run_usage(run_id) if run_id else {"by_model": {}}
     judge_unpriced = [verdict.unpriced_model] if verdict.unpriced_model else []
+    state = _run_state(run_id) if run_id else {}
+    cause = bench_cause(
+        passed=outcome == "success",
+        bench_error=status == "error" and not state.get("failure_cause"),
+        run_status=status,
+        stop_reason=state.get("stop_reason"),
+        state_cause=state.get("failure_cause"),
+        timed_out=outcome == "timeout",
+    )
     return TaskResult(
         task=task.name,
         category=task.category,
@@ -633,6 +649,8 @@ async def run_task(
         tags=tags_of(task),
         recovered_errors=_recovered_errors(run_id) if run_id else {},
         **_efficiency(run_id),
+        failure_cause=cause,
+        error=error or state.get("failure_detail") or None,
     )
 
 
@@ -667,6 +685,7 @@ def interrupted_result(active: dict) -> TaskResult:
         unpriced_models=usage.get("unpriced_models", []),
         attempt=active["attempt"],
         tags=tags_of(task),
+        failure_cause="interrupted",
     )
 
 
@@ -692,6 +711,7 @@ def summarize(results: list[TaskResult]) -> dict:
         "paused_tasks": sum(1 for r in results if r.pauses),
         "recovered_errors": sum(sum(r.recovered_errors.values()) for r in results),
         "recovered_tasks": sum(1 for r in results if r.recovered_errors),
+        "by_cause": by_cause(r.failure_cause for r in results if r.outcome != "success"),
         "mean_wasted_ratio": _mean([r.wasted_ratio for r in results], 3),
         "mean_step_seconds": _mean([r.step_seconds for r in results], 2),
         **cost_summary(results, counts["success"]),
@@ -846,7 +866,7 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         if r.recovered_errors:
             note += f"recovered x{sum(r.recovered_errors.values())} "
         if r.outcome != "success":
-            note += r.judge_reason
+            note += (f"[{r.failure_cause}] " if r.failure_cause else "") + r.judge_reason
         label = r.task if r.attempt == 1 else f"{r.task} #{r.attempt}"
         lines.append(f"{label:22} {r.category:11} {r.outcome:14} {r.steps:>5} {r.seconds:>5} {r.cost_usd:>7.4f}  {note.strip()}")
     lines.append("")
@@ -856,6 +876,8 @@ def format_report(results: list[TaskResult], summary: dict, previous: dict | Non
         f"{summary['failure']} failure · {summary['timeout']} timeout · {summary['error']} error"
         + (f" · {summary['compromised']} compromised" if summary.get("compromised") else "")
     )
+    if summary.get("by_cause"):
+        lines.append("failures by cause: " + " · ".join(f"{cause} {n}" for cause, n in summary["by_cause"].items()))
     if summary.get("score_range"):
         rng = summary["score_range"]
         lines.append(f"score {rng['score']:.0%}, 95% range {rng['low']:.0%} to {rng['high']:.0%} over {rng['tasks']} tasks")

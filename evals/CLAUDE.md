@@ -94,3 +94,7 @@ With `ffmpeg` on PATH the file is H.264 (plays in browsers, Windows, Loom); with
   Loom copies older than about two weeks.
 - Captions include the text Operon typed, and release assets are permanent and as visible as the
   repo, so benchmark tasks must only ever use fake data.
+
+## Failure causes (KAN-175)
+
+Every non-passing live-bench and OSWorld result carries `failure_cause` (one of `RunFailureCause`: the loop causes plus bench-only `timeout`, `bench_error`, `wrong_result`) and `error` (the text behind it); summaries add `by_cause`, and the live-bench report prints `failures by cause`. Old reports lack these keys: read with `.get`. The grader screenshot is the highest `step_N` `after.png` (else `before.png`), never picked by mtime (`evals/failure_cause.py`).

@@ -140,12 +140,42 @@ def run_state(run_id: str | None, runs_root: str | Path | None = None) -> tuple[
     return (str(status) if status else None), (str(reason) if reason else None)
 
 
+def run_failure(run_id: str | None, runs_root: str | Path | None = None) -> tuple[str | None, str | None]:
+    """``(failure_cause, failure_detail)`` saved in the run's state.json (KAN-175); (None, None) if unreadable."""
+    if not run_id or runs_root is None:
+        return None, None
+    try:
+        data = json.loads((Path(runs_root) / run_id / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    cause, detail = data.get("failure_cause"), data.get("failure_detail")
+    return (str(cause) if cause else None), (str(detail) if detail else None)
+
+
+def failure_cause(*, passed: bool, bench_error: bool, timed_out: bool, run_status: str | None,
+                  stop_reason: str | None, state_cause: str | None) -> str | None:
+    """The one cause for a non-passing task (evals.failure_cause.bench_cause).
+
+    This runner's own venv may not have Operon, so the import is lazy: without it a failed task
+    is labelled from the state cause alone, else bench_error / timeout / other."""
+    try:
+        from evals.failure_cause import bench_cause
+    except ImportError:
+        if passed:
+            return None
+        return state_cause or ("bench_error" if bench_error else "timeout" if timed_out else "other")
+    return bench_cause(passed=passed, bench_error=bench_error, run_status=run_status, stop_reason=stop_reason,
+                       state_cause=state_cause, timed_out=timed_out)
+
+
 def error_result(task: dict[str, str], note: str, error: str, *, seconds: int = 0, run_id: str | None = None,
                  cost_usd: float = 0.0, log: str | None = None) -> dict[str, Any]:
     """The result of a task that raised before it could be scored (score 0)."""
     return {"domain": task["domain"], "id": task["id"], "score": 0.0, "passed": False, "run_id": run_id,
             "cost_usd": round(cost_usd, 4), "seconds": seconds, "note": note, "log": log, "status": "error",
-            "stop_reason": None, "run_status": None, "error": error}
+            "stop_reason": None, "run_status": None, "error": error, "failure_cause": "bench_error"}
 
 
 def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
@@ -193,11 +223,16 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
     if ran:
         run_id = run_id or find_run_since(runs_root, wall_started)
     run_status, stop_reason = run_state(run_id, runs_root)
+    state_cause, state_detail = run_failure(run_id, runs_root)
+    passed = score >= 1.0 and not error
+    # A bench error gives bench_error, unless the run itself recorded a cause (the model API died inside Operon).
+    cause = failure_cause(passed=passed, bench_error=bool(error) and not state_cause, timed_out=timed_out,
+                          run_status=run_status, stop_reason=stop_reason, state_cause=state_cause)
     status = "error" if error else "passed" if score >= 1.0 else "timed_out" if timed_out else "failed"
     return {"domain": task["domain"], "id": task["id"], "score": score, "passed": score >= 1.0 and not error,
             "run_id": run_id, "cost_usd": round(run_cost(run_id, runs_root), 4), "seconds": round(time.monotonic() - started),
             "note": note, "log": log, "status": status, "stop_reason": stop_reason, "run_status": run_status,
-            "error": error}
+            "error": error or (None if passed else state_detail), "failure_cause": cause}
 
 
 def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
@@ -235,6 +270,14 @@ def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
     return made
 
 
+def _by_cause(causes: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for cause in causes:
+        if cause:
+            counts[cause] = counts.get(cause, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(results)
     passed = sum(1 for r in results if r["passed"])
@@ -245,7 +288,9 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         row[1] += 1
     errors = sum(1 for r in results if r.get("status") == "error")
     timed_out = sum(1 for r in results if r.get("status") == "timed_out")
-    return {"tasks": n, "passed": passed, "errors": errors, "timed_out": timed_out, "success_rate": round(passed / n, 3) if n else 0.0,
+    return {"tasks": n, "passed": passed, "errors": errors, "timed_out": timed_out,
+            "by_cause": _by_cause(r.get("failure_cause") for r in results if not r["passed"]),
+            "success_rate": round(passed / n, 3) if n else 0.0,
             "cost_usd": round(sum(r["cost_usd"] for r in results), 4),
             "by_domain": {d: f"{p}/{t}" for d, (p, t) in sorted(by_domain.items())}}
 

@@ -213,7 +213,7 @@ _PLAIN_SWITCHES_OFF = [
     "trace",
 ]
 # Graduated: on by default on purpose. (`tools` is unset by default and resolves to on.)
-_GRADUATED_ON = [("trust_gate", True), ("zoom", "dense")]
+_GRADUATED_ON = [("trust_gate", True), ("zoom", "dense"), ("keyring", True)]
 _GRADUATED_RESOLVED = ["tools"]
 # Plain configuration: models, paths, hosts, keys, timeouts and sizes; no feature to turn on.
 _PLAIN_CONFIG = {
@@ -268,3 +268,29 @@ def test_every_setting_is_classified() -> None:
         "classify new settings as experimental (off), plain switch (off), graduated (on) or plain config: "
         f"{sorted(fields ^ classified)}"
     )
+
+
+def test_keyring_flag_parses_and_defaults_on() -> None:
+    assert Settings.from_env({}).keyring is True
+    assert Settings.from_env({"OPERON_KEYRING": ""}).keyring is True
+    assert Settings.from_env({"OPERON_KEYRING": "on"}).keyring is True
+    for off in ("off", "OFF", "false", "0", "no"):
+        assert Settings.from_env({"OPERON_KEYRING": off}).keyring is False
+
+
+def test_a_keyring_loaded_key_is_masked(memory_keyring, monkeypatch, tmp_path) -> None:
+    import os
+
+    from operon.core.paths import load_stored_keys
+
+    memory_keyring.set_password("operon", "GEMINI_API_KEY", "keyring-sekrit")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPERON_KEYRING", raising=False)
+    try:
+        load_stored_keys({})
+        assert os.environ["GEMINI_API_KEY"] == "keyring-sekrit"
+        effective = get_settings().effective()
+        assert effective["GEMINI_API_KEY"] == "<set>"
+        assert "keyring-sekrit" not in json.dumps(effective)
+    finally:
+        os.environ.pop("GEMINI_API_KEY", None)

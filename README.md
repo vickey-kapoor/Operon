@@ -73,7 +73,7 @@ pip install -e ".[dev]"
 playwright install chromium
 ```
 
-**2. Set your key**: copy `.env.example` to `.env` and put your key in `GEMINI_API_KEY`.
+**2. Set your key**: on Windows the recommended way is `operon keys set GEMINI_API_KEY`, which keeps it in Credential Manager instead of a plain-text file. Or copy `.env.example` to `.env` and put your key in `GEMINI_API_KEY`.
 
 **3. Run a task**:
 

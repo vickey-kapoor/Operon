@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -78,6 +80,53 @@ def load_user_env() -> bool:
 
     load_dotenv(path, override=False)
     return True
+
+
+_real_env: dict[str, str] = {}
+_key_sources: dict[str, str] = {}
+
+
+def load_stored_keys(real_env: Mapping[str, str]) -> dict[str, str]:
+    """Fill known key variables from the OS credential store (KAN-186); return name -> source.
+
+    ``real_env`` is the environment as the process started, before any .env file was read. A
+    non-blank value there wins over the store, which undoes ``create_app``'s ``override=True``
+    for these names only. Order: real environment, credential store, working-folder .env,
+    ``operon.env``. Never raises and never logs a value.
+    """
+    import logging
+
+    from operon.core.settings import get_settings
+
+    _real_env.clear()
+    _real_env.update(real_env)
+    _key_sources.clear()
+    if not get_settings().keyring:
+        return {}
+    log = logging.getLogger(__name__)
+    try:
+        from operon.core import keystore
+
+        if not keystore.available():
+            log.debug("no credential store available; keys come from the environment and .env files")
+            return {}
+        for name in keystore.known_names():
+            if real_env.get(name, "").strip():
+                os.environ[name] = real_env[name]
+                _key_sources[name] = "environment"
+                continue
+            value = keystore.get(name)
+            if value:
+                os.environ[name] = value
+                _key_sources[name] = "Credential Manager"
+    except Exception as exc:
+        log.debug("credential store skipped (%s)", type(exc).__name__)
+    return dict(_key_sources)
+
+
+def loaded_key_state() -> tuple[dict[str, str], dict[str, str]]:
+    """The real-environment snapshot and the sources from the last ``load_stored_keys`` call."""
+    return dict(_real_env), dict(_key_sources)
 
 
 def prompts_dir() -> Path:

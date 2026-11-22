@@ -14,6 +14,24 @@ operon secrets rm bank_pw
 
 Names are 1 to 64 letters, digits, `_` or `-`.
 
+## Model API keys (KAN-186)
+
+Separate from the vault above: your model keys (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and so on) can live
+in the operating system's credential store instead of a plain-text `.env`. On Windows that is Credential
+Manager. macOS and desktop Linux use their own keystore when the Python `keyring` package finds one; a
+headless Linux box has none and falls back to environment variables and `.env`.
+
+```
+operon keys set GEMINI_API_KEY   # asks for the value (hidden, twice)
+operon keys list                 # where each key comes from; never values
+operon keys rm GEMINI_API_KEY
+operon keys import               # copy the keys in this folder's .env into the store
+```
+
+`import` never edits `.env`: it prints the names to delete by hand. Order, first match wins: real
+environment variables, the credential store, the working folder's `.env`, `~/.operon/operon.env`. A
+blank environment variable counts as unset. Set `OPERON_KEYRING=off` to skip the store entirely.
+
 ## Where values are stored
 
 One file per secret under `~/.operon/secrets/` (the `OPERON_CONFIG_DIR` folder).

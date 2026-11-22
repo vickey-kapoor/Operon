@@ -32,6 +32,7 @@ CI installs with `uv sync --locked --extra dev`, so update deps via `uv lock --u
 .venv\Scripts\operon run --request "task"
 # KAN-103 part 2 (OPERON_SECRETS=on): the model types {{secret:NAME}} and never sees the value; the value is asked for hidden
 .venv\Scripts\operon secrets set NAME     # also: operon secrets list (names only) / operon secrets rm NAME; see docs/secrets.md
+.venv\Scripts\operon keys set NAME        # KAN-186: model API key in the OS credential store (Windows Credential Manager); also: keys list / keys rm NAME / keys import; see docs/secrets.md
 .venv\Scripts\operon envs      # KAN-80: list desktop run environments and whether each is ready here
 
 # Offline test suite (no network, no browser)

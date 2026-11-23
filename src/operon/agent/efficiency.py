@@ -78,7 +78,8 @@ def compute_efficiency(
 ) -> dict[str, Any]:
     """Score a run from its run-log rows (as dicts), optional per-step durations in ms, and
     optional per-step revisit verdicts (aligned with the rows; see ``run_efficiency``)."""
-    steps = [e for e in entries if isinstance(e, Mapping)]
+    # KAN-175: a run_end row says how the run ended; it is not a step.
+    steps = [e for e in entries if isinstance(e, Mapping) and e.get("record_type") != "run_end"]
     total = len(steps)
     blocked = failed = repeat = noop = revisit = wasted = 0
     model_calls: int | None = None
@@ -160,7 +161,7 @@ def run_efficiency(run_dir: str | Path) -> dict[str, Any]:
             row = json.loads(line)
         except ValueError:
             continue
-        if isinstance(row, dict):
+        if isinstance(row, dict) and row.get("record_type") != "run_end":
             entries.append(row)
     step_ms: list[float | None] = []
     for path in sorted(root.glob("step_*/step_timing.json")):

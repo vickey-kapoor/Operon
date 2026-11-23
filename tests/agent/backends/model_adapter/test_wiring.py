@@ -21,7 +21,7 @@ from operon.agent.policy.thin import OwnDoneVerifier, ThinPolicy, ThinRecovery
 from operon.api.runtime.loops import _loop_layers
 from operon.api.runtime.services import build_browser_services, build_desktop_services
 from operon.api.runtime_config import validate_modes
-from operon.models.common import RunStatus, StopReason
+from operon.models.common import FailureCategory, RunStatus, StopReason
 from operon.models.execution import ExecutedAction
 from operon.models.policy import ActionType, AgentAction, PolicyDecision
 from operon.models.state import AgentState
@@ -122,6 +122,7 @@ async def test_the_models_own_done_ends_the_run_unchecked() -> None:
     )
     assert result.status is VerificationStatus.SUCCESS
     assert result.stop_reason is StopReason.TASK_COMPLETED
+    assert result.failure_category is None
 
 
 async def test_a_give_up_never_counts_as_done() -> None:
@@ -131,3 +132,4 @@ async def test_a_give_up_never_counts_as_done() -> None:
     )
     assert result.status is VerificationStatus.FAILURE
     assert result.stop_reason is StopReason.COMPLETION_UNVERIFIED
+    assert result.failure_category is FailureCategory.MODEL_GAVE_UP  # KAN-175

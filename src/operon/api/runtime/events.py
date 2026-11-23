@@ -10,9 +10,20 @@ import json
 import logging
 from pathlib import Path
 
+from operon.agent.failure_cause import (
+    append_run_end,
+    cause_of_error,
+    error_text,
+    note_failure,
+)
 from operon.agent.loop import AgentLoop
 from operon.api import ws_stream as _ws_stream
-from operon.models.common import RunResponse, RunStatus
+from operon.models.common import (
+    FailureCategory,
+    RunFailureCause,
+    RunResponse,
+    RunStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,12 +174,29 @@ async def publish_step_outcome(loop: AgentLoop, response: RunResponse) -> None:
         publish_run_completed(response.run_id, response.status)
 
 
-async def mark_run_failed(loop: AgentLoop, run_id: str) -> RunResponse | None:
-    """Mark a run FAILED after an unhandled step error; None if it is already terminal or gone."""
+async def mark_run_failed(loop: AgentLoop, run_id: str, error: BaseException | None = None) -> RunResponse | None:
+    """Mark a run FAILED after an unhandled step error; None if it is already terminal or gone.
+
+    KAN-175: records the cause (``api_error`` for a model API error, else ``run_crashed``),
+    the error text, and a ``run_end`` row in run.jsonl.
+    """
     try:
         state = await loop.run_store.get_run(run_id)
         if state is None or state.status in _TERMINAL:
             return None
+        detail = error_text(error) if error is not None else "The step crashed."
+        try:
+            # Labelling must never stop the run from being marked failed.
+            note_failure(state, cause=cause_of_error(error) if error is not None else RunFailureCause.RUN_CRASHED, detail=detail)
+            append_run_end(
+                loop._run_log_path(run_id),
+                state,
+                status=RunStatus.FAILED,
+                category=FailureCategory.EXECUTION_ERROR,
+                message=detail,
+            )
+        except Exception as exc:
+            logger.warning("could not record the failure cause of %s: %s", run_id, exc)
         updated = await loop.run_store.set_status(run_id, RunStatus.FAILED)
     except Exception as exc:
         logger.warning("could not mark run %s failed: %s", run_id, exc)

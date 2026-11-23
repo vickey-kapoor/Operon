@@ -40,11 +40,13 @@ def test_paths_come_from_the_run_store(tmp_path: Path) -> None:
     assert manager.run_log_path("r") == str(tmp_path / "r" / "run.jsonl")
 
 
-def test_paths_fall_back_to_the_plain_layout_without_store_methods() -> None:
+def test_paths_fall_back_to_the_runs_root_without_store_methods(tmp_path: Path, monkeypatch) -> None:
+    # The real runs directory (OPERON_RUNS_ROOT honored), not ``runs/`` under the cwd (KAN-177).
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(tmp_path))
     manager = StepArtifactsManager(object())
-    assert Path(manager.before_path("r", 3)) == Path("runs/r/step_3/before.png")
-    assert Path(manager.after_path("r", 3)) == Path("runs/r/step_3/after.png")
-    assert Path(manager.run_log_path("r")) == Path("runs/r/run.jsonl")
+    assert Path(manager.before_path("r", 3)) == tmp_path / "r" / "step_3" / "before.png"
+    assert Path(manager.after_path("r", 3)) == tmp_path / "r" / "step_3" / "after.png"
+    assert Path(manager.run_log_path("r")) == tmp_path / "r" / "run.jsonl"
 
 
 def test_prepare_creates_step_dirs_and_touches_the_run_log(tmp_path: Path) -> None:

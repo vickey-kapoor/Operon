@@ -939,3 +939,17 @@ def test_observer_settings_reports_the_trust_gate(monkeypatch) -> None:
     monkeypatch.setenv("OPERON_TRUST_GATE", "off")
     monkeypatch.setenv("OPERON_TOOLS", "read_file,list_dir")
     assert client.get("/observer/api/settings").json() == {"trust_gate": "off", "tools": "read_file,list_dir"}
+
+
+def test_run_usage_flags_steps_without_usage_and_unreadable_files(monkeypatch, tmp_path) -> None:
+    from operon.api import observer
+
+    monkeypatch.setenv("OPERON_RUNS_ROOT", str(tmp_path))
+    monkeypatch.setattr(observer, "load_run_replay", lambda run_id, root_dir: [])
+    run = tmp_path / "run-1"
+    (run / "step_1").mkdir(parents=True)
+    (run / "step_1" / "computer_use_raw.json").write_text("{}", encoding="utf-8")
+    (run / "step_2").mkdir()
+    (run / "step_2" / "model_usage.json").write_text("{bad", encoding="utf-8")
+    aggregate = observer.summarize_run_usage("run-1")
+    assert aggregate.steps_without_usage == 1 and aggregate.unreadable_usage_files == 1

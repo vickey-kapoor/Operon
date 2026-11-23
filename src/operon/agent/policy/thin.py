@@ -48,6 +48,11 @@ class ThinPolicy(PolicyService):
     async def choose_action(self, state: AgentState, perception: ScreenPerception) -> PolicyDecision:
         return await self.delegate.choose_action(state, perception)
 
+    @property
+    def model_label(self) -> str | None:
+        label = getattr(self.delegate, "model_label", None)
+        return label if isinstance(label, str) and label else None
+
     def latest_debug_artifacts(self) -> ModelDebugArtifacts | None:
         getter = getattr(self.delegate, "latest_debug_artifacts", None)
         return getter() if getter is not None else None

@@ -252,3 +252,31 @@ async def test_a_failed_turn_after_a_declined_dialog_still_reports_the_decline_o
     assert "declined" in error and "first 1 action(s) of the turn DID run" in error
     # The failed attempt answered with b.png and was rolled back; the retry carries the fresh screen.
     assert answered_with[-1].endswith("c.png") and answered_with.count(answered_with[-1]) == 1
+
+
+async def test_replaying_approved_calls_records_no_usage(tmp_path: Path) -> None:
+    # No model turn runs, so the client's latest usage is the previous turn's: recording it
+    # again would bill that turn twice.
+    from operon.models.usage import ModelUsage
+    from operon.store.background_writer import bg_writer
+
+    class UsageClient(ScriptedClient):
+        def latest_usage(self) -> ModelUsage:
+            return ModelUsage(provider="gemini", model="m", request_kind="computer_use", input_tokens=100 * len(self.turns))
+
+    client = UsageClient([_click_reply()])
+    backend = _backend(client)
+    (tmp_path / "step_1").mkdir()
+    (tmp_path / "step_2").mkdir()
+    await _step(backend, _frame(tmp_path, "step_1/before.png"), _state())
+    assert backend.latest_debug_artifacts().usage.input_tokens == 100
+
+    backend.note_not_executed("run-1", "low confidence")
+    await _step(backend, _frame(tmp_path, "step_2/before.png"), _state())
+    await bg_writer.flush()
+
+    assert len(client.turns) == 1
+    debug = backend.latest_debug_artifacts()
+    assert debug.usage is None and debug.usage_artifact_path is None
+    assert not (tmp_path / "step_2" / "computer_use_usage.json").exists()
+    assert (tmp_path / "step_1" / "computer_use_usage.json").exists()

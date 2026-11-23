@@ -276,6 +276,11 @@ def prepare(report: dict, overrides: dict[str, str | None]) -> dict:
     if unpriced and not config.get("flagged"):
         models = ", ".join((report.get("summary") or {}).get("unpriced_models") or []) or "unknown"
         config["flagged"] = f"{unpriced} model calls had no price ({models}): their cost counts as $0"
+    summary = report.get("summary") or {}
+    missing = summary.get("steps_without_usage") or 0
+    unreadable = summary.get("unreadable_usage_files") or 0
+    if (missing or unreadable) and not config.get("flagged"):
+        config["flagged"] = f"{missing} steps had no usage file and {unreadable} usage files were unreadable: their cost counts as $0"
     report["config"] = config
     report["results"] = [
         {k: v for k, v in result.items() if k not in DROPPED_RESULT_FIELDS} for result in report["results"]

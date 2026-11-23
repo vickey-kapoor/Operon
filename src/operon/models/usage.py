@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -38,7 +39,32 @@ class UsageAggregate(StrictModel):
     cache_creation_input_tokens: int = Field(default=0, ge=0)
     cache_read_input_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0.0, ge=0)
+    # Calls the cost above could not count (KAN-177): a step with a saved model response but no usage
+    # file, and a usage file that could not be read.
+    steps_without_usage: int = Field(default=0, ge=0)
+    unreadable_usage_files: int = Field(default=0, ge=0)
     by_model: dict[str, "UsageAggregate"] = Field(default_factory=dict)
+
+
+# The first words of a step's prompt file when the backend made no model call (it ran calls the
+# person approved): that step's saved answer rightly has no usage file.
+NO_MODEL_CALL = "No model call"
+
+
+def step_missing_usage(step: Path) -> bool:
+    """A step folder with a saved model response (``<name>_raw.*``) but no ``<name>_usage.json``,
+    so its cost is missing from a run's total (KAN-177). Steps that made no model call do not count."""
+    for name in {raw.name.split("_raw.", 1)[0] for raw in step.glob("*_raw.*")}:
+        if (step / f"{name}_usage.json").exists():
+            continue
+        try:
+            with (step / f"{name}_prompt.txt").open(encoding="utf-8") as handle:
+                if handle.read(len(NO_MODEL_CALL)) == NO_MODEL_CALL:
+                    continue
+        except OSError:
+            pass
+        return True
+    return False
 
 
 # List prices in USD per million tokens: (input, output, cache read). Anthropic

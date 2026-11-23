@@ -17,7 +17,7 @@ the loop.
 
 from __future__ import annotations
 
-from operon.models.common import StopReason
+from operon.models.common import FailureCategory, LoopStage, StopReason
 from operon.models.execution import ExecutedAction
 from operon.models.logs import ModelDebugArtifacts
 from operon.models.perception import ScreenPerception
@@ -82,6 +82,9 @@ class OwnDoneVerifier(VerifierService):
                     stop_condition_met=True,
                     reason=decision.rationale,
                     stop_reason=StopReason.COMPLETION_UNVERIFIED,
+                    # KAN-175: a structured cause for the step log (a label, not a rule).
+                    failure_category=FailureCategory.MODEL_GAVE_UP,
+                    failure_stage=LoopStage.CHOOSE_ACTION,
                 )
             return VerificationResult(
                 status=VerificationStatus.SUCCESS,
@@ -126,6 +129,9 @@ class ThinRecovery(RecoveryManager):
                 terminal=True,
                 recoverable=False,
                 stop_reason=verification.stop_reason,
+                # None on a normal "done"; MODEL_GAVE_UP when the model gave up (KAN-175).
+                failure_category=verification.failure_category,
+                failure_stage=verification.failure_stage,
             )
         return RecoveryDecision(
             strategy=RecoveryStrategy.ADVANCE,

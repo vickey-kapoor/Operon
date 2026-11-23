@@ -54,7 +54,10 @@ def test_fork_pr_check_never_runs_pr_code() -> None:
 
 
 needs_bash = pytest.mark.skipif(
-    shutil.which("bash") is None or shutil.which("jq") is None, reason="needs bash and jq"
+    # Windows: "bash" can resolve to WSL's launcher with no distro installed; these scripts only run on
+    # GitHub's Linux runners anyway.
+    os.name == "nt" or shutil.which("bash") is None or shutil.which("jq") is None,
+    reason="needs a Linux bash and jq"
 )
 
 

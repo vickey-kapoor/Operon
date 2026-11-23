@@ -1,0 +1,70 @@
+# Fork PR workflow check (KAN-195).
+#
+# A pull request from a fork that adds or edits a workflow, an action or CODEOWNERS can run attacker-written
+# code the moment its runs are approved. This check turns red on such a PR *before* anyone approves the
+# fork's runs, so the rule is visible: never approve a fork PR's workflow runs while this check is red.
+#
+# It uses pull_request_target on purpose: that trigger runs main's copy of this file and, unlike
+# pull_request, does not wait for approval on a fork's first run. It never checks out or runs PR code; it
+# only reads the PR's file list through the API, and no PR-controlled text is put into a command.
+name: Fork PR workflow check
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  check:
+    name: No .github/ changes from a fork
+    # Same-repo PRs are trusted: their workflows run only after a maintainer pushes them.
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      CHANGED: ${{ github.event.pull_request.changed_files }}
+    steps:
+      - name: List the changed paths under .github/
+        run: |
+          set -eu
+          # The files API stops at 3000 files, so a bigger PR could hide a .github/ change past the end:
+          # refuse it outright, and refuse a list whose length is not the PR's own count.
+          case "$CHANGED" in ("" | *[!0-9]*) echo "::error::Could not read the PR's changed file count."; exit 1;; esac
+          if [ "$CHANGED" -ge 3000 ]; then
+            echo "::error::Fork PR changes $CHANGED files (3000 or more): too many to check. Do not approve its workflow runs."
+            exit 1
+          fi
+          # "F name" per file and "P name" for a rename's previous_filename (moving a workflow out of .github/ counts too).
+          listing="$(gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | "F " + .filename, (if .previous_filename then "P " + .previous_filename else empty end)')"
+          listed="$(printf '%s\n' "$listing" | grep -c '^F ' || true)"
+          if [ "$listed" -ne "$CHANGED" ]; then
+            echo "::error::The API listed $listed files but the PR has $CHANGED. Do not approve its workflow runs."
+            exit 1
+          fi
+          # Names come from the fork: keep only plain characters so they can't smuggle in a workflow command.
+          paths="$(printf '%s\n' "$listing" | cut -c3- | tr -c 'A-Za-z0-9._/\n-' '?')"
+          bad="$(printf '%s\n' "$paths" | grep -E '^\.github/' | sort -u || true)"
+          {
+            echo "### Fork PR workflow check"
+            if [ -z "$bad" ]; then
+              echo "No changes under \`.github/\`."
+            else
+              echo "This fork PR changes files under \`.github/\`. Do not approve its workflow runs."
+              echo
+              echo '```'
+              echo "$bad"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$bad" ]; then
+            echo "::error::Fork PR changes .github/ (workflows, actions, CODEOWNERS, dependabot). Do not approve its workflow runs: $(echo "$bad" | tr '\n' ' ')"
+            exit 1
+          fi

@@ -8,8 +8,15 @@ $0.31), so you pick how many tasks and the cost cap each time.
 ```
 start-vm   az vm start operon-linux            (ubuntu-latest, Azure OIDC sign-in)
 bench      self-hosted runner on operon-linux  scripts/osworld-vm/setup.sh, then python -m evals.osworld
-stop-vm    az vm deallocate operon-linux       (always, even when the run fails)
+stop-vm    az vm deallocate operon-linux       (always, even when the run fails), then delete the run's runner if it is still registered
 ```
+
+The `bench` job runs on a one-job (just-in-time) runner (KAN-195). `start-vm` mints it through the GitHub API
+under a label unique to the run (`operon-osworld-<run id>-<attempt>-<random>`), hands its config to the VM with
+`az vm run-command`, and the runner takes that one job and is gone. The label carries a random suffix, so cells of one batch
+do not clash and it cannot be guessed from the public run id. No lasting runner stays registered, so another
+workflow, such as an approved fork PR's, has no standing runner to target on the VM. The logic is `scripts/bench-runners/jit-runner.sh`
+(`start` and `remove`) and `scripts/bench-runners/vm-linux.sh` (runs on the VM).
 
 Inputs: `limit` (first N tasks; 5 = the pilot, 25 or 0 = all), `only` (one task id prefix),
 `max_cost_usd` (stop starting tasks past this; use 8 for all 25), `max_steps`. The report
@@ -46,21 +53,23 @@ The VM `operon-linux` (Standard_D2s_v4, `operon-bench` resource group) needs KVM
    sudo usermod -aG docker,kvm "$USER"
    ```
 
-2. Register a GitHub Actions runner on the VM with the label `operon-osworld`. Get a
-   registration token in the repo under Settings > Actions > Runners > New self-hosted runner
-   (Linux, x64), then follow the commands it shows, adding the label and installing it as a
-   service so it comes back after every start of the VM:
+2. Unpack the GitHub Actions runner binaries on the VM, as the login user, into `~/actions-runner`
+   (Settings > Actions > Runners > New self-hosted runner > Linux, x64 shows the download and unpack
+   commands). Do not run `config.sh` or `svc.sh`: the workflow registers a one-job runner for each run.
+   A runner registered the old way is retired on the next run (its service is removed and its registration deleted),
+   but do this once before the first run: delete the old persistent runners under Settings > Actions > Runners.
 
-   ```bash
-   ./config.sh --url https://github.com/vickey-kapoor/Operon --token <token> --labels operon-osworld --unattended
-   sudo ./svc.sh install && sudo ./svc.sh start
-   ```
+   Then create the repo secret `RUNNER_ADMIN_TOKEN`: a fine-grained personal access token for this
+   repository only, permission Administration: read and write, nothing else. The `start-vm` and
+   `stop-vm` jobs use it to mint and delete the one-job runner; the `bench` job never sees it.
 
 3. Azure sign-in is the one the desktop benchmark already uses (`AZURE_CLIENT_ID`,
    `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`; see `docs/azure-desktop-runner.md`). Its role is
    assigned on the whole `operon-bench` resource group, so it can already start and deallocate
    `operon-linux`. It is trusted for the `main` branch only, so the workflow can only be run
-   from `main`. If the VM has another name, set the repo variable `OSWORLD_VM_NAME`.
+   from `main`. If the VM has another name, set the repo variable `OSWORLD_VM_NAME`. Delivering the
+   runner config needs one more permission in the role, `Microsoft.Compute/virtualMachines/runCommand/action`
+   (the role JSON is in `docs/azure-desktop-runner.md`; update the role with `az role definition update`).
 
 4. The repo secret `GEMINI_API_KEY` is the one the other benchmarks use. The key reaches the run
    as an environment variable of the job; it is not written to the VM's disk by the workflow.
@@ -73,8 +82,11 @@ downloads the image, so it takes a few minutes longer.
 
 ## Notes
 
-- Only this workflow uses the `operon-osworld` runner label, and it only runs on a manual start.
-- A self-hosted runner trusts the code it runs: do not use the label from any workflow that runs
-  on pull requests.
+- The runner label is different every run and exists only while its one job does; there is no lasting
+  `operon-osworld` runner and no label for another workflow to ask for.
+- A self-hosted runner trusts the code it runs: never point a workflow that runs on pull requests at the VM.
+- Never approve a fork PR's workflow runs while the "Fork PR workflow check" is red (it lists changes under `.github/`).
 - The VM keeps its disk (about $10 a month for 128 GB) while deallocated; compute bills only
   while a run is going.
+- Backstop, as for the desktop VM: `az vm auto-shutdown --resource-group operon-bench --name operon-linux --time 0700`
+  deallocates it daily in case a run never reaches its `stop-vm` job.

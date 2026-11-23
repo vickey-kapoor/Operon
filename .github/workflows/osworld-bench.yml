@@ -4,10 +4,12 @@
 # batch (benchmark.yml, KAN-184); it always runs the default branch. It spends model credits, so nothing starts it for you: you pick how many
 # tasks and the cost cap. Steps: start the Linux VM
 # operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
-# docs/osworld-runner.md), upload the report, deallocate the VM. The bench job's timeout is sized to the
+# docs/osworld-runner.md), upload the report, deallocate the VM. The runner is a one-job (JIT) runner
+# minted by start-vm under a label unique to this run (KAN-195), so no lasting runner on the VM can pick up any other job. The bench job's timeout is sized to the
 # tasks chosen (`python -m evals.osworld --job-minutes`, computed in start-vm: 30 min + 35 min a task), not a flat number.
 #
-# Needs repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the Azure OIDC variables the desktop bench already uses.
+# Needs repo secret RUNNER_ADMIN_TOKEN (fine-grained token, this repo only, Administration read+write: it mints and deletes
+# the one-job runner) and repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the Azure OIDC variables the desktop bench already uses.
 # Cost: Gemini about $0.12 a task (the last full 25-task run was $3.11); Claude or GPT about $0.12-0.24 a task.
 # The cap is checked between tasks, so a run can overshoot by one task.
 name: Run OSWorld test tasks (own VM)
@@ -49,6 +51,8 @@ on:
       GEMINI_API_KEY: {required: false}
       ANTHROPIC_API_KEY: {required: false}
       OPENAI_API_KEY: {required: false}
+      # Mints the one-job runner. Only benchmark.yml's osworld cell passes it; it never reaches the bench job.
+      RUNNER_ADMIN_TOKEN: {required: false}
 
 permissions:
   contents: read
@@ -73,6 +77,7 @@ jobs:
       ONLY: ${{ inputs.only }}
     outputs:
       bench_minutes: ${{ steps.minutes.outputs.minutes }}
+      runner_label: ${{ steps.label.outputs.label }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -88,19 +93,37 @@ jobs:
           minutes="$(python3 -m evals.osworld "${args[@]}")"
           echo "bench job timeout: $minutes minutes"
           echo "minutes=$minutes" >> "$GITHUB_OUTPUT"
+      # A label only this run's one-job runner has. run_id and run_attempt belong to the caller when this is a
+      # batch cell, so several cells share them and the id is public: the random part keeps cells apart and unguessable.
+      - name: Pick this run's runner label
+        id: label
+        run: echo "label=operon-osworld-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(openssl rand -hex 6)" >> "$GITHUB_OUTPUT"
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+      # Mint a runner that takes exactly this run's bench job and hand it to the VM; retire the old lasting one.
+      - name: Start a one-job runner on the VM
+        # The token is on this step only, not on the checkout and login actions.
+        env:
+          RUNNER_LABEL: ${{ steps.label.outputs.label }}
+          GH_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$GH_ADMIN_TOKEN" ]; then
+            echo "::error::Missing repository secret RUNNER_ADMIN_TOKEN (see docs/osworld-runner.md)."
+            exit 1
+          fi
+          bash scripts/bench-runners/jit-runner.sh start linux "$RUNNER_LABEL" operon-osworld
 
   bench:
     name: Run the OSWorld tasks
     needs: start-vm
     if: ${{ !cancelled() && needs.start-vm.result == 'success' }}
-    # The runner on operon-linux (docs/osworld-runner.md). It comes online a minute or two after the VM boots.
-    runs-on: [self-hosted, linux, operon-osworld]
+    # The one-job runner start-vm put on operon-linux (docs/osworld-runner.md), under this run's own label.
+    runs-on: ${{ needs.start-vm.outputs.runner_label }}
     # 30 min setup + 35 min a task (start-vm sizes it); the fallback is the 25-task worst case.
     timeout-minutes: ${{ fromJSON(needs.start-vm.outputs.bench_minutes || '905') }}
     # Never more than read, even when a caller grants more (benchmark.yml grants write for the video release).
@@ -178,7 +201,8 @@ jobs:
   stop-vm:
     name: Stop the Azure VM
     needs: [start-vm, bench]
-    if: ${{ always() && needs.start-vm.result == 'success' }}
+    # Also after a failed start-vm: it can fail once the VM is already up (the runner step) and the VM must not keep billing.
+    if: ${{ always() && needs.start-vm.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -187,6 +211,7 @@ jobs:
     env:
       RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
       VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-linux' }}
+      RUNNER_LABEL: ${{ needs.start-vm.outputs.runner_label }}
     steps:
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
@@ -195,6 +220,17 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       # Deallocated, not just stopped: a stopped VM still bills for compute.
       - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+      # The default branch's script, not anything a run produced. A one-job runner deletes itself when its job
+      # ends; this removes it when the bench job never started. Best effort.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Remove the one-job runner if it is still registered
+        env:
+          GH_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/bench-runners/jit-runner.sh remove "$RUNNER_LABEL" || echo "::warning::could not check for a leftover runner"
 
   # Keeps the run videos for good: workflow artifacts expire after 14 days, a prerelease does not.
   # It only downloads files and uploads them to a release; it never checks out or runs benchmarked code.

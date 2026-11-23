@@ -11,7 +11,7 @@ run-name: Gemini · ${{ inputs.category }} · Thin · ${{ inputs.suite }} on ${{
 # runs on it, and deallocates it afterwards, so it costs nothing while idle.
 # Every run spends model credits.
 # Needs repo secret GEMINI_API_KEY (Gemini is the agent, the verifier and the judge). runner: azure
-# also needs secret AZURE_CREDENTIALS; repo variables AZURE_VM_RESOURCE_GROUP and
+# also needs secret RUNNER_ADMIN_TOKEN (mints the one-job runner on the VM, KAN-195) and secret AZURE_CREDENTIALS; repo variables AZURE_VM_RESOURCE_GROUP and
 # AZURE_VM_NAME override the VM's default names (operon-bench, operon-desktop).
 # The run stops once it has spent max_cost_usd (MAX_RUN_COST_USD).
 
@@ -45,6 +45,8 @@ on:
       ANTHROPIC_API_KEY: {required: false}
       OPENAI_API_KEY: {required: false}
       AZURE_CREDENTIALS: {required: false}
+      # Mints the one-job runner on the Azure VM (KAN-195); not needed for the hosted runner.
+      RUNNER_ADMIN_TOKEN: {required: false}
 
 permissions:
   contents: read
@@ -58,7 +60,8 @@ concurrency:
 jobs:
   start-vm:
     name: Start the Azure VM
-    if: inputs.runner == 'azure' && inputs.manage_vm != 'false'
+    # Also with manage_vm false: the caller starts the VM, but the one-job runner is still minted here.
+    if: inputs.runner == 'azure'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # id-token: sign in to Azure with GitHub's OIDC token when AZURE_CLIENT_ID is set.
@@ -70,7 +73,18 @@ jobs:
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
       VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
+    outputs:
+      runner_label: ${{ steps.label.outputs.label }}
     steps:
+      # The default branch's scripts, never the ref being benchmarked: this job holds the runner-admin token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      # A label only this run's one-job runner has; the random part keeps callers' runs apart and unguessable.
+      - name: Pick this run's runner label
+        id: label
+        run: echo "label=operon-desktop-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(openssl rand -hex 6)" >> "$GITHUB_OUTPUT"
       - name: Check the settings
         run: |
           if [ -z "$AZURE_CLIENT_ID" ] && [ -z "$AZURE_CREDENTIALS" ]; then
@@ -88,15 +102,29 @@ jobs:
         if: env.AZURE_CLIENT_ID == ''
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-      # The VM signs in automatically at boot and its runner comes online a minute or
-      # two later; the bench job waits in the queue until then.
-      - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+      - if: inputs.manage_vm != 'false'
+        run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+      # The VM signs in automatically at boot; the logon task then picks up the config below and the
+      # one-job runner comes online a minute or two later (the bench job waits in the queue until then).
+      - name: Start a one-job runner on the VM
+        # The token is on this step only, not on the login actions.
+        env:
+          RUNNER_LABEL: ${{ steps.label.outputs.label }}
+          GH_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$GH_ADMIN_TOKEN" ]; then
+            echo "::error::Missing repository secret RUNNER_ADMIN_TOKEN (see docs/azure-desktop-runner.md)."
+            exit 1
+          fi
+          bash scripts/bench-runners/jit-runner.sh start windows "$RUNNER_LABEL" operon-desktop
 
   bench:
     name: Run the tasks
     needs: start-vm
     if: ${{ !cancelled() && (needs.start-vm.result == 'success' || needs.start-vm.result == 'skipped') }}
-    runs-on: ${{ inputs.runner == 'azure' && fromJSON('["self-hosted", "windows", "operon-desktop"]') || 'windows-latest' }}
+    # The Azure VM's runner is the one-job runner start-vm minted under this run's own label.
+    runs-on: ${{ inputs.runner == 'azure' && needs.start-vm.outputs.runner_label || 'windows-latest' }}
     timeout-minutes: 120
     defaults:
       run:
@@ -287,7 +315,9 @@ jobs:
   stop-vm:
     name: Stop the Azure VM
     needs: [start-vm, bench]
-    if: ${{ always() && inputs.runner == 'azure' && inputs.manage_vm != 'false' && needs.start-vm.result == 'success' }}
+    # Not skipped, so a start-vm that failed after the VM was up still gets it deallocated. With manage_vm false
+    # the caller owns the VM: this job then only removes the one-job runner.
+    if: ${{ always() && inputs.runner == 'azure' && needs.start-vm.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -297,16 +327,29 @@ jobs:
       AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
       VM_NAME: ${{ vars.AZURE_VM_NAME || 'operon-desktop' }}
+      RUNNER_LABEL: ${{ needs.start-vm.outputs.runner_label }}
     steps:
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        if: env.AZURE_CLIENT_ID != ''
+        if: inputs.manage_vm != 'false' && env.AZURE_CLIENT_ID != ''
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
-        if: env.AZURE_CLIENT_ID == ''
+        if: inputs.manage_vm != 'false' && env.AZURE_CLIENT_ID == ''
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       # Deallocated, not just stopped: a stopped VM still bills for compute.
-      - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+      - if: inputs.manage_vm != 'false'
+        run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+      # The default branch's script. A one-job runner deletes itself when its job ends; this removes it
+      # when the bench job never started. Best effort.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Remove the one-job runner if it is still registered
+        env:
+          GH_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/bench-runners/jit-runner.sh remove "$RUNNER_LABEL" || echo "::warning::could not check for a leftover runner"

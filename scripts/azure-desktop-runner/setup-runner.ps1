@@ -5,7 +5,7 @@ benchmark (.github/workflows/live-desktop-bench.yml, runner input "azure").
 
 .DESCRIPTION
 Run once, in an elevated PowerShell, while signed in over RDP as the VM's admin
-account. Running it again rebuilds the runner (it needs a fresh token). It:
+account. Running it again rebuilds the runner folder. It:
 
   - installs PowerShell 7, Git and Python 3.14 (the workflow's shell and toolchain)
   - turns off Windows Update, notifications, the lock screen, the screen saver,
@@ -16,33 +16,26 @@ account. Running it again rebuilds the runner (it needs a fresh token). It:
     account, so it can't change the system, other accounts or the admin's files
   - signs that account in automatically at boot (Sysinternals Autologon keeps the
     password as an LSA secret, not in plain text in the registry)
-  - registers the GitHub Actions runner as that account with the "operon-desktop"
-    label and starts it at logon, hidden, unelevated, inside the interactive
-    session; a runner installed as a Windows service has no desktop to
-    screenshot, so it is not a service
+  - unpacks the GitHub Actions runner but does NOT register it (KAN-195): a run
+    registers a one-job runner by itself (scripts/bench-runners/jit-runner.sh) and
+    leaves its config in C:\actions-runner\.jitconfig. A logon task, hidden,
+    unelevated, inside the interactive session (a runner installed as a Windows
+    service has no desktop to screenshot, so it is not a service), waits for that
+    file and starts the runner with it, once per job
   - sets the screen to 1920x1080 each time the runner starts
 
-Then it restarts the VM. After the restart the account signs in, the runner comes
-online, and the VM is ready. See docs/azure-desktop-runner.md for the whole setup.
-
-.PARAMETER RunnerToken
-A runner registration token: repository Settings > Actions > Runners > New
-self-hosted runner, or `gh api -X POST repos/vickey-kapoor/Operon/actions/runners/registration-token --jq .token`.
-It expires after an hour.
+Then it restarts the VM. After the restart the account signs in and waits for a run's
+runner config; nothing shows under Settings > Actions > Runners until a run starts. See docs/azure-desktop-runner.md for the whole setup.
 
 .PARAMETER RunnerUser
 The standard account the runner runs as. Created if missing; its password is
 reset to a new random one on every run of this script.
 
 .EXAMPLE
-.\setup-runner.ps1 -RunnerToken AAAA...
+.\setup-runner.ps1
 #>
 param(
-    [Parameter(Mandatory)] [string] $RunnerToken,
     [string] $RunnerUser = "benchrunner",
-    [string] $Repo = "vickey-kapoor/Operon",
-    [string] $RunnerName = "azure-desktop",
-    [string] $Labels = "operon-desktop",
     [string] $RunnerDir = "C:\actions-runner",
     [string] $PythonVersion = "3.14.0",
     [switch] $NoRestart
@@ -140,11 +133,10 @@ powercfg /change hibernate-timeout-ac 0
 
 # --- the runner's standard account -------------------------------------------
 Write-Output "Setting up the standard account $userName..."
-# A random password, used below for auto-logon and registration and then dropped.
+# A random password, used below for auto-logon and then dropped.
 $bytes = New-Object byte[] 24
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $plain = [Convert]::ToBase64String($bytes) + "aA1!"
-$secure = ConvertTo-SecureString $plain -AsPlainText -Force
 # Through ADSI, not the LocalAccounts cmdlets: some Server images (and any 32-bit
 # PowerShell) don't have that module.
 $computer = [ADSI]"WinNT://$env:COMPUTERNAME,computer"
@@ -163,7 +155,6 @@ if (-not $users.IsMember($account.ADsPath)) { $users.Add($account.ADsPath) }
 # Never an administrator: the benchmark runs whatever code the PR branch carries.
 $admins = [ADSI]"WinNT://$env:COMPUTERNAME/Administrators,group"
 if ($admins.IsMember($account.ADsPath)) { $admins.Remove($account.ADsPath) }
-$credential = New-Object System.Management.Automation.PSCredential("$env:COMPUTERNAME\$userName", $secure)
 
 # --- auto-logon --------------------------------------------------------------
 Write-Output "Setting up auto-logon for $userName..."
@@ -184,14 +175,9 @@ New-Item -ItemType Directory -Force -Path $RunnerDir | Out-Null
 Expand-Archive -Path $zip -DestinationPath $RunnerDir -Force
 # The runner account owns its folder so the runner can update itself.
 icacls $RunnerDir /grant "${userName}:(OI)(CI)F" /T /Q | Out-Null
-# Registered as the runner account: its credentials are encrypted for that account.
-$config = Start-Process cmd.exe -Credential $credential -LoadUserProfile -Wait -PassThru `
-    -WorkingDirectory $RunnerDir -ArgumentList "/c", "config.cmd", "--unattended", "--replace", `
-    "--url", "https://github.com/$Repo", "--token", $RunnerToken, `
-    "--name", $RunnerName, "--labels", $Labels, "--work", "_work"
-if ($config.ExitCode -ne 0) { throw "Runner registration failed (is the token older than an hour?)." }
+# No config.cmd and no lasting registration (KAN-195): each run hands over a one-job runner config.
 
-# Started at logon: sets the screen size, then runs the runner in this session.
+# Started at logon: sets the screen size, then runs one runner per job in this session.
 @'
 Add-Type @"
 using System;
@@ -223,7 +209,20 @@ public static class Display {
 "@
 [Display]::Set(1920, 1080) | Out-Null
 Set-Location $PSScriptRoot
-& .\run.cmd *> runner-console.log
+# The run's start-vm job (scripts/bench-runners/vm-windows.ps1) drops a one-job config here. Read it,
+# delete it so it can't be reused, and run the runner; it exits when its job is done. Then wait again.
+while ($true) {
+    $cfg = $null
+    if (Test-Path .\.jitconfig) { $cfg = Get-Content .\.jitconfig -Raw -ErrorAction SilentlyContinue }
+    if ([string]::IsNullOrWhiteSpace($cfg)) {
+        # No file yet, or one that is empty: leave it alone and look again.
+        Start-Sleep -Seconds 5
+    } else {
+        Remove-Item .\.jitconfig -Force
+        & .\run.cmd --jitconfig $cfg.Trim() *> runner-console.log
+        $cfg = $null
+    }
+}
 '@ | Set-Content -Path "$RunnerDir\start-runner.ps1" -Encoding UTF8
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `

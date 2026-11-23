@@ -125,7 +125,13 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         self._advisory_hints: dict[str, list[tuple[str, str]]] = {}
         self._conversations: dict[str, _ConversationState] = {}
 
+    @property
+    def model_label(self) -> str | None:
+        return getattr(self.client, "model", None) or None
+
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
+        # A step that fails before this ends must not report the previous step's files.
+        self._last_debug_artifacts = None
         self._last_frames[state.run_id] = screenshot
         step_dir = Path(screenshot.artifact_path).resolve().parent
         step_dir.mkdir(parents=True, exist_ok=True)
@@ -147,6 +153,8 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
         conversation.messages.append(user_message)
 
         usages: list[ModelUsage] = []
+        turns: list[dict] = []
+        turns_path = step_dir / "computer_use_turns.json"
         zooms = 0
         while True:
             try:
@@ -161,7 +169,10 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 raise BackendCompatibilityError(str(exc)) from exc
             if isinstance(usage := self.client.latest_usage(), ModelUsage):
                 usages.append(usage)
+            # computer_use_raw.json is the final turn; every turn (zooms included) is kept in the list.
+            turns.append(response)
             bg_writer.enqueue(raw_path, json.dumps(response, indent=2))
+            bg_writer.enqueue(turns_path, json.dumps(turns, indent=2))
 
             if response.get("stop_reason") == "refusal":
                 del conversation.messages[history_length:]

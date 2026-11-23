@@ -578,3 +578,28 @@ async def test_a_server_without_the_settings_endpoint_keeps_its_old_default(monk
     transport = httpx.MockTransport(lambda request: httpx.Response(404, json={"detail": "Not Found"}))
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         assert await live_bench.server_trust_gate(client) == expected
+
+
+def test_run_usage_flags_steps_without_usage_and_unreadable_files(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)
+    run = tmp_path / "run-1"
+    _write_usage(run / "step_1", kind="computer_use", model="gemini-3.5-flash", input_tokens=10, estimated_cost_usd=0.01)
+    (run / "step_1" / "computer_use_raw.json").write_text("{}", encoding="utf-8")
+    (run / "step_2").mkdir()
+    (run / "step_2" / "computer_use_raw.json").write_text("{}", encoding="utf-8")  # response saved, usage lost
+    (run / "step_3").mkdir()
+    (run / "step_3" / "policy_usage.json").write_text("{not json", encoding="utf-8")
+
+    usage = live_bench.run_usage("run-1")
+    assert usage["steps_without_usage"] == 1 and usage["unreadable_usage_files"] == 1
+    result = live_bench.TaskResult("t", "c", "r", "succeeded", "success", "-", 1, 0, 5, 1, 0, "", "-",
+                                   steps_without_usage=1, unreadable_usage_files=1)
+    summary = summarize([result, _costly("other", 0.01)])
+    assert summary["steps_without_usage"] == 1 and summary["unreadable_usage_files"] == 1
+
+
+def test_backends_used_counts_legacy_combined_raw_as_computer_use(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(live_bench, "runs_dir", lambda: tmp_path)
+    (tmp_path / "r" / "step_1").mkdir(parents=True)
+    (tmp_path / "r" / "step_1" / "combined_raw.json").write_text("{}", encoding="utf-8")
+    assert live_bench._backends_used("r") == (1, 0)

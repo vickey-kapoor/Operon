@@ -120,6 +120,10 @@ def test_partial_incomplete_and_unpriced_runs_are_flagged_but_kept() -> None:
     assert prepare(_report(summary=summary), {})["config"]["flagged"] == (
         "3 model calls had no price (gemini-new-model): their cost counts as $0"
     )
+    gaps = {"tasks": 2, "success": 1, "steps_without_usage": 2, "unreadable_usage_files": 1}
+    assert prepare(_report(summary=gaps), {})["config"]["flagged"] == (
+        "2 steps had no usage file and 1 usage files were unreadable: their cost counts as $0"
+    )
 
 
 def _grounding_report() -> dict:

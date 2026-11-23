@@ -159,3 +159,93 @@ async def test_retry_keeps_the_conversation_valid_after_a_function_response_turn
     # the step's usage counts the blocked request and the retry
     usage = backend.latest_debug_artifacts().usage
     assert usage is not None and usage.input_tokens == 300
+
+
+class WeakFirstClient:
+    """First answer has no function call (needs the stronger retry); the retry gives `second`."""
+
+    model = "model-x"
+
+    def __init__(self, second, *, raise_before_usage: bool = False) -> None:
+        self.second = second
+        self.raise_before_usage = raise_before_usage
+        self.runs = 0
+        self._usage: ModelUsage | None = None
+
+    def latest_usage(self) -> ModelUsage | None:
+        return self._usage
+
+    async def run_step(self, *, prompt: str, screenshot_path: str) -> dict:
+        self.runs += 1
+        if self.runs > 1 and self.raise_before_usage and isinstance(self.second, Exception):
+            raise self.second  # failed before the client recorded this request's usage
+        self._usage = ModelUsage(provider="gemini", model="m", request_kind="computer_use", input_tokens=100 * self.runs)
+        if self.runs == 1:
+            return {"action": {"action_type": "wait"}, "perception": {}, "function_calls": [], "confidence": 0.1}
+        if isinstance(self.second, Exception):
+            raise self.second
+        return self.second
+
+
+async def _first_turn(backend, client, tmp_path: Path) -> dict:
+    async def fake_turn(**_kwargs) -> dict:
+        return await client.run_step(prompt="p", screenshot_path="s")
+
+    backend._run_turn = fake_turn  # type: ignore[method-assign]
+    return await _call(backend, tmp_path)
+
+
+async def test_stronger_retry_usage_is_summed_with_the_first_turn(tmp_path: Path) -> None:
+    client = WeakFirstClient(_reply())
+    backend = _backend(client)
+
+    await _first_turn(backend, client, tmp_path)
+
+    # The first turn (100) is carried; perceive adds the client's latest (the retry, 200).
+    assert backend._blocked_usage["run-1"].input_tokens == 100
+    assert client.latest_usage().input_tokens == 200
+
+
+async def test_failed_stronger_retry_sums_each_paid_turn_once(tmp_path: Path) -> None:
+    client = WeakFirstClient(GeminiPromptBlockedError("x", block_reason="SAFETY"))
+    backend = _backend(client)
+
+    payload = await _first_turn(backend, client, tmp_path)
+
+    assert payload["confidence"] == 0.1  # the first answer is kept
+    assert backend._blocked_usage["run-1"].input_tokens == 100
+    assert backend.model_label == "model-x"
+
+
+async def _perceive_first_turn(backend, client, tmp_path: Path):
+    """The whole step through perceive, so the usage it reports is what the run log gets."""
+    async def fake_turn(**_kwargs) -> dict:
+        return await client.run_step(prompt="p", screenshot_path="s")
+
+    backend._run_turn = fake_turn  # type: ignore[method-assign]
+    backend._conversations.setdefault("run-1", _ConversationState())
+    shot = tmp_path / "s.png"
+    shot.write_bytes(b"png")
+    frame = CaptureFrame(artifact_path=str(shot), width=1000, height=1000)
+    await backend.perceive(frame, AgentState(run_id="run-1", intent="x", status=RunStatus.RUNNING))
+    return backend.latest_debug_artifacts().usage
+
+
+async def test_successful_stronger_retry_step_usage_is_both_turns(tmp_path: Path) -> None:
+    client = WeakFirstClient(_reply())
+    usage = await _perceive_first_turn(_backend(client), client, tmp_path)
+    assert usage is not None and usage.input_tokens == 300  # 100 + 200
+
+
+async def test_retry_failing_before_new_usage_counts_the_first_turn_once(tmp_path: Path) -> None:
+    client = WeakFirstClient(GeminiPromptBlockedError("x", block_reason="SAFETY"), raise_before_usage=True)
+    backend = _backend(client)
+    usage = await _perceive_first_turn(backend, client, tmp_path)
+    assert client.runs == 2
+    assert usage is not None and usage.input_tokens == 100  # not 200
+
+
+async def test_failed_retry_with_its_own_usage_step_usage_is_both_turns(tmp_path: Path) -> None:
+    client = WeakFirstClient(GeminiPromptBlockedError("x", block_reason="SAFETY"))
+    usage = await _perceive_first_turn(_backend(client), client, tmp_path)
+    assert usage is not None and usage.input_tokens == 300

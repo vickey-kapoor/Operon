@@ -146,10 +146,10 @@ def _action_summary(action) -> str:
 
 
 def _screenshot(entry: StepLog) -> str:
-    """The step's after-image, or its before-image when no action ran (a gate pause
-    logs an after path that is never written)."""
+    """The step's after-image, or its before-image when there is none (a gate pause logs
+    no after path because nothing ran; an older run's file may also be missing)."""
     after = entry.after_artifact_path
-    return after if Path(after).exists() else entry.before_artifact_path
+    return after if after and Path(after).exists() else entry.before_artifact_path
 
 
 def _checked_by(result) -> str:

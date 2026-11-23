@@ -160,3 +160,31 @@ async def test_approving_held_calls_keeps_the_models_own_reason(tmp_path: Path) 
     approved = await _step(backend, _frame(tmp_path, "b.png"), _state())
 
     assert approved.rationale == "Click Place order to buy it"
+
+
+async def test_replaying_approved_calls_records_no_usage(tmp_path: Path) -> None:
+    # No model turn runs, so the client's latest usage is the previous turn's: recording it
+    # again would bill that turn twice.
+    from operon.models.usage import ModelUsage
+    from operon.store.background_writer import bg_writer
+
+    class UsageClient(ScriptedClient):
+        def latest_usage(self) -> ModelUsage:
+            return ModelUsage(provider="gemini", model="m", request_kind="computer_use", input_tokens=100 * len(self.turns))
+
+    client = UsageClient([_click_reply()])
+    backend = _backend(client)
+    (tmp_path / "step_1").mkdir()
+    (tmp_path / "step_2").mkdir()
+    await _step(backend, _frame(tmp_path, "step_1/before.png"), _state())
+    assert backend.latest_debug_artifacts().usage.input_tokens == 100
+
+    backend.note_not_executed("run-1", "low confidence")
+    await _step(backend, _frame(tmp_path, "step_2/before.png"), _state())
+    await bg_writer.flush()
+
+    assert len(client.turns) == 1
+    debug = backend.latest_debug_artifacts()
+    assert debug.usage is None and debug.usage_artifact_path is None
+    assert not (tmp_path / "step_2" / "computer_use_usage.json").exists()
+    assert (tmp_path / "step_1" / "computer_use_usage.json").exists()

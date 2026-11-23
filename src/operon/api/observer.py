@@ -12,9 +12,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from operon.agent.failure_cause import note_failure
 from operon.core.paths import browser_artifacts_dir, desktop_artifacts_dir, runs_dir
 from operon.models.common import RunFailureCause, RunStatus, StopReason
-from operon.models.logs import PreStepFailureLog, StepLog
+from operon.models.logs import ModelDebugArtifacts, PreStepFailureLog, StepLog
 from operon.models.state import AgentState
-from operon.models.usage import ModelUsage, UsageAggregate
+from operon.models.usage import ModelUsage, UsageAggregate, step_missing_usage
 from operon.store.replay import load_run_replay
 
 
@@ -196,7 +196,7 @@ def _looks_like_browser_run(state: AgentState) -> bool:
 
 def _step_payload(entry: StepLog) -> dict[str, Any]:
     before_dimensions = _image_dimensions(entry.before_artifact_path)
-    perception_diagnostics = _load_json(entry.perception_debug.diagnostics_artifact_path)
+    perception_diagnostics = _load_json(_perception_debug(entry).diagnostics_artifact_path)
     return {
         "step_id": entry.step_id,
         "step_index": entry.step_index,
@@ -208,10 +208,10 @@ def _step_payload(entry: StepLog) -> dict[str, Any]:
             "summary": entry.perception.summary,
             "focused_element_id": entry.perception.focused_element_id,
             "confidence": entry.perception.confidence,
-            "usage": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
+            "usage": _perception_debug(entry).usage.model_dump(mode="json") if _perception_debug(entry).usage is not None else None,
             "metrics": _perception_metrics(entry),
             "elements": [element.model_dump(mode="json") for element in entry.perception.visible_elements],
-            "retry_log": _read_text(entry.perception_debug.retry_log_artifact_path),
+            "retry_log": _read_text(_perception_debug(entry).retry_log_artifact_path),
             "diagnostics": perception_diagnostics,
         },
         "selector": {
@@ -234,7 +234,7 @@ def _step_payload(entry: StepLog) -> dict[str, Any]:
         },
         "verification": entry.verification_result.model_dump(mode="json"),
         "usage": {
-            "perception": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
+            "perception": _perception_debug(entry).usage.model_dump(mode="json") if _perception_debug(entry).usage is not None else None,
             "policy": entry.policy_debug.usage.model_dump(mode="json") if entry.policy_debug.usage is not None else None,
             "verification": entry.verification_debug.usage.model_dump(mode="json") if entry.verification_debug is not None and entry.verification_debug.usage is not None else None,
         },
@@ -257,8 +257,8 @@ def _step_payload(entry: StepLog) -> dict[str, Any]:
 
 
 def _pre_step_payload(entry: PreStepFailureLog) -> dict[str, Any]:
-    diagnostics = _load_json(entry.perception_debug.diagnostics_artifact_path) or {}
-    parsed_perception = _load_json(entry.perception_debug.parsed_artifact_path) or {}
+    diagnostics = _load_json(_perception_debug(entry).diagnostics_artifact_path) or {}
+    parsed_perception = _load_json(_perception_debug(entry).parsed_artifact_path) or {}
     visible_elements = parsed_perception.get("visible_elements", []) if isinstance(parsed_perception, dict) else []
     return {
         "step_id": entry.step_id,
@@ -268,17 +268,17 @@ def _pre_step_payload(entry: PreStepFailureLog) -> dict[str, Any]:
         "phase": entry.failure.stage.value,
         "error_message": entry.error_message,
         "failure": entry.failure.model_dump(mode="json"),
-        "perception_retry_log": _read_text(entry.perception_debug.retry_log_artifact_path),
+        "perception_retry_log": _read_text(_perception_debug(entry).retry_log_artifact_path),
         "perception": {
             "summary": diagnostics.get("summary") or parsed_perception.get("summary"),
             "focused_element_id": diagnostics.get("normalized_raw_perception_summary", {}).get("focused_element_id")
             if isinstance(diagnostics.get("normalized_raw_perception_summary"), dict)
             else parsed_perception.get("focused_element_id"),
             "confidence": parsed_perception.get("confidence"),
-            "usage": entry.perception_debug.usage.model_dump(mode="json") if entry.perception_debug.usage is not None else None,
+            "usage": _perception_debug(entry).usage.model_dump(mode="json") if _perception_debug(entry).usage is not None else None,
             "metrics": _pre_step_perception_metrics(diagnostics),
             "elements": visible_elements,
-            "retry_log": _read_text(entry.perception_debug.retry_log_artifact_path),
+            "retry_log": _read_text(_perception_debug(entry).retry_log_artifact_path),
             "diagnostics": diagnostics or None,
         },
         "selector": {"trace": None},
@@ -406,7 +406,7 @@ def _partial_execution_payload(execution_trace: Any) -> dict[str, Any]:
 
 def _perception_metrics(entry: StepLog) -> dict[str, Any]:
     elements = entry.perception.visible_elements
-    retry_log = _read_text(entry.perception_debug.retry_log_artifact_path) or ""
+    retry_log = _read_text(_perception_debug(entry).retry_log_artifact_path) or ""
     return _perception_metrics_from_elements(
         [element.model_dump(mode="json") for element in elements],
         entry.perception.page_hint.value,
@@ -511,7 +511,7 @@ def _build_event_log(
                 {"step_index": entry.step_index, "event": entry.decision_source or "action_decided", "detail": _action_detail},
             ]
         )
-        retry_log = _read_text(entry.perception_debug.retry_log_artifact_path) or ""
+        retry_log = _read_text(_perception_debug(entry).retry_log_artifact_path) or ""
         if retry_log:
             for line in retry_log.splitlines():
                 if line.strip():
@@ -547,7 +547,7 @@ def _build_event_log(
     for entry in pre_step_failures:
         events.append({"step_index": entry.step_index, "event": "screenshot_captured", "detail": entry.before_artifact_path})
         events.append({"step_index": entry.step_index, "event": "perception_requested", "detail": entry.error_message})
-        retry_log = _read_text(entry.perception_debug.retry_log_artifact_path) or ""
+        retry_log = _read_text(_perception_debug(entry).retry_log_artifact_path) or ""
         if retry_log:
             for line in retry_log.splitlines():
                 if line.strip():
@@ -589,6 +589,16 @@ def _read_text(path_value: str | None) -> str | None:
     if not path.exists():
         return None
     return path.read_text(encoding="utf-8")
+
+
+# A pre-step failure whose backend failed before it reported its files logs no perception_debug.
+_NO_PERCEPTION_DEBUG = ModelDebugArtifacts.model_construct(
+    prompt_artifact_path=None, raw_response_artifact_path=None, parsed_artifact_path=None
+)
+
+
+def _perception_debug(entry: StepLog | PreStepFailureLog) -> ModelDebugArtifacts:
+    return entry.perception_debug or _NO_PERCEPTION_DEBUG
 
 
 def _load_json(path_value: str | None) -> Any:
@@ -641,6 +651,13 @@ def summarize_run_usage(run_id: str) -> UsageAggregate:
     planner_usage = _usage_from_path(run_dir / "planner_usage.json") if run_dir.exists() else None
     if planner_usage is not None:
         _merge_usage(aggregate, planner_usage)
+    if run_dir.exists():
+        for step in sorted(run_dir.glob("step_*")):
+            if step_missing_usage(step):
+                aggregate.steps_without_usage += 1
+        for path in run_dir.glob("step_*/*_usage.json"):
+            if _usage_from_path(path) is None:
+                aggregate.unreadable_usage_files += 1
     step_dir = _latest_step_dir(run_dir) if run_dir.exists() else None
     if step_dir is not None:
         step_index = int(step_dir.name.split("_", 1)[1])
@@ -719,10 +736,10 @@ def _partial_step_events(step: dict[str, Any]) -> list[dict[str, Any]]:
 def _entry_usages(entry: StepLog | PreStepFailureLog) -> list[ModelUsage]:
     usages: list[ModelUsage] = []
     seen_keys: set[str] = set()
-    if entry.perception_debug.usage is not None:
-        key = entry.perception_debug.usage_artifact_path or f"{entry.perception_debug.usage.provider}:{entry.perception_debug.usage.model}:{entry.perception_debug.usage.request_kind}:{entry.perception_debug.usage.total_tokens}"
+    if _perception_debug(entry).usage is not None:
+        key = _perception_debug(entry).usage_artifact_path or f"{_perception_debug(entry).usage.provider}:{_perception_debug(entry).usage.model}:{_perception_debug(entry).usage.request_kind}:{_perception_debug(entry).usage.total_tokens}"
         seen_keys.add(key)
-        usages.append(entry.perception_debug.usage)
+        usages.append(_perception_debug(entry).usage)
     if isinstance(entry, StepLog):
         for debug in [entry.policy_debug, entry.verification_debug]:
             if debug is None or debug.usage is None:
@@ -770,6 +787,8 @@ def _merge_aggregate(target: UsageAggregate, source: UsageAggregate) -> None:
         into.cache_creation_input_tokens += src.cache_creation_input_tokens
         into.cache_read_input_tokens += src.cache_read_input_tokens
         into.estimated_cost_usd = round(into.estimated_cost_usd + src.estimated_cost_usd, 8)
+        into.steps_without_usage += src.steps_without_usage
+        into.unreadable_usage_files += src.unreadable_usage_files
 
 
 def _image_dimensions(path_value: str | None) -> dict[str, int] | None:

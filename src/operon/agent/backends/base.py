@@ -34,6 +34,11 @@ def restore_hints(hints: dict[str, list[tuple[str, str]]], saved: dict[str, list
 
 
 class AgentBackend(ABC):
+    @property
+    def model_label(self) -> str | None:
+        """The model this backend talks to, for the step log. None when it does not know."""
+        return None
+
     @abstractmethod
     async def perceive(self, screenshot: CaptureFrame, state: AgentState) -> ScreenPerception:
         ...

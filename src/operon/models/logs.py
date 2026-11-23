@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -55,7 +56,8 @@ class StepLog(StrictModel):
     step_id: str = Field(min_length=1)
     step_index: int = Field(ge=1)
     before_artifact_path: str = Field(min_length=1)
-    after_artifact_path: str = Field(min_length=1)
+    # None when nothing ran in the step (a pause before the action), so no after screenshot exists.
+    after_artifact_path: str | None = Field(default=None, min_length=1)
     perception_debug: ModelDebugArtifacts
     policy_debug: ModelDebugArtifacts
     verification_debug: ModelDebugArtifacts | None = None
@@ -72,6 +74,12 @@ class StepLog(StrictModel):
     # Actions this step ran before ``executed_action`` that failed their check and
     # were retried in the same step (full harness), oldest first.
     earlier_attempts: list[ExecutedAction] = Field(default_factory=list)
+    # Wall-clock UTC start and end of the step, the step's duration, and the part of it
+    # spent waiting on the model (perceive + policy stages). Absent in older run.jsonl files.
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    step_latency_ms: float | None = Field(default=None, ge=0)
+    model_latency_ms: float | None = Field(default=None, ge=0)
 
 
 class PreStepFailureLog(StrictModel):
@@ -82,9 +90,12 @@ class PreStepFailureLog(StrictModel):
     step_id: str = Field(min_length=1)
     step_index: int = Field(ge=1)
     before_artifact_path: str = Field(min_length=1)
-    perception_debug: ModelDebugArtifacts
+    # None when the perception backend failed before it reported any files of its own.
+    perception_debug: ModelDebugArtifacts | None = None
     failure: FailureRecord
     error_message: str = Field(min_length=1)
+    # Wall-clock UTC time the failure was logged. Absent in older run.jsonl files.
+    logged_at: datetime | None = None
 
 
 class RunEndLog(StrictModel):

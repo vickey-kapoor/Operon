@@ -330,3 +330,19 @@ async def test_start_url_inside_the_allowlist_opens(monkeypatch: pytest.MonkeyPa
     await loop.start_run(RunTaskRequest(intent="Look around", start_url="https://shop.example.com/"))
 
     assert [c.args[0].url for c in execute.call_args_list] == ["https://shop.example.com/"]
+
+
+# KAN-191: a non-web start_url is refused outright, trust gate on or off.
+
+
+@pytest.mark.parametrize("gate", [TrustGate(enabled=False), TrustGate(enabled=True)])
+@pytest.mark.parametrize("url", ["file:///C:/Users/x/.ssh/id_rsa", "javascript:alert(1)", "example.com"])
+async def test_non_web_start_url_is_refused(monkeypatch: pytest.MonkeyPatch, gate: TrustGate, url: str) -> None:
+    loop, execute, _ = _loop(monkeypatch, [SAFE])
+    loop._trust_gate = gate
+    loop.run_store.create_run = lambda **_: pytest.fail("run must not be created")
+
+    with pytest.raises(StartUrlBlockedError, match="only http and https"):
+        await loop.start_run(RunTaskRequest(intent="Look around", start_url=url))
+
+    execute.assert_not_called()

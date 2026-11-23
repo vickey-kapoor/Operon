@@ -158,6 +158,15 @@ async def test_native_browser_executor_upload_file_native_headed_end_to_end() ->
     upload_file = _create_temp_upload_file()
     html_page = _write_upload_html()
     run_id = "integration-test-upload"
+    # The executor refuses file: links (KAN-191), so serve the page over local http.
+    import functools
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(SimpleHTTPRequestHandler, directory=str(html_page.parent))
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    page_url = f"http://127.0.0.1:{server.server_address[1]}/{html_page.name}"
 
     executor = NativeBrowserExecutor(
         artifact_dir=".browser-artifacts/integration-test",
@@ -171,7 +180,7 @@ async def test_native_browser_executor_upload_file_native_headed_end_to_end() ->
         # Navigate to the test page
         nav_result = await executor.execute(AgentAction(
             action_type=ActionType.NAVIGATE,
-            url=html_page.as_uri(),
+            url=page_url,
         ))
         assert nav_result.success, f"Navigate failed: {nav_result.detail}"
 
@@ -198,6 +207,8 @@ async def test_native_browser_executor_upload_file_native_headed_end_to_end() ->
         )
 
     finally:
+        server.shutdown()
+        server.server_close()
         await executor.aclose_run(run_id)
         upload_file.unlink(missing_ok=True)
         html_page.unlink(missing_ok=True)

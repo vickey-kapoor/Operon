@@ -87,7 +87,7 @@ def neutral_tools(environment: str) -> list[dict[str, Any]]:
             )
         )
     else:
-        tools.append(_fn("navigate", "Open a URL in the current tab.", {"url": {"type": "string"}}, ["url"]))
+        tools.append(_fn("navigate", "Open an http or https URL in the current tab.", {"url": {"type": "string"}}, ["url"]))
     tools += [
         _fn(
             "done",

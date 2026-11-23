@@ -395,3 +395,52 @@ async def test_user_input_playwright_error_propagates_to_the_caller(tmp_path: Pa
 
     with pytest.raises(RuntimeError, match="page closed"):
         await executor.user_input("run-1", input_type="click", x_ratio=0.1, y_ratio=0.1)
+
+
+# --- KAN-191: only http and https links open --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_a_file_url_is_refused_without_going_there(tmp_path: Path) -> None:
+    page = _page()
+    executor = _executor(tmp_path, page)
+
+    result = await executor.execute(AgentAction(action_type=ActionType.NAVIGATE, url="file:///home/x/.ssh/id_rsa"))
+
+    assert result.success is False
+    assert result.detail == "navigate blocked: only http and https links can be opened (got 'file:')"
+    assert result.failure_category is FailureCategory.EXECUTION_ERROR
+    page.goto.assert_not_awaited()
+    executor._current_page.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_batch_navigate_child_to_a_file_url_is_refused(tmp_path: Path) -> None:
+    page = _page()
+    executor = _executor(tmp_path, page)
+    batch = AgentAction(
+        action_type=ActionType.BATCH,
+        actions=[
+            AgentAction(action_type=ActionType.NAVIGATE, url="https://example.com/"),
+            AgentAction(action_type=ActionType.NAVIGATE, url="file:///etc/passwd"),
+        ],
+    )
+
+    result = await executor.execute(batch)
+
+    assert result.success is False
+    assert "only http and https links can be opened" in result.detail
+    assert result.batch_failed_index == 1
+    page.goto.assert_awaited_once_with("https://example.com/")
+
+
+@pytest.mark.asyncio
+async def test_session_reset_never_opens_a_non_web_start_url(tmp_path: Path) -> None:
+    page = _page(url="https://example.com/now", reload=AsyncMock())
+    executor = _executor(tmp_path, page)
+
+    await executor.session_reset("file:///etc/passwd")
+
+    page.goto.assert_not_awaited()
+    page.reload.assert_awaited_once()
+    assert "not an http or https link" in executor.last_reset_actions[0]

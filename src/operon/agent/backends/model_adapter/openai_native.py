@@ -77,7 +77,7 @@ def _custom_tools(environment: str) -> list[dict[str, Any]]:
     return [{
         "type": "function",
         "name": "navigate",
-        "description": "Open a URL in the current tab. The screenshots show no address bar.",
+        "description": "Open an http or https URL in the current tab. The screenshots show no address bar.",
         "parameters": {
             "type": "object",
             "properties": {"url": {"type": "string"}},

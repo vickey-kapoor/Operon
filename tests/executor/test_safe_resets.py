@@ -246,6 +246,17 @@ async def test_denied_start_url_is_never_navigated_to(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
+async def test_non_web_start_url_is_never_navigated_to() -> None:
+    loop = _loop()
+    loop.executor = SimpleNamespace(session_reset=AsyncMock(), last_reset_actions=["reloaded"])
+    loop._artifacts = MagicMock()
+
+    await loop._apply_recovery_actions(_state("file:///etc/passwd"), _session(), 3)
+
+    loop.executor.session_reset.assert_awaited_once_with(None)
+
+
+@pytest.mark.asyncio
 async def test_allowed_start_url_is_passed_and_trace_recorded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPERON_TRUST_ALLOW_DOMAINS", "good.test")
     loop = _loop()

@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.mark.asyncio
-async def test_popup_becomes_active_page_for_next_action(tmp_path: Path) -> None:
+async def test_popup_becomes_active_page_for_next_action(tmp_path: Path, serve_dir: str) -> None:
     """A real target=_blank click must direct the next action into the new tab."""
     (tmp_path / "index.html").write_text(
         '<html><body style="margin:0"><a href="popup.html" target="_blank" '
@@ -45,7 +45,7 @@ async def test_popup_becomes_active_page_for_next_action(tmp_path: Path) -> None
     executor.set_current_run_id(run_id)
     try:
         result = await executor.execute(
-            AgentAction(action_type="navigate", url=(tmp_path / "index.html").as_uri())
+            AgentAction(action_type="navigate", url=f"{serve_dir}/index.html")
         )
         assert result.success, result.detail
         original = executor._sessions[run_id].page
@@ -54,7 +54,7 @@ async def test_popup_becomes_active_page_for_next_action(tmp_path: Path) -> None
         assert result.success, result.detail
         popup = await popup_event.value
         await popup.wait_for_load_state("domcontentloaded")
-        assert await executor.current_url_for_run(run_id) == popup_path.as_uri()
+        assert await executor.current_url_for_run(run_id) == f"{serve_dir}/popup.html"
         result = await executor.execute(
             AgentAction(action_type="type", x=50, y=50, text="new tab input")
         )

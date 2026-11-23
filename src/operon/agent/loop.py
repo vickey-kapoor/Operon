@@ -1290,8 +1290,8 @@ class AgentLoop:
             policy_debug=ctx.policy_debug,
             step_index=ctx.step_index,
             before_artifact_path=ctx.before_artifact_path,
-            after_artifact_path=ctx.after_artifact_path,
             log_step=False,
+            step_ctx=ctx,
         )
 
     def _absorb_dialog_message(self, ctx: StepContext) -> None:

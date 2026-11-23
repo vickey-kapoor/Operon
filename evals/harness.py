@@ -32,6 +32,7 @@ from PIL import Image, ImageDraw
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.agent.efficiency import run_efficiency
+from operon.agent.failure_cause import cause_from_state
 from operon.agent.loop import AgentLoop
 from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.policy.thin import OwnDoneVerifier, ThinPolicy, ThinRecovery
@@ -373,12 +374,15 @@ class RunResult:
     recovered_errors: dict[str, int] = field(default_factory=dict)
     # The run's step-efficiency score (KAN-85), as saved in its state.
     efficiency: dict[str, Any] | None = None
+    # KAN-175: the cause a failed run ended with (None when it did not fail).
+    failure_cause: str | None = None
 
     def summary(self) -> str:
         return (
             f"{self.scenario}: {self.outcome} (status={self.status}, stop={self.stop_reason}, "
             f"steps={self.steps}, pauses={self.pauses}, screen={self.final_screen}, actions={self.actions}"
             + (f", error={self.error}" if self.error else "")
+            + (f", cause={self.failure_cause}" if self.failure_cause else "")
             + ")"
         )
 
@@ -467,6 +471,13 @@ async def run_scenario(scenario: Scenario, *, root: Path | None = None) -> RunRe
             if status in _TERMINAL:
                 break
 
+        ended = status in _TERMINAL  # graded before the extra step below, so a runaway stays "incomplete"
+        if error is None and status is RunStatus.RUNNING and steps >= scenario.max_steps:
+            # One more step lets the loop record its own max-steps ending (cause, run_end row).
+            try:
+                await loop.step_run(StepRequest(run_id=run_id))
+            except Exception:  # noqa: BLE001 - the extra step only records the ending; the grade is already fixed
+                pass
         state = await loop.run_store.get_run(run_id)
         await bg_writer.flush()  # artifact writes land in the temp dir; finish them before it goes
         requests = model_client.requests
@@ -475,9 +486,9 @@ async def run_scenario(scenario: Scenario, *, root: Path | None = None) -> RunRe
             outcome="crash" if error else grade(
                 claimed_success=status is RunStatus.SUCCEEDED,
                 reached_goal=world.screen.goal,
-                ended=status in _TERMINAL,
+                ended=ended,
             ),
-            status=status.value,
+            status=(state.status if state is not None else status).value,  # the run's final status, after the extra step
             stop_reason=state.stop_reason.value if state is not None and state.stop_reason else None,
             steps=steps,
             pauses=pauses,
@@ -489,4 +500,7 @@ async def run_scenario(scenario: Scenario, *, root: Path | None = None) -> RunRe
             recovered_errors=dict(state.recovered_errors) if state is not None else {},
             # A run that never ended inside the budget has no saved score: compute it from its files.
             efficiency=(state.efficiency or run_efficiency(root / "runs" / run_id)) if state is not None else None,
+            failure_cause=(
+                cause_from_state(state.status, state.stop_reason, state.failure_cause) if state is not None else None
+            ),
         )

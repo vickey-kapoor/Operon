@@ -511,6 +511,7 @@ async def build_report(run_id: str) -> dict[str, Any]:
     steps = _steps(loop, run_id)
     status = record.status
     stop_reason = record.stop_reason.value if record.stop_reason is not None else None
+    failure_cause = getattr(record, "failure_cause", None)  # KAN-175
     context = current_runtime().peek_run(run_id)
     started = context.started_at if context is not None else None
     finished = context.finished_at if context is not None and status in TERMINAL else None
@@ -538,6 +539,8 @@ async def build_report(run_id: str) -> dict[str, Any]:
         "outcome": outcome,
         "summary": summary,
         "stop_reason": stop_reason,
+        "failure_cause": failure_cause.value if failure_cause is not None else None,
+        "failure_detail": getattr(record, "failure_detail", None),
         "final_message": _final_message(steps, record),
         "steps": record.step_count,
         "retries": retries,
@@ -574,6 +577,10 @@ def format_report(report: dict[str, Any]) -> str:
         facts.append(f"about ${report['cost_usd']:.4f}")
     if report.get("stop_reason"):
         facts.append(f"stop reason {report['stop_reason']}")
+    if report.get("failure_cause"):
+        facts.append(f"cause {report['failure_cause']}")
     lines.append(" · ".join(facts))
+    if report.get("failure_detail"):
+        lines.append(f"Why: {report['failure_detail']}")
     lines.append(f"Artifacts: {report['run_dir']}")
     return "\n".join(lines)

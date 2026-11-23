@@ -18,6 +18,13 @@ from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.backends.base import ModelBlockedError
 from operon.agent.efficiency import run_efficiency
+from operon.agent.failure_cause import (
+    append_run_end,
+    cause_of_error,
+    clear_failure,
+    error_text,
+    note_failure,
+)
 from operon.agent.perception import PerceptionLowQualityError, PerceptionService
 from operon.agent.perception.capture import CaptureService
 from operon.agent.perception.expect_check import (
@@ -66,6 +73,7 @@ from operon.models.capture import CaptureFrame
 from operon.models.common import (
     FailureCategory,
     LoopStage,
+    RunFailureCause,
     RunResponse,
     RunStatus,
     RunTaskRequest,
@@ -541,6 +549,7 @@ class AgentLoop:
                 record.approval_count += 1
         self._pause_requests.discard(run_id)
         record.stop_reason = None
+        clear_failure(record)
         if hasattr(record, "pause_reason"):
             record.pause_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
@@ -595,6 +604,7 @@ class AgentLoop:
         # instead of resetting the backend or adding a second hint.
         origin, record.interrupted_from = record.interrupted_from, None
         record.stop_reason = None
+        clear_failure(record)
         async with self._executor_lock:
             if hasattr(self.executor, "set_current_run_id"):
                 self.executor.set_current_run_id(run_id)
@@ -731,8 +741,7 @@ class AgentLoop:
         # before this step changes anything (a no-op for browser runs and runs created here).
         self.check_resume_environment(record)
         if record.step_count >= record.max_steps:
-            record.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
-            updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
+            updated = await self.fail_for_max_steps(record)
             try:
                 await self._cleanup_completed_run(record.run_id)
             except Exception as exc:
@@ -1247,6 +1256,8 @@ class AgentLoop:
             final_status = RunStatus.WAITING_FOR_USER
         if final_status is not RunStatus.WAITING_FOR_USER:
             self._pause_requests.discard(run_id)
+        if final_status is RunStatus.FAILED:
+            note_failure(state, detail=recovery.message)  # KAN-175: cause from the stop reason
         if final_status is RunStatus.RUNNING:
             await self._apply_recovery_actions(state, recovery, ctx.step_index)
         ctx.final_status = final_status
@@ -1888,6 +1899,20 @@ class AgentLoop:
                 on_recapture(frame)
         raise PerceptionLowQualityError("no visible elements after all liveness retries")  # pragma: no cover
 
+    async def fail_for_max_steps(self, record: AgentState) -> AgentState:
+        """End a run whose step budget is used up: FAILED, cause ``max_steps``, a ``run_end`` row (KAN-175)."""
+        record.stop_reason = StopReason.MAX_STEP_LIMIT_REACHED
+        message = f"Step limit reached after {record.step_count} steps."
+        note_failure(record, cause=RunFailureCause.MAX_STEPS, detail=message)
+        append_run_end(
+            self._run_log_path(record.run_id),
+            record,
+            status=RunStatus.FAILED,
+            category=FailureCategory.MAX_STEP_LIMIT_REACHED,
+            message=message,
+        )
+        return await self.run_store.set_status(record.run_id, RunStatus.FAILED)
+
     async def _record_pre_step_perception_failure(
         self,
         *,
@@ -1932,6 +1957,14 @@ class AgentLoop:
         )
         record.artifact_paths.extend(await self._pre_step_failure_files(before_artifact_path, perception_debug))
         record.stop_reason = stop_reason
+        # KAN-175: an error in the perceive stage is a perception failure unless it is a
+        # model API error or a provider block; the error text goes to state.json.
+        cause = cause_of_error(error)
+        note_failure(
+            record,
+            cause=RunFailureCause.PERCEPTION_FAILED if cause is RunFailureCause.RUN_CRASHED else cause,
+            detail=error_text(error),
+        )
         updated = await self.run_store.set_status(record.run_id, RunStatus.FAILED)
         try:
             await self._cleanup_completed_run(record.run_id)

@@ -9,7 +9,7 @@ import weakref
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
 from operon.agent import control as run_control
@@ -161,6 +161,20 @@ class StartUrlBlockedError(ValueError):
     """``start_url`` is outside ``OPERON_TRUST_ALLOW_DOMAINS``; the run is not created."""
 
 
+class TakeoverActiveError(ValueError):
+    """The run is under the person's control: only a hand-back resumes it (KAN-172)."""
+
+
+class _DialogPause(NamedTuple):
+    """A run paused on a page dialog the executor cancelled (KAN-172)."""
+
+    kind: str
+    message: str
+    held: bool  # the backend holds the calls that raised it
+    child_index: int | None  # top-level batch child that raised it
+    action_count: int  # actions in the turn (1 for a single action)
+
+
 class AgentLoop:
     """Coordinates the MVP control loop and terminal benchmark boundaries."""
 
@@ -231,6 +245,12 @@ class AgentLoop:
         # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
         self._pause_requests: set[str] = set()
         self._approved_gate_actions: dict[str, tuple[str, frozenset[str]]] = {}
+        # KAN-172: run_id -> (dialog type, message, whether the backend holds the action that
+        # raised it) for a run paused on a page dialog the executor cancelled.
+        self._dialog_pauses: dict[str, _DialogPause] = {}
+        # The (type, message) of a dialog the person approved, until its replay has run
+        # (kept across a gate pause on the replay, which re-arms the executor on approval).
+        self._dialog_approved: dict[str, tuple[str, str]] = {}
         # KAN-158: errors the loop recovered from, per run and site, not yet saved
         # into the run's state (``AgentState.recovered_errors``). Drained by
         # ``_flush_recovered_errors`` when a step, start or resume ends.
@@ -445,7 +465,11 @@ class AgentLoop:
         """The gate a paused run waits on for approval (``trust``, ``confidence``,
         ``coordinate_thrash``), or None when its pause is not an approvable gate."""
         pending = self._pending_gate_approvals.get(run_id)
-        return pending[1] if pending is not None else None
+        if pending is None:
+            # A page dialog the executor cancelled (KAN-172) is also an approval the person
+            # answers; auto-confirm must never answer it.
+            return "dialog" if run_id in self._dialog_pauses else None
+        return pending[1]
 
     def pending_gate_category(self, run_id: str) -> str | None:
         """The named risk category (KAN-103) of the trust pause a run waits on, if any."""
@@ -483,7 +507,14 @@ class AgentLoop:
             record.in_takeover = True
             record.takeover_count = getattr(record, "takeover_count", 0) + 1
             await self.run_store.save_state(record)
+        self._set_person_driving(run_id, True)
         return record
+
+    def _set_person_driving(self, run_id: str, driving: bool) -> None:
+        """Tell the executor the person has the screen (or gave it back): their dialogs are theirs to answer."""
+        set_driving = getattr(self.executor, "set_person_driving", None)
+        if callable(set_driving):
+            set_driving(run_id, driving)
 
     async def hand_back(self, run_id: str, note: str | None = None) -> RunResponse:
         """End a takeover and let the agent continue from the screen as the person left it.
@@ -504,6 +535,7 @@ class AgentLoop:
             hint += f" The user says: {note.strip()}"
         run_control.set_override_hint(run_id, hint)
         record.in_takeover = False
+        self._set_person_driving(run_id, False)
         record.force_fresh_perception = True
         return await self.resume_run(run_id, approve_gated_action=False)
 
@@ -520,10 +552,23 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} not found")
         if record.status is not RunStatus.WAITING_FOR_USER:
             raise ValueError(f"Run {run_id!r} is {record.status.value}, not waiting_for_user")
+        if getattr(record, "in_takeover", False):
+            # A resume would put the agent back in charge with the person's dialog rule (they
+            # answer their own dialogs) still on; only hand_back ends a takeover.
+            raise TakeoverActiveError(f"Run {run_id!r} is under the user's control; hand it back instead")
+        self._set_person_driving(run_id, False)
         self.check_resume_environment(record)
         if record.stop_reason is StopReason.INTERRUPTED:
             await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
-        if not approve_gated_action:
+        dialog_pause = self._dialog_pauses.pop(run_id, None)
+        approved_dialog = self._dialog_approved.pop(run_id, None)
+        self._disarm_dialog_accept(run_id)  # nothing stays armed across a resume
+        if dialog_pause is not None:
+            self._answer_dialog_pause(run_id, dialog_pause, approved=approve_gated_action)
+        elif approved_dialog is not None and approve_gated_action and run_id in self._pending_gate_approvals:
+            # The replay of an approved dialog was gate-paused and the gate is approved now.
+            self._approve_dialog(run_id, approved_dialog)
+        elif not approve_gated_action:
             # A correction is not an approval: a backend holding the calls it paused
             # on (Gemini's require_confirmation) must not run them on the next step.
             self._discard_held_actions(
@@ -570,6 +615,75 @@ class AgentLoop:
             intent=updated.intent,
             step_count=updated.step_count,
         )
+
+    def _approve_dialog(self, run_id: str, dialog: tuple[str, str]) -> None:
+        """Remember the dialog the person approved. The executor is armed for it only right
+        before the replay runs (``_set_dialog_policy``), never earlier."""
+        if callable(getattr(self.executor, "arm_accept_next_dialog", None)):
+            self._dialog_approved[run_id] = dialog
+
+    def _answer_dialog_pause(self, run_id: str, pause: _DialogPause, *, approved: bool) -> None:
+        """The person's answer to a page dialog the executor cancelled (KAN-172).
+
+        Yes: the executor accepts the next dialog of the run, once, but only this one (same
+        type and message), and the action that raised it runs again: the backend replays the
+        calls it holds from the one that raised the dialog on (the same path a gate approval
+        takes); without held calls the model is told to repeat the action. No: the held
+        calls are dropped and the model is told the person declined."""
+        kind, message, held, child_index, action_count = pause
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if approved:
+            self._approve_dialog(run_id, (kind, message))
+            if held and child_index is not None:
+                # Calls before the dialog-raising one already ran: replay from it on.
+                if not self._drop_ran_held_calls(run_id, child_index, action_count):
+                    held = False
+                    self._discard_held_actions(
+                        run_id,
+                        "Not executed again: part of the turn already ran, so the model repeats the action"
+                        + self._ran_before_text(child_index),
+                    )
+            if not held and callable(add_hints):
+                add_hints(
+                    [f"The person approved the page's {kind} dialog: {message!r}. "
+                     "Repeat the action that opened it (only that action, not the ones before it); "
+                     "the dialog will be accepted."],
+                    source="dialog_answer",
+                    run_id=run_id,
+                )
+            return
+        self._discard_held_actions(
+            run_id,
+            f"Not executed: the person declined the page's {kind} dialog and it was cancelled"
+            + self._ran_before_text(child_index),
+        )
+        if callable(add_hints):
+            add_hints(
+                [f"The person declined the page's {kind} dialog {message!r}; it was cancelled. "
+                 "Do not repeat that action unless the person asks."],
+                source="dialog_answer",
+                run_id=run_id,
+            )
+
+    @staticmethod
+    def _ran_before_text(child_index: int | None) -> str:
+        """What ran before the dialog-raising action of a stopped batch, so the model does not redo it."""
+        if not child_index:
+            return "."
+        return (
+            f"; the first {child_index} action(s) of the turn DID run and must not be repeated, the next one ran "
+            "but its dialog was cancelled, and the rest did not run."
+        )
+
+    def _drop_ran_held_calls(self, run_id: str, index: int, action_count: int) -> bool:
+        for service in {id(s): s for s in (self.policy_service, self.perception_service)}.values():
+            drop = getattr(service, "drop_held_calls_before", None)
+            try:
+                if callable(drop) and drop(run_id, index, action_count) is True:
+                    return True
+            except Exception as exc:  # noqa: BLE001 - falls back to the model repeating the action
+                self._recovered(run_id, "drop_held_calls", exc)
+        return False
 
     def check_resume_environment(self, record) -> None:
         """Fail before anything is changed when the run's original provider is not this one.
@@ -721,7 +835,8 @@ class AgentLoop:
         await self._execute_and_verify_stage(ctx)
         await self._recover_stage(ctx)
         self._record_step_stage(ctx)
-        return await self._finish_step_stage(ctx)
+        response = await self._finish_step_stage(ctx)
+        return await self._pause_for_cancelled_dialog(ctx, response)
 
     async def _begin_step(self, request: StepRequest) -> StepContext | RunResponse:
         """Load the run; refuse a run that may not step; build the step's context."""
@@ -876,6 +991,7 @@ class AgentLoop:
                 _trace("  3 POLICY -> CANCELLED", "run was stopped while the gate read the click text")
                 return self._cancelled_response(ctx.record)
             return None
+        self._disarm_dialog_accept(ctx.run_id)  # a gate pause never leaves an accept armed
         return await self._pause_for_user(
             record=ctx.record,
             state=ctx.state,
@@ -893,8 +1009,16 @@ class AgentLoop:
         # Set run context on the executor so launched processes are tracked per run
         if hasattr(self.executor, "set_current_run_id"):
             self.executor.set_current_run_id(ctx.run_id)
-        await self._execute_attempt(ctx)
+        self._drop_stale_dialog(ctx)
+        self._set_dialog_policy(ctx)
+        try:
+            await self._execute_attempt(ctx)
+        finally:
+            # A person's yes covers the one action it was given for, whatever happened to it.
+            self._dialog_approved.pop(ctx.run_id, None)
+            self._disarm_dialog_accept(ctx.run_id)
         self._absorb_dialog_message(ctx)
+        self._note_cancelled_dialog(ctx)
         self._pass_on_change_note(ctx)
         await self._verify_attempt(ctx)
         self._check_expected_change(ctx)
@@ -1065,12 +1189,117 @@ class AgentLoop:
         except Exception as exc:  # noqa: BLE001 - an advisory check must never fail a step
             self._recovered(ctx.run_id, "expect_check", exc)
 
-    def _absorb_dialog_message(self, ctx: StepContext) -> None:
-        """Fold a JS dialog the executor intercepted into this step's perception.
+    def _set_dialog_policy(self, ctx: StepContext) -> None:
+        """Tell the executor how to answer the page's confirm/prompt/beforeunload dialogs (KAN-172).
 
-        The verifier and success-stop rule read the summary to detect
-        form-submission confirmations (alert/confirm/prompt). Only updates
-        in-memory state, avoiding a second run_store.update_state call.
+        Mirrors the trust gate's confirmations: ``auto`` permission mode (or the gate
+        turned off) accepts them, anything else cancels them and asks the person."""
+        # The agent acts now: nothing it does runs with the person's "I am driving" rule on.
+        self._set_person_driving(ctx.run_id, False)
+        set_policy = getattr(self.executor, "set_dialog_policy", None)
+        if not callable(set_policy):
+            return
+        mode = resolve_permission_mode(getattr(ctx.state, "permission_mode", None))
+        # With the gate off only ``ask`` still asks (apply_permission_mode, docs/api.md).
+        set_policy(
+            ctx.run_id,
+            accept=mode is PermissionMode.AUTO or (not self._trust_gate.enabled and mode is not PermissionMode.ASK),
+        )
+        # The person approved a dialog: accept that one (type and message), once, in this step only.
+        approved = self._dialog_approved.get(ctx.run_id)
+        arm = getattr(self.executor, "arm_accept_next_dialog", None)
+        if approved is not None and callable(arm):
+            arm(ctx.run_id, approved[0], approved[1])
+
+    def _drop_stale_dialog(self, ctx: StepContext) -> None:
+        """Forget a dialog that fired after the previous action returned: it is not this action's."""
+        pop = getattr(self.executor, "pop_pending_dialog", None)
+        stale = pop(ctx.run_id) if callable(pop) else None
+        if isinstance(stale, tuple) and len(stale) == 3:
+            logger.info("Cancelled a page dialog that fired after the previous action returned")
+            ctx.cancelled_dialog = stale
+            self._hint_cancelled_dialog(ctx, asked=False)
+            ctx.cancelled_dialog = None
+
+    def _disarm_dialog_accept(self, run_id: str) -> None:
+        disarm = getattr(self.executor, "disarm_accept_next_dialog", None)
+        if callable(disarm):
+            disarm(run_id)
+
+    def _note_cancelled_dialog(self, ctx: StepContext) -> None:
+        """Pick up a dialog the executor cancelled and tell the model about it (advisory hint).
+
+        The pause for the person comes at the end of the step (``_pause_for_cancelled_dialog``)."""
+        pop = getattr(self.executor, "pop_pending_dialog", None)
+        if not callable(pop):
+            return
+        pending = pop(ctx.run_id)
+        if not (isinstance(pending, tuple) and len(pending) == 3):
+            return
+        ctx.cancelled_dialog = pending
+        ctx.dialog_captured = True
+
+    def _hint_cancelled_dialog(self, ctx: StepContext, *, asked: bool) -> None:
+        """Tell the model (advisory hint) about a dialog Operon cancelled, and whether the person was asked."""
+        if ctx.cancelled_dialog is None:
+            return
+        kind, message = ctx.cancelled_dialog[0], ctx.cancelled_dialog[1]
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            tail = "and asked the person" if asked else "(the person was not asked)"
+            add_hints(
+                [f"The page showed a {kind} dialog: {message!r}. Operon cancelled it {tail}."],
+                source="dialog",
+                run_id=ctx.run_id,
+            )
+
+    async def _pause_for_cancelled_dialog(self, ctx: StepContext, response: RunResponse) -> RunResponse:
+        """Pause the run for the person after the step cancelled a page dialog (KAN-172).
+
+        The same pause the trust gate uses (WAITING_FOR_USER, approved by resuming). The backend
+        holds the action that raised the dialog (``_note_not_executed``): approving replays it
+        once with the dialog accepted, declining drops it. Nothing here picks or replaces an
+        action; the only re-run is the one the person approved."""
+        if ctx.cancelled_dialog is None:
+            return response
+        if response.status is not RunStatus.RUNNING:
+            self._hint_cancelled_dialog(ctx, asked=False)  # ended or paused for another reason
+            return response
+        self._hint_cancelled_dialog(ctx, asked=True)
+        kind, message, child_index = ctx.cancelled_dialog
+        shown = message if len(message) <= 300 else message[:300] + "..."
+        question = f'The page asked: "{shown}" Accept?' if shown else f"The page showed a {kind} dialog. Accept?"
+        gate_text = f"{question} Resume to accept it and run the action again, or correct/stop."
+        self._note_not_executed(
+            ctx.run_id, f"the page's {kind} dialog was cancelled and the person was asked", ran=child_index or 0
+        )
+        children = ctx.decision.action.actions if ctx.decision.action.action_type is ActionType.BATCH else None
+        self._dialog_pauses[ctx.run_id] = _DialogPause(
+            kind, message, self._has_held_actions(ctx.run_id), child_index, len(children) if children else 1
+        )
+        pause = ctx.decision.model_copy(
+            update={"action": AgentAction(action_type=ActionType.WAIT_FOR_USER, text=gate_text)}
+        )
+        _trace("  8 DIALOG -> HITL", f"{kind} dialog cancelled; asking the person")
+        return await self._pause_for_user(
+            record=ctx.record,
+            state=ctx.state,
+            perception=ctx.perception,
+            decision=pause,
+            perception_debug=ctx.perception_debug,
+            policy_debug=ctx.policy_debug,
+            step_index=ctx.step_index,
+            before_artifact_path=ctx.before_artifact_path,
+            log_step=False,
+            step_ctx=ctx,
+        )
+
+    def _absorb_dialog_message(self, ctx: StepContext) -> None:
+        """Fold a JS dialog message the executor accepted into this step's perception summary.
+
+        Marks the step (``ctx.dialog_captured``) so the expect-check does not read the
+        screen change against the model's expectation. Only updates in-memory state,
+        avoiding a second run_store.update_state call.
         """
         if not hasattr(self.executor, "pop_last_dialog_message"):
             return
@@ -1665,14 +1894,15 @@ class AgentLoop:
 
         self.executor.batch_child_check = check
 
-    def _note_not_executed(self, run_id: str, reason: str) -> None:
+    def _note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         """Tell the policy a gate stopped its decision before it ran, so a backend
         that answers the model's tool calls does not report it as done."""
         note = getattr(self.policy_service, "note_not_executed", None)
         if note is None:
             return
         try:
-            note(run_id, reason)
+            # ``ran``: the first actions of a stopped batch really ran; the backend says so per call.
+            note(run_id, reason, ran=ran) if ran else note(run_id, reason)
         except Exception as exc:  # noqa: BLE001 - a courtesy to the backend, never a blocker
             self._recovered(run_id, "note_not_executed", exc)
 
@@ -2086,6 +2316,8 @@ class AgentLoop:
         which otherwise keep them for the life of the server."""
         self._expect_reminded.pop(run_id, None)
         self._secret_site_approved.pop(run_id, None)
+        self._dialog_pauses.pop(run_id, None)
+        self._dialog_approved.pop(run_id, None)
         services = {id(s): s for s in (self.perception_service, self.policy_service)}.values()
         for service in services:
             for target in (service, getattr(service, "delegate", None)):

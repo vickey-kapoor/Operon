@@ -180,3 +180,28 @@ def test_action_intent_reports_the_executor_viewport(tmp_path, events) -> None:
 
     intent = next(e for e in events if e["type"] == "action_intent")
     assert (intent["viewport_w"], intent["viewport_h"]) == (1280, 720)
+
+
+@pytest.mark.parametrize("message", [{"type": "resume"}, {"type": "override", "hint": "click Next"}])
+async def test_ws_resume_and_override_during_takeover_return_an_error(
+    tmp_path, events, monkeypatch: pytest.MonkeyPatch, message: dict
+) -> None:
+    from operon.agent.loop import TakeoverActiveError
+
+    store = _FakeStore(tmp_path, status=RunStatus.WAITING_FOR_USER, max_steps=7)
+    loop = _FakeLoop(store, [])
+
+    async def refuse(run_id: str, *, approve_gated_action: bool = True):
+        raise TakeoverActiveError("Run is under the user's control; hand it back instead")
+
+    loop.resume_run = refuse
+    scheduled: list[tuple[str, int]] = []
+    monkeypatch.setattr(tasks, "schedule_auto_run", lambda _loop, run_id, max_steps: scheduled.append((run_id, max_steps)))
+    monkeypatch.setattr(current_runtime(), "browser_loop", loop)
+    monkeypatch.setattr(current_runtime().stream, "active_run_id", "run-1")
+    monkeypatch.setattr(current_runtime(), "runs", OrderedDict())
+
+    await ws_stream._handle_control(message)
+
+    assert "hand it back" in events[-1]["error"]
+    assert scheduled == []  # nothing was restarted

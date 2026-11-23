@@ -150,6 +150,15 @@ The trust gate, file guard, coordinate-thrash pause and step budget stay. Adviso
 note, secret names, change note) is allowed because it changes what the model sees, not its
 action.
 
+**Page dialogs (KAN-172).** A JavaScript `alert` is accepted and its text kept. A `confirm`,
+`prompt` or `beforeunload` dialog is a question for the person, so the browser executor cancels
+it and records it; after the action the loop gives the model an advisory hint and pauses the run
+(`WAITING_FOR_USER`, the text names the dialog's message) the way a trust-gate confirmation does.
+A batch stops at the child that raised it, and an atomic type does not type after a cancelled focus click, so the replay is exact. Resuming accepts that very dialog once (a different dialog is cancelled and asked about again) and replays the held action, from the call that raised the dialog on (the backend's held calls, the same
+path a gate approval takes); a correction declines it and tells the model so. In `auto`
+permission mode (or with the trust gate off, unless the mode is `ask`) the dialog is accepted and the run never pauses. A
+Dialogs the person raises while driving (takeover, or input sent through the live view) are accepted: they answer them. A resume during a takeover is refused (HTTP 409, a WebSocket error); only hand-back ends it, and the agent never acts with that rule on. When a batch stopped at action i, the backend tells the model that the first i actions ran (per call for Claude, with a count elsewhere), so it does not redo them. Known limit: a `type` whose dialog fires after the text was typed (for example on Enter) is replayed whole and types the text again; the focus-click case is exact. A popup that closes itself hands the session back to its opener, or the newest open page.
+
 ### Observable Browser Mode
 
 `RunTaskRequest.mode` accepts `batch` or `observable`. Observable browser mode uses `BrowserManager` to attach to Chrome over CDP, publish JPEG frames through `/ws/stream`, and accept `inject_input` control messages.

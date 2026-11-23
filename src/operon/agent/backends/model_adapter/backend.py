@@ -53,6 +53,7 @@ class _Run:
     turns: list[Turn] = field(default_factory=list)
     acknowledged_actions: int = 0
     not_executed_reason: str | None = None
+    not_executed_ran: int = 0  # actions of the turn that did run before a page dialog stopped it
     invalid_replies: int = 0
     replies: int = 0
 
@@ -194,10 +195,11 @@ class ModelAdapterBackend(AgentBackend):
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         self._hints = {"": [(h, "") for h in hints if h]}
 
-    def note_not_executed(self, run_id: str, reason: str) -> None:
+    def note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         run = self._runs.get(run_id)
         if run is not None and run.turns:
             run.not_executed_reason = reason.strip()[:300] or "blocked by a gate"
+            run.not_executed_ran = ran
 
     def invalid_reply_counts(self, run_id: str) -> tuple[int, int]:
         """(invalid replies, all replies) so far in a run."""
@@ -230,11 +232,19 @@ class ModelAdapterBackend(AgentBackend):
                 "Look at the screen and reply again in the required format."
             )
         elif run.not_executed_reason:
-            last.outcome = (
-                f"Not executed: the run paused for a human before this action ran ({run.not_executed_reason}). "
-                "Check the screen and propose the next action again."
-            )
+            if run.not_executed_ran:
+                last.outcome = (
+                    f"Partly executed: the first {run.not_executed_ran} action(s) of your reply DID run, so do not "
+                    f"repeat them; the run then paused for a human ({run.not_executed_reason}) and the rest did "
+                    "not run. Check the screen and propose the next action again."
+                )
+            else:
+                last.outcome = (
+                    f"Not executed: the run paused for a human before this action ran ({run.not_executed_reason}). "
+                    "Check the screen and propose the next action again."
+                )
             run.not_executed_reason = None
+            run.not_executed_ran = 0
         elif len(state.action_history) > run.acknowledged_actions:
             executed = state.action_history[-1]
             last.outcome = "OK" if executed.success else f"Error: {executed.detail or 'the action failed'}"

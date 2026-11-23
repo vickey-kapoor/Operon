@@ -67,9 +67,10 @@ class AgentBackend(ABC):
         """Drop any queued advisory hints. Optional hook."""
         return None
 
-    def note_not_executed(self, run_id: str, reason: str) -> None:
+    def note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         """The last decision was stopped by a gate before it ran. Optional hook for
-        backends that answer the model's calls with their outcome."""
+        backends that answer the model's calls with their outcome. ``ran``: the first
+        actions of a stopped batch that did run (a page dialog stopped it)."""
         return None
 
     # Per-run caches the backends keep, keyed by run_id.
@@ -85,6 +86,12 @@ class AgentBackend(ABC):
 
     def has_held_actions(self, run_id: str) -> bool:
         """Whether the run is paused on calls the model asked the user to confirm."""
+        return False
+
+    def drop_held_calls_before(self, run_id: str, index: int, action_count: int) -> bool:
+        """Drop the first ``index`` held calls: they already ran (a dialog stopped the turn
+        part-way). ``action_count`` is how many actions the turn became. True when done;
+        False when the held calls cannot be cut cleanly (the caller then drops them all)."""
         return False
 
     def discard_held_actions(self, run_id: str, reason: str) -> None:

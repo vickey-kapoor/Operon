@@ -38,6 +38,11 @@ def call(name: str, **args: Any) -> dict:
     return {"function_call": {"name": name, "args": args}}
 
 
+def calls(*items: dict) -> dict:
+    """One model turn with several function calls (a multi-call turn)."""
+    return {"function_calls": list(items)}
+
+
 def say(text: str) -> dict:
     return {"text": text}
 
@@ -87,6 +92,17 @@ class ScriptedClient:
                 "active_subgoal": "finish",
                 "model_content": {"parts": [{"text": text}]},
             }
+        if "function_calls" in reply:
+            fcs = [item["function_call"] for item in reply["function_calls"]]
+            return {
+                "perception": perception,
+                "function_call": fcs[0],
+                "function_calls": fcs,
+                "rationale": "several calls",
+                "confidence": 0.7,
+                "active_subgoal": "several calls",
+                "model_content": {"parts": [{"function_call": fc} for fc in fcs]},
+            }
         fc = reply["function_call"]
         return {
             "perception": perception,
@@ -106,6 +122,7 @@ class Result:
     client: ScriptedClient
     run_dir: Path
     state: Any  # the saved AgentState
+    pauses: list[str] | None = None  # the text of each pause the run answered (on_pause)
 
     @property
     def stop_reason(self) -> str | None:
@@ -125,8 +142,13 @@ async def run_script(
     start_url: str,
     max_steps: int = 12,
     tools: bool = False,
+    permission_mode: str = "auto",
+    on_pause: str | None = None,
 ) -> Result:
-    """Run ``intent`` through the real loop on headless Chromium."""
+    """Run ``intent`` through the real loop on headless Chromium.
+
+    ``on_pause``: "approve" or "decline" answers each pause the run reaches (resume_run), as the
+    person would; None leaves a pause unanswered (the run stays waiting)."""
     executor = NativeBrowserExecutor(
         artifact_dir=tmp_path / "artifacts",
         viewport_width=VIEWPORT[0],
@@ -158,17 +180,23 @@ async def run_script(
     try:
         run = await loop.start_run(
             RunTaskRequest(intent=intent, start_url=start_url, headless=True, max_steps=max_steps,
-                           permission_mode="auto")
+                           permission_mode=permission_mode)
         )
         status, steps = run.status, 0
+        pauses: list[str] = []
         # One call past the budget: the loop ends a run that has spent its steps on the next call.
         for _ in range(max_steps + 1):
             if status in TERMINAL:
                 break
             response = await loop.step_run(StepRequest(run_id=run.run_id))
             status, steps = response.status, response.step_count
+            if status is RunStatus.WAITING_FOR_USER and on_pause is not None:
+                paused = await run_store.get_run(run.run_id)
+                pauses.append(getattr(paused, "pause_reason", None) or "")
+                response = await loop.resume_run(run.run_id, approve_gated_action=on_pause == "approve")
+                status = response.status
         await bg_writer.flush()
         state = await run_store.get_run(run.run_id)
-        return Result(status, steps, client, run_store.root_dir / run.run_id, state)
+        return Result(status, steps, client, run_store.root_dir / run.run_id, state, pauses)
     finally:
         await executor.aclose()

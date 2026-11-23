@@ -421,3 +421,18 @@ async def test_a_failed_request_after_a_correction_still_reports_not_executed(fr
     assert "Not executed" in json.dumps(items)
     assert not items[0].get("acknowledged_safety_checks")
     assert "use the other button" in json.dumps(items)
+
+
+async def test_a_dialog_stopped_batch_is_reported_as_partly_executed_through_the_policy(frame) -> None:
+    from operon.agent.policy.thin import ThinPolicy
+
+    client = ScriptedResponses([sample("openai_computer_call"), _response("resp_002", _message("Retrying."))])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+
+    ThinPolicy(backend).note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=2)
+    await _step(backend, frame, state((ActionType.CLICK, True)), "s2")
+
+    note = client.requests[1]["input_items"][-1]["content"][0]["text"]
+    assert note.startswith("Partly executed: the first 2 action(s) of your reply DID run")
+    assert "do not repeat" in note

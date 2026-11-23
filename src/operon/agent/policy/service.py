@@ -28,12 +28,13 @@ class PolicyService(ABC):
     ) -> PolicyDecision:
         """Choose the next action from current state and perception."""
 
-    def note_not_executed(self, run_id: str, reason: str) -> None:
+    def note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         """The last decision was stopped by a gate before it ran. Wrappers pass it
-        to their delegate; a backend holding open tool calls reports it to the model."""
+        to their delegate; a backend holding open tool calls reports it to the model.
+        ``ran``: the first actions of a stopped batch that did run (a page dialog)."""
         note = getattr(getattr(self, "delegate", None), "note_not_executed", None)
         if note is not None:
-            note(run_id, reason)
+            note(run_id, reason, ran=ran) if ran else note(run_id, reason)
 
     def has_held_actions(self, run_id: str) -> bool:
         """Whether the delegate holds calls the model asked the user to confirm."""

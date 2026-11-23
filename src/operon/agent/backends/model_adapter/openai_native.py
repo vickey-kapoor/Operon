@@ -159,6 +159,7 @@ class _Conversation:
     acknowledged_actions: int = 0
     invalid: str | None = None
     not_executed_reason: str | None = None
+    not_executed_ran: int = 0  # actions of the turn that did run before a page dialog stopped it
     # Safety checks of a held call, acknowledged when its output is sent.
     held_checks: list[dict[str, Any]] = field(default_factory=list)
     # The held call's actions, run without a new request once the human resumes the run.
@@ -257,7 +258,7 @@ class OpenAIComputerUseBackend(AgentBackend):
             # The conversation is left as it was, so a later step answers the same calls.
             restore_hints(self._hints, saved_hints)
             raise BackendCompatibilityError(str(exc)) from exc
-        conv.held_checks, conv.not_executed_reason = [], None
+        conv.held_checks, conv.not_executed_reason, conv.not_executed_ran = [], None, 0
         bg_writer.enqueue(raw_path, json.dumps(response, indent=2))
         conv.previous_response_id = response["id"]
         conv.replies += 1
@@ -378,6 +379,7 @@ class OpenAIComputerUseBackend(AgentBackend):
             return
         conv.held_payload, conv.held_checks = None, []
         conv.not_executed_reason = reason.removeprefix("Not executed: ").rstrip(".")
+        conv.not_executed_ran = 0  # the reason already says what ran
 
     def add_advisory_hints(self, hints: list[str], source: str = "", run_id: str = "") -> None:
         bucket = self._hints.setdefault(run_id, [])
@@ -391,10 +393,11 @@ class OpenAIComputerUseBackend(AgentBackend):
     def clear_advisory_hints(self, run_id: str = "") -> None:
         self._hints.pop(run_id, None)
 
-    def note_not_executed(self, run_id: str, reason: str) -> None:
+    def note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         conv = self._runs.get(run_id)
         if conv is not None and conv.pending:
             conv.not_executed_reason = reason.strip()[:300] or "blocked by a gate"
+            conv.not_executed_ran = ran
 
     def invalid_reply_counts(self, run_id: str) -> tuple[int, int]:
         conv = self._runs.get(run_id)
@@ -437,6 +440,12 @@ class OpenAIComputerUseBackend(AgentBackend):
             return f"Error: those actions could not be run ({conv.invalid}), so nothing ran."
         if conv.not_executed_reason:
             reason = conv.not_executed_reason
+            if conv.not_executed_ran:
+                return (
+                    f"Partly executed: the first {conv.not_executed_ran} action(s) of your reply DID run, so do "
+                    f"not repeat them; the run then paused for a human ({reason}) and the rest did not run. "
+                    "Check the screen and propose the next action again."
+                )
             return (
                 f"Not executed: the run paused for a human before this action ran ({reason}). "
                 "Check the screen and propose the next action again."

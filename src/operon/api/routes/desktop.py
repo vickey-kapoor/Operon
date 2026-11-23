@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, status
 
 from operon.agent.efficiency import efficiency_for_response
-from operon.agent.loop import StartUrlBlockedError
+from operon.agent.loop import StartUrlBlockedError, TakeoverActiveError
 from operon.api.dependencies import (
     get_desktop_agent_loop,
     require_checkpoints,
@@ -54,6 +54,8 @@ async def desktop_resume_run(request: ResumeRequest) -> RunResponse:
     validate_run_id(request.run_id)
     try:
         return await get_desktop_agent_loop().resume_run(request.run_id)
+    except TakeoverActiveError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 

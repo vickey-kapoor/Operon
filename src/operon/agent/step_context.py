@@ -78,6 +78,9 @@ class StepContext:
     # A JS dialog was auto-accepted this step: the screen change says nothing about the
     # model's expectation then (KAN-116).
     dialog_captured: bool = False
+    # A confirm/prompt/beforeunload dialog the executor cancelled this step: (type, message, batch child index).
+    # The loop pauses for the person at the end of the step (KAN-172).
+    cancelled_dialog: tuple[str, str, int | None] | None = None
 
     # Recover and finish.
     recovery: RecoveryDecision = field(init=False)

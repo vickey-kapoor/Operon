@@ -243,3 +243,32 @@ async def test_a_transport_error_keeps_the_queued_hint_for_the_next_turn(frame, 
     assert json.dumps(client.requests[1]).count("use the left menu") == 1
     assert json.dumps(client.requests[2]).count("use the left menu") == 1  # history replay, not a second send
     assert not backend._hints.get(bucket)
+
+async def test_a_batch_stopped_by_a_dialog_says_how_many_actions_ran(frame) -> None:
+    client = ScriptedChat([
+        chat_reply(tool_calls=[tool_call("click", "c1", x=1, y=1)]),
+        chat_reply(tool_calls=[tool_call("click", "c2", x=1, y=1)]),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+    backend.note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=2)
+    await _step(backend, frame, state(), "s2")
+    tool_message = client.requests[1]["messages"][4]
+    assert tool_message["content"].startswith("Partly executed: the first 2 action(s) of your reply DID run")
+    assert "do not repeat" in tool_message["content"]
+
+
+async def test_a_dialog_stopped_batch_says_how_many_actions_ran_through_the_policy(frame) -> None:
+    from operon.agent.policy.thin import ThinPolicy
+
+    client = ScriptedChat([
+        chat_reply(tool_calls=[tool_call("click", "c1", x=1, y=1)]),
+        chat_reply(tool_calls=[tool_call("click", "c2", x=1, y=1)]),
+    ])
+    backend = _backend(client)
+    await _step(backend, frame, state(), "s1")
+
+    ThinPolicy(backend).note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=2)
+    await _step(backend, frame, state(), "s2")
+
+    assert client.requests[1]["messages"][4]["content"].startswith("Partly executed: the first 2 action(s)")

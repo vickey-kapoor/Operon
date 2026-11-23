@@ -162,6 +162,98 @@ async def test_approving_held_calls_keeps_the_models_own_reason(tmp_path: Path) 
     assert approved.rationale == "Click Place order to buy it"
 
 
+def _two_click_reply() -> dict:
+    calls = [{"name": "click_at", "args": {"x": 500, "y": 500}}, {"name": "click_at", "args": {"x": 600, "y": 500}}]
+    reply = _click_reply()
+    return {
+        **reply,
+        "function_call": calls[0],
+        "function_calls": calls,
+        "model_content": {"parts": [{"function_call": c} for c in calls]},
+    }
+
+
+async def test_a_declined_dialog_tells_the_model_how_many_actions_of_the_turn_ran(tmp_path: Path) -> None:
+    from operon.agent.loop import AgentLoop
+
+    client = ScriptedClient([_two_click_reply(), _click_reply(700)])
+    backend = _backend(client)
+    await _step(backend, _frame(tmp_path, "a.png"), _state())
+
+    backend.note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
+    backend.discard_held_actions("run-1", "Not executed: the person declined" + AgentLoop._ran_before_text(1))
+    await _step(backend, _frame(tmp_path, "b.png"), _state())
+
+    error = _last_answer(client)["parts"][0]["function_response"]["response"]["error"]
+    assert "first 1 action(s) of the turn DID run" in error and "must not be repeated" in error
+
+
+async def test_an_approved_dialog_replays_only_the_calls_from_the_stopped_one(tmp_path: Path) -> None:
+    client = ScriptedClient([_two_click_reply(), _click_reply(700)])
+    backend = _backend(client)
+    await _step(backend, _frame(tmp_path, "a.png"), _state())
+    backend.note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
+
+    assert backend.drop_held_calls_before("run-1", 1, 2) is True
+    replay = await _step(backend, _frame(tmp_path, "b.png"), _state())
+
+    assert replay.action.x is not None and len(client.turns) == 1  # one click replayed, no model turn
+
+
+async def test_a_dialog_stopped_batch_reaches_the_gemini_backend_through_the_policy(tmp_path: Path) -> None:
+    from operon.agent.policy.thin import ThinPolicy
+
+    client = ScriptedClient([_two_click_reply(), _click_reply(700)])
+    backend = _backend(client)
+    await _step(backend, _frame(tmp_path, "a.png"), _state())
+
+    ThinPolicy(backend).note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
+
+    assert backend.has_held_actions("run-1")  # held: the person's answer replays from the stopped call
+    assert backend.drop_held_calls_before("run-1", 1, 2) is True
+
+
+async def test_a_failed_turn_after_a_declined_dialog_still_reports_the_decline_on_the_retry(tmp_path: Path) -> None:
+    """KAN-173 rolls a failed turn back; the dialog decline (and the count of actions that ran) must survive it."""
+    import pytest
+
+    from operon.agent.backends.base import BackendCompatibilityError
+    from operon.agent.loop import AgentLoop
+
+    class FlakyClient(ScriptedClient):
+        fail_next = False
+
+        async def generate_turn(self, *, contents: list[dict]) -> dict:
+            if self.fail_next:
+                self.fail_next = False
+                raise BackendCompatibilityError("HTTP 503")
+            return await super().generate_turn(contents=contents)
+
+    client = FlakyClient([_two_click_reply(), _click_reply(700)])
+    answered_with: list[str] = []
+    plain_build = client.build_function_response_content
+
+    def recording_build(**kwargs):
+        answered_with.append(kwargs["screenshot_path"])
+        return plain_build(**kwargs)
+
+    client.build_function_response_content = recording_build
+    backend = _backend(client)
+    await _step(backend, _frame(tmp_path, "a.png"), _state())
+    backend.note_not_executed("run-1", "the page's confirm dialog was cancelled", ran=1)
+    backend.discard_held_actions("run-1", "Not executed: the person declined" + AgentLoop._ran_before_text(1))
+
+    client.fail_next = True
+    with pytest.raises(BackendCompatibilityError):
+        await backend.perceive(_frame(tmp_path, "b.png"), _state())
+    await _step(backend, _frame(tmp_path, "c.png"), _state())  # the retry
+
+    error = _last_answer(client)["parts"][0]["function_response"]["response"]["error"]
+    assert "declined" in error and "first 1 action(s) of the turn DID run" in error
+    # The failed attempt answered with b.png and was rolled back; the retry carries the fresh screen.
+    assert answered_with[-1].endswith("c.png") and answered_with.count(answered_with[-1]) == 1
+
+
 async def test_replaying_approved_calls_records_no_usage(tmp_path: Path) -> None:
     # No model turn runs, so the client's latest usage is the previous turn's: recording it
     # again would bill that turn twice.

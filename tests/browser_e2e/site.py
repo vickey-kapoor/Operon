@@ -42,6 +42,14 @@ BOX: dict[str, tuple[int, int, int, int]] = {
     "open_modal": (100, 450, 300, 70),
     "modal_confirm": (380, 430, 240, 70),
     "modal_close": (380, 520, 240, 70),
+    # confirm dialog and self-closing popup pages
+    "confirm_btn": (100, 200, 300, 70),
+    "popup_open": (100, 200, 300, 70),
+    "popup_after": (100, 320, 300, 70),
+    # multi-call page: a field, a button that confirms, a second field
+    "multi_a": (100, 150, 500, 50),
+    "multi_btn": (100, 230, 300, 70),
+    "multi_b": (100, 330, 500, 50),
     # delayed page
     "delayed_button": (300, 300, 400, 100),
     # shop workflow
@@ -169,6 +177,16 @@ class TestSite:
             return _page("Long page", _link("scroll_target", "/t/pick?b=bottom", "Bottom button"), height=2600)
         if path == "/dialog":
             return self._dialog_page()
+        if path == "/confirm":
+            return self._confirm_page()
+        if path == "/multi":
+            return self._multi_page()
+        if path == "/popup":
+            return self._popup_page()
+        if path == "/popup_child":
+            # Opens, tells the site, closes itself (an OAuth or payment window does the same).
+            return _page("Popup", "", script="fetch('/t/event?kind=popup&value=opened')"
+                         ".then(function(){window.close()})")
         if path == "/event":
             self.events.append(f"{request.get('kind')}:{request.get('value')}")
             return Reply("ok", content_type="text/plain")
@@ -214,6 +232,39 @@ class TestSite:
                 self.cart.clear()
             return redirect("/t/thanks")
         return None
+
+    def _confirm_page(self) -> Reply:
+        body = f'<div id="go" class="btn" style="{_box_style("confirm_btn")}">Delete everything</div>'
+        script = """
+function ev(k,v){fetch('/t/event?kind='+k+'&value='+encodeURIComponent(v))}
+document.getElementById('go').onclick=function(){
+  if(confirm('Delete everything?')){ev('confirm','accepted');this.textContent='Deleted'}
+  else{ev('confirm','cancelled')}};
+"""
+        return _page("Danger zone", body, script=script)
+
+    def _multi_page(self) -> Reply:
+        body = (
+            '<input id="fa" type="text" style="' + _box_style("multi_a") + '">'
+            f'<div id="go" class="btn" style="{_box_style("multi_btn")}">Save</div>'
+            '<input id="fb" type="text" style="' + _box_style("multi_b") + '">'
+        )
+        script = """
+function ev(k,v){fetch('/t/event?kind='+k+'&value='+encodeURIComponent(v))}
+document.getElementById('fa').oninput=function(){ev('a',this.value)};
+document.getElementById('fb').oninput=function(){ev('b',this.value)};
+document.getElementById('go').onclick=function(){
+  if(confirm('Save changes?')){ev('confirm','accepted')}else{ev('confirm','cancelled')}};
+"""
+        return _page("Multi", body, script=script)
+
+    def _popup_page(self) -> Reply:
+        body = (
+            f'<div id="open" class="btn" style="{_box_style("popup_open")}">Sign in with a popup</div>'
+            + _link("popup_after", "/t/pick?b=after", "Continue")
+        )
+        script = "document.getElementById('open').onclick=function(){window.open('/t/popup_child')};"
+        return _page("Popup sign-in", body, script=script)
 
     def _dialog_page(self) -> Reply:
         options = {"option_small": "Small", "option_medium": "Medium", "option_large": "Large"}

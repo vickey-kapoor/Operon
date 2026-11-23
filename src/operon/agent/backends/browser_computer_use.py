@@ -301,6 +301,19 @@ class BrowserComputerUseBackend(AgentBackend):
         conversation = self._conversations.get(run_id)
         return bool(conversation is not None and conversation.held_calls)
 
+    def drop_held_calls_before(self, run_id: str, index: int, action_count: int) -> bool:
+        """Keep only the held calls from ``index`` on: the earlier ones already ran.
+
+        Only when calls and actions are one to one (a click and the type after it can be
+        merged into one action, so their positions would not line up): otherwise False."""
+        conversation = self._conversations.get(run_id)
+        if conversation is None or not conversation.held_calls:
+            return False
+        if len(conversation.held_calls) != action_count or not 0 <= index < action_count:
+            return False
+        conversation.held_calls = conversation.held_calls[index:]
+        return True
+
     def discard_held_actions(self, run_id: str, reason: str) -> None:
         conversation = self._conversations.get(run_id)
         if conversation is None or not conversation.held_calls:
@@ -311,7 +324,7 @@ class BrowserComputerUseBackend(AgentBackend):
         conversation.acknowledge_safety = False
         conversation.declined_reason = reason
 
-    def note_not_executed(self, run_id: str, reason: str) -> None:
+    def note_not_executed(self, run_id: str, reason: str, ran: int = 0) -> None:
         """An Operon gate paused the run before the model's calls ran. Hold them:
         the person's approval runs exactly these calls, and a correction declines
         them (``discard_held_actions``), so the model never hears them reported as
@@ -325,7 +338,9 @@ class BrowserComputerUseBackend(AgentBackend):
             conversation.held_calls = list(conversation.last_calls)
             conversation.held_rationale = conversation.last_rationale
             return
-        conversation.not_run_reason = f"Not executed: {reason}"
+        conversation.not_run_reason = f"Not executed: {reason}" + (
+            f"; the first {ran} action(s) of the turn DID run and must not be repeated" if ran else ""
+        )
 
     def _reset_advisory_hints_for_test(self, hints: list[str]) -> None:
         """Reset hints to a known state. Test use only."""

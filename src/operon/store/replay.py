@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from operon.core.paths import runs_dir
-from operon.models.logs import PreStepFailureLog, RunLogEntry, StepLog
+from operon.models.logs import PreStepFailureLog, RunEndLog, RunLogEntry, StepLog
 
 
 def load_run_replay(run_id: str, root_dir: str | Path | None = None) -> list[RunLogEntry]:
@@ -29,6 +30,7 @@ def render_run_replay(run_id: str, root_dir: str | Path | None = None) -> str:
     entries = load_run_replay(run_id, root_dir=root_dir)
     completed_steps = [entry for entry in entries if isinstance(entry, StepLog)]
     pre_step_failures = [entry for entry in entries if isinstance(entry, PreStepFailureLog)]
+    run_ends = [entry for entry in entries if isinstance(entry, RunEndLog)]
     lines = [f"Run: {run_id}", f"Steps: {len(completed_steps)}"]
     if pre_step_failures:
         lines.append(f"Pre-step failures: {len(pre_step_failures)}")
@@ -84,14 +86,32 @@ def render_run_replay(run_id: str, root_dir: str | Path | None = None) -> str:
             ]
         )
 
+    for run_end in run_ends:
+        cause = run_end.failure_cause.value if run_end.failure_cause is not None else "none"
+        lines.extend(["", f"Run ended: {run_end.status.value} | cause={cause} | {run_end.message}"])
+
     return "\n".join(lines)
 
 
 def _parse_run_log_entry(payload: str) -> RunLogEntry:
+    record_type = _record_type(payload)
+    if record_type == "run_end":
+        return RunEndLog.model_validate_json(payload)
+    if record_type == "pre_step_failure":
+        return PreStepFailureLog.model_validate_json(payload)
     try:
         return StepLog.model_validate_json(payload)
     except ValidationError:
         return PreStepFailureLog.model_validate_json(payload)
+
+
+def _record_type(payload: str) -> str | None:
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return None
+    value = data.get("record_type") if isinstance(data, dict) else None
+    return value if isinstance(value, str) else None
 
 
 def main() -> None:

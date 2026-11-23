@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import Field
 
-from operon.models.common import RunStatus, StopReason, StrictModel
+from operon.models.common import RunFailureCause, RunStatus, StopReason, StrictModel
 from operon.models.execution import ExecutedAction
 from operon.models.perception import ScreenPerception
 from operon.models.progress import ProgressState
@@ -36,6 +36,11 @@ class AgentState(StrictModel):
     progress_state: ProgressState = Field(default_factory=ProgressState)
     artifact_paths: list[str] = Field(default_factory=list)
     stop_reason: StopReason | None = None
+    # KAN-175: the one cause a failed run ended with, and its text (an error message,
+    # the model's reason). Set once by operon.agent.failure_cause.note_failure; None on
+    # runs that did not fail and on runs saved before the field existed.
+    failure_cause: RunFailureCause | None = None
+    failure_detail: str | None = None
     hitl_message: str | None = Field(default=None, description="LLM-generated message shown to the human when a run pauses for intervention")
     force_fresh_perception: bool = Field(default=False, description="When True the loop waits an extra settle delay before the next capture, then resets. Set by the no-progress recovery rule after a visual perturbation.")
     # Carries the outcome of the most recent deterministic rule that fired.

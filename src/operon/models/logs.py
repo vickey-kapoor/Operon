@@ -6,7 +6,14 @@ from typing import Literal
 
 from pydantic import Field
 
-from operon.models.common import FailureCategory, LoopStage, StopReason, StrictModel
+from operon.models.common import (
+    FailureCategory,
+    LoopStage,
+    RunFailureCause,
+    RunStatus,
+    StopReason,
+    StrictModel,
+)
 from operon.models.execution import ExecutedAction
 from operon.models.perception import ScreenPerception
 from operon.models.policy import PolicyDecision
@@ -80,4 +87,21 @@ class PreStepFailureLog(StrictModel):
     error_message: str = Field(min_length=1)
 
 
-RunLogEntry = StepLog | PreStepFailureLog
+class RunEndLog(StrictModel):
+    """KAN-175: terminal run.jsonl row for a run that ended outside a completed step.
+
+    Written when the step budget runs out or a step crashes, so the step log always
+    says how a failed run ended. Readers that only want steps skip it by ``record_type``.
+    """
+
+    record_type: Literal["run_end"] = "run_end"
+    run_id: str = Field(min_length=1)
+    step_index: int = Field(ge=0, description="The run's step count when it ended (a step that crashed partway counts).")
+    status: RunStatus
+    stop_reason: StopReason | None = None
+    failure_cause: RunFailureCause | None = None
+    failure: FailureRecord | None = None
+    message: str = Field(min_length=1)
+
+
+RunLogEntry = StepLog | PreStepFailureLog | RunEndLog

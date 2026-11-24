@@ -64,6 +64,7 @@ from operon.agent.step_context import StepContext
 from operon.agent.task_note import build_task_note
 from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
+from operon.core.logging_utils import url_origin_for_log
 from operon.core.settings import get_settings
 from operon.core.vault import action_uses_secret, available_names, secrets_hint
 from operon.executor.browser import Executor
@@ -263,7 +264,7 @@ class AgentLoop:
             self.executor_adapter = UnifiedDesktopExecutor(executor)
 
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
-        _trace("START_RUN", f"intent={request.intent!r}  url={request.start_url!r}")
+        _trace("START_RUN", f"intent={request.intent!r}  origin={url_origin_for_log(request.start_url)!r}")
         if request.start_url:
             # The start URL is opened before any step, so the trust gate's per-action
             # check never sees it: judge it here, before the run exists.
@@ -320,7 +321,7 @@ class AgentLoop:
                 except Exception as exc:
                     self._recovered(record.run_id, "start_run_recording", exc)
             if request.start_url:
-                _trace("START_RUN -> NAVIGATE", request.start_url)
+                _trace("START_RUN -> NAVIGATE", url_origin_for_log(request.start_url) or "")
                 await self.executor.execute(
                     AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
                 )
@@ -1633,7 +1634,7 @@ class AgentLoop:
             return
         try:
             with (Path(root) / run_id / "trust_gate_urls.jsonl").open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"url": url}) + "\n")
+                fh.write(json.dumps({"url": url_origin_for_log(url)}) + "\n")
         except OSError as exc:
             self._recovered(run_id, "trust_gate_url_log", exc, level=logging.DEBUG)
 
@@ -2267,9 +2268,9 @@ class AgentLoop:
             if start_url and self.environment is UnifiedEnvironment.BROWSER:
                 url_allowed = self._reset_url_allowed(start_url, getattr(state, "permission_mode", None))
                 if not url_allowed:
-                    logger.info("session_reset: the trust gate does not allow %r; reloading instead", start_url)
+                    logger.info("session_reset: the trust gate does not allow %r; reloading instead", url_origin_for_log(start_url))
                     start_url = None
-            _trace("  7b SESSION_RESET", f"start_url={start_url!r}")
+            _trace("  7b SESSION_RESET", f"origin={url_origin_for_log(start_url)!r}")
             try:
                 await self.executor.session_reset(start_url)
             except Exception as exc:

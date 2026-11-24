@@ -13,8 +13,41 @@ import argparse
 import shutil
 from datetime import date, timedelta
 from pathlib import Path
+from uuid import UUID
 
 from operon.core.paths import runs_dir
+from operon.store import owner
+
+
+def cleanup_browser_recordings(root: Path, run_root: Path, keep_days: int) -> int:
+    """Remove expired browser video files from recognized run folders."""
+    if keep_days < 0 or not root.is_dir():
+        return 0
+    cutoff = date.today() - timedelta(days=keep_days)
+    removed = 0
+    for run in root.iterdir():
+        try:
+            if str(UUID(run.name)) != run.name:
+                continue
+        except ValueError:
+            continue
+        videos = run / "session_video"
+        if any(p.is_symlink() or p.is_junction() for p in (run, videos)) or not videos.is_dir():
+            continue
+        state_dir = run_root / run.name
+        claim = owner.read(state_dir)
+        state = state_dir / "state.json"
+        if (claim is not None and owner.owner_alive(claim)) or (
+            state.is_file() and date.fromtimestamp(state.stat().st_mtime) >= cutoff
+        ):
+            continue
+        for video in videos.iterdir():
+            if video.suffix.lower() not in {".webm", ".mp4"} or video.is_symlink() or not video.is_file():
+                continue
+            if date.fromtimestamp(video.stat().st_mtime) < cutoff:
+                video.unlink(missing_ok=True)
+                removed += 1
+    return removed
 
 
 def cleanup_old_runs(

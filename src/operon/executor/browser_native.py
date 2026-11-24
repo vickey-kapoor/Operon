@@ -32,6 +32,7 @@ from operon.agent.perception.screen_diff import (
 )
 from operon.agent.perception.settle import frame_signature
 from operon.browser.keys import normalize_key
+from operon.core.logging_utils import url_origin_for_log
 from operon.core.paths import browser_artifacts_dir
 from operon.core.settings import get_settings
 from operon.core.vault import SecretError, redact, resolve_text
@@ -591,7 +592,7 @@ class NativeBrowserExecutor(Executor):
         if new_page is session.page:
             return
         session.page = new_page
-        logger.info("New tab detected after click — switched session to %s", new_page.url)
+        logger.info("New tab detected after click — switched session to %s", url_origin_for_log(new_page.url))
         await self._follow_in_live_view(self._current_run_id, new_page)
 
     @staticmethod
@@ -877,7 +878,7 @@ class NativeBrowserExecutor(Executor):
                 "(for example a popup that closed itself)."
             )
         session.page = replacement
-        logger.info("The current tab was closed — switched session to %s", getattr(replacement, "url", "?"))
+        logger.info("The current tab was closed — switched session to %s", url_origin_for_log(getattr(replacement, "url", None)))
         await self._follow_in_live_view(run_id, replacement)
 
     def _follow_in_live_view_soon(self, run_id: str, page: object) -> None:
@@ -1116,14 +1117,14 @@ class NativeBrowserExecutor(Executor):
                 logger.warning("The run's last open page closed")
                 return
             session.page = replacement
-            logger.info("The current tab closed — switched session to %s", getattr(replacement, "url", "?"))
+            logger.info("The current tab closed — switched session to %s", url_origin_for_log(getattr(replacement, "url", None)))
             self._follow_in_live_view_soon(run_id, replacement)
 
         page.on("popup", _on_popup)
         page.on("close", _on_close)
         page.on("console", lambda msg: logger.debug("BROWSER_LOG [%s]: %s", msg.type, msg.text))
         page.on("requestfailed", lambda req: logger.warning(
-            "NETWORK_FAIL: %s — %s", req.url, req.failure
+            "NETWORK_FAIL: %s — %s", url_origin_for_log(req.url), req.failure
         ))
 
         async def _on_dialog(dialog) -> None:

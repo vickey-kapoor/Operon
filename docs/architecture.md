@@ -342,6 +342,9 @@ Browser session videos are written under `.var/browser-artifacts/` by default. D
 
 ## Observability
 
+See [Logging and diagnostics](logging.md) for the logging layers, data locations,
+retention behavior, and review findings.
+
 - **Per-step artifacts** are listed under [Persistence](#persistence), including the model's
   input and output per step. Usage is aggregated by `GET /observer/api/usage`; a run is exported
   as a zip by `GET /observer/api/export/{run_id}` (`api/observer.py`).

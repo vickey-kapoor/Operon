@@ -8,7 +8,7 @@ from dotenv import find_dotenv, load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from operon.core.paths import runs_dir
+from operon.core.paths import browser_artifacts_dir, runs_dir
 from operon.core.settings import check_startup_settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,14 @@ async def _lifespan(app: FastAPI):
     # Disable with OPERON_RUNS_RETAIN_DAYS=-1; default 14 days.
     retain_days = settings.runs_retain_days
     if retain_days >= 0:
+        try:
+            from operon.store.cleanup import cleanup_browser_recordings
+
+            removed = cleanup_browser_recordings(browser_artifacts_dir(), runs_dir(), retain_days)
+            if removed:
+                logger.info("retention_sweep: removed %d old browser recording(s)", removed)
+        except OSError as exc:
+            logger.warning("browser recording retention sweep skipped: %s", exc)
         try:
             from operon.store.cleanup import cleanup_old_runs
             deleted, freed = cleanup_old_runs(

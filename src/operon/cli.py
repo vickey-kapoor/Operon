@@ -467,6 +467,8 @@ def _display_host(host: str) -> str:
 
 
 def _serve(args: argparse.Namespace) -> int:
+    import logging
+
     import uvicorn
     from dotenv import find_dotenv, load_dotenv
 
@@ -503,7 +505,10 @@ def _serve(args: argparse.Namespace) -> int:
         print(f"API key file: {api_key_file()}")
     else:
         print("Authentication is off")
-    uvicorn.run("operon.api.server:app", host=args.host, port=args.port)
+    level = args.log_level.upper()
+    logging.basicConfig(level=level)
+    logging.getLogger("operon").setLevel(level)
+    uvicorn.run("operon.api.server:app", host=args.host, port=args.port, log_level=args.log_level)
     return 0
 
 
@@ -557,6 +562,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="start the API")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
+    serve.add_argument("--log-level", choices=("debug", "info", "warning", "error", "critical"), default="info")
     serve.add_argument("--allow-remote", action="store_true", help="allow a non-loopback --host; this exposes the API beyond this machine")
     serve.set_defaults(func=_serve)
 

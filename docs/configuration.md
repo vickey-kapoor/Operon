@@ -40,6 +40,10 @@ saying json was removed.
 
 ## All settings
 
+`operon serve --log-level` sets console verbosity for Operon and Uvicorn.
+The default is `info`. Supported levels are `debug`, `info`, `warning`,
+`error`, and `critical`.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | unset | Gemini API key (Gemini Computer Use reads `GEMINI_API_KEY` only) |
@@ -102,7 +106,7 @@ saying json was removed.
 | `OPERON_STREAM_TOKEN_TTL_S` | `600` | Lifetime of the short-lived `/ws/stream` tokens from `POST /app/api/stream-token` (10 to 86400 s). Checked at connect, so an open stream is not cut off. |
 | `OPERON_API_URL` | `http://127.0.0.1:8080` | Where `operon run --request` sends the task. |
 | `OPERON_ALLOWED_FILE_ROOTS` | unset | Extra directories that `read_text` / `upload_file` may touch. The file guard is always on: any path not named in the task or inside the run directory pauses the run for a human. |
-| `OPERON_RUNS_RETAIN_DAYS` | `14` | Days of run directories kept by the startup sweep; `-1` disables it |
+| `OPERON_RUNS_RETAIN_DAYS` | `14` | Days of run directories and browser videos kept by the startup sweep. `-1` disables both sweeps. |
 | `HITL_WEBHOOK_URL` | unset | POST endpoint called when a run pauses for a human |
 
 `.env.example` lists every setting the server reads, with comments.

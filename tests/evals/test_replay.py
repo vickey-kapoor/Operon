@@ -411,12 +411,11 @@ def test_the_run_permission_mode_is_restored(tmp_path):
 
 
 def test_the_trust_gate_sees_the_pages_it_saw(tmp_path):
-    """With a domain allowlist, an action on an off-list page pauses; the replay must show
-    the gate the same page, or the pause turns into an executed click."""
+    """Replay uses the recorded origins to reproduce the domain allowlist pause."""
     turns = [call("click_at", x=300, y=300), call("click_at", x=310, y=310), done()]
     recording = _record(tmp_path, turns, settings={"OPERON_TRUST_GATE": "on", "OPERON_TRUST_ALLOW_DOMAINS": "example.com"},
-                        gate_urls=["https://example.com/", "https://evil.test/login"])
-    assert recording["gate_urls"][:2] == ["https://example.com/", "https://evil.test/login"]
+                        gate_urls=["https://example.com/", "https://evil.test/login?token=private#fragment"])
+    assert recording["gate_urls"][:2] == ["https://example.com", "https://evil.test"]
     assert [s["action"]["action_type"] for s in recording["steps"]][:2] == ["click", "wait_for_user"]
     _replays(recording)
     blind = asyncio.run(rp.replay({**recording, "gate_urls": []}))  # the gate never sees the page

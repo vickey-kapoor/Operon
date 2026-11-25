@@ -256,6 +256,7 @@ Pull requests should include:
 - Known limitations or risks
 - Related issues, where applicable
 - Screenshots or artifacts for relevant UI and desktop-behavior changes
+- Fill in `.github/pull_request_template.md`; its Proof section is required for a behavior change (section 10).
 
 Do not include unrelated generated files, temporary artifacts, or sensitive execution traces.
 

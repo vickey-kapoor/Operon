@@ -175,7 +175,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A timing test had no margin and failed by 0.03 s on CI -> size test delays at several times the worst measured sample, and note the measurement next to the constant (KAN-211, #364).
 - A workflow checkout kept its token in `.git/config` -> `persist-credentials: false` on every `actions/checkout`; run zizmor before pushing workflow edits (#351).
 - A test that shells out to bash failed on Windows, where bash may be WSL with no distro -> skip such tests on Windows; offline checks must pass there too (KAN-195, #360).
-- A stop step's run.jsonl row named an after screenshot that was never written -> name only files that were actually written; null otherwise (KAN-218, #TBD).
+- A stop step's run.jsonl row named an after screenshot that was never written -> `after_artifact_path` names only a screenshot the executor actually took; null otherwise (KAN-218, #368).
 - `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge (found during the #191 restructure).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)

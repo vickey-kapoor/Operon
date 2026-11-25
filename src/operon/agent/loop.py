@@ -66,6 +66,7 @@ from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.core.logging_utils import url_origin_for_log
 from operon.core.settings import get_settings
+from operon.core.urls import is_web_url, web_url_refusal
 from operon.core.vault import action_uses_secret, available_names, secrets_hint
 from operon.executor.browser import Executor
 from operon.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
@@ -268,6 +269,9 @@ class AgentLoop:
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
         _trace("START_RUN", f"intent={request.intent!r}  origin={url_origin_for_log(request.start_url)!r}")
         if request.start_url:
+            # KAN-191: a hard refusal, with the trust gate on or off (never a pause to approve).
+            if not is_web_url(request.start_url):
+                raise StartUrlBlockedError(web_url_refusal(request.start_url, "start_url"))
             # The start URL is opened before any step, so the trust gate's per-action
             # check never sees it: judge it here, before the run exists.
             verdict = self._trust_gate.evaluate(
@@ -2310,6 +2314,8 @@ class AgentLoop:
     def _reset_url_allowed(self, url: str, permission_mode: str | None = None) -> bool:
         """True when the agent may navigate to ``url`` unasked: the trust gate allows it and
         the run's permission mode would not hold it for approval (a reset cannot ask a person)."""
+        if not is_web_url(url):
+            return False
         probe = AgentAction(action_type=ActionType.NAVIGATE, url=url)
         result = apply_permission_mode(self._trust_gate.evaluate(probe), probe, permission_mode)
         return result.verdict is TrustVerdict.ALLOW

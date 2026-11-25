@@ -42,6 +42,7 @@ RISKY_PATTERNS: tuple[str, ...] = (
     "src/operon/agent/policy/**",
     "src/operon/agent/loop.py",
     "src/operon/agent/step_context.py",
+    "src/operon/__init__.py",  # runs on every import
     "src/operon/agent/control.py",
     "src/operon/agent/actions/translation.py",  # atomic TYPE, confidence default
     "src/operon/models/policy.py",  # ActionType / PolicyDecision used by the gates
@@ -68,7 +69,8 @@ RISKY_PATTERNS: tuple[str, ...] = (
     "src/operon/api/ws_stream.py",
     "src/operon/api/stream_tokens.py",
     "src/operon/api/routes/**",
-    "src/operon/api/runtime/services.py",
+    "src/operon/api/runtime/**",  # per-environment wiring, loops, events
+    "src/operon/store/run_store.py",
     "src/operon/browser/manager.py",
     "src/operon/clients/**",
     "src/operon/cli.py",
@@ -79,7 +81,19 @@ RISKY_PATTERNS: tuple[str, ...] = (
 # the kinds below. Everything else is risky: any dotfile or dot-directory, any *.ini/*.cfg/*.toml, helper
 # modules and conftest.py under tests/ (pytest can load them as plugins), tests/ci/**, dashboard server
 # code, evals/**, scripts/**, docker/**, lock files.
-RISKY_NAMES: tuple[str, ...] = ("claude.md", "agents.md", "security.md", "conftest.py")
+RISKY_NAMES: tuple[str, ...] = (
+    "claude.md",
+    "agents.md",
+    "security.md",
+    "conftest.py",
+    "claude-code-reference.md",  # the standing rules for local sessions
+    "sitecustomize.py",  # python runs these on startup
+    "usercustomize.py",
+)
+# Compiled or loadable code, anywhere in the repo, and Python's cache directories.
+BINARY_SUFFIXES: tuple[str, ...] = (".pyc", ".pyo", ".so", ".pyd", ".dll", ".dylib", ".pth", ".egg-link")
+# The only kinds of file under src/ that can be low-risk (what src/ holds today).
+SRC_TEXT_SUFFIXES: tuple[str, ...] = (".py", ".md", ".txt", ".yaml")
 RISKY_SUFFIXES: tuple[str, ...] = (".ini", ".cfg", ".toml")
 TEST_FILE_PATTERNS: tuple[str, ...] = ("test_*.py", "*_test.py")  # what pytest collects
 DASHBOARD_STATIC: tuple[str, ...] = ("dashboard/app.js", "dashboard/readme.md")
@@ -145,7 +159,12 @@ def is_risky_path(path: str) -> bool:
     # A path with empty, "." or ".." parts is not one we can reason about.
     if any(p in ("", ".", "..") for p in parts):
         return True
+    name = parts[-1]
+    if "__pycache__" in parts or name.endswith(BINARY_SUFFIXES):
+        return True
     if parts[0] == "src":
+        if name in RISKY_NAMES or not name.endswith(SRC_TEXT_SUFFIXES):
+            return True
         return any(_matches(p, path) for p in RISKY_PATTERNS)
     if any(p.startswith(".") for p in parts):
         return True
@@ -245,6 +264,9 @@ def merge_ready(
             why.append(f"required check missing: {name}")
         elif run.get("status") == "completed" and run.get("conclusion") != "success":
             why.append(f"required check not successful: {name}")
+
+    if (pr.get("base") or {}).get("ref") != "main":
+        why.append("PR does not target main")
 
     if status is None:
         why.append("combined status not read")

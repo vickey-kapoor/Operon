@@ -87,14 +87,23 @@ jobs:
             [ -n "$n" ] || continue
             d="$work/$n"
             mkdir -p "$d"
-            gh api "repos/$REPO/pulls/$n" > "$d/pr.json"
-            sha=$(jq -r '.head.sha' "$d/pr.json")
+            # One PR's API failure is a warning, not the end of the sweep.
+            if ! gh api "repos/$REPO/pulls/$n" > "$d/pr.json"; then
+              echo "::warning::PR $n: could not read the PR, skipped"
+              continue
+            fi
+            sha=$(jq -r '.head.sha' "$d/pr.json") || sha=""
             case "$sha" in (*[!0-9a-f]* | "") echo "::warning::PR $n: odd head sha, skipped"; continue;; esac
             [ "${#sha}" -eq 40 ] || { echo "::warning::PR $n: odd head sha, skipped"; continue; }
-            gh api --paginate "repos/$REPO/pulls/$n/files" | jq -s 'add // []' > "$d/files.json"
-            gh api --paginate "repos/$REPO/commits/$sha/check-runs" --jq '.check_runs[]' | jq -s '.' > "$d/checks.json"
-            gh api "repos/$REPO/commits/$sha/status" > "$d/status.json"
-            gh api --paginate "repos/$REPO/issues/$n/comments" | jq -s 'add // []' > "$d/comments.json"
+            if ! {
+              gh api --paginate "repos/$REPO/pulls/$n/files" | jq -s 'add // []' > "$d/files.json" &&
+                gh api --paginate "repos/$REPO/commits/$sha/check-runs" --jq '.check_runs[]' | jq -s '.' > "$d/checks.json" &&
+                gh api "repos/$REPO/commits/$sha/status" > "$d/status.json" &&
+                gh api --paginate "repos/$REPO/issues/$n/comments" | jq -s 'add // []' > "$d/comments.json"
+            }; then
+              echo "::warning::PR $n: an API read failed, skipped"
+              continue
+            fi
             verdict=$(python3 scripts/pr_gate.py merge-ready --pr "$d/pr.json" --files "$d/files.json" \
               --checks "$d/checks.json" --status "$d/status.json" --comments "$d/comments.json" \
               --ignore-check "Label PR" --ignore-check "Sweep and merge" 2>"$d/why.txt") || verdict=error
@@ -106,9 +115,10 @@ jobs:
               else
                 echo "::warning::PR $n: merge refused (head moved or branch rules); next sweep retries"
               fi
-            elif ! grep -q "operon-gate-trial: $sha" "$d/comments.json"; then
+            elif ! jq -e --arg m "operon-gate-trial: $sha" \
+              'any(.[]; .user.type == "Bot" and ((.body // "") | contains($m)))' "$d/comments.json" > /dev/null; then
               printf '<!-- operon-gate-trial: %s -->\nTrial week: would auto-merge this PR (OPERON_AUTO_MERGE is not on).\n' "$sha" > "$d/note.md"
-              gh pr comment "$n" --repo "$REPO" --body-file "$d/note.md"
+              gh pr comment "$n" --repo "$REPO" --body-file "$d/note.md" || { echo "::warning::PR $n: the trial note failed"; continue; }
               gh pr edit "$n" --repo "$REPO" --add-label gate-would-merge || echo "::warning::PR $n: adding the gate-would-merge label failed"
             fi
           done < "$work/prs"
@@ -120,6 +130,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       pull-requests: read
+      issues: read
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -136,7 +147,7 @@ jobs:
                 | "- #\(.number) \(.title | gsub("[^A-Za-z0-9 .,:()_/-]"; ""))"] | join("\n")')
           # Would merge: a trial note (operon-gate-trial comment) was posted in the last 24 h.
           would=$(gh api --paginate "repos/$REPO/issues/comments?since=$cutoff&per_page=100" \
-            | jq -rs --arg c "$cutoff" '[.[][] | select(.created_at >= $c and ((.body // "") | contains("operon-gate-trial:")))
+            | jq -rs --arg c "$cutoff" '[.[][] | select(.created_at >= $c and .user.type == "Bot" and ((.body // "") | contains("operon-gate-trial:")))
                 | "- #\(.issue_url | split("/") | last)"] | unique | join("\n")')
           mode=trial
           [ "$AUTO_MERGE" = on ] && mode=on

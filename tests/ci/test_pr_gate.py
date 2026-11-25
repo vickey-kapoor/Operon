@@ -52,6 +52,20 @@ OLD = "b" * 40
         ([CF("docs/old_test.md", "renamed", "tests/agent/x_test.py")], False, "risky"),
         ([CF("src/operon/agent/actions/translation.py")], False, "risky"),
         ([CF("src/operon/models/policy.py")], False, "risky"),
+        ([CF("src/operon/agent/__pycache__/loop.cpython-314.pyc")], False, "risky"),
+        ([CF("src/operon/agent/loop.so")], False, "risky"),
+        ([CF("src/operon/x.pyd")], False, "risky"),
+        ([CF("tests/fixtures/a.pyc")], False, "risky"),
+        ([CF("docs/x.pth")], False, "risky"),
+        ([CF("docs/__pycache__/a.md")], False, "risky"),
+        ([CF("src/operon/data.json")], False, "risky"),
+        ([CF("src/operon/agent/prompts.txt")], False, "low-risk"),
+        ([CF("docs/CLAUDE-CODE-REFERENCE.md")], False, "risky"),
+        ([CF("src/sitecustomize.py")], False, "risky"),
+        ([CF("src/operon/sitecustomize.py")], False, "risky"),
+        ([CF("src/operon/__init__.py")], False, "risky"),
+        ([CF("src/operon/api/runtime/events.py")], False, "risky"),
+        ([CF("src/operon/store/run_store.py")], False, "risky"),
         ([CF("tests/ci/test_y.py")], False, "risky"),
         ([CF("tests/executor/conftest.py")], False, "risky"),
         ([CF("tests/test_invariants.py")], False, "risky"),
@@ -109,7 +123,7 @@ def _pr(**over: Any) -> dict[str, Any]:
         "draft": False,
         "labels": [{"name": "low-risk"}],
         "head": {"sha": HEAD, "repo": {"full_name": "o/r"}},
-        "base": {"repo": {"full_name": "o/r"}},
+        "base": {"ref": "main", "repo": {"full_name": "o/r"}},
     }
     pr.update(over)
     return pr
@@ -184,6 +198,7 @@ def test_skipped_and_neutral_checks_count_as_good() -> None:
         ({"pr": _pr(labels=[{"name": "risky"}])}, "labelled"),
         ({"pr": _pr(labels=[{"name": "low-risk"}, {"name": "risky"}])}, "labelled"),
         ({"risk": "risky"}, "fresh classification"),
+        ({"pr": _pr(base={"ref": "dev", "repo": {"full_name": "o/r"}})}, "does not target main"),
     ],
 )
 def test_not_ready(kw: dict[str, Any], reason: str) -> None:
@@ -288,6 +303,9 @@ def test_safety_gate_modules_are_listed_explicitly() -> None:
         "src/operon/agent/backends/base.py",
         "src/operon/agent/actions/translation.py",
         "src/operon/models/policy.py",
+        "src/operon/__init__.py",
+        "src/operon/api/runtime/events.py",
+        "src/operon/store/run_store.py",
         "src/operon/cli.py",
         "src/operon/cloud.py",
         "src/operon/clients/gemini.py",

@@ -44,7 +44,8 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
   usage limit. It starts no new story while one is in progress. Otherwise it starts one thread for the next
   story in board order whose latest Vickey comment approves it (never "Run:" or paid stories). It posts one
   line only when it did something. A run that hits Claude's usage limit just skips; the next run retries.
-  The full prompt lives in the scheduled task itself.
+  The full prompt lives in the scheduled task itself. Claude's Jira comments start with "(from Claude)"
+  (they post through Vickey's own Jira connection, so they carry her account).
 - **Plans and docs go in Confluence, space OPERON** (not Claude Docs). Add new pages
   to the OPERON home page table of contents (page 295140).
 - **Never drop or change a step of an approved plan without asking.** If a run or

@@ -44,6 +44,8 @@ RISKY_PATTERNS: tuple[str, ...] = (
     "src/operon/agent/step_context.py",
     "src/operon/__init__.py",  # runs on every import
     "src/operon/agent/control.py",
+    "src/operon/agent/perception/**",  # vision-only: what the model sees
+    "src/operon/agent/actions/grounding.py",
     "src/operon/agent/actions/translation.py",  # atomic TYPE, confidence default
     "src/operon/models/policy.py",  # ActionType / PolicyDecision used by the gates
     "src/operon/agent/backends/**",  # model adapters: what the model sees and may emit
@@ -94,6 +96,7 @@ RISKY_NAMES: tuple[str, ...] = (
 BINARY_SUFFIXES: tuple[str, ...] = (".pyc", ".pyo", ".so", ".pyd", ".dll", ".dylib", ".pth", ".egg-link")
 # The only kinds of file under src/ that can be low-risk (what src/ holds today).
 SRC_TEXT_SUFFIXES: tuple[str, ...] = (".py", ".md", ".txt", ".yaml")
+DOCS_IMAGE_SUFFIXES: tuple[str, ...] = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
 RISKY_SUFFIXES: tuple[str, ...] = (".ini", ".cfg", ".toml")
 TEST_FILE_PATTERNS: tuple[str, ...] = ("test_*.py", "*_test.py")  # what pytest collects
 DASHBOARD_STATIC: tuple[str, ...] = ("dashboard/app.js", "dashboard/readme.md")
@@ -138,8 +141,10 @@ def _low_risk_kind(path: str) -> bool:
     name = path.rsplit("/", 1)[-1]
     if name in RISKY_NAMES or name.endswith(RISKY_SUFFIXES):
         return False
-    if path.startswith("docs/") or name.endswith(".md"):
+    if name.endswith(".md"):
         return True
+    if path.startswith("docs/"):
+        return name.endswith(DOCS_IMAGE_SUFFIXES)
     if path.startswith("tests/"):
         if path.startswith("tests/ci/") or path == "tests/test_invariants.py":
             return False
@@ -153,7 +158,18 @@ def _low_risk_kind(path: str) -> bool:
     return False
 
 
-def is_risky_path(path: str) -> bool:
+def _src_denied(path: str) -> bool:
+    """On the src/ denylist. A denylisted ``x.py`` also denies a package ``x/`` that would shadow it."""
+    for pattern in RISKY_PATTERNS:
+        if _matches(pattern, path):
+            return True
+        if pattern.endswith(".py") and "*" not in pattern and _matches(pattern[:-3] + "/**", path):
+            return True
+    return False
+
+
+def is_risky_path(path: str, status: str = "modified") -> bool:
+    """Whether ``path`` needs a human. ``status`` is the file's change status in the PR."""
     path = path.replace("\\", "/").casefold()
     parts = path.split("/")
     # A path with empty, "." or ".." parts is not one we can reason about.
@@ -163,9 +179,14 @@ def is_risky_path(path: str) -> bool:
     if "__pycache__" in parts or name.endswith(BINARY_SUFFIXES):
         return True
     if parts[0] == "src":
+        # Only edits to existing files under src/operon/ can be low-risk. A new file (added, renamed or
+        # copied in) can shadow an import (src/json.py, a package next to a denylisted module), so it
+        # always needs a human.
+        if status != "modified" or parts[1:2] != ["operon"]:
+            return True
         if name in RISKY_NAMES or not name.endswith(SRC_TEXT_SUFFIXES):
             return True
-        return any(_matches(p, path) for p in RISKY_PATTERNS)
+        return _src_denied(path)
     if any(p.startswith(".") for p in parts):
         return True
     return not _low_risk_kind(path)
@@ -185,9 +206,10 @@ def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
     if len(files) >= MAX_FILES:
         reasons.append(f"{len(files)} changed files reaches the API limit")
     for f in files:
-        for name in [f.filename] + ([f.previous_filename] if f.previous_filename else []):
-            if is_risky_path(name):
-                reasons.append(f"risky path: {name}")
+        names = [(f.filename, f.status)] + ([(f.previous_filename, "modified")] if f.previous_filename else [])
+        for name, status in names:
+            if is_risky_path(name, status):
+                reasons.append(f"risky path: {name}" + (f" ({status})" if status != "modified" else ""))
         if f.status == "removed" and _is_test(f.filename):
             reasons.append(f"test file deleted: {f.filename}")
         if f.status == "renamed" and f.previous_filename and _is_collected_test(f.previous_filename):
@@ -257,7 +279,8 @@ def merge_ready(
         elif c.get("conclusion") not in GOOD_CONCLUSIONS:
             why.append(f"check {c.get('conclusion')}: {c.get('name')}")
 
-    by_name = {c.get("name"): c for c in relevant}
+    # Only runs from GitHub Actions count: another app can post a check run with a required name.
+    by_name = {c.get("name"): c for c in relevant if (c.get("app") or {}).get("slug") == "github-actions"}
     for name in REQUIRED_CHECKS:
         run = by_name.get(name)
         if run is None:

@@ -116,7 +116,7 @@ jobs:
                 echo "::warning::PR $n: merge refused (head moved or branch rules); next sweep retries"
               fi
             elif ! jq -e --arg m "operon-gate-trial: $sha" \
-              'any(.[]; .user.type == "Bot" and ((.body // "") | contains($m)))' "$d/comments.json" > /dev/null; then
+              'any(.[]; .user.login == "github-actions[bot]" and ((.body // "") | contains($m)))' "$d/comments.json" > /dev/null; then
               printf '<!-- operon-gate-trial: %s -->\nTrial week: would auto-merge this PR (OPERON_AUTO_MERGE is not on).\n' "$sha" > "$d/note.md"
               gh pr comment "$n" --repo "$REPO" --body-file "$d/note.md" || { echo "::warning::PR $n: the trial note failed"; continue; }
               gh pr edit "$n" --repo "$REPO" --add-label gate-would-merge || echo "::warning::PR $n: adding the gate-would-merge label failed"
@@ -147,7 +147,7 @@ jobs:
                 | "- #\(.number) \(.title | gsub("[^A-Za-z0-9 .,:()_/-]"; ""))"] | join("\n")')
           # Would merge: a trial note (operon-gate-trial comment) was posted in the last 24 h.
           would=$(gh api --paginate "repos/$REPO/issues/comments?since=$cutoff&per_page=100" \
-            | jq -rs --arg c "$cutoff" '[.[][] | select(.created_at >= $c and .user.type == "Bot" and ((.body // "") | contains("operon-gate-trial:")))
+            | jq -rs --arg c "$cutoff" '[.[][] | select(.created_at >= $c and .user.login == "github-actions[bot]" and ((.body // "") | contains("operon-gate-trial:")))
                 | "- #\(.issue_url | split("/") | last)"] | unique | join("\n")')
           mode=trial
           [ "$AUTO_MERGE" = on ] && mode=on

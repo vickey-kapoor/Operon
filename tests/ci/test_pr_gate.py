@@ -52,6 +52,21 @@ OLD = "b" * 40
         ([CF("docs/old_test.md", "renamed", "tests/agent/x_test.py")], False, "risky"),
         ([CF("src/operon/agent/actions/translation.py")], False, "risky"),
         ([CF("src/operon/models/policy.py")], False, "risky"),
+        ([CF("src/operon/core/urls/__init__.py", "added")], False, "risky"),
+        ([CF("src/operon/agent/loop/__init__.py", "added")], False, "risky"),
+        ([CF("src/operon/core/urls/__init__.py")], False, "risky"),  # even "modified": package shadows urls.py
+        ([CF("src/json.py", "added")], False, "risky"),
+        ([CF("src/httpx/__init__.py", "added")], False, "risky"),
+        ([CF("src/operon/agent/actions/zoom.py", "modified")], False, "low-risk"),
+        ([CF("src/operon/agent/actions/new_thing.py", "added")], False, "risky"),
+        ([CF("src/operon/agent/actions/new_thing.py", "renamed", "src/operon/agent/actions/zoom.py")], False, "risky"),
+        ([CF("src/operon/agent/actions/new_thing.py", "copied")], False, "risky"),
+        ([CF("src/other/mod.py")], False, "risky"),
+        ([CF("src/operon/agent/perception/service.py")], False, "risky"),
+        ([CF("src/operon/agent/actions/grounding.py")], False, "risky"),
+        ([CF("docs/notes.txt")], False, "risky"),
+        ([CF("docs/run.sh")], False, "risky"),
+        ([CF("docs/shot.PNG"), CF("docs/a.svg"), CF("docs/b.webp")], False, "low-risk"),
         ([CF("src/operon/agent/__pycache__/loop.cpython-314.pyc")], False, "risky"),
         ([CF("src/operon/agent/loop.so")], False, "risky"),
         ([CF("src/operon/x.pyd")], False, "risky"),
@@ -146,7 +161,10 @@ def _marker(sha: str = HEAD, assoc: str = "OWNER", kind: str = "User") -> dict[s
     }
 
 
-GOOD_CHECKS = [{"name": n, "status": "completed", "conclusion": "success"} for n in gate.REQUIRED_CHECKS]
+ACTIONS = {"slug": "github-actions"}
+GOOD_CHECKS = [
+    {"name": n, "status": "completed", "conclusion": "success", "app": ACTIONS} for n in gate.REQUIRED_CHECKS
+]
 GOOD_STATUS = {"state": "pending", "statuses": []}  # no statuses at all
 
 
@@ -198,6 +216,8 @@ def test_skipped_and_neutral_checks_count_as_good() -> None:
         ({"pr": _pr(labels=[{"name": "risky"}])}, "labelled"),
         ({"pr": _pr(labels=[{"name": "low-risk"}, {"name": "risky"}])}, "labelled"),
         ({"risk": "risky"}, "fresh classification"),
+        ({"checks": [{**GOOD_CHECKS[0], "app": {"slug": "evil"}}, *GOOD_CHECKS[1:]]}, "required check missing"),
+        ({"checks": [{**GOOD_CHECKS[0], "app": None}, *GOOD_CHECKS[1:]]}, "required check missing"),
         ({"pr": _pr(base={"ref": "dev", "repo": {"full_name": "o/r"}})}, "does not target main"),
     ],
 )
@@ -306,6 +326,8 @@ def test_safety_gate_modules_are_listed_explicitly() -> None:
         "src/operon/__init__.py",
         "src/operon/api/runtime/events.py",
         "src/operon/store/run_store.py",
+        "src/operon/agent/perception/service.py",
+        "src/operon/agent/actions/grounding.py",
         "src/operon/cli.py",
         "src/operon/cloud.py",
         "src/operon/clients/gemini.py",

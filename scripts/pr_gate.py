@@ -44,6 +44,10 @@ RISKY_PATTERNS: tuple[str, ...] = (
     "src/operon/agent/step_context.py",
     "src/operon/__init__.py",  # runs on every import
     "src/operon/agent/control.py",
+    "src/operon/core/paths.py",  # where every artifact directory resolves
+    "src/operon/api/observer.py",
+    "src/operon/api/dependencies.py",
+    "src/operon/store/checkpoints.py",
     "src/operon/agent/perception/**",  # vision-only: what the model sees
     "src/operon/agent/actions/grounding.py",
     "src/operon/agent/actions/translation.py",  # atomic TYPE, confidence default
@@ -92,6 +96,9 @@ RISKY_NAMES: tuple[str, ...] = (
     "sitecustomize.py",  # python runs these on startup
     "usercustomize.py",
 )
+# Instruction files that coding agents and reviewers read, at any depth: AGENTS.override.md, CLAUDE.local.md,
+# GEMINI.md, copilot-instructions.md (dotfiles such as .cursorrules are risky as dotfiles).
+RISKY_NAME_PREFIXES: tuple[str, ...] = ("agents.", "claude.", "gemini.", "copilot-instructions.")
 # Compiled or loadable code, anywhere in the repo, and Python's cache directories.
 BINARY_SUFFIXES: tuple[str, ...] = (".pyc", ".pyo", ".so", ".pyd", ".dll", ".dylib", ".pth", ".egg-link")
 # The only kinds of file under src/ that can be low-risk (what src/ holds today).
@@ -176,7 +183,7 @@ def is_risky_path(path: str, status: str = "modified") -> bool:
     if any(p in ("", ".", "..") for p in parts):
         return True
     name = parts[-1]
-    if "__pycache__" in parts or name.endswith(BINARY_SUFFIXES):
+    if "__pycache__" in parts or name.endswith(BINARY_SUFFIXES) or name.startswith(RISKY_NAME_PREFIXES):
         return True
     if parts[0] == "src":
         # Only edits to existing files under src/operon/ can be low-risk. A new file (added, renamed or
@@ -184,8 +191,8 @@ def is_risky_path(path: str, status: str = "modified") -> bool:
         # always needs a human.
         if status != "modified" or parts[1:2] != ["operon"]:
             return True
-        if name in RISKY_NAMES or not name.endswith(SRC_TEXT_SUFFIXES):
-            return True
+        if name in RISKY_NAMES or name == "__init__.py" or not name.endswith(SRC_TEXT_SUFFIXES):
+            return True  # __init__.py runs on import
         return _src_denied(path)
     if any(p.startswith(".") for p in parts):
         return True
@@ -206,7 +213,7 @@ def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
     if len(files) >= MAX_FILES:
         reasons.append(f"{len(files)} changed files reaches the API limit")
     for f in files:
-        names = [(f.filename, f.status)] + ([(f.previous_filename, "modified")] if f.previous_filename else [])
+        names = [(f.filename, f.status)] + ([(f.previous_filename, "removed")] if f.previous_filename else [])
         for name, status in names:
             if is_risky_path(name, status):
                 reasons.append(f"risky path: {name}" + (f" ({status})" if status != "modified" else ""))

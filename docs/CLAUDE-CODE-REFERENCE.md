@@ -16,6 +16,18 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
   per PR; an earlier "merge", a "yes" to another question, green checks or a clean
   Codex review do not count. Never enable auto-merge (it is off repo-wide).
 - **Codex reviews every PR.** Fix or answer every Codex finding before asking for merge.
+- **Never approve a fork PR's workflow runs while its "Fork PR workflow check" is red.** The check
+  fails when a fork PR touches `.github/` (workflows, actions, CODEOWNERS); outside PRs must not
+  change `.github/`. The benchmark VM runners are one-job (JIT) runners minted per run, so nothing
+  stays registered for such a workflow to use (KAN-195). One-time steps before the first run after
+  KAN-195 (otherwise `start-vm` fails):
+  1. Repo secret `RUNNER_ADMIN_TOKEN`: a fine-grained token for this repo only, Administration read and write.
+  2. Add `Microsoft.Compute/virtualMachines/runCommand/action` to the Azure role "Operon bench VM
+     operator" (`az role definition update`, see `docs/azure-desktop-runner.md`).
+  3. Delete the old persistent runners in Settings > Actions > Runners.
+  4. `operon-linux`: the runner stays unpacked in `~/actions-runner` (no `config.sh`/`svc.sh`); the
+     first run retires the old service itself. `operon-desktop`: re-run `setup-runner.ps1` (no token)
+     before its next `azure` run.
 - Multiple PRs a day are fine. `main` is protected: PR required, Test + Lint checks
   required, no force push.
 - Commit subjects: `Fix:`/`Feat:`/`Docs:`/`CI:`/`Chore:`/`Refactor:`, one line, with
@@ -73,8 +85,8 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 | Paid workflow | `benchmark.yml` "Run Operon on test tasks (paid)": manual dispatch (`cells`), `/bench grounding` or `/bench batch` PR comments. Paid runs are OSWorld and grounding only (KAN-184). Engines: `osworld-bench.yml`, `grounding.yml` (`live-bench.yml` and `live-desktop-bench.yml` are no longer startable, kept until the cleanup PR). Syntax in `evals/CLAUDE.md`. |
 | Paid batches | Started by hand with `cells` (Actions > Run Operon on test tasks (paid) > Run workflow). The nightly queue (`evals/nightly-queue.txt`) was removed 2026-11-18; it stays in git history. Older batch log: project file `bench-queue/queue.md`. |
 | OSWorld | `osworld-bench.yml` "Run OSWorld test tasks (own VM)": started by hand or as a batch cell (always the default branch), runs on Azure VM `operon-linux`, report artifact `osworld-report` (not imported to the dashboard). |
-| Azure Windows VM | `operon-desktop` (westus2, resource group `operon-bench`), self-hosted desktop bench runner, logged in via OIDC. Clean snapshot `operon-desktop-clean` (manual restore point; `az snapshot create` needs `-l westus2`). |
-| Azure Linux VM | `operon-linux` (westus3, rg `operon-bench`, Standard_D2s_v4): cloud desktop via `operon cloud open`, and the OSWorld runner (label `operon-osworld`). |
+| Azure Windows VM | `operon-desktop` (westus2, resource group `operon-bench`), one-job desktop bench runner minted per run (KAN-195), logged in via OIDC. Clean snapshot `operon-desktop-clean` (manual restore point; `az snapshot create` needs `-l westus2`). |
+| Azure Linux VM | `operon-linux` (westus3, rg `operon-bench`, Standard_D2s_v4): cloud desktop via `operon cloud open`, and the OSWorld runner (a one-job runner minted per run, label `operon-osworld-<run>-<attempt>-<random>`; needs repo secret `RUNNER_ADMIN_TOKEN`, KAN-195). |
 | Deallocate after runs | `az vm deallocate -g operon-bench -n operon-desktop` (or `-n operon-linux`). Workflows deallocate on their own; check by hand after manual work. |
 | az login | Needs `--tenant bae81514-1670-44ef-9e7a-c41552f64f59` (MFA). AVG antivirus HTTPS scanning breaks az certificates on Vickey's PC (workaround: temporary cert file). |
 | Eval dashboard | Vercel project `operon-evals` (root `dashboard/`, don't move it), Neon Postgres. Dashboard reads through the read-only role `dashboard_ro` (`DASHBOARD_DATABASE_URL`). New tables need `GRANT SELECT ... TO dashboard_ro`. Never "Rotate Neon Secrets". Backfill via the "Save run results to dashboard" workflow. |

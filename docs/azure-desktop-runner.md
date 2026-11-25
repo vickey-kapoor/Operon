@@ -4,8 +4,9 @@ The live desktop benchmark (`.github/workflows/live-desktop-bench.yml`) can run 
 GitHub's hosted `windows-latest` runner or on our own Azure VM. Pick the VM with
 the workflow's `runner: azure` input. (Paid desktop runs of Operon's own suites were stopped, KAN-184; this runner is kept for the cleanup decision.)
 
-On `azure`, the workflow starts the VM, waits for its runner to come online, runs
-the benchmark, and deallocates the VM again, so the VM costs nothing between runs
+On `azure`, the workflow starts the VM, mints a one-job runner for the run under a
+label unique to it (`operon-desktop-<run id>-<attempt>-<random>`, KAN-195; see `scripts/bench-runners/jit-runner.sh`),
+waits for it to come online, runs the benchmark, and deallocates the VM again, so the VM costs nothing between runs
 except its disk and IP (a few dollars a month). Only one Azure run happens at a time.
 
 The VM is a Standard_D4s_v5 (4 vCPU, 16 GB) running Windows Server 2022 with the
@@ -44,9 +45,9 @@ az vm auto-shutdown --resource-group $rg --name $vm --time 0700
 
 ### 2. Run the setup script on the VM
 
-1. Get a runner token: repository **Settings > Actions > Runners > New self-hosted
-   runner**, choose Windows, and copy the value after `--token` in the Configure
-   step. It expires after an hour.
+1. Nothing to register: the script unpacks the runner but does not register it, and needs no
+   token. Create the repo secret `RUNNER_ADMIN_TOKEN` (a fine-grained token for this repository only,
+   permission Administration: read and write) so each run can mint its one-job runner.
 2. RDP in: `mstsc /v:$(az vm show -d -g $rg -n $vm --query publicIps -o tsv)`. Sign in as
    `.\operon`; the leading `.\` picks the VM's local account instead of your Microsoft account.
 3. Get the script onto the VM. Paste `scripts/azure-desktop-runner/setup-runner.ps1`
@@ -55,14 +56,15 @@ az vm auto-shutdown --resource-group $rg --name $vm --time 0700
 
    ```powershell
    Set-ExecutionPolicy -Scope Process Bypass
-   C:\setup-runner.ps1 -RunnerToken <token>
+   C:\setup-runner.ps1
    ```
 
 The script installs PowerShell 7, Git and Python 3.14, quiets the desktop, creates
 the `benchrunner` account with a random password nobody sees, sets up auto-logon for
-it, registers the runner as that account (name `azure-desktop`, label
-`operon-desktop`) and restarts the VM, which drops your RDP session. A minute later
-the runner should show as **Idle** under Settings > Actions > Runners.
+it, unpacks the runner with a logon task that waits for a run's runner config
+(`C:\actions-runner\.jitconfig`, readable only by `benchrunner`) and restarts the VM, which
+drops your RDP session. The runner shows under Settings > Actions > Runners only while a
+run's job is on it.
 
 RDP in as `.\operon` when you need the VM. That is a separate session, so the
 runner's desktop keeps running. Don't sign in as `benchrunner`.
@@ -96,17 +98,27 @@ the VM from a fresh image is the only full reset, so rebuild it if a branch you
 didn't write was ever benchmarked on it.
 
 **Moving an existing VM to the standard account.** Older setups ran the runner as
-the admin account. Get a new runner token, RDP in as `.\operon`, copy the current
+the admin account. RDP in as `.\operon` (no token is needed now), copy the current
 `setup-runner.ps1` to the VM and run step 2 again. It creates `benchrunner`, removes
-the old runner and its logon task, registers the runner again and restarts. Do it
+the old runner and its logon task and restarts. The next run deletes the old lasting
+runner's registration from GitHub. Do it
 while no benchmark is running.
+
+**An existing `operon-desktop` VM must re-run `setup-runner.ps1` before its next `azure` run (KAN-195).**
+The old script registered a lasting runner and started it without waiting for a one-job config; the new
+logon task is what picks up each run's config, so a VM set up the old way never comes online for a run.
 
 ### 3. Let the workflow start and stop the VM
 
 The workflow signs in to Azure with GitHub's OIDC token, so no Azure secret is
-stored in GitHub, and the identity can only start, stop and read the VM: a
-custom role, because the built-in Virtual Machine Contributor role also allows
-Run Command (code as SYSTEM on the VM) and password resets.
+stored in GitHub, and the identity can only start, stop and read the VM and run
+one command on it: a custom role, because the built-in Virtual Machine Contributor
+role also allows password resets and more. Run Command (code as SYSTEM on the VM) is
+now in the role, because that is how a run hands the VM its one-job runner config
+(KAN-195). The trade-off: the identity is trusted for `main` only, and it now delivers
+a one-job runner instead of the VM holding a lasting one that any approved workflow could use.
+The run-command right is granted on the whole resource group, so it also covers every other VM in it,
+including `operon-linux`, which `operon cloud open` uses.
 
 ```powershell
 $sub = az account show --query id -o tsv
@@ -117,17 +129,18 @@ $scope = az group show --name $rg --query id -o tsv
 @"
 {
   "Name": "Operon bench VM operator",
-  "Description": "Start, deallocate and read the desktop benchmark VM",
+  "Description": "Start, deallocate, read and hand a one-job runner config to the benchmark VMs",
   "Actions": [
     "Microsoft.Compute/virtualMachines/read",
     "Microsoft.Compute/virtualMachines/start/action",
     "Microsoft.Compute/virtualMachines/deallocate/action",
-    "Microsoft.Compute/virtualMachines/instanceView/read"
+    "Microsoft.Compute/virtualMachines/instanceView/read",
+    "Microsoft.Compute/virtualMachines/runCommand/action"
   ],
   "AssignableScopes": ["$scope"]
 }
 "@ | Set-Content operon-role.json
-az role definition create --role-definition operon-role.json
+az role definition create --role-definition operon-role.json   # an existing role: az role definition update
 
 # An app registration GitHub can sign in as, trusted only for this repo's main branch
 # (/bench comments and manual runs both run main's workflow).
@@ -176,9 +189,8 @@ az disk create --resource-group $rg --name "$vm-os-restored" --source "$vm-clean
 az vm update --resource-group $rg --name $vm --os-disk "$vm-os-restored"
 ```
 
-The runner's registration lives on the disk, so it comes back too. If GitHub has
-removed the runner in the meantime (14 days without a connection), re-register it as
-in Troubleshooting below, then take a new snapshot.
+The runner folder and the logon task are on the disk, so they come back too; there is no registration to
+restore, since each run registers its own one-job runner.
 
 ## Troubleshooting
 
@@ -189,12 +201,9 @@ in Troubleshooting below, then take a new snapshot.
   where it is.
 - **The bench job sits at "Waiting for a runner".** The VM is up but the runner
   isn't online. Usually auto-logon failed (for example after a password change):
-  RDP in, rerun the script with a new token, and let it restart.
+  RDP in, rerun the script, and let it restart. The config file
+  `C:\actions-runner\.jitconfig` is picked up when the account is signed in.
 - **Screenshots are black or the run can't see windows.** The session is locked or
   disconnected, most often after an RDP session was closed. Restart the VM.
-- **The runner disappeared from Settings > Actions > Runners.** GitHub removes a
-  self-hosted runner that hasn't connected for 14 days, and a deallocated VM
-  doesn't connect. If two weeks pass without an Azure run, start the VM
-  (`az vm start`), RDP in, rerun the script with a new token, and deallocate it.
 - **Runner logs** are in `C:\actions-runner\_diag` and
   `C:\actions-runner\runner-console.log`.

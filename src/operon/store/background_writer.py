@@ -33,7 +33,7 @@ def _write_file(path: Path, content: str) -> None:
         tmp.write_text(content, encoding="utf-8")
         _replace(tmp, path)
     except Exception:
-        logger.debug("artifact write failed: %s", path, exc_info=True)
+        logger.warning("artifact write failed: %s", path, exc_info=True)
 
 
 def _replace(tmp: Path, path: Path) -> None:
@@ -91,7 +91,7 @@ class BackgroundWriter:
                     fh.write(content)
                     fh.flush()
             except Exception:
-                logger.debug("artifact append failed: %s", p, exc_info=True)
+                logger.warning("artifact append failed: %s", p, exc_info=True)
 
         if self._sync:
             _append_line(path, line)

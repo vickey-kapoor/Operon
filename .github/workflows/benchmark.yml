@@ -228,6 +228,8 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Only the osworld cell: the called workflow mints a one-job runner on the VM with it (KAN-195). The benchmarked code never gets it.
+      RUNNER_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
 
   grounding:
     name: ${{ needs.parse.outputs.label }}

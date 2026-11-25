@@ -135,6 +135,7 @@ Superseded by KAN-184: paid runs are OSWorld and grounding cells only, so the ow
 - **KAN-115 A/B pending**: night 1 had baseline 21/21 ($0.55) and settle 20/21 ($0.59);
   the settle+note and planner arms run Sunday. Then compare pass rate and cost per arm
   and report; recommendation so far is to keep the features off.
+- **KAN-208**: `OPERON_DONE_CHECK` (off) asks one independent check of the model's done; A/B with the `donecheck` bench cell word.
 - **KAN-116 A/B**: compare the `expect` arm with the KAN-115 `off` arm (pass rate,
   steps/cost, true catches vs false alarms in `expect_check.json`).
 - **OSWorld follow-ups**: full run was 21/25 ($3.11, Gemini thin). Open: the 2c1ebcd7

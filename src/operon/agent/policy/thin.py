@@ -11,6 +11,10 @@ rule-based "full" harness; this is the only harness):
 - ``ThinRecovery`` always hands the next step back to the model; the run's step
   budget and the model's own "done" are the only stops.
 
+With ``OPERON_DONE_CHECK`` on (experimental, KAN-208) the loop asks one independent check of a
+"done" (``agent/done_check.py``). A rejection is only a hint on the next step: the model's
+action is never replaced, and after two checks the model's done stands.
+
 Safety gates (trust gate, file roots, coordinate-thrash pause, max steps) stay in
 the loop.
 """
@@ -65,7 +69,8 @@ class OwnDoneVerifier(VerifierService):
     decide success afterwards, which makes a false success a clean metric. Every other
     step passes through: a failed action is reported to the model as its tool result by
     the backend, not retried here. A ``fail`` (rationale starting with ``gave_up_prefix``)
-    ends the run as not done."""
+    ends the run as not done. (With ``OPERON_DONE_CHECK`` on, the loop may ask one independent
+    check of a "done" after this verdict; see ``agent/done_check.py``.)"""
 
     def __init__(self, *, gave_up_prefix: str = "Model gave up: ") -> None:
         self.gave_up_prefix = gave_up_prefix

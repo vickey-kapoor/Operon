@@ -330,6 +330,7 @@ installed with pip (`OPERON_RUNTIME_ROOT`, `OPERON_RUNS_ROOT`):
     policy_decision.json  verification_result.json  perception_parsed.json
     execution_trace.json  progress_trace.json  step_timing.json
     task_note.txt   (when that feature is on)
+    done_check.json  (when OPERON_DONE_CHECK asked for an independent check of a done)
 ```
 
 Memory is stored under `memory/` when enabled by the store:
@@ -388,6 +389,7 @@ Experimental work ships behind an env flag that defaults to off. Defaults are fr
 | `OPERON_FOCUS_GUARD` | off | Skip the first action after a capture if focus was stolen (Windows) |
 | `OPERON_DPI_AWARE` | off | Per-monitor-v2 DPI awareness before `pyautogui` loads (Windows) |
 | `OPERON_PLANNER` / `OPERON_PLANNER_MODEL` | off / `gemini-3.5-flash-lite` | One text-only plan at task start |
+| `OPERON_DONE_CHECK` / `OPERON_DONE_CHECK_MODEL` | off / `gemini-3.5-flash` | One independent check of the model's done: a rejection is a hint, at most 2 checks per run |
 | `OPERON_TASK_NOTE` / `OPERON_TASK_NOTE_MAX_ITEMS` | off / 8 | A running task-state note with each step, no model call |
 | `OPERON_CHECKPOINTS` | off | Mark interrupted runs at startup; resume on request |
 | `OPERON_PROGRESS_REVISIT` | off | A repeated action counts as progress only if its after-screen is new; the thin harness only records the loop in `progress_trace.json` |

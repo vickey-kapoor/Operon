@@ -29,6 +29,9 @@ class AgentState(StrictModel):
     action_history: list[ExecutedAction] = Field(default_factory=list)
     verification_history: list[VerificationResult] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
+    # KAN-208: the independent checks of the model's "done" (OPERON_DONE_CHECK): how many ran
+    # ("checked") and how they came out ("accepted", "rejected", "error").
+    done_checks: dict[str, int] = Field(default_factory=dict)
     # KAN-158: errors the loop caught and carried on from, by site (see
     # AgentLoop._recovered); reported per task by the live benchmarks.
     recovered_errors: dict[str, int] = Field(default_factory=dict)

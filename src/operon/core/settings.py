@@ -145,6 +145,10 @@ class Settings(BaseModel):
     # resumed from the current screen on request (KAN-80).
     checkpoints: bool = _env_field("OPERON_CHECKPOINTS", False)
     planner_model: str = _env_field("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite")
+    # One independent check of the model's "done": a model that sees the final screen can send
+    # the run back to work, at most twice per run (KAN-208).
+    done_check: bool = _env_field("OPERON_DONE_CHECK", False)
+    done_check_model: str = _env_field("OPERON_DONE_CHECK_MODEL", "gemini-3.5-flash")
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)
     # The trust gate reads the text under a click from the screenshot (KAN-163; needs [ocr]).
     click_text: bool = _env_field("OPERON_CLICK_TEXT", False)
@@ -412,6 +416,8 @@ class _Parser:
             task_note_max_items=min(50, max(1, self.number("OPERON_TASK_NOTE_MAX_ITEMS", "8", int, fatal=False))),
             checkpoints=self.flag("OPERON_CHECKPOINTS", "off"),
             planner_model=self.or_default("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite"),
+            done_check=self.flag("OPERON_DONE_CHECK", "off"),
+            done_check_model=self.or_default("OPERON_DONE_CHECK_MODEL", "gemini-3.5-flash"),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},
             click_text=self.flag("OPERON_CLICK_TEXT", "off"),
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),

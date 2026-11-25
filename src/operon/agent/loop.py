@@ -18,6 +18,7 @@ from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.backends.base import ModelBlockedError
 from operon.agent.done_check import (
+    DONE_CHECK_DEADLINE_S,
     DONE_CHECK_USAGE_FILE,
     MAX_DONE_CHECKS,
     DoneCheckResult,
@@ -1183,11 +1184,19 @@ class AgentLoop:
                 result = DoneCheckResult("error", error="no screenshot to check")
             else:
                 client = self.done_check_client
+                result = None
                 if client is None:
                     from operon.clients.gemini import GeminiHttpClient
 
-                    client = GeminiHttpClient(model=settings.done_check_model, timeout_seconds=15.0, max_retries=0)
-                result = await check_done(client, ctx.state.intent, closing, screenshot)
+                    try:
+                        # Just under the check's overall deadline, so the HTTP call ends first.
+                        client = GeminiHttpClient(
+                            model=settings.done_check_model, timeout_seconds=DONE_CHECK_DEADLINE_S - 2, max_retries=0
+                        )
+                    except Exception as exc:  # noqa: BLE001 - e.g. Vertex on without a project
+                        result = DoneCheckResult("error", error=f"could not build the checker: {exc}")
+                if result is None:
+                    result = await check_done(client, ctx.state.intent, closing, screenshot)
             ctx.record_stage("done_check", t0)
             counts[result.verdict] = counts.get(result.verdict, 0) + 1
             self._save_done_check(ctx, result, counts["checked"], closing, screenshot)

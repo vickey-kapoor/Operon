@@ -299,3 +299,19 @@ def test_old_state_files_load_without_done_checks() -> None:
     dumped = state.model_dump(mode="json")
     dumped.pop("done_checks")
     assert AgentState.model_validate(dumped).done_checks == {}
+
+
+def test_a_checker_that_cannot_be_built_is_a_recorded_error(monkeypatch, tmp_path: Path) -> None:
+    """Building the default client can fail (e.g. Vertex on without a project): the done stands, as an error."""
+    import operon.clients.gemini as gemini
+
+    def cannot_build(*args, **kwargs):
+        raise ValueError("no project")
+
+    monkeypatch.setattr(gemini, "GeminiHttpClient", cannot_build)
+    result, state, _ = _run(monkeypatch, tmp_path, _scenario(), None)
+    assert result.status == "succeeded"
+    assert state["done_checks"] == {"checked": 1, "error": 1}
+    assert state["verification_history"][-1]["unchecked"] is True
+    (path,) = _check_files(tmp_path)
+    assert "no project" in json.loads(path.read_text(encoding="utf-8"))["error"]

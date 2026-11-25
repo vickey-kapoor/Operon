@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from evals.fixture_site import FixtureSite
+from tests.e2e_artifacts import ENV_VAR, save_run_artifacts
 
 from .site import TestSite
 
@@ -56,3 +57,18 @@ def site(_site_server):
 @pytest.fixture
 def app(_site_server, site):
     return _site_server[1]
+
+
+@pytest.fixture(autouse=True)
+def _save_e2e_evidence(request):
+    """Opt-in (KAN-213): copy this test's screenshots and run files when OPERON_E2E_ARTIFACTS_DIR is set.
+
+    Set only in CI. The screenshots are the fixture site, never a real screen.
+    """
+    # Resolve tmp_path before the test runs so it is still alive at teardown.
+    tmp = None
+    if os.environ.get(ENV_VAR) and "tmp_path" in request.fixturenames:
+        tmp = request.getfixturevalue("tmp_path")
+    yield
+    if tmp is not None:
+        save_run_artifacts(tmp, request.node.nodeid)

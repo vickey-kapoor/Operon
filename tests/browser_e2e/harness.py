@@ -10,9 +10,11 @@ in ``tests/desktop_e2e``. The thin harness has no second model: the run ends on 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from operon.agent.backends.browser_computer_use import BrowserComputerUseBackend
 from operon.agent.loop import AgentLoop
@@ -20,6 +22,7 @@ from operon.agent.perception.capture import ScreenCaptureService
 from operon.agent.tools import enabled_tools, function_declarations
 from operon.api.runtime.loops import _loop_layers
 from operon.api.runtime.services import RuntimeServices
+from operon.clients.gemini_computer_use import GeminiComputerUseHttpClient
 from operon.core.contracts.perception import Environment
 from operon.core.paths import prompts_dir
 from operon.executor.browser_native import NativeBrowserExecutor
@@ -115,14 +118,85 @@ class ScriptedClient:
         }
 
 
+# -- the model API boundary: the REAL Gemini HTTP client on an httpx.MockTransport -------------
+
+
+def _usage() -> dict:
+    return {"promptTokenCount": 100, "candidatesTokenCount": 10, "totalTokenCount": 110}
+
+
+def api_call(name: str, **args: Any) -> httpx.Response:
+    """A 200 generateContent reply with one function call."""
+    part = {"functionCall": {"name": name, "args": args}}
+    body = {"candidates": [{"content": {"role": "model", "parts": [part]}, "finishReason": "STOP"}],
+            "usageMetadata": _usage()}
+    return httpx.Response(200, json=body)
+
+
+def api_text(text: str, finish: str = "STOP") -> httpx.Response:
+    """A 200 reply with only text and the given finishReason (how the model says it is done)."""
+    body = {"candidates": [{"content": {"role": "model", "parts": [{"text": text}]}, "finishReason": finish}],
+            "usageMetadata": _usage()}
+    return httpx.Response(200, json=body)
+
+
+def api_status(code: int, retry_after: str | None = None) -> httpx.Response:
+    headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    return httpx.Response(code, headers=headers, text=f"scripted error {code}")
+
+
+def api_blocked(reason: str = "SAFETY") -> httpx.Response:
+    """A 200 reply with no candidates and a promptFeedback blockReason."""
+    return httpx.Response(200, json={"promptFeedback": {"blockReason": reason}, "usageMetadata": _usage()})
+
+
+def count_inline_images(request_body: dict) -> int:
+    """How many inline screenshot parts a recorded generateContent request carried."""
+    return sum(
+        1
+        for content in request_body.get("contents", [])
+        for part in content.get("parts", [])
+        if "inline_data" in part or "inlineData" in part
+    )
+
+
+@dataclass
+class ApiLog:
+    """What the scripted API saw: each request's JSON body, in order."""
+
+    requests: list[dict] = field(default_factory=list)
+
+
+def _api_client(script: list[httpx.Response], log: ApiLog, tools: tuple[str, ...]) -> GeminiComputerUseHttpClient:
+    queue = list(script)
+    last = api_text("I cannot make progress.")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal last
+        log.requests.append(json.loads(request.content))
+        if queue:
+            last = queue.pop(0)
+        return last  # an exhausted script repeats its last reply, like ScriptedClient
+
+    return GeminiComputerUseHttpClient(
+        model="gemini-e2e",
+        api_key="fake-test-key",
+        api_base_url="http://gemini.invalid",
+        retry_backoff_seconds=0.0,
+        function_declarations=function_declarations(tools),
+        transport=httpx.MockTransport(handler),
+    )
+
+
 @dataclass
 class Result:
     status: RunStatus
     steps: int
-    client: ScriptedClient
+    client: Any  # ScriptedClient, or the real GeminiComputerUseHttpClient on the api path
     run_dir: Path
     state: Any  # the saved AgentState
     pauses: list[str] | None = None  # the text of each pause the run answered (on_pause)
+    api: ApiLog | None = None  # the requests the scripted API saw (api path only)
 
     @property
     def stop_reason(self) -> str | None:
@@ -141,14 +215,19 @@ async def run_script(
     *,
     start_url: str,
     max_steps: int = 12,
-    tools: bool = False,
+    tools: bool | str = False,
     permission_mode: str = "auto",
     on_pause: str | None = None,
+    api: list[httpx.Response] | None = None,
 ) -> Result:
     """Run ``intent`` through the real loop on headless Chromium.
 
     ``on_pause``: "approve" or "decline" answers each pause the run reaches (resume_run), as the
-    person would; None leaves a pause unanswered (the run stays waiting)."""
+    person would; None leaves a pause unanswered (the run stays waiting).
+
+    ``tools``: True enables the "on" tool set, "all" adds run_shell. ``api``: instead of
+    ``script``, serve these raw generateContent replies to the real Gemini HTTP client
+    (``Result.api`` records each request)."""
     executor = NativeBrowserExecutor(
         artifact_dir=tmp_path / "artifacts",
         viewport_width=VIEWPORT[0],
@@ -156,8 +235,10 @@ async def run_script(
         headless=True,
         record_video=False,
     )
-    tool_names = enabled_tools("on") if tools else ()
-    client = ScriptedClient(script, tools=tool_names)
+    tool_names = enabled_tools("all" if tools == "all" else "on") if tools else ()
+    log = ApiLog() if api is not None else None
+    client: Any = _api_client(api, log, tool_names) if api is not None and log is not None else ScriptedClient(
+        script, tools=tool_names)
     backend = BrowserComputerUseBackend(
         client=client,
         prompt_path=prompts_dir() / "browser_computer_use_prompt.txt",
@@ -197,6 +278,6 @@ async def run_script(
                 status = response.status
         await bg_writer.flush()
         state = await run_store.get_run(run.run_id)
-        return Result(status, steps, client, run_store.root_dir / run.run_id, state, pauses)
+        return Result(status, steps, client, run_store.root_dir / run.run_id, state, pauses, log)
     finally:
         await executor.aclose()

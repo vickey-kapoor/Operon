@@ -180,6 +180,10 @@ Add or update tests for changes involving:
 
 Prefer deterministic unit tests with mocked external dependencies.
 
+Free end-to-end regression tests (real loop, scripted model, $0) for past bug classes live in
+`tests/browser_e2e/test_model_api_regressions.py`, `tests/browser_e2e/test_safety_regressions.py` and
+`tests/desktop_e2e/test_input_regressions.py`. When you fix a bug of a new class, add its scenario there.
+
 Do not weaken assertions, bypass verification, or delete failing tests simply to make the suite pass.
 
 ### Live and integration tests
@@ -252,6 +256,7 @@ Pull requests should include:
 - Known limitations or risks
 - Related issues, where applicable
 - Screenshots or artifacts for relevant UI and desktop-behavior changes
+- Fill in `.github/pull_request_template.md`; its Proof section is required for a behavior change (section 10).
 
 Do not include unrelated generated files, temporary artifacts, or sensitive execution traces.
 
@@ -264,6 +269,9 @@ An implementation task is complete only when:
 - The requested behavior has been implemented.
 - Relevant architectural invariants remain intact.
 - Appropriate tests have been added or updated.
+- A bug fix adds a test that fails without the fix and passes with it. Where the bug shows through the real loop, put it in a free end-to-end suite (`tests/browser_e2e`, `tests/desktop_e2e`); otherwise an offline test.
+- A behavior change (anything under `src/`) shows its Proof in the PR (`.github/pull_request_template.md`): a named test that fails without the change, or the e2e evidence artifact.
+- A fix for a mistake caught in review, by Codex, or by a failed run adds its lesson: one line in `CLAUDE.md` "Lessons", or a guard in `tests/test_invariants.py` if code can check it.
 - Applicable validation has passed, or unexecuted/failed checks are clearly documented.
 - No unrelated changes have been introduced.
 - Security and configuration implications have been considered.

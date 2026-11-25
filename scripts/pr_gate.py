@@ -43,6 +43,8 @@ RISKY_PATTERNS: tuple[str, ...] = (
     "src/operon/agent/loop.py",
     "src/operon/agent/step_context.py",
     "src/operon/agent/control.py",
+    "src/operon/agent/actions/translation.py",  # atomic TYPE, confidence default
+    "src/operon/models/policy.py",  # ActionType / PolicyDecision used by the gates
     "src/operon/agent/backends/**",  # model adapters: what the model sees and may emit
     "src/operon/agent/tools/**",  # run_shell, http_get
     # Visual servo, scroll units and every process the model can start (the executors).
@@ -73,24 +75,15 @@ RISKY_PATTERNS: tuple[str, ...] = (
     "src/operon/cloud.py",
 )
 
-# Outside src/ the rule is the other way round (fail closed): a path is low-risk only when an allow
-# pattern matches and no exception does. Any dotfile or dot-directory is risky.
-LOW_ALLOW: tuple[str, ...] = ("docs/**", "*.md", "tests/**", "dashboard/**")
-LOW_EXCEPT: tuple[str, ...] = (
-    # Rules files and security policy (the .claude/ and .github/ dot-directories are risky anyway).
-    "claude.md",
-    "agents.md",
-    "security.md",
-    # Test defaults and the guards themselves, and the gate's own tests.
-    "conftest.py",
-    "tests/ci/**",
-    "tests/test_invariants.py",
-    # Dashboard dependencies and config.
-    "package*.json",
-    "vercel.json",
-    "next.config.*",
-    "*.config.*",
-)
+# Outside src/ the rule is the other way round (fail closed): a path is low-risk only when it is one of
+# the kinds below. Everything else is risky: any dotfile or dot-directory, any *.ini/*.cfg/*.toml, helper
+# modules and conftest.py under tests/ (pytest can load them as plugins), tests/ci/**, dashboard server
+# code, evals/**, scripts/**, docker/**, lock files.
+RISKY_NAMES: tuple[str, ...] = ("claude.md", "agents.md", "security.md", "conftest.py")
+RISKY_SUFFIXES: tuple[str, ...] = (".ini", ".cfg", ".toml")
+TEST_FILE_PATTERNS: tuple[str, ...] = ("test_*.py", "*_test.py")  # what pytest collects
+DASHBOARD_STATIC: tuple[str, ...] = ("dashboard/app.js", "dashboard/readme.md")
+
 
 # Checks that must be present and green on the head before a merge (the names are the CI job names).
 REQUIRED_CHECKS: tuple[str, ...] = (
@@ -122,11 +115,28 @@ def _matches(pattern: str, path: str) -> bool:
     return fnmatch.fnmatchcase(path, pattern)
 
 
-def _matches_anywhere(pattern: str, path: str) -> bool:
-    """A bare pattern (no "/") matches the file name at any depth; others match the whole path."""
-    if "/" in pattern:
-        return _matches(pattern, path)
-    return _matches(pattern, path.rsplit("/", 1)[-1])
+def _is_collected_test(path: str) -> bool:
+    return any(fnmatch.fnmatchcase(path.casefold().rsplit("/", 1)[-1], p) for p in TEST_FILE_PATTERNS)
+
+
+def _low_risk_kind(path: str) -> bool:
+    """Whether a non-src path (casefolded, no dot parts) is one of the allowed low-risk kinds."""
+    name = path.rsplit("/", 1)[-1]
+    if name in RISKY_NAMES or name.endswith(RISKY_SUFFIXES):
+        return False
+    if path.startswith("docs/") or name.endswith(".md"):
+        return True
+    if path.startswith("tests/"):
+        if path.startswith("tests/ci/") or path == "tests/test_invariants.py":
+            return False
+        if _is_collected_test(path) or name == "__init__.py":
+            return True
+        # Data files in a fixtures directory (never code: a .py file there could be loaded as a plugin).
+        return "/fixtures/" in path and not name.endswith(".py")
+    if path.startswith("dashboard/"):
+        static_page = path.count("/") == 1 and name.endswith(".html")
+        return static_page or name.endswith(".css") or path in DASHBOARD_STATIC
+    return False
 
 
 def is_risky_path(path: str) -> bool:
@@ -139,9 +149,7 @@ def is_risky_path(path: str) -> bool:
         return any(_matches(p, path) for p in RISKY_PATTERNS)
     if any(p.startswith(".") for p in parts):
         return True
-    if not any(_matches_anywhere(p, path) for p in LOW_ALLOW):
-        return True
-    return any(_matches_anywhere(p, path) for p in LOW_EXCEPT)
+    return not _low_risk_kind(path)
 
 
 def _is_test(path: str) -> bool:
@@ -163,9 +171,9 @@ def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
                 reasons.append(f"risky path: {name}")
         if f.status == "removed" and _is_test(f.filename):
             reasons.append(f"test file deleted: {f.filename}")
-        if f.status == "renamed" and f.previous_filename and _is_test(f.previous_filename):
-            if not _is_test(f.filename):
-                reasons.append(f"test file moved out of tests/: {f.previous_filename}")
+        if f.status == "renamed" and f.previous_filename and _is_collected_test(f.previous_filename):
+            if not _is_collected_test(f.filename):
+                reasons.append(f"test file renamed to a non-test: {f.previous_filename}")
     reasons = list(dict.fromkeys(reasons))
     return (RISKY if reasons else LOW), reasons or ["only docs, tests and non-gate source changed"]
 

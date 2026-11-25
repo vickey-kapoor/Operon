@@ -29,7 +29,29 @@ OLD = "b" * 40
     [
         ([CF("docs/architecture.md")], False, "low-risk"),
         ([CF("tests/agent/test_x.py", "added"), CF("README.md"), CF("docs/a/b.png")], False, "low-risk"),
-        ([CF("dashboard/app.js"), CF("dashboard/README.md")], False, "low-risk"),
+        ([CF("dashboard/app.js"), CF("dashboard/README.md"), CF("dashboard/index.html")], False, "low-risk"),
+        ([CF("dashboard/style.css"), CF("dashboard/static/x.css")], False, "low-risk"),
+        ([CF("tests/executor/test_a.py"), CF("tests/x_test.py"), CF("tests/agent/__init__.py")], False, "low-risk"),
+        ([CF("tests/fixtures/site/page.html"), CF("tests/fixtures/data.json")], False, "low-risk"),
+        ([CF("tests/pytest.ini")], False, "risky"),
+        ([CF("tests/setup.cfg")], False, "risky"),
+        ([CF("tests/tox.ini")], False, "risky"),
+        ([CF("tests/pyproject.toml")], False, "risky"),
+        ([CF("tests/x.py")], False, "risky"),
+        ([CF("tests/browser_e2e/harness.py")], False, "risky"),
+        ([CF("tests/fixtures/plugin.py")], False, "risky"),
+        ([CF("tests/fixtures/pytest.ini")], False, "risky"),
+        ([CF("docs/tox.ini")], False, "risky"),
+        ([CF("dashboard/api/blob.js")], False, "risky"),
+        ([CF("dashboard/server/db.js")], False, "risky"),
+        ([CF("dashboard/scripts/blob-upload.mjs")], False, "risky"),
+        ([CF("dashboard/dev-server.js")], False, "risky"),
+        ([CF("dashboard/api/page.html")], False, "risky"),
+        ([CF("tests/agent/test_new.py", "renamed", "tests/agent/test_old.py")], False, "low-risk"),
+        ([CF("tests/agent/helper.py", "renamed", "tests/agent/test_old.py")], False, "risky"),
+        ([CF("docs/old_test.md", "renamed", "tests/agent/x_test.py")], False, "risky"),
+        ([CF("src/operon/agent/actions/translation.py")], False, "risky"),
+        ([CF("src/operon/models/policy.py")], False, "risky"),
         ([CF("tests/ci/test_y.py")], False, "risky"),
         ([CF("tests/executor/conftest.py")], False, "risky"),
         ([CF("tests/test_invariants.py")], False, "risky"),
@@ -264,6 +286,8 @@ def test_safety_gate_modules_are_listed_explicitly() -> None:
         "src/operon/api/stream_tokens.py",
         "src/operon/api/routes/browser.py",
         "src/operon/agent/backends/base.py",
+        "src/operon/agent/actions/translation.py",
+        "src/operon/models/policy.py",
         "src/operon/cli.py",
         "src/operon/cloud.py",
         "src/operon/clients/gemini.py",
@@ -291,6 +315,16 @@ def test_workflow_uses_pull_request_and_pinned_actions() -> None:
     assert checkouts
     assert all(s["with"]["persist-credentials"] is False for s in checkouts)
     assert all("permissions" in j for j in wf["jobs"].values())
+
+
+def test_only_main_can_merge() -> None:
+    """The sweep runs main's workflow and script only (schedule and dispatch both set github.ref)."""
+    assert _wf()["jobs"]["sweep"]["if"].startswith("github.ref == 'refs/heads/main' &&")
+
+
+def test_daily_note_searches_merged_by_date() -> None:
+    run = next(s["run"] for s in _wf()["jobs"]["daily"]["steps"] if "run" in s)
+    assert 'gh pr list --repo "$REPO" --state merged --search "merged:>=$cutoff"' in run
 
 
 def test_merge_is_behind_the_variable_and_pinned_to_the_head() -> None:

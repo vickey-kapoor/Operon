@@ -56,7 +56,7 @@ jobs:
 
   sweep:
     name: Sweep and merge
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '*/30 * * * *')
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '*/30 * * * *'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -131,7 +131,7 @@ jobs:
           set -euo pipefail
           cutoff=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
           # Auto-merged: merged in the last 24 h by the workflow's own token (not by a label).
-          merged=$(gh pr list --repo "$REPO" --state merged --limit 100 --json number,title,mergedAt,mergedBy \
+          merged=$(gh pr list --repo "$REPO" --state merged --search "merged:>=$cutoff" --limit 100 --json number,title,mergedAt,mergedBy \
             | jq -r --arg c "$cutoff" '[.[] | select(.mergedAt >= $c and ((.mergedBy.login // "") | startswith("github-actions")))
                 | "- #\(.number) \(.title | gsub("[^A-Za-z0-9 .,:()_/-]"; ""))"] | join("\n")')
           # Would merge: a trial note (operon-gate-trial comment) was posted in the last 24 h.

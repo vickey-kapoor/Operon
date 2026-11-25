@@ -63,6 +63,7 @@ jobs:
       contents: write # the squash merge
       pull-requests: write
       checks: read
+      statuses: read
     concurrency:
       group: pr-gate-sweep
       cancel-in-progress: false
@@ -92,22 +93,23 @@ jobs:
             [ "${#sha}" -eq 40 ] || { echo "::warning::PR $n: odd head sha, skipped"; continue; }
             gh api --paginate "repos/$REPO/pulls/$n/files" | jq -s 'add // []' > "$d/files.json"
             gh api --paginate "repos/$REPO/commits/$sha/check-runs" --jq '.check_runs[]' | jq -s '.' > "$d/checks.json"
+            gh api "repos/$REPO/commits/$sha/status" > "$d/status.json"
             gh api --paginate "repos/$REPO/issues/$n/comments" | jq -s 'add // []' > "$d/comments.json"
             verdict=$(python3 scripts/pr_gate.py merge-ready --pr "$d/pr.json" --files "$d/files.json" \
-              --checks "$d/checks.json" --comments "$d/comments.json" \
+              --checks "$d/checks.json" --status "$d/status.json" --comments "$d/comments.json" \
               --ignore-check "Label PR" --ignore-check "Sweep and merge" 2>"$d/why.txt") || verdict=error
             cat "$d/why.txt"
             [ "$verdict" = ready ] || continue
             if [ "$AUTO_MERGE" = on ]; then
               if gh pr merge "$n" --repo "$REPO" --squash --match-head-commit "$sha"; then
-                gh pr edit "$n" --repo "$REPO" --add-label auto-merged || true
+                gh pr edit "$n" --repo "$REPO" --add-label auto-merged || echo "::warning::PR $n: merged, but adding the auto-merged label failed"
               else
                 echo "::warning::PR $n: merge refused (head moved or branch rules); next sweep retries"
               fi
             elif ! grep -q "operon-gate-trial: $sha" "$d/comments.json"; then
               printf '<!-- operon-gate-trial: %s -->\nTrial week: would auto-merge this PR (OPERON_AUTO_MERGE is not on).\n' "$sha" > "$d/note.md"
               gh pr comment "$n" --repo "$REPO" --body-file "$d/note.md"
-              gh pr edit "$n" --repo "$REPO" --add-label gate-would-merge || true
+              gh pr edit "$n" --repo "$REPO" --add-label gate-would-merge || echo "::warning::PR $n: adding the gate-would-merge label failed"
             fi
           done < "$work/prs"
 
@@ -128,11 +130,14 @@ jobs:
         run: |
           set -euo pipefail
           cutoff=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          lines='[.[] | "- #\(.number) \(.title | gsub("[^A-Za-z0-9 .,:()_/-]"; ""))"] | join("\n")'
-          merged=$(gh pr list --repo "$REPO" --state merged --label auto-merged --limit 100 --json number,title,mergedAt \
-            | jq -r --arg c "$cutoff" "[.[] | select(.mergedAt >= \$c)] | $lines")
-          would=$(gh pr list --repo "$REPO" --state all --label gate-would-merge --limit 100 --json number,title,updatedAt \
-            | jq -r --arg c "$cutoff" "[.[] | select(.updatedAt >= \$c)] | $lines")
+          # Auto-merged: merged in the last 24 h by the workflow's own token (not by a label).
+          merged=$(gh pr list --repo "$REPO" --state merged --limit 100 --json number,title,mergedAt,mergedBy \
+            | jq -r --arg c "$cutoff" '[.[] | select(.mergedAt >= $c and ((.mergedBy.login // "") | startswith("github-actions")))
+                | "- #\(.number) \(.title | gsub("[^A-Za-z0-9 .,:()_/-]"; ""))"] | join("\n")')
+          # Would merge: a trial note (operon-gate-trial comment) was posted in the last 24 h.
+          would=$(gh api --paginate "repos/$REPO/issues/comments?since=$cutoff&per_page=100" \
+            | jq -rs --arg c "$cutoff" '[.[][] | select(.created_at >= $c and ((.body // "") | contains("operon-gate-trial:")))
+                | "- #\(.issue_url | split("/") | last)"] | unique | join("\n")')
           mode=trial
           [ "$AUTO_MERGE" = on ] && mode=on
           note=$(printf 'PR gate (auto-merge: %s), last 24 h\nAuto-merged:\n%s\nWould have merged (trial):\n%s\n' \

@@ -28,7 +28,33 @@ OLD = "b" * 40
     ("files", "fork", "expected"),
     [
         ([CF("docs/architecture.md")], False, "low-risk"),
-        ([CF("tests/agent/test_x.py", "added"), CF("tests/ci/test_y.py")], False, "low-risk"),
+        ([CF("tests/agent/test_x.py", "added"), CF("README.md"), CF("docs/a/b.png")], False, "low-risk"),
+        ([CF("dashboard/app.js"), CF("dashboard/README.md")], False, "low-risk"),
+        ([CF("tests/ci/test_y.py")], False, "risky"),
+        ([CF("tests/executor/conftest.py")], False, "risky"),
+        ([CF("tests/test_invariants.py")], False, "risky"),
+        ([CF("dashboard/package.json")], False, "risky"),
+        ([CF("dashboard/vercel.json")], False, "risky"),
+        ([CF("dashboard/postcss.config.js")], False, "risky"),
+        ([CF("evals/harness.py")], False, "risky"),
+        ([CF("scripts/research_scan.py")], False, "risky"),
+        ([CF("docker/Dockerfile")], False, "risky"),
+        ([CF(".gitleaks.toml")], False, "risky"),
+        ([CF(".bandit-baseline.json")], False, "risky"),
+        ([CF("pyproject.toml")], False, "risky"),
+        ([CF("uv.lock")], False, "risky"),
+        ([CF("docs/.hidden.md")], False, "risky"),
+        ([CF("SECURITY.md")], False, "risky"),
+        ([CF("docs/CLAUDE.md")], False, "risky"),
+        ([CF("CLAUDE.MD")], False, "risky"),
+        ([CF(".GitHub/x.yml")], False, "risky"),
+        ([CF("src/operon/Executor/desktop.py")], False, "risky"),
+        ([CF("Tests/test_old.py", "removed")], False, "risky"),
+        ([CF("some_new_top_level.txt")], False, "risky"),
+        ([CF("src/operon/environments/live.py")], False, "risky"),
+        ([CF("src/operon/api/routes/browser.py")], False, "risky"),
+        ([CF("src/operon/clients/gemini.py")], False, "risky"),
+        ([CF("src/operon/cli.py")], False, "risky"),
         ([CF("src/operon/agent/actions/zoom.py")], False, "low-risk"),
         ([CF(".github/workflows/ci.yml")], False, "risky"),
         ([CF("docs/a.md"), CF("src/operon/executor/desktop.py")], False, "risky"),
@@ -76,15 +102,16 @@ def _codex(sha: str = HEAD, status: str = "completed", unresolved: bool = False)
     }
 
 
-def _marker(sha: str = HEAD, assoc: str = "OWNER") -> dict[str, Any]:
+def _marker(sha: str = HEAD, assoc: str = "OWNER", kind: str = "User") -> dict[str, Any]:
     return {
-        "user": {"login": "someone"},
+        "user": {"login": "someone", "type": kind},
         "author_association": assoc,
         "body": f"<!-- operon-verifier: PASS {sha} -->",
     }
 
 
-GOOD_CHECKS = [{"name": "Test", "status": "completed", "conclusion": "success"}]
+GOOD_CHECKS = [{"name": n, "status": "completed", "conclusion": "success"} for n in gate.REQUIRED_CHECKS]
+GOOD_STATUS = {"state": "pending", "statuses": []}  # no statuses at all
 
 
 def _ready(**kw: Any) -> tuple[bool, list[str]]:
@@ -94,6 +121,7 @@ def _ready(**kw: Any) -> tuple[bool, list[str]]:
         kw.get("comments", [_codex(), _marker()]),
         kw.get("ignore", ()),
         risk=kw.get("risk", "low-risk"),
+        status=kw.get("status", GOOD_STATUS),
     )
 
 
@@ -116,9 +144,16 @@ def test_skipped_and_neutral_checks_count_as_good() -> None:
         ({"comments": [_codex(unresolved=True), _marker()]}, "unresolved"),
         ({"comments": [_codex(status="in_progress"), _marker()]}, "status"),
         ({"comments": [_marker()]}, "no Codex"),
-        ({"checks": [{"name": "Test", "status": "in_progress", "conclusion": None}]}, "still running"),
-        ({"checks": [{"name": "Test", "status": "completed", "conclusion": "failure"}]}, "failure"),
+        ({"checks": GOOD_CHECKS + [{"name": "X", "status": "in_progress", "conclusion": None}]}, "still running"),
+        ({"checks": GOOD_CHECKS + [{"name": "X", "status": "completed", "conclusion": "failure"}]}, "failure"),
         ({"checks": []}, "no check runs"),
+        ({"checks": GOOD_CHECKS[1:]}, "required check missing: Test (Python 3.14)"),
+        ({"checks": [{**GOOD_CHECKS[0], "conclusion": "skipped"}, *GOOD_CHECKS[1:]]}, "required check not successful"),
+        ({"checks": [{**GOOD_CHECKS[0], "conclusion": "failure"}, *GOOD_CHECKS[1:]]}, "required check not successful"),
+        ({"status": {"state": "pending", "statuses": [{"state": "pending"}]}}, "combined status"),
+        ({"status": {"state": "failure", "statuses": [{"state": "failure"}]}}, "combined status"),
+        ({"status": None}, "combined status not read"),
+        ({"comments": [_codex(), _marker(kind="Bot")]}, "verifier"),
         ({"comments": [_codex()]}, "verifier"),
         ({"comments": [_codex(), _marker(assoc="NONE")]}, "verifier"),
         ({"comments": [_codex(), _marker(assoc="CONTRIBUTOR")]}, "verifier"),
@@ -133,6 +168,10 @@ def test_not_ready(kw: dict[str, Any], reason: str) -> None:
     ok, why = _ready(**kw)
     assert not ok
     assert any(reason in w for w in why), why
+
+
+def test_a_successful_status_is_ready() -> None:
+    assert _ready(status={"state": "success", "statuses": [{"state": "success"}]})[0]
 
 
 def test_the_gates_own_check_is_ignored() -> None:
@@ -183,7 +222,10 @@ def test_cli_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     comments.write_text(json.dumps([_codex(), _marker()]))
     assert gate.main(["classify", "--files", str(files)]) == 0
     assert capsys.readouterr().out.strip() == "low-risk"
+    status = tmp_path / "status.json"
+    status.write_text(json.dumps({"state": "success", "statuses": [{"state": "success"}]}))
     args = ["merge-ready", "--pr", str(pr), "--files", str(files), "--checks", str(checks)]
+    args += ["--status", str(status)]
     assert gate.main([*args, "--comments", str(comments)]) == 0
     assert capsys.readouterr().out.strip() == "ready"
     comments.write_text(json.dumps([_codex()]))
@@ -203,10 +245,7 @@ def _tracked_paths() -> list[str]:
 @pytest.mark.parametrize("pattern", gate.RISKY_PATTERNS)
 def test_every_risky_pattern_matches_something(pattern: str) -> None:
     """A renamed safety-gate module must not silently fall off the risky list."""
-    if pattern.startswith(".claude/"):
-        assert (ROOT / ".claude" / "agents").is_dir()
-        return
-    assert any(gate.is_risky_path(p) and gate._matches(pattern, p) for p in _tracked_paths()), pattern
+    assert any(gate._matches(pattern, p) for p in _tracked_paths()), pattern
 
 
 def test_safety_gate_modules_are_listed_explicitly() -> None:
@@ -218,6 +257,17 @@ def test_safety_gate_modules_are_listed_explicitly() -> None:
         "src/operon/executor/linux_desktop.py",
         "src/operon/core/urls.py",  # is_web_url
         "src/operon/core/launch_env.py",
+        "src/operon/environments/__init__.py",
+        "src/operon/core/runtime.py",
+        "src/operon/agent/control.py",
+        "src/operon/api/ws_stream.py",
+        "src/operon/api/stream_tokens.py",
+        "src/operon/api/routes/browser.py",
+        "src/operon/agent/backends/base.py",
+        "src/operon/cli.py",
+        "src/operon/cloud.py",
+        "src/operon/clients/gemini.py",
+        "src/operon/browser/manager.py",
     ):
         assert (ROOT / path).is_file(), path
         assert gate.is_risky_path(path), path
@@ -235,7 +285,7 @@ def test_workflow_uses_pull_request_and_pinned_actions() -> None:
     assert "pull_request_target" not in text.replace("Never pull_request_target", "")
     wf = _wf()
     assert "pull_request" in wf[True]  # YAML reads the key `on` as True
-    for line in re.findall(r"uses: (\S+)", text):
+    for line in re.findall(r"^\s*- uses: (\S+)", text, flags=re.MULTILINE):
         assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", line), line
     checkouts = [s for j in wf["jobs"].values() for s in j["steps"] if "checkout" in s.get("uses", "")]
     assert checkouts

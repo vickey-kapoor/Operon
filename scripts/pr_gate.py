@@ -31,52 +31,75 @@ RISKY = "risky"
 # The files API stops at 3000 entries; a PR that big is never auto-merged.
 MAX_FILES = 3000
 
-# Paths a human must merge. A pattern ending in "/**" is a directory prefix; anything else is an
-# fnmatch pattern over the repo-relative posix path. tests/ci/test_pr_gate.py checks that every entry
-# matches something, so a rename of a safety-gate module cannot silently drop it from the list.
+# Inside src/ everything is low-risk EXCEPT these (a denylist). A pattern ending in "/**" is a directory
+# prefix; anything else is an fnmatch pattern over the repo-relative posix path. Matching is
+# case-insensitive. tests/ci/test_pr_gate.py checks that every entry matches a real file, so a rename of
+# a safety-gate module cannot silently drop it from the list.
 RISKY_PATTERNS: tuple[str, ...] = (
-    # CI, workflows, agent definitions and the rules themselves.
-    ".github/**",
-    ".claude/**",
-    "CLAUDE.md",
-    "AGENTS.md",
-    ".env.example",
-    "pyproject.toml",
-    "uv.lock",
-    "dashboard/package*.json",
-    "docker/**",
-    "scripts/**",  # includes this gate
-    "tests/conftest.py",  # the safe-mode / strict-errors / no-auth test defaults
-    "tests/test_invariants.py",
-    # The harness and the safety gates: trust gate and permission modes (trust_gate.py), file guard,
-    # OCR trust gate, confidence gate, coordinate-thrash pause, max steps and secret-type gate (loop.py).
+    # The harness and the safety gates: trust gate and permission modes (trust_gate.py), file guard.
+    # OCR trust gate, coordinate-thrash pause, max steps and secret-type gate live in loop.py; the
+    # confidence gate in loop.py and control.py.
     "src/operon/agent/policy/**",
     "src/operon/agent/loop.py",
     "src/operon/agent/step_context.py",
+    "src/operon/agent/control.py",
+    "src/operon/agent/backends/**",  # model adapters: what the model sees and may emit
     "src/operon/agent/tools/**",  # run_shell, http_get
     # Visual servo, scroll units and every process the model can start (the executors).
     "src/operon/executor/**",
-    # is_web_url, launch_env, settings, secrets and keys.
+    "src/operon/environments/**",  # the desktop machine the run drives
+    # is_web_url, launch_env, settings, runtime state, secrets and keys.
     "src/operon/core/urls.py",
     "src/operon/core/launch_env.py",
     "src/operon/core/settings.py",
+    "src/operon/core/runtime.py",
     "src/operon/core/vault.py",
     "src/operon/core/keystore.py",
     "src/operon/secrets_command.py",
     "src/operon/keys_command.py",
-    # Permission-mode fields, auth, CORS and per-environment wiring.
+    # Permission-mode fields, auth, CORS, streaming, routes, entry points and per-environment wiring.
     "src/operon/models/common.py",
     "src/operon/models/state.py",
     "src/operon/api/auth.py",
     "src/operon/api/server.py",
     "src/operon/api/frontdoor.py",
+    "src/operon/api/ws_stream.py",
+    "src/operon/api/stream_tokens.py",
+    "src/operon/api/routes/**",
     "src/operon/api/runtime/services.py",
-    # Evals that start paid runs.
-    "evals/bench*.py",
-    "evals/osworld*",
-    "evals/grounding*.py",
-    "evals/live_*.py",
-    "evals/judge_check.py",
+    "src/operon/browser/manager.py",
+    "src/operon/clients/**",
+    "src/operon/cli.py",
+    "src/operon/cloud.py",
+)
+
+# Outside src/ the rule is the other way round (fail closed): a path is low-risk only when an allow
+# pattern matches and no exception does. Any dotfile or dot-directory is risky.
+LOW_ALLOW: tuple[str, ...] = ("docs/**", "*.md", "tests/**", "dashboard/**")
+LOW_EXCEPT: tuple[str, ...] = (
+    # Rules files and security policy (the .claude/ and .github/ dot-directories are risky anyway).
+    "claude.md",
+    "agents.md",
+    "security.md",
+    # Test defaults and the guards themselves, and the gate's own tests.
+    "conftest.py",
+    "tests/ci/**",
+    "tests/test_invariants.py",
+    # Dashboard dependencies and config.
+    "package*.json",
+    "vercel.json",
+    "next.config.*",
+    "*.config.*",
+)
+
+# Checks that must be present and green on the head before a merge (the names are the CI job names).
+REQUIRED_CHECKS: tuple[str, ...] = (
+    "Test (Python 3.14)",
+    "Test (Windows, Python 3.14)",
+    "Lint",
+    "Type check",
+    "Browser end to end (Chromium)",
+    "Desktop (Linux container)",
 )
 
 OWNER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
@@ -93,21 +116,36 @@ class ChangedFile:
 
 
 def _matches(pattern: str, path: str) -> bool:
+    pattern, path = pattern.casefold(), path.casefold()
     if pattern.endswith("/**"):
         return path.startswith(pattern[:-2])
     return fnmatch.fnmatchcase(path, pattern)
 
 
+def _matches_anywhere(pattern: str, path: str) -> bool:
+    """A bare pattern (no "/") matches the file name at any depth; others match the whole path."""
+    if "/" in pattern:
+        return _matches(pattern, path)
+    return _matches(pattern, path.rsplit("/", 1)[-1])
+
+
 def is_risky_path(path: str) -> bool:
-    path = path.replace("\\", "/")
+    path = path.replace("\\", "/").casefold()
+    parts = path.split("/")
     # A path with empty, "." or ".." parts is not one we can reason about.
-    if any(p in ("", ".", "..") for p in path.split("/")):
+    if any(p in ("", ".", "..") for p in parts):
         return True
-    return any(_matches(p, path) for p in RISKY_PATTERNS)
+    if parts[0] == "src":
+        return any(_matches(p, path) for p in RISKY_PATTERNS)
+    if any(p.startswith(".") for p in parts):
+        return True
+    if not any(_matches_anywhere(p, path) for p in LOW_ALLOW):
+        return True
+    return any(_matches_anywhere(p, path) for p in LOW_EXCEPT)
 
 
 def _is_test(path: str) -> bool:
-    return path.startswith("tests/")
+    return path.casefold().startswith("tests/")
 
 
 def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
@@ -161,8 +199,10 @@ def merge_ready(
     ignore_checks: Iterable[str] = (),
     *,
     risk: str | None = None,
+    status: dict[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:
-    """Whether the gate may merge ``pr``. ``pr`` is a pulls API object; ``checks`` the head's check runs.
+    """Whether the gate may merge ``pr``. ``pr`` is a pulls API object; ``checks`` the head's check runs;
+    ``status`` the head's combined status (the older status API, which check runs do not cover).
 
     ``risk`` is a fresh classification of the PR's files; when given it must be low-risk too.
     """
@@ -190,6 +230,19 @@ def merge_ready(
         elif c.get("conclusion") not in GOOD_CONCLUSIONS:
             why.append(f"check {c.get('conclusion')}: {c.get('name')}")
 
+    by_name = {c.get("name"): c for c in relevant}
+    for name in REQUIRED_CHECKS:
+        run = by_name.get(name)
+        if run is None:
+            why.append(f"required check missing: {name}")
+        elif run.get("status") == "completed" and run.get("conclusion") != "success":
+            why.append(f"required check not successful: {name}")
+
+    if status is None:
+        why.append("combined status not read")
+    elif status.get("statuses") and status.get("state") != "success":
+        why.append(f"combined status is {status.get('state')!r}")
+
     state = _find_codex_state(comments)
     if state is None:
         why.append("no Codex review summary")
@@ -203,6 +256,7 @@ def merge_ready(
 
     marked = any(
         c.get("author_association") in OWNER_ASSOCIATIONS
+        and (c.get("user") or {}).get("type") == "User"
         and any(m.lower() == head.lower() for m in VERIFIER_RE.findall(c.get("body") or ""))
         for c in comments
     )
@@ -243,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--files", required=True)
     m.add_argument("--checks", required=True)
     m.add_argument("--comments", required=True)
+    m.add_argument("--status", required=True)
     m.add_argument("--ignore-check", action="append", default=[])
     a = ap.parse_args(argv)
 
@@ -263,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         _load(a.comments),
         a.ignore_check,
         risk=risk,
+        status=_load(a.status),
     )
     verdict = "ready" if ok else "not-ready"
     _report(verdict, why, f"Merge gate for #{pr.get('number')}")

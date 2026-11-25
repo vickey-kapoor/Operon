@@ -1049,6 +1049,9 @@ class AgentLoop:
             if hasattr(self.executor, "batch_child_check"):
                 self.executor.batch_child_check = None
         _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{ctx.record_stage('execute', _t0):.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
+        # An executor that took no after screenshot (a stop, a failed action) leaves artifact_path
+        # empty; only a step that really captured one may name step_N/after.png in its log (KAN-218).
+        ctx.after_captured = executed_action.artifact_path is not None
         ctx.executed_action = self._relocate_after_artifact(executed_action, ctx.after_artifact_path)
 
     def _add_secrets_hint(self, ctx: StepContext) -> None:
@@ -1402,7 +1405,7 @@ class AgentLoop:
             step_id=f"step_{ctx.step_index}",
             step_index=ctx.step_index,
             before_artifact_path=ctx.before_artifact_path,
-            after_artifact_path=ctx.after_artifact_path,
+            after_artifact_path=ctx.after_artifact_path if ctx.after_captured else None,
             perception_debug=perception_debug,
             policy_debug=policy_debug,
             verification_debug=verification_debug,
@@ -1438,7 +1441,7 @@ class AgentLoop:
         state.artifact_paths.extend(
             [
                 ctx.before_artifact_path,
-                ctx.after_artifact_path,
+                *( [ctx.after_artifact_path] if ctx.after_captured else [] ),
                 perception_debug.prompt_artifact_path,
                 perception_debug.raw_response_artifact_path,
                 perception_debug.parsed_artifact_path,

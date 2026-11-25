@@ -129,10 +129,7 @@ def test_every_step_row_names_real_artifacts_and_has_sane_timing(tmp_path, site,
                 yield from artifact_paths(value)
 
     for row in rows:
-        stopped = row["policy_decision"]["action"]["action_type"] == "stop"
         for key, value in artifact_paths(row):
-            if stopped and key == "after_artifact_path":
-                continue  # a stop never captures an after screenshot (its row still names the path)
             assert (result.run_dir / value).exists(), (key, value)
         assert row["started_at"] <= row["finished_at"]
         assert 0 <= row["model_latency_ms"] <= row["step_latency_ms"], row

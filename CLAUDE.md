@@ -159,14 +159,14 @@ These are load-bearing — violating them silently breaks the agent.
 
 ## Lessons
 
-Mistakes caught in review or by a failing run, one line each. A PR that fixes a caught mistake adds
-its lesson here, or, if code can check it, a guard in `tests/test_invariants.py` (named in brackets below).
+Mistakes caught in review, by Codex, or by a failed run, one line each. A PR that fixes such a mistake adds
+its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`. Lines marked [guarded: ...] name that guard.
 
 - Linux TYPE pasted with ctrl+v and terminals ignored it -> type short printable ASCII key by key; paste only what has no key (KAN-166, #280).
-- Scroll amounts are pixels but pyautogui takes wheel clicks, so pages jumped hundreds of notches -> convert with `wheel_clicks()` in `executor/scroll_units.py` (KAN-171, #346) [guarded].
-- NAVIGATE and `start_url` accepted `file:` and other schemes -> every path that opens a URL checks `is_web_url()` first (KAN-191, #359) [guarded].
-- `run_shell` and launched apps inherited API keys from the environment -> every process started for the model gets `env=launch_env()` (KAN-181, #356) [guarded].
-- `http_get` could reach private addresses through DNS, redirects, the env proxy and IPv4-mapped IPv6 -> check every resolved IP, `trust_env=False`, `follow_redirects=False` (KAN-181, #356) [guarded].
+- Scroll amounts are pixels but pyautogui takes wheel clicks, so pages jumped hundreds of notches -> convert with `wheel_clicks()` in `executor/scroll_units.py` (KAN-171, #346) [guarded: `test_scroll_goes_through_wheel_clicks`].
+- NAVIGATE and `start_url` accepted `file:` and other schemes -> every path that opens a URL checks `is_web_url()` first (KAN-191, #359) [guarded for `.goto()`: `test_goto_is_guarded_by_is_web_url`].
+- `run_shell` inherited API keys from the environment -> every process the model can start (shell, launched apps) gets `env=launch_env()` (KAN-181, #356) [guarded for `Popen`/`create_subprocess_*` in the executors and tool runner: `test_spawned_processes_use_launch_env`].
+- `http_get` could reach private addresses through DNS, redirects, the env proxy and IPv4-mapped IPv6 -> check every resolved IP, `trust_env=False`, `follow_redirects=False` (KAN-181, #356) [client flags guarded: `test_tool_http_client_is_locked_down`].
 - The API key was printed, and serve and CORS were open -> never print a key, bind to loopback, refuse `CORS_ORIGINS=*` (KAN-180, #352).
 - A key file was readable by other users, and the fix missed files that already existed -> create secret files owner-only and tighten existing ones on update (#336).
 - Model clients gave up on 429 and 5xx, and a failed turn stayed in the conversation -> honor `Retry-After`, back off, roll the failed turn back (KAN-173, #348).
@@ -175,7 +175,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A timing test had no margin and failed by 0.03 s on CI -> size test delays at several times the worst measured sample, and note the measurement next to the constant (KAN-211, #364).
 - A workflow checkout kept its token in `.git/config` -> `persist-credentials: false` on every `actions/checkout`; run zizmor before pushing workflow edits (#351).
 - A test that shells out to bash failed on Windows, where bash may be WSL with no distro -> skip such tests on Windows; offline checks must pass there too (KAN-195, #360).
-- `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge.
+- `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge (found during the #191 restructure).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 

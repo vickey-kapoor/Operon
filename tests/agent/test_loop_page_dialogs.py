@@ -183,6 +183,32 @@ async def test_approving_arms_accept_and_reruns_the_held_action_once(monkeypatch
     assert second.status is RunStatus.RUNNING  # no second pause
 
 
+@pytest.mark.parametrize("outcome", ["approved", "declined", "cancelled"])
+async def test_dialog_audit_records_one_answer(monkeypatch: pytest.MonkeyPatch, outcome: str) -> None:
+    from operon.store.approval_audit import read_events
+    from operon.store.background_writer import bg_writer
+
+    loop, _, state, _, _ = _loop(monkeypatch, [CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    if outcome == "cancelled":
+        state.status = RunStatus.CANCELLED
+        await loop._cleanup_completed_run("run-1")
+        await loop._cleanup_completed_run("run-1")
+    else:
+        await loop.resume_run("run-1", approve_gated_action=outcome == "approved")
+        with pytest.raises(ValueError):
+            await loop.resume_run("run-1")
+
+    await bg_writer.flush()
+    path = loop._approval_audit_path("run-1")
+    requested, resolved = read_events(path)
+    assert requested["outcome"] == "requested"
+    assert resolved["outcome"] == outcome
+    assert requested["request_id"] == resolved["request_id"]
+    assert resolved["category"] == "dialog"
+    assert ASKED not in path.read_text(encoding="utf-8")
+
+
 async def test_declining_does_not_rerun_and_tells_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     loop, executor, state, hints, policy = _loop(monkeypatch, [CLICK])
     await loop.step_run(StepRequest(run_id="run-1"))
@@ -221,6 +247,25 @@ async def test_a_later_dialog_is_not_accepted_without_a_new_approval(monkeypatch
 
 PURCHASE = AgentAction(action_type=ActionType.TYPE, text="purchase now", target_element_id="buy")
 OTHER_CLICK = AgentAction(action_type=ActionType.CLICK, x=70, y=80)
+
+
+async def test_trust_denial_override_is_audited(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.store.approval_audit import read_events
+    from operon.store.background_writer import bg_writer
+
+    loop, executor, _, _, _ = _loop(monkeypatch, [PURCHASE])
+    loop._trust_gate = TrustGate(enabled=True, deny=("purchase",))
+    response = await loop.step_run(StepRequest(run_id="run-1"))
+    assert response.status is RunStatus.WAITING_FOR_USER
+    assert loop.pending_gate_verdict("run-1") == "deny"
+    assert executor.executed == []
+
+    await loop.resume_run("run-1")
+    await bg_writer.flush()
+    requested, resolved = read_events(loop._approval_audit_path("run-1"))
+    assert (requested["outcome"], resolved["outcome"]) == ("requested", "approved")
+    assert requested["request_id"] == resolved["request_id"]
+    assert resolved["category"] == "trust"
 
 
 async def test_an_accept_never_survives_a_gate_paused_replay_and_a_correction(monkeypatch: pytest.MonkeyPatch) -> None:

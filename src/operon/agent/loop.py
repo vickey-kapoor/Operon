@@ -99,6 +99,7 @@ from operon.models.state import AgentState
 from operon.models.verification import (
     VerificationStatus,
 )
+from operon.store.approval_audit import append_event, request_event
 from operon.store.background_writer import bg_writer
 from operon.store.memory import MemoryStore
 from operon.store.run_logger import append_step_log, append_step_log_critical
@@ -238,6 +239,7 @@ class AgentLoop:
         # the approval is used up once it gets through (or the policy picks another).
         # run_id -> (action fingerprint, gate, risk category, trust verdict "deny"/"confirm" or "")
         self._pending_gate_approvals: dict[str, tuple[str, str, str, str]] = {}
+        self._pending_audit: dict[str, dict[str, str | int]] = {}
         # Host a person approved a secret type on, per run (None: none known; KAN-103).
         self._secret_site_approved: dict[str, str | None] = {}
         # Runs this process created: they run where they started, so resume skips the provider check.
@@ -599,6 +601,8 @@ class AgentLoop:
         if hasattr(record, "pause_reason"):
             record.pause_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
+        if updated.status is RunStatus.RUNNING:
+            self._resolve_approval_audit(run_id, "approved" if approve_gated_action else "declined")
         if hasattr(self.executor, "restore_work_window"):
             # The person answered through the API client, which is now in front of the app
             # the run was using: put that app back before the next screenshot.
@@ -2004,6 +2008,20 @@ class AgentLoop:
         state.step_count = step_index
         await self.run_store.save_state(state)
         updated = await self.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
+        if updated.status is RunStatus.WAITING_FOR_USER:
+            category = self.pending_gate(record.run_id)
+            if (
+                category is None
+                and step_ctx is not None
+                and step_ctx.decision.action.action_type is ActionType.WAIT_FOR_USER
+                and self._has_held_actions(record.run_id)
+            ):
+                category = "model_confirmation"
+            if category:
+                self._resolve_approval_audit(record.run_id, "cancelled")
+                event = request_event(record.run_id, step_index, category)
+                self._pending_audit[record.run_id] = event
+                append_event(self._approval_audit_path(record.run_id), event)
 
         # Fire desktop notification (best-effort).
         notify_desktop(
@@ -2296,7 +2314,16 @@ class AgentLoop:
         result = apply_permission_mode(self._trust_gate.evaluate(probe), probe, permission_mode)
         return result.verdict is TrustVerdict.ALLOW
 
+    def _approval_audit_path(self, run_id: str) -> Path:
+        return Path(self._run_log_path(run_id)).with_name("approval_audit.jsonl")
+
+    def _resolve_approval_audit(self, run_id: str, outcome: str) -> None:
+        event = self._pending_audit.pop(run_id, None)
+        if event is not None:
+            append_event(self._approval_audit_path(run_id), {**event, "outcome": outcome})
+
     async def _cleanup_completed_run(self, run_id: str) -> None:
+        self._resolve_approval_audit(run_id, "cancelled")
         self._release_backend_run_state(run_id)
         if hasattr(self.executor, "stop_run_recording"):
             try:

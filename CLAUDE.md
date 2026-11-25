@@ -157,6 +157,26 @@ These are load-bearing — violating them silently breaks the agent.
 - **`.env.example` is a contract.** Every variable in it must actually be read by
   code in `src/`, and new settings must be added there (and to `Settings`).
 
+## Lessons
+
+Mistakes caught in review or by a failing run, one line each. A PR that fixes a caught mistake adds
+its lesson here, or, if code can check it, a guard in `tests/test_invariants.py` (named in brackets below).
+
+- Linux TYPE pasted with ctrl+v and terminals ignored it -> type short printable ASCII key by key; paste only what has no key (KAN-166, #280).
+- Scroll amounts are pixels but pyautogui takes wheel clicks, so pages jumped hundreds of notches -> convert with `wheel_clicks()` in `executor/scroll_units.py` (KAN-171, #346) [guarded].
+- NAVIGATE and `start_url` accepted `file:` and other schemes -> every path that opens a URL checks `is_web_url()` first (KAN-191, #359) [guarded].
+- `run_shell` and launched apps inherited API keys from the environment -> every process started for the model gets `env=launch_env()` (KAN-181, #356) [guarded].
+- `http_get` could reach private addresses through DNS, redirects, the env proxy and IPv4-mapped IPv6 -> check every resolved IP, `trust_env=False`, `follow_redirects=False` (KAN-181, #356) [guarded].
+- The API key was printed, and serve and CORS were open -> never print a key, bind to loopback, refuse `CORS_ORIGINS=*` (KAN-180, #352).
+- A key file was readable by other users, and the fix missed files that already existed -> create secret files owner-only and tighten existing ones on update (#336).
+- Model clients gave up on 429 and 5xx, and a failed turn stayed in the conversation -> honor `Retry-After`, back off, roll the failed turn back (KAN-173, #348).
+- Browser confirm dialogs skipped the trust gate -> a dialog is an action: gate it, and bind the approval to that one dialog (KAN-172, #350).
+- Run-cost readers counted a step with no usage file as $0 -> report missing usage as a gap; readers of run files accept null fields (KAN-177, #358).
+- A timing test had no margin and failed by 0.03 s on CI -> size test delays at several times the worst measured sample, and note the measurement next to the constant (KAN-211, #364).
+- A workflow checkout kept its token in `.git/config` -> `persist-credentials: false` on every `actions/checkout`; run zizmor before pushing workflow edits (#351).
+- A test that shells out to bash failed on Windows, where bash may be WSL with no distro -> skip such tests on Windows; offline checks must pass there too (KAN-195, #360).
+- `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge.
+
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 
 For any code change, follow the `pipeline` skill (`/pipeline <task>`): Opus plans, Haiku

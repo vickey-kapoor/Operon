@@ -39,6 +39,12 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 ### Planning and scope
 - **Only work on Jira stories Vickey approved in a Jira comment.** No approval comment,
   don't start. Story discussion goes in Jira comments.
+- **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
+  project coordinator at 7:17 AM and 6:17 PM Chicago time. It first resumes any story thread stopped by a
+  usage limit. It starts no new story while one is in progress. Otherwise it starts one thread for the next
+  story in board order whose latest Vickey comment approves it (never "Run:" or paid stories). It posts one
+  line only when it did something. A run that hits Claude's usage limit just skips; the next run retries.
+  The full prompt lives in the scheduled task itself.
 - **Plans and docs go in Confluence, space OPERON** (not Claude Docs). Add new pages
   to the OPERON home page table of contents (page 295140).
 - **Never drop or change a step of an approved plan without asking.** If a run or
@@ -55,7 +61,7 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 - **No paid runs until the weekend of Sat-Sun Nov 21-22, 2026**, and Vickey starts
   those by hand (Actions > Run Operon on test tasks (paid) > Run workflow, with `cells`).
   The nightly schedule and the nightly queue were removed on purpose (2026-11-18): don't add
-  any scheduled starter.
+  any scheduled starter for paid runs.
 - **$100/month benchmark cap**, $10 default batch cap. Before asking for any paid run, state
   the cost estimate and month-to-date spend; never start one without Vickey OKing its
   cost. At most one paid run (batch) per day.

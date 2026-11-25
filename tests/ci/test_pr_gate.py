@@ -72,7 +72,7 @@ def _codex(sha: str = HEAD, status: str = "completed", unresolved: bool = False)
     return {
         "user": {"login": gate.CODEX_BOT},
         "author_association": "NONE",
-        "body": f"Review summary\n<!-- codex-review-state: {json.dumps(state)} -->",
+        "body": "<!-- codex-review-state:v1 " + json.dumps({"code_review": state}) + " -->",
     }
 
 
@@ -139,6 +139,33 @@ def test_the_gates_own_check_is_ignored() -> None:
     running = GOOD_CHECKS + [{"name": "Sweep and merge", "status": "in_progress", "conclusion": None}]
     assert not _ready(checks=running)[0]
     assert _ready(checks=running, ignore=["Sweep and merge"])[0]
+
+
+# A real Codex summary comment: the braces of its state are HTML entities.
+REAL_CODEX_BODY = (
+    "<!-- codex-pull-request-review-summary -->\n"
+    '<!-- codex-review-state:v1 &#123;"code_review":&#123;"commit_sha":"25a58541f3142fc74aba50e0e63f0905d4ec1bd5",'
+    '"has_any_findings":false,"has_unresolved_findings":false,"status":"completed"&#125;,'
+    '"security_review":&#123;"commit_sha":null,"has_any_findings":null,"has_unresolved_findings":null,'
+    '"status":null&#125;&#125; -->\n\n'
+    "<details>\n<summary><strong>Codex Review Summary</strong>: ✅ Completed</summary>"
+)
+REAL_SHA = "25a58541f3142fc74aba50e0e63f0905d4ec1bd5"
+
+
+def _real_codex() -> dict[str, Any]:
+    return {"user": {"login": gate.CODEX_BOT}, "author_association": "NONE", "body": REAL_CODEX_BODY}
+
+
+def test_real_codex_comment_ready_when_sha_matches() -> None:
+    pr = _pr(head={"sha": REAL_SHA, "repo": {"full_name": "o/r"}})
+    assert _ready(pr=pr, comments=[_real_codex(), _marker(sha=REAL_SHA)]) == (True, ["all gates passed"])
+
+
+def test_real_codex_comment_stale_sha_is_not_ready() -> None:
+    ok, why = _ready(comments=[_real_codex(), _marker()])
+    assert not ok
+    assert any("another commit" in w for w in why), why
 
 
 def test_codex_state_from_another_author_is_ignored() -> None:

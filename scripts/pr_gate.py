@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import html
 import json
 import os
 import re
@@ -137,7 +138,8 @@ def _find_codex_state(comments: Iterable[dict[str, Any]]) -> dict[str, Any] | No
     for c in comments:
         if (c.get("user") or {}).get("login") != CODEX_BOT:
             continue
-        body = c.get("body") or ""
+        # The summary hides its state in an HTML comment whose braces are entities (&#123; ... &#125;).
+        body = html.unescape(c.get("body") or "")
         idx = body.find("codex-review-state")
         brace = body.find("{", idx) if idx >= 0 else -1
         if brace < 0:
@@ -146,8 +148,9 @@ def _find_codex_state(comments: Iterable[dict[str, Any]]) -> dict[str, Any] | No
             obj, _ = json.JSONDecoder().raw_decode(body[brace:])
         except ValueError:
             continue
-        if isinstance(obj, dict):
-            found = obj
+        review = obj.get("code_review") if isinstance(obj, dict) else None
+        if isinstance(review, dict):
+            found = review
     return found
 
 

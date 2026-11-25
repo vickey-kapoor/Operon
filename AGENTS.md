@@ -256,6 +256,7 @@ Pull requests should include:
 - Known limitations or risks
 - Related issues, where applicable
 - Screenshots or artifacts for relevant UI and desktop-behavior changes
+- Fill in `.github/pull_request_template.md`; its Proof section is required for a behavior change (section 10).
 
 Do not include unrelated generated files, temporary artifacts, or sensitive execution traces.
 
@@ -269,6 +270,7 @@ An implementation task is complete only when:
 - Relevant architectural invariants remain intact.
 - Appropriate tests have been added or updated.
 - A bug fix adds a test that fails without the fix and passes with it. Where the bug shows through the real loop, put it in a free end-to-end suite (`tests/browser_e2e`, `tests/desktop_e2e`); otherwise an offline test.
+- A behavior change (anything under `src/`) shows its Proof in the PR (`.github/pull_request_template.md`): a named test that fails without the change, or the e2e evidence artifact.
 - Applicable validation has passed, or unexecuted/failed checks are clearly documented.
 - No unrelated changes have been introduced.
 - Security and configuration implications have been considered.

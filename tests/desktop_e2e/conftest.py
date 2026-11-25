@@ -8,6 +8,7 @@ import shutil
 import pytest
 
 from operon.environments import get_provider
+from tests.e2e_artifacts import ENV_VAR, save_run_artifacts
 
 
 @pytest.fixture(scope="session")
@@ -30,3 +31,18 @@ def desktop():
     finally:
         provider.stop()
         mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _save_e2e_evidence(request):
+    """Opt-in (KAN-213): copy this test's screenshots and run files when OPERON_E2E_ARTIFACTS_DIR is set.
+
+    Set only in CI. The screenshots are the test container's desktop, never a real screen.
+    """
+    # Resolve tmp_path before the test runs so it is still alive at teardown.
+    tmp = None
+    if os.environ.get(ENV_VAR) and "tmp_path" in request.fixturenames:
+        tmp = request.getfixturevalue("tmp_path")
+    yield
+    if tmp is not None:
+        save_run_artifacts(tmp, request.node.nodeid)

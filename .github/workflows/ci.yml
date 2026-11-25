@@ -147,7 +147,8 @@ jobs:
   desktop:
     # KAN-166: the real loop clicks and types on a real XFCE desktop (the KAN-80 Linux
     # desktop container) with a scripted model instead of Gemini, so it costs nothing.
-    # Graded from the machine's own state; tests/desktop_e2e.
+    # Graded from the machine's own state; tests/desktop_e2e. Every run uploads its evidence
+    # (screenshots, run.jsonl, state.json) as the desktop-e2e-evidence artifact, pass or fail.
     name: Desktop (Linux container)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -172,7 +173,17 @@ jobs:
         env:
           GEMINI_API_KEY: fake-test-key
           OPERON_E2E_REQUIRE_DESKTOP: "true"
+          OPERON_E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
         run: uv run pytest tests/desktop_e2e -m desktop_container -o addopts="" -v --tb=short
+
+      - name: Upload the run evidence (screenshots, run.jsonl, state.json)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: desktop-e2e-evidence
+          path: ${{ runner.temp }}/e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
 
   lint:
     name: Lint
@@ -228,6 +239,8 @@ jobs:
     # The real loop drives the real NativeBrowserExecutor on headless Chromium against a
     # local fixture site, with a scripted model instead of Gemini, so it costs nothing.
     # tests/browser_e2e. OPERON_E2E_REQUIRE_BROWSER makes a missing Chromium fail, not skip.
+    # Every run uploads its evidence (screenshots, run.jsonl, state.json) as the
+    # browser-e2e-evidence artifact, pass or fail.
     name: Browser end to end (Chromium)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -255,7 +268,17 @@ jobs:
         env:
           GEMINI_API_KEY: fake-test-key
           OPERON_E2E_REQUIRE_BROWSER: "true"
+          OPERON_E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
         run: uv run pytest tests/browser_e2e -m browser_e2e -o addopts="" -v --tb=short
+
+      - name: Upload the run evidence (screenshots, run.jsonl, state.json)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: browser-e2e-evidence
+          path: ${{ runner.temp }}/e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
 
   evals:
     # The scripted eval scenarios through the real loop, offline. `python -m evals` exits 1

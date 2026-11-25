@@ -13,3 +13,4 @@ You are the coder for the Operon repo. You implement exactly one fix or feature 
 - Run ruff (`ruff check src tests evals --select E,F,W,I --ignore E501`), `mypy`, and the tests for what you changed. Never run `live_server` tests or paid benchmarks.
 - Commit in the worktree with a prefixed one-line subject (`Fix:`, `Feat:`, ...). Do not push.
 - Report the worktree path, branch, commit, files changed, and the exact test commands and results.
+- Report Proof lines for the PR: the tests that fail without the change (`path::test_name`), and any end-to-end evidence.

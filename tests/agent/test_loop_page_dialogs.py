@@ -249,6 +249,25 @@ PURCHASE = AgentAction(action_type=ActionType.TYPE, text="purchase now", target_
 OTHER_CLICK = AgentAction(action_type=ActionType.CLICK, x=70, y=80)
 
 
+async def test_trust_denial_override_is_audited(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.store.approval_audit import read_events
+    from operon.store.background_writer import bg_writer
+
+    loop, executor, _, _, _ = _loop(monkeypatch, [PURCHASE])
+    loop._trust_gate = TrustGate(enabled=True, deny=("purchase",))
+    response = await loop.step_run(StepRequest(run_id="run-1"))
+    assert response.status is RunStatus.WAITING_FOR_USER
+    assert loop.pending_gate_verdict("run-1") == "deny"
+    assert executor.executed == []
+
+    await loop.resume_run("run-1")
+    await bg_writer.flush()
+    requested, resolved = read_events(loop._approval_audit_path("run-1"))
+    assert (requested["outcome"], resolved["outcome"]) == ("requested", "approved")
+    assert requested["request_id"] == resolved["request_id"]
+    assert resolved["category"] == "trust"
+
+
 async def test_an_accept_never_survives_a_gate_paused_replay_and_a_correction(monkeypatch: pytest.MonkeyPatch) -> None:
     # Step 2 stands for the replay being gate-paused; the person then sends a correction and the
     # model's next, different action raises a dialog nobody approved.

@@ -2017,7 +2017,7 @@ class AgentLoop:
                 and self._has_held_actions(record.run_id)
             ):
                 category = "model_confirmation"
-            if category and self.pending_gate_verdict(record.run_id) != "deny":
+            if category:
                 self._resolve_approval_audit(record.run_id, "cancelled")
                 event = request_event(record.run_id, step_index, category)
                 self._pending_audit[record.run_id] = event

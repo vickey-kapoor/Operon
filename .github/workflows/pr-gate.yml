@@ -1,0 +1,159 @@
+# PR gate (KAN-216): label every PR low-risk or risky, and merge the low-risk ones that are fully reviewed.
+#
+# All decisions live in scripts/pr_gate.py (offline tested). The merge step only runs when the repo
+# variable OPERON_AUTO_MERGE is "on". Unset (the default) is trial mode: label, plus one "would merge"
+# note per head commit, so a human still merges everything. Never pull_request_target; the label job
+# runs main's copy of the script, and no PR-controlled text is put into a command (it goes through env
+# or files).
+name: PR gate
+
+on:
+  pull_request:
+    branches: ["main", "master"]
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: "*/30 * * * *" # sweep: merge (or note) PRs that became ready
+    - cron: "17 6 * * *" # once a day: report what the gate did
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  label:
+    name: Label PR
+    # A fork's token is read-only, and a fork PR is never low-risk anyway.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: pr-gate-label-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      # The base commit, not the PR's: the classifier that judges a PR is never the PR's own copy.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Classify and label
+        run: |
+          set -euo pipefail
+          gh label create low-risk --repo "$REPO" --color 0E8A16 --description "Auto-merge candidate (KAN-216)" --force
+          gh label create risky --repo "$REPO" --color D93F0B --description "A human merges this (KAN-216)" --force
+          gh api --paginate "repos/$REPO/pulls/$PR/files" | jq -s 'add // []' > "$RUNNER_TEMP/files.json"
+          risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json")
+          case "$risk" in
+            low-risk) add=low-risk; remove=risky ;;
+            *) add=risky; remove=low-risk ;;
+          esac
+          gh pr edit "$PR" --repo "$REPO" --add-label "$add" --remove-label "$remove"
+
+  sweep:
+    name: Sweep and merge
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '*/30 * * * *'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # the squash merge
+      pull-requests: write
+      checks: read
+      statuses: read
+    concurrency:
+      group: pr-gate-sweep
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      AUTO_MERGE: ${{ vars.OPERON_AUTO_MERGE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check every open low-risk PR
+        run: |
+          set -euo pipefail
+          gh label create auto-merged --repo "$REPO" --color 5319E7 --description "Merged by the PR gate" --force
+          gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Trial week: the gate would have merged this" --force
+          work="$RUNNER_TEMP/gate"
+          mkdir -p "$work"
+          gh pr list --repo "$REPO" --state open --label low-risk --limit 100 --json number --jq '.[].number' > "$work/prs"
+          while read -r n; do
+            [ -n "$n" ] || continue
+            d="$work/$n"
+            mkdir -p "$d"
+            # One PR's API failure is a warning, not the end of the sweep.
+            if ! gh api "repos/$REPO/pulls/$n" > "$d/pr.json"; then
+              echo "::warning::PR $n: could not read the PR, skipped"
+              continue
+            fi
+            sha=$(jq -r '.head.sha' "$d/pr.json") || sha=""
+            case "$sha" in (*[!0-9a-f]* | "") echo "::warning::PR $n: odd head sha, skipped"; continue;; esac
+            [ "${#sha}" -eq 40 ] || { echo "::warning::PR $n: odd head sha, skipped"; continue; }
+            if ! {
+              gh api --paginate "repos/$REPO/pulls/$n/files" | jq -s 'add // []' > "$d/files.json" &&
+                gh api --paginate "repos/$REPO/commits/$sha/check-runs" --jq '.check_runs[]' | jq -s '.' > "$d/checks.json" &&
+                gh api "repos/$REPO/commits/$sha/status" > "$d/status.json" &&
+                gh api --paginate "repos/$REPO/issues/$n/comments" | jq -s 'add // []' > "$d/comments.json"
+            }; then
+              echo "::warning::PR $n: an API read failed, skipped"
+              continue
+            fi
+            verdict=$(python3 scripts/pr_gate.py merge-ready --pr "$d/pr.json" --files "$d/files.json" \
+              --checks "$d/checks.json" --status "$d/status.json" --comments "$d/comments.json" \
+              --ignore-check "Label PR" --ignore-check "Sweep and merge" 2>"$d/why.txt") || verdict=error
+            cat "$d/why.txt"
+            [ "$verdict" = ready ] || continue
+            if [ "$AUTO_MERGE" = on ]; then
+              if gh pr merge "$n" --repo "$REPO" --squash --match-head-commit "$sha"; then
+                gh pr edit "$n" --repo "$REPO" --add-label auto-merged || echo "::warning::PR $n: merged, but adding the auto-merged label failed"
+              else
+                echo "::warning::PR $n: merge refused (head moved or branch rules); next sweep retries"
+              fi
+            elif ! jq -e --arg m "operon-gate-trial: $sha" \
+              'any(.[]; .user.login == "github-actions[bot]" and ((.body // "") | contains($m)))' "$d/comments.json" > /dev/null; then
+              printf '<!-- operon-gate-trial: %s -->\nTrial week: would auto-merge this PR (OPERON_AUTO_MERGE is not on).\n' "$sha" > "$d/note.md"
+              gh pr comment "$n" --repo "$REPO" --body-file "$d/note.md" || { echo "::warning::PR $n: the trial note failed"; continue; }
+              gh pr edit "$n" --repo "$REPO" --add-label gate-would-merge || echo "::warning::PR $n: adding the gate-would-merge label failed"
+            fi
+          done < "$work/prs"
+
+  daily:
+    name: Daily note
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '17 6 * * *')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      issues: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      AUTO_MERGE: ${{ vars.OPERON_AUTO_MERGE }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Summarise the last 24 hours
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          # Auto-merged: merged in the last 24 h by the workflow's own token (not by a label).
+          merged=$(gh pr list --repo "$REPO" --state merged --search "merged:>=$cutoff" --limit 100 --json number,title,mergedAt,mergedBy \
+            | jq -r --arg c "$cutoff" '[.[] | select(.mergedAt >= $c and ((.mergedBy.login // "") | startswith("github-actions")))
+                | "- #\(.number) \(.title | gsub("[^A-Za-z0-9 .,:()_/-]"; ""))"] | join("\n")')
+          # Would merge: a trial note (operon-gate-trial comment) was posted in the last 24 h.
+          would=$(gh api --paginate "repos/$REPO/issues/comments?since=$cutoff&per_page=100" \
+            | jq -rs --arg c "$cutoff" '[.[][] | select(.created_at >= $c and .user.login == "github-actions[bot]" and ((.body // "") | contains("operon-gate-trial:")))
+                | "- #\(.issue_url | split("/") | last)"] | unique | join("\n")')
+          mode=trial
+          [ "$AUTO_MERGE" = on ] && mode=on
+          note=$(printf 'PR gate (auto-merge: %s), last 24 h\nAuto-merged:\n%s\nWould have merged (trial):\n%s\n' \
+            "$mode" "${merged:-none}" "${would:-none}")
+          printf '%s\n' "$note" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            jq -n --arg text "$note" '{text: $text}' | curl -fsS -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+          fi

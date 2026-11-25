@@ -14,7 +14,10 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 ### Merging and PRs
 - **Never merge a PR until Vickey writes "merge" for that specific PR.** Approval is
   per PR; an earlier "merge", a "yes" to another question, green checks or a clean
-  Codex review do not count. Never enable auto-merge (it is off repo-wide).
+  Codex review do not count. Never enable GitHub auto-merge (it is off repo-wide). The one exception
+  (KAN-216) is the PR gate workflow (`.github/workflows/pr-gate.yml`): it alone may squash-merge a
+  `low-risk` PR, only when the repo variable `OPERON_AUTO_MERGE` is `on` and checks, Codex review and the
+  verifier marker are green on the head. Agents never merge by hand without Vickey's "merge".
 - **Codex reviews every PR.** Fix or answer every Codex finding before asking for merge.
 - **Never approve a fork PR's workflow runs while its "Fork PR workflow check" is red.** The check
   fails when a fork PR touches `.github/` (workflows, actions, CODEOWNERS); outside PRs must not

@@ -17,6 +17,13 @@ from operon.agent.actions.grounding import element_center
 from operon.agent.actions.selector import DeterministicTargetSelector
 from operon.agent.artifacts.step_artifacts import StepArtifactsManager
 from operon.agent.backends.base import ModelBlockedError
+from operon.agent.done_check import (
+    DONE_CHECK_USAGE_FILE,
+    MAX_DONE_CHECKS,
+    DoneCheckResult,
+    check_done,
+    rejection_note,
+)
 from operon.agent.efficiency import run_efficiency
 from operon.agent.failure_cause import (
     append_run_end,
@@ -97,6 +104,7 @@ from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.selector import TargetIntent, TargetIntentAction
 from operon.models.state import AgentState
 from operon.models.verification import (
+    VerificationResult,
     VerificationStatus,
 )
 from operon.store.background_writer import bg_writer
@@ -205,6 +213,7 @@ class AgentLoop:
         memory_store: MemoryStore | None = None,
         gemini_client: GeminiClient | None = None,
         planner_client: Any = None,
+        done_check_client: Any = None,
         environment: UnifiedEnvironment = UnifiedEnvironment.BROWSER,
     ) -> None:
         self.capture_service = capture_service
@@ -217,6 +226,7 @@ class AgentLoop:
         self.memory_store = memory_store
         self.gemini_client = gemini_client
         self.planner_client = planner_client
+        self.done_check_client = done_check_client
         self.target_selector = DeterministicTargetSelector()
         self.environment = environment
         self._artifacts = StepArtifactsManager(run_store)
@@ -1022,6 +1032,7 @@ class AgentLoop:
         self._note_cancelled_dialog(ctx)
         self._pass_on_change_note(ctx)
         await self._verify_attempt(ctx)
+        await self._check_done_claim(ctx)
         self._check_expected_change(ctx)
 
     async def _execute_attempt(self, ctx: StepContext) -> None:
@@ -1128,6 +1139,124 @@ class AgentLoop:
     def _backend_reports_expected_change(self) -> bool:
         """Whether the backend's own answer carries expected_change (set by a backend that reports it)."""
         return getattr(self.perception_service, "reports_expected_change", False) is True
+
+    async def _check_done_claim(self, ctx: StepContext) -> None:
+        """One independent check of the model's "done" (OPERON_DONE_CHECK, KAN-208).
+
+        Accepted: the run ends as it would have. Rejected: the reason is a hint for the
+        next step and the run goes on (the model's action is never replaced). At most
+        ``MAX_DONE_CHECKS`` checks per run; a checker failure leaves the done standing and
+        unchecked. A "give up" and a done on the run's last allowed step are not checked
+        (a rejection there could only turn a finished run into a max-steps failure).
+        """
+        settings = get_settings()
+        if not settings.done_check:
+            return
+        try:
+            verification = ctx.verification
+            if (
+                ctx.decision.action.action_type is not ActionType.STOP
+                or verification.status is not VerificationStatus.SUCCESS
+                or not verification.stop_condition_met
+                or verification.stop_reason is not StopReason.TASK_COMPLETED
+            ):
+                return
+            counts = ctx.state.done_checks
+            if counts.get("checked", 0) >= MAX_DONE_CHECKS or ctx.step_index >= ctx.state.max_steps:
+                return
+            screenshot = next(
+                (
+                    path
+                    for path in (ctx.last_attempt.artifact_path, ctx.frame.artifact_path, ctx.before_artifact_path)
+                    if path and Path(path).exists()
+                ),
+                None,
+            )
+            decision = ctx.decision
+            closing = decision.rationale or ""
+            text = decision.action.text
+            if text and text not in closing:
+                closing = f"{closing} {text}".strip()
+            t0 = time.perf_counter()
+            counts["checked"] = counts.get("checked", 0) + 1
+            if screenshot is None:
+                result = DoneCheckResult("error", error="no screenshot to check")
+            else:
+                client = self.done_check_client
+                if client is None:
+                    from operon.clients.gemini import GeminiHttpClient
+
+                    client = GeminiHttpClient(model=settings.done_check_model, timeout_seconds=15.0, max_retries=0)
+                result = await check_done(client, ctx.state.intent, closing, screenshot)
+            ctx.record_stage("done_check", t0)
+            counts[result.verdict] = counts.get(result.verdict, 0) + 1
+            self._save_done_check(ctx, result, counts["checked"], closing, screenshot)
+            if result.verdict == "accepted":
+                ctx.verification = verification.model_copy(
+                    update={
+                        "unchecked": False,
+                        "critic_model_used": True,
+                        "reason": f"Model says done; independent check agrees: {result.reason or 'no reason given'}",
+                    }
+                )
+            elif result.verdict == "rejected":
+                ctx.verification = VerificationResult(
+                    status=VerificationStatus.UNCERTAIN,
+                    expected_outcome_met=False,
+                    stop_condition_met=False,
+                    reason=f"Model said done; independent check says not done: {result.reason or 'no reason given'}",
+                    critic_model_used=True,
+                )
+                add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+                if callable(add_hints):
+                    add_hints([rejection_note(result.reason)], source="done_check", run_id=ctx.run_id)
+            else:
+                logger.warning("done check: no usable verdict, the model's done stands: %s", result.error)
+        except Exception as exc:  # noqa: BLE001 - an independent check must never fail a step
+            self._recovered(ctx.run_id, "done_check", exc)
+
+    def _save_done_check(
+        self, ctx: StepContext, result: DoneCheckResult, number: int, closing: str, screenshot: str | None
+    ) -> None:
+        """Write ``done_check.json`` (and the call's prompt, raw answer and cost when one came back)."""
+        step_dir = Path(self._artifacts.before_path(ctx.run_id, ctx.step_index)).resolve().parent
+        step_dir.mkdir(parents=True, exist_ok=True)
+        verdict_path = step_dir / "done_check.json"
+        verdict_path.write_text(
+            json.dumps(
+                {
+                    "step_index": ctx.step_index,
+                    "check_number": number,
+                    "model": get_settings().done_check_model,
+                    "verdict": result.verdict,
+                    "done": None if result.verdict == "error" else result.verdict == "accepted",
+                    "reason": result.reason,
+                    "error": result.error,
+                    "closing_message": closing,
+                    "screenshot": screenshot,
+                    "usage": result.usage.model_dump(mode="json") if result.usage is not None else None,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        if result.raw is None or result.prompt is None:
+            return  # no reply arrived: nothing for the run's cost accounting to count
+        prompt_path = step_dir / "done_check_prompt.txt"
+        raw_path = step_dir / "done_check_raw.txt"
+        prompt_path.write_text(result.prompt, encoding="utf-8")
+        raw_path.write_text(result.raw, encoding="utf-8")
+        usage_path = None
+        if result.usage is not None:
+            usage_path = step_dir / DONE_CHECK_USAGE_FILE
+            usage_path.write_text(result.usage.model_dump_json(indent=2), encoding="utf-8")
+        ctx.verification_debug = ModelDebugArtifacts(
+            prompt_artifact_path=str(prompt_path),
+            raw_response_artifact_path=str(raw_path),
+            parsed_artifact_path=str(verdict_path),
+            usage_artifact_path=str(usage_path) if usage_path else None,
+            usage=result.usage,
+        )
 
     def _check_expected_change(self, ctx: StepContext) -> None:
         """Compare the model's expectation with the screen change; hint on a mismatch (KAN-116).

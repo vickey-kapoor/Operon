@@ -34,6 +34,11 @@ on:
         type: choice
         default: ""
         options: ["", claude-sonnet-5-5, openai-computer-use]
+      done_check:
+        description: "OPERON_DONE_CHECK (KAN-208): one independent check of the model's done; adds a small Gemini call per done"
+        type: choice
+        default: "off"
+        options: ["off", "on"]
   # Called by benchmark.yml for an osworld batch cell (KAN-184).
   workflow_call:
     inputs:
@@ -43,6 +48,8 @@ on:
       max_steps: {type: string, default: "50"}
       # A registry model profile (KAN-168) instead of Gemini; empty = Gemini.
       model: {type: string, default: ""}
+      # OPERON_DONE_CHECK (KAN-208): "on" or "off".
+      done_check: {type: string, default: "off"}
       # Set by the paid-run workflow (benchmark.yml) so its cells' artifacts do not share a name.
       artifact_suffix: {type: string, default: ""}
       # benchmark.yml keeps the videos of all its cells in one release itself, so it passes "false".
@@ -133,6 +140,7 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # A registry model (KAN-168) acts through the model backend, always thin with its own done.
       MODEL: ${{ inputs.model }}
+      DONE_CHECK: ${{ inputs.done_check }}
       # Another provider's key reaches a run only when that run uses that provider's model.
       ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}
       OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}
@@ -152,6 +160,7 @@ jobs:
           case "$LIMIT$MAX_STEPS" in (*[!0-9]*) echo "::error::limit and max_steps must be whole numbers"; exit 1;; esac
           case "$MAX_COST" in (*[!0-9.]*|"") echo "::error::max_cost_usd must be a number"; exit 1;; esac
           case "$ONLY" in (*[!0-9a-fA-F-]*) echo "::error::only must be the start of a task id"; exit 1;; esac
+          case "$DONE_CHECK" in (on | off) ;; (*) echo "::error::done_check must be on or off"; exit 1;; esac
           case "$MODEL" in ("" | claude-sonnet-5-5 | openai-computer-use) ;; (*) echo "::error::model must be empty, claude-sonnet-5-5 or openai-computer-use"; exit 1;; esac
       - name: Set up the VM (idempotent)
         run: scripts/osworld-vm/setup.sh "$GITHUB_WORKSPACE"
@@ -161,6 +170,7 @@ jobs:
           args=(--osworld-repo "$HOME/OSWorld" --max-cost-usd "$MAX_COST" --max-steps "$MAX_STEPS"
                 --operon-python "$HOME/operon-venv/bin/python" --out "$PWD/.var/bench")
           if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
+          args+=(--done-check "$DONE_CHECK")
           if [ -n "$ONLY" ]; then args+=(--only "$ONLY"); elif [ "$LIMIT" != "0" ]; then args+=(--limit "$LIMIT"); fi
           OPERON_DESKTOP_PLATFORM=linux "$HOME/osw-venv/bin/python" -m evals.osworld --videos "${args[@]}" | tee osworld.log
       - name: Summary

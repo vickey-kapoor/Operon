@@ -26,7 +26,8 @@ run-name: >-
 #
 # grounding cells take zoom, per_set=<n>, pr=<n> (that PR's head; forks refused) or ref=<branch|tag|commit>
 # and cap=<USD> (default $3). osworld cells take limit=<0..25>, only=<task id prefix>, steps=<n>,
-# model=claude-sonnet-5-5|openai-computer-use (default Gemini; raise cap=, e.g. cap=6, for a 25-task Claude/GPT cell) and
+# model=claude-sonnet-5-5|openai-computer-use (default Gemini; raise cap=, e.g. cap=6, for a 25-task Claude/GPT cell),
+# donecheck (KAN-208: OPERON_DONE_CHECK on for that cell) and
 # cap=<USD>. Grounding cells run side by side on hosted runners; OSWorld cells run one after another
 # on the OSWorld VM (the OSWorld workflow starts and deallocates it). The batch is refused before anything
 # starts when the cells' caps add up to more than the batch cap, so the most it can spend is known up front.
@@ -222,6 +223,7 @@ jobs:
       artifact_suffix: ${{ matrix.suffix }}
       max_steps: ${{ matrix.steps }}
       model: ${{ matrix.model }}
+      done_check: ${{ matrix.done_check }}
       publish_videos: "false"  # publish-videos below keeps every cell's videos in one release
     # Only the called workflow's bench job decides which key reaches a cell (by its model).
     secrets:

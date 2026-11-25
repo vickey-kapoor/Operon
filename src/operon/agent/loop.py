@@ -74,6 +74,7 @@ from operon.clients.gemini import GeminiClient
 from operon.core.contracts.perception import Environment as UnifiedEnvironment
 from operon.core.logging_utils import url_origin_for_log
 from operon.core.settings import get_settings
+from operon.core.urls import is_web_url, web_url_refusal
 from operon.core.vault import action_uses_secret, available_names, secrets_hint
 from operon.executor.browser import Executor
 from operon.executor.browser_adapter import BrowserExecutor as UnifiedBrowserExecutor
@@ -108,6 +109,7 @@ from operon.models.verification import (
     VerificationResult,
     VerificationStatus,
 )
+from operon.store.approval_audit import append_event, request_event
 from operon.store.background_writer import bg_writer
 from operon.store.memory import MemoryStore
 from operon.store.run_logger import append_step_log, append_step_log_critical
@@ -249,6 +251,7 @@ class AgentLoop:
         # the approval is used up once it gets through (or the policy picks another).
         # run_id -> (action fingerprint, gate, risk category, trust verdict "deny"/"confirm" or "")
         self._pending_gate_approvals: dict[str, tuple[str, str, str, str]] = {}
+        self._pending_audit: dict[str, dict[str, str | int]] = {}
         # Host a person approved a secret type on, per run (None: none known; KAN-103).
         self._secret_site_approved: dict[str, str | None] = {}
         # Runs this process created: they run where they started, so resume skips the provider check.
@@ -277,6 +280,9 @@ class AgentLoop:
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
         _trace("START_RUN", f"intent={request.intent!r}  origin={url_origin_for_log(request.start_url)!r}")
         if request.start_url:
+            # KAN-191: a hard refusal, with the trust gate on or off (never a pause to approve).
+            if not is_web_url(request.start_url):
+                raise StartUrlBlockedError(web_url_refusal(request.start_url, "start_url"))
             # The start URL is opened before any step, so the trust gate's per-action
             # check never sees it: judge it here, before the run exists.
             verdict = self._trust_gate.evaluate(
@@ -610,6 +616,8 @@ class AgentLoop:
         if hasattr(record, "pause_reason"):
             record.pause_reason = None
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
+        if updated.status is RunStatus.RUNNING:
+            self._resolve_approval_audit(run_id, "approved" if approve_gated_action else "declined")
         if hasattr(self.executor, "restore_work_window"):
             # The person answered through the API client, which is now in front of the app
             # the run was using: put that app back before the next screenshot.
@@ -2142,6 +2150,20 @@ class AgentLoop:
         state.step_count = step_index
         await self.run_store.save_state(state)
         updated = await self.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
+        if updated.status is RunStatus.WAITING_FOR_USER:
+            category = self.pending_gate(record.run_id)
+            if (
+                category is None
+                and step_ctx is not None
+                and step_ctx.decision.action.action_type is ActionType.WAIT_FOR_USER
+                and self._has_held_actions(record.run_id)
+            ):
+                category = "model_confirmation"
+            if category:
+                self._resolve_approval_audit(record.run_id, "cancelled")
+                event = request_event(record.run_id, step_index, category)
+                self._pending_audit[record.run_id] = event
+                append_event(self._approval_audit_path(record.run_id), event)
 
         # Fire desktop notification (best-effort).
         notify_desktop(
@@ -2430,11 +2452,22 @@ class AgentLoop:
     def _reset_url_allowed(self, url: str, permission_mode: str | None = None) -> bool:
         """True when the agent may navigate to ``url`` unasked: the trust gate allows it and
         the run's permission mode would not hold it for approval (a reset cannot ask a person)."""
+        if not is_web_url(url):
+            return False
         probe = AgentAction(action_type=ActionType.NAVIGATE, url=url)
         result = apply_permission_mode(self._trust_gate.evaluate(probe), probe, permission_mode)
         return result.verdict is TrustVerdict.ALLOW
 
+    def _approval_audit_path(self, run_id: str) -> Path:
+        return Path(self._run_log_path(run_id)).with_name("approval_audit.jsonl")
+
+    def _resolve_approval_audit(self, run_id: str, outcome: str) -> None:
+        event = self._pending_audit.pop(run_id, None)
+        if event is not None:
+            append_event(self._approval_audit_path(run_id), {**event, "outcome": outcome})
+
     async def _cleanup_completed_run(self, run_id: str) -> None:
+        self._resolve_approval_audit(run_id, "cancelled")
         self._release_backend_run_state(run_id)
         if hasattr(self.executor, "stop_run_recording"):
             try:

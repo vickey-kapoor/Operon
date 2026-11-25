@@ -70,7 +70,7 @@ async def connected_browser():
             await browser.close()
 
 
-async def test_popup_chain_dialog_and_next_run(tmp_path: Path):
+async def test_popup_chain_dialog_and_next_run(tmp_path: Path, serve_dir: str):
     (tmp_path / "index.html").write_text(
         '<body style="margin:0"><a href="child.html" target="_blank" style="display:block;width:200px;height:100px">child</a>'
     )
@@ -88,7 +88,7 @@ async def test_popup_chain_dialog_and_next_run(tmp_path: Path):
     executor.set_current_run_id(run_id)
     try:
         result = await executor.execute(
-            AgentAction(action_type="navigate", url=(tmp_path / "index.html").as_uri())
+            AgentAction(action_type="navigate", url=f"{serve_dir}/index.html")
         )
         assert result.success, result.detail
         for target in ["child.html", "grandchild.html"]:
@@ -102,7 +102,7 @@ async def test_popup_chain_dialog_and_next_run(tmp_path: Path):
             await popup.wait_for_load_state()
             assert (
                 await executor.current_url_for_run(run_id)
-                == (tmp_path / target).as_uri()
+                == f"{serve_dir}/{target}"
             )
         result = await executor.execute(
             AgentAction(action_type="type", x=50, y=50, text="grandchild input")
@@ -118,7 +118,7 @@ async def test_popup_chain_dialog_and_next_run(tmp_path: Path):
         executor.configure_run("next", headless=True, mode="batch")
         executor.set_current_run_id("next")
         result = await executor.execute(
-            AgentAction(action_type="navigate", url=(tmp_path / "index.html").as_uri())
+            AgentAction(action_type="navigate", url=f"{serve_dir}/index.html")
         )
         assert result.success, result.detail
         assert not old_browser.is_connected()

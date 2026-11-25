@@ -15,6 +15,7 @@ from operon.models.common import RunFailureCause, RunStatus, StopReason
 from operon.models.logs import ModelDebugArtifacts, PreStepFailureLog, StepLog
 from operon.models.state import AgentState
 from operon.models.usage import ModelUsage, UsageAggregate, step_missing_usage
+from operon.store.approval_audit import read_events
 from operon.store.replay import load_run_replay
 
 
@@ -92,6 +93,7 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
     )
     phase = _current_phase(state, current_step, pre_step_failures[-1] if pre_step_failures else None)
     event_log = _build_event_log(state, completed_steps, pre_step_failures, partial_current_step)
+    approval_audit = read_events(run_dir / "approval_audit.jsonl")
     if partial_is_newer:
         steps.append(partial_current_step)
         steps.sort(key=lambda item: item["step_index"])
@@ -116,6 +118,7 @@ def load_run_snapshot(run_id: str) -> dict[str, Any]:
         "steps": steps,
         "pre_step_failures": [_pre_step_payload(entry) for entry in pre_step_failures],
         "event_log": event_log,
+        "approval_audit": approval_audit,
     }
 
 

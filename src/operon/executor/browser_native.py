@@ -35,6 +35,7 @@ from operon.browser.keys import normalize_key
 from operon.core.logging_utils import url_origin_for_log
 from operon.core.paths import browser_artifacts_dir
 from operon.core.settings import get_settings
+from operon.core.urls import is_web_url, web_url_refusal
 from operon.core.vault import SecretError, redact, resolve_text
 from operon.executor.browser import Executor
 from operon.executor.os_picker_macro import PickerOutcome, run_os_picker_macro
@@ -298,6 +299,8 @@ class NativeBrowserExecutor(Executor):
             if at is ActionType.NAVIGATE:
                 if action.url is None:
                     return self._fail(action, "navigate requires url", FailureCategory.EXECUTION_ERROR)
+                if not is_web_url(action.url):
+                    return self._fail(action, web_url_refusal(action.url), FailureCategory.EXECUTION_ERROR)
                 page = await self._current_page(foreground=False)
                 await page.goto(action.url)
                 await self._foreground_if_fresh_session()
@@ -818,6 +821,10 @@ class NativeBrowserExecutor(Executor):
             self.last_reset_actions.append("no page: nothing reset")
             return
         try:
+            if start_url and not is_web_url(start_url):
+                # KAN-191: never open a non-web start URL; behave as if there were none.
+                self.last_reset_actions.append("start URL is not an http or https link: did not navigate to it")
+                start_url = None
             if start_url:
                 await page.goto(start_url, wait_until="domcontentloaded", timeout=15000)
                 self.last_reset_actions.append(f"navigated to the start URL {start_url}")

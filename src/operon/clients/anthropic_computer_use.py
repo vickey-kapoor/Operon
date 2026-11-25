@@ -48,7 +48,7 @@ NAVIGATE_TOOL: dict[str, Any] = {
     ),
     "input_schema": {
         "type": "object",
-        "properties": {"url": {"type": "string", "description": "Absolute URL to open."}},
+        "properties": {"url": {"type": "string", "description": "Absolute http or https URL to open."}},
         "required": ["url"],
         "additionalProperties": False,
     },

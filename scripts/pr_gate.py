@@ -44,6 +44,9 @@ RISKY_PATTERNS: tuple[str, ...] = (
     "src/operon/agent/step_context.py",
     "src/operon/__init__.py",  # runs on every import
     "src/operon/agent/control.py",
+    "src/operon/agent/app_catalog.py",  # what apps the model may launch
+    "src/operon/agent/actions/zoom.py",
+    "src/operon/agent/hitl.py",  # human-in-the-loop notifier
     "src/operon/core/paths.py",  # where every artifact directory resolves
     "src/operon/api/observer.py",
     "src/operon/api/dependencies.py",

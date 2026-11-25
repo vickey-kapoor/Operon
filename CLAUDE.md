@@ -183,6 +183,13 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 For any code change, follow the `pipeline` skill (`/pipeline <task>`): Opus plans, Haiku
 scanners find, Sonnet coders fix in isolated worktrees, a fresh Opus verifier checks.
 The main session does not edit code. Never merge until Vickey writes "merge" for that PR.
+Exception (KAN-216): the PR gate (`.github/workflows/pr-gate.yml`, `scripts/pr_gate.py`) labels each PR `low-risk` or
+`risky` and, only when the repo variable `OPERON_AUTO_MERGE` is `on` (unset = trial week: label and "would merge" note
+only), squash-merges a `low-risk` PR whose checks, Codex review and verifier marker are all green on the head. Agents
+still never merge by hand; a `risky` PR waits for Vickey's "merge". After the fresh verifier passes on a PR's head
+commit, the main session posts the marker comment `<!-- operon-verifier: PASS <full head sha> -->` on the PR. That
+comment comes from the same account that opens PRs, so the gate is only as trustworthy as the verifier step. Gate
+merges use `GITHUB_TOKEN`, so push-triggered CI on `main` does not run for them.
 
 Worktrees have no `.venv` of their own and the editable install points at the main checkout's
 `src/`, so in a worktree run the main checkout's venv by absolute path, from the worktree root, with `PYTHONPATH=src` (PowerShell:

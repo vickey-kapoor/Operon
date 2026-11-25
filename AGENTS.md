@@ -262,6 +262,16 @@ Do not include unrelated generated files, temporary artifacts, or sensitive exec
 
 Do not commit, push, merge, or create a pull request unless the user has authorized those actions.
 
+Exception (KAN-216): the PR gate workflow labels each PR `low-risk` or `risky` (`scripts/pr_gate.py`: outside `src/`
+only docs, markdown, test additions and dashboard sources are low-risk; inside `src/` only edits to existing
+`src/operon/` files outside the safety gates, executors, settings, secrets, routes and clients are low-risk, and a
+new file under `src/` always needs Vickey). Only the gate merges a `low-risk` PR, and only when the repo variable
+`OPERON_AUTO_MERGE` is `on` and checks, Codex review and the verifier marker are green on the head; unset, it only
+labels and notes "would merge". Agents never merge by hand, and a `risky` PR waits for the owner's "merge". After the
+fresh verifier passes on the PR's head commit, post `<!-- operon-verifier: PASS <full head sha> -->` as a PR comment.
+That comment comes from the same account that opens PRs, so the gate is only as trustworthy as the verifier step. Gate
+merges use `GITHUB_TOKEN`, so push-triggered CI on `main` does not run for them.
+
 ## 10. Definition of Done
 
 An implementation task is complete only when:

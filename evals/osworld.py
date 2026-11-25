@@ -58,7 +58,7 @@ def operon_command(instruction: str, max_steps: int, python: str | None = None) 
             "--mode", "auto", "--max-steps", str(max_steps), instruction]
 
 
-def operon_env(server_url: str, runs_root: str | None = None, model: str = "") -> dict[str, str]:
+def operon_env(server_url: str, runs_root: str | None = None, model: str = "", done_check: bool = False) -> dict[str, str]:
     """The environment of one ``operon run``. ``model`` (a registry profile; empty is Gemini) selects the
     model backend (KAN-168) for the desktop; a Gemini run forces computer_use and an empty profile."""
     env = {**os.environ, **({"OPERON_RUNS_ROOT": runs_root} if runs_root else {}), "OPERON_ENVIRONMENT": "osworld", "OPERON_OSWORLD_URL": server_url,
@@ -67,6 +67,8 @@ def operon_env(server_url: str, runs_root: str | None = None, model: str = "") -
     # Always set both, so a run never inherits the runner's backend settings.
     env["OPERON_DESKTOP_BACKEND"] = "model" if model else "computer_use"
     env["OPERON_MODEL_PROFILE"] = model
+    # KAN-208: set either way, so a run never inherits the runner's own setting of the done check.
+    env["OPERON_DONE_CHECK"] = "on" if done_check else "off"
     return env
 
 
@@ -191,6 +193,20 @@ def run_failure(run_id: str | None, runs_root: str | Path | None = None) -> tupl
     return (str(cause) if cause else None), (str(detail) if detail else None)
 
 
+def run_done_checks(run_id: str | None, runs_root: str | Path | None = None) -> dict[str, int]:
+    """``done_checks`` saved in the run's state.json (KAN-208): checked, accepted, rejected, error. Import-free."""
+    if not run_id or runs_root is None:
+        return {}
+    try:
+        data = json.loads((Path(runs_root) / run_id / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    counts = data.get("done_checks") if isinstance(data, dict) else None
+    if not isinstance(counts, dict):
+        return {}
+    return {str(k): v for k, v in counts.items() if isinstance(v, int) and not isinstance(v, bool)}
+
+
 def failure_cause(*, passed: bool, bench_error: bool, timed_out: bool, run_status: str | None,
                   stop_reason: str | None, state_cause: str | None) -> str | None:
     """The one cause for a non-passing task (evals.failure_cause.bench_cause, which needs no Operon install)."""
@@ -208,7 +224,7 @@ def error_result(task: dict[str, str], note: str, error: str, *, seconds: int = 
 
 def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps: int, timeout_s: float,
             python: str | None = None, runs_root: str | None = None, settle_s: float = EVALUATE_SETTLE_S,
-            logs_dir: str | None = None, model: str = "",
+            logs_dir: str | None = None, model: str = "", done_check: bool = False,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict[str, Any]:
     """One task. An ``Exception`` in reset, Operon or evaluate is recorded as an error result (score 0, the
     cost and run id so far kept); ``BaseException`` (Ctrl+C) still propagates."""
@@ -226,7 +242,7 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
         phase = "operon"
         try:
             ran = True
-            done = run(operon_command(task["instruction"], max_steps, python), env=operon_env(url, runs_root, model),
+            done = run(operon_command(task["instruction"], max_steps, python), env=operon_env(url, runs_root, model, done_check),
                        capture_output=True, text=True, timeout=timeout_s, check=False)
             out_text, err_text = done.stdout or "", done.stderr or ""
             run_id = parse_run_id(out_text + err_text)
@@ -261,7 +277,7 @@ def run_one(env: Any, task: dict[str, str], config: dict[str, Any], *, max_steps
             "run_id": run_id, "cost_usd": round(run_cost(run_id, runs_root), 4), "seconds": round(time.monotonic() - started),
             "note": note, "log": log, "status": status, "stop_reason": stop_reason, "run_status": run_status,
             "error": error or (None if passed else state_detail), "failure_cause": cause,
-            **run_usage_gaps(run_id, runs_root)}
+            **run_usage_gaps(run_id, runs_root), "done_checks": run_done_checks(run_id, runs_root)}
 
 
 def save_task_videos(results: list[dict[str, Any]], out: Path, python: str,
@@ -349,6 +365,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
                         help="Python that has Operon installed (3.14); default: this one")
     parser.add_argument("--model", default="", help="registry model profile (" + ", ".join(MODEL_LABELS)
                         + "); empty = Gemini. Spends that provider's credits: needs Vickey's OK")
+    parser.add_argument("--done-check", choices=("on", "off"), default="off",
+                        help="OPERON_DONE_CHECK: one independent check of the model's done (KAN-208)")
     parser.add_argument("--job-minutes", action="store_true",
                         help="print the CI job timeout in minutes for the chosen tasks and exit (free)")
     parser.add_argument("--videos", action="store_true", help="write one MP4 per task under <out>/videos")
@@ -372,6 +390,7 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
     if not args.osworld_repo:
         parser.error("--osworld-repo (or $OSWORLD_REPO) is required to run")
     repo = Path(args.osworld_repo).expanduser()
+    done_check = args.done_check == "on"
     env = env_factory(repo)
     results: list[dict[str, Any]] = []
     spent = 0.0
@@ -381,7 +400,8 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
 
     def save() -> dict[str, Any]:
         report = {"benchmark": "osworld-verified-subset", "harness": "thin", "auto_confirm": True,
-                  "model": args.model, "label": f"{MODEL_LABELS.get(args.model, 'Gemini')} · OSWorld",
+                  "model": args.model, "done_check": done_check,
+                  "label": f"{MODEL_LABELS.get(args.model, 'Gemini')} · OSWorld" + (" · done check" if done_check else ""),
                   "summary": summarize(results), "results": results}
         target.write_text(json.dumps(report, indent=1), encoding="utf-8")
         return report
@@ -396,7 +416,7 @@ def main(argv: list[str] | None = None, *, env_factory: Callable[[Path], Any] = 
                 result = run_one(env, task, task_config(repo, task), max_steps=args.max_steps,
                                  timeout_s=args.task_timeout, python=args.operon_python,
                                  runs_root=str(out / "osworld-runs"),
-                                 logs_dir=str(out / "osworld-logs"), model=args.model, run=run)
+                                 logs_dir=str(out / "osworld-logs"), model=args.model, done_check=done_check, run=run)
             except Exception as exc:  # noqa: BLE001 - keep going with the next task
                 error = f"{type(exc).__name__}: {exc}"[:300]
                 result = error_result(task, f"setup error: {error}", error, seconds=round(time.monotonic() - started))

@@ -183,6 +183,32 @@ async def test_approving_arms_accept_and_reruns_the_held_action_once(monkeypatch
     assert second.status is RunStatus.RUNNING  # no second pause
 
 
+@pytest.mark.parametrize("outcome", ["approved", "declined", "cancelled"])
+async def test_dialog_audit_records_one_answer(monkeypatch: pytest.MonkeyPatch, outcome: str) -> None:
+    from operon.store.approval_audit import read_events
+    from operon.store.background_writer import bg_writer
+
+    loop, _, state, _, _ = _loop(monkeypatch, [CLICK])
+    await loop.step_run(StepRequest(run_id="run-1"))
+    if outcome == "cancelled":
+        state.status = RunStatus.CANCELLED
+        await loop._cleanup_completed_run("run-1")
+        await loop._cleanup_completed_run("run-1")
+    else:
+        await loop.resume_run("run-1", approve_gated_action=outcome == "approved")
+        with pytest.raises(ValueError):
+            await loop.resume_run("run-1")
+
+    await bg_writer.flush()
+    path = loop._approval_audit_path("run-1")
+    requested, resolved = read_events(path)
+    assert requested["outcome"] == "requested"
+    assert resolved["outcome"] == outcome
+    assert requested["request_id"] == resolved["request_id"]
+    assert resolved["category"] == "dialog"
+    assert ASKED not in path.read_text(encoding="utf-8")
+
+
 async def test_declining_does_not_rerun_and_tells_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     loop, executor, state, hints, policy = _loop(monkeypatch, [CLICK])
     await loop.step_run(StepRequest(run_id="run-1"))

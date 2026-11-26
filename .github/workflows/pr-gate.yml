@@ -1,8 +1,9 @@
-# PR gate (KAN-216): label every PR low-risk or risky, and merge the low-risk ones that are fully reviewed.
+# PR gate (KAN-216, KAN-227): label every PR low-risk, risky or paid-run, and merge the low-risk and risky ones that are
+# fully reviewed (risky also needs a Fable 5.2 top-review marker). A paid-run PR is never merged here: Vickey merges it.
 #
 # All decisions live in scripts/pr_gate.py (offline tested). The merge step only runs when the repo
 # variable OPERON_AUTO_MERGE is "on". Unset (the default) is trial mode: label, plus one "would merge"
-# note per head commit, so a human still merges everything. Never pull_request_target; the label job
+# note per head commit, and nothing is merged by the gate. Never pull_request_target; the label job
 # runs main's copy of the script, and no PR-controlled text is put into a command (it goes through env
 # or files).
 name: PR gate
@@ -21,7 +22,7 @@ permissions: {}
 jobs:
   label:
     name: Label PR
-    # A fork's token is read-only, and a fork PR is never low-risk anyway.
+    # A fork's token is read-only, and a fork PR is never auto-merged anyway.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -45,14 +46,16 @@ jobs:
         run: |
           set -euo pipefail
           gh label create low-risk --repo "$REPO" --color 0E8A16 --description "Auto-merge candidate (KAN-216)" --force
-          gh label create risky --repo "$REPO" --color D93F0B --description "A human merges this (KAN-216)" --force
+          gh label create risky --repo "$REPO" --color D93F0B --description "Merges after a Fable 5.2 review (KAN-227)" --force
+          gh label create paid-run --repo "$REPO" --color B60205 --description "Touches paid runs: Vickey merges (KAN-227)" --force
           gh api --paginate "repos/$REPO/pulls/$PR/files" | jq -s 'add // []' > "$RUNNER_TEMP/files.json"
           risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json")
           case "$risk" in
-            low-risk) add=low-risk; remove=risky ;;
-            *) add=risky; remove=low-risk ;;
+            low-risk) add=low-risk; r1=risky; r2=paid-run ;;
+            paid-run) add=paid-run; r1=low-risk; r2=risky ;;
+            *) add=risky; r1=low-risk; r2=paid-run ;;
           esac
-          gh pr edit "$PR" --repo "$REPO" --add-label "$add" --remove-label "$remove"
+          gh pr edit "$PR" --repo "$REPO" --add-label "$add" --remove-label "$r1" --remove-label "$r2"
 
   sweep:
     name: Sweep and merge
@@ -75,14 +78,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check every open low-risk PR
+      - name: Check every open low-risk or risky PR
         run: |
           set -euo pipefail
           gh label create auto-merged --repo "$REPO" --color 5319E7 --description "Merged by the PR gate" --force
-          gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Trial week: the gate would have merged this" --force
+          gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Would merge: the gate would have merged this (KAN-216/KAN-227)" --force
           work="$RUNNER_TEMP/gate"
           mkdir -p "$work"
-          gh pr list --repo "$REPO" --state open --label low-risk --limit 100 --json number --jq '.[].number' > "$work/prs"
+          # Open, non-draft PRs labelled low-risk or risky; paid-run is never listed (and merge-ready refuses it anyway).
+          gh pr list --repo "$REPO" --state open --draft=false --label low-risk --limit 100 --json number --jq '.[].number' > "$work/prs"
+          gh pr list --repo "$REPO" --state open --draft=false --label risky --limit 100 --json number --jq '.[].number' >> "$work/prs"
           while read -r n; do
             [ -n "$n" ] || continue
             d="$work/$n"
@@ -117,7 +122,7 @@ jobs:
               fi
             elif ! jq -e --arg m "operon-gate-trial: $sha" \
               'any(.[]; .user.login == "github-actions[bot]" and ((.body // "") | contains($m)))' "$d/comments.json" > /dev/null; then
-              printf '<!-- operon-gate-trial: %s -->\nTrial week: would auto-merge this PR (OPERON_AUTO_MERGE is not on).\n' "$sha" > "$d/note.md"
+              printf '<!-- operon-gate-trial: %s -->\nWould merge: the gate would merge this PR (OPERON_AUTO_MERGE is not on).\n' "$sha" > "$d/note.md"
               gh pr comment "$n" --repo "$REPO" --body-file "$d/note.md" || { echo "::warning::PR $n: the trial note failed"; continue; }
               gh pr edit "$n" --repo "$REPO" --add-label gate-would-merge || echo "::warning::PR $n: adding the gate-would-merge label failed"
             fi

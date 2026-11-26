@@ -63,14 +63,15 @@ def test_prepare_creates_step_dirs_and_touches_the_run_log(tmp_path: Path) -> No
     assert (tmp_path / "r" / "run.jsonl").read_text() == "line\n"
 
 
-def test_relocate_sets_the_planned_path_when_the_executor_saved_none(tmp_path: Path) -> None:
+def test_relocate_leaves_the_path_empty_when_the_executor_saved_none(tmp_path: Path) -> None:
+    """KAN-219: no screenshot taken, so no field may name the planned after.png."""
     planned = str(tmp_path / "r" / "step_1" / "after.png")
     executed = ExecutedAction(action=CLICK, success=True, detail="ok")
 
     moved = _manager(tmp_path).relocate_after_artifact(executed, planned)
 
-    assert moved.artifact_path == planned
-    assert executed.artifact_path is None  # the original is not mutated
+    assert moved.artifact_path is None
+    assert not Path(planned).exists()
 
 
 def test_relocate_moves_the_executor_screenshot_into_the_step_dir(tmp_path: Path) -> None:

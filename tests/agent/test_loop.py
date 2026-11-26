@@ -227,9 +227,8 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
     response = await loop.step_run(StepRequest(run_id="run-2"))
 
     capture_service.capture.assert_awaited_once_with(initial_state)
-    remapped_executed = executed.model_copy(
-        update={"artifact_path": str(run_root / "run-2" / "step_1" / "after.png")}
-    )
+    # The executor saved no after screenshot, so the loop names none either (KAN-219).
+    remapped_executed = executed
     perception_service.perceive.assert_awaited_once_with(frame, initial_state)
     run_store.update_state.assert_awaited_once_with("run-2", perception)
     policy_service.choose_action.assert_awaited_once_with(updated_state, perception)

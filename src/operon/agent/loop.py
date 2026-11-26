@@ -1062,7 +1062,8 @@ class AgentLoop:
                 self.executor.batch_child_check = None
         _trace("  4 EXECUTE OK" if executed_action.success else "  4 EXECUTE FAIL", f"{ctx.record_stage('execute', _t0):.2f}s  success={executed_action.success}  detail={executed_action.detail!r}")
         # An executor that took no after screenshot (a stop, a failed action) leaves artifact_path
-        # empty; only a step that really captured one may name step_N/after.png in its log (KAN-218).
+        # empty, and it stays empty; only a step that really captured one may name step_N/after.png
+        # in its log (KAN-218, KAN-219).
         ctx.after_captured = executed_action.artifact_path is not None
         ctx.executed_action = self._relocate_after_artifact(executed_action, ctx.after_artifact_path)
 

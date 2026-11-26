@@ -369,3 +369,29 @@ def test_only_a_succeeded_run_can_be_model_says_done() -> None:
 
     assert frontdoor.done_checked(failed) is None and frontdoor.outcome_label(failed) == "Failed"
     assert frontdoor.done_checked(old) is None and frontdoor.outcome_label(old) == "Done"
+
+
+async def test_only_the_last_verdict_decides_the_label(monkeypatch, tmp_path, scheduled) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from operon.models.common import StopReason
+    from operon.models.policy import ActionType, AgentAction
+    from operon.models.verification import VerificationResult, VerificationStatus
+
+    ran = VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True,
+                             stop_condition_met=False, reason="ran", unchecked=True)
+    checked = VerificationResult(status=VerificationStatus.SUCCESS, expected_outcome_met=True,
+                                 stop_condition_met=True, reason="checked",
+                                 stop_reason=StopReason.TASK_COMPLETED, critic_model_used=True)
+    loop, _ = build_loop(monkeypatch, tmp_path, [CLICK_SAVE, AgentAction(action_type=ActionType.STOP, text="Saved.")])
+    loop.verifier_service = SimpleNamespace(verify=AsyncMock(side_effect=[ran, checked]))
+    _use(monkeypatch, loop)
+    async with _client() as client:
+        run_id = (await _start(client, permission_mode="auto"))["run_id"]
+        await loop.step_run(StepRequest(run_id=run_id))
+        await loop.step_run(StepRequest(run_id=run_id))
+        report = (await client.get(f"/app/api/runs/{run_id}/report")).json()
+
+    assert report["status"] == "succeeded" and report["steps"] == 2
+    assert report["outcome"] == "Done" and report["done_checked"] is True

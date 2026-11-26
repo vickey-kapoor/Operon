@@ -428,9 +428,10 @@ UNCHECKED_DONE = "Model says done"
 
 
 def done_checked(record) -> bool | None:
-    """Whether a succeeded run's final "done" was checked: True when something judged it (a
-    step critic, or an independent done check that agreed, KAN-208), False when only the
-    model said so, None for a run that did not succeed or kept no verdict."""
+    """Whether a succeeded run's final "done" was checked: True when something judged it (an
+    independent done check that agreed, KAN-208, or the step critic of a run saved before
+    KAN-183), False when only the model said so, None for a run that did not succeed or
+    kept no verdict. Only the last verdict counts: it is the stop step's, after any check."""
     if record.status is not RunStatus.SUCCEEDED:
         return None
     history = getattr(record, "verification_history", None) or []

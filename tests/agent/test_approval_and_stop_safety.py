@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -417,3 +418,25 @@ async def test_auto_mode_opens_a_confirm_start_url_unasked(monkeypatch: pytest.M
     assert response.status is not RunStatus.WAITING_FOR_USER
     assert [c.args[0].url for c in execute.call_args_list] == [CHECKOUT_URL]
     assert loop.pending_gate("run-1") is None
+
+
+async def test_start_url_pause_notifies_the_person_like_any_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.agent import hitl
+
+    loop, _, _, _, _ = await _start_paused(monkeypatch)
+    await asyncio.sleep(0)  # let the webhook task start
+
+    hitl.post_hitl_webhook.assert_awaited_once()
+    assert hitl.post_hitl_webhook.await_args.kwargs["url"] == CHECKOUT_URL
+
+
+async def test_a_stop_while_approving_never_opens_the_start_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, _, _, _ = await _start_paused(monkeypatch)
+
+    async def stopped(_run_id: str) -> bool:
+        return True  # stopped while the approval waited for another run's step
+
+    monkeypatch.setattr(loop, "_run_cancelled", stopped)
+    await loop.resume_run("run-1")
+
+    execute.assert_not_called()

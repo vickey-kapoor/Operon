@@ -366,8 +366,6 @@ class AgentLoop:
         """Pause a new run before its start page opens: the trust gate or the run's
         permission mode wants a person's OK (KAN-197). Approving (resume) opens the page;
         declining or a correction leaves it closed and tells the model so."""
-        from operon.agent.hitl import notify_desktop
-
         run_id = record.run_id
         probe = AgentAction(action_type=ActionType.NAVIGATE, url=url)
         self._pending_gate_approvals[run_id] = (
@@ -391,10 +389,7 @@ class AgentLoop:
             event = request_event(run_id, 0, "trust")
             self._pending_audit[run_id] = event
             append_event(self._approval_audit_path(run_id), event)
-        try:
-            notify_desktop(title="Operon needs you", message=reason[:120])
-        except Exception as exc:
-            self._recovered(run_id, "notify_start_url", exc)
+        self._notify_person(run_id, intent=record.intent, page_hint="unknown", message=reason, url=url)
         return updated
 
     async def _open_approved_start_url(self, run_id: str, url: str) -> None:
@@ -402,6 +397,10 @@ class AgentLoop:
         _trace("RESUME -> NAVIGATE", url_origin_for_log(url) or "")
         try:
             async with self._executor_lock:
+                # A stop can land while this waits for another run's step: never open a page for a stopped run.
+                if await self._run_cancelled(run_id):
+                    _trace("RESUME -> NAVIGATE skipped", "run was stopped while waiting")
+                    return
                 if hasattr(self.executor, "set_current_run_id"):
                     self.executor.set_current_run_id(run_id)
                 await self.executor.execute(AgentAction(action_type=ActionType.NAVIGATE, url=url))
@@ -2178,12 +2177,7 @@ class AgentLoop:
         """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer.
 
         ``log_step=False`` when the step was already logged with the action it ran."""
-        from operon.agent.hitl import (
-            generate_hitl_message,
-            notify_desktop,
-            post_hitl_webhook,
-            start_escalation_timer,
-        )
+        from operon.agent.hitl import generate_hitl_message
 
         # Generate a human-readable LLM explanation of why we're pausing.
         element_names = [e.primary_name for e in perception.visible_elements[:12]]
@@ -2253,26 +2247,39 @@ class AgentLoop:
                 self._pending_audit[record.run_id] = event
                 append_event(self._approval_audit_path(record.run_id), event)
 
-        # Fire desktop notification (best-effort).
-        notify_desktop(
-            title="Operon needs you",
-            message=hitl_message[:120],
+        self._notify_person(
+            record.run_id,
+            intent=state.intent,
+            page_hint=perception.page_hint.value,
+            message=hitl_message,
+            url=state.start_url,
         )
 
-        # Start escalating re-notification in the background.
-        run_store = self.run_store
-        run_id = record.run_id
+        return RunResponse(
+            run_id=updated.run_id,
+            status=updated.status,
+            intent=updated.intent,
+            step_count=updated.step_count,
+        )
+
+    def _notify_person(self, run_id: str, *, intent: str, page_hint: str, message: str, url: str | None) -> None:
+        """Tell the person a run waits on them: desktop notice, the HITL webhook, and the
+        escalating re-notification while it stays paused."""
+        from operon.agent.hitl import (
+            notify_desktop,
+            post_hitl_webhook,
+            start_escalation_timer,
+        )
+
+        # Fire desktop notification (best-effort).
+        notify_desktop(title="Operon needs you", message=message[:120])
 
         # POST webhook (reliable channel — always attempted, always logged).
         asyncio.create_task(
-            post_hitl_webhook(
-                run_id=run_id,
-                intent=state.intent,
-                page_hint=perception.page_hint.value,
-                message=hitl_message,
-                url=state.start_url,
-            )
+            post_hitl_webhook(run_id=run_id, intent=intent, page_hint=page_hint, message=message, url=url)
         )
+
+        run_store = self.run_store
 
         async def _get_status():
             s = await run_store.get_run(run_id)
@@ -2287,13 +2294,6 @@ class AgentLoop:
         task.add_done_callback(
             lambda t: logger.warning("HITL escalation error: %s", t.exception())
             if not t.cancelled() and t.exception() is not None else None
-        )
-
-        return RunResponse(
-            run_id=updated.run_id,
-            status=updated.status,
-            intent=updated.intent,
-            step_count=updated.step_count,
         )
 
     async def _perceive_with_liveness_retry(

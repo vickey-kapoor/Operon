@@ -19,6 +19,7 @@ Guidance:
 - If a risky action requires user confirmation, request confirmation through the tool's safety flow.
 - Only stop when the task is fully done or the screen clearly shows a terminal state. Leave the result visible on screen.
 - When the task is complete, reply with a short sentence saying what the screen now shows and make no further tool calls.
+- If the task cannot be done (the app or the thing it asks for is not there, or it needs something you do not have), call give_up with a short reason instead of replying with text. Do not call give_up for a task that is done.
 
 Advisory hints:
 {advisory_hints}

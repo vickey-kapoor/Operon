@@ -34,7 +34,7 @@ There is one harness, thin (KAN-183 removed the Full harness, its `json` backend
 `OPERON_HARNESS_PROFILE`, `OPERON_CRITIC`, `OPERON_GROUNDER`, `OPERON_BESTOFN_N` and
 `OPERON_SITE_ADAPTERS`; setting any of them only logs a warning). Gemini makes every decision. No
 rule engine or guard replaces its action, and its own "done" ends the run, so the benchmark graders
-decide success. The trust gate, allowed file roots, coordinate-thrash pause and step budget still
+decide success. The trust gate, allowed file roots, coordinate-thrash pause, step budget and the word-only stop (3 replies in a row with no action) still
 apply. `OPERON_BROWSER_BACKEND=json` and `OPERON_DESKTOP_BACKEND=json` fail startup with a message
 saying json was removed.
 

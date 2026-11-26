@@ -128,7 +128,7 @@ class UITarsFormat(ActionFormat):
         thought = thought_match.group(1).strip() if thought_match else ""
         action_match = _ACTION.search(text)
         if not action_match:
-            return ParsedReply(thought=thought or text, invalid="the reply has no 'Action:' line")
+            return ParsedReply(thought=thought or text, invalid="the reply has no 'Action:' line", no_action=True)
         reply = ParsedReply(thought=thought)
         # Several actions may follow, one per line (or separated by blank lines).
         code = "\n".join(line.strip() for line in action_match.group(1).strip().splitlines() if line.strip())

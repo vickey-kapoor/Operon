@@ -802,6 +802,7 @@ class AgentLoop:
                 add_hints([text], source="model_confirmation_answer", run_id=run_id)
         self._pause_requests.discard(run_id)
         record.stop_reason = None
+        record.words_only_streak = 0
         clear_failure(record)
         if hasattr(record, "pause_reason"):
             record.pause_reason = None
@@ -1172,6 +1173,8 @@ class AgentLoop:
         if callable(add_hints):
             add_hints([ctx.override_text], source="user_override", run_id=ctx.run_id)
             ctx.override_sent = True
+        # A person answered the model: its words-only streak starts over (KAN-204).
+        ctx.record.words_only_streak = 0
         logger.info("Consumed user override hint for step %d: %r", ctx.step_index, override_hint)
 
     async def _perceive_stage(self, ctx: StepContext) -> RunResponse | None:
@@ -1216,6 +1219,8 @@ class AgentLoop:
         if _enriched is not decision.action:
             decision = decision.model_copy(update={"action": _enriched})
         ctx.decision = decision
+        words = getattr(decision, "words_only", None)
+        ctx.state.words_only_streak = ctx.state.words_only_streak + 1 if isinstance(words, str) else 0
         _trace("  3 POLICY OK", f"{ctx.record_stage('policy', _t0):.2f}s  action={decision.action.action_type.value!r}  target={decision.action.target_element_id!r}  rationale={decision.rationale[:80]!r}")
         ctx.policy_debug = self._resolve_model_debug_artifacts(ctx.run_id, ctx.step_index, "policy", self.policy_service)
         ctx.state.current_subgoal = decision.active_subgoal
@@ -1864,7 +1869,16 @@ class AgentLoop:
         if final_status is not RunStatus.WAITING_FOR_USER:
             self._pause_requests.discard(run_id)
         if final_status is RunStatus.FAILED:
-            note_failure(state, detail=recovery.message)  # KAN-175: cause from the stop reason
+            # KAN-175: cause from the stop reason; the word-only stop (KAN-204) names its own.
+            note_failure(
+                state,
+                cause=(
+                    RunFailureCause.MODEL_ONLY_TALKED
+                    if recovery.failure_category is FailureCategory.MODEL_ONLY_TALKED
+                    else None
+                ),
+                detail=recovery.message,
+            )
         if final_status is RunStatus.RUNNING:
             await self._apply_recovery_actions(state, recovery, ctx.step_index)
         ctx.final_status = final_status

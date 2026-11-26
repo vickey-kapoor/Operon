@@ -103,7 +103,7 @@ A Gemini computer-use click in batch browser mode:
 7. **Verify.** `OwnDoneVerifier.verify` (`agent/policy/thin.py`) returns SUCCESS for an executed
    action and for the model's own "done" (unchecked; graders decide), UNCERTAIN for a failed
    action, and FAILURE when the model gave up.
-8. **Recover.** `ThinRecovery` (`agent/policy/thin.py`) advances, or stops on the model's own done.
+8. **Recover.** `ThinRecovery` (`agent/policy/thin.py`) advances, or stops on the model's own done or after 3 replies in a row with words only and no action (KAN-204).
 9. **Persist.** The step log, progress trace and run state are written (see
    [Persistence](#persistence)).
 
@@ -143,10 +143,10 @@ in `api/runtime/loops.py:_loop_layers` for every backend (Gemini `computer_use` 
 |---|---|
 | Policy | `ThinPolicy`: the backend's decision unchanged |
 | Verifier | `OwnDoneVerifier`: failures go back to the model as tool results; the model's "done" ends the run, unchecked |
-| Recovery | `ThinRecovery`: always hand back to the model, or stop on its own done |
+| Recovery | `ThinRecovery`: hand back to the model, or stop on its own done or after 3 word-only replies in a row |
 | Loop | No retries, no redundant-action blocking, no grounder refinement |
 
-The trust gate, file guard, coordinate-thrash pause and step budget stay. Advisory text (task
+The trust gate, file guard, coordinate-thrash pause, step budget and word-only stop stay. Advisory text (task
 note, secret names, change note) is allowed because it changes what the model sees, not its
 action.
 
@@ -244,7 +244,7 @@ No second model judges a "done". The benchmark graders (app state, request logs)
 ## Recovery
 
 `ThinRecovery` (`src/operon/agent/policy/thin.py`) is the only recovery manager: it advances after
-every step and stops only on the model's own "done". The earlier retry ladder (retry, new tactic,
+every step and stops only on the model's own "done", or when the model has replied with words only and no action 3 times in a row (`model_only_talked`, KAN-204; the run ends FAILED with the model's last words as the reason). The earlier retry ladder (retry, new tactic,
 context reset, session reset) was removed (KAN-183); the `RecoveryManager` interface and the
 `CONTEXT_RESET` and `SESSION_RESET` strategies remain.
 

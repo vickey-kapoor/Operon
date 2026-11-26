@@ -81,6 +81,8 @@ class FailureCategory(StrEnum):
     MAX_STEP_LIMIT_REACHED = "max_step_limit_reached"
     # KAN-175: the model itself called the run a failure (thin harness "gave up").
     MODEL_GAVE_UP = "model_gave_up"
+    # KAN-204: the model replied with words only, no action, 3 times in a row.
+    MODEL_ONLY_TALKED = "model_only_talked"
     HUMAN_INTERVENTION_REQUIRED = "human_intervention_required"
 
 
@@ -121,6 +123,8 @@ class StopReason(StrEnum):
     SUBGOAL_ALREADY_COMPLETED = "subgoal_already_completed"
     RETRY_LIMIT_REACHED = "retry_limit_reached"
     MAX_STEP_LIMIT_REACHED = "max_step_limit_reached"
+    # KAN-204: the model replied with words only, no action, 3 times in a row.
+    MODEL_ONLY_TALKED = "model_only_talked"
     WAITING_FOR_USER = "waiting_for_user"
     # The process died while the run was in flight (OPERON_CHECKPOINTS, KAN-80); the run
     # waits, with this reason, for an explicit resume.
@@ -130,7 +134,7 @@ class StopReason(StrEnum):
 class RunFailureCause(StrEnum):
     """KAN-175: the one cause a failed run ended with, from a fixed list a bench can group by.
 
-    The loop and API store the first nine in ``AgentState.failure_cause``, except ``needs_user``
+    The loop and API store the first ten in ``AgentState.failure_cause``, except ``needs_user``
     and ``cancelled``, which ``cause_from_state`` derives from the run's status. The last four are
     for benchmark reports only: the bench could not finish the task (``timeout``,
     ``bench_error``), the run said done but the grader disagreed (``wrong_result``), or no
@@ -139,6 +143,7 @@ class RunFailureCause(StrEnum):
 
     MAX_STEPS = "max_steps"
     MODEL_GAVE_UP = "model_gave_up"
+    MODEL_ONLY_TALKED = "model_only_talked"
     API_ERROR = "api_error"
     MODEL_BLOCKED = "model_blocked"
     PERCEPTION_FAILED = "perception_failed"

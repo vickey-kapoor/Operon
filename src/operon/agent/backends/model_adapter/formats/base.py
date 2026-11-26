@@ -50,6 +50,9 @@ class ParsedReply:
     invalid: str | None = None
     # Tool-call ids in reply order, for formats whose history answers each call.
     call_ids: list[str] = field(default_factory=list)
+    # True only when the reply had no action at all (no tool call, no action line, no code
+    # block), as opposed to an action that was wrong. The loop counts these (KAN-204).
+    no_action: bool = False
 
 
 @dataclass(slots=True)

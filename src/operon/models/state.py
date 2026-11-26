@@ -78,6 +78,9 @@ class AgentState(StrictModel):
     permission_mode: str | None = Field(default=None, pattern=r"^(ask|risky|auto)$")
     # True while the person has taken over the screen; no step runs until they hand back.
     in_takeover: bool = False
+    # KAN-204: how many replies in a row had words only and no action (reset by any action
+    # or by a person's answer). The thin recovery stops the run at 3.
+    words_only_streak: int = Field(default=0, ge=0)
     takeover_count: int = Field(default=0, ge=0)
     # Gate pauses the person approved.
     approval_count: int = Field(default=0, ge=0)

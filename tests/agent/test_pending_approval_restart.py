@@ -10,7 +10,7 @@ import pytest
 from operon.agent.policy.trust_gate import TrustGate
 from operon.api.frontdoor import _waiting
 from operon.models.common import RunStatus, RunTaskRequest, StepRequest
-from operon.models.policy import ActionType
+from operon.models.policy import ActionType, AgentAction
 from operon.models.state import AgentState
 from operon.store.approval_audit import read_events
 from operon.store.background_writer import bg_writer
@@ -169,7 +169,7 @@ async def test_a_finished_run_forgets_what_it_waited_for(
     assert _outcomes(tmp_path, run_id)[-1] == "cancelled"
 
 
-async def test_a_takeover_does_not_leave_an_approval_for_a_restart(
+async def test_a_takeover_keeps_the_start_page_but_not_the_approval_across_a_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     run_id = await _paused_on_start_url(monkeypatch, tmp_path)
@@ -177,7 +177,89 @@ async def test_a_takeover_does_not_leave_an_approval_for_a_restart(
     await loop.take_over(run_id)
     await bg_writer.flush()
 
+    saved = _on_disk(tmp_path, run_id).pending_approval
+    assert saved is not None and saved.start_url == URL and saved.gate is None
+
+    again, executor, hints = _restart(monkeypatch, tmp_path)
+    await again.hand_back(run_id)
+
+    assert executor.executed == []
+    assert any("did not approve opening the start page" in h for h in hints)
     assert _on_disk(tmp_path, run_id).pending_approval is None
+
+
+async def test_a_plain_approve_after_a_takeover_restart_cannot_open_the_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = await _paused_on_start_url(monkeypatch, tmp_path)
+    loop, _, _ = _restart(monkeypatch, tmp_path)
+    await loop.take_over(run_id)
+    await bg_writer.flush()
+    record = _on_disk(tmp_path, run_id)
+    record.in_takeover = False  # a restart ends the takeover (checkpoints)
+    (tmp_path / run_id / "state.json").write_text(record.model_dump_json(), encoding="utf-8")
+
+    again, executor, hints = _restart(monkeypatch, tmp_path)
+    await again.resume_run(run_id)
+
+    assert executor.executed == []
+    assert any("did not approve opening the start page" in h for h in hints)
+
+
+async def _paused_on_dialog(monkeypatch: pytest.MonkeyPatch, root: Path) -> str:
+    from operon.agent.loop import _DialogPause
+    from operon.store.approval_audit import request_event
+
+    loop, _ = build_loop(monkeypatch, root, [CLICK_SAVE])
+    record = loop.run_store.create_run("Delete it")
+    loop._dialog_pauses[record.run_id] = _DialogPause("confirm", "Delete?", True, 0, 1)
+    loop._pending_audit[record.run_id] = request_event(record.run_id, 1, "dialog")
+    record.pause_reason = 'The page asked: "Delete?" Accept?'
+    await loop.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
+    await loop._save_pending_approval(record)
+    await bg_writer.flush()
+    return record.run_id
+
+
+@pytest.mark.parametrize("approve", [True, False])
+async def test_a_dialog_pause_is_answered_after_a_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, approve: bool
+) -> None:
+    run_id = await _paused_on_dialog(monkeypatch, tmp_path)
+    loop, executor, hints = _restart(monkeypatch, tmp_path)
+    armed: list[tuple] = []
+    executor.arm_accept_next_dialog = lambda *a: armed.append(a)
+    record = await loop.run_store.get_run(run_id)
+    assert _waiting(loop, record)["gate"] == "dialog"
+
+    await loop.resume_run(run_id, approve_gated_action=approve)
+
+    if approve:
+        assert loop._dialog_approved[run_id] == ("confirm", "Delete?")
+        assert any("approved the page's confirm dialog" in h and "Repeat the action" in h for h in hints)
+    else:
+        assert run_id not in loop._dialog_approved
+        assert any("declined the page's confirm dialog" in h for h in hints)
+
+
+@pytest.mark.parametrize("approve", [True, False])
+async def test_a_model_confirmation_pause_is_answered_after_a_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, approve: bool
+) -> None:
+    ask = AgentAction(action_type=ActionType.WAIT_FOR_USER, text="Saves the file.")
+    loop, _ = build_loop(monkeypatch, tmp_path, [ask])
+    loop.policy_service.has_held_actions = lambda run_id: True
+    run_id = loop.run_store.create_run("Save").run_id
+    await loop.step_run(StepRequest(run_id=run_id))
+    await bg_writer.flush()
+
+    restarted, _, hints = _restart(monkeypatch, tmp_path, [ask])
+    await restarted.resume_run(run_id, approve_gated_action=approve)
+
+    if approve:
+        assert any("said yes" in h and "did not run because Operon restarted" in h for h in hints)
+    else:
+        assert any("declined the action you asked to confirm" in h for h in hints)
 
 
 def test_a_state_saved_before_the_field_still_loads() -> None:

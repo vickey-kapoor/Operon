@@ -24,6 +24,9 @@ class PendingApproval(StrictModel):
     start_url: str | None = None
     audit: dict[str, str | int] | None = None
     reason: str | None = None
+    # A page dialog the executor cancelled (KAN-172): its kind and message.
+    dialog_kind: str | None = None
+    dialog_message: str | None = None
 
 
 class AgentState(StrictModel):

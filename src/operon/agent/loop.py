@@ -267,6 +267,8 @@ class AgentLoop:
         self._opening_start_urls: set[str] = set()
         # KAN-226: runs whose pending approval this process refilled from state.json (once each).
         self._pending_restored: set[str] = set()
+        # Runs paused on a model confirmation whose held calls a restart lost.
+        self._restored_confirmations: set[str] = set()
         # KAN-172: run_id -> (dialog type, message, whether the backend holds the action that
         # raised it) for a run paused on a page dialog the executor cancelled.
         self._dialog_pauses: dict[str, _DialogPause] = {}
@@ -405,7 +407,10 @@ class AgentLoop:
         if pending is None and audit is None:
             record.pending_approval = None
             return
+        dialog = self._dialog_pauses.get(run_id)
         record.pending_approval = PendingApproval(
+            dialog_kind=dialog.kind if dialog is not None else None,
+            dialog_message=dialog.message if dialog is not None else None,
             fingerprint=pending[0] if pending else None,
             gate=pending[1] if pending else None,
             category=pending[2] if pending else "",
@@ -441,6 +446,17 @@ class AgentLoop:
             self._pending_start_urls.setdefault(run_id, pending.start_url)
         if pending.audit is not None:
             self._pending_audit.setdefault(run_id, dict(pending.audit))
+            if (
+                pending.gate is None
+                and pending.dialog_kind is None
+                and pending.audit.get("category") == "model_confirmation"
+            ):
+                self._restored_confirmations.add(run_id)
+        if pending.dialog_kind is not None:
+            # The page and its held calls are gone: the approve path arms the dialog and hints.
+            self._dialog_pauses.setdefault(
+                run_id, _DialogPause(pending.dialog_kind, pending.dialog_message or "", False, None, 1)
+            )
         if pending.reason:
             record.pause_reason = pending.reason  # what the person is about to approve
 
@@ -657,8 +673,13 @@ class AgentLoop:
         if not getattr(record, "in_takeover", False):
             record.in_takeover = True
             record.takeover_count = getattr(record, "takeover_count", 0) + 1
-            # A restart during a takeover must not turn a plain resume into an approval.
-            record.pending_approval = None
+            # A restart during a takeover must not turn a plain resume into an approval: keep
+            # the start page and reason (hand back then tells the model it was not opened),
+            # drop the gate.
+            if record.pending_approval is not None:
+                record.pending_approval = record.pending_approval.model_copy(
+                    update={"fingerprint": None, "gate": None, "category": "", "verdict": ""}
+                )
             await self.run_store.save_state(record)
         self._set_person_driving(run_id, True)
         return record
@@ -717,7 +738,6 @@ class AgentLoop:
         self.restore_pending_approval(record)  # before anything below pops it
         if record.stop_reason is StopReason.INTERRUPTED:
             await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
-            self.restore_pending_approval(record, force=True)
         dialog_pause = self._dialog_pauses.pop(run_id, None)
         approved_dialog = self._dialog_approved.pop(run_id, None)
         self._disarm_dialog_accept(run_id)  # nothing stays armed across a resume
@@ -769,6 +789,18 @@ class AgentLoop:
             self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
             if hasattr(record, "approval_count"):
                 record.approval_count += 1
+        if run_id in self._restored_confirmations:
+            # The held calls died with the process: tell the model what the person answered.
+            self._restored_confirmations.discard(run_id)
+            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+            if callable(add_hints):
+                text = (
+                    "The person said yes to the action you asked to confirm, but it did not run because "
+                    "Operon restarted. Look at the screen and repeat it if it is still needed."
+                    if approve_gated_action
+                    else "The person declined the action you asked to confirm. Do not repeat it unless asked."
+                )
+                add_hints([text], source="model_confirmation_answer", run_id=run_id)
         self._pause_requests.discard(run_id)
         record.stop_reason = None
         clear_failure(record)
@@ -2678,6 +2710,7 @@ class AgentLoop:
         self._pause_requests.discard(run_id)
         self._created_runs.discard(run_id)
         self._pending_restored.discard(run_id)
+        self._restored_confirmations.discard(run_id)
         try:
             saved = await self.run_store.get_run(run_id)
             if saved is not None and saved.pending_approval is not None:

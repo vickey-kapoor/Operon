@@ -129,6 +129,10 @@ PAID_RUN_PATTERNS: tuple[str, ...] = (
     # grounding.yml and osworld-bench.yml; the merge check is pr-gate.yml, scripts/pr_gate.py and its tests).
     ".github/workflows/**",
     ".github/actions/**",
+    # Anything under .claude/ and a root .mcp.json can run commands in the next Claude Code session (hooks, permission
+    # allow lists, agent definitions including the verifier whose PASS the gate needs).
+    ".claude/**",
+    ".mcp.json",
     "scripts/pr_gate.py",
     "tests/ci/test_pr_gate.py",
     # Everything under evals/ (bench, batch queue, OSWorld, grounding, live smoke, caps, suites, seasons, runners'
@@ -182,7 +186,8 @@ class ChangedFile:
 def _matches(pattern: str, path: str) -> bool:
     pattern, path = pattern.casefold(), path.casefold()
     if pattern.endswith("/**"):
-        return path.startswith(pattern[:-2])
+        # The bare directory (no trailing file) matches too.
+        return path.startswith(pattern[:-2]) or path == pattern[:-3]
     return fnmatch.fnmatchcase(path, pattern)
 
 

@@ -448,7 +448,7 @@ def test_every_risky_pattern_matches_something(pattern: str) -> None:
 
 
 # No composite action is committed yet; the folder still waits for Vickey (a new action file is needs-vickey).
-PAID_RUN_MAY_BE_EMPTY: tuple[str, ...] = (".github/actions/**",)
+PAID_RUN_MAY_BE_EMPTY: tuple[str, ...] = (".github/actions/**", ".claude/**", ".mcp.json")
 
 
 @pytest.mark.parametrize("pattern", gate.PAID_RUN_PATTERNS)
@@ -505,9 +505,6 @@ def test_claude_md_lists_every_paid_run_pattern() -> None:
         "tests/integration/CLAUDE.md",
         "src/operon/agents.md",
         "a/b/c/AGENTS.md",
-        ".claude/settings.json",
-        ".claude/skills/x/SKILL.md",
-        ".claude/agents/coder.md",
     ],
 )
 def test_rules_files_are_risky_not_needs_vickey(path: str) -> None:
@@ -584,6 +581,20 @@ def test_other_github_settings_files_are_risky_not_needs_vickey(path: str) -> No
 )
 def test_a_rename_into_or_out_of_workflows_needs_vickey(old: str, new: str) -> None:
     f = CF(new, "renamed", previous_filename=old)
+    assert gate.classify([f], is_fork=False)[0] == "needs-vickey"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [".claude/settings.json", ".claude/agents/verifier.md", ".claude/skills/x/SKILL.md", ".mcp.json", ".github/workflows", ".github/actions"],
+)
+def test_claude_dir_mcp_json_and_bare_workflow_dirs_need_vickey(path: str) -> None:
+    for status in ("modified", "added", "removed"):
+        assert gate.classify([CF(path, status)], is_fork=False)[0] == "needs-vickey", (path, status)
+
+
+def test_a_rename_out_of_claude_agents_needs_vickey() -> None:
+    f = CF("docs/a.md", "renamed", previous_filename=".claude/agents/a.md")
     assert gate.classify([f], is_fork=False)[0] == "needs-vickey"
 
 

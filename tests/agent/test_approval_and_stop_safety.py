@@ -440,3 +440,22 @@ async def test_a_stop_while_approving_never_opens_the_start_url(monkeypatch: pyt
     await loop.resume_run("run-1")
 
     execute.assert_not_called()
+
+
+@pytest.mark.parametrize("fails", ["result", "raise"])
+async def test_an_approved_start_url_that_fails_to_open_is_told_to_the_model(
+    monkeypatch: pytest.MonkeyPatch, fails: str
+) -> None:
+    loop, execute, _, _, hints = await _start_paused(monkeypatch)
+
+    async def failing(action: AgentAction) -> ExecutedAction:
+        if fails == "raise":
+            raise RuntimeError("browser gone")
+        return ExecutedAction(action=action, success=False, detail="net::ERR_NAME_NOT_RESOLVED")
+
+    execute.side_effect = failing
+    if fails == "raise":
+        monkeypatch.setattr(loop, "_recovered", lambda *_: None)  # tests re-raise recovered errors
+    await loop.resume_run("run-1")
+
+    assert any("failed to open" in hint for hint in hints)

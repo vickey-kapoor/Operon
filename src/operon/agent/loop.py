@@ -395,6 +395,7 @@ class AgentLoop:
     async def _open_approved_start_url(self, run_id: str, url: str) -> None:
         """Open the start page the person just approved (KAN-197), as ``start_run`` would have."""
         _trace("RESUME -> NAVIGATE", url_origin_for_log(url) or "")
+        failure: str | None = None
         try:
             async with self._executor_lock:
                 # A stop can land while this waits for another run's step: never open a page for a stopped run.
@@ -403,16 +404,23 @@ class AgentLoop:
                     return
                 if hasattr(self.executor, "set_current_run_id"):
                     self.executor.set_current_run_id(run_id)
-                await self.executor.execute(AgentAction(action_type=ActionType.NAVIGATE, url=url))
+                result = await self.executor.execute(AgentAction(action_type=ActionType.NAVIGATE, url=url))
+            # Executors report most load failures (DNS, timeout) as success=False, not by raising.
+            if getattr(result, "success", True) is False:
+                failure = getattr(result, "detail", None) or "navigation failed"
         except Exception as exc:
             self._recovered(run_id, "open_start_url", exc)
-            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
-            if callable(add_hints):
-                add_hints(
-                    [f"The person approved the start page {url}, but it failed to open. Look at the screen before acting."],
-                    source="start_url_failed",
-                    run_id=run_id,
-                )
+            failure = type(exc).__name__
+        if failure is None:
+            return
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints(
+                [f"The person approved the start page {url}, but it failed to open ({failure}). "
+                 "Look at the screen before acting."],
+                source="start_url_failed",
+                run_id=run_id,
+            )
 
     async def _write_plan(self, record) -> None:
         """One-shot planner (OPERON_PLANNER): a cheaper model plans once; the plan is a first-step hint.

@@ -224,6 +224,49 @@ def test_goto_guard_detects_violations() -> None:
     assert _goto_sites_and_violations(ok, "ok.py")[1] == []
 
 
+# A2. The start URL is judged (KAN-197): start_run runs the trust gate's verdict through the
+# run's permission mode before it navigates, so `ask` mode and a CONFIRM pause the run.
+def _start_url_violations(source: str, rel: str) -> list[str]:
+    out: list[str] = []
+    found = False
+    for fn in _functions(ast.parse(source)):
+        if fn.name != "start_run":
+            continue
+        found = True
+        calls = [n for n in _own_nodes(fn) if isinstance(n, ast.Call)]
+        judged = [c.lineno for c in calls if _call_name(c) == "apply_permission_mode"]
+        if not judged:
+            out.append(f"{rel}:{fn.lineno} start_run() never calls apply_permission_mode")
+            continue
+        navs = [c.lineno for c in calls if _call_name(c) == "execute" and c.lineno < min(judged)]
+        if navs:
+            out.append(f"{rel}:{navs[0]} start_run() executes before apply_permission_mode")
+    if not found:
+        out.append(f"{rel}: start_run not found")
+    return out
+
+
+def test_start_url_is_judged_with_permission_mode() -> None:
+    rel = "operon/agent/loop.py"
+    violations = _start_url_violations(_read(SRC / rel), rel)
+    assert not violations, "start URL not judged:\n" + "\n".join(violations)
+
+
+def test_start_url_guard_detects_violations() -> None:
+    bad = "class A:\n    async def start_run(self, r):\n        await self.executor.execute(r)\n"
+    late = (
+        "class A:\n    async def start_run(self, r):\n        await self.executor.execute(r)\n"
+        "        v = apply_permission_mode(r, r, None)\n"
+    )
+    ok = (
+        "class A:\n    async def start_run(self, r):\n        v = apply_permission_mode(r, r, None)\n"
+        "        await self.executor.execute(r)\n"
+    )
+    assert len(_start_url_violations(bad, "bad.py")) == 1
+    assert len(_start_url_violations(late, "late.py")) == 1
+    assert _start_url_violations(ok, "ok.py") == []
+
+
 # B. Spawned processes use launch_env (KAN-181, #356): the server's secrets in its own
 # environment must not leak into the apps and tools Operon launches.
 SPAWN_FILES = [

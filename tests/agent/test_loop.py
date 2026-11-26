@@ -1414,6 +1414,8 @@ def _expect_loop(tmp_path):
     loop.perception_service = MagicMock()
     loop._recovered_errors = {}
     loop._expect_reminded = {}
+    loop._pending_start_urls = {}
+    loop._opening_start_urls = set()
     loop._secret_site_approved = {}
     loop._dialog_pauses = {}
     loop._dialog_approved = {}

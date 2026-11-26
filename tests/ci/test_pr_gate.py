@@ -578,3 +578,65 @@ def test_no_pr_controlled_text_in_run_scripts() -> None:
     for run in re.findall(r"run: \|\n((?:\s{10,}.*\n)+)", text):
         for bad in ("github.event.pull_request.title", "head_ref", "github.head_ref", "comment.body", "${{"):
             assert bad not in run, bad
+
+
+# KAN-229: one word ("pause") stops all auto-work: an open issue labelled auto-work-paused.
+def _issue(*labels: str, **extra: Any) -> dict[str, Any]:
+    return {"number": 1, "state": "open", "labels": [{"name": n} for n in labels], **extra}
+
+
+def test_paused_when_an_open_issue_has_the_label() -> None:
+    assert gate.is_paused([_issue("auto-work-paused")])
+    assert gate.is_paused([_issue("bug"), _issue("bug", "Auto-Work-Paused")])  # case-insensitive
+
+
+def test_not_paused_without_an_open_labelled_issue() -> None:
+    assert not gate.is_paused([])
+    assert not gate.is_paused([_issue("bug"), _issue()])
+    assert not gate.is_paused([_issue("auto-work-paused", state="closed")])
+
+
+def test_a_pull_request_with_the_label_does_not_pause() -> None:
+    """The issues API also lists pull requests; they carry a pull_request key."""
+    assert not gate.is_paused([_issue("auto-work-paused", pull_request={"url": "x"})])
+    assert gate.is_paused([_issue("auto-work-paused", pull_request={"url": "x"}), _issue("auto-work-paused")])
+
+
+def test_pause_lookup_failure_counts_as_paused(tmp_path: Path) -> None:
+    assert gate.paused_from_file(str(tmp_path / "missing.json"))
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json", encoding="utf-8")
+    assert gate.paused_from_file(str(bad))
+    bad.write_text('{"message": "rate limited"}', encoding="utf-8")
+    assert gate.paused_from_file(str(bad))
+    bad.write_text("[1]", encoding="utf-8")
+    assert gate.paused_from_file(str(bad))
+
+
+def test_cli_paused_prints_paused_or_running(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    f = tmp_path / "issues.json"
+    f.write_text(json.dumps([_issue("auto-work-paused")]), encoding="utf-8")
+    assert gate.main(["paused", "--issues", str(f)]) == 0
+    assert capsys.readouterr().out.strip() == "paused"
+    f.write_text("[]", encoding="utf-8")
+    assert gate.main(["paused", "--issues", str(f)]) == 0
+    assert capsys.readouterr().out.strip() == "running"
+
+
+def test_sweep_checks_the_pause_before_it_merges_or_notes() -> None:
+    run = _sweep_run()
+    check = run.index("pr_gate.py paused")
+    assert check < run.index("gh pr merge") and check < run.index("gh pr comment") and check < run.index("gh pr list")
+    assert "Auto-work is paused" in run
+    assert "|| state=paused" in run and "rm -f" in run  # fail closed
+    assert _wf()["jobs"]["sweep"]["permissions"]["issues"] == "read"
+
+
+def test_daily_note_says_paused() -> None:
+    run = next(s["run"] for s in _wf()["jobs"]["daily"]["steps"] if "run" in s)
+    assert "pr_gate.py paused" in run and "Paused" in run and "|| pause=paused" in run
+
+
+def test_claude_md_states_the_pause_rule() -> None:
+    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "While an open issue labelled `auto-work-paused` exists" in text

@@ -195,6 +195,7 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   (`<!-- operon-gate-trial: <head sha> -->`) for that exact head and the PR is not labelled `paid-run`. A fork PR is
   never merged by the gate. Never enable GitHub's own auto-merge (it is off repo-wide): it only waits for required
   checks and skips the markers.
+- While an open issue labelled `auto-work-paused` exists (Vickey wrote "pause"), the gate merges nothing and posts no would-merge notes, so no PR merges.
 - A `risky` PR also needs a review by the top model available in this app (today Fable 5.2), in a fresh session that is
   not the coordinator and did not write or verify the change, so someone checks on Vickey's behalf. Post its verdict on
   the PR verbatim, with the marker, in its own comment. Fix what it finds; once it passes on the head, post

@@ -6,8 +6,9 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
     python scripts/pr_gate.py classify --files files.json [--fork]
     python scripts/pr_gate.py merge-ready --pr pr.json --files files.json --checks checks.json \
         --comments comments.json [--ignore-check NAME ...]
+    python scripts/pr_gate.py paused --issues issues.json
 
-``classify`` prints ``low-risk``, ``risky`` or ``paid-run`` on stdout (paid-run beats risky beats low-risk); ``merge-ready`` prints ``ready`` or ``not-ready``.
+``classify`` prints ``low-risk``, ``risky`` or ``paid-run`` on stdout (paid-run beats risky beats low-risk); ``merge-ready`` prints ``ready`` or ``not-ready``; ``paused`` prints ``paused`` or ``running`` (KAN-229).
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -156,6 +157,9 @@ REQUIRED_CHECKS: tuple[str, ...] = (
     "Browser end to end (Chromium)",
     "Desktop (Linux container)",
 )
+
+# KAN-229: while an open issue carries this label, the gate merges nothing and posts no would-merge notes.
+PAUSE_LABEL = "auto-work-paused"
 
 OWNER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 CODEX_BOT = "chatgpt-codex-connector[bot]"
@@ -405,6 +409,33 @@ def merge_ready(
     return (not why), why or ["all gates passed"]
 
 
+def is_paused(open_issues: Iterable[dict[str, Any]]) -> bool:
+    """Whether auto-work is paused: any open issue (not a pull request) carries the ``auto-work-paused`` label.
+
+    ``open_issues`` is a list from the issues API, which also returns pull requests (they have a ``pull_request``
+    key and never pause anything). The label match is case-insensitive.
+    """
+    for issue in open_issues:
+        if issue.get("pull_request") is not None or issue.get("state", "open") != "open":
+            continue
+        for label in issue.get("labels") or []:
+            name = label.get("name") if isinstance(label, dict) else label
+            if isinstance(name, str) and name.casefold() == PAUSE_LABEL:
+                return True
+    return False
+
+
+def paused_from_file(path: str) -> bool:
+    """``is_paused`` for JSON saved from the issues API. Fail closed: a missing, unreadable or odd file means paused."""
+    try:
+        data = _load(path)
+    except (OSError, ValueError):
+        return True
+    if not isinstance(data, list) or not all(isinstance(i, dict) for i in data):
+        return True
+    return is_paused(data)
+
+
 def _load(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -438,8 +469,15 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--comments", required=True)
     m.add_argument("--status", required=True)
     m.add_argument("--ignore-check", action="append", default=[])
+    p = sub.add_parser("paused")
+    p.add_argument("--issues", required=True)
     a = ap.parse_args(argv)
 
+    if a.cmd == "paused":
+        paused = paused_from_file(a.issues)
+        _report("paused" if paused else "running", [f"open issue labelled {PAUSE_LABEL}, or the lookup failed" if paused else "none"], "Auto-work")
+        print("paused" if paused else "running")
+        return 0
     if a.cmd == "classify":
         risk, reasons = classify(_files(a.files), a.fork)
         _report(risk, reasons, "PR risk")

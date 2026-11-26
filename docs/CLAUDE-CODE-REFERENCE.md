@@ -15,9 +15,10 @@ Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
 - **Every PR can merge itself, but no paid run without Vickey's explicit OK** (Vickey, 2026-11-26). The full rule
   is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short: checks green, Codex
   answered and the verifier marker on the head; `risky` PRs also need a top-model (today Fable 5.2) review in a fresh
-  session that is not the coordinator or the author; PRs touching paid-run machinery (workflows, evals except JSON
-  recordings, scripts, the gate's tests, price tables, model defaults and ids, model clients, settings; exact list in
-  `CLAUDE.md`) or these rules wait for Vickey's "merge" for that PR. The gate does the merging; agents never merge by
+  session that is not the coordinator or the author; PRs labelled `needs-vickey` (every workflow or action file, evals
+  except JSON recordings, scripts, the gate's tests, price tables, model defaults and ids, model clients, settings;
+  exact list in `CLAUDE.md`) wait for Vickey's "merge" for that PR; the rules files are only `risky`. The gate does the
+  merging; agents never merge by
   hand except as `CLAUDE.md` allows. Approval is per PR and per run: an earlier "merge", a "yes" to another question, green checks,
   a clean Codex review or a reviewer PASS do not count. Never enable GitHub's own auto-merge (it is off repo-wide).
 - **Codex reviews every PR.** Fix or answer every Codex finding before merging.

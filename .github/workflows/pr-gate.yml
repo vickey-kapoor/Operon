@@ -1,11 +1,13 @@
-# PR gate (KAN-216, KAN-227): label every PR low-risk, risky or paid-run, and merge the low-risk and risky ones that are
-# fully reviewed (risky also needs a Fable 5.2 top-review marker). A paid-run PR is never merged here: Vickey merges it.
+# PR gate (KAN-216, KAN-227): label every PR low-risk, risky or needs-vickey, and merge the low-risk and risky ones that are
+# fully reviewed (risky also needs a Fable 5.2 top-review marker). A needs-vickey PR is never merged here: Vickey merges it.
 #
 # All decisions live in scripts/pr_gate.py (offline tested). The merge step only runs when the repo
 # variable OPERON_AUTO_MERGE is "on". Unset (the default) is trial mode: label, plus one "would merge"
 # note per head commit, and nothing is merged by the gate. Never pull_request_target; the label job
 # runs main's copy of the script, and no PR-controlled text is put into a command (it goes through env
-# or files).
+# or files). The label is advisory: on pull_request this workflow file comes from the PR itself, so a PR that edits it
+# can change what its own label job does. What enforces is the sweep on main: it reclassifies every PR with main's
+# script from the PR's files and refuses needs-vickey, whatever the labels or notes say.
 name: PR gate
 
 on:
@@ -36,8 +38,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
-      # The base commit, not the PR's: the classifier that judges a PR is never the PR's own copy.
+      # The base commit's script, not the PR's copy (the workflow file itself is the PR's: see the header).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
@@ -47,15 +50,23 @@ jobs:
           set -euo pipefail
           gh label create low-risk --repo "$REPO" --color 0E8A16 --description "Auto-merge candidate (KAN-216)" --force
           gh label create risky --repo "$REPO" --color D93F0B --description "Merges after a Fable 5.2 review (KAN-227)" --force
-          gh label create paid-run --repo "$REPO" --color B60205 --description "Touches paid runs: Vickey merges (KAN-227)" --force
+          gh label create needs-vickey --repo "$REPO" --color B60205 --description "Changes paid-run workflows, the merge check, cost files or workflow secrets: Vickey merges (KAN-227)" --force
           gh api --paginate "repos/$REPO/pulls/$PR/files" | jq -s 'add // []' > "$RUNNER_TEMP/files.json"
-          risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json")
+          # The base script may predate --repo/--ref (it then cannot read agent files, which only matters after merge).
+          extra=()
+          if python3 scripts/pr_gate.py classify --help | grep -q -e '--ref'; then extra=(--repo "$REPO" --ref "$HEAD_SHA"); fi
+          risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json" "${extra[@]}")
           case "$risk" in
-            low-risk) add=low-risk; r1=risky; r2=paid-run ;;
-            paid-run) add=paid-run; r1=low-risk; r2=risky ;;
-            *) add=risky; r1=low-risk; r2=paid-run ;;
+            low-risk) add=low-risk; r1=risky; r2=needs-vickey ;;
+            needs-vickey) add=needs-vickey; r1=low-risk; r2=risky ;;
+            *) add=risky; r1=low-risk; r2=needs-vickey ;;
           esac
           gh pr edit "$PR" --repo "$REPO" --add-label "$add" --remove-label "$r1" --remove-label "$r2"
+          # The label was called paid-run before: drop a stale one so old PRs are relabelled cleanly.
+          current=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name')
+          if printf '%s\n' "$current" | grep -qx paid-run; then
+            gh pr edit "$PR" --repo "$REPO" --remove-label paid-run
+          fi
 
   sweep:
     name: Sweep and merge
@@ -67,6 +78,7 @@ jobs:
       pull-requests: write
       checks: read
       statuses: read
+      issues: read # the pause check (KAN-229)
     concurrency:
       group: pr-gate-sweep
       cancel-in-progress: false
@@ -81,11 +93,23 @@ jobs:
       - name: Check every open low-risk or risky PR
         run: |
           set -euo pipefail
-          gh label create auto-merged --repo "$REPO" --color 5319E7 --description "Merged by the PR gate" --force
-          gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Would merge: the gate would have merged this (KAN-216/KAN-227)" --force
           work="$RUNNER_TEMP/gate"
           mkdir -p "$work"
-          # Open, non-draft PRs labelled low-risk or risky; paid-run is never listed (and merge-ready refuses it anyway).
+          # KAN-229: an open issue labelled auto-work-paused stops all merging and would-merge notes. Fail closed:
+          # if the lookup fails, the issues file is removed and the script reports paused. Checked again before
+          # every merge and note, so a pause set mid-sweep takes effect.
+          pause_state() {
+            gh api --paginate "repos/$REPO/issues?state=open&labels=auto-work-paused&per_page=100" | jq -s 'add // []' > "$work/issues.json" || rm -f "$work/issues.json"
+            python3 scripts/pr_gate.py paused --issues "$work/issues.json" 2>/dev/null || echo paused
+          }
+          if [ "$(pause_state)" != running ]; then
+            echo "Auto-work is paused: merging nothing and posting no notes."
+            exit 0
+          fi
+          # --- end of the pause check ---
+          gh label create auto-merged --repo "$REPO" --color 5319E7 --description "Merged by the PR gate" --force
+          gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Would merge: the gate would have merged this (KAN-216/KAN-227)" --force
+          # Open, non-draft PRs labelled low-risk or risky; needs-vickey is never listed (and merge-ready refuses it anyway).
           gh pr list --repo "$REPO" --state open --draft=false --label low-risk --limit 100 --json number --jq '.[].number' > "$work/prs"
           gh pr list --repo "$REPO" --state open --draft=false --label risky --limit 100 --json number --jq '.[].number' >> "$work/prs"
           while read -r n; do
@@ -114,6 +138,10 @@ jobs:
               --ignore-check "Label PR" --ignore-check "Sweep and merge" 2>"$d/why.txt") || verdict=error
             cat "$d/why.txt"
             [ "$verdict" = ready ] || continue
+            if [ "$(pause_state)" != running ]; then
+              echo "Auto-work is paused: merging nothing and posting no notes."
+              exit 0
+            fi
             if [ "$AUTO_MERGE" = on ]; then
               if gh pr merge "$n" --repo "$REPO" --squash --match-head-commit "$sha"; then
                 gh pr edit "$n" --repo "$REPO" --add-label auto-merged || echo "::warning::PR $n: merged, but adding the auto-merged label failed"
@@ -134,6 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read # the checkout (scripts/pr_gate.py paused)
       pull-requests: read
       issues: read
     env:
@@ -142,6 +171,9 @@ jobs:
       AUTO_MERGE: ${{ vars.OPERON_AUTO_MERGE }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Summarise the last 24 hours
         run: |
           set -euo pipefail
@@ -156,8 +188,12 @@ jobs:
                 | "- #\(.issue_url | split("/") | last)"] | unique | join("\n")')
           mode=trial
           [ "$AUTO_MERGE" = on ] && mode=on
-          note=$(printf 'PR gate (auto-merge: %s), last 24 h\nAuto-merged:\n%s\nWould have merged (trial):\n%s\n' \
-            "$mode" "${merged:-none}" "${would:-none}")
+          # KAN-229: report the pause state (fail closed: a failed lookup reads as paused).
+          gh api --paginate "repos/$REPO/issues?state=open&labels=auto-work-paused&per_page=100" | jq -s 'add // []' > "$RUNNER_TEMP/issues.json" || rm -f "$RUNNER_TEMP/issues.json"
+          pause=$(python3 scripts/pr_gate.py paused --issues "$RUNNER_TEMP/issues.json" 2>/dev/null) || pause=paused
+          [ "$pause" = running ] && pause=no || pause="Paused (merges nothing)"
+          note=$(printf 'PR gate (auto-merge: %s), last 24 h\nPause: %s\nAuto-merged:\n%s\nWould have merged (trial):\n%s\n' \
+            "$mode" "$pause" "${merged:-none}" "${would:-none}")
           printf '%s\n' "$note" >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$SLACK_WEBHOOK_URL" ]; then
             jq -n --arg text "$note" '{text: $text}' | curl -fsS -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK_URL"

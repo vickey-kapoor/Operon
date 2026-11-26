@@ -118,7 +118,7 @@ OLD = "b" * 40
         ([CF("SECURITY.md")], False, "risky"),
         ([CF("docs/CLAUDE.md")], False, "risky"),
         ([CF("CLAUDE.MD")], False, "risky"),
-        ([CF(".GitHub/x.yml")], False, "needs-vickey"),
+        ([CF(".GitHub/x.yml")], False, "risky"),
         ([CF("src/operon/Executor/desktop.py")], False, "risky"),
         ([CF("Tests/test_old.py", "removed")], False, "risky"),
         ([CF("some_new_top_level.txt")], False, "risky"),
@@ -148,7 +148,7 @@ OLD = "b" * 40
         ([CF("src/operon/clients/anthropic.py")], False, "needs-vickey"),
         ([CF("tests/ci/test_pr_gate.py")], False, "needs-vickey"),
         ([], False, "risky"),
-        ([CF("docs/../.github/x.yml")], False, "needs-vickey"),
+        ([CF("docs/../.github/x.yml")], False, "risky"),
     ],
 )
 def test_classify(files: list[Any], fork: bool, expected: str) -> None:
@@ -401,7 +401,7 @@ def test_cli_low_risk_label_with_a_workflow_file_is_not_ready(tmp_path: Path, ca
     """The label says low-risk, but the fresh classification of the files (a workflow) says needs-vickey."""
     paths = {n: tmp_path / f"{n}.json" for n in ("pr", "files", "checks", "comments", "status")}
     paths["pr"].write_text(json.dumps(_pr()))
-    paths["files"].write_text(json.dumps([{"filename": "docs/a.md"}, {"filename": ".github/x.yml", "status": "added"}]))
+    paths["files"].write_text(json.dumps([{"filename": "docs/a.md"}, {"filename": ".github/workflows/x.yml", "status": "added"}]))
     paths["checks"].write_text(json.dumps({"check_runs": GOOD_CHECKS}))
     paths["comments"].write_text(json.dumps([_codex(), _marker(), _top()]))
     paths["status"].write_text(json.dumps(GOOD_STATUS))
@@ -447,9 +447,15 @@ def test_every_risky_pattern_matches_something(pattern: str) -> None:
     assert any(gate._matches(pattern, p) for p in _tracked_paths()), pattern
 
 
+# No composite action is committed yet; the folder still waits for Vickey (a new action file is needs-vickey).
+PAID_RUN_MAY_BE_EMPTY: tuple[str, ...] = (".github/actions/**",)
+
+
 @pytest.mark.parametrize("pattern", gate.PAID_RUN_PATTERNS)
 def test_every_paid_run_pattern_matches_a_real_file(pattern: str) -> None:
     """A renamed price table or model file must not silently fall off the needs-vickey list."""
+    if pattern in PAID_RUN_MAY_BE_EMPTY:
+        return
     assert any(gate._matches(pattern, p) for p in _tracked_paths()), pattern
 
 
@@ -485,8 +491,8 @@ def test_claude_md_lists_every_paid_run_pattern() -> None:
         assert pattern in named, pattern
     assert "evals/recordings/" in named and "JSON recordings under `evals/recordings/`" in section
     assert gate.PAID_RUN_EXEMPT == ("evals/recordings/*.json",)
-    assert "Vickey, 2026-11-26: only paid-run and merge-check files wait for her" in text
-    assert "rules files" in section and "risky" in section
+    assert "Every GitHub workflow or action file waits for Vickey (Vickey," in text
+    assert "rules files" in section and "risky" in section.casefold()
 
 
 @pytest.mark.parametrize(
@@ -514,80 +520,98 @@ def test_evals_claude_md_still_waits_because_evals_does() -> None:
     assert gate.classify([CF("evals/CLAUDE.md")], is_fork=False)[0] == "needs-vickey"
 
 
-PAID_WORKFLOWS = ("benchmark", "live-bench", "live-desktop-bench", "grounding", "osworld-bench", "pr-gate")
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/benchmark.yml",
+        ".github/workflows/live-bench.yml",
+        ".github/workflows/live-desktop-bench.yml",
+        ".github/workflows/grounding.yml",
+        ".github/workflows/osworld-bench.yml",
+        ".github/workflows/pr-gate.yml",
+        ".github/workflows/ci.yml",
+        ".github/workflows/security.yml",
+        ".github/workflows/brand-new.yml",
+        ".github/actions/foo/action.yml",
+        ".github/actions/foo/run.sh",
+        ".github/Workflows/CI.YML",
+        "scripts/pr_gate.py",
+        "tests/ci/test_pr_gate.py",
+        "scripts/bench-runners/x.sh",
+        "evals/x.py",
+    ],
+)
+def test_every_workflow_and_action_file_and_the_merge_check_need_vickey(path: str) -> None:
+    """KAN-231 (Vickey, 2026-11-26): a workflow can start a paid run on its own, so no workflow is inspected, all wait."""
+    for status in ("modified", "added", "removed"):
+        assert gate.classify([CF(path, status)], is_fork=False)[0] == "needs-vickey", (path, status)
 
 
-@pytest.mark.parametrize("name", PAID_WORKFLOWS)
-def test_paid_run_workflows_and_the_gate_need_vickey_even_for_a_comment(name: str) -> None:
-    f = CF(f".github/workflows/{name}.yml", patch="@@ -1 +1 @@\n+# a comment")
-    assert gate.classify([f], is_fork=False)[0] == "needs-vickey"
-
-
-@pytest.mark.parametrize("path", ["scripts/pr_gate.py", "tests/ci/test_pr_gate.py", "scripts/bench-runners/x.sh", "evals/x.py"])
-def test_merge_check_and_bench_files_need_vickey(path: str) -> None:
-    assert gate.classify([CF(path, patch="+x")], is_fork=False)[0] == "needs-vickey"
-
-
-def _wf_change(path: str, *added: str) -> list[Any]:
-    return [CF(path, patch="@@ -1,2 +1,3 @@\n context\n" + "\n".join("+" + a for a in added))]
-
-
-def test_other_workflow_change_without_secrets_is_risky() -> None:
-    files = _wf_change(".github/workflows/ci.yml", "      - run: echo hello", "        timeout-minutes: 5")
-    risk, _ = gate.classify(files, is_fork=False)
-    assert risk == "risky"
-
-
-def test_ci_change_adding_a_model_key_secret_needs_vickey() -> None:
-    files = _wf_change(".github/workflows/ci.yml", "        env:", "          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}")
-    risk, why = gate.classify(files, is_fork=False)
-    assert risk == "needs-vickey" and any("secret" in w for w in why), why
-
-
-def test_the_workflow_token_secret_alone_is_fine() -> None:
-    files = _wf_change(".github/workflows/ci.yml", "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}")
-    assert gate.classify(files, is_fork=False)[0] == "risky"
-
-
-def test_removed_secret_lines_do_not_count() -> None:
-    f = CF(".github/workflows/ci.yml", patch="@@ -1 +1 @@\n-          K: ${{ secrets.GEMINI_API_KEY }}\n+          K: 1")
-    assert gate.classify([f], is_fork=False)[0] == "risky"
-
-
-def test_a_repo_variable_needs_vickey() -> None:
-    files = _wf_change(".github/workflows/ci.yml", "      AUTO: ${{ vars.OPERON_AUTO_MERGE }}")
-    assert gate.classify(files, is_fork=False)[0] == "needs-vickey"
+def test_a_ci_change_needs_vickey_with_or_without_secrets(tmp_path: Path) -> None:
+    """The content of the workflow does not matter: no regex can see gh workflow run, a reusable workflow or a wider token."""
+    for patch in ("+  K: ${{ secrets.GEMINI_API_KEY }}", "+      - run: echo hello", "+  run: gh workflow run osworld-bench.yml"):
+        f = tmp_path / "files.json"
+        f.write_text(json.dumps([{"filename": ".github/workflows/ci.yml", "status": "modified", "patch": patch}]))
+        assert gate.classify(gate._files(str(f)), False)[0] == "needs-vickey"
 
 
 @pytest.mark.parametrize(
-    "line",
-    ["  schedule:", '    - cron: "0 * * * *"', "  workflow_run:", "  repository_dispatch:", "on: [push, schedule]", "  - schedule:"],
+    "path",
+    [
+        ".github/dependabot.yml",
+        ".github/pull_request_template.md",
+        ".github/CODEOWNERS",
+        ".github/ISSUE_TEMPLATE/bug.md",
+        ".github/ISSUE_TEMPLATE/config.yml",
+        ".github/FUNDING.yml",
+    ],
 )
-def test_a_new_trigger_that_can_run_unattended_needs_vickey(line: str) -> None:
-    files = _wf_change(".github/workflows/security.yml", line)
-    assert gate.classify(files, is_fork=False)[0] == "needs-vickey", line
+def test_other_github_settings_files_are_risky_not_needs_vickey(path: str) -> None:
+    assert not gate.is_paid_run_path(path)
+    for status in ("modified", "added"):
+        assert gate.classify([CF(path, status)], is_fork=False)[0] == "risky", (path, status)
 
 
-def test_a_workflow_change_with_no_patch_text_needs_vickey() -> None:
-    for patch in (None, ""):
-        assert gate.classify([CF(".github/workflows/ci.yml", patch=patch)], is_fork=False)[0] == "needs-vickey"
-    assert gate.classify([CF(".github/dependabot.yml", "added")], is_fork=False)[0] == "needs-vickey"
-
-
-def test_a_workflow_renamed_away_is_checked_too() -> None:
-    f = CF("docs/x.md", "renamed", previous_filename=".github/workflows/ci.yml", patch="+# x")
-    assert gate.classify([f], is_fork=False)[0] == "risky"
-    f = CF("docs/x.md", "renamed", previous_filename=".github/workflows/ci.yml")
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (".github/workflows/x.yml", "docs/x.yml"),
+        ("docs/x.yml", ".github/workflows/x.yml"),
+        (".github/actions/a/action.yml", "docs/a.md"),
+        (".github/workflows/x.yml", ".github/dependabot.yml"),
+        (".github/dependabot.yml", ".github/workflows/x.yml"),
+    ],
+)
+def test_a_rename_into_or_out_of_workflows_needs_vickey(old: str, new: str) -> None:
+    f = CF(new, "renamed", previous_filename=old)
     assert gate.classify([f], is_fork=False)[0] == "needs-vickey"
 
 
-def test_files_json_patch_reaches_the_classifier(tmp_path: Path) -> None:
+def test_a_rename_between_other_github_files_is_risky() -> None:
+    f = CF(".github/a.yml", "renamed", previous_filename=".github/dependabot.yml")
+    assert gate.classify([f], is_fork=False)[0] == "risky"
+
+
+def test_files_json_status_and_previous_filename_reach_the_classifier(tmp_path: Path) -> None:
     f = tmp_path / "files.json"
-    f.write_text(json.dumps([{"filename": ".github/workflows/ci.yml", "status": "modified", "patch": "+  K: ${{ secrets.X }}"}]))
-    assert gate._files(str(f))[0].patch
+    f.write_text(json.dumps([{"filename": "docs/x.yml", "status": "renamed", "previous_filename": ".github/workflows/x.yml"}]))
     assert gate.classify(gate._files(str(f)), False)[0] == "needs-vickey"
-    f.write_text(json.dumps([{"filename": ".github/workflows/ci.yml", "status": "modified"}]))
-    assert gate.classify(gate._files(str(f)), False)[0] == "needs-vickey"
+
+
+def test_the_content_check_is_gone() -> None:
+    assert not hasattr(gate, "workflow_needs_vickey")
+
+
+def test_pr_gate_header_says_the_label_is_advisory() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "The label is advisory" in text and "the classifier that judges a PR is never the PR's own copy" not in text
+
+
+def test_claude_md_hand_merge_needs_a_fresh_classify_and_lists_the_split() -> None:
+    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "has first run main's `scripts/pr_gate.py classify`" in text
+    assert "Waits for Vickey (`needs-vickey`)" in text and "Risky (Fable 5.2 review), not Vickey" in text
+    assert "Every GitHub workflow or action file waits for Vickey" in text
 
 
 def test_safety_gate_modules_are_listed_explicitly() -> None:

@@ -5,7 +5,9 @@
 # variable OPERON_AUTO_MERGE is "on". Unset (the default) is trial mode: label, plus one "would merge"
 # note per head commit, and nothing is merged by the gate. Never pull_request_target; the label job
 # runs main's copy of the script, and no PR-controlled text is put into a command (it goes through env
-# or files).
+# or files). The label is advisory: on pull_request this workflow file comes from the PR itself, so a PR that edits it
+# can change what its own label job does. What enforces is the sweep on main: it reclassifies every PR with main's
+# script from the PR's files and refuses needs-vickey, whatever the labels or notes say.
 name: PR gate
 
 on:
@@ -37,7 +39,7 @@ jobs:
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
     steps:
-      # The base commit, not the PR's: the classifier that judges a PR is never the PR's own copy.
+      # The base commit's script, not the PR's copy (the workflow file itself is the PR's: see the header).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}

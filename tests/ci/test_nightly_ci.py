@@ -63,8 +63,11 @@ def test_nightly_run_is_not_cancelled_by_a_push() -> None:
     assert "schedule" in CI["concurrency"]["group"]
 
 
-def test_manual_run_uses_the_nightly_group_too() -> None:
-    assert "workflow_dispatch" in CI["concurrency"]["group"]
+def test_manual_run_has_its_own_group() -> None:
+    """A manual run must not cancel the scheduled nightly, and the nightly must not cancel it."""
+    group = CI["concurrency"]["group"]
+    assert "'nightly-dispatch'" in group and "'nightly'" in group
+    assert group.index("'nightly'") < group.index("workflow_dispatch")
 
 
 def test_issue_close_is_one_loud_call() -> None:

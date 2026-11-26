@@ -116,20 +116,19 @@ TEST_FILE_PATTERNS: tuple[str, ...] = ("test_*.py", "*_test.py")  # what pytest 
 DASHBOARD_STATIC: tuple[str, ...] = ("dashboard/app.js", "dashboard/readme.md")
 
 
-# KAN-227 (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval") and KAN-231
-# (Vickey, 2026-11-26: only paid-run and merge-check files wait for her): a PR that could start a paid run, change how
-# paid runs start or what they may spend, or change the merge check itself is never merged by the gate; it waits for
-# Vickey ("needs-vickey"). Same pattern syntax as RISKY_PATTERNS; every entry must match a real file
-# (tests/ci/test_pr_gate.py). Rules files (CLAUDE.md, AGENTS.md, ...) and other .github/ files are risky, not here;
-# evals/CLAUDE.md stays here only because evals/** does. Other workflow changes: see workflow_needs_vickey().
+# KAN-227 (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval"): a PR that could
+# start a paid run, change how paid runs start or what they may spend, or change the merge check itself is never merged
+# by the gate; it waits for Vickey ("needs-vickey"). Every workflow and action file is here, because a workflow can start
+# a paid run on its own (gh workflow run, a reusable workflow, a wider token, a secret); the content is not inspected.
+# A rename into or out of these paths counts too (classify checks both names). Same pattern syntax as RISKY_PATTERNS;
+# every entry must match a real file (tests/ci/test_pr_gate.py). The rules files (CLAUDE.md, AGENTS.md, ...) and other
+# .github/ files (dependabot.yml, CODEOWNERS, templates) are risky, not here; evals/CLAUDE.md waits only because
+# evals/** does.
 PAID_RUN_PATTERNS: tuple[str, ...] = (
-    # The five paid-run workflows, and the merge check itself.
-    ".github/workflows/benchmark.yml",
-    ".github/workflows/live-bench.yml",
-    ".github/workflows/live-desktop-bench.yml",
-    ".github/workflows/grounding.yml",
-    ".github/workflows/osworld-bench.yml",
-    ".github/workflows/pr-gate.yml",
+    # Every workflow and action (the five paid-run workflows are benchmark.yml, live-bench.yml, live-desktop-bench.yml,
+    # grounding.yml and osworld-bench.yml; the merge check is pr-gate.yml, scripts/pr_gate.py and its tests).
+    ".github/workflows/**",
+    ".github/actions/**",
     "scripts/pr_gate.py",
     "tests/ci/test_pr_gate.py",
     # Everything under evals/ (bench, batch queue, OSWorld, grounding, live smoke, caps, suites, seasons, runners'
@@ -178,7 +177,6 @@ class ChangedFile:
     filename: str
     status: str = "modified"
     previous_filename: str | None = None
-    patch: str | None = None  # the files API's diff text; absent for a huge or binary change
 
 
 def _matches(pattern: str, path: str) -> bool:
@@ -262,37 +260,6 @@ def is_paid_run_path(path: str) -> bool:
     return False
 
 
-# KAN-231: any other change under .github/ is risky, unless it touches what could fund or start a paid run: a secret
-# other than the workflow token, a repo variable, or a schedule / workflow_run / repository_dispatch trigger.
-_SECRET_RE = re.compile(r"\bsecrets\b(?!\s*\.\s*github_token\b)", re.IGNORECASE)
-_VARS_RE = re.compile(r"\bvars\s*[.\[]", re.IGNORECASE)
-_TRIGGER_RE = re.compile(
-    r"^\s*-?\s*(schedule|workflow_run|repository_dispatch|cron)\s*:"
-    r"|^\s*(\"?on\"?)\s*:\s*[\[{].*\b(schedule|workflow_run|repository_dispatch)\b",
-    re.IGNORECASE,
-)
-
-
-def workflow_needs_vickey(f: ChangedFile) -> str | None:
-    """Why a change under ``.github/`` must wait for Vickey, or None. Fails closed when the patch text is missing."""
-    names = [f.filename] + ([f.previous_filename] if f.previous_filename else [])
-    if not any(posixpath.normpath(n.replace("\\", "/")).casefold().startswith(".github/") for n in names):
-        return None
-    if not f.patch:
-        return f"{f.filename}: no patch text from the files API (too large or binary)"
-    for line in f.patch.splitlines():
-        if not line.startswith("+") or line.startswith("+++"):
-            continue
-        text = line[1:]
-        if _SECRET_RE.search(text):
-            return f"{f.filename}: adds a secret reference"
-        if _VARS_RE.search(text):
-            return f"{f.filename}: adds a repo variable reference"
-        if _TRIGGER_RE.search(text):
-            return f"{f.filename}: adds or changes a schedule, workflow_run or repository_dispatch trigger"
-    return None
-
-
 def _is_test(path: str) -> bool:
     return path.casefold().startswith("tests/")
 
@@ -318,9 +285,6 @@ def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
                 paid.append(f"needs Vickey's merge (paid-run or merge-check file): {name}")
             if is_risky_path(name, status):
                 reasons.append(f"risky path: {name}" + (f" ({status})" if status != "modified" else ""))
-        why_workflow = workflow_needs_vickey(f)
-        if why_workflow:
-            paid.append(f"needs Vickey's merge (workflow change): {why_workflow}")
         if f.status == "removed" and _is_test(f.filename):
             reasons.append(f"test file deleted: {f.filename}")
         if f.status == "renamed" and f.previous_filename and _is_collected_test(f.previous_filename):
@@ -488,7 +452,7 @@ def _load(path: str) -> Any:
 
 def _files(path: str) -> list[ChangedFile]:
     return [
-        ChangedFile(f["filename"], f.get("status", "modified"), f.get("previous_filename"), f.get("patch"))
+        ChangedFile(f["filename"], f.get("status", "modified"), f.get("previous_filename"))
         for f in _load(path)
     ]
 

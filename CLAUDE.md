@@ -137,7 +137,7 @@ These are load-bearing — violating them silently breaks the agent.
   replaced, retried or reset by the loop, and its own "done" ends the run. Fix failures by
   improving what the model sees or the executor, not by adding rules or guards around the model.
   The safety gates (trust gate, OCR trust gate, file guard, permission modes, confidence gate,
-  coordinate-thrash pause, max steps, secret-type gate, visual servo) are not part of the harness and stay.
+  coordinate-thrash pause, max steps, word-only stop, secret-type gate, visual servo) are not part of the harness and stay.
 - **No scenario hardcoding.** Never branch on a specific site, task, or benchmark
   in core policy.
 - **Atomic TYPE.** The executor merges focus+type into one call. Policy must never

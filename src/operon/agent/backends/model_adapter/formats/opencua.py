@@ -88,6 +88,7 @@ class OpenCUAFormat(ActionFormat):
         reply = ParsedReply(thought=thought or text[:500])
         if not code.strip():
             reply.invalid = "the reply has no code block"
+            reply.no_action = True
             return reply
         try:
             calls = parse_calls(code)

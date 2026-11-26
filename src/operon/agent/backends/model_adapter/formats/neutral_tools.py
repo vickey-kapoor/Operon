@@ -142,7 +142,7 @@ class NeutralToolsFormat(ActionFormat):
                 calls.append(("", body.get("name"), body.get("arguments")))
             thought = _TEXT_TOOL_CALL.sub("", thought).strip()
         if not calls:
-            return ParsedReply(thought=thought, invalid="the reply has no tool call")
+            return ParsedReply(thought=thought, invalid="the reply has no tool call", no_action=True)
 
         reply = ParsedReply(thought=thought)
         allowed = _tool_names(ctx.environment)

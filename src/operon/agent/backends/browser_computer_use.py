@@ -296,6 +296,10 @@ class BrowserComputerUseBackend(AgentBackend):
                 "action": {"action_type": ActionType.STOP.value},
                 "active_subgoal": "complete task",
             }
+        elif model_turn and self._is_clean_text_only(response_payload):
+            # Words only, before acting: the loop counts these (KAN-204). The reply is
+            # not changed; this only records what the model said.
+            response_payload = {**response_payload, "words_only": self._words_of(response_payload)}
         decision = build_policy_decision(response_payload)
         self._cached_decisions[state.run_id] = decision
         bg_writer.enqueue(
@@ -686,19 +690,36 @@ class BrowserComputerUseBackend(AgentBackend):
         return "; ".join(described)
 
     @staticmethod
-    def _is_completion_text(response_payload: dict, state: AgentState) -> bool:
-        """Whether a text-only reply is the model saying the task is done (KAN-102).
-
-        Only a clean finish counts: a reply cut off, malformed or stopped by a safety
-        filter is not a "done". It stays a wait, and the model gets another turn on a
-        fresh screenshot. The reply's wording is never judged (thin harness, KAN-183)."""
+    def _is_clean_text_only(response_payload: dict) -> bool:
+        """A reply with no function call, a wait action and a clean finish (words only)."""
         if "function_call" in response_payload:
             return False
         if (response_payload.get("action") or {}).get("action_type") != "wait":
             return False
         finish = (response_payload.get("raw_candidate") or {}).get("finish_reason")
         # A reply with no finish reason (older recordings, scripted replies) is read as before.
-        if finish is not None and str(finish).upper() not in _CLEAN_FINISH_REASONS:
+        return finish is None or str(finish).upper() in _CLEAN_FINISH_REASONS
+
+    @staticmethod
+    def _words_of(response_payload: dict) -> str:
+        """What the model said in a word-only reply: its text parts, "" when it wrote none."""
+        parts = (response_payload.get("raw_candidate") or {}).get("text_parts")
+        if isinstance(parts, list) and parts:
+            words = " ".join(str(part) for part in parts if part).strip()
+        else:
+            words = str(response_payload.get("rationale") or "").strip()
+        if words == _NO_TEXT_SUMMARY:
+            return ""
+        return words[:2000]
+
+    @staticmethod
+    def _is_completion_text(response_payload: dict, state: AgentState) -> bool:
+        """Whether a text-only reply is the model saying the task is done (KAN-102).
+
+        Only a clean finish counts: a reply cut off, malformed or stopped by a safety
+        filter is not a "done". It stays a wait, and the model gets another turn on a
+        fresh screenshot. The reply's wording is never judged (thin harness, KAN-183)."""
+        if not BrowserComputerUseBackend._is_clean_text_only(response_payload):
             return False
         return any(
             executed.success and executed.action.action_type not in {ActionType.WAIT, ActionType.STOP, ActionType.WAIT_FOR_USER}

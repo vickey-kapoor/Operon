@@ -121,6 +121,9 @@ class ModelAdapterBackend(AgentBackend):
         bg_writer.enqueue(raw_path, json.dumps(response, indent=2))
         message = response["choices"][0]["message"]
         parsed = self.format.parse(message, ctx)
+        if response["choices"][0].get("finish_reason") == "length":
+            # A reply cut off mid-way is not the model choosing to talk (KAN-204).
+            parsed.no_action = False
         decision = self._decide(parsed, ctx)
         run.replies += 1
         if parsed.invalid:
@@ -315,6 +318,7 @@ class ModelAdapterBackend(AgentBackend):
                 "rationale": f"{INVALID_PREFIX}{parsed.invalid}",
                 "confidence": 0.3,
                 "active_subgoal": "reply in the required format",
+                "words_only": thought[:2000] if parsed.no_action else None,
             }
         )
 

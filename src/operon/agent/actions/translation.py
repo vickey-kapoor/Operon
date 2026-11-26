@@ -583,4 +583,5 @@ def build_policy_decision(response_payload: dict[str, Any]) -> PolicyDecision:
         confidence=float(response_payload.get("confidence", 0.7)),
         active_subgoal=response_payload.get("active_subgoal", "browser step"),
         expected_change=expected_change,
+        words_only=response_payload.get("words_only"),
     )

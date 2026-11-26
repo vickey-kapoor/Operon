@@ -137,12 +137,27 @@ PAID_RUN_PATTERNS: tuple[str, ...] = (
     "src/operon/api/runtime_config.py",  # default model, pricing check
     "src/operon/api/runtime/services.py",  # pricing check
     "src/operon/clients/**",  # model ids
+    # KAN-230: cost code in the model connections (what is sent and counted on every paid call).
+    "src/operon/agent/backends/model_adapter/transports/**",
+    "src/operon/api/observer.py",
+    # KAN-230: a package named like a paid-run module above would shadow it (usage/ next to usage.py).
+    "src/operon/models/usage/**",
+    "src/operon/core/settings/**",
+    "src/operon/api/runtime_config/**",
+    "src/operon/api/runtime/services/**",
+    "src/operon/agent/backends/model_adapter/registry/**",
     # The rules that define this exception, so a PR cannot loosen them and self-merge.
     "claude.md",
     "agents.md",
     "docs/claude-code-reference.md",
     "evals/claude.md",
     ".claude/agents/**",
+    # KAN-230: a rules file in any subfolder (the ones above are the root and evals/ ones), and Claude's own settings
+    # and skills (hooks and permissions that could start a paid run).
+    "**/claude.md",
+    "**/agents.md",
+    ".claude/settings.json",
+    ".claude/skills/**",
 )
 # Data recorded for the free replay tests: not a way to start or fund a paid run.
 PAID_RUN_EXEMPT: tuple[str, ...] = ("evals/recordings/*.json",)

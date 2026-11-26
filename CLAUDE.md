@@ -207,8 +207,12 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   `src/operon/agent/backends/model_adapter/registry.py` (model defaults);
   `src/operon/agent/backends/model_adapter/models.yaml` (price table, model ids); `src/operon/api/runtime_config.py`
   (default model, pricing check); `src/operon/api/runtime/services.py` (pricing check); `src/operon/clients/**` (model
-  ids); or these rules (`CLAUDE.md`, `AGENTS.md`, `docs/CLAUDE-CODE-REFERENCE.md`, `evals/CLAUDE.md`,
-  `.claude/agents/**`). A PR with 3000 or more changed files also waits (the file list may be cut short). When unsure,
+  ids); the model connections' cost code (`src/operon/agent/backends/model_adapter/transports/**`,
+  `src/operon/api/observer.py`); a package that would shadow one of those modules (`src/operon/models/usage/**`,
+  `src/operon/core/settings/**`, `src/operon/api/runtime_config/**`, `src/operon/api/runtime/services/**`,
+  `src/operon/agent/backends/model_adapter/registry/**`); or these rules (`CLAUDE.md`, `AGENTS.md`,
+  `docs/CLAUDE-CODE-REFERENCE.md`, `evals/CLAUDE.md`, a `CLAUDE.md` or `AGENTS.md` in any subfolder (`**/claude.md`,
+  `**/agents.md`), `.claude/agents/**`, `.claude/settings.json`, `.claude/skills/**`). A PR with 3000 or more changed files also waits (the file list may be cut short). When unsure,
   it waits. A `low-risk` label never overrides this; keep such a PR as a draft until Vickey says "merge".
 - **No paid run without Vickey's explicit OK for that run and its cost:** no `/bench` comment, no manual start of
   `benchmark.yml`, `grounding.yml` or `osworld-bench.yml`, no local run with a real model key, and no PR whose own CI

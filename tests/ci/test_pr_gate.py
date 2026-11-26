@@ -65,7 +65,7 @@ OLD = "b" * 40
         ([CF(".windsurfrules")], False, "risky"),
         ([CF("docs/claude-notes.md")], False, "low-risk"),
         ([CF("src/operon/core/paths.py")], False, "risky"),
-        ([CF("src/operon/api/observer.py")], False, "risky"),
+        ([CF("src/operon/api/observer.py")], False, "paid-run"),
         ([CF("src/operon/api/dependencies.py")], False, "risky"),
         ([CF("src/operon/store/checkpoints.py")], False, "risky"),
         ([CF("docs/a.md", "renamed", "src/operon/core/paths.py")], False, "risky"),
@@ -116,7 +116,7 @@ OLD = "b" * 40
         ([CF("uv.lock")], False, "risky"),
         ([CF("docs/.hidden.md")], False, "risky"),
         ([CF("SECURITY.md")], False, "risky"),
-        ([CF("docs/CLAUDE.md")], False, "risky"),
+        ([CF("docs/CLAUDE.md")], False, "paid-run"),
         ([CF("CLAUDE.MD")], False, "paid-run"),
         ([CF(".GitHub/x.yml")], False, "paid-run"),
         ([CF("src/operon/Executor/desktop.py")], False, "risky"),
@@ -447,14 +447,64 @@ def test_every_risky_pattern_matches_something(pattern: str) -> None:
     assert any(gate._matches(pattern, p) for p in _tracked_paths()), pattern
 
 
+# Patterns that legitimately match no tracked file today (KAN-230): Claude's own settings and skills are not
+# committed (the rest of .claude/ is gitignored), and a shadow package does not exist next to its module.
+PAID_RUN_MAY_BE_EMPTY: tuple[str, ...] = (
+    ".claude/settings.json",
+    ".claude/skills/**",
+    "**/agents.md",  # only the root and evals/ ones exist as AGENTS.md today, and those have their own entries
+    "src/operon/models/usage/**",
+    "src/operon/core/settings/**",
+    "src/operon/api/runtime_config/**",
+    "src/operon/api/runtime/services/**",
+    "src/operon/agent/backends/model_adapter/registry/**",
+)
+
+
 @pytest.mark.parametrize("pattern", gate.PAID_RUN_PATTERNS)
 def test_every_paid_run_pattern_matches_a_real_file(pattern: str) -> None:
     """A renamed price table or model file must not silently fall off the paid-run list."""
     if pattern.startswith(".claude/"):  # _tracked_paths skips .claude/; only .claude/agents/ is committed
+        if pattern in PAID_RUN_MAY_BE_EMPTY:
+            return
         assert pattern == ".claude/agents/**"
         assert any(p.is_file() for p in (ROOT / ".claude" / "agents").rglob("*")), pattern
         return
+    if pattern in PAID_RUN_MAY_BE_EMPTY and pattern.startswith("src/"):
+        # A shadow package matches no file today; the module it would shadow must exist.
+        assert (ROOT / (pattern[: -len("/**")] + ".py")).is_file(), pattern
+        return
+    if pattern in PAID_RUN_MAY_BE_EMPTY:
+        return
     assert any(gate._matches(pattern, p) for p in _tracked_paths()), pattern
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/operon/agent/backends/model_adapter/transports/openai_compat.py",
+        "src/operon/agent/backends/model_adapter/transports/new_transport.py",
+        "src/operon/api/observer.py",
+        "docs/CLAUDE.md",
+        "tests/integration/CLAUDE.md",
+        "src/operon/agents.md",
+        "a/b/c/AGENTS.md",
+        ".claude/settings.json",
+        ".claude/skills/x/SKILL.md",
+        ".claude/agents/coder.md",
+        "src/operon/models/usage/__init__.py",
+        "src/operon/core/settings/__init__.py",
+        "src/operon/api/runtime_config/__init__.py",
+        "src/operon/api/runtime/services/__init__.py",
+        "src/operon/agent/backends/model_adapter/registry/__init__.py",
+    ],
+)
+def test_kan_230_paths_are_paid_run(path: str) -> None:
+    assert gate.is_paid_run_path(path), path
+    risk, _ = gate.classify([CF(path)], is_fork=False)
+    assert risk == "paid-run"
+    risk, _ = gate.classify([CF(path, "added")], is_fork=False)
+    assert risk == "paid-run"
 
 
 def test_claude_md_lists_every_paid_run_pattern() -> None:

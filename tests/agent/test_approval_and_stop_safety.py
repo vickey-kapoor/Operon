@@ -346,3 +346,74 @@ async def test_non_web_start_url_is_refused(monkeypatch: pytest.MonkeyPatch, gat
         await loop.start_run(RunTaskRequest(intent="Look around", start_url=url))
 
     execute.assert_not_called()
+
+
+# KAN-197: a start_url the trust gate or the permission mode wants approved waits for the person.
+
+CONFIRM_GATE = TrustGate(enabled=True, confirm=("checkout",))
+CHECKOUT_URL = "https://shop.example.com/checkout"
+
+
+async def _start_paused(monkeypatch: pytest.MonkeyPatch, *, gate: TrustGate = CONFIRM_GATE, mode: str | None = None):
+    from operon.agent import hitl
+
+    monkeypatch.setattr(hitl, "notify_desktop", lambda **_: None)
+    loop, execute, state = _loop(monkeypatch, [SAFE])
+    loop._trust_gate = gate
+    loop.run_store.create_run = lambda **_: state
+    hints: list[str] = []
+    loop.perception_service.add_advisory_hints = lambda items, **_: hints.extend(items)
+    response = await loop.start_run(
+        RunTaskRequest(intent="Look around", start_url=CHECKOUT_URL, permission_mode=mode)
+    )
+    return loop, execute, state, response, hints
+
+
+async def test_start_url_needing_approval_pauses_before_it_opens(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, state, response, _ = await _start_paused(monkeypatch)
+
+    assert response.status is RunStatus.WAITING_FOR_USER
+    execute.assert_not_called()
+    assert loop.pending_gate("run-1") == "trust"
+    assert loop.pending_gate_verdict("run-1") == "confirm"
+    assert CHECKOUT_URL in (state.pause_reason or "")
+
+
+async def test_approving_the_start_url_opens_it_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, state, _, _ = await _start_paused(monkeypatch)
+
+    resumed = await loop.resume_run("run-1")
+
+    assert resumed.status is RunStatus.RUNNING
+    assert [c.args[0].url for c in execute.call_args_list] == [CHECKOUT_URL]
+    assert state.approval_count == 1
+    # The yes was for opening the start page only: no later action is pre-approved.
+    assert "run-1" not in loop._approved_gate_actions
+    assert loop.pending_gate("run-1") is None
+
+
+async def test_declining_the_start_url_leaves_it_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, state, _, hints = await _start_paused(monkeypatch)
+
+    resumed = await loop.resume_run("run-1", approve_gated_action=False)
+
+    assert resumed.status is RunStatus.RUNNING
+    execute.assert_not_called()
+    assert state.approval_count == 0
+    assert any("did not approve opening the start page" in hint for hint in hints)
+
+
+async def test_ask_mode_asks_before_the_start_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, _, response, _ = await _start_paused(monkeypatch, gate=TrustGate(enabled=True), mode="ask")
+
+    assert response.status is RunStatus.WAITING_FOR_USER
+    execute.assert_not_called()
+    assert loop.pending_gate("run-1") == "trust"
+
+
+async def test_auto_mode_opens_a_confirm_start_url_unasked(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, _, response, _ = await _start_paused(monkeypatch, mode="auto")
+
+    assert response.status is not RunStatus.WAITING_FOR_USER
+    assert [c.args[0].url for c in execute.call_args_list] == [CHECKOUT_URL]
+    assert loop.pending_gate("run-1") is None

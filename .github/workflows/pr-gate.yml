@@ -47,7 +47,7 @@ jobs:
           set -euo pipefail
           gh label create low-risk --repo "$REPO" --color 0E8A16 --description "Auto-merge candidate (KAN-216)" --force
           gh label create risky --repo "$REPO" --color D93F0B --description "Merges after a Fable 5.2 review (KAN-227)" --force
-          gh label create needs-vickey --repo "$REPO" --color B60205 --description "Changes workflows, the merge check, paid runs or the rules: Vickey merges (KAN-227)" --force
+          gh label create needs-vickey --repo "$REPO" --color B60205 --description "Changes paid-run workflows, the merge check, cost files or workflow secrets: Vickey merges (KAN-227)" --force
           gh api --paginate "repos/$REPO/pulls/$PR/files" | jq -s 'add // []' > "$RUNNER_TEMP/files.json"
           risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json")
           case "$risk" in

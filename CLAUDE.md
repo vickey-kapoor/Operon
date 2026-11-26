@@ -189,7 +189,7 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
 - A PR may merge once its checks are green, every Codex finding is answered, and a fresh verifier has passed on the
   head commit (the main session then posts `<!-- operon-verifier: PASS <full head sha> -->` on the PR).
 - The PR gate (`.github/workflows/pr-gate.yml`, `scripts/pr_gate.py`, KAN-216/KAN-227) labels each PR `low-risk`,
-  `risky` or `needs-vickey` (the PRs that wait for Vickey's own "merge": the paid-run machinery and the rules, see the Paid-run exception below), and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`
+  `risky` or `needs-vickey` (the PRs that wait for Vickey's own "merge": the paid-run machinery and the merge check, see the Paid-run exception below), and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`
   is `on` (it is). The gate does the merging; agents never merge by hand, except that a story thread may run
   `gh pr merge --squash --match-head-commit <sha>` only while no open `auto-work-paused` issue exists and the gate has posted its "would merge" note
   (`<!-- operon-gate-trial: <head sha> -->`) for that exact head and the PR is not labelled `needs-vickey`. A fork PR is
@@ -201,17 +201,24 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   the PR verbatim, with the marker, in its own comment. Fix what it finds; once it passes on the head, post
   `<!-- operon-top-review: PASS <full head sha> -->` in that comment; the gate ignores a top-review marker in the same
   comment as the verifier marker. A new commit needs a new review.
-- **Paid-run exception (label `needs-vickey`).** A PR waits for Vickey to write "merge" for that PR if it touches any of: `.github/**`;
-  `evals/**` except JSON recordings under `evals/recordings/`; `scripts/**`; `tests/ci/test_pr_gate.py` (the gate's
-  tests); `src/operon/models/usage.py` (price tables behind every cost cap); `src/operon/core/settings.py`;
-  `src/operon/agent/backends/model_adapter/registry.py` (model defaults);
-  `src/operon/agent/backends/model_adapter/models.yaml` (price table, model ids); `src/operon/api/runtime_config.py`
-  (default model, pricing check); `src/operon/api/runtime/services.py` (pricing check); `src/operon/clients/**` (model
-  ids); the model connections' cost code (`src/operon/agent/backends/model_adapter/transports/**`,
-  `src/operon/api/observer.py`); a package with the same name as any listed `.py` file (`usage/` next to `usage.py`) counts too; or these rules (`CLAUDE.md`, `AGENTS.md`,
-  `docs/CLAUDE-CODE-REFERENCE.md`, `evals/CLAUDE.md`, a `CLAUDE.md` or `AGENTS.md` in any subfolder (`**/claude.md`,
-  `**/agents.md`), `.claude/agents/**`, `.claude/settings.json`, `.claude/skills/**`). A PR with 3000 or more changed files also waits (the file list may be cut short). When unsure,
-  it waits. A `low-risk` label never overrides this; keep such a PR as a draft until Vickey says "merge".
+- **Paid-run exception (label `needs-vickey`).** Vickey, 2026-11-26: only paid-run and merge-check files wait for her.
+  A PR waits for Vickey to write "merge" for that PR if it touches any of: the five paid-run workflows
+  (`.github/workflows/benchmark.yml`, `.github/workflows/live-bench.yml`, `.github/workflows/live-desktop-bench.yml`,
+  `.github/workflows/grounding.yml`, `.github/workflows/osworld-bench.yml`); the merge check itself
+  (`.github/workflows/pr-gate.yml`, `scripts/pr_gate.py`, `tests/ci/test_pr_gate.py`); `evals/**` except
+  JSON recordings under `evals/recordings/` (so `evals/CLAUDE.md` waits too); `scripts/**` (bench runners and VM scripts); cost caps,
+  model prices, ids, defaults and settings (`src/operon/models/usage.py`, `src/operon/core/settings.py`,
+  `src/operon/agent/backends/model_adapter/registry.py`, `src/operon/agent/backends/model_adapter/models.yaml`,
+  `src/operon/api/runtime_config.py`, `src/operon/api/runtime/services.py`, `src/operon/clients/**`,
+  `src/operon/agent/backends/model_adapter/transports/**`, `src/operon/api/observer.py`); a package with the same name as
+  any listed `.py` file (`usage/` next to `usage.py`); any other change under `.github/` whose added lines mention a
+  secret other than `GITHUB_TOKEN` or a repo variable (`vars.`), or add or change a `schedule`, `workflow_run` or
+  `repository_dispatch` trigger, or whose patch text the files API does not give (too large or binary); and any PR with
+  3000 or more changed files (the file list may be cut short). The rules files (`CLAUDE.md`, `AGENTS.md`,
+  `docs/CLAUDE-CODE-REFERENCE.md`, any `CLAUDE.md` or `AGENTS.md` in a subfolder, `.claude/agents/**`,
+  `.claude/settings.json`, `.claude/skills/**`) and other workflow changes are `risky`: they merge after the top-model
+  review, not on Vickey's word. When unsure, it waits. A `low-risk` label never overrides this; keep such a PR as a draft
+  until Vickey says "merge".
 - **No paid run without Vickey's explicit OK for that run and its cost:** no `/bench` comment, no manual start of
   `benchmark.yml`, `grounding.yml` or `osworld-bench.yml`, no local run with a real model key, and no PR whose own CI
   would use a model key. Approval is per PR and per run: an earlier "merge", a "yes" to another question, a green check,

@@ -208,6 +208,9 @@ def _waiting(loop, record) -> dict[str, Any] | None:
         return None
     if getattr(record, "in_takeover", False):
         return {"kind": "takeover", "reason": "You are in control. Hand back when you are done."}
+    restore = getattr(loop, "restore_pending_approval", None)
+    if callable(restore):
+        restore(record)  # after a restart the loop holds nothing until it reads the saved state (KAN-226)
     reason = getattr(record, "pause_reason", None) or record.hitl_message or "Paused."
     gate = loop.pending_gate(record.run_id) if hasattr(loop, "pending_gate") else None
     waiting: dict[str, Any] = {"kind": "approval" if gate is not None else "needs_you", "gate": gate, "reason": reason}

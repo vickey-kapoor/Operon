@@ -109,7 +109,7 @@ def test_a_prompt_blocked_twice_fails_the_run_as_model_blocked(tmp_path, site, a
 
 # A6
 def test_every_step_row_names_real_artifacts_and_has_sane_timing(tmp_path, site, app):
-    """Regression for KAN-177: run.jsonl rows point at files that exist, carry timing and name the deciding model."""
+    """Regression for KAN-177 and KAN-219: run.jsonl rows point at files that exist, carry timing and name the deciding model."""
     api = [
         api_call("type_text_at", **grid_point("field_name"), text="Ada Lovelace", press_enter=False),
         api_call("type_text_at", **grid_point("field_email"), text="ada@example.com", press_enter=False),
@@ -131,6 +131,10 @@ def test_every_step_row_names_real_artifacts_and_has_sane_timing(tmp_path, site,
     for row in rows:
         for key, value in artifact_paths(row):
             assert (result.run_dir / value).exists(), (key, value)
+        # KAN-219: the executed action's screenshot, when named, exists too (a stop step names none).
+        shot = (row.get("executed_action") or {}).get("artifact_path")
+        if shot:
+            assert (result.run_dir / shot).exists(), ("executed_action.artifact_path", shot)
         assert row["started_at"] <= row["finished_at"]
         assert 0 <= row["model_latency_ms"] <= row["step_latency_ms"], row
         assert row["decision_source"] == "[LLM] gemini:gemini-e2e", row["decision_source"]

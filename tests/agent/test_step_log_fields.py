@@ -194,6 +194,8 @@ def test_a_stop_step_logs_no_after_screenshot(tmp_path: Path, monkeypatch: pytes
     others = [log for log in logs if log not in stops]
     assert stops and others
     assert all(log.after_artifact_path is None for log in stops)
+    # KAN-219: nor may its executed action name the planned after.png.
+    assert all(log.executed_action.artifact_path is None for log in stops)
     # A normal step still names an after file that exists.
     assert all(log.after_artifact_path and Path(log.after_artifact_path).exists() for log in others)
     state = json.loads(next((tmp_path / "runs").glob("*/state.json")).read_text(encoding="utf-8"))

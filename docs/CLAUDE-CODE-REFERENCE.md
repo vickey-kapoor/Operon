@@ -12,13 +12,13 @@ Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
 ## Standing rules (Vickey)
 
 ### Merging and PRs
-- **Never merge a PR until Vickey writes "merge" for that specific PR.** Approval is
-  per PR; an earlier "merge", a "yes" to another question, green checks or a clean
-  Codex review do not count. Never enable GitHub auto-merge (it is off repo-wide). The one exception
-  (KAN-216) is the PR gate workflow (`.github/workflows/pr-gate.yml`): it alone may squash-merge a
-  `low-risk` PR, only when the repo variable `OPERON_AUTO_MERGE` is `on` and checks, Codex review and the
-  verifier marker are green on the head. Agents never merge by hand without Vickey's "merge".
-- **Codex reviews every PR.** Fix or answer every Codex finding before asking for merge.
+- **Every PR can merge itself, but no paid run without Vickey's explicit OK** (Vickey, 2026-11-26). A PR merges once
+  its checks are green, every Codex finding is answered and the fresh verifier marker is on the head. The PR gate
+  (`.github/workflows/pr-gate.yml`) merges ready `low-risk` PRs; the session that opened any other PR may squash-merge
+  it. A `risky` PR also needs a Fable 5.2 review in a fresh session (not the coordinator, not the writer or verifier),
+  marked `<!-- operon-top-review: PASS <full head sha> -->` on the head. A PR that could start a paid run or change
+  paid-run limits (paid-run workflows and scripts, cost caps, the run queue, the PR gate) waits for Vickey's "merge".
+- **Codex reviews every PR.** Fix or answer every Codex finding before merging.
 - **Never approve a fork PR's workflow runs while its "Fork PR workflow check" is red.** The check
   fails when a fork PR touches `.github/` (workflows, actions, CODEOWNERS); outside PRs must not
   change `.github/`. The benchmark VM runners are one-job (JIT) runners minted per run, so nothing

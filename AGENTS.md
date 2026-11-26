@@ -262,15 +262,17 @@ Do not include unrelated generated files, temporary artifacts, or sensitive exec
 
 Do not commit, push, merge, or create a pull request unless the user has authorized those actions.
 
-Exception (KAN-216): the PR gate workflow labels each PR `low-risk` or `risky` (`scripts/pr_gate.py`: outside `src/`
-only docs, markdown, test additions and dashboard sources are low-risk; inside `src/` only edits to existing
-`src/operon/` files outside the safety gates, executors, settings, secrets, routes and clients are low-risk, and a
-new file under `src/` always needs Vickey). Only the gate merges a `low-risk` PR, and only when the repo variable
-`OPERON_AUTO_MERGE` is `on` and checks, Codex review and the verifier marker are green on the head; unset, it only
-labels and notes "would merge". Agents never merge by hand, and a `risky` PR waits for the owner's "merge". After the
-fresh verifier passes on the PR's head commit, post `<!-- operon-verifier: PASS <full head sha> -->` as a PR comment.
-That comment comes from the same account that opens PRs, so the gate is only as trustworthy as the verifier step. Gate
-merges use `GITHUB_TOKEN`, so push-triggered CI on `main` does not run for them.
+Exception, merging (owner's rule, 2026-11-26): a PR merges once its checks are green, every Codex finding is answered
+and the fresh verifier has passed on the head commit (post `<!-- operon-verifier: PASS <full head sha> -->` as a PR
+comment). The PR gate workflow (KAN-216, `scripts/pr_gate.py`) labels each PR `low-risk` or `risky` and merges ready
+`low-risk` PRs itself; the agent that opened any other PR may squash-merge it when these rules are met. A `risky` PR
+also needs a review by the top model available (Fable 5.2) in a fresh session that is not the coordinator and did not
+write or verify the change; once it passes on the head, post `<!-- operon-top-review: PASS <full head sha> -->`, then
+merge. A PR that could start a paid run or change how paid runs start or what they may spend (paid-run workflows,
+bench/OSWorld/grounding/live-smoke scripts, cost caps, the run queue, the PR gate itself) waits for the owner's "merge",
+and no paid run starts without the owner's explicit OK. Marker comments come from the same account that opens PRs, so
+they are only as trustworthy as the review behind them. Gate merges use `GITHUB_TOKEN`, so push-triggered CI on `main`
+does not run for them.
 
 ## 10. Definition of Done
 

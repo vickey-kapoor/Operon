@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import re
@@ -639,6 +640,12 @@ BAD_AGENTS = {
     "empty_value": "---\nname:\n---\nb",
     "crlf": "---\r\nname: x\r\n---\r\nb",
     "unicode_separator": "---\nname: x hooks: a\n---\nb",
+    "indented_allowed": "---\n  name: x\n---\nb",
+    "forbidden_key_with_allowed_pair": "---\nmcpServers: {x: {command: curl, name: y}}\n---\nb",
+    "body_separator": "---\nname: x\n---\nb\n---\nhooks: a\n---\n",
+    "body_separator_trailing_space": "---\nname: x\n---\nb\n--- \nc",
+    "body_hooks": "---\nname: x\n---\nhooks: {}\n",
+    "body_mcp": "---\nname: x\n---\nmcpServers: a\n",
     "too_big": SAFE_AGENT + "x" * 70000,
 }
 
@@ -670,6 +677,80 @@ def test_head_file_reader_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert gate.head_file_reader("o/r", HEAD)(".claude/agents/x.md") is None
 
 
+def test_dot_md_alone_is_not_a_plain_agent_path() -> None:
+    assert not gate.is_plain_agent_path(".claude/agents/.md")
+
+
+T_ROOT, T_CLAUDE, T_AGENTS, B_SHA = "1" * 40, "2" * 40, "3" * 40, "4" * 40
+
+
+def _entry(path: str, sha: str, mode: str = "040000", typ: str = "tree") -> dict[str, Any]:
+    return {"path": path, "mode": mode, "type": typ, "sha": sha}
+
+
+def _fake_gh(
+    *,
+    agents_entry: dict[str, Any] | None = None,
+    file_entry: dict[str, Any] | None = None,
+    truncated: bool = False,
+    content: bytes | str = SAFE_AGENT,
+    blob: dict[str, Any] | None = None,
+) -> Any:
+    file_entry = file_entry or _entry("x.md", B_SHA, "100644", "blob")
+    raw = content if isinstance(content, bytes) else content.encode()
+    objs: dict[str, dict[str, Any]] = {
+        f"repos/o/r/git/commits/{HEAD}": {"tree": {"sha": T_ROOT}},
+        f"repos/o/r/git/trees/{T_ROOT}": {"tree": [_entry(".claude", T_CLAUDE), _entry("docs", "5" * 40)]},
+        f"repos/o/r/git/trees/{T_CLAUDE}": {"tree": [agents_entry or _entry("agents", T_AGENTS)]},
+        f"repos/o/r/git/trees/{T_AGENTS}": {"tree": [file_entry] if file_entry else [], "truncated": truncated},
+        f"repos/o/r/git/blobs/{B_SHA}": blob
+        or {"encoding": "base64", "size": len(raw), "content": base64.b64encode(raw).decode()},
+    }
+    return objs.get
+
+
+def _classify_with(fetch: Any, path: str = ".claude/agents/x.md") -> str:
+    reader = gate.head_file_reader("o/r", HEAD, fetch)
+    return gate.classify([CF(path)], False, reader)[0]
+
+
+def test_a_regular_blob_agent_file_is_read_and_risky() -> None:
+    assert gate.head_file_reader("o/r", HEAD, _fake_gh())(".claude/agents/x.md") == SAFE_AGENT
+    assert _classify_with(_fake_gh()) == "risky"
+
+
+@pytest.mark.parametrize(
+    ("kind", "kwargs"),
+    [
+        ("symlink", {"file_entry": _entry("x.md", B_SHA, "120000", "blob")}),
+        ("executable", {"file_entry": _entry("x.md", B_SHA, "100755", "blob")}),
+        ("submodule", {"file_entry": _entry("x.md", B_SHA, "160000", "commit")}),
+        ("agents_dir_symlink", {"agents_entry": _entry("agents", T_AGENTS, "120000", "blob")}),
+        ("agents_dir_wrong_name_case", {"agents_entry": _entry("Agents", T_AGENTS)}),
+        ("file_case_mismatch", {"file_entry": _entry("X.md", B_SHA, "100644", "blob")}),
+        ("missing_entry", {"file_entry": _entry("y.md", B_SHA, "100644", "blob")}),
+        ("truncated_tree", {"truncated": True}),
+        ("bad_base64", {"blob": {"encoding": "base64", "size": 3, "content": "!!!"}}),
+        ("bad_utf8", {"content": b"\xff\xfe"}),
+        ("too_big", {"content": SAFE_AGENT + "x" * 70000}),
+        ("wrong_size", {"blob": {"encoding": "base64", "size": 1, "content": base64.b64encode(b"abc").decode()}}),
+    ],
+)
+def test_an_agent_file_that_is_not_an_ordinary_blob_needs_vickey(kind: str, kwargs: dict[str, Any]) -> None:
+    assert _classify_with(_fake_gh(**kwargs)) == "needs-vickey", kind
+
+
+def test_a_failed_fetch_needs_vickey() -> None:
+    assert _classify_with(lambda endpoint: None) == "needs-vickey"
+
+
+@pytest.mark.parametrize("name", ["verifier.md", "Verifier.MD"])
+def test_the_verifier_agent_always_needs_vickey(name: str) -> None:
+    f = CF(f".claude/agents/{name}")
+    assert gate.classify([f], False, _read(SAFE_AGENT))[0] == "needs-vickey"
+    assert gate.classify([CF(f".claude/agents/{name}", "removed")], False)[0] == "needs-vickey"
+
+
 def test_a_rename_out_of_claude_agents_is_at_least_risky() -> None:
     f = CF("docs/a.md", "renamed", previous_filename=".claude/agents/a.md")
     assert gate.classify([f], False, _read(SAFE_AGENT))[0] == "risky"
@@ -692,6 +773,10 @@ def test_every_tracked_claude_file_is_a_safe_plain_agent_definition() -> None:
     out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False)
     if out.returncode != 0:
         pytest.skip("not a git checkout")
+    staged = subprocess.run(["git", "ls-files", "-s", "-z", ".claude"], cwd=ROOT, capture_output=True, check=False)
+    for rec in filter(None, staged.stdout.decode().split("\0")):
+        meta, _, name = rec.partition("\t")
+        assert meta.split()[0] == "100644", f"{name}: a tracked .claude file must be an ordinary file (mode 100644)"
     tracked = [p for p in out.stdout.decode().split("\0") if p and (".claude" in p.split("/") or p.endswith(".mcp.json"))]
     for p in tracked:
         assert gate.is_plain_agent_path(p), f"{p}: only plain agent definitions may be tracked under .claude/"

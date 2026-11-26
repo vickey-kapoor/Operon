@@ -177,6 +177,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A test that shells out to bash failed on Windows, where bash may be WSL with no distro -> skip such tests on Windows; offline checks must pass there too (KAN-195, #360).
 - A stop step's run.jsonl row named an after screenshot that was never written -> `after_artifact_path` and `executed_action.artifact_path` name only a screenshot the executor actually took; null otherwise (KAN-218, #368; KAN-219).
 - `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge (found during the #191 restructure).
+- The PR-gate label job runs main's copy of `scripts/pr_gate.py`, so a new flag failed the check -> pass new flags only when the base script supports them, until merged (#374).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 
@@ -207,7 +208,7 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   2026-11-26), because a workflow can start a paid run on its own; the content of a workflow is not inspected. A PR
   waits for Vickey to write "merge" for that PR, and the other files merge after a Fable 5.2 review.
   - Waits for Vickey (`needs-vickey`): `.github/workflows/**` and `.github/actions/**` (a rename into or out of them
-    too); any `.claude/` file other than a plain agent definition `.claude/agents/<name>.md`, any agent definition whose frontmatter has anything beyond name, description, model, tools, isolation, color and effort (so no hooks or MCP servers), and any `.mcp.json`; the merge check (`scripts/pr_gate.py`, `tests/ci/test_pr_gate.py`); `evals/**` except
+    too); any `.claude/` folder at any depth or file in it other than a plain agent definition `.claude/agents/<name>.md`, and any `.mcp.json`; a plain agent definition also waits if it is not an ordinary file (e.g. a link), if it can't be read or is over 64 KB, if its frontmatter has anything beyond name, description, model, tools, isolation, color and effort (so no hooks or MCP servers; `tools` must be a plain comma-separated list of tool names), and `.claude/agents/verifier.md` always waits (its PASS is a merge marker); the merge check (`scripts/pr_gate.py`, `tests/ci/test_pr_gate.py`); `evals/**` except
     JSON recordings under `evals/recordings/` (so `evals/CLAUDE.md` waits too); `scripts/**` (bench runners and VM
     scripts); cost caps, model prices, ids, defaults and settings (`src/operon/models/usage.py`,
     `src/operon/core/settings.py`, `src/operon/agent/backends/model_adapter/registry.py`,

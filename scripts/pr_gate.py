@@ -15,6 +15,7 @@ The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 from __future__ import annotations
 
 import argparse
+import base64
 import fnmatch
 import html
 import json
@@ -28,7 +29,6 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 LOW = "low-risk"
 RISKY = "risky"
@@ -296,8 +296,11 @@ def agent_file_is_safe(text: str) -> bool:
     lines = text.split("\n")
     if lines[0] != "---" or "---" not in lines[1:]:
         return False
+    end = lines.index("---", 1)
+    if any(ln.rstrip() == "---" or ln.startswith(("hooks:", "mcpServers:")) for ln in lines[end + 1 :]):
+        return False  # a second frontmatter-like block or a hooks line in the body
     seen: set[str] = set()
-    for line in lines[1 : lines.index("---", 1)]:
+    for line in lines[1:end]:
         m = _AGENT_LINE_RE.fullmatch(line)
         if m is None or m.group(1) in seen:
             return False
@@ -307,19 +310,68 @@ def agent_file_is_safe(text: str) -> bool:
     return True
 
 
-def head_file_reader(repo: str, ref: str) -> Callable[[str], str | None]:
-    """A reader of file text at commit ``ref`` of ``repo`` through ``gh api`` (needs GH_TOKEN). None on any failure."""
+def _gh_json(endpoint: str) -> dict[str, Any] | None:
+    """``gh api`` JSON object for ``endpoint`` (needs GH_TOKEN), or None on any failure."""
+    try:
+        out = subprocess.run(["gh", "api", endpoint], capture_output=True, timeout=60, check=False)  # noqa: S603, S607
+        if out.returncode != 0:
+            return None
+        data = json.loads(out.stdout.decode("utf-8"))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def head_file_reader(
+    repo: str, ref: str, fetch: Callable[[str], dict[str, Any] | None] = _gh_json
+) -> Callable[[str], str | None]:
+    """A reader of a plain agent file's text at commit ``ref`` of ``repo``. None on any failure (fail closed).
+
+    It walks the git tree (commit, then ``.claude``, ``agents``, the file) so it can require every directory to be a
+    real tree and the file a regular blob of mode 100644: a symlink, executable, submodule, missing or truncated
+    entry, a case mismatch, a file over 64 KB or bad base64 or UTF-8 gives None. ``fetch(endpoint)`` returns a JSON
+    object (default: ``gh api``).
+    """
 
     def read(path: str) -> str | None:
         if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo) or not re.fullmatch(r"[0-9a-fA-F]{40}", ref):
             return None
-        cmd = ["gh", "api", f"repos/{repo}/contents/{quote(path)}?ref={ref}", "-H", "Accept: application/vnd.github.raw"]
+        parts = path.split("/")
+        if len(parts) != 3 or parts[0] != ".claude" or parts[1] != "agents" or not is_plain_agent_path(path):
+            return None
         try:
-            out = subprocess.run(cmd, capture_output=True, timeout=60, check=False)  # noqa: S603
-            if out.returncode != 0 or len(out.stdout) > AGENT_FILE_MAX_BYTES:
+            commit = fetch(f"repos/{repo}/git/commits/{ref}")
+            sha = ((commit or {}).get("tree") or {}).get("sha")
+            for i, name in enumerate(parts):
+                if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+                    return None
+                tree = fetch(f"repos/{repo}/git/trees/{sha}")
+                entries = (tree or {}).get("tree")
+                if tree is None or tree.get("truncated") or not isinstance(entries, list):
+                    return None
+                match = [e for e in entries if isinstance(e, dict) and e.get("path") == name]
+                if len(match) != 1:
+                    return None
+                entry = match[0]
+                last = i == len(parts) - 1
+                if entry.get("type") != ("blob" if last else "tree") or entry.get("mode") != (
+                    "100644" if last else "040000"
+                ):
+                    return None
+                sha = entry.get("sha")
+            if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
                 return None
-            return out.stdout.decode("utf-8")
-        except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
+            blob = fetch(f"repos/{repo}/git/blobs/{sha}")
+            if blob is None or blob.get("encoding") != "base64" or not isinstance(blob.get("content"), str):
+                return None
+            size = blob.get("size")
+            if not isinstance(size, int) or size > AGENT_FILE_MAX_BYTES:
+                return None
+            raw = base64.b64decode(blob["content"], validate=False)
+            if len(raw) > AGENT_FILE_MAX_BYTES or len(raw) != size:
+                return None
+            return raw.decode("utf-8")
+        except (ValueError, UnicodeDecodeError, TypeError, AttributeError):
             return None
 
     return read
@@ -367,6 +419,8 @@ def classify(
     for f in files:
         names = [(f.filename, f.status)] + ([(f.previous_filename, "removed")] if f.previous_filename else [])
         for name, status in names:
+            if is_plain_agent_path(name) and name.replace("\\", "/").casefold().endswith("/verifier.md"):
+                paid.append(f"needs Vickey's merge (the verifier's PASS is a merge marker): {name}")
             if is_paid_run_path(name):
                 paid.append(f"needs Vickey's merge (paid-run or merge-check file): {name}")
             if is_risky_path(name, status):

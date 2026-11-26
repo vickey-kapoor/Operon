@@ -322,6 +322,13 @@ def _gh_json(endpoint: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def agent_name_matches(text: str, path: str) -> bool:
+    """Whether the frontmatter ``name:`` is a plain word equal to the file stem (case-sensitive), so no file shadows another."""
+    stem = path.replace("\\", "/").rsplit("/", 1)[-1][:-3]
+    m = re.search(r"^name: (\S.*)$", text.split("\n---", 1)[0], re.M)
+    return m is not None and _AGENT_WORD_RE.fullmatch(m.group(1)) is not None and m.group(1) == stem
+
+
 def head_file_reader(
     repo: str, ref: str, fetch: Callable[[str], dict[str, Any] | None] = _gh_json
 ) -> Callable[[str], str | None]:
@@ -427,7 +434,7 @@ def classify(
                 reasons.append(f"risky path: {name}" + (f" ({status})" if status != "modified" else ""))
         if is_plain_agent_path(f.filename) and f.status != "removed" and not is_paid_run_path(f.filename):
             text = read_file(f.filename) if read_file else None
-            if text is None or not agent_file_is_safe(text):
+            if text is None or not agent_file_is_safe(text) or not agent_name_matches(text, f.filename):
                 paid.append(f"needs Vickey's merge (agent definition unreadable or beyond plain frontmatter): {f.filename}")
         if f.status == "removed" and _is_test(f.filename):
             reasons.append(f"test file deleted: {f.filename}")

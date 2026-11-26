@@ -617,7 +617,8 @@ def test_claude_dir_mcp_json_and_bare_workflow_dirs_need_vickey(path: str) -> No
 def test_a_safe_agent_file_is_risky() -> None:
     for status in ("modified", "added"):
         assert gate.classify([CF(".claude/agents/x.md", status)], False, _read(SAFE_AGENT))[0] == "risky"
-    assert gate.classify([CF(".Claude/Agents/X.MD")], False, _read(SAFE_AGENT))[0] == "risky"
+    assert gate.classify([CF(".Claude/Agents/x.MD")], False, _read(SAFE_AGENT))[0] == "risky"
+    assert gate.classify([CF(".claude/agents/X.md")], False, _read(SAFE_AGENT))[0] == "needs-vickey"  # name is case-sensitive
 
 
 def test_a_deleted_agent_file_is_risky_without_reading_it() -> None:
@@ -668,7 +669,11 @@ def test_agent_content_that_cannot_be_read_needs_vickey() -> None:
 
 def test_head_file_reader_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert gate.head_file_reader("not a repo", HEAD)(".claude/agents/x.md") is None
-    assert gate.head_file_reader("o/r", "main")(".claude/agents/x.md") is None
+    for bad_ref in ("main", HEAD[:39], HEAD + "a"):
+        assert gate.head_file_reader("o/r", bad_ref, lambda e: _fake_gh()(e.replace(bad_ref, HEAD)))(
+            ".claude/agents/x.md"
+        ) is None
+    assert gate.head_file_reader("o/r", HEAD, _fake_gh())(".claude/agents/x.md") == SAFE_AGENT
 
     def missing(*a: Any, **k: Any) -> Any:
         raise FileNotFoundError
@@ -740,6 +745,33 @@ def test_an_agent_file_that_is_not_an_ordinary_blob_needs_vickey(kind: str, kwar
     assert _classify_with(_fake_gh(**kwargs)) == "needs-vickey", kind
 
 
+def test_two_tree_entries_with_the_same_name_need_vickey() -> None:
+    fetch = _fake_gh()
+    twin = _entry("x.md", "6" * 40, "100644", "blob")
+
+    def dup(endpoint: str) -> Any:
+        obj = fetch(endpoint)
+        if endpoint.endswith(T_AGENTS):
+            return {"tree": obj["tree"] + [twin]}
+        return obj
+
+    assert gate.head_file_reader("o/r", HEAD, dup)(".claude/agents/x.md") is None
+
+
+def test_a_blob_size_that_differs_from_its_content_needs_vickey() -> None:
+    raw = SAFE_AGENT.encode()
+    blob = {"encoding": "base64", "size": len(raw) + 1, "content": base64.b64encode(raw).decode()}
+    assert gate.head_file_reader("o/r", HEAD, _fake_gh(blob=blob))(".claude/agents/x.md") is None
+
+
+@pytest.mark.parametrize("name", ["other", "X", "x y", "x;"])
+def test_an_agent_name_must_equal_the_file_stem(name: str) -> None:
+    text = SAFE_AGENT.replace("name: x", f"name: {name}")
+    assert gate.classify([CF(".claude/agents/x.md")], False, _read(text))[0] == "needs-vickey"
+    no_name = SAFE_AGENT.replace("name: x\n", "")
+    assert gate.classify([CF(".claude/agents/x.md")], False, _read(no_name))[0] == "needs-vickey"
+
+
 def test_a_failed_fetch_needs_vickey() -> None:
     assert _classify_with(lambda endpoint: None) == "needs-vickey"
 
@@ -762,7 +794,7 @@ def test_a_rename_into_claude_needs_vickey() -> None:
 
 
 def test_a_rename_into_agents_reads_the_new_content() -> None:
-    f = CF(".claude/agents/a.md", "renamed", previous_filename="docs/a.md")
+    f = CF(".claude/agents/x.md", "renamed", previous_filename="docs/a.md")
     assert gate.classify([f], False, _read(SAFE_AGENT))[0] == "risky"
     assert gate.classify([f], False, _read(BAD_AGENTS["hooks"]))[0] == "needs-vickey"
 
@@ -780,7 +812,9 @@ def test_every_tracked_claude_file_is_a_safe_plain_agent_definition() -> None:
     tracked = [p for p in out.stdout.decode().split("\0") if p and (".claude" in p.split("/") or p.endswith(".mcp.json"))]
     for p in tracked:
         assert gate.is_plain_agent_path(p), f"{p}: only plain agent definitions may be tracked under .claude/"
-        assert gate.agent_file_is_safe((ROOT / p).read_text(encoding="utf-8")), p
+        text = (ROOT / p).read_text(encoding="utf-8")
+        assert gate.agent_file_is_safe(text), p
+        assert gate.agent_name_matches(text, p), p
     assert any(p.startswith(".claude/agents/") for p in tracked)
 
 

@@ -398,11 +398,18 @@ class AgentLoop:
         """Open the start page the person just approved (KAN-197), as ``start_run`` would have."""
         _trace("RESUME -> NAVIGATE", url_origin_for_log(url) or "")
         failure: str | None = None
+        # The run's own lock, as a step holds it: a takeover waits for it, so the person
+        # never gets the screen while this navigation is about to run or running.
+        run_lock = self._run_locks.get(run_id)
+        if run_lock is None:
+            run_lock = self._run_locks[run_id] = asyncio.Lock()
         try:
-            async with self._executor_lock:
-                # A stop can land while this waits for another run's step: never open a page for a stopped run.
-                if await self._run_cancelled(run_id):
-                    _trace("RESUME -> NAVIGATE skipped", "run was stopped while waiting")
+            async with run_lock, self._executor_lock:
+                # A stop or takeover can land while this waits for another run's step:
+                # never open a page for a stopped run or under the person's hands.
+                current = await self.run_store.get_run(run_id)
+                if current is None or current.status is RunStatus.CANCELLED or getattr(current, "in_takeover", False):
+                    _trace("RESUME -> NAVIGATE skipped", "run was stopped or taken over while waiting")
                     return
                 if hasattr(self.executor, "set_current_run_id"):
                     self.executor.set_current_run_id(run_id)

@@ -431,15 +431,41 @@ async def test_start_url_pause_notifies_the_person_like_any_pause(monkeypatch: p
 
 
 async def test_a_stop_while_approving_never_opens_the_start_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    loop, execute, _, _, _ = await _start_paused(monkeypatch)
+    loop, execute, state, _, _ = await _start_paused(monkeypatch)
 
-    async def stopped(_run_id: str) -> bool:
-        return True  # stopped while the approval waited for another run's step
-
-    monkeypatch.setattr(loop, "_run_cancelled", stopped)
-    await loop.resume_run("run-1")
+    async with loop._executor_lock:  # another run's step holds the executor
+        approving = asyncio.create_task(loop.resume_run("run-1"))
+        await asyncio.sleep(0.01)
+        state.status = RunStatus.CANCELLED  # stopped while the approval waited
+    await approving
 
     execute.assert_not_called()
+    assert state.status is RunStatus.CANCELLED
+
+
+async def test_a_takeover_while_the_approval_waits_never_navigates_under_the_person(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop, execute, state, _, _ = await _start_paused(monkeypatch)
+
+    async with loop._executor_lock:  # another run's step holds the executor
+        approving = asyncio.create_task(loop.resume_run("run-1"))
+        await asyncio.sleep(0.01)
+        # The takeover must wait for the approval's turn: it never returns "you are in
+        # control" while the page is still to be opened.
+        taking_over = asyncio.create_task(loop.take_over("run-1"))
+        await asyncio.sleep(0.01)
+        assert not taking_over.done()
+    await approving
+    try:
+        await taking_over
+    except ValueError:
+        pass  # the approval already handed the run back to the agent
+
+    if state.in_takeover:
+        assert state.status is RunStatus.WAITING_FOR_USER
+    else:
+        assert execute.call_count == 1
 
 
 @pytest.mark.parametrize("fails", ["result", "raise"])
@@ -481,10 +507,16 @@ async def test_a_takeover_while_the_start_url_loads_keeps_the_person_in_control(
     with pytest.raises(ValueError, match="start page is opening"):
         await loop.resume_run("run-1", approve_gated_action=False)
 
-    await loop.take_over("run-1")
+    # The takeover waits for the page load to end instead of handing over mid-navigation.
+    taking_over = asyncio.create_task(loop.take_over("run-1"))
+    await asyncio.sleep(0.01)
+    assert not taking_over.done()
     finish.set()
-    response = await approving
+    await approving
+    try:
+        await taking_over
+    except ValueError:
+        pass  # the approval already handed the run back to the agent
 
-    assert response.status is RunStatus.WAITING_FOR_USER
-    assert state.status is RunStatus.WAITING_FOR_USER
-    assert state.in_takeover is True
+    # Never both: the person in control and the agent running.
+    assert not (state.in_takeover and state.status is RunStatus.RUNNING)

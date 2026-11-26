@@ -60,6 +60,7 @@ from operon.agent.policy.progress_tracker import (
 from operon.agent.policy.recovery import RecoveryManager, validate_benchmark_integrity
 from operon.agent.policy.trust_gate import (
     PermissionMode,
+    TrustResult,
     TrustVerdict,
     apply_permission_mode,
     make_trust_gate,
@@ -260,6 +261,10 @@ class AgentLoop:
         # in flight finishes its action but ends WAITING_FOR_USER instead of RUNNING.
         self._pause_requests: set[str] = set()
         self._approved_gate_actions: dict[str, tuple[str, frozenset[str]]] = {}
+        # KAN-197: run_id -> start URL a new run is paused on, opened when the person approves.
+        self._pending_start_urls: dict[str, str] = {}
+        # Runs whose approved start page is opening right now: a second answer waits its turn.
+        self._opening_start_urls: set[str] = set()
         # KAN-172: run_id -> (dialog type, message, whether the backend holds the action that
         # raised it) for a run paused on a page dialog the executor cancelled.
         self._dialog_pauses: dict[str, _DialogPause] = {}
@@ -279,19 +284,23 @@ class AgentLoop:
 
     async def start_run(self, request: RunTaskRequest) -> RunResponse:
         _trace("START_RUN", f"intent={request.intent!r}  origin={url_origin_for_log(request.start_url)!r}")
+        start_check: TrustResult | None = None
         if request.start_url:
             # KAN-191: a hard refusal, with the trust gate on or off (never a pause to approve).
             if not is_web_url(request.start_url):
                 raise StartUrlBlockedError(web_url_refusal(request.start_url, "start_url"))
             # The start URL is opened before any step, so the trust gate's per-action
-            # check never sees it: judge it here, before the run exists.
-            verdict = self._trust_gate.evaluate(
-                AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
-            )
+            # check never sees it: judge it here, before the run exists, with the run's
+            # permission mode. A DENY refuses the run; a CONFIRM (KAN-197) creates it
+            # paused, and the page opens only when the person approves.
+            probe = AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
+            verdict = apply_permission_mode(self._trust_gate.evaluate(probe), probe, request.permission_mode)
             if verdict.verdict is TrustVerdict.DENY:
                 raise StartUrlBlockedError(
                     f"start_url blocked by policy ({verdict.reason}: '{verdict.matched}')"
                 )
+            if verdict.verdict is TrustVerdict.CONFIRM:
+                start_check = verdict
         # Minimize all windows (Win+D) only in desktop mode. Browser-mode runs
         # use Playwright in its own window — issuing Win+D would minimize the
         # USER's foreground app on every task start, which yanks focus during
@@ -337,11 +346,14 @@ class AgentLoop:
                     await self.executor.start_run_recording(record.run_id, root_dir=self.run_store.root_dir)
                 except Exception as exc:
                     self._recovered(record.run_id, "start_run_recording", exc)
-            if request.start_url:
+            if request.start_url and start_check is None:
                 _trace("START_RUN -> NAVIGATE", url_origin_for_log(request.start_url) or "")
                 await self.executor.execute(
                     AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
                 )
+        if request.start_url and start_check is not None:
+            # Paused before the planner's wait, so no /step can run in that window.
+            record = await self._pause_for_start_url(record, request.start_url, start_check)
         await self._write_plan(record)
         self._send_expect_instruction(record.run_id)
         await self._flush_recovered_errors(record.run_id)
@@ -351,6 +363,73 @@ class AgentLoop:
             intent=record.intent,
             step_count=record.step_count,
         )
+
+    async def _pause_for_start_url(self, record, url: str, check: TrustResult):
+        """Pause a new run before its start page opens: the trust gate or the run's
+        permission mode wants a person's OK (KAN-197). Approving (resume) opens the page;
+        declining or a correction leaves it closed and tells the model so."""
+        run_id = record.run_id
+        probe = AgentAction(action_type=ActionType.NAVIGATE, url=url)
+        self._pending_gate_approvals[run_id] = (
+            self._gate_fingerprint(probe), "trust", check.category, check.verdict.value
+        )
+        self._pending_start_urls[run_id] = url
+        if check.reason.startswith("ask mode"):
+            reason = f"Approval needed (ask mode): open the start page {url}. Approve to open it, or correct/stop."
+        else:
+            reason = (
+                f"Approve opening the start page {url}? (matched '{check.matched}'). "
+                "Resume to approve, or correct/stop."
+            )
+        _trace("START_RUN -> TRUST_GATE", f"{check.verdict.value} (matched {check.matched!r})")
+        record.pause_reason = reason
+        record.hitl_message = reason
+        record.stop_reason = StopReason.WAITING_FOR_USER
+        await self.run_store.save_state(record)
+        updated = await self.run_store.set_status(run_id, RunStatus.WAITING_FOR_USER)
+        if updated.status is RunStatus.WAITING_FOR_USER:
+            event = request_event(run_id, 0, "trust")
+            self._pending_audit[run_id] = event
+            append_event(self._approval_audit_path(run_id), event)
+            self._notify_person(run_id, intent=record.intent, page_hint="unknown", message=reason, url=url)
+        return updated
+
+    async def _open_approved_start_url(self, run_id: str, url: str) -> None:
+        """Open the start page the person just approved (KAN-197), as ``start_run`` would have."""
+        _trace("RESUME -> NAVIGATE", url_origin_for_log(url) or "")
+        failure: str | None = None
+        # The run's own lock, as a step holds it: a takeover waits for it, so the person
+        # never gets the screen while this navigation is about to run or running.
+        run_lock = self._run_locks.get(run_id)
+        if run_lock is None:
+            run_lock = self._run_locks[run_id] = asyncio.Lock()
+        try:
+            async with run_lock, self._executor_lock:
+                # A stop or takeover can land while this waits for another run's step:
+                # never open a page for a stopped run or under the person's hands.
+                current = await self.run_store.get_run(run_id)
+                if current is None or current.status is RunStatus.CANCELLED or getattr(current, "in_takeover", False):
+                    _trace("RESUME -> NAVIGATE skipped", "run was stopped or taken over while waiting")
+                    return
+                if hasattr(self.executor, "set_current_run_id"):
+                    self.executor.set_current_run_id(run_id)
+                result = await self.executor.execute(AgentAction(action_type=ActionType.NAVIGATE, url=url))
+            # Executors report most load failures (DNS, timeout) as success=False, not by raising.
+            if getattr(result, "success", True) is False:
+                failure = getattr(result, "detail", None) or "navigation failed"
+        except Exception as exc:
+            self._recovered(run_id, "open_start_url", exc)
+            failure = type(exc).__name__
+        if failure is None:
+            return
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints(
+                [f"The person approved the start page {url}, but it failed to open ({failure}). "
+                 "Look at the screen before acting."],
+                source="start_url_failed",
+                run_id=run_id,
+            )
 
     async def _write_plan(self, record) -> None:
         """One-shot planner (OPERON_PLANNER): a cheaper model plans once; the plan is a first-step hint.
@@ -518,6 +597,10 @@ class AgentLoop:
             lock = self._run_locks[run_id] = asyncio.Lock()
         async with lock:
             record = await self.run_store.get_run(run_id)
+            if record is not None and record.status is RunStatus.RUNNING:
+                # An approved start page was loading under this lock and its resume set the
+                # run RUNNING; pause again while still holding the lock, so no step starts.
+                record = await self.pause_run(run_id)
         if record is None or record.status is not RunStatus.WAITING_FOR_USER:
             state = record.status.value if record is not None else "gone"
             raise ValueError(f"Run {run_id!r} is {state}; nothing to take over")
@@ -574,6 +657,9 @@ class AgentLoop:
             # A resume would put the agent back in charge with the person's dialog rule (they
             # answer their own dialogs) still on; only hand_back ends a takeover.
             raise TakeoverActiveError(f"Run {run_id!r} is under the user's control; hand it back instead")
+        if run_id in self._opening_start_urls:
+            # An approval is already opening the start page (KAN-197); that resume finishes the job.
+            raise ValueError(f"Run {run_id!r} is already resuming: its start page is opening")
         self._set_person_driving(run_id, False)
         self.check_resume_environment(record)
         if record.stop_reason is StopReason.INTERRUPTED:
@@ -603,7 +689,25 @@ class AgentLoop:
             # pause also holds the calls; its approval is counted below, once.
             record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
-        if approve_gated_action and pending is not None:
+        start_url = self._pending_start_urls.pop(run_id, None)
+        open_start_url = None
+        if start_url is not None:
+            # The run paused before its start page opened (KAN-197). A yes opens it once;
+            # it is not an approval of any later action the model picks.
+            if approve_gated_action and pending is not None:
+                open_start_url = start_url
+                if hasattr(record, "approval_count"):
+                    record.approval_count += 1
+            else:
+                add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+                if callable(add_hints):
+                    add_hints(
+                        [f"The person did not approve opening the start page {start_url}; it was not opened. "
+                         "Do not open it unless the person asks."],
+                        source="start_url_declined",
+                        run_id=run_id,
+                    )
+        elif approve_gated_action and pending is not None:
             fingerprint, gate, _category, _verdict = pending
             prior = self._approved_gate_actions.get(run_id)
             gates = prior[1] if prior is not None and prior[0] == fingerprint else frozenset()
@@ -615,6 +719,27 @@ class AgentLoop:
         clear_failure(record)
         if hasattr(record, "pause_reason"):
             record.pause_reason = None
+        if open_start_url is not None:
+            # Before the run turns RUNNING, so its first step sees the page.
+            self._opening_start_urls.add(run_id)
+            try:
+                await self._open_approved_start_url(run_id, open_start_url)
+            finally:
+                self._opening_start_urls.discard(run_id)
+            current = await self.run_store.get_run(run_id)
+            if (
+                current is None
+                or current.status is not RunStatus.WAITING_FOR_USER
+                or getattr(current, "in_takeover", False)
+            ):
+                # The person took over or stopped the run while the page loaded: their
+                # action wins, so the run is not put back in the agent's hands.
+                self._resolve_approval_audit(run_id, "approved")
+                await self._flush_recovered_errors(run_id)
+                final = current or record
+                return RunResponse(
+                    run_id=final.run_id, status=final.status, intent=final.intent, step_count=final.step_count
+                )
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
         if updated.status is RunStatus.RUNNING:
             self._resolve_approval_audit(run_id, "approved" if approve_gated_action else "declined")
@@ -2094,12 +2219,7 @@ class AgentLoop:
         """Pause the run, generate an LLM explanation, notify the human, and start the escalation timer.
 
         ``log_step=False`` when the step was already logged with the action it ran."""
-        from operon.agent.hitl import (
-            generate_hitl_message,
-            notify_desktop,
-            post_hitl_webhook,
-            start_escalation_timer,
-        )
+        from operon.agent.hitl import generate_hitl_message
 
         # Generate a human-readable LLM explanation of why we're pausing.
         element_names = [e.primary_name for e in perception.visible_elements[:12]]
@@ -2169,26 +2289,39 @@ class AgentLoop:
                 self._pending_audit[record.run_id] = event
                 append_event(self._approval_audit_path(record.run_id), event)
 
-        # Fire desktop notification (best-effort).
-        notify_desktop(
-            title="Operon needs you",
-            message=hitl_message[:120],
+        self._notify_person(
+            record.run_id,
+            intent=state.intent,
+            page_hint=perception.page_hint.value,
+            message=hitl_message,
+            url=state.start_url,
         )
 
-        # Start escalating re-notification in the background.
-        run_store = self.run_store
-        run_id = record.run_id
+        return RunResponse(
+            run_id=updated.run_id,
+            status=updated.status,
+            intent=updated.intent,
+            step_count=updated.step_count,
+        )
+
+    def _notify_person(self, run_id: str, *, intent: str, page_hint: str, message: str, url: str | None) -> None:
+        """Tell the person a run waits on them: desktop notice, the HITL webhook, and the
+        escalating re-notification while it stays paused."""
+        from operon.agent.hitl import (
+            notify_desktop,
+            post_hitl_webhook,
+            start_escalation_timer,
+        )
+
+        # Fire desktop notification (best-effort).
+        notify_desktop(title="Operon needs you", message=message[:120])
 
         # POST webhook (reliable channel — always attempted, always logged).
         asyncio.create_task(
-            post_hitl_webhook(
-                run_id=run_id,
-                intent=state.intent,
-                page_hint=perception.page_hint.value,
-                message=hitl_message,
-                url=state.start_url,
-            )
+            post_hitl_webhook(run_id=run_id, intent=intent, page_hint=page_hint, message=message, url=url)
         )
+
+        run_store = self.run_store
 
         async def _get_status():
             s = await run_store.get_run(run_id)
@@ -2203,13 +2336,6 @@ class AgentLoop:
         task.add_done_callback(
             lambda t: logger.warning("HITL escalation error: %s", t.exception())
             if not t.cancelled() and t.exception() is not None else None
-        )
-
-        return RunResponse(
-            run_id=updated.run_id,
-            status=updated.status,
-            intent=updated.intent,
-            step_count=updated.step_count,
         )
 
     async def _perceive_with_liveness_retry(
@@ -2491,6 +2617,7 @@ class AgentLoop:
         """Drop the finished run's conversation and last screenshot from the backends,
         which otherwise keep them for the life of the server."""
         self._expect_reminded.pop(run_id, None)
+        self._pending_start_urls.pop(run_id, None)
         self._secret_site_approved.pop(run_id, None)
         self._dialog_pauses.pop(run_id, None)
         self._dialog_approved.pop(run_id, None)

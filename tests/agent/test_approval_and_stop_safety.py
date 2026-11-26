@@ -513,10 +513,9 @@ async def test_a_takeover_while_the_start_url_loads_keeps_the_person_in_control(
     assert not taking_over.done()
     finish.set()
     await approving
-    try:
-        await taking_over
-    except ValueError:
-        pass  # the approval already handed the run back to the agent
+    await taking_over  # completes without error: the takeover wins over the approval's resume
 
-    # Never both: the person in control and the agent running.
-    assert not (state.in_takeover and state.status is RunStatus.RUNNING)
+    assert state.in_takeover is True
+    assert state.status is RunStatus.WAITING_FOR_USER
+    # The agent did not step: the only action ever executed is the start page itself.
+    assert [c.args[0].url for c in execute.call_args_list] == [CHECKOUT_URL]

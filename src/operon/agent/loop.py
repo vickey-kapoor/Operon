@@ -597,6 +597,10 @@ class AgentLoop:
             lock = self._run_locks[run_id] = asyncio.Lock()
         async with lock:
             record = await self.run_store.get_run(run_id)
+            if record is not None and record.status is RunStatus.RUNNING:
+                # An approved start page was loading under this lock and its resume set the
+                # run RUNNING; pause again while still holding the lock, so no step starts.
+                record = await self.pause_run(run_id)
         if record is None or record.status is not RunStatus.WAITING_FOR_USER:
             state = record.status.value if record is not None else "gone"
             raise ValueError(f"Run {run_id!r} is {state}; nothing to take over")

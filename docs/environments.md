@@ -27,10 +27,11 @@ desktop loop from being built, with the missing pieces in the error.
 
 ## Your open windows (KAN-205)
 
-A desktop run on your own PC (`live`) leaves your open windows alone. Only a benchmark run
-(the run request sets `benchmark`) or a run on a throwaway machine (any environment but `live`)
-starts by hiding every window (Win+D on Windows, ctrl+alt+d on the Linux desktop) for a clean
-screen. A run request can decide for itself with `"clear_desktop": true` or `false`.
+A desktop run on your own PC (`live`) leaves your open windows alone. A run hides every window
+first (Win+D on Windows, ctrl+alt+d on the Linux desktop) only when it runs on a throwaway machine
+(any environment but `live`), or when its request sets a `benchmark` name or `"clear_desktop": true`.
+The live desktop and hybrid benchmarks send `"clear_desktop": true`. A request with
+`"clear_desktop": false` never hides them.
 
 ## Environments
 

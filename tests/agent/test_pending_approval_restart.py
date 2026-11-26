@@ -195,9 +195,7 @@ async def test_a_plain_approve_after_a_takeover_restart_cannot_open_the_page(
     loop, _, _ = _restart(monkeypatch, tmp_path)
     await loop.take_over(run_id)
     await bg_writer.flush()
-    record = _on_disk(tmp_path, run_id)
-    record.in_takeover = False  # a restart ends the takeover (checkpoints)
-    (tmp_path / run_id / "state.json").write_text(record.model_dump_json(), encoding="utf-8")
+    _end_takeover_on_disk(tmp_path, run_id)
 
     again, executor, hints = _restart(monkeypatch, tmp_path)
     await again.resume_run(run_id)
@@ -206,19 +204,23 @@ async def test_a_plain_approve_after_a_takeover_restart_cannot_open_the_page(
     assert any("did not approve opening the start page" in h for h in hints)
 
 
-async def _paused_on_dialog(monkeypatch: pytest.MonkeyPatch, root: Path) -> str:
-    from operon.agent.loop import _DialogPause
-    from operon.store.approval_audit import request_event
+def _end_takeover_on_disk(root: Path, run_id: str) -> None:
+    record = _on_disk(root, run_id)
+    record.in_takeover = False  # a restart ends the takeover (checkpoints)
+    (root / run_id / "state.json").write_text(record.model_dump_json(), encoding="utf-8")
 
-    loop, _ = build_loop(monkeypatch, root, [CLICK_SAVE])
-    record = loop.run_store.create_run("Delete it")
-    loop._dialog_pauses[record.run_id] = _DialogPause("confirm", "Delete?", True, 0, 1)
-    loop._pending_audit[record.run_id] = request_event(record.run_id, 1, "dialog")
-    record.pause_reason = 'The page asked: "Delete?" Accept?'
-    await loop.run_store.set_status(record.run_id, RunStatus.WAITING_FOR_USER)
-    await loop._save_pending_approval(record)
+
+async def _paused_on_dialog(monkeypatch: pytest.MonkeyPatch, root: Path) -> str:
+    """A real step whose action raised a page dialog the executor cancelled."""
+    loop, executor = build_loop(monkeypatch, root, [CLICK_SAVE])
+    answers = iter([None, ("confirm", "Delete?", None)])  # none at the step start, then the dialog
+    executor.pop_pending_dialog = lambda run_id: next(answers, None)
+    run_id = loop.run_store.create_run("Delete it").run_id
+    paused = await loop.step_run(StepRequest(run_id=run_id))
+    assert paused.status is RunStatus.WAITING_FOR_USER
+    assert loop.pending_gate(run_id) == "dialog"
     await bg_writer.flush()
-    return record.run_id
+    return run_id
 
 
 @pytest.mark.parametrize("approve", [True, False])
@@ -260,6 +262,60 @@ async def test_a_model_confirmation_pause_is_answered_after_a_restart(
         assert any("said yes" in h and "did not run because Operon restarted" in h for h in hints)
     else:
         assert any("declined the action you asked to confirm" in h for h in hints)
+
+
+async def test_a_taken_over_dialog_pause_is_not_an_approval_after_a_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = await _paused_on_dialog(monkeypatch, tmp_path)
+    loop, _, _ = _restart(monkeypatch, tmp_path)
+    await loop.take_over(run_id)
+    await bg_writer.flush()
+    _end_takeover_on_disk(tmp_path, run_id)
+
+    again, executor, hints = _restart(monkeypatch, tmp_path)
+    executor.arm_accept_next_dialog = lambda *a: None
+    await again.resume_run(run_id)
+
+    assert run_id not in again._dialog_approved
+    assert not any("approved the page's" in h for h in hints)
+
+
+async def test_a_taken_over_confirmation_is_not_a_yes_after_a_restart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ask = AgentAction(action_type=ActionType.WAIT_FOR_USER, text="Saves the file.")
+    loop, _ = build_loop(monkeypatch, tmp_path, [ask])
+    loop.policy_service.has_held_actions = lambda run_id: True
+    run_id = loop.run_store.create_run("Save").run_id
+    await loop.step_run(StepRequest(run_id=run_id))
+    await loop.take_over(run_id)
+    await bg_writer.flush()
+    _end_takeover_on_disk(tmp_path, run_id)
+
+    again, _, hints = _restart(monkeypatch, tmp_path, [ask])
+    await again.resume_run(run_id)
+
+    assert hints == []
+
+
+async def test_a_confirmation_approved_in_the_same_process_runs_the_held_calls_without_a_restart_hint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ask = AgentAction(action_type=ActionType.WAIT_FOR_USER, text="Saves the file.")
+    loop, _ = build_loop(monkeypatch, tmp_path, [ask])
+    hints = _hints(loop)
+    loop.policy_service.has_held_actions = lambda run_id: True
+    discarded: list[str] = []
+    loop.policy_service.discard_held_actions = lambda run_id, reason: discarded.append(run_id)
+    run_id = loop.run_store.create_run("Save").run_id
+    await loop.step_run(StepRequest(run_id=run_id))
+
+    assert _waiting(loop, await loop.run_store.get_run(run_id)) is not None  # a status poll
+    await loop.resume_run(run_id)
+
+    assert discarded == []  # the backend still holds its calls and runs them
+    assert hints == []
 
 
 def test_a_state_saved_before_the_field_still_loads() -> None:

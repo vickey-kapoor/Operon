@@ -267,8 +267,6 @@ class AgentLoop:
         self._opening_start_urls: set[str] = set()
         # KAN-226: runs whose pending approval this process refilled from state.json (once each).
         self._pending_restored: set[str] = set()
-        # Runs paused on a model confirmation whose held calls a restart lost.
-        self._restored_confirmations: set[str] = set()
         # KAN-172: run_id -> (dialog type, message, whether the backend holds the action that
         # raised it) for a run paused on a page dialog the executor cancelled.
         self._dialog_pauses: dict[str, _DialogPause] = {}
@@ -446,12 +444,6 @@ class AgentLoop:
             self._pending_start_urls.setdefault(run_id, pending.start_url)
         if pending.audit is not None:
             self._pending_audit.setdefault(run_id, dict(pending.audit))
-            if (
-                pending.gate is None
-                and pending.dialog_kind is None
-                and pending.audit.get("category") == "model_confirmation"
-            ):
-                self._restored_confirmations.add(run_id)
         if pending.dialog_kind is not None:
             # The page and its held calls are gone: the approve path arms the dialog and hints.
             self._dialog_pauses.setdefault(
@@ -674,11 +666,11 @@ class AgentLoop:
             record.in_takeover = True
             record.takeover_count = getattr(record, "takeover_count", 0) + 1
             # A restart during a takeover must not turn a plain resume into an approval: keep
-            # the start page and reason (hand back then tells the model it was not opened),
-            # drop the gate.
+            # only the start page and reason (hand back then tells the model it was not
+            # opened); the gate, dialog and audit request go.
             if record.pending_approval is not None:
-                record.pending_approval = record.pending_approval.model_copy(
-                    update={"fingerprint": None, "gate": None, "category": "", "verdict": ""}
+                record.pending_approval = PendingApproval(
+                    start_url=record.pending_approval.start_url, reason=record.pending_approval.reason
                 )
             await self.run_store.save_state(record)
         self._set_person_driving(run_id, True)
@@ -738,6 +730,14 @@ class AgentLoop:
         self.restore_pending_approval(record)  # before anything below pops it
         if record.stop_reason is StopReason.INTERRUPTED:
             await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
+        audit = self._pending_audit.get(run_id)
+        confirmation_lost = (
+            audit is not None
+            and audit.get("category") == "model_confirmation"
+            and run_id not in self._pending_gate_approvals
+            and run_id not in self._dialog_pauses
+            and not self._has_held_actions(run_id)  # a restart dropped the calls it asked about
+        )
         dialog_pause = self._dialog_pauses.pop(run_id, None)
         approved_dialog = self._dialog_approved.pop(run_id, None)
         self._disarm_dialog_accept(run_id)  # nothing stays armed across a resume
@@ -789,9 +789,8 @@ class AgentLoop:
             self._approved_gate_actions[run_id] = (fingerprint, gates | {gate})
             if hasattr(record, "approval_count"):
                 record.approval_count += 1
-        if run_id in self._restored_confirmations:
+        if confirmation_lost:
             # The held calls died with the process: tell the model what the person answered.
-            self._restored_confirmations.discard(run_id)
             add_hints = getattr(self.perception_service, "add_advisory_hints", None)
             if callable(add_hints):
                 text = (
@@ -2710,7 +2709,6 @@ class AgentLoop:
         self._pause_requests.discard(run_id)
         self._created_runs.discard(run_id)
         self._pending_restored.discard(run_id)
-        self._restored_confirmations.discard(run_id)
         try:
             saved = await self.run_store.get_run(run_id)
             if saved is not None and saved.pending_approval is not None:

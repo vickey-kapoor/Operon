@@ -82,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           gh label create auto-merged --repo "$REPO" --color 5319E7 --description "Merged by the PR gate" --force
-          gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Trial week: the gate would have merged this" --force
+          gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Would merge: the gate would have merged this (KAN-216/KAN-227)" --force
           work="$RUNNER_TEMP/gate"
           mkdir -p "$work"
           # Open, non-draft PRs labelled low-risk or risky; paid-run is never listed (and merge-ready refuses it anyway).
@@ -122,7 +122,7 @@ jobs:
               fi
             elif ! jq -e --arg m "operon-gate-trial: $sha" \
               'any(.[]; .user.login == "github-actions[bot]" and ((.body // "") | contains($m)))' "$d/comments.json" > /dev/null; then
-              printf '<!-- operon-gate-trial: %s -->\nTrial week: would auto-merge this PR (OPERON_AUTO_MERGE is not on).\n' "$sha" > "$d/note.md"
+              printf '<!-- operon-gate-trial: %s -->\nWould merge: the gate would merge this PR (OPERON_AUTO_MERGE is not on).\n' "$sha" > "$d/note.md"
               gh pr comment "$n" --repo "$REPO" --body-file "$d/note.md" || { echo "::warning::PR $n: the trial note failed"; continue; }
               gh pr edit "$n" --repo "$REPO" --add-label gate-would-merge || echo "::warning::PR $n: adding the gate-would-merge label failed"
             fi

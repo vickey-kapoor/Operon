@@ -266,9 +266,11 @@ Exception, merging (owner's rule, 2026-11-26: "Every PR can auto-merge but no pa
 approval"): the full rule is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short:
 a PR merges once checks are green, Codex is answered and the fresh verifier marker is on the head; a `risky` PR also
 needs a top-model review (today Fable 5.2) in a fresh session that is not the coordinator and did not write or verify
-it; a PR touching paid-run machinery or these rules (`.github/**`, `evals/**`, `scripts/**`, price tables, model
-defaults, settings, the rules files) waits for the owner's "merge" for that PR; never enable GitHub's own auto-merge;
-and no paid run starts without the owner's explicit OK for that run and its cost.
+it; a PR touching paid-run machinery or these rules (`.github/**`, `evals/**` except JSON recordings, `scripts/**`, the
+gate's tests, price tables, model defaults and model ids, model clients, settings, the rules files; the exact list is in
+`CLAUDE.md`) waits for the owner's "merge" for that PR; the gate does the merging and agents never merge by hand except
+as `CLAUDE.md` allows; never enable GitHub's own auto-merge; and no paid run starts without the owner's explicit OK for
+that run and its cost.
 
 ## 10. Definition of Done
 

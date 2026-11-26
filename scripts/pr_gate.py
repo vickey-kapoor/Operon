@@ -30,7 +30,7 @@ LOW = "low-risk"
 RISKY = "risky"
 PAID = "paid-run"
 
-# The files API stops at 3000 entries; a PR that big is never auto-merged.
+# The files API stops at 3000 entries, so the list may be cut short: a PR that big is classified paid-run (fail closed).
 MAX_FILES = 3000
 
 # Inside src/ everything is low-risk EXCEPT these (a denylist). A pattern ending in "/**" is a directory
@@ -132,6 +132,10 @@ PAID_RUN_PATTERNS: tuple[str, ...] = (
     "src/operon/models/usage.py",
     "src/operon/core/settings.py",
     "src/operon/agent/backends/model_adapter/registry.py",
+    "src/operon/agent/backends/model_adapter/models.yaml",  # price table, model ids
+    "src/operon/api/runtime_config.py",  # default model, pricing check
+    "src/operon/api/runtime/services.py",  # pricing check
+    "src/operon/clients/**",  # model ids
     # The rules that define this exception, so a PR cannot loosen them and self-merge.
     "claude.md",
     "agents.md",
@@ -249,16 +253,17 @@ def _is_test(path: str) -> bool:
 def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
     """Return (``low-risk`` | ``risky`` | ``paid-run``, reasons). Risky when in any doubt.
 
-    A fork is never auto-merged: it is risky, or paid-run when it also touches paid-run files.
+    A fork is at least risky (paid-run when it also touches paid-run files); ``merge_ready`` refuses every fork.
+    A PR with ``MAX_FILES`` or more files is paid-run: the files API may have cut its list short.
     """
+    if len(files) >= MAX_FILES:
+        return PAID, [f"{len(files)} changed files reaches the API limit: the list may be incomplete"]
     reasons: list[str] = []
     paid: list[str] = []
     if is_fork:
         reasons.append("PR is from a fork")
     if not files:
         reasons.append("no changed files listed")
-    if len(files) >= MAX_FILES:
-        reasons.append(f"{len(files)} changed files reaches the API limit")
     for f in files:
         names = [(f.filename, f.status)] + ([(f.previous_filename, "removed")] if f.previous_filename else [])
         for name, status in names:
@@ -299,34 +304,44 @@ def _find_codex_state(comments: Iterable[dict[str, Any]]) -> dict[str, Any] | No
     return found
 
 
+def is_fork_pr(pr: dict[str, Any]) -> bool:
+    """Whether ``pr`` (a pulls API object) comes from another repository. Unknown repos count as a fork."""
+    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
+    base_repo = ((pr.get("base") or {}).get("repo") or {}).get("full_name")
+    return head_repo is None or head_repo != base_repo
+
+
 def merge_ready(
     pr: dict[str, Any],
     checks: list[dict[str, Any]],
     comments: list[dict[str, Any]],
     ignore_checks: Iterable[str] = (),
     *,
-    risk: str | None = None,
+    risk: str,
     status: dict[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:
     """Whether the gate may merge ``pr``. ``pr`` is a pulls API object; ``checks`` the head's check runs;
     ``status`` the head's combined status (the older status API, which check runs do not cover).
 
-    ``risk`` is a fresh classification of the PR's files. A ``paid-run`` PR is never ready. A ``risky`` PR
-    (labelled risky, classified risky) also needs a top-review marker for the head from an owner or collaborator.
+    ``risk`` is a fresh classification of the PR's files. A fork PR and a ``paid-run`` PR are never ready. A
+    ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
+    collaborator, in a comment of its own (one that does not also carry the verifier marker).
     """
     why: list[str] = []
     head = (pr.get("head") or {}).get("sha") or ""
     if not head:
         return False, ["no head sha"]
+    if is_fork_pr(pr):
+        return False, ["PR is from a fork"]
     labels = {(x.get("name") if isinstance(x, dict) else x) for x in pr.get("labels") or []}
     if PAID in labels or risk == PAID:
         return False, ["touches paid runs: waits for Vickey's merge"]
     level = RISKY if RISKY in labels or risk == RISKY else LOW
     if len(labels & {LOW, RISKY}) != 1:
         why.append(f"not labelled exactly one of {LOW} or {RISKY}")
-    elif risk is not None and (RISKY in labels) != (risk == RISKY):
+    elif (RISKY in labels) != (risk == RISKY):
         why.append("fresh classification does not match the label")
-    if risk is not None and risk not in (LOW, RISKY):
+    if risk not in (LOW, RISKY):
         why.append("fresh classification is not low-risk or risky")
     if pr.get("draft"):
         why.append("PR is a draft")
@@ -371,17 +386,20 @@ def merge_ready(
         if state.get("has_unresolved_findings") is not False:
             why.append("Codex review has unresolved findings")
 
-    def marked(regex: re.Pattern[str]) -> bool:
+    def marked(regex: re.Pattern[str], alone: bool = False) -> bool:
+        """A comment from an owner or collaborator carries ``regex``'s marker for the head; with ``alone``,
+        the comment must not also carry a verifier marker (the top review is posted in its own comment)."""
         return any(
             c.get("author_association") in OWNER_ASSOCIATIONS
             and (c.get("user") or {}).get("type") == "User"
             and any(m.lower() == head.lower() for m in regex.findall(c.get("body") or ""))
+            and not (alone and VERIFIER_RE.search(c.get("body") or ""))
             for c in comments
         )
 
     if not marked(VERIFIER_RE):
         why.append("no verifier PASS marker for the head commit from an owner or collaborator")
-    if level == RISKY and not marked(TOP_REVIEW_RE):
+    if level == RISKY and not marked(TOP_REVIEW_RE, alone=True):
         why.append("no top-review PASS marker for the head commit from an owner or collaborator")
 
     return (not why), why or ["all gates passed"]
@@ -428,10 +446,7 @@ def main(argv: list[str] | None = None) -> int:
         print(risk)
         return 0
     pr = _load(a.pr)
-    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
-    base_repo = ((pr.get("base") or {}).get("repo") or {}).get("full_name")
-    fork = head_repo is None or head_repo != base_repo
-    risk, _ = classify(_files(a.files), fork)
+    risk, _ = classify(_files(a.files), is_fork_pr(pr))
     checks = _load(a.checks)
     ok, why = merge_ready(
         pr,

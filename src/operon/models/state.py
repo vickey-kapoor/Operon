@@ -13,6 +13,19 @@ from operon.models.progress import ProgressState
 from operon.models.verification import VerificationResult
 
 
+class PendingApproval(StrictModel):
+    """What a paused run waits on from the person (KAN-226), saved so a restart keeps it.
+    Gate fields are None for a model-confirmation pause, which has an audit event and no gate."""
+
+    fingerprint: str | None = None
+    gate: str | None = None
+    category: str = ""
+    verdict: str = ""
+    start_url: str | None = None
+    audit: dict[str, str | int] | None = None
+    reason: str | None = None
+
+
 class AgentState(StrictModel):
     """Local typed state stored for a single agent run."""
 
@@ -67,6 +80,8 @@ class AgentState(StrictModel):
     approval_count: int = Field(default=0, ge=0)
     # Why the run is paused for the person (the gate's or the model's own words).
     pause_reason: str | None = None
+    # KAN-226: what the pause waits on, so an approval survives a restart; None otherwise.
+    pending_approval: PendingApproval | None = None
     # OPERON_CHECKPOINTS (KAN-80): what the run was doing when the process died (running,
     # pending or waiting_for_user), kept while stop_reason is "interrupted". A run that
     # was waiting for the person re-pauses on resume instead of continuing.

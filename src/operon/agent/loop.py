@@ -105,7 +105,7 @@ from operon.models.policy import ActionType, AgentAction, PolicyDecision
 from operon.models.progress import ProgressTrace
 from operon.models.recovery import RecoveryDecision, RecoveryStrategy
 from operon.models.selector import TargetIntent, TargetIntentAction
-from operon.models.state import AgentState
+from operon.models.state import AgentState, PendingApproval
 from operon.models.verification import (
     VerificationResult,
     VerificationStatus,
@@ -265,6 +265,8 @@ class AgentLoop:
         self._pending_start_urls: dict[str, str] = {}
         # Runs whose approved start page is opening right now: a second answer waits its turn.
         self._opening_start_urls: set[str] = set()
+        # KAN-226: runs whose pending approval this process refilled from state.json (once each).
+        self._pending_restored: set[str] = set()
         # KAN-172: run_id -> (dialog type, message, whether the backend holds the action that
         # raised it) for a run paused on a page dialog the executor cancelled.
         self._dialog_pauses: dict[str, _DialogPause] = {}
@@ -391,8 +393,56 @@ class AgentLoop:
             event = request_event(run_id, 0, "trust")
             self._pending_audit[run_id] = event
             append_event(self._approval_audit_path(run_id), event)
+            await self._save_pending_approval(updated)
             self._notify_person(run_id, intent=record.intent, page_hint="unknown", message=reason, url=url)
         return updated
+
+    def _remember_pending_approval(self, record) -> None:
+        """Copy what the run waits on into its state, so a restart keeps it (KAN-226)."""
+        run_id = record.run_id
+        pending = self._pending_gate_approvals.get(run_id)
+        audit = self._pending_audit.get(run_id)
+        if pending is None and audit is None:
+            record.pending_approval = None
+            return
+        record.pending_approval = PendingApproval(
+            fingerprint=pending[0] if pending else None,
+            gate=pending[1] if pending else None,
+            category=pending[2] if pending else "",
+            verdict=pending[3] if pending else "",
+            start_url=self._pending_start_urls.get(run_id),
+            audit=dict(audit) if audit is not None else None,
+            reason=record.pause_reason,
+        )
+
+    async def _save_pending_approval(self, updated) -> None:
+        """Save the pause's pending approval, only while the run stands paused."""
+        if updated.status is RunStatus.WAITING_FOR_USER:
+            self._remember_pending_approval(updated)
+            await self.run_store.save_state(updated)
+
+    def restore_pending_approval(self, record, *, force: bool = False) -> None:
+        """Refill what a paused run waits on from its saved state after a restart (KAN-226).
+
+        Once per run per process, and only for entries this process does not hold; ``force``
+        redoes it after a step that dropped them."""
+        pending = getattr(record, "pending_approval", None)
+        run_id = record.run_id
+        if pending is None or record.status is not RunStatus.WAITING_FOR_USER:
+            return
+        if run_id in self._pending_restored and not force:
+            return
+        self._pending_restored.add(run_id)
+        if pending.gate is not None and pending.fingerprint is not None:
+            self._pending_gate_approvals.setdefault(
+                run_id, (pending.fingerprint, pending.gate, pending.category, pending.verdict)
+            )
+        if pending.start_url is not None:
+            self._pending_start_urls.setdefault(run_id, pending.start_url)
+        if pending.audit is not None:
+            self._pending_audit.setdefault(run_id, dict(pending.audit))
+        if pending.reason:
+            record.pause_reason = pending.reason  # what the person is about to approve
 
     async def _open_approved_start_url(self, run_id: str, url: str) -> None:
         """Open the start page the person just approved (KAN-197), as ``start_run`` would have."""
@@ -607,6 +657,8 @@ class AgentLoop:
         if not getattr(record, "in_takeover", False):
             record.in_takeover = True
             record.takeover_count = getattr(record, "takeover_count", 0) + 1
+            # A restart during a takeover must not turn a plain resume into an approval.
+            record.pending_approval = None
             await self.run_store.save_state(record)
         self._set_person_driving(run_id, True)
         return record
@@ -662,8 +714,10 @@ class AgentLoop:
             raise ValueError(f"Run {run_id!r} is already resuming: its start page is opening")
         self._set_person_driving(run_id, False)
         self.check_resume_environment(record)
+        self.restore_pending_approval(record)  # before anything below pops it
         if record.stop_reason is StopReason.INTERRUPTED:
             await self._prepare_interrupted(run_id, record)  # a restart lost the conversation (KAN-80)
+            self.restore_pending_approval(record, force=True)
         dialog_pause = self._dialog_pauses.pop(run_id, None)
         approved_dialog = self._dialog_approved.pop(run_id, None)
         self._disarm_dialog_accept(run_id)  # nothing stays armed across a resume
@@ -690,6 +744,7 @@ class AgentLoop:
             record.approval_count += 1
         pending = self._pending_gate_approvals.pop(run_id, None)
         start_url = self._pending_start_urls.pop(run_id, None)
+        record.pending_approval = None  # used up here: a later restart must not bring it back
         open_start_url = None
         if start_url is not None:
             # The run paused before its start page opened (KAN-197). A yes opens it once;
@@ -723,6 +778,13 @@ class AgentLoop:
             # Before the run turns RUNNING, so its first step sees the page.
             self._opening_start_urls.add(run_id)
             try:
+                if run_id in self._pending_restored and hasattr(self.executor, "configure_run"):
+                    # Loaded from disk: this executor never heard of the run.
+                    try:
+                        async with self._executor_lock:
+                            self.executor.configure_run(run_id, headless=record.headless, mode=record.mode)
+                    except Exception as exc:
+                        self._recovered(run_id, "configure_run", exc)
                 await self._open_approved_start_url(run_id, open_start_url)
             finally:
                 self._opening_start_urls.discard(run_id)
@@ -737,6 +799,8 @@ class AgentLoop:
                 self._resolve_approval_audit(run_id, "approved")
                 await self._flush_recovered_errors(run_id)
                 final = current or record
+                final.pending_approval = None
+                await self.run_store.save_state(final)
                 return RunResponse(
                     run_id=final.run_id, status=final.status, intent=final.intent, step_count=final.step_count
                 )
@@ -873,6 +937,7 @@ class AgentLoop:
                 except Exception as exc:
                     self._recovered(run_id, "configure_run", exc)
         self._release_backend_run_state(run_id)
+        self.restore_pending_approval(record, force=True)  # the release dropped the start page
         add_hints = getattr(self.perception_service, "add_advisory_hints", None)
         if callable(add_hints):
             add_hints([build_resume_hint(record)], source=RESUME_HINT_SOURCE, run_id=run_id)
@@ -882,7 +947,8 @@ class AgentLoop:
         """Continue a run a restart interrupted, from the current screen (KAN-80).
 
         A run that was waiting for the person when the process died stays waiting: the
-        gate it paused on is forgotten, so the person approves again before anything runs."""
+        gate it paused on is kept (KAN-226): approving opens its start page, or lets the same
+        gated action through once. Nothing runs before the person answers."""
         record = await self.run_store.get_run(run_id)
         if record is None:
             raise ValueError(f"Run {run_id!r} not found")
@@ -892,7 +958,12 @@ class AgentLoop:
         origin = await self._prepare_interrupted(run_id, record)
         if origin is RunStatus.WAITING_FOR_USER:
             record.stop_reason = StopReason.WAITING_FOR_USER
-            record.pause_reason = "Resumed after a restart. Approve to continue from the current screen."
+            waiting_on = record.pending_approval.reason if record.pending_approval is not None else None
+            record.pause_reason = (
+                f"Resumed after a restart. {waiting_on}"
+                if waiting_on
+                else "Resumed after a restart. Approve to continue from the current screen."
+            )
             await self.run_store.save_state(record)
             return RunResponse(
                 run_id=run_id, status=record.status, intent=record.intent, step_count=record.step_count
@@ -2288,6 +2359,7 @@ class AgentLoop:
                 event = request_event(record.run_id, step_index, category)
                 self._pending_audit[record.run_id] = event
                 append_event(self._approval_audit_path(record.run_id), event)
+            await self._save_pending_approval(updated)
 
         self._notify_person(
             record.run_id,
@@ -2599,6 +2671,20 @@ class AgentLoop:
     async def _cleanup_completed_run(self, run_id: str) -> None:
         self._resolve_approval_audit(run_id, "cancelled")
         self._release_backend_run_state(run_id)
+        # The run is over: forget what it waited on, in memory and in its saved state (KAN-226).
+        self._pending_gate_approvals.pop(run_id, None)
+        self._approved_gate_actions.pop(run_id, None)
+        self._trust_approved.pop(run_id, None)
+        self._pause_requests.discard(run_id)
+        self._created_runs.discard(run_id)
+        self._pending_restored.discard(run_id)
+        try:
+            saved = await self.run_store.get_run(run_id)
+            if saved is not None and saved.pending_approval is not None:
+                saved.pending_approval = None
+                await self.run_store.save_state(saved)
+        except Exception as exc:
+            self._recovered(run_id, "clear_pending_approval", exc)
         if hasattr(self.executor, "stop_run_recording"):
             try:
                 await self.executor.stop_run_recording(run_id)

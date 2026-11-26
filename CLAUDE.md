@@ -176,6 +176,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A workflow checkout kept its token in `.git/config` -> `persist-credentials: false` on every `actions/checkout`; run zizmor before pushing workflow edits (#351).
 - A test that shells out to bash failed on Windows, where bash may be WSL with no distro -> skip such tests on Windows; offline checks must pass there too (KAN-195, #360).
 - A stop step's run.jsonl row named an after screenshot that was never written -> `after_artifact_path` and `executed_action.artifact_path` name only a screenshot the executor actually took; null otherwise (KAN-218, #368; KAN-219).
+- The start URL was checked only for DENY, so a page needing approval (or ask mode) opened unasked -> judge it with `apply_permission_mode` like every other navigation and pause the new run on CONFIRM (KAN-197, entry-point audit).
 - `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge (found during the #191 restructure).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)

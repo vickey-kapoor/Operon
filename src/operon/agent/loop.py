@@ -349,10 +349,11 @@ class AgentLoop:
                 await self.executor.execute(
                     AgentAction(action_type=ActionType.NAVIGATE, url=request.start_url)
                 )
+        if request.start_url and start_check is not None:
+            # Paused before the planner's wait, so no /step can run in that window.
+            record = await self._pause_for_start_url(record, request.start_url, start_check)
         await self._write_plan(record)
         self._send_expect_instruction(record.run_id)
-        if request.start_url and start_check is not None:
-            record = await self._pause_for_start_url(record, request.start_url, start_check)
         await self._flush_recovered_errors(record.run_id)
         return RunResponse(
             run_id=record.run_id,
@@ -406,6 +407,13 @@ class AgentLoop:
                 await self.executor.execute(AgentAction(action_type=ActionType.NAVIGATE, url=url))
         except Exception as exc:
             self._recovered(run_id, "open_start_url", exc)
+            add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+            if callable(add_hints):
+                add_hints(
+                    [f"The person approved the start page {url}, but it failed to open. Look at the screen before acting."],
+                    source="start_url_failed",
+                    run_id=run_id,
+                )
 
     async def _write_plan(self, record) -> None:
         """One-shot planner (OPERON_PLANNER): a cheaper model plans once; the plan is a first-step hint.

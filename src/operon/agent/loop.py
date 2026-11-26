@@ -263,6 +263,8 @@ class AgentLoop:
         self._approved_gate_actions: dict[str, tuple[str, frozenset[str]]] = {}
         # KAN-197: run_id -> start URL a new run is paused on, opened when the person approves.
         self._pending_start_urls: dict[str, str] = {}
+        # Runs whose approved start page is opening right now: a second answer waits its turn.
+        self._opening_start_urls: set[str] = set()
         # KAN-172: run_id -> (dialog type, message, whether the backend holds the action that
         # raised it) for a run paused on a page dialog the executor cancelled.
         self._dialog_pauses: dict[str, _DialogPause] = {}
@@ -389,7 +391,7 @@ class AgentLoop:
             event = request_event(run_id, 0, "trust")
             self._pending_audit[run_id] = event
             append_event(self._approval_audit_path(run_id), event)
-        self._notify_person(run_id, intent=record.intent, page_hint="unknown", message=reason, url=url)
+            self._notify_person(run_id, intent=record.intent, page_hint="unknown", message=reason, url=url)
         return updated
 
     async def _open_approved_start_url(self, run_id: str, url: str) -> None:
@@ -644,6 +646,9 @@ class AgentLoop:
             # A resume would put the agent back in charge with the person's dialog rule (they
             # answer their own dialogs) still on; only hand_back ends a takeover.
             raise TakeoverActiveError(f"Run {run_id!r} is under the user's control; hand it back instead")
+        if run_id in self._opening_start_urls:
+            # An approval is already opening the start page (KAN-197); that resume finishes the job.
+            raise ValueError(f"Run {run_id!r} is already resuming: its start page is opening")
         self._set_person_driving(run_id, False)
         self.check_resume_environment(record)
         if record.stop_reason is StopReason.INTERRUPTED:
@@ -705,7 +710,25 @@ class AgentLoop:
             record.pause_reason = None
         if open_start_url is not None:
             # Before the run turns RUNNING, so its first step sees the page.
-            await self._open_approved_start_url(run_id, open_start_url)
+            self._opening_start_urls.add(run_id)
+            try:
+                await self._open_approved_start_url(run_id, open_start_url)
+            finally:
+                self._opening_start_urls.discard(run_id)
+            current = await self.run_store.get_run(run_id)
+            if (
+                current is None
+                or current.status is not RunStatus.WAITING_FOR_USER
+                or getattr(current, "in_takeover", False)
+            ):
+                # The person took over or stopped the run while the page loaded: their
+                # action wins, so the run is not put back in the agent's hands.
+                self._resolve_approval_audit(run_id, "approved")
+                await self._flush_recovered_errors(run_id)
+                final = current or record
+                return RunResponse(
+                    run_id=final.run_id, status=final.status, intent=final.intent, step_count=final.step_count
+                )
         updated = await self.run_store.set_status(run_id, RunStatus.RUNNING)
         if updated.status is RunStatus.RUNNING:
             self._resolve_approval_audit(run_id, "approved" if approve_gated_action else "declined")

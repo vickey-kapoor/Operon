@@ -459,3 +459,32 @@ async def test_an_approved_start_url_that_fails_to_open_is_told_to_the_model(
     await loop.resume_run("run-1")
 
     assert any("failed to open" in hint for hint in hints)
+
+
+async def test_a_takeover_while_the_start_url_loads_keeps_the_person_in_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop, execute, state, _, _ = await _start_paused(monkeypatch)
+    loading = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def slow_open(action: AgentAction) -> ExecutedAction:
+        loading.set()
+        await finish.wait()
+        return ExecutedAction(action=action, success=True, detail="ok")
+
+    execute.side_effect = slow_open
+    approving = asyncio.create_task(loop.resume_run("run-1"))
+    await loading.wait()
+
+    # A second answer while the page loads is refused, not run early.
+    with pytest.raises(ValueError, match="start page is opening"):
+        await loop.resume_run("run-1", approve_gated_action=False)
+
+    await loop.take_over("run-1")
+    finish.set()
+    response = await approving
+
+    assert response.status is RunStatus.WAITING_FOR_USER
+    assert state.status is RunStatus.WAITING_FOR_USER
+    assert state.in_takeover is True

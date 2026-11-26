@@ -177,6 +177,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A test that shells out to bash failed on Windows, where bash may be WSL with no distro -> skip such tests on Windows; offline checks must pass there too (KAN-195, #360).
 - A stop step's run.jsonl row named an after screenshot that was never written -> `after_artifact_path` and `executed_action.artifact_path` name only a screenshot the executor actually took; null otherwise (KAN-218, #368; KAN-219).
 - `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge (found during the #191 restructure).
+- The PR-gate label job runs main's copy of `scripts/pr_gate.py`, so a new flag failed the check -> pass new flags only when the base script supports them, until merged (#374).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 
@@ -189,26 +190,37 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
 - A PR may merge once its checks are green, every Codex finding is answered, and a fresh verifier has passed on the
   head commit (the main session then posts `<!-- operon-verifier: PASS <full head sha> -->` on the PR).
 - The PR gate (`.github/workflows/pr-gate.yml`, `scripts/pr_gate.py`, KAN-216/KAN-227) labels each PR `low-risk`,
-  `risky` or `paid-run`, and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`
+  `risky` or `needs-vickey` (the PRs that wait for Vickey's own "merge": every workflow and action file, the paid-run machinery and the merge check, see the Paid-run exception below), and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`
   is `on` (it is). The gate does the merging; agents never merge by hand, except that a story thread may run
-  `gh pr merge --squash --match-head-commit <sha>` only when the gate has posted its "would merge" note
-  (`<!-- operon-gate-trial: <head sha> -->`) for that exact head and the PR is not labelled `paid-run`. A fork PR is
+  `gh pr merge --squash --match-head-commit <sha>` only while no open `auto-work-paused` issue exists, the gate has posted its "would merge" note
+  (`<!-- operon-gate-trial: <head sha> -->`) for that exact head, the PR is not labelled `needs-vickey`, and the thread
+  has first run main's `scripts/pr_gate.py classify` on the PR's files itself and got `low-risk` or `risky` (a same-repo
+  PR's own CI could post a fake note or remove labels, so the note and labels alone prove nothing). A fork PR is
   never merged by the gate. Never enable GitHub's own auto-merge (it is off repo-wide): it only waits for required
   checks and skips the markers.
+- While an open issue labelled `auto-work-paused` exists (Vickey wrote "pause"), the gate merges nothing and posts no would-merge notes, so no PR merges, and no agent merges by hand, even with an earlier would-merge note.
 - A `risky` PR also needs a review by the top model available in this app (today Fable 5.2), in a fresh session that is
   not the coordinator and did not write or verify the change, so someone checks on Vickey's behalf. Post its verdict on
   the PR verbatim, with the marker, in its own comment. Fix what it finds; once it passes on the head, post
   `<!-- operon-top-review: PASS <full head sha> -->` in that comment; the gate ignores a top-review marker in the same
   comment as the verifier marker. A new commit needs a new review.
-- **Paid-run exception.** A PR waits for Vickey to write "merge" for that PR if it touches any of: `.github/**`;
-  `evals/**` except JSON recordings under `evals/recordings/`; `scripts/**`; `tests/ci/test_pr_gate.py` (the gate's
-  tests); `src/operon/models/usage.py` (price tables behind every cost cap); `src/operon/core/settings.py`;
-  `src/operon/agent/backends/model_adapter/registry.py` (model defaults);
-  `src/operon/agent/backends/model_adapter/models.yaml` (price table, model ids); `src/operon/api/runtime_config.py`
-  (default model, pricing check); `src/operon/api/runtime/services.py` (pricing check); `src/operon/clients/**` (model
-  ids); or these rules (`CLAUDE.md`, `AGENTS.md`, `docs/CLAUDE-CODE-REFERENCE.md`, `evals/CLAUDE.md`,
-  `.claude/agents/**`). A PR with 3000 or more changed files also waits (the file list may be cut short). When unsure,
-  it waits. A `low-risk` label never overrides this; keep such a PR as a draft until Vickey says "merge".
+- **Paid-run exception (label `needs-vickey`).** Every GitHub workflow or action file waits for Vickey (Vickey,
+  2026-11-26), because a workflow can start a paid run on its own; the content of a workflow is not inspected. A PR
+  waits for Vickey to write "merge" for that PR, and the other files merge after a Fable 5.2 review.
+  - Waits for Vickey (`needs-vickey`): `.github/workflows/**` and `.github/actions/**` (a rename into or out of them
+    too); any `.claude/` folder at any depth or file in it other than a plain agent definition `.claude/agents/<name>.md`, and any `.mcp.json`; a plain agent definition also waits if it is not an ordinary file (e.g. a link), if it can't be read or is over 64 KB, if its frontmatter has anything beyond name, description, model, tools, isolation, color and effort (so no hooks or MCP servers; `tools` must be a plain comma-separated list of tool names), if its `name` is not its file name, if a body line is `---` or starts with `hooks:` or `mcpServers:`, and `.claude/agents/verifier.md` always waits (its PASS is a merge marker); the merge check (`scripts/pr_gate.py`, `tests/ci/test_pr_gate.py`); `evals/**` except
+    JSON recordings under `evals/recordings/` (so `evals/CLAUDE.md` waits too); `scripts/**` (bench runners and VM
+    scripts); cost caps, model prices, ids, defaults and settings (`src/operon/models/usage.py`,
+    `src/operon/core/settings.py`, `src/operon/agent/backends/model_adapter/registry.py`,
+    `src/operon/agent/backends/model_adapter/models.yaml`, `src/operon/api/runtime_config.py`,
+    `src/operon/api/runtime/services.py`, `src/operon/clients/**`,
+    `src/operon/agent/backends/model_adapter/transports/**`, `src/operon/api/observer.py`); a package with the same
+    name as any listed `.py` file (`usage/` next to `usage.py`); any PR with 3000 or more changed files (the file list
+    may be cut short).
+  - Risky (Fable 5.2 review), not Vickey: other GitHub settings files (`dependabot.yml`, `CODEOWNERS`, issue and PR
+    templates) and the rules files (`CLAUDE.md`, `AGENTS.md`, `docs/CLAUDE-CODE-REFERENCE.md`, any `CLAUDE.md` or
+    `AGENTS.md` in a subfolder), plain agent definitions `.claude/agents/<name>.md`.
+  - When unsure, it waits. A `low-risk` label never overrides this; keep such a PR as a draft until Vickey says "merge".
 - **No paid run without Vickey's explicit OK for that run and its cost:** no `/bench` comment, no manual start of
   `benchmark.yml`, `grounding.yml` or `osworld-bench.yml`, no local run with a real model key, and no PR whose own CI
   would use a model key. Approval is per PR and per run: an earlier "merge", a "yes" to another question, a green check,

@@ -6,31 +6,36 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
     python scripts/pr_gate.py classify --files files.json [--fork]
     python scripts/pr_gate.py merge-ready --pr pr.json --files files.json --checks checks.json \
         --comments comments.json [--ignore-check NAME ...]
+    python scripts/pr_gate.py paused --issues issues.json
 
-``classify`` prints ``low-risk``, ``risky`` or ``paid-run`` on stdout (paid-run beats risky beats low-risk); ``merge-ready`` prints ``ready`` or ``not-ready``.
+``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready`` or ``not-ready``; ``paused`` prints ``paused`` or ``running`` (KAN-229).
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import fnmatch
 import html
 import json
 import os
 import posixpath
 import re
+import subprocess
 import sys
-from collections.abc import Iterable
+import unicodedata
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 LOW = "low-risk"
 RISKY = "risky"
-PAID = "paid-run"
+PAID = "needs-vickey"  # the label for PRs that wait for Vickey's own "merge"
+LEGACY_PAID = "paid-run"  # the old name of that label: still refused, so a stale label cannot be merged
 
-# The files API stops at 3000 entries, so the list may be cut short: a PR that big is classified paid-run (fail closed).
+# The files API stops at 3000 entries, so the list may be cut short: a PR that big is classified needs-vickey (fail closed).
 MAX_FILES = 3000
 
 # Inside src/ everything is low-risk EXCEPT these (a denylist). A pattern ending in "/**" is a directory
@@ -114,20 +119,27 @@ TEST_FILE_PATTERNS: tuple[str, ...] = ("test_*.py", "*_test.py")  # what pytest 
 DASHBOARD_STATIC: tuple[str, ...] = ("dashboard/app.js", "dashboard/readme.md")
 
 
-# KAN-227 (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval"): a PR that
-# could start a paid run, or change how paid runs start or what they may spend, is never merged by the gate; it waits
-# for Vickey. Same pattern syntax as RISKY_PATTERNS; every entry must match a real file (tests/ci/test_pr_gate.py).
+# KAN-227 (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval"): a PR that could
+# start a paid run, change how paid runs start or what they may spend, or change the merge check itself is never merged
+# by the gate; it waits for Vickey ("needs-vickey"). Every workflow and action file is here, because a workflow can start
+# a paid run on its own (gh workflow run, a reusable workflow, a wider token, a secret); the content is not inspected.
+# A rename into or out of these paths counts too (classify checks both names). Same pattern syntax as RISKY_PATTERNS;
+# every entry must match a real file (tests/ci/test_pr_gate.py). The rules files (CLAUDE.md, AGENTS.md, ...) and other
+# .github/ files (dependabot.yml, CODEOWNERS, templates) are risky, not here; evals/CLAUDE.md waits only because
+# evals/** does.
 PAID_RUN_PATTERNS: tuple[str, ...] = (
-    # Any workflow can read a model API key secret or add a schedule: all of .github/ (the five paid-run workflows
-    # are benchmark.yml, live-bench.yml, live-desktop-bench.yml, grounding.yml, osworld-bench.yml; the gate is pr-gate.yml).
-    ".github/**",
+    # Every workflow and action (the five paid-run workflows are benchmark.yml, live-bench.yml, live-desktop-bench.yml,
+    # grounding.yml and osworld-bench.yml; the merge check is pr-gate.yml, scripts/pr_gate.py and its tests).
+    ".github/workflows/**",
+    ".github/actions/**",
+    # .claude/ and .mcp.json are not listed here: see is_claude_gated (plain agent definitions are risky, the rest waits).
+    "scripts/pr_gate.py",
+    "tests/ci/test_pr_gate.py",
     # Everything under evals/ (bench, batch queue, OSWorld, grounding, live smoke, caps, suites, seasons, runners'
     # scripts), except recorded data (PAID_RUN_EXEMPT).
     "evals/**",
-    # Bench-runner and VM scripts, and the gate (scripts/pr_gate.py).
+    # Bench-runner and VM scripts.
     "scripts/**",
-    # The gate's own tests.
-    "tests/ci/test_pr_gate.py",
     # Price tables behind every cost cap, settings (caps, model defaults), model defaults.
     "src/operon/models/usage.py",
     "src/operon/core/settings.py",
@@ -136,13 +148,20 @@ PAID_RUN_PATTERNS: tuple[str, ...] = (
     "src/operon/api/runtime_config.py",  # default model, pricing check
     "src/operon/api/runtime/services.py",  # pricing check
     "src/operon/clients/**",  # model ids
-    # The rules that define this exception, so a PR cannot loosen them and self-merge.
-    "claude.md",
-    "agents.md",
-    "docs/claude-code-reference.md",
-    "evals/claude.md",
-    ".claude/agents/**",
+    # KAN-230: cost code in the model connections (what is sent and counted on every paid call).
+    "src/operon/agent/backends/model_adapter/transports/**",
+    "src/operon/api/observer.py",
 )
+# Agent definitions (.claude/agents/<name>.md) can only be a plain risky change while their frontmatter carries no
+# hooks, MCP servers or permission settings (those run commands in the next Claude Code session). Only these keys.
+AGENT_FRONTMATTER_KEYS: tuple[str, ...] = ("name", "description", "model", "tools", "isolation", "color", "effort")
+AGENT_FILE_MAX_BYTES = 64 * 1024
+_AGENT_LINE_RE = re.compile(r"(" + "|".join(AGENT_FRONTMATTER_KEYS) + r"): (\S.*)")
+_AGENT_WORD_RE = re.compile(r"\w+")
+# Control characters (other than newline and tab) and Unicode line or paragraph separators: a YAML reader could treat
+# them as line breaks that this check does not see.
+_AGENT_ODD_CATEGORIES = frozenset({"Cc", "Zl", "Zp"})
+
 # Data recorded for the free replay tests: not a way to start or fund a paid run.
 PAID_RUN_EXEMPT: tuple[str, ...] = ("evals/recordings/*.json",)
 
@@ -156,6 +175,9 @@ REQUIRED_CHECKS: tuple[str, ...] = (
     "Browser end to end (Chromium)",
     "Desktop (Linux container)",
 )
+
+# KAN-229: while an open issue carries this label, the gate merges nothing and posts no would-merge notes.
+PAUSE_LABEL = "auto-work-paused"
 
 OWNER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 CODEX_BOT = "chatgpt-codex-connector[bot]"
@@ -174,7 +196,8 @@ class ChangedFile:
 def _matches(pattern: str, path: str) -> bool:
     pattern, path = pattern.casefold(), path.casefold()
     if pattern.endswith("/**"):
-        return path.startswith(pattern[:-2])
+        # The bare directory (no trailing file) matches too.
+        return path.startswith(pattern[:-2]) or path == pattern[:-3]
     return fnmatch.fnmatchcase(path, pattern)
 
 
@@ -238,23 +261,159 @@ def is_risky_path(path: str, status: str = "modified") -> bool:
     return not _low_risk_kind(path)
 
 
+def is_plain_agent_path(path: str) -> bool:
+    """Whether ``path`` is exactly ``.claude/agents/<name>.md`` (one level, no odd parts), case-insensitively."""
+    parts = path.replace("\\", "/").casefold().split("/")
+    return (
+        len(parts) == 3
+        and parts[0] == ".claude"
+        and parts[1] == "agents"
+        and parts[2].endswith(".md")
+        and len(parts[2]) > 3
+    )
+
+
+def is_claude_gated(raw: str, normalized: str) -> bool:
+    """Any ``.claude`` path part or ``.mcp.json`` file, at any depth, except a plain agent definition."""
+    parts = normalized.split("/")
+    if parts[-1] == ".mcp.json":
+        return True
+    return ".claude" in parts and not is_plain_agent_path(raw)
+
+
+def agent_file_is_safe(text: str) -> bool:
+    """Whether an agent definition's text cannot run commands: a strict frontmatter of plain keys only.
+
+    The frontmatter (between the first line ``---`` and the next ``---`` line) may hold only ``key: value`` lines for
+    ``AGENT_FRONTMATTER_KEYS``, each at most once, with no leading whitespace; ``tools`` is a comma-separated list of
+    plain words. Anything else (indentation, comments, blank lines, ``hooks:``, ``mcpServers:``, odd control or
+    line-separator characters, a missing or unterminated frontmatter, a file over 64 KB) is not safe.
+    """
+    if len(text.encode("utf-8", "surrogatepass")) > AGENT_FILE_MAX_BYTES or any(
+        unicodedata.category(c) in _AGENT_ODD_CATEGORIES and c not in "\n\t" for c in text
+    ):
+        return False
+    lines = text.split("\n")
+    if lines[0] != "---" or "---" not in lines[1:]:
+        return False
+    end = lines.index("---", 1)
+    if any(ln.rstrip() == "---" or ln.startswith(("hooks:", "mcpServers:")) for ln in lines[end + 1 :]):
+        return False  # a second frontmatter-like block or a hooks line in the body
+    seen: set[str] = set()
+    for line in lines[1:end]:
+        m = _AGENT_LINE_RE.fullmatch(line)
+        if m is None or m.group(1) in seen:
+            return False
+        seen.add(m.group(1))
+        if m.group(1) == "tools" and not all(_AGENT_WORD_RE.fullmatch(t.strip()) for t in m.group(2).split(",")):
+            return False
+    return True
+
+
+def _gh_json(endpoint: str) -> dict[str, Any] | None:
+    """``gh api`` JSON object for ``endpoint`` (needs GH_TOKEN), or None on any failure."""
+    try:
+        out = subprocess.run(["gh", "api", endpoint], capture_output=True, timeout=60, check=False)  # noqa: S603, S607
+        if out.returncode != 0:
+            return None
+        data = json.loads(out.stdout.decode("utf-8"))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def agent_name_matches(text: str, path: str) -> bool:
+    """Whether the frontmatter ``name:`` is a plain word equal to the file stem (case-sensitive), so no file shadows another."""
+    stem = path.replace("\\", "/").rsplit("/", 1)[-1][:-3]
+    m = re.search(r"^name: (\S.*)$", text.split("\n---", 1)[0], re.M)
+    return m is not None and _AGENT_WORD_RE.fullmatch(m.group(1)) is not None and m.group(1) == stem
+
+
+def head_file_reader(
+    repo: str, ref: str, fetch: Callable[[str], dict[str, Any] | None] = _gh_json
+) -> Callable[[str], str | None]:
+    """A reader of a plain agent file's text at commit ``ref`` of ``repo``. None on any failure (fail closed).
+
+    It walks the git tree (commit, then ``.claude``, ``agents``, the file) so it can require every directory to be a
+    real tree and the file a regular blob of mode 100644: a symlink, executable, submodule, missing or truncated
+    entry, a case mismatch, a file over 64 KB or bad base64 or UTF-8 gives None. ``fetch(endpoint)`` returns a JSON
+    object (default: ``gh api``).
+    """
+
+    def read(path: str) -> str | None:
+        if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo) or not re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+            return None
+        parts = path.split("/")
+        if len(parts) != 3 or parts[0] != ".claude" or parts[1] != "agents" or not is_plain_agent_path(path):
+            return None
+        try:
+            commit = fetch(f"repos/{repo}/git/commits/{ref}")
+            sha = ((commit or {}).get("tree") or {}).get("sha")
+            for i, name in enumerate(parts):
+                if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+                    return None
+                tree = fetch(f"repos/{repo}/git/trees/{sha}")
+                entries = (tree or {}).get("tree")
+                if tree is None or tree.get("truncated") or not isinstance(entries, list):
+                    return None
+                match = [e for e in entries if isinstance(e, dict) and e.get("path") == name]
+                if len(match) != 1:
+                    return None
+                entry = match[0]
+                last = i == len(parts) - 1
+                if entry.get("type") != ("blob" if last else "tree") or entry.get("mode") != (
+                    "100644" if last else "040000"
+                ):
+                    return None
+                sha = entry.get("sha")
+            if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+                return None
+            blob = fetch(f"repos/{repo}/git/blobs/{sha}")
+            if blob is None or blob.get("encoding") != "base64" or not isinstance(blob.get("content"), str):
+                return None
+            size = blob.get("size")
+            if not isinstance(size, int) or size > AGENT_FILE_MAX_BYTES:
+                return None
+            raw = base64.b64decode(blob["content"], validate=False)
+            if len(raw) > AGENT_FILE_MAX_BYTES or len(raw) != size:
+                return None
+            return raw.decode("utf-8")
+        except (ValueError, UnicodeDecodeError, TypeError, AttributeError):
+            return None
+
+    return read
+
+
 def is_paid_run_path(path: str) -> bool:
     """Whether ``path`` could start a paid run or change how paid runs start or what they may spend."""
-    path = posixpath.normpath(path.replace("\\", "/")).casefold()
+    raw = path.replace("\\", "/").casefold()
+    path = posixpath.normpath(raw).casefold()
+    if is_claude_gated(raw, path):
+        return True
     if any(_matches(p, path) for p in PAID_RUN_EXEMPT):
         return False
-    return any(_matches(p, path) for p in PAID_RUN_PATTERNS)
+    for pattern in PAID_RUN_PATTERNS:
+        if _matches(pattern, path):
+            return True
+        # KAN-230: a package named like a listed module (observer/ next to observer.py) would shadow it.
+        if pattern.endswith(".py") and "*" not in pattern and _matches(pattern[:-3] + "/**", path):
+            return True
+    return False
 
 
 def _is_test(path: str) -> bool:
     return path.casefold().startswith("tests/")
 
 
-def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
-    """Return (``low-risk`` | ``risky`` | ``paid-run``, reasons). Risky when in any doubt.
+def classify(
+    files: list[ChangedFile], is_fork: bool, read_file: Callable[[str], str | None] | None = None
+) -> tuple[str, list[str]]:
+    """Return (``low-risk`` | ``risky`` | ``needs-vickey``, reasons). Risky when in any doubt.
 
-    A fork is at least risky (paid-run when it also touches paid-run files); ``merge_ready`` refuses every fork.
-    A PR with ``MAX_FILES`` or more files is paid-run: the files API may have cut its list short.
+    A fork is at least risky (needs-vickey when it also touches paid-run files); ``merge_ready`` refuses every fork.
+    A PR with ``MAX_FILES`` or more files is needs-vickey: the files API may have cut its list short.
+    ``read_file(path)`` returns a changed file's text at the head commit (or None); a plain agent definition
+    (``.claude/agents/<name>.md``, not deleted) is risky only when it is read and ``agent_file_is_safe``, else needs-vickey.
     """
     if len(files) >= MAX_FILES:
         return PAID, [f"{len(files)} changed files reaches the API limit: the list may be incomplete"]
@@ -267,10 +426,16 @@ def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
     for f in files:
         names = [(f.filename, f.status)] + ([(f.previous_filename, "removed")] if f.previous_filename else [])
         for name, status in names:
+            if is_plain_agent_path(name) and name.replace("\\", "/").casefold().endswith("/verifier.md"):
+                paid.append(f"needs Vickey's merge (the verifier's PASS is a merge marker): {name}")
             if is_paid_run_path(name):
-                paid.append(f"touches paid runs: {name}")
+                paid.append(f"needs Vickey's merge (paid-run or merge-check file): {name}")
             if is_risky_path(name, status):
                 reasons.append(f"risky path: {name}" + (f" ({status})" if status != "modified" else ""))
+        if is_plain_agent_path(f.filename) and f.status != "removed" and not is_paid_run_path(f.filename):
+            text = read_file(f.filename) if read_file else None
+            if text is None or not agent_file_is_safe(text) or not agent_name_matches(text, f.filename):
+                paid.append(f"needs Vickey's merge (agent definition unreadable or beyond plain frontmatter): {f.filename}")
         if f.status == "removed" and _is_test(f.filename):
             reasons.append(f"test file deleted: {f.filename}")
         if f.status == "renamed" and f.previous_filename and _is_collected_test(f.previous_filename):
@@ -323,7 +488,7 @@ def merge_ready(
     """Whether the gate may merge ``pr``. ``pr`` is a pulls API object; ``checks`` the head's check runs;
     ``status`` the head's combined status (the older status API, which check runs do not cover).
 
-    ``risk`` is a fresh classification of the PR's files. A fork PR and a ``paid-run`` PR are never ready. A
+    ``risk`` is a fresh classification of the PR's files. A fork PR and a ``needs-vickey`` PR are never ready. A
     ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
     collaborator, in a comment of its own (one that does not also carry the verifier marker).
     """
@@ -334,8 +499,8 @@ def merge_ready(
     if is_fork_pr(pr):
         return False, ["PR is from a fork"]
     labels = {(x.get("name") if isinstance(x, dict) else x) for x in pr.get("labels") or []}
-    if PAID in labels or risk == PAID:
-        return False, ["touches paid runs: waits for Vickey's merge"]
+    if PAID in labels or LEGACY_PAID in labels or risk == PAID:
+        return False, ["needs Vickey's merge: touches paid-run or merge-check files"]
     level = RISKY if RISKY in labels or risk == RISKY else LOW
     if len(labels & {LOW, RISKY}) != 1:
         why.append(f"not labelled exactly one of {LOW} or {RISKY}")
@@ -405,6 +570,33 @@ def merge_ready(
     return (not why), why or ["all gates passed"]
 
 
+def is_paused(open_issues: Iterable[dict[str, Any]]) -> bool:
+    """Whether auto-work is paused: any open issue (not a pull request) carries the ``auto-work-paused`` label.
+
+    ``open_issues`` is a list from the issues API, which also returns pull requests (they have a ``pull_request``
+    key and never pause anything). The label match is case-insensitive.
+    """
+    for issue in open_issues:
+        if issue.get("pull_request") is not None or issue.get("state", "open") != "open":
+            continue
+        for label in issue.get("labels") or []:
+            name = label.get("name") if isinstance(label, dict) else label
+            if isinstance(name, str) and name.casefold() == PAUSE_LABEL:
+                return True
+    return False
+
+
+def paused_from_file(path: str) -> bool:
+    """``is_paused`` for JSON saved from the issues API. Fail closed: a missing, unreadable or odd file means paused."""
+    try:
+        data = _load(path)
+    except (OSError, ValueError):
+        return True
+    if not isinstance(data, list) or not all(isinstance(i, dict) for i in data):
+        return True
+    return is_paused(data)
+
+
 def _load(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -431,6 +623,8 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("classify")
     c.add_argument("--files", required=True)
     c.add_argument("--fork", action="store_true")
+    c.add_argument("--repo", help="owner/name, to read agent definitions at --ref (without both, they need Vickey)")
+    c.add_argument("--ref", help="the PR head commit sha")
     m = sub.add_parser("merge-ready")
     m.add_argument("--pr", required=True)
     m.add_argument("--files", required=True)
@@ -438,15 +632,25 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--comments", required=True)
     m.add_argument("--status", required=True)
     m.add_argument("--ignore-check", action="append", default=[])
+    p = sub.add_parser("paused")
+    p.add_argument("--issues", required=True)
     a = ap.parse_args(argv)
 
+    if a.cmd == "paused":
+        paused = paused_from_file(a.issues)
+        _report("paused" if paused else "running", [f"open issue labelled {PAUSE_LABEL}, or the lookup failed" if paused else "none"], "Auto-work")
+        print("paused" if paused else "running")
+        return 0
     if a.cmd == "classify":
-        risk, reasons = classify(_files(a.files), a.fork)
+        reader = head_file_reader(a.repo, a.ref) if a.repo and a.ref else None
+        risk, reasons = classify(_files(a.files), a.fork, reader)
         _report(risk, reasons, "PR risk")
         print(risk)
         return 0
     pr = _load(a.pr)
-    risk, _ = classify(_files(a.files), is_fork_pr(pr))
+    base_repo = ((pr.get("base") or {}).get("repo") or {}).get("full_name") or ""
+    reader = head_file_reader(base_repo, (pr.get("head") or {}).get("sha") or "")
+    risk, _ = classify(_files(a.files), is_fork_pr(pr), reader)
     checks = _load(a.checks)
     ok, why = merge_ready(
         pr,

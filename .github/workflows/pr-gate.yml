@@ -38,6 +38,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       # The base commit's script, not the PR's copy (the workflow file itself is the PR's: see the header).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +52,7 @@ jobs:
           gh label create risky --repo "$REPO" --color D93F0B --description "Merges after a Fable 5.2 review (KAN-227)" --force
           gh label create needs-vickey --repo "$REPO" --color B60205 --description "Changes paid-run workflows, the merge check, cost files or workflow secrets: Vickey merges (KAN-227)" --force
           gh api --paginate "repos/$REPO/pulls/$PR/files" | jq -s 'add // []' > "$RUNNER_TEMP/files.json"
-          risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json")
+          risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json" --repo "$REPO" --ref "$HEAD_SHA")
           case "$risk" in
             low-risk) add=low-risk; r1=risky; r2=needs-vickey ;;
             needs-vickey) add=needs-vickey; r1=low-risk; r2=risky ;;

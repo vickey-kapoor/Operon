@@ -207,7 +207,7 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   2026-11-26), because a workflow can start a paid run on its own; the content of a workflow is not inspected. A PR
   waits for Vickey to write "merge" for that PR, and the other files merge after a Fable 5.2 review.
   - Waits for Vickey (`needs-vickey`): `.github/workflows/**` and `.github/actions/**` (a rename into or out of them
-    too); anything under `.claude/` (`.claude/**`) and `.mcp.json` (they can run commands in the next session); the merge check (`scripts/pr_gate.py`, `tests/ci/test_pr_gate.py`); `evals/**` except
+    too); any `.claude/` file other than a plain agent definition `.claude/agents/<name>.md`, any agent definition whose frontmatter has anything beyond name, description, model, tools, isolation, color and effort (so no hooks or MCP servers), and any `.mcp.json`; the merge check (`scripts/pr_gate.py`, `tests/ci/test_pr_gate.py`); `evals/**` except
     JSON recordings under `evals/recordings/` (so `evals/CLAUDE.md` waits too); `scripts/**` (bench runners and VM
     scripts); cost caps, model prices, ids, defaults and settings (`src/operon/models/usage.py`,
     `src/operon/core/settings.py`, `src/operon/agent/backends/model_adapter/registry.py`,
@@ -218,7 +218,7 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
     may be cut short).
   - Risky (Fable 5.2 review), not Vickey: other GitHub settings files (`dependabot.yml`, `CODEOWNERS`, issue and PR
     templates) and the rules files (`CLAUDE.md`, `AGENTS.md`, `docs/CLAUDE-CODE-REFERENCE.md`, any `CLAUDE.md` or
-    `AGENTS.md` in a subfolder).
+    `AGENTS.md` in a subfolder), plain agent definitions `.claude/agents/<name>.md`.
   - When unsure, it waits. A `low-risk` label never overrides this; keep such a PR as a draft until Vickey says "merge".
 - **No paid run without Vickey's explicit OK for that run and its cost:** no `/bench` comment, no manual start of
   `benchmark.yml`, `grounding.yml` or `osworld-bench.yml`, no local run with a real model key, and no PR whose own CI

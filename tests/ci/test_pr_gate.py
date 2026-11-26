@@ -448,7 +448,7 @@ def test_every_risky_pattern_matches_something(pattern: str) -> None:
 
 
 # No composite action is committed yet; the folder still waits for Vickey (a new action file is needs-vickey).
-PAID_RUN_MAY_BE_EMPTY: tuple[str, ...] = (".github/actions/**", ".claude/**", ".mcp.json")
+PAID_RUN_MAY_BE_EMPTY: tuple[str, ...] = (".github/actions/**",)
 
 
 @pytest.mark.parametrize("pattern", gate.PAID_RUN_PATTERNS)
@@ -584,18 +584,119 @@ def test_a_rename_into_or_out_of_workflows_needs_vickey(old: str, new: str) -> N
     assert gate.classify([f], is_fork=False)[0] == "needs-vickey"
 
 
+SAFE_AGENT = "---\nname: x\ndescription: Does a thing.\nmodel: sonnet\ntools: Read, Grep\n---\n\nBody.\n"
+
+
+def _read(text: str | None) -> Any:
+    return lambda path: text
+
+
 @pytest.mark.parametrize(
     "path",
-    [".claude/settings.json", ".claude/agents/verifier.md", ".claude/skills/x/SKILL.md", ".mcp.json", ".github/workflows", ".github/actions"],
+    [
+        ".claude/settings.json",
+        ".claude/skills/x/SKILL.md",
+        ".claude/agents/sub/x.md",
+        ".claude/agents/x.txt",
+        ".claude/agents",
+        ".claude/agents/../settings.json",
+        ".Claude/Settings.json",
+        "src/.claude/settings.json",
+        ".mcp.json",
+        "docs/.mcp.json",
+        ".github/workflows",
+        ".github/actions",
+    ],
 )
 def test_claude_dir_mcp_json_and_bare_workflow_dirs_need_vickey(path: str) -> None:
     for status in ("modified", "added", "removed"):
-        assert gate.classify([CF(path, status)], is_fork=False)[0] == "needs-vickey", (path, status)
+        assert gate.classify([CF(path, status)], False, _read(SAFE_AGENT))[0] == "needs-vickey", (path, status)
 
 
-def test_a_rename_out_of_claude_agents_needs_vickey() -> None:
+def test_a_safe_agent_file_is_risky() -> None:
+    for status in ("modified", "added"):
+        assert gate.classify([CF(".claude/agents/x.md", status)], False, _read(SAFE_AGENT))[0] == "risky"
+    assert gate.classify([CF(".Claude/Agents/X.MD")], False, _read(SAFE_AGENT))[0] == "risky"
+
+
+def test_a_deleted_agent_file_is_risky_without_reading_it() -> None:
+    assert gate.classify([CF(".claude/agents/x.md", "removed")], False)[0] == "risky"
+
+
+BAD_AGENTS = {
+    "hooks": "---\nname: x\nhooks:\n---\nb",
+    "hooks_inline": "---\nname: x\nhooks: {}\n---\nb",
+    "mcpServers": "---\nname: x\nmcpServers: a\n---\nb",
+    "permissionMode": "---\nname: x\npermissionMode: bypassPermissions\n---\nb",
+    "indented": "---\nname: x\n  hooks: a\n---\nb",
+    "duplicate": "---\nname: x\nname: y\n---\nb",
+    "comment": "---\nname: x\n# hooks\n---\nb",
+    "blank": "---\nname: x\n\n---\nb",
+    "no_frontmatter": "name: x\nBody\n",
+    "unterminated": "---\nname: x\nmodel: sonnet\nBody\n",
+    "tools_shell": "---\nname: x\ntools: Bash; rm -rf\n---\nb",
+    "tools_empty_item": "---\nname: x\ntools: Read,,Grep\n---\nb",
+    "empty_value": "---\nname:\n---\nb",
+    "crlf": "---\r\nname: x\r\n---\r\nb",
+    "unicode_separator": "---\nname: x hooks: a\n---\nb",
+    "too_big": SAFE_AGENT + "x" * 70000,
+}
+
+
+@pytest.mark.parametrize("name", sorted(BAD_AGENTS))
+def test_an_agent_file_beyond_plain_frontmatter_needs_vickey(name: str) -> None:
+    assert not gate.agent_file_is_safe(BAD_AGENTS[name])
+    assert gate.classify([CF(".claude/agents/x.md")], False, _read(BAD_AGENTS[name]))[0] == "needs-vickey"
+
+
+def test_agent_file_is_safe_accepts_every_allowed_key() -> None:
+    text = "---\n" + "\n".join(f"{k}: v" for k in gate.AGENT_FRONTMATTER_KEYS) + "\n---\n"
+    assert gate.agent_file_is_safe(text.replace("tools: v", "tools: Read, mcp__a__b"))
+
+
+def test_agent_content_that_cannot_be_read_needs_vickey() -> None:
+    assert gate.classify([CF(".claude/agents/x.md")], False, _read(None))[0] == "needs-vickey"
+    assert gate.classify([CF(".claude/agents/x.md")], False)[0] == "needs-vickey"  # no reader: fail closed
+
+
+def test_head_file_reader_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert gate.head_file_reader("not a repo", HEAD)(".claude/agents/x.md") is None
+    assert gate.head_file_reader("o/r", "main")(".claude/agents/x.md") is None
+
+    def missing(*a: Any, **k: Any) -> Any:
+        raise FileNotFoundError
+
+    monkeypatch.setattr(gate.subprocess, "run", missing)
+    assert gate.head_file_reader("o/r", HEAD)(".claude/agents/x.md") is None
+
+
+def test_a_rename_out_of_claude_agents_is_at_least_risky() -> None:
     f = CF("docs/a.md", "renamed", previous_filename=".claude/agents/a.md")
-    assert gate.classify([f], is_fork=False)[0] == "needs-vickey"
+    assert gate.classify([f], False, _read(SAFE_AGENT))[0] == "risky"
+
+
+def test_a_rename_into_claude_needs_vickey() -> None:
+    f = CF(".claude/settings.json", "renamed", previous_filename="docs/a.md")
+    assert gate.classify([f], False, _read(SAFE_AGENT))[0] == "needs-vickey"
+
+
+def test_a_rename_into_agents_reads_the_new_content() -> None:
+    f = CF(".claude/agents/a.md", "renamed", previous_filename="docs/a.md")
+    assert gate.classify([f], False, _read(SAFE_AGENT))[0] == "risky"
+    assert gate.classify([f], False, _read(BAD_AGENTS["hooks"]))[0] == "needs-vickey"
+
+
+def test_every_tracked_claude_file_is_a_safe_plain_agent_definition() -> None:
+    import subprocess
+
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=False)
+    if out.returncode != 0:
+        pytest.skip("not a git checkout")
+    tracked = [p for p in out.stdout.decode().split("\0") if p and (".claude" in p.split("/") or p.endswith(".mcp.json"))]
+    for p in tracked:
+        assert gate.is_plain_agent_path(p), f"{p}: only plain agent definitions may be tracked under .claude/"
+        assert gate.agent_file_is_safe((ROOT / p).read_text(encoding="utf-8")), p
+    assert any(p.startswith(".claude/agents/") for p in tracked)
 
 
 def test_a_rename_between_other_github_files_is_risky() -> None:

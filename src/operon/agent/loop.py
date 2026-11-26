@@ -303,15 +303,13 @@ class AgentLoop:
                 )
             if verdict.verdict is TrustVerdict.CONFIRM:
                 start_check = verdict
-        # Minimize all windows (Win+D) only in desktop mode. Browser-mode runs
-        # use Playwright in its own window — issuing Win+D would minimize the
-        # USER's foreground app on every task start, which yanks focus during
-        # multi-task benchmark sweeps (especially headless runs where the
-        # browser is invisible and there's nothing to "clear" anyway).
+        # Hide all windows (Win+D) only for desktop runs that want a clean screen (KAN-205):
+        # never in browser mode, and on your own PC only when the request asks for it.
         if (
             self.environment is not UnifiedEnvironment.BROWSER
             and hasattr(self.executor, "reset_desktop")
             and not self._test_safe_mode_enabled()
+            and self._should_clear_desktop(request)
         ):
             await self.executor.reset_desktop()
         record = self.run_store.create_run(
@@ -925,6 +923,23 @@ class AgentLoop:
             except Exception as exc:  # noqa: BLE001 - falls back to the model repeating the action
                 self._recovered(run_id, "drop_held_calls", exc)
         return False
+
+    @staticmethod
+    def _should_clear_desktop(request: RunTaskRequest) -> bool:
+        """Whether a desktop run starts by hiding every open window (KAN-205).
+
+        The request's ``clear_desktop`` decides when it is set. Otherwise only a benchmark run
+        (``benchmark`` set) or a run on a throwaway machine (any environment provider but
+        ``live``: a sandbox, a container, a VM) hides them. A task on your own PC leaves your
+        windows where they are."""
+        if request.clear_desktop is not None:
+            return request.clear_desktop
+        if request.benchmark:
+            return True
+        from operon.core.runtime import current_runtime
+
+        provider = getattr(current_runtime().desktop_provider, "name", None) or get_settings().environment
+        return provider != "live"
 
     def check_resume_environment(self, record) -> None:
         """Fail before anything is changed when the run's original provider is not this one.

@@ -177,6 +177,9 @@ class RunTaskRequest(StrictModel):
     max_steps: int = Field(default=25, ge=1, le=200)
     # ask | risky | auto (see agent/policy/trust_gate.py); None = OPERON_PERMISSION_MODE.
     permission_mode: str | None = Field(default=None, pattern=r"^(ask|risky|auto)$")
+    # KAN-205: hide every window (Win+D) before a desktop run starts. None = only when the run is
+    # a benchmark run or runs on a throwaway machine (sandbox, container, VM), never on your own PC.
+    clear_desktop: bool | None = None
 
     @field_validator("intent", mode="before")
     @classmethod

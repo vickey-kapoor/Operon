@@ -191,11 +191,11 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
 - The PR gate (`.github/workflows/pr-gate.yml`, `scripts/pr_gate.py`, KAN-216/KAN-227) labels each PR `low-risk`,
   `risky` or `paid-run`, and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`
   is `on` (it is). The gate does the merging; agents never merge by hand, except that a story thread may run
-  `gh pr merge --squash --match-head-commit <sha>` only when the gate has posted its "would merge" note
+  `gh pr merge --squash --match-head-commit <sha>` only while no open `auto-work-paused` issue exists and the gate has posted its "would merge" note
   (`<!-- operon-gate-trial: <head sha> -->`) for that exact head and the PR is not labelled `paid-run`. A fork PR is
   never merged by the gate. Never enable GitHub's own auto-merge (it is off repo-wide): it only waits for required
   checks and skips the markers.
-- While an open issue labelled `auto-work-paused` exists (Vickey wrote "pause"), the gate merges nothing and posts no would-merge notes, so no PR merges.
+- While an open issue labelled `auto-work-paused` exists (Vickey wrote "pause"), the gate merges nothing and posts no would-merge notes, so no PR merges, and no agent merges by hand, even with an earlier would-merge note.
 - A `risky` PR also needs a review by the top model available in this app (today Fable 5.2), in a fresh session that is
   not the coordinator and did not write or verify the change, so someone checks on Vickey's behalf. Post its verdict on
   the PR verbatim, with the marker, in its own comment. Fix what it finds; once it passes on the head, post
@@ -208,9 +208,7 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   `src/operon/agent/backends/model_adapter/models.yaml` (price table, model ids); `src/operon/api/runtime_config.py`
   (default model, pricing check); `src/operon/api/runtime/services.py` (pricing check); `src/operon/clients/**` (model
   ids); the model connections' cost code (`src/operon/agent/backends/model_adapter/transports/**`,
-  `src/operon/api/observer.py`); a package that would shadow one of those modules (`src/operon/models/usage/**`,
-  `src/operon/core/settings/**`, `src/operon/api/runtime_config/**`, `src/operon/api/runtime/services/**`,
-  `src/operon/agent/backends/model_adapter/registry/**`); or these rules (`CLAUDE.md`, `AGENTS.md`,
+  `src/operon/api/observer.py`); a package with the same name as any listed `.py` file (`usage/` next to `usage.py`) counts too; or these rules (`CLAUDE.md`, `AGENTS.md`,
   `docs/CLAUDE-CODE-REFERENCE.md`, `evals/CLAUDE.md`, a `CLAUDE.md` or `AGENTS.md` in any subfolder (`**/claude.md`,
   `**/agents.md`), `.claude/agents/**`, `.claude/settings.json`, `.claude/skills/**`). A PR with 3000 or more changed files also waits (the file list may be cut short). When unsure,
   it waits. A `low-risk` label never overrides this; keep such a PR as a draft until Vickey says "merge".

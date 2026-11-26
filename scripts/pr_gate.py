@@ -140,12 +140,6 @@ PAID_RUN_PATTERNS: tuple[str, ...] = (
     # KAN-230: cost code in the model connections (what is sent and counted on every paid call).
     "src/operon/agent/backends/model_adapter/transports/**",
     "src/operon/api/observer.py",
-    # KAN-230: a package named like a paid-run module above would shadow it (usage/ next to usage.py).
-    "src/operon/models/usage/**",
-    "src/operon/core/settings/**",
-    "src/operon/api/runtime_config/**",
-    "src/operon/api/runtime/services/**",
-    "src/operon/agent/backends/model_adapter/registry/**",
     # The rules that define this exception, so a PR cannot loosen them and self-merge.
     "claude.md",
     "agents.md",
@@ -262,7 +256,13 @@ def is_paid_run_path(path: str) -> bool:
     path = posixpath.normpath(path.replace("\\", "/")).casefold()
     if any(_matches(p, path) for p in PAID_RUN_EXEMPT):
         return False
-    return any(_matches(p, path) for p in PAID_RUN_PATTERNS)
+    for pattern in PAID_RUN_PATTERNS:
+        if _matches(pattern, path):
+            return True
+        # KAN-230: a package named like a listed module (observer/ next to observer.py) would shadow it.
+        if pattern.endswith(".py") and "*" not in pattern and _matches(pattern[:-3] + "/**", path):
+            return True
+    return False
 
 
 def _is_test(path: str) -> bool:

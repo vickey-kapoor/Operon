@@ -17,7 +17,7 @@ permissions:
 
 # A newer push to the same PR or branch cancels the run it replaces.
 concurrency:
-  group: ci-${{ github.event_name == 'schedule' && 'nightly' || github.event.pull_request.number || github.ref }}
+  group: ci-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'nightly' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -350,6 +350,6 @@ jobs:
           else
             printf 'The nightly tests passed again.\n\n' | cat - body.md > comment.md
             for n in $open_issues; do
-              gh issue close "$n" --repo "$REPO" --comment-file comment.md 2>/dev/null || gh issue close "$n" --repo "$REPO" --comment "$(cat comment.md)"
+              gh issue close "$n" --repo "$REPO" --comment "$(cat comment.md)"
             done
           fi

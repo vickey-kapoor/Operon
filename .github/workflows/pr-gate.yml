@@ -85,13 +85,17 @@ jobs:
           work="$RUNNER_TEMP/gate"
           mkdir -p "$work"
           # KAN-229: an open issue labelled auto-work-paused stops all merging and would-merge notes. Fail closed:
-          # if the lookup fails, the issues file is removed and the script reports paused.
-          gh api --paginate "repos/$REPO/issues?state=open&labels=auto-work-paused&per_page=100" | jq -s 'add // []' > "$work/issues.json" || rm -f "$work/issues.json"
-          state=$(python3 scripts/pr_gate.py paused --issues "$work/issues.json") || state=paused
-          if [ "$state" != running ]; then
+          # if the lookup fails, the issues file is removed and the script reports paused. Checked again before
+          # every merge and note, so a pause set mid-sweep takes effect.
+          pause_state() {
+            gh api --paginate "repos/$REPO/issues?state=open&labels=auto-work-paused&per_page=100" | jq -s 'add // []' > "$work/issues.json" || rm -f "$work/issues.json"
+            python3 scripts/pr_gate.py paused --issues "$work/issues.json" 2>/dev/null || echo paused
+          }
+          if [ "$(pause_state)" != running ]; then
             echo "Auto-work is paused: merging nothing and posting no notes."
             exit 0
           fi
+          # --- end of the pause check ---
           gh label create auto-merged --repo "$REPO" --color 5319E7 --description "Merged by the PR gate" --force
           gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Would merge: the gate would have merged this (KAN-216/KAN-227)" --force
           # Open, non-draft PRs labelled low-risk or risky; paid-run is never listed (and merge-ready refuses it anyway).
@@ -123,6 +127,10 @@ jobs:
               --ignore-check "Label PR" --ignore-check "Sweep and merge" 2>"$d/why.txt") || verdict=error
             cat "$d/why.txt"
             [ "$verdict" = ready ] || continue
+            if [ "$(pause_state)" != running ]; then
+              echo "Auto-work is paused: merging nothing and posting no notes."
+              exit 0
+            fi
             if [ "$AUTO_MERGE" = on ]; then
               if gh pr merge "$n" --repo "$REPO" --squash --match-head-commit "$sha"; then
                 gh pr edit "$n" --repo "$REPO" --add-label auto-merged || echo "::warning::PR $n: merged, but adding the auto-merged label failed"

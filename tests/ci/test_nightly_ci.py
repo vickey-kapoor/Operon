@@ -61,3 +61,15 @@ def test_report_script_opens_comments_and_closes() -> None:
 
 def test_nightly_run_is_not_cancelled_by_a_push() -> None:
     assert "schedule" in CI["concurrency"]["group"]
+
+
+def test_manual_run_uses_the_nightly_group_too() -> None:
+    assert "workflow_dispatch" in CI["concurrency"]["group"]
+
+
+def test_issue_close_is_one_loud_call() -> None:
+    run = "\n".join(s.get("run", "") for s in REPORT["steps"])
+    closes = [line for line in run.splitlines() if "gh issue close" in line]
+    assert len(closes) == 1
+    assert '--comment "$(cat comment.md)"' in closes[0]
+    assert "comment-file" not in closes[0] and "||" not in closes[0] and "2>/dev/null" not in closes[0]

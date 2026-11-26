@@ -448,17 +448,16 @@ def test_every_risky_pattern_matches_something(pattern: str) -> None:
 
 
 # Patterns that legitimately match no tracked file today (KAN-230): Claude's own settings and skills are not
-# committed (the rest of .claude/ is gitignored), and a shadow package does not exist next to its module.
+# committed (the rest of .claude/ is gitignored), and no AGENTS.md exists in a subfolder yet.
 PAID_RUN_MAY_BE_EMPTY: tuple[str, ...] = (
     ".claude/settings.json",
     ".claude/skills/**",
     "**/agents.md",  # only the root and evals/ ones exist as AGENTS.md today, and those have their own entries
-    "src/operon/models/usage/**",
-    "src/operon/core/settings/**",
-    "src/operon/api/runtime_config/**",
-    "src/operon/api/runtime/services/**",
-    "src/operon/agent/backends/model_adapter/registry/**",
 )
+
+
+def test_may_be_empty_entries_are_real_patterns() -> None:
+    assert set(PAID_RUN_MAY_BE_EMPTY) <= set(gate.PAID_RUN_PATTERNS)
 
 
 @pytest.mark.parametrize("pattern", gate.PAID_RUN_PATTERNS)
@@ -469,10 +468,6 @@ def test_every_paid_run_pattern_matches_a_real_file(pattern: str) -> None:
             return
         assert pattern == ".claude/agents/**"
         assert any(p.is_file() for p in (ROOT / ".claude" / "agents").rglob("*")), pattern
-        return
-    if pattern in PAID_RUN_MAY_BE_EMPTY and pattern.startswith("src/"):
-        # A shadow package matches no file today; the module it would shadow must exist.
-        assert (ROOT / (pattern[: -len("/**")] + ".py")).is_file(), pattern
         return
     if pattern in PAID_RUN_MAY_BE_EMPTY:
         return
@@ -492,6 +487,7 @@ def test_every_paid_run_pattern_matches_a_real_file(pattern: str) -> None:
         ".claude/settings.json",
         ".claude/skills/x/SKILL.md",
         ".claude/agents/coder.md",
+        "src/operon/api/observer/__init__.py",
         "src/operon/models/usage/__init__.py",
         "src/operon/core/settings/__init__.py",
         "src/operon/api/runtime_config/__init__.py",
@@ -678,13 +674,82 @@ def test_sweep_checks_the_pause_before_it_merges_or_notes() -> None:
     check = run.index("pr_gate.py paused")
     assert check < run.index("gh pr merge") and check < run.index("gh pr comment") and check < run.index("gh pr list")
     assert "Auto-work is paused" in run
-    assert "|| state=paused" in run and "rm -f" in run  # fail closed
+    assert "|| echo paused" in run and "rm -f" in run  # fail closed
     assert _wf()["jobs"]["sweep"]["permissions"]["issues"] == "read"
+
+
+def test_sweep_checks_the_pause_again_before_each_merge_and_note() -> None:
+    loop = _sweep_run().split("while read -r n", 1)[1]
+    again = loop.index('"$(pause_state)"')
+    assert again < loop.index("gh pr merge") and again < loop.index("gh pr comment")
+    assert loop.index('[ "$verdict" = ready ] || continue') < again
+
+
+FAKE_GH = """#!/bin/sh
+echo "$@" >> "$FAKE_GH_LOG"
+case "$1" in
+  api) [ "$FAKE_GH_MODE" = fail ] && exit 1; cat "$FAKE_GH_BODY" ;;
+esac
+exit 0
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="shells out to bash (KAN-195)")
+@pytest.mark.parametrize(
+    ("mode", "body", "paused"),
+    [
+        ("fail", "[]", True),
+        ("ok", '{"message": "Bad credentials"}', True),
+        ("ok", json.dumps([_issue("auto-work-paused")]), True),
+        ("ok", json.dumps([_issue("auto-work-paused", pull_request={"url": "x"})]), False),
+        ("ok", "[]", False),
+    ],
+)
+def test_sweep_pause_prefix_runs_with_a_fake_gh(tmp_path: Path, mode: str, body: str, paused: bool) -> None:
+    import os
+    import shutil
+    import subprocess
+
+    bash, jq = shutil.which("bash"), shutil.which("jq")
+    if not bash or not jq:
+        pytest.skip("needs bash and jq")
+    run = _sweep_run()
+    prefix = run[: run.index("# --- end of the pause check ---")]
+    script = tmp_path / "prefix.sh"
+    script.write_text(prefix + "gh pr list --label low-risk\necho reached-the-sweep\n", encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    fake = fakebin / "gh"
+    fake.write_text(FAKE_GH, encoding="utf-8")
+    fake.chmod(0o755)
+    (fakebin / "python3").symlink_to(sys.executable)  # the script calls python3
+    (tmp_path / "body.json").write_text(body, encoding="utf-8")
+    log = tmp_path / "gh.log"
+    env = {
+        "PATH": os.pathsep.join([str(fakebin), str(Path(jq).parent), str(Path(bash).parent)]),
+        "RUNNER_TEMP": str(tmp_path),
+        "REPO": "o/r",
+        "FAKE_GH_MODE": mode,
+        "FAKE_GH_BODY": str(tmp_path / "body.json"),
+        "FAKE_GH_LOG": str(log),
+        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+    }
+    done = subprocess.run([bash, str(script)], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
+    calls = log.read_text(encoding="utf-8") if log.exists() else ""
+    if paused:
+        assert "Auto-work is paused" in done.stdout
+        assert "reached-the-sweep" not in done.stdout
+        assert "pr list" not in calls and "label create" not in calls
+    else:
+        assert "reached-the-sweep" in done.stdout
+        assert "pr list" in calls
 
 
 def test_daily_note_says_paused() -> None:
     run = next(s["run"] for s in _wf()["jobs"]["daily"]["steps"] if "run" in s)
     assert "pr_gate.py paused" in run and "Paused" in run and "|| pause=paused" in run
+    assert "\\nPause: %s\\n" in run and '"$mode" "$pause"' in run
 
 
 def test_claude_md_states_the_pause_rule() -> None:

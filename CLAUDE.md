@@ -183,18 +183,31 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 For any code change, follow the `pipeline` skill (`/pipeline <task>`): Opus plans, Haiku
 scanners find, Sonnet coders fix in isolated worktrees, a fresh Opus verifier checks.
 The main session does not edit code.
-Merging (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval"): a PR merges once
-its checks are green, every Codex finding is answered and the fresh verifier has passed on the head commit (the main
-session then posts `<!-- operon-verifier: PASS <full head sha> -->` on the PR). The PR gate (`.github/workflows/pr-gate.yml`,
-`scripts/pr_gate.py`, KAN-216) labels each PR `low-risk` or `risky` and squash-merges ready `low-risk` PRs itself; the
-session that opened any other PR may squash-merge it when these rules are met. A `risky` PR also needs a review by the
-top model available, Fable 5.2, in a fresh session or helper that is not the coordinator and did not write or verify
-the change; fix what it finds, and once it passes on the head post `<!-- operon-top-review: PASS <full head sha> -->`,
-then merge. Exception: a PR that could start a paid run or change how paid runs start or what they may spend (the
-paid-run workflows, the bench/OSWorld/grounding/live-smoke scripts, cost caps, the run queue, the PR gate itself) waits
-for Vickey to write "merge" for that PR, and no paid run starts without Vickey's explicit OK. Marker comments come
-from the same account that opens PRs, so they are only as trustworthy as the review behind them. Gate merges use
-`GITHUB_TOKEN`, so push-triggered CI on `main` does not run for them.
+
+**Merging (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval").** This is the
+full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
+- A PR may merge once its checks are green, every Codex finding is answered, and a fresh verifier has passed on the
+  head commit (the main session then posts `<!-- operon-verifier: PASS <full head sha> -->` on the PR).
+- The PR gate (`.github/workflows/pr-gate.yml`, `scripts/pr_gate.py`, KAN-216/KAN-227) labels each PR `low-risk`,
+  `risky` or `paid-run`, and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`
+  is `on`. While it is unset, the session that opened the PR merges it under the same rules, with
+  `gh pr merge --squash --match-head-commit <sha>`. Never enable GitHub's own auto-merge (it is off repo-wide): it only
+  waits for required checks and skips the markers.
+- A `risky` PR also needs a review by the top model available in this app (today Fable 5.2), in a fresh session that is
+  not the coordinator and did not write or verify the change, so someone checks on Vickey's behalf. Post its verdict on
+  the PR verbatim. Fix what it finds; once it passes on the head, post `<!-- operon-top-review: PASS <full head sha> -->`.
+  A new commit needs a new review.
+- **Paid-run exception.** A PR waits for Vickey to write "merge" for that PR if it touches any of: `.github/**`;
+  `evals/**` except data under `evals/recordings/`; `scripts/**`; `src/operon/models/usage.py` (price tables behind every
+  cost cap); `src/operon/core/settings.py`; `src/operon/agent/backends/model_adapter/registry.py` (model defaults); or
+  these rules (`CLAUDE.md`, `AGENTS.md`, `docs/CLAUDE-CODE-REFERENCE.md`, `evals/CLAUDE.md`, `.claude/agents/**`).
+  When unsure, it waits. A `low-risk` label never overrides this; keep such a PR as a draft until Vickey says "merge".
+- **No paid run without Vickey's explicit OK for that run and its cost:** no `/bench` comment, no manual start of
+  `benchmark.yml`, `grounding.yml` or `osworld-bench.yml`, no local run with a real model key, and no PR whose own CI
+  would use a model key. Approval is per PR and per run: an earlier "merge", a "yes" to another question, a green check,
+  a clean Codex review or a reviewer PASS do not count.
+- Marker comments come from the same account that opens PRs, so they are only as trustworthy as the review behind them.
+  Gate merges use `GITHUB_TOKEN`, so push-triggered CI on `main` does not run for them.
 
 Worktrees have no `.venv` of their own and the editable install points at the main checkout's
 `src/`, so in a worktree run the main checkout's venv by absolute path, from the worktree root, with `PYTHONPATH=src` (PowerShell:

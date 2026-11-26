@@ -262,17 +262,13 @@ Do not include unrelated generated files, temporary artifacts, or sensitive exec
 
 Do not commit, push, merge, or create a pull request unless the user has authorized those actions.
 
-Exception, merging (owner's rule, 2026-11-26): a PR merges once its checks are green, every Codex finding is answered
-and the fresh verifier has passed on the head commit (post `<!-- operon-verifier: PASS <full head sha> -->` as a PR
-comment). The PR gate workflow (KAN-216, `scripts/pr_gate.py`) labels each PR `low-risk` or `risky` and merges ready
-`low-risk` PRs itself; the agent that opened any other PR may squash-merge it when these rules are met. A `risky` PR
-also needs a review by the top model available (Fable 5.2) in a fresh session that is not the coordinator and did not
-write or verify the change; once it passes on the head, post `<!-- operon-top-review: PASS <full head sha> -->`, then
-merge. A PR that could start a paid run or change how paid runs start or what they may spend (paid-run workflows,
-bench/OSWorld/grounding/live-smoke scripts, cost caps, the run queue, the PR gate itself) waits for the owner's "merge",
-and no paid run starts without the owner's explicit OK. Marker comments come from the same account that opens PRs, so
-they are only as trustworthy as the review behind them. Gate merges use `GITHUB_TOKEN`, so push-triggered CI on `main`
-does not run for them.
+Exception, merging (owner's rule, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit
+approval"): the full rule is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short:
+a PR merges once checks are green, Codex is answered and the fresh verifier marker is on the head; a `risky` PR also
+needs a top-model review (today Fable 5.2) in a fresh session that is not the coordinator and did not write or verify
+it; a PR touching paid-run machinery or these rules (`.github/**`, `evals/**`, `scripts/**`, price tables, model
+defaults, settings, the rules files) waits for the owner's "merge" for that PR; never enable GitHub's own auto-merge;
+and no paid run starts without the owner's explicit OK for that run and its cost.
 
 ## 10. Definition of Done
 

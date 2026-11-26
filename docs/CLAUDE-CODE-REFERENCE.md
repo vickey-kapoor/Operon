@@ -6,18 +6,18 @@ repo `C:\Users\vicke\GitHub\Operon`). Work moved here from the claude.ai project
 architecture, invariants and the Opus/Haiku/Sonnet dev workflow; this file adds the
 standing rules, infrastructure and open items that live outside the code.
 
-Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
+Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
 `~/.operon` and Vickey's local `.env`.
 
 ## Standing rules (Vickey)
 
 ### Merging and PRs
-- **Every PR can merge itself, but no paid run without Vickey's explicit OK** (Vickey, 2026-11-26). A PR merges once
-  its checks are green, every Codex finding is answered and the fresh verifier marker is on the head. The PR gate
-  (`.github/workflows/pr-gate.yml`) merges ready `low-risk` PRs; the session that opened any other PR may squash-merge
-  it. A `risky` PR also needs a Fable 5.2 review in a fresh session (not the coordinator, not the writer or verifier),
-  marked `<!-- operon-top-review: PASS <full head sha> -->` on the head. A PR that could start a paid run or change
-  paid-run limits (paid-run workflows and scripts, cost caps, the run queue, the PR gate) waits for Vickey's "merge".
+- **Every PR can merge itself, but no paid run without Vickey's explicit OK** (Vickey, 2026-11-26). The full rule
+  is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short: checks green, Codex
+  answered and the verifier marker on the head; `risky` PRs also need a top-model (today Fable 5.2) review in a fresh
+  session that is not the coordinator or the author; PRs touching paid-run machinery or these rules wait for Vickey's
+  "merge" for that PR. Approval is per PR and per run: an earlier "merge", a "yes" to another question, green checks,
+  a clean Codex review or a reviewer PASS do not count. Never enable GitHub's own auto-merge (it is off repo-wide).
 - **Codex reviews every PR.** Fix or answer every Codex finding before merging.
 - **Never approve a fork PR's workflow runs while its "Fork PR workflow check" is red.** The check
   fails when a fork PR touches `.github/` (workflows, actions, CODEOWNERS); outside PRs must not

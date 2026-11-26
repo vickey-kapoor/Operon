@@ -441,6 +441,8 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_browser_mode() -> Non
         (None, None, "linux-container", True),
         (True, None, "live", True),  # the request asks for it
         (False, "osworld", "windows-sandbox", False),  # the request says no
+        (False, "osworld", "live", False),
+        (None, None, "osworld", True),
     ],
 )
 @pytest.mark.asyncio

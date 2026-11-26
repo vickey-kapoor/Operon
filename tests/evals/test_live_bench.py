@@ -143,6 +143,7 @@ async def test_desktop_run_task_uses_the_desktop_routes_and_cleans_up(tmp_path, 
     assert calls == ["POST /desktop/run-task", "POST /desktop/step", "POST /desktop/cleanup"]
     assert bodies[1] == {"run_id": "run-2"}
     assert "start_url" not in bodies[0]
+    assert bodies[0]["clear_desktop"] is True  # KAN-205: benchmark tasks still start from a clean screen
     assert result.outcome == "success"
     # The desktop loop has no fallback backend, so no step counts as a fallback.
     assert result.cu_steps == 0 and result.other_steps == 0

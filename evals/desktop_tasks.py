@@ -1,7 +1,7 @@
 """Real desktop tasks for the live benchmark (``python -m evals.live_desktop_bench``).
 
-Each task starts from whatever is on screen (the desktop loop minimizes windows
-first) and names what the final screen must show (``check``). It is graded from
+Each task starts from whatever is on screen (the benchmark asks the desktop loop to
+minimize windows first, KAN-205) and names what the final screen must show (``check``). It is graded from
 the machine's state against that, not by a judge model: each task has a check in
 ``evals/desktop_state.py`` that reads the open windows, their text and files.
 

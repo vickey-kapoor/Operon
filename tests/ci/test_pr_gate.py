@@ -65,7 +65,7 @@ OLD = "b" * 40
         ([CF(".windsurfrules")], False, "risky"),
         ([CF("docs/claude-notes.md")], False, "low-risk"),
         ([CF("src/operon/core/paths.py")], False, "risky"),
-        ([CF("src/operon/api/observer.py")], False, "paid-run"),
+        ([CF("src/operon/api/observer.py")], False, "needs-vickey"),
         ([CF("src/operon/api/dependencies.py")], False, "risky"),
         ([CF("src/operon/store/checkpoints.py")], False, "risky"),
         ([CF("docs/a.md", "renamed", "src/operon/core/paths.py")], False, "risky"),
@@ -95,7 +95,7 @@ OLD = "b" * 40
         ([CF("docs/__pycache__/a.md")], False, "risky"),
         ([CF("src/operon/data.json")], False, "risky"),
         ([CF("src/operon/agent/prompts.txt")], False, "low-risk"),
-        ([CF("docs/CLAUDE-CODE-REFERENCE.md")], False, "paid-run"),
+        ([CF("docs/CLAUDE-CODE-REFERENCE.md")], False, "needs-vickey"),
         ([CF("src/sitecustomize.py")], False, "risky"),
         ([CF("src/operon/sitecustomize.py")], False, "risky"),
         ([CF("src/operon/__init__.py")], False, "risky"),
@@ -107,8 +107,8 @@ OLD = "b" * 40
         ([CF("dashboard/package.json")], False, "risky"),
         ([CF("dashboard/vercel.json")], False, "risky"),
         ([CF("dashboard/postcss.config.js")], False, "risky"),
-        ([CF("evals/harness.py")], False, "paid-run"),
-        ([CF("scripts/research_scan.py")], False, "paid-run"),
+        ([CF("evals/harness.py")], False, "needs-vickey"),
+        ([CF("scripts/research_scan.py")], False, "needs-vickey"),
         ([CF("docker/Dockerfile")], False, "risky"),
         ([CF(".gitleaks.toml")], False, "risky"),
         ([CF(".bandit-baseline.json")], False, "risky"),
@@ -116,49 +116,49 @@ OLD = "b" * 40
         ([CF("uv.lock")], False, "risky"),
         ([CF("docs/.hidden.md")], False, "risky"),
         ([CF("SECURITY.md")], False, "risky"),
-        ([CF("docs/CLAUDE.md")], False, "paid-run"),
-        ([CF("CLAUDE.MD")], False, "paid-run"),
-        ([CF(".GitHub/x.yml")], False, "paid-run"),
+        ([CF("docs/CLAUDE.md")], False, "needs-vickey"),
+        ([CF("CLAUDE.MD")], False, "needs-vickey"),
+        ([CF(".GitHub/x.yml")], False, "needs-vickey"),
         ([CF("src/operon/Executor/desktop.py")], False, "risky"),
         ([CF("Tests/test_old.py", "removed")], False, "risky"),
         ([CF("some_new_top_level.txt")], False, "risky"),
         ([CF("src/operon/environments/live.py")], False, "risky"),
         ([CF("src/operon/api/routes/browser.py")], False, "risky"),
-        ([CF("src/operon/clients/gemini.py")], False, "paid-run"),
+        ([CF("src/operon/clients/gemini.py")], False, "needs-vickey"),
         ([CF("src/operon/cli.py")], False, "risky"),
         ([CF("src/operon/agent/actions/selector.py")], False, "low-risk"),
-        ([CF(".github/workflows/ci.yml")], False, "paid-run"),
+        ([CF(".github/workflows/ci.yml")], False, "needs-vickey"),
         ([CF("docs/a.md"), CF("src/operon/executor/desktop.py")], False, "risky"),
-        ([CF("src/operon/core/settings.py")], False, "paid-run"),
+        ([CF("src/operon/core/settings.py")], False, "needs-vickey"),
         ([CF("src/operon/agent/policy/trust_gate.py")], False, "risky"),
         ([CF("src/operon/core/urls.py")], False, "risky"),
-        ([CF("CLAUDE.md")], False, "paid-run"),
-        ([CF("evals/live_smoke.py")], False, "paid-run"),
+        ([CF("CLAUDE.md")], False, "needs-vickey"),
+        ([CF("evals/live_smoke.py")], False, "needs-vickey"),
         ([CF("tests/test_old.py", "removed")], False, "risky"),
         ([CF("docs/x.md", "renamed", "tests/test_old.py")], False, "risky"),
         ([CF("src/operon/agent/actions/zoom.py", "renamed", "src/operon/executor/x.py")], False, "risky"),
         ([CF("docs/architecture.md")], True, "risky"),
         ([CF("src/operon/agent/actions/selector.py")], True, "risky"),
-        ([CF("scripts/x.py")], True, "paid-run"),
-        ([CF("evals/recordings/x.json")], False, "risky"),  # not paid-run, but outside the low-risk kinds
-        ([CF("evals/recordings/README.md")], False, "paid-run"),
-        ([CF("src/operon/api/runtime_config.py")], False, "paid-run"),
-        ([CF("src/operon/agent/backends/model_adapter/models.yaml")], False, "paid-run"),
-        ([CF("src/operon/api/runtime/services.py")], False, "paid-run"),
-        ([CF("src/operon/clients/anthropic.py")], False, "paid-run"),
-        ([CF("tests/ci/test_pr_gate.py")], False, "paid-run"),
+        ([CF("scripts/x.py")], True, "needs-vickey"),
+        ([CF("evals/recordings/x.json")], False, "risky"),  # not needs-vickey, but outside the low-risk kinds
+        ([CF("evals/recordings/README.md")], False, "needs-vickey"),
+        ([CF("src/operon/api/runtime_config.py")], False, "needs-vickey"),
+        ([CF("src/operon/agent/backends/model_adapter/models.yaml")], False, "needs-vickey"),
+        ([CF("src/operon/api/runtime/services.py")], False, "needs-vickey"),
+        ([CF("src/operon/clients/anthropic.py")], False, "needs-vickey"),
+        ([CF("tests/ci/test_pr_gate.py")], False, "needs-vickey"),
         ([], False, "risky"),
-        ([CF("docs/../.github/x.yml")], False, "paid-run"),
+        ([CF("docs/../.github/x.yml")], False, "needs-vickey"),
     ],
 )
 def test_classify(files: list[Any], fork: bool, expected: str) -> None:
     assert gate.classify(files, fork)[0] == expected
 
 
-def test_a_pr_with_max_files_is_paid_run() -> None:
-    """The files API may have cut the list short, so the files we cannot see could be paid-run ones."""
+def test_a_pr_with_max_files_needs_vickey() -> None:
+    """The files API may have cut the list short, so the files we cannot see could be needs-vickey ones."""
     files = [CF(f"docs/f{i}.md") for i in range(gate.MAX_FILES)]
-    assert gate.classify(files, False)[0] == "paid-run"
+    assert gate.classify(files, False)[0] == "needs-vickey"
     assert gate.classify(files[:-1], False)[0] == "low-risk"
 
 
@@ -363,18 +363,18 @@ def test_top_review_in_the_verifier_comment_does_not_count() -> None:
 @pytest.mark.parametrize(
     ("labels", "risk"),
     [
-        ([{"name": "paid-run"}], "low-risk"),
-        ([{"name": "low-risk"}, {"name": "paid-run"}], "low-risk"),
-        ([{"name": "risky"}, {"name": "paid-run"}], "risky"),
-        ([{"name": "low-risk"}], "paid-run"),
-        ([{"name": "risky"}], "paid-run"),
+        ([{"name": "needs-vickey"}], "low-risk"),
+        ([{"name": "low-risk"}, {"name": "needs-vickey"}], "low-risk"),
+        ([{"name": "risky"}, {"name": "needs-vickey"}], "risky"),
+        ([{"name": "low-risk"}], "needs-vickey"),
+        ([{"name": "risky"}], "needs-vickey"),
     ],
 )
-def test_paid_run_is_never_ready_even_with_every_marker(labels: list[dict[str, str]], risk: str) -> None:
+def test_needs_vickey_is_never_ready_even_with_every_marker(labels: list[dict[str, str]], risk: str) -> None:
     comments = [_codex(), _marker(), _top()]
     ok, why = _ready(pr=_pr(labels=labels), risk=risk, comments=comments)
     assert not ok
-    assert any("paid runs" in w for w in why), why
+    assert any("needs Vickey" in w for w in why), why
 
 
 @pytest.mark.parametrize(
@@ -398,7 +398,7 @@ def test_merge_ready_requires_a_risk() -> None:
 
 
 def test_cli_low_risk_label_with_a_workflow_file_is_not_ready(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """The label says low-risk, but the fresh classification of the files (a workflow) says paid-run."""
+    """The label says low-risk, but the fresh classification of the files (a workflow) says needs-vickey."""
     paths = {n: tmp_path / f"{n}.json" for n in ("pr", "files", "checks", "comments", "status")}
     paths["pr"].write_text(json.dumps(_pr()))
     paths["files"].write_text(json.dumps([{"filename": "docs/a.md"}, {"filename": ".github/x.yml", "status": "added"}]))
@@ -409,7 +409,7 @@ def test_cli_low_risk_label_with_a_workflow_file_is_not_ready(tmp_path: Path, ca
     assert gate.main(args) == 0
     out = capsys.readouterr()
     assert out.out.strip() == "not-ready"
-    assert "paid runs" in out.err
+    assert "needs Vickey" in out.err
 
 
 def test_cli_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -498,15 +498,15 @@ def test_every_paid_run_pattern_matches_a_real_file(pattern: str) -> None:
 def test_kan_230_paths_are_paid_run(path: str) -> None:
     assert gate.is_paid_run_path(path), path
     risk, _ = gate.classify([CF(path)], is_fork=False)
-    assert risk == "paid-run"
+    assert risk == "needs-vickey"
     risk, _ = gate.classify([CF(path, "added")], is_fork=False)
-    assert risk == "paid-run"
+    assert risk == "needs-vickey"
 
 
 def test_claude_md_lists_every_paid_run_pattern() -> None:
     """The rule in CLAUDE.md and the gate's list must agree."""
     text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    section = text[text.index("**Paid-run exception.**") :]
+    section = text[text.index("**Paid-run exception") :]
     section = section[: section.index("\n- **")]
     named = {m.casefold() for m in re.findall(r"`([^`]+)`", section)}
     for pattern in gate.PAID_RUN_PATTERNS:
@@ -600,23 +600,39 @@ def _sweep_run() -> str:
     return next(s["run"] for s in _wf()["jobs"]["sweep"]["steps"] if "run" in s)
 
 
-def test_sweep_lists_low_risk_and_risky_but_never_paid_run() -> None:
+def test_sweep_lists_low_risk_and_risky_but_never_needs_vickey() -> None:
     lists = re.findall(r"gh pr list [^\n]*", _sweep_run())
     labels = [label for line in lists for label in re.findall(r"--label (\S+)", line)]
     assert sorted(labels) == ["low-risk", "risky"]
-    assert not any("paid-run" in line for line in lists)
+    assert not any("needs-vickey" in line for line in lists)
 
 
 def test_label_step_removes_the_other_two_labels() -> None:
     run = next(s["run"] for s in _wf()["jobs"]["label"]["steps"] if "run" in s)
     cases = dict(re.findall(r"^\s*([\w*-]+)\) (add=[^;]+; r1=[^;]+; r2=[^;]+) ;;", run, flags=re.MULTILINE))
-    assert set(cases) == {"low-risk", "paid-run", "*"}
+    assert set(cases) == {"low-risk", "needs-vickey", "*"}
     for spec in cases.values():
         values = dict(kv.split("=") for kv in spec.split("; "))
-        assert {values["add"], values["r1"], values["r2"]} == {"low-risk", "risky", "paid-run"}
+        assert {values["add"], values["r1"], values["r2"]} == {"low-risk", "risky", "needs-vickey"}
     edit = re.findall(r"gh pr edit [^\n]*", run)
-    assert len(edit) == 1
     assert '--add-label "$add" --remove-label "$r1" --remove-label "$r2"' in edit[0]
+
+
+def test_label_step_drops_a_stale_paid_run_label() -> None:
+    """The label used to be called paid-run: old PRs lose it, and the label is never added again."""
+    run = next(s["run"] for s in _wf()["jobs"]["label"]["steps"] if "run" in s)
+    edit = re.findall(r"gh pr edit [^\n]*", run)
+    assert len(edit) == 2
+    assert edit[1].endswith("--remove-label paid-run")
+    assert "gh pr view" in run and "grep -qx paid-run" in run
+    assert not any("--add-label paid-run" in e for e in edit)
+    assert "add=paid-run" not in run and "--add-label" not in edit[1]
+
+
+@pytest.mark.parametrize("risk", ["low-risk", "risky"])
+def test_a_stale_paid_run_label_still_blocks_a_merge(risk: str) -> None:
+    ok, why = _ready(pr=_pr(labels=[{"name": risk}, {"name": "paid-run"}]), risk=risk, comments=[_codex(), _marker(), _top()])
+    assert not ok and any("needs Vickey" in w for w in why), why
 
 
 def test_no_pr_controlled_text_in_run_scripts() -> None:

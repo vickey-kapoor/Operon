@@ -189,10 +189,10 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
 - A PR may merge once its checks are green, every Codex finding is answered, and a fresh verifier has passed on the
   head commit (the main session then posts `<!-- operon-verifier: PASS <full head sha> -->` on the PR).
 - The PR gate (`.github/workflows/pr-gate.yml`, `scripts/pr_gate.py`, KAN-216/KAN-227) labels each PR `low-risk`,
-  `risky` or `paid-run`, and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`
+  `risky` or `needs-vickey` (the PRs that wait for Vickey's own "merge": the paid-run machinery and the rules, see the Paid-run exception below), and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`
   is `on` (it is). The gate does the merging; agents never merge by hand, except that a story thread may run
   `gh pr merge --squash --match-head-commit <sha>` only while no open `auto-work-paused` issue exists and the gate has posted its "would merge" note
-  (`<!-- operon-gate-trial: <head sha> -->`) for that exact head and the PR is not labelled `paid-run`. A fork PR is
+  (`<!-- operon-gate-trial: <head sha> -->`) for that exact head and the PR is not labelled `needs-vickey`. A fork PR is
   never merged by the gate. Never enable GitHub's own auto-merge (it is off repo-wide): it only waits for required
   checks and skips the markers.
 - While an open issue labelled `auto-work-paused` exists (Vickey wrote "pause"), the gate merges nothing and posts no would-merge notes, so no PR merges, and no agent merges by hand, even with an earlier would-merge note.
@@ -201,7 +201,7 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   the PR verbatim, with the marker, in its own comment. Fix what it finds; once it passes on the head, post
   `<!-- operon-top-review: PASS <full head sha> -->` in that comment; the gate ignores a top-review marker in the same
   comment as the verifier marker. A new commit needs a new review.
-- **Paid-run exception.** A PR waits for Vickey to write "merge" for that PR if it touches any of: `.github/**`;
+- **Paid-run exception (label `needs-vickey`).** A PR waits for Vickey to write "merge" for that PR if it touches any of: `.github/**`;
   `evals/**` except JSON recordings under `evals/recordings/`; `scripts/**`; `tests/ci/test_pr_gate.py` (the gate's
   tests); `src/operon/models/usage.py` (price tables behind every cost cap); `src/operon/core/settings.py`;
   `src/operon/agent/backends/model_adapter/registry.py` (model defaults);

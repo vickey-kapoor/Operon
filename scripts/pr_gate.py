@@ -8,7 +8,7 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
         --comments comments.json [--ignore-check NAME ...]
     python scripts/pr_gate.py paused --issues issues.json
 
-``classify`` prints ``low-risk``, ``risky`` or ``paid-run`` on stdout (paid-run beats risky beats low-risk); ``merge-ready`` prints ``ready`` or ``not-ready``; ``paused`` prints ``paused`` or ``running`` (KAN-229).
+``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk); ``merge-ready`` prints ``ready`` or ``not-ready``; ``paused`` prints ``paused`` or ``running`` (KAN-229).
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -29,9 +29,10 @@ from typing import Any
 
 LOW = "low-risk"
 RISKY = "risky"
-PAID = "paid-run"
+PAID = "needs-vickey"  # the label for PRs that wait for Vickey's own "merge"
+LEGACY_PAID = "paid-run"  # the old name of that label: still refused, so a stale label cannot be merged
 
-# The files API stops at 3000 entries, so the list may be cut short: a PR that big is classified paid-run (fail closed).
+# The files API stops at 3000 entries, so the list may be cut short: a PR that big is classified needs-vickey (fail closed).
 MAX_FILES = 3000
 
 # Inside src/ everything is low-risk EXCEPT these (a denylist). A pattern ending in "/**" is a directory
@@ -270,10 +271,10 @@ def _is_test(path: str) -> bool:
 
 
 def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
-    """Return (``low-risk`` | ``risky`` | ``paid-run``, reasons). Risky when in any doubt.
+    """Return (``low-risk`` | ``risky`` | ``needs-vickey``, reasons). Risky when in any doubt.
 
-    A fork is at least risky (paid-run when it also touches paid-run files); ``merge_ready`` refuses every fork.
-    A PR with ``MAX_FILES`` or more files is paid-run: the files API may have cut its list short.
+    A fork is at least risky (needs-vickey when it also touches paid-run files); ``merge_ready`` refuses every fork.
+    A PR with ``MAX_FILES`` or more files is needs-vickey: the files API may have cut its list short.
     """
     if len(files) >= MAX_FILES:
         return PAID, [f"{len(files)} changed files reaches the API limit: the list may be incomplete"]
@@ -287,7 +288,7 @@ def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
         names = [(f.filename, f.status)] + ([(f.previous_filename, "removed")] if f.previous_filename else [])
         for name, status in names:
             if is_paid_run_path(name):
-                paid.append(f"touches paid runs: {name}")
+                paid.append(f"needs Vickey's merge (paid-run machinery or rules): {name}")
             if is_risky_path(name, status):
                 reasons.append(f"risky path: {name}" + (f" ({status})" if status != "modified" else ""))
         if f.status == "removed" and _is_test(f.filename):
@@ -342,7 +343,7 @@ def merge_ready(
     """Whether the gate may merge ``pr``. ``pr`` is a pulls API object; ``checks`` the head's check runs;
     ``status`` the head's combined status (the older status API, which check runs do not cover).
 
-    ``risk`` is a fresh classification of the PR's files. A fork PR and a ``paid-run`` PR are never ready. A
+    ``risk`` is a fresh classification of the PR's files. A fork PR and a ``needs-vickey`` PR are never ready. A
     ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
     collaborator, in a comment of its own (one that does not also carry the verifier marker).
     """
@@ -353,8 +354,8 @@ def merge_ready(
     if is_fork_pr(pr):
         return False, ["PR is from a fork"]
     labels = {(x.get("name") if isinstance(x, dict) else x) for x in pr.get("labels") or []}
-    if PAID in labels or risk == PAID:
-        return False, ["touches paid runs: waits for Vickey's merge"]
+    if PAID in labels or LEGACY_PAID in labels or risk == PAID:
+        return False, ["needs Vickey's merge: touches paid-run machinery or the rules"]
     level = RISKY if RISKY in labels or risk == RISKY else LOW
     if len(labels & {LOW, RISKY}) != 1:
         why.append(f"not labelled exactly one of {LOW} or {RISKY}")

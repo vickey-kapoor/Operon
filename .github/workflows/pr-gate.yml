@@ -1,5 +1,5 @@
-# PR gate (KAN-216, KAN-227): label every PR low-risk, risky or paid-run, and merge the low-risk and risky ones that are
-# fully reviewed (risky also needs a Fable 5.2 top-review marker). A paid-run PR is never merged here: Vickey merges it.
+# PR gate (KAN-216, KAN-227): label every PR low-risk, risky or needs-vickey, and merge the low-risk and risky ones that are
+# fully reviewed (risky also needs a Fable 5.2 top-review marker). A needs-vickey PR is never merged here: Vickey merges it.
 #
 # All decisions live in scripts/pr_gate.py (offline tested). The merge step only runs when the repo
 # variable OPERON_AUTO_MERGE is "on". Unset (the default) is trial mode: label, plus one "would merge"
@@ -47,15 +47,20 @@ jobs:
           set -euo pipefail
           gh label create low-risk --repo "$REPO" --color 0E8A16 --description "Auto-merge candidate (KAN-216)" --force
           gh label create risky --repo "$REPO" --color D93F0B --description "Merges after a Fable 5.2 review (KAN-227)" --force
-          gh label create paid-run --repo "$REPO" --color B60205 --description "Touches paid runs: Vickey merges (KAN-227)" --force
+          gh label create needs-vickey --repo "$REPO" --color B60205 --description "Changes workflows, the merge check, paid runs or the rules: Vickey merges (KAN-227)" --force
           gh api --paginate "repos/$REPO/pulls/$PR/files" | jq -s 'add // []' > "$RUNNER_TEMP/files.json"
           risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json")
           case "$risk" in
-            low-risk) add=low-risk; r1=risky; r2=paid-run ;;
-            paid-run) add=paid-run; r1=low-risk; r2=risky ;;
-            *) add=risky; r1=low-risk; r2=paid-run ;;
+            low-risk) add=low-risk; r1=risky; r2=needs-vickey ;;
+            needs-vickey) add=needs-vickey; r1=low-risk; r2=risky ;;
+            *) add=risky; r1=low-risk; r2=needs-vickey ;;
           esac
           gh pr edit "$PR" --repo "$REPO" --add-label "$add" --remove-label "$r1" --remove-label "$r2"
+          # The label was called paid-run before: drop a stale one so old PRs are relabelled cleanly.
+          current=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name')
+          if printf '%s\n' "$current" | grep -qx paid-run; then
+            gh pr edit "$PR" --repo "$REPO" --remove-label paid-run
+          fi
 
   sweep:
     name: Sweep and merge
@@ -98,7 +103,7 @@ jobs:
           # --- end of the pause check ---
           gh label create auto-merged --repo "$REPO" --color 5319E7 --description "Merged by the PR gate" --force
           gh label create gate-would-merge --repo "$REPO" --color FBCA04 --description "Would merge: the gate would have merged this (KAN-216/KAN-227)" --force
-          # Open, non-draft PRs labelled low-risk or risky; paid-run is never listed (and merge-ready refuses it anyway).
+          # Open, non-draft PRs labelled low-risk or risky; needs-vickey is never listed (and merge-ready refuses it anyway).
           gh pr list --repo "$REPO" --state open --draft=false --label low-risk --limit 100 --json number --jq '.[].number' > "$work/prs"
           gh pr list --repo "$REPO" --state open --draft=false --label risky --limit 100 --json number --jq '.[].number' >> "$work/prs"
           while read -r n; do

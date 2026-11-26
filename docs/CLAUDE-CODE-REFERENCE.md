@@ -6,19 +6,21 @@ repo `C:\Users\vicke\GitHub\Operon`). Work moved here from the claude.ai project
 architecture, invariants and the Opus/Haiku/Sonnet dev workflow; this file adds the
 standing rules, infrastructure and open items that live outside the code.
 
-Last updated: 2026-11-17. Contains no secrets: keys live in GitHub repo secrets,
+Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
 `~/.operon` and Vickey's local `.env`.
 
 ## Standing rules (Vickey)
 
 ### Merging and PRs
-- **Never merge a PR until Vickey writes "merge" for that specific PR.** Approval is
-  per PR; an earlier "merge", a "yes" to another question, green checks or a clean
-  Codex review do not count. Never enable GitHub auto-merge (it is off repo-wide). The one exception
-  (KAN-216) is the PR gate workflow (`.github/workflows/pr-gate.yml`): it alone may squash-merge a
-  `low-risk` PR, only when the repo variable `OPERON_AUTO_MERGE` is `on` and checks, Codex review and the
-  verifier marker are green on the head. Agents never merge by hand without Vickey's "merge".
-- **Codex reviews every PR.** Fix or answer every Codex finding before asking for merge.
+- **Every PR can merge itself, but no paid run without Vickey's explicit OK** (Vickey, 2026-11-26). The full rule
+  is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short: checks green, Codex
+  answered and the verifier marker on the head; `risky` PRs also need a top-model (today Fable 5.2) review in a fresh
+  session that is not the coordinator or the author; PRs touching paid-run machinery (workflows, evals except JSON
+  recordings, scripts, the gate's tests, price tables, model defaults and ids, model clients, settings; exact list in
+  `CLAUDE.md`) or these rules wait for Vickey's "merge" for that PR. The gate does the merging; agents never merge by
+  hand except as `CLAUDE.md` allows. Approval is per PR and per run: an earlier "merge", a "yes" to another question, green checks,
+  a clean Codex review or a reviewer PASS do not count. Never enable GitHub's own auto-merge (it is off repo-wide).
+- **Codex reviews every PR.** Fix or answer every Codex finding before merging.
 - **Never approve a fork PR's workflow runs while its "Fork PR workflow check" is red.** The check
   fails when a fork PR touches `.github/` (workflows, actions, CODEOWNERS); outside PRs must not
   change `.github/`. The benchmark VM runners are one-job (JIT) runners minted per run, so nothing

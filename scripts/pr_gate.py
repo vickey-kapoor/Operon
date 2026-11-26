@@ -1,4 +1,4 @@
-"""PR gate (KAN-216): decide whether a pull request is low-risk and ready to merge on its own.
+"""PR gate (KAN-216, KAN-227): classify a pull request and decide whether it is ready to merge on its own.
 
 Pure functions plus a thin CLI; the workflow ``pr-gate.yml`` feeds it JSON saved from ``gh api``.
 Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not ready".
@@ -7,7 +7,7 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
     python scripts/pr_gate.py merge-ready --pr pr.json --files files.json --checks checks.json \
         --comments comments.json [--ignore-check NAME ...]
 
-``classify`` prints ``low-risk`` or ``risky`` on stdout; ``merge-ready`` prints ``ready`` or ``not-ready``.
+``classify`` prints ``low-risk``, ``risky`` or ``paid-run`` on stdout (paid-run beats risky beats low-risk); ``merge-ready`` prints ``ready`` or ``not-ready``.
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -18,6 +18,7 @@ import fnmatch
 import html
 import json
 import os
+import posixpath
 import re
 import sys
 from collections.abc import Iterable
@@ -27,8 +28,9 @@ from typing import Any
 
 LOW = "low-risk"
 RISKY = "risky"
+PAID = "paid-run"
 
-# The files API stops at 3000 entries; a PR that big is never auto-merged.
+# The files API stops at 3000 entries, so the list may be cut short: a PR that big is classified paid-run (fail closed).
 MAX_FILES = 3000
 
 # Inside src/ everything is low-risk EXCEPT these (a denylist). A pattern ending in "/**" is a directory
@@ -112,6 +114,39 @@ TEST_FILE_PATTERNS: tuple[str, ...] = ("test_*.py", "*_test.py")  # what pytest 
 DASHBOARD_STATIC: tuple[str, ...] = ("dashboard/app.js", "dashboard/readme.md")
 
 
+# KAN-227 (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval"): a PR that
+# could start a paid run, or change how paid runs start or what they may spend, is never merged by the gate; it waits
+# for Vickey. Same pattern syntax as RISKY_PATTERNS; every entry must match a real file (tests/ci/test_pr_gate.py).
+PAID_RUN_PATTERNS: tuple[str, ...] = (
+    # Any workflow can read a model API key secret or add a schedule: all of .github/ (the five paid-run workflows
+    # are benchmark.yml, live-bench.yml, live-desktop-bench.yml, grounding.yml, osworld-bench.yml; the gate is pr-gate.yml).
+    ".github/**",
+    # Everything under evals/ (bench, batch queue, OSWorld, grounding, live smoke, caps, suites, seasons, runners'
+    # scripts), except recorded data (PAID_RUN_EXEMPT).
+    "evals/**",
+    # Bench-runner and VM scripts, and the gate (scripts/pr_gate.py).
+    "scripts/**",
+    # The gate's own tests.
+    "tests/ci/test_pr_gate.py",
+    # Price tables behind every cost cap, settings (caps, model defaults), model defaults.
+    "src/operon/models/usage.py",
+    "src/operon/core/settings.py",
+    "src/operon/agent/backends/model_adapter/registry.py",
+    "src/operon/agent/backends/model_adapter/models.yaml",  # price table, model ids
+    "src/operon/api/runtime_config.py",  # default model, pricing check
+    "src/operon/api/runtime/services.py",  # pricing check
+    "src/operon/clients/**",  # model ids
+    # The rules that define this exception, so a PR cannot loosen them and self-merge.
+    "claude.md",
+    "agents.md",
+    "docs/claude-code-reference.md",
+    "evals/claude.md",
+    ".claude/agents/**",
+)
+# Data recorded for the free replay tests: not a way to start or fund a paid run.
+PAID_RUN_EXEMPT: tuple[str, ...] = ("evals/recordings/*.json",)
+
+
 # Checks that must be present and green on the head before a merge (the names are the CI job names).
 REQUIRED_CHECKS: tuple[str, ...] = (
     "Test (Python 3.14)",
@@ -126,6 +161,7 @@ OWNER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 CODEX_BOT = "chatgpt-codex-connector[bot]"
 GOOD_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
 VERIFIER_RE = re.compile(r"<!--\s*operon-verifier:\s*PASS\s+([0-9a-fA-F]{40})\s*-->")
+TOP_REVIEW_RE = re.compile(r"<!--\s*operon-top-review:\s*PASS\s+([0-9a-fA-F]{40})\s*-->")
 
 
 @dataclass(frozen=True)
@@ -179,7 +215,7 @@ def _src_denied(path: str) -> bool:
 
 
 def is_risky_path(path: str, status: str = "modified") -> bool:
-    """Whether ``path`` needs a human. ``status`` is the file's change status in the PR."""
+    """Whether ``path`` is outside the low-risk kinds (needs a review). ``status`` is the file's change status in the PR."""
     path = path.replace("\\", "/").casefold()
     parts = path.split("/")
     # A path with empty, "." or ".." parts is not one we can reason about.
@@ -191,7 +227,7 @@ def is_risky_path(path: str, status: str = "modified") -> bool:
     if parts[0] == "src":
         # Only edits to existing files under src/operon/ can be low-risk. A new file (added, renamed or
         # copied in) can shadow an import (src/json.py, a package next to a denylisted module), so it
-        # always needs a human.
+        # always needs the risky review.
         if status != "modified" or parts[1:2] != ["operon"]:
             return True
         if name in RISKY_NAMES or name == "__init__.py" or not name.endswith(SRC_TEXT_SUFFIXES):
@@ -202,22 +238,37 @@ def is_risky_path(path: str, status: str = "modified") -> bool:
     return not _low_risk_kind(path)
 
 
+def is_paid_run_path(path: str) -> bool:
+    """Whether ``path`` could start a paid run or change how paid runs start or what they may spend."""
+    path = posixpath.normpath(path.replace("\\", "/")).casefold()
+    if any(_matches(p, path) for p in PAID_RUN_EXEMPT):
+        return False
+    return any(_matches(p, path) for p in PAID_RUN_PATTERNS)
+
+
 def _is_test(path: str) -> bool:
     return path.casefold().startswith("tests/")
 
 
 def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
-    """Return (``low-risk`` | ``risky``, reasons). Risky when in any doubt."""
+    """Return (``low-risk`` | ``risky`` | ``paid-run``, reasons). Risky when in any doubt.
+
+    A fork is at least risky (paid-run when it also touches paid-run files); ``merge_ready`` refuses every fork.
+    A PR with ``MAX_FILES`` or more files is paid-run: the files API may have cut its list short.
+    """
+    if len(files) >= MAX_FILES:
+        return PAID, [f"{len(files)} changed files reaches the API limit: the list may be incomplete"]
     reasons: list[str] = []
+    paid: list[str] = []
     if is_fork:
         reasons.append("PR is from a fork")
     if not files:
         reasons.append("no changed files listed")
-    if len(files) >= MAX_FILES:
-        reasons.append(f"{len(files)} changed files reaches the API limit")
     for f in files:
         names = [(f.filename, f.status)] + ([(f.previous_filename, "removed")] if f.previous_filename else [])
         for name, status in names:
+            if is_paid_run_path(name):
+                paid.append(f"touches paid runs: {name}")
             if is_risky_path(name, status):
                 reasons.append(f"risky path: {name}" + (f" ({status})" if status != "modified" else ""))
         if f.status == "removed" and _is_test(f.filename):
@@ -225,6 +276,8 @@ def classify(files: list[ChangedFile], is_fork: bool) -> tuple[str, list[str]]:
         if f.status == "renamed" and f.previous_filename and _is_collected_test(f.previous_filename):
             if not _is_collected_test(f.filename):
                 reasons.append(f"test file renamed to a non-test: {f.previous_filename}")
+    if paid:
+        return PAID, list(dict.fromkeys(paid))
     reasons = list(dict.fromkeys(reasons))
     return (RISKY if reasons else LOW), reasons or ["only docs, tests and non-gate source changed"]
 
@@ -251,29 +304,45 @@ def _find_codex_state(comments: Iterable[dict[str, Any]]) -> dict[str, Any] | No
     return found
 
 
+def is_fork_pr(pr: dict[str, Any]) -> bool:
+    """Whether ``pr`` (a pulls API object) comes from another repository. Unknown repos count as a fork."""
+    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
+    base_repo = ((pr.get("base") or {}).get("repo") or {}).get("full_name")
+    return head_repo is None or head_repo != base_repo
+
+
 def merge_ready(
     pr: dict[str, Any],
     checks: list[dict[str, Any]],
     comments: list[dict[str, Any]],
     ignore_checks: Iterable[str] = (),
     *,
-    risk: str | None = None,
+    risk: str,
     status: dict[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:
     """Whether the gate may merge ``pr``. ``pr`` is a pulls API object; ``checks`` the head's check runs;
     ``status`` the head's combined status (the older status API, which check runs do not cover).
 
-    ``risk`` is a fresh classification of the PR's files; when given it must be low-risk too.
+    ``risk`` is a fresh classification of the PR's files. A fork PR and a ``paid-run`` PR are never ready. A
+    ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
+    collaborator, in a comment of its own (one that does not also carry the verifier marker).
     """
     why: list[str] = []
     head = (pr.get("head") or {}).get("sha") or ""
     if not head:
         return False, ["no head sha"]
+    if is_fork_pr(pr):
+        return False, ["PR is from a fork"]
     labels = {(x.get("name") if isinstance(x, dict) else x) for x in pr.get("labels") or []}
-    if LOW not in labels or RISKY in labels:
-        why.append(f"not labelled {LOW}")
-    if risk is not None and risk != LOW:
-        why.append("fresh classification is not low-risk")
+    if PAID in labels or risk == PAID:
+        return False, ["touches paid runs: waits for Vickey's merge"]
+    level = RISKY if RISKY in labels or risk == RISKY else LOW
+    if len(labels & {LOW, RISKY}) != 1:
+        why.append(f"not labelled exactly one of {LOW} or {RISKY}")
+    elif (RISKY in labels) != (risk == RISKY):
+        why.append("fresh classification does not match the label")
+    if risk not in (LOW, RISKY):
+        why.append("fresh classification is not low-risk or risky")
     if pr.get("draft"):
         why.append("PR is a draft")
     if pr.get("state", "open") != "open":
@@ -317,14 +386,21 @@ def merge_ready(
         if state.get("has_unresolved_findings") is not False:
             why.append("Codex review has unresolved findings")
 
-    marked = any(
-        c.get("author_association") in OWNER_ASSOCIATIONS
-        and (c.get("user") or {}).get("type") == "User"
-        and any(m.lower() == head.lower() for m in VERIFIER_RE.findall(c.get("body") or ""))
-        for c in comments
-    )
-    if not marked:
+    def marked(regex: re.Pattern[str], alone: bool = False) -> bool:
+        """A comment from an owner or collaborator carries ``regex``'s marker for the head; with ``alone``,
+        the comment must not also carry a verifier marker (the top review is posted in its own comment)."""
+        return any(
+            c.get("author_association") in OWNER_ASSOCIATIONS
+            and (c.get("user") or {}).get("type") == "User"
+            and any(m.lower() == head.lower() for m in regex.findall(c.get("body") or ""))
+            and not (alone and VERIFIER_RE.search(c.get("body") or ""))
+            for c in comments
+        )
+
+    if not marked(VERIFIER_RE):
         why.append("no verifier PASS marker for the head commit from an owner or collaborator")
+    if level == RISKY and not marked(TOP_REVIEW_RE, alone=True):
+        why.append("no top-review PASS marker for the head commit from an owner or collaborator")
 
     return (not why), why or ["all gates passed"]
 
@@ -370,10 +446,7 @@ def main(argv: list[str] | None = None) -> int:
         print(risk)
         return 0
     pr = _load(a.pr)
-    head_repo = ((pr.get("head") or {}).get("repo") or {}).get("full_name")
-    base_repo = ((pr.get("base") or {}).get("repo") or {}).get("full_name")
-    fork = head_repo is None or head_repo != base_repo
-    risk, _ = classify(_files(a.files), fork)
+    risk, _ = classify(_files(a.files), is_fork_pr(pr))
     checks = _load(a.checks)
     ok, why = merge_ready(
         pr,

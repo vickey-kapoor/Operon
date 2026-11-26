@@ -23,6 +23,7 @@ from operon.agent.backends.base import (
     restore_hints,
     snapshot_hints,
 )
+from operon.agent.backends.model_adapter.backend import GAVE_UP_PREFIX
 from operon.clients.gemini_computer_use import (
     GeminiComputerUseClient,
     GeminiComputerUseError,
@@ -90,6 +91,40 @@ class _ConversationState:
     not_run_reason: str | None = None
 
 
+# The "give up" tool (KAN-202). Gemini's computer use tool has no way to say a task
+# cannot be done: a text reply after it has acted reads as "done". This custom
+# function, declared next to the computer use tool, ends the run as given up with the
+# model's reason, the same path the model backend's ``fail`` takes (Claude, GPT).
+GIVE_UP = "give_up"
+GIVE_UP_FUNCTION: dict = {
+    "name": GIVE_UP,
+    "description": (
+        "Give up: the task cannot be done here. Call it alone, with a short reason, "
+        "instead of replying with text. Never call it for a task that is done."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"reason": {"type": "string", "description": "Why the task cannot be done."}},
+        "required": ["reason"],
+    },
+}
+# The summary the client writes for a reply with no text: not a reason.
+_NO_TEXT_SUMMARY = "Computer Use step evaluated."
+
+
+def _give_up_call(function_calls: list[dict]) -> dict | None:
+    """The turn's give_up call, if the model made one."""
+    return next((call for call in function_calls if call.get("name") == GIVE_UP), None)
+
+
+def _give_up_reason(call: dict, rationale: object) -> str:
+    reason = str((call.get("args") or {}).get("reason") or "").strip()
+    if not reason:
+        text = str(rationale or "").strip()
+        reason = text if text and text != _NO_TEXT_SUMMARY else "no reason given"
+    return reason
+
+
 # Gemini finish reasons for a reply that ended normally. Anything else (MAX_TOKENS,
 # MALFORMED_FUNCTION_CALL, SAFETY, RECITATION, ...) means the reply did not finish.
 _CLEAN_FINISH_REASONS = frozenset({"STOP", "FINISH_REASON_STOP"})
@@ -127,6 +162,11 @@ class BrowserComputerUseBackend(AgentBackend):
         tools: tuple[str, ...] = (),
     ) -> None:
         self.client = client
+        # Declare give_up next to the client's other custom functions (KAN-202). A client
+        # with no declarations list (a scripted test client) is left as it is.
+        declared = getattr(client, "function_declarations", None)
+        if isinstance(declared, list) and not any(d.get("name") == GIVE_UP for d in declared):
+            client.function_declarations = [*declared, GIVE_UP_FUNCTION]
         self.prompt_path = prompt_path
         self.browser_runtime = browser_runtime
         # The tools the client declares (RFC 0002); their skill notes join the prompt.
@@ -199,13 +239,13 @@ class BrowserComputerUseBackend(AgentBackend):
                 # The model never saw these hints: queue them again for the next try.
                 restore_hints(self._advisory_hints, saved_hints)
                 raise
-            if self.zoom.enabled:
+            if self.zoom.enabled and _give_up_call(response_payload.get("function_calls") or []) is None:
                 response_payload, zoom_usage = await self._zoom_first_click(response_payload, screenshot, state)
             function_calls = response_payload.get("function_calls") or []
             conversation = self._conversations[state.run_id]
             conversation.last_calls = list(function_calls)
             conversation.last_rationale = response_payload.get("rationale")
-            if any(_requires_confirmation(call) for call in function_calls):
+            if _give_up_call(function_calls) is None and any(_requires_confirmation(call) for call in function_calls):
                 conversation.held_calls = function_calls
                 conversation.held_rationale = conversation.last_rationale
 
@@ -218,7 +258,21 @@ class BrowserComputerUseBackend(AgentBackend):
             payload=perception_payload,
             screenshot_path=screenshot.artifact_path,
         )
-        if "function_call" in response_payload:
+        give_up = (
+            _give_up_call(response_payload.get("function_calls") or [response_payload["function_call"]])
+            if "function_call" in response_payload
+            else None
+        )
+        if give_up is not None:
+            # The model gave up (KAN-202): the run ends as not done, with its reason.
+            # Other calls in the same turn do not run.
+            response_payload = {
+                **response_payload,
+                "action": {"action_type": ActionType.STOP.value},
+                "rationale": f"{GAVE_UP_PREFIX}{_give_up_reason(give_up, response_payload.get('rationale'))}",
+                "active_subgoal": "complete task",
+            }
+        elif "function_call" in response_payload:
             function_calls = response_payload.get("function_calls") or [response_payload["function_call"]]
             conversation = self._conversations.get(state.run_id)
             hold = conversation.key_hold.copy() if conversation is not None else KeyHold()

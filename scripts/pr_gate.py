@@ -23,6 +23,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,7 +158,9 @@ AGENT_FRONTMATTER_KEYS: tuple[str, ...] = ("name", "description", "model", "tool
 AGENT_FILE_MAX_BYTES = 64 * 1024
 _AGENT_LINE_RE = re.compile(r"(" + "|".join(AGENT_FRONTMATTER_KEYS) + r"): (\S.*)")
 _AGENT_WORD_RE = re.compile(r"\w+")
-_AGENT_ODD_CHARS_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f\x85\u2028\u2029]")
+# Control characters (other than newline and tab) and Unicode line or paragraph separators: a YAML reader could treat
+# them as line breaks that this check does not see.
+_AGENT_ODD_CATEGORIES = frozenset({"Cc", "Zl", "Zp"})
 
 # Data recorded for the free replay tests: not a way to start or fund a paid run.
 PAID_RUN_EXEMPT: tuple[str, ...] = ("evals/recordings/*.json",)
@@ -286,7 +289,9 @@ def agent_file_is_safe(text: str) -> bool:
     plain words. Anything else (indentation, comments, blank lines, ``hooks:``, ``mcpServers:``, odd control or
     line-separator characters, a missing or unterminated frontmatter, a file over 64 KB) is not safe.
     """
-    if len(text.encode("utf-8", "surrogatepass")) > AGENT_FILE_MAX_BYTES or _AGENT_ODD_CHARS_RE.search(text):
+    if len(text.encode("utf-8", "surrogatepass")) > AGENT_FILE_MAX_BYTES or any(
+        unicodedata.category(c) in _AGENT_ODD_CATEGORIES and c not in "\n\t" for c in text
+    ):
         return False
     lines = text.split("\n")
     if lines[0] != "---" or "---" not in lines[1:]:

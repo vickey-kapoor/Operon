@@ -52,7 +52,10 @@ jobs:
           gh label create risky --repo "$REPO" --color D93F0B --description "Merges after a Fable 5.2 review (KAN-227)" --force
           gh label create needs-vickey --repo "$REPO" --color B60205 --description "Changes paid-run workflows, the merge check, cost files or workflow secrets: Vickey merges (KAN-227)" --force
           gh api --paginate "repos/$REPO/pulls/$PR/files" | jq -s 'add // []' > "$RUNNER_TEMP/files.json"
-          risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json" --repo "$REPO" --ref "$HEAD_SHA")
+          # The base script may predate --repo/--ref (it then cannot read agent files, which only matters after merge).
+          extra=()
+          if python3 scripts/pr_gate.py classify --help | grep -q -e '--ref'; then extra=(--repo "$REPO" --ref "$HEAD_SHA"); fi
+          risk=$(python3 scripts/pr_gate.py classify --files "$RUNNER_TEMP/files.json" "${extra[@]}")
           case "$risk" in
             low-risk) add=low-risk; r1=risky; r2=needs-vickey ;;
             needs-vickey) add=needs-vickey; r1=low-risk; r2=risky ;;

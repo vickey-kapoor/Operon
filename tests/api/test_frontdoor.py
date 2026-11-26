@@ -303,3 +303,69 @@ def test_format_report_says_a_thin_run_was_checked_by_the_models_own_done() -> N
     }
     assert "checked by: the model's own done" in frontdoor.format_report(base)
     assert "checked by" not in frontdoor.format_report({**base, "timeline": [{"checked_by": "rules"}]})
+
+
+async def _finished_run(monkeypatch, tmp_path, verifier) -> tuple[dict, dict, str, bool | None]:
+    from operon.models.policy import ActionType, AgentAction
+
+    loop, _ = build_loop(monkeypatch, tmp_path, [AgentAction(action_type=ActionType.STOP, text="Saved.")])
+    loop.verifier_service = verifier
+    _use(monkeypatch, loop)
+    async with _client() as client:
+        run_id = (await _start(client, permission_mode="auto"))["run_id"]
+        await loop.step_run(StepRequest(run_id=run_id))
+        await bg_writer.flush()
+        status = (await client.get(f"/app/api/runs/{run_id}")).json()
+        report = (await client.get(f"/app/api/runs/{run_id}/report")).json()
+        listed = (await client.get("/app/api/runs?limit=1")).json()["runs"][0]
+    assert listed["run_id"] == run_id
+    return status, report, listed["outcome"], listed["done_checked"]
+
+
+async def test_a_done_nothing_checked_says_model_says_done(monkeypatch, tmp_path, scheduled) -> None:
+    from operon.agent.policy.thin import OwnDoneVerifier
+
+    status, report, listed, listed_checked = await _finished_run(monkeypatch, tmp_path, OwnDoneVerifier())
+
+    assert report["status"] == "succeeded"  # the status (and the exit code) stays as it was
+    assert report["outcome"] == "Model says done" and report["done_checked"] is False
+    assert report["summary"].startswith("Model says done after 1 step")
+    assert frontdoor.format_report(report).startswith("Model says done: Save the form")
+    assert status["outcome"] == "Model says done" and status["done_checked"] is False
+    assert listed == "Model says done" and listed_checked is False
+
+
+async def test_a_checked_done_still_says_done(monkeypatch, tmp_path, scheduled) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from operon.models.common import StopReason
+    from operon.models.verification import VerificationResult, VerificationStatus
+
+    checked = VerificationResult(
+        status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=True,
+        reason="Model says done; independent check agrees", stop_reason=StopReason.TASK_COMPLETED,
+        critic_model_used=True,
+    )
+    status, report, listed, listed_checked = await _finished_run(
+        monkeypatch, tmp_path, SimpleNamespace(verify=AsyncMock(return_value=checked))
+    )
+
+    assert report["status"] == "succeeded"
+    assert report["outcome"] == "Done" and report["done_checked"] is True
+    assert status["outcome"] == "Done" and listed == "Done" and listed_checked is True
+
+
+def test_only_a_succeeded_run_can_be_model_says_done() -> None:
+    from types import SimpleNamespace
+
+    from operon.models.verification import VerificationResult, VerificationStatus
+
+    unchecked = VerificationResult(
+        status=VerificationStatus.SUCCESS, expected_outcome_met=True, stop_condition_met=True, reason="r", unchecked=True
+    )
+    failed = SimpleNamespace(status=RunStatus.FAILED, verification_history=[unchecked])
+    old = SimpleNamespace(status=RunStatus.SUCCEEDED, verification_history=[])  # a run that kept no verdict
+
+    assert frontdoor.done_checked(failed) is None and frontdoor.outcome_label(failed) == "Failed"
+    assert frontdoor.done_checked(old) is None and frontdoor.outcome_label(old) == "Done"

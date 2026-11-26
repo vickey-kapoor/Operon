@@ -41,7 +41,12 @@ Put your Gemini key in `.env` (or in `~/.operon/operon.env`, an optional per-use
   `auto` asks for nothing. Deny rules and the domain allowlist block in every mode, and so
   does a vendor safety confirmation. `ask` asks even when `OPERON_TRUST_GATE=off`.
 - **Report.** `GET /app/api/runs/{run_id}/report` gives the outcome, steps, approvals and
-  takeovers once the run ends.
+  takeovers once the run ends. A finished run whose "done" nothing checked (the default thin
+  harness takes the model's word) has the outcome "Model says done" and `done_checked: false`;
+  a run whose done was checked (for example by `OPERON_DONE_CHECK`) says "Done". Its status is
+  `succeeded` either way, so `operon run` still exits 0. The run list and run status carry the
+  same `outcome` and `done_checked`. Benchmarks score with their own checker, so this label
+  does not change any score (KAN-206).
 
 The live stream uses a short-lived token from `POST /app/api/stream-token` instead of the key.
 The token is sent as the subprotocol pair `["x-stream-token", token]` and expires after

@@ -120,6 +120,10 @@ logger = logging.getLogger(__name__)
 
 
 _LIVENESS_RETRY_MAX = 3
+# First step: the fixed wait for the OS and browser window to finish drawing. With
+# OPERON_SETTLE_DETECT on it becomes the most the wait falls back to; the wait ends as soon
+# as the screen is still, capped at OPERON_SETTLE_MAX_S (KAN-203).
+_WARMUP_DELAY_S = 2.5
 _LIVENESS_RETRY_FIRST_SLEEP_S = 0.5   # fast recovery for brief UI transitions (e.g. search overlay animating in)
 _LIVENESS_RETRY_SLEEP_S = 1.5         # subsequent retries give slower loads more time
 
@@ -1163,7 +1167,20 @@ class AgentLoop:
                 await self.executor.execute(warmup)
             else:
                 logger.info("Bootstrap warmup: trust gate blocks google.com — skipping warmup navigation")
-        await asyncio.sleep(2.5)
+        await self._warmup_wait()
+
+    async def _warmup_wait(self) -> None:
+        """Wait before the first screenshot: until the screen is still (OPERON_SETTLE_DETECT), else 2.5 s."""
+        settle_now = getattr(self.executor, "settle_now", None)
+        if not (get_settings().settle_detect and inspect.iscoroutinefunction(settle_now)):
+            await asyncio.sleep(_WARMUP_DELAY_S)
+            return
+        await settle_now(_WARMUP_DELAY_S)
+        # No action ran before step 1, so a change note from this wait (OPERON_CHANGE_NOTE)
+        # would describe the start-up, not the model's action: drop it.
+        pop = getattr(self.executor, "pop_change_note", None)
+        if callable(pop):
+            pop()
 
     async def _capture_stage(self, ctx: StepContext) -> None:
         _trace("  1 CAPTURE", "taking screenshot via CaptureService")

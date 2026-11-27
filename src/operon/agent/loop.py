@@ -1274,7 +1274,9 @@ class AgentLoop:
         # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
         # action never runs; the run pauses for a human instead.
         # The gate stage uses a person's approval up, so later checks read this copy.
-        ctx.approved_gates = self._approved_gates(ctx.run_id, ctx.decision.action)
+        # Read only with OPERON_FRESH_LOOK on: reading drops a stored approval whose action changed.
+        if get_settings().fresh_look:
+            ctx.approved_gates = self._approved_gates(ctx.run_id, ctx.decision.action)
         pause_decision = await self._gate_pause_decision(ctx.record, ctx.state, ctx.decision, frame=ctx.frame)
         if pause_decision is None:
             # Reading the click text (KAN-163) waits on OCR: a stop that came in

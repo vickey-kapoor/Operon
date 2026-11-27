@@ -170,3 +170,19 @@ async def test_executor_without_peek_runs(tmp_path, monkeypatch) -> None:
     loop, ctx, execute, _ = _setup(tmp_path, monkeypatch, flag=True, action=CLICK, peek=None)
     await loop._execute_attempt(ctx)
     execute.assert_awaited_once()
+
+
+async def test_flag_off_the_gate_stage_leaves_a_stored_approval_alone(tmp_path, monkeypatch) -> None:
+    """Flag off: the gate stage must not touch an approval stored for another action."""
+    wait = AgentAction(action_type=ActionType.WAIT_FOR_USER, text="help")
+    loop, ctx, _, _ = _setup(tmp_path, monkeypatch, flag=False, action=wait, peek=None)
+    stored = (loop._gate_fingerprint(CLICK), frozenset({"trust"}))
+    loop._approved_gate_actions["r1"] = stored
+    loop._run_cancelled = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    loop._pause_for_user = AsyncMock(return_value="paused")  # type: ignore[method-assign]
+    ctx.state = SimpleNamespace(intent="x", target_failure_counts={}, permission_mode=None)
+    ctx.perception = ctx.perception_debug = ctx.policy_debug = ctx.before_artifact_path = None
+
+    await loop._gate_stage(ctx)
+
+    assert loop._approved_gate_actions["r1"] == stored

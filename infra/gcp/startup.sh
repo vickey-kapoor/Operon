@@ -20,7 +20,7 @@ RUNNER_SHA256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
 RUNNER_USER=runner
 RUNNER_HOME=/home/runner
 RUNNER_DIR="$RUNNER_HOME/actions-runner"
-PACKAGES=(docker.io python3-venv python3-pip git jq curl)
+PACKAGES=(docker.io python3-venv python3-pip python3-dev build-essential git jq curl)
 
 log() { echo "operon-startup: $*"; }
 

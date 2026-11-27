@@ -2,7 +2,7 @@
 
 Terraform for the VM that runs the OSWorld benchmark (`.github/workflows/osworld-bench.yml`, see
 `docs/osworld-runner.md`). Project `propane-cubist-479515-c5`, region `us-central1`, zone `us-central1-a`.
-Terraform 1.17.2 or newer, provider `hashicorp/google` 8.12.0 (pinned; `.terraform.lock.hcl` is committed
+Terraform 1.10 or newer (CI uses 1.17.2), provider `hashicorp/google` 8.12.0 (pinned; `.terraform.lock.hcl` is committed
 for Linux and Windows).
 
 | Folder | What it makes | State |

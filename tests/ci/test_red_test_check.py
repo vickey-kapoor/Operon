@@ -155,6 +155,35 @@ def test_reports_red_and_passing_modules(repo: Path, capsys: pytest.CaptureFixtu
     assert "passed on base (prove nothing alone): tests/sub/test_weak.py" in err
 
 
+@needs_git
+def test_all_skipped_module_is_not_run(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    skipped = "import pytest\n\n\n@pytest.mark.skip(reason='x')\ndef test_skipped():\n    assert False\n"
+    base = _pr(repo, {"src/toy/mod.py": FIXED, "tests/test_skip.py": skipped})
+    assert _run(repo, base) == 0
+    err = capsys.readouterr().err
+    assert "not run" in err
+    assert "passed on base" not in err
+
+
+@needs_git
+def test_conftest_importing_new_symbol_is_red(repo: Path) -> None:
+    base = _pr(
+        repo,
+        {
+            "src/toy/mod.py": BUGGY + "\n\ndef mul(a, b):\n    return a * b\n",
+            "tests/conftest.py": "from toy.mod import mul  # noqa: F401\n",
+            "tests/test_mul.py": "def test_ok():\n    assert True\n",
+        },
+    )
+    assert _run(repo, base) == 0
+
+
+@needs_git
+def test_other_usage_error_still_fails(repo: Path) -> None:
+    files = {"src/toy/mod.py": FIXED, "tests/conftest.py": "raise SystemExit(3)\n", "tests/test_x.py": "def test_x():\n    assert True\n"}
+    assert _run(repo, _pr(repo, files)) == 1
+
+
 def test_split_files_rules() -> None:
     files = [
         "tests/test_a.py",
@@ -177,6 +206,14 @@ def test_workflow_uses_merge_parent_as_base() -> None:
     raw = (ROOT / ".github" / "workflows" / "red-test.yml").read_text(encoding="utf-8")
     assert "git rev-parse HEAD^1" in raw
     assert "base.sha" not in raw
+
+
+def test_workflow_reads_labels_before_installing() -> None:
+    wf = yaml.safe_load((ROOT / ".github" / "workflows" / "red-test.yml").read_text(encoding="utf-8"))
+    steps = wf["jobs"]["red-test"]["steps"]
+    label = next(i for i, st in enumerate(steps) if st.get("id") == "labels")
+    sync = next(i for i, st in enumerate(steps) if "uv sync" in st.get("run", ""))
+    assert label < sync
 
 
 def test_workflow_safety_rails() -> None:

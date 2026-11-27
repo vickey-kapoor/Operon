@@ -8,7 +8,9 @@ lists which modules were red and which passed on base. Stdlib only, $0.
 
 Code means a changed file under src/, scripts/, evals/ or .github/. Exit 0: at least one changed test module
 fails on the base (good), or the check is skipped (no changed test, no code change, nothing collected, or
-``--opt-out`` for a PR labelled ``no-red-test``). Exit 1: every module passes on the base, or pytest failed in
+``--opt-out`` for a PR labelled ``no-red-test``). A module whose tests are all skipped on the base counts as
+"not run" (like nothing collected), not as passed. A changed ``tests/conftest.py`` that fails to import (it uses
+something only the PR adds) counts as red. Exit 1: every module that ran passes on the base, or pytest failed in
 some other way. The reasons go to stderr and, when set, to
 ``$GITHUB_STEP_SUMMARY``.
 """
@@ -18,9 +20,11 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 TIMEOUT_S = 15 * 60
@@ -59,9 +63,43 @@ def _tail(text: str) -> str:
     return "\n".join(text.splitlines()[-TAIL_LINES:])
 
 
-def run_on_base(repo: Path, base: str, head: str, tests: list[str], test_modules: list[str]) -> list[tuple[str, int | None, str]]:
-    """Run each changed test module on the base code. Returns (module, exit code or None on timeout, output)."""
-    results: list[tuple[str, int | None, str]] = []
+def _outcomes(xml_path: Path) -> tuple[int, int] | None:
+    """Return (passed, failed or errored) from a pytest junit file, or None if it is missing or unreadable."""
+    try:
+        root = ET.parse(xml_path).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    passed = failed = 0
+    for suite in [root] if root.tag == "testsuite" else root.iter("testsuite"):
+        n, f, e, sk = (int(suite.get(k, "0")) for k in ("tests", "failures", "errors", "skipped"))
+        failed += f + e
+        passed += max(n - f - e - sk, 0)
+    return passed, failed
+
+
+CONFTEST_IMPORT = re.compile(r"while loading conftest[\s\S]*?(ImportError|ModuleNotFoundError|AttributeError)")
+
+
+def classify(code: int | None, output: str, counts: tuple[int, int] | None) -> str:
+    """One of red, passed, notrun, other for a module's base run."""
+    if code is None:
+        return "other"
+    if code in (1, 2):
+        return "red"
+    if code == 5:
+        return "notrun"
+    if code == 4 and CONFTEST_IMPORT.search(output):
+        return "red"
+    if code == 0:
+        if counts is not None and counts[0] == 0 and counts[1] == 0:
+            return "notrun"
+        return "passed"
+    return "other"
+
+
+def run_on_base(repo: Path, base: str, head: str, tests: list[str], test_modules: list[str]) -> list[tuple[str, int | None, str, tuple[int, int] | None]]:
+    """Run each changed test module on the base code. Returns (module, exit code or None on timeout, output, (passed, failed))."""
+    results: list[tuple[str, int | None, str, tuple[int, int] | None]] = []
     with tempfile.TemporaryDirectory(prefix="red-test-", ignore_cleanup_errors=True) as tmp:
         wt = Path(tmp) / "wt"
         _git(repo, "worktree", "add", "--detach", str(wt), base)
@@ -73,15 +111,16 @@ def run_on_base(repo: Path, base: str, head: str, tests: list[str], test_modules
             env = dict(os.environ)
             # The base code must win over an editable install that points at another checkout.
             env["PYTHONPATH"] = os.pathsep.join(p for p in (str(wt / "src"), env.get("PYTHONPATH", "")) if p)
-            for module in test_modules:
-                cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", module]
+            for i, module in enumerate(test_modules):
+                xml_path = Path(tmp) / f"junit-{i}.xml"
+                cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--junitxml={xml_path}", module]
                 try:
                     proc = subprocess.run(cmd, cwd=wt, env=env, capture_output=True, text=True, timeout=TIMEOUT_S)
                 except subprocess.TimeoutExpired as exc:
                     out = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
-                    results.append((module, None, out))
+                    results.append((module, None, out, None))
                     continue
-                results.append((module, proc.returncode, proc.stdout + proc.stderr))
+                results.append((module, proc.returncode, proc.stdout + proc.stderr, _outcomes(xml_path)))
         finally:
             subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=repo, capture_output=True)
     return results
@@ -112,19 +151,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     results = run_on_base(repo, a.base, a.head, tests, test_modules)
-    red = [m for m, c, _ in results if c in (1, 2)]
-    other = [(m, c, o) for m, c, o in results if c not in (1, 2, 5)]
-    passed = [m for m, c, _ in other if c == 0]
+    kinds = [(m, c, o, classify(c, o, n)) for m, c, o, n in results]
+    red = [m for m, _, _, k in kinds if k == "red"]
+    notrun = [m for m, _, _, k in kinds if k == "notrun"]
+    other = [(m, c, o) for m, c, o, k in kinds if k in ("passed", "other")]
+    passed = [m for m, _, _, k in kinds if k == "passed"]
     lines = []
     if red:
         lines.append("red on base (fail without the fix): " + ", ".join(red))
     if passed:
         lines.append("passed on base (prove nothing alone): " + ", ".join(passed))
+    if notrun:
+        lines.append("not run on base (nothing collected, or every test skipped): " + ", ".join(notrun))
     if not red and not other:
-        _report("skipped", ["pytest collected no tests (deselected by markers?)"])
+        _report("skipped", ["no changed test module ran on the base (nothing collected, or every test skipped)", *lines])
         return 0
     if red:
-        first = next(o for _, c, o in results if c in (1, 2))
+        first = next(o for m, _, o, k in kinds if k == "red")
         _report("pass", ["at least one changed test fails without the fix, good", *lines, f"base pytest output of {red[0]} (tail):\n{_tail(first)}"])
         return 0
     errors = [f"{m}: {_describe(c)}" for m, c, _ in other if c != 0]

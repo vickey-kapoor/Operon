@@ -31,15 +31,6 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Install uv (packages cached between runs, keyed on uv.lock)
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Install dependencies (exact versions from uv.lock)
-        run: uv sync --locked --extra dev
-
       - name: Read the PR's current labels
         id: labels
         env:
@@ -52,6 +43,15 @@ jobs:
           else
             echo "opt_out=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev
 
       - name: Run the PR's tests on the base code
         env:

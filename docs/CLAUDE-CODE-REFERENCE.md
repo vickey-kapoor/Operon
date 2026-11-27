@@ -60,7 +60,13 @@ Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
   a `needs-vickey` one) until Vickey writes "merge" for that PR.
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It first resumes any story thread stopped by a
-  usage limit. It starts no new story while one is in progress. Otherwise it starts one thread for the next
+  usage limit. Then it looks at main first (KAN-222): main is broken when an open `nightly-failure` issue
+  exists or the latest finished free run on main (`ci.yml`, `security.yml`) failed. A broken main gets one
+  "Fix broken main: <check>" thread before any new story starts. That thread marks its one try on the
+  `nightly-failure` issue, fixes the real cause in a normal PR (never by skipping, disabling or weakening a
+  test or check), and closes the issue once a hand-started free run on main is green. If the one try fails
+  (or the check was only flaky), it writes an inbox story under KAN-210 and tells Vickey instead of trying
+  again. It starts no new story while one is in progress. Otherwise it starts one thread for the next
   story in board order whose latest Vickey comment approves it, or that is `pre-approved` (never "Run:" or paid stories). It posts one
   line only when it did something. A run that hits Claude's usage limit just skips; the next run retries.
   The full prompt lives in the scheduled task itself. Claude's Jira comments start with "(from Claude)"

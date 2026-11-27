@@ -953,6 +953,7 @@ async def test_settle_grab_does_not_launch_a_browser(tmp_path) -> None:
 
 
 async def test_settle_grab_reads_the_open_page(tmp_path) -> None:
+    """With a browser open, the settle grab still reads a small frame of the page."""
 
     buf = __import__("io").BytesIO()
     __import__("PIL.Image", fromlist=["Image"]).new("RGB", (40, 30), "white").save(buf, format="JPEG")

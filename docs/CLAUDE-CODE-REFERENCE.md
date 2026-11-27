@@ -31,9 +31,8 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
   2. Add `Microsoft.Compute/virtualMachines/runCommand/action` to the Azure role "Operon bench VM
      operator" (`az role definition update`, see `docs/azure-desktop-runner.md`).
   3. Delete the old persistent runners in Settings > Actions > Runners.
-  4. `operon-linux`: the runner stays unpacked in `~/actions-runner` (no `config.sh`/`svc.sh`); the
-     first run retires the old service itself. `operon-desktop`: re-run `setup-runner.ps1` (no token)
-     before its next `azure` run.
+  4. `operon-desktop`: re-run `setup-runner.ps1` (no token) before its next `azure` run. The OSWorld VM
+     `operon-osworld` (Google Cloud, KAN-224) unpacks the runner itself in its startup script.
 - Multiple PRs a day are fine. `main` is protected: PR required, Test + Lint checks
   required, no force push.
 - Commit subjects: `Fix:`/`Feat:`/`Docs:`/`CI:`/`Chore:`/`Refactor:`, one line, with
@@ -138,10 +137,11 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
 | GitHub | `vickey-kapoor/Operon`. API keys (Gemini, Anthropic, OpenAI) are repo secrets. Actions: approval required for all external contributors. |
 | Paid workflow | `benchmark.yml` "Run Operon on test tasks (paid)": manual dispatch (`cells`), `/bench grounding` or `/bench batch` PR comments. Paid runs are OSWorld and grounding only (KAN-184). Engines: `osworld-bench.yml`, `grounding.yml` (`live-bench.yml` and `live-desktop-bench.yml` are no longer startable, kept until the cleanup PR). Syntax in `evals/CLAUDE.md`. |
 | Paid batches | Started by hand with `cells` (Actions > Run Operon on test tasks (paid) > Run workflow). The nightly queue (`evals/nightly-queue.txt`) was removed 2026-11-18; it stays in git history. Older batch log: project file `bench-queue/queue.md`. |
-| OSWorld | `osworld-bench.yml` "Run OSWorld test tasks (own VM)": started by hand or as a batch cell (always the default branch), runs on Azure VM `operon-linux`, report artifact `osworld-report` (not imported to the dashboard). |
+| OSWorld | `osworld-bench.yml` "Run OSWorld test tasks (own VM)": started by hand or as a batch cell (always the default branch), runs on the Google Cloud VM `operon-osworld` (KAN-224), report artifact `osworld-report` (not imported to the dashboard). |
 | Azure Windows VM | `operon-desktop` (westus2, resource group `operon-bench`), one-job desktop bench runner minted per run (KAN-195), logged in via OIDC. Clean snapshot `operon-desktop-clean` (manual restore point; `az snapshot create` needs `-l westus2`). |
-| Azure Linux VM | `operon-linux` (westus3, rg `operon-bench`, Standard_D2s_v4): cloud desktop via `operon cloud open`, and the OSWorld runner (a one-job runner minted per run, label `operon-osworld-<run>-<attempt>-<random>`; needs repo secret `RUNNER_ADMIN_TOKEN`, KAN-195). |
-| Deallocate after runs | `az vm deallocate -g operon-bench -n operon-desktop` (or `-n operon-linux`). Workflows deallocate on their own; check by hand after manual work. |
+| Google Cloud | Project `propane-cubist-479515-c5`, VM `operon-osworld` (us-central1-a, n2-standard-4, made by Terraform in `infra/gcp`, see `infra/gcp/README.md`): the OSWorld runner (a one-job runner minted per run, label `operon-osworld-<run>-<attempt>-<random>`, delivered through the metadata key `operon-jit-script`; needs repo secret `RUNNER_ADMIN_TOKEN` and repo variables `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`; KAN-195, KAN-224). The workflow signs in with OIDC as `operon-osworld-ci`. |
+| Azure Linux VM | `operon-linux` was deleted; the OSWorld runner moved to Google Cloud (KAN-224). `operon cloud open` still points at it (separate story). |
+| Deallocate after runs | `az vm deallocate -g operon-bench -n operon-desktop`; the OSWorld VM: `gcloud compute instances stop operon-osworld --zone us-central1-a --project propane-cubist-479515-c5`. Workflows stop their VMs on their own; check by hand after manual work. |
 | az login | Needs `--tenant bae81514-1670-44ef-9e7a-c41552f64f59` (MFA). AVG antivirus HTTPS scanning breaks az certificates on Vickey's PC (workaround: temporary cert file). |
 | Eval dashboard | Vercel project `operon-evals` (root `dashboard/`, don't move it), Neon Postgres. Dashboard reads through the read-only role `dashboard_ro` (`DASHBOARD_DATABASE_URL`). New tables need `GRANT SELECT ... TO dashboard_ro`. Never "Rotate Neon Secrets". Backfill via the "Save run results to dashboard" workflow. |
 | Slack | Critical alerts only (cost cap, failed run, failed import). |

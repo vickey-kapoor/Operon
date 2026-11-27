@@ -85,3 +85,8 @@ desktop.ini
 *.code-workspace
 demo-*.png
 .gcloudignore
+
+# Terraform (infra/, KAN-224): provider downloads and state never go in git; .terraform.lock.hcl does.
+.terraform/
+*.tfstate
+*.tfstate.*

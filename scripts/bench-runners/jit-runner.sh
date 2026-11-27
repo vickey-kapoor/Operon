@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-job (just-in-time) runners for the Azure benchmark VMs (KAN-195).
+# One-job (just-in-time) runners for the benchmark VMs (KAN-195): the Windows desktop VM on Azure and
+# the OSWorld VM on Google Cloud (KAN-224).
 #
 # The repo is public, so a lasting self-hosted runner could be handed any approved fork-PR workflow
 # that asks for its label. Instead nothing lasting stays registered: each paid run mints a JIT runner
@@ -8,13 +9,16 @@
 #
 #   bash jit-runner.sh start <linux|windows> <label> <static-label>
 #       mint the JIT config, delete any old lasting runner that carries <static-label>, hand the
-#       config to the VM (az vm run-command), then wait until the runner is online. Prints only the
-#       VM script's output.
+#       config to the VM, then wait until the runner is online. Azure (VM_CLOUD=azure, the default):
+#       az vm run-command runs the VM script and prints its output. Google Cloud (VM_CLOUD=gcp, linux
+#       only): the script goes on the VM's metadata key operon-jit-script, the VM's operon-jit-watch
+#       service runs it (infra/gcp/startup.sh), and the key is always removed again afterwards.
 #   bash jit-runner.sh remove <label>
 #       delete the runner named <label> if it is still registered (the job never started).
 #
 # Needs: GH_ADMIN_TOKEN (fine-grained token, this repo only, Administration read+write), GH_REPO
-# (owner/name), and for `start` RESOURCE_GROUP, VM_NAME and an `az` that is already signed in.
+# (owner/name), and for `start` VM_NAME plus, on Azure, RESOURCE_GROUP and an `az` that is already
+# signed in, or, on Google Cloud, GCP_ZONE, GCP_PROJECT and a `gcloud` that is already signed in.
 # RUNNER_ONLINE_TIMEOUT / RUNNER_POLL_INTERVAL (seconds, default 300 / 10) tune the wait.
 # The token and the config are secrets: never echo them, never put them in a command line.
 set -euo pipefail
@@ -69,10 +73,40 @@ check_label() {
   case "$1" in ("" | *[!a-z0-9-]*) echo "::error::runner label must be lowercase letters, digits and dashes" >&2; exit 1;; esac
 }
 
+# gcloud on the Google Cloud VM: gcp_instances VERB [ARGS...].
+gcp_instances() {
+  local verb="$1"; shift
+  gcloud compute instances "$verb" "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" "$@"
+}
+
+# Google Cloud delivery: put the script on the metadata (from a file, so the config is never in a
+# command line), wait for the runner, then always take the key off again: a failed removal fails too.
+deliver_gcp() {
+  local label="$1" rc=0
+  gcp_instances add-metadata --metadata-from-file "operon-jit-script=$tmp/script" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "runner script is on the VM's metadata"
+    wait_online "$label" || rc=$?
+  fi
+  if ! gcp_instances remove-metadata --keys operon-jit-script; then
+    echo "::error::could not remove the runner script from the VM's metadata" >&2
+    [ "$rc" -ne 0 ] || rc=1
+  fi
+  return "$rc"
+}
+
 start() {
-  local os="$1" label="$2" static="$3" command_id template config out
+  local os="$1" label="$2" static="$3" cloud="${VM_CLOUD:-azure}" command_id template config out
   check_label "$label"; check_label "$static"
-  : "${RESOURCE_GROUP:?RESOURCE_GROUP is required}" "${VM_NAME:?VM_NAME is required}"
+  : "${VM_NAME:?VM_NAME is required}"
+  case "$cloud" in
+    azure) : "${RESOURCE_GROUP:?RESOURCE_GROUP is required}" ;;
+    gcp)
+      : "${GCP_ZONE:?GCP_ZONE is required}" "${GCP_PROJECT:?GCP_PROJECT is required}"
+      [ "$os" = linux ] || { echo "::error::VM_CLOUD=gcp takes linux only" >&2; exit 1; }
+      ;;
+    *) echo "::error::VM_CLOUD must be azure or gcp" >&2; exit 1 ;;
+  esac
   case "$os" in
     linux)   command_id=RunShellScript;      template="$HERE/vm-linux.sh" ;;
     windows) command_id=RunPowerShellScript; template="$HERE/vm-windows.ps1" ;;
@@ -97,6 +131,11 @@ start() {
     printf "\$JitConfig = '%s'\n\$RunnerLabel = '%s'\n" "$config" "$label" > "$tmp/script"
   fi
   cat "$template" >> "$tmp/script"
+
+  if [ "$cloud" = gcp ]; then
+    deliver_gcp "$label"
+    return
+  fi
 
   # az prints the script's output; the VM script ends with "operon-jit-runner-started" when it worked.
   out="$(az vm run-command invoke --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" \

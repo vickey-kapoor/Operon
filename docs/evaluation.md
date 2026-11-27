@@ -193,7 +193,7 @@ osworld only=2c1ebcd7 cap=1
 Both take `cap=<USD>` (the whole cell's cost cap, default $3). A line for an own suite is refused. The batch is refused before anything starts when
 its caps add up to more than `max_total_usd` (default $10), so the most it can spend is known up
 front. Grounding cells run side by side on hosted runners; OSWorld cells run one after another on the OSWorld VM
-(the OSWorld workflow starts and deallocates it). `evals/bench_batch.py` reads and checks the cells.
+(the OSWorld workflow starts and stops the Google Cloud VM). `evals/bench_batch.py` reads and checks the cells.
 
 ## Adding models later
 

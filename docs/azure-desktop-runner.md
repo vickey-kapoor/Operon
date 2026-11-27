@@ -117,8 +117,8 @@ role also allows password resets and more. Run Command (code as SYSTEM on the VM
 now in the role, because that is how a run hands the VM its one-job runner config
 (KAN-195). The trade-off: the identity is trusted for `main` only, and it now delivers
 a one-job runner instead of the VM holding a lasting one that any approved workflow could use.
-The run-command right is granted on the whole resource group, so it also covers every other VM in it,
-including `operon-linux`, which `operon cloud open` uses.
+The run-command right is granted on the whole resource group, so it also covers every other VM in it.
+(The OSWorld runner moved to Google Cloud in KAN-224 and no longer uses this role; see `docs/osworld-runner.md`.)
 
 ```powershell
 $sub = az account show --query id -o tsv

@@ -182,6 +182,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - The PR-gate label job runs main's copy of `scripts/pr_gate.py`, so a new flag failed the check -> pass new flags only when the base script supports them, until merged (#374).
 - A settle frame grab could launch the browser inside the wait's time limit, where a slow start is cancelled half-way -> a frame grab only reads a session that already exists; it never opens one (KAN-203, #380).
 - A changed default (no Win+D on your own PC) silently took the clean screen from the live desktop benchmarks -> when a default changes, find every caller that relied on the old one and make it ask explicitly (KAN-205, #379).
+- A Google workload identity mapping read an OIDC claim (`job_workflow_ref`) that a directly started run may not carry -> map an optional claim as `"claim" in assertion ? assertion.claim : <fallback>`, and check a direct start and a called run both sign in at apply (KAN-224, #386).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 

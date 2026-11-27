@@ -6,7 +6,7 @@ repo `C:\Users\vicke\GitHub\Operon`). Work moved here from the claude.ai project
 architecture, invariants and the Opus/Haiku/Sonnet dev workflow; this file adds the
 standing rules, infrastructure and open items that live outside the code.
 
-Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
+Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
 `~/.operon` and Vickey's local `.env`.
 
 ## Standing rules (Vickey)
@@ -60,13 +60,15 @@ Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
   a `needs-vickey` one) until Vickey writes "merge" for that PR.
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It first resumes any story thread stopped by a
-  usage limit. Then it looks at main first (KAN-222): main is broken when an open `nightly-failure` issue
-  exists or the latest finished free run on main (`ci.yml`, `security.yml`) failed. A broken main gets one
-  "Fix broken main: <check>" thread before any new story starts. That thread marks its one try on the
-  `nightly-failure` issue, fixes the real cause in a normal PR (never by skipping, disabling or weakening a
-  test or check), and closes the issue once a hand-started free run on main is green. If the one try fails
-  (or the check was only flaky), it writes an inbox story under KAN-210 and tells Vickey instead of trying
-  again. It starts no new story while one is in progress. Otherwise it starts one thread for the next
+  usage limit. Then it looks at main first (KAN-222): main looks red when an open `nightly-failure` issue
+  exists or the latest finished free run on main (`ci.yml`, `security.yml`; schedule, push or hand start)
+  failed. Each break gets exactly one try, recorded on one open `main-broken` issue that the nightly never
+  closes. A "Fix broken main: <check>" thread opens that issue, starts a fresh free run on main to confirm
+  the break, fixes the real cause in a normal PR (never by skipping, disabling or weakening a test or
+  check), and closes the issue once a fresh run is green. If it was only flaky or the try fails, it writes
+  (or adds to) an inbox story under KAN-210 and tells Vickey. While a try is running no new story starts;
+  once the issue has its outcome (or the fix PR waits on Vickey's "merge"), stories go on, and the pickup
+  closes the issue when main is green again. It starts no new story while one is in progress. Otherwise it starts one thread for the next
   story in board order whose latest Vickey comment approves it, or that is `pre-approved` (never "Run:" or paid stories). It posts one
   line only when it did something. A run that hits Claude's usage limit just skips; the next run retries.
   The full prompt lives in the scheduled task itself. Claude's Jira comments start with "(from Claude)"

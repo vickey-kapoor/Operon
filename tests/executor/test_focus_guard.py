@@ -212,3 +212,21 @@ async def test_peek_frame_does_not_rerecord_focus(monkeypatch) -> None:
         assert executor._internal_capture is False
         await executor.capture()
         record.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_capture_deletes_the_discarded_first_frame(monkeypatch, tmp_path) -> None:
+    """When the screen was still moving, the first burst's file is removed, not orphaned."""
+    from operon.models.capture import CaptureFrame
+
+    executor = _guarded(monkeypatch)
+    paths = []
+    for i, velocity in enumerate((0.5, 0.0)):
+        path = tmp_path / f"f{i}.png"
+        path.write_bytes(b"x")
+        paths.append((CaptureFrame(artifact_path=str(path), width=1, height=1), velocity))
+    with patch.object(executor, "_capture_burst_sync", side_effect=paths), patch("asyncio.sleep", new_callable=AsyncMock):
+        frame = await executor.capture()
+    assert frame.artifact_path == str(tmp_path / "f1.png")
+    assert not (tmp_path / "f0.png").exists()
+    assert (tmp_path / "f1.png").exists()

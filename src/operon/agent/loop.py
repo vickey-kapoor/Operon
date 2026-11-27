@@ -1355,6 +1355,9 @@ class AgentLoop:
         peek = getattr(self.executor, "peek_frame", None)
         if point is None or not inspect.iscoroutinefunction(peek):
             return None
+        if self._approved_gates(ctx.run_id, action):
+            # A person approved this action at a pause: it runs as approved, never skipped again.
+            return None
         fresh = None
         try:
             fresh = await peek()
@@ -1362,7 +1365,7 @@ class AgentLoop:
                 return None
             x = point[0] - int(getattr(ctx.frame, "monitor_left", 0) or 0)
             y = point[1] - int(getattr(ctx.frame, "monitor_top", 0) or 0)
-            changed = spot_changed(ctx.frame.artifact_path, fresh.artifact_path, x, y)
+            changed = await asyncio.to_thread(spot_changed, ctx.frame.artifact_path, fresh.artifact_path, x, y)
         except Exception as exc:  # noqa: BLE001 - the fresh look must never fail a step
             self._recovered(ctx.run_id, "fresh_look", exc)
             return None

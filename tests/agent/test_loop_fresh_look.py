@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-import pytest
 from PIL import Image, ImageDraw
 
 from operon.agent.loop import AgentLoop
@@ -112,13 +111,30 @@ async def test_monitor_origin_is_subtracted(tmp_path, monkeypatch) -> None:
     execute.assert_not_awaited()
 
 
-@pytest.mark.parametrize("mode", ["none", "raises"])
-async def test_peek_failure_fails_open(tmp_path, monkeypatch, mode) -> None:
-    peek = AsyncMock(return_value=None) if mode == "none" else AsyncMock(side_effect=RuntimeError("boom"))
+async def test_peek_returning_none_runs_the_action(tmp_path, monkeypatch) -> None:
+    loop, ctx, execute, _ = _setup(tmp_path, monkeypatch, flag=True, action=CLICK, peek=AsyncMock(return_value=None))
+    await loop._execute_attempt(ctx)
+    execute.assert_awaited_once()
+    assert ctx.executed_action.success
+
+
+async def test_peek_error_is_counted_and_the_action_runs(tmp_path, monkeypatch) -> None:
+    peek = AsyncMock(side_effect=RuntimeError("boom"))
     loop, ctx, execute, _ = _setup(tmp_path, monkeypatch, flag=True, action=CLICK, peek=peek)
     await loop._execute_attempt(ctx)
     execute.assert_awaited_once()
     assert ctx.executed_action.success
+    assert loop._recovered_errors["r1"]
+
+
+async def test_an_approved_action_runs_without_a_peek(tmp_path, monkeypatch) -> None:
+    """A person approved this action at a pause (e.g. coordinate thrash): the fresh look must not skip it again."""
+    peek, _ = _peek_returning(tmp_path, popup=True)
+    loop, ctx, execute, _ = _setup(tmp_path, monkeypatch, flag=True, action=CLICK, peek=peek)
+    loop._approved_gate_actions["r1"] = (loop._gate_fingerprint(CLICK), frozenset({"coordinate_thrash"}))
+    await loop._execute_attempt(ctx)
+    peek.assert_not_awaited()
+    execute.assert_awaited_once()
 
 
 async def test_non_pointer_action_does_not_peek(tmp_path, monkeypatch) -> None:

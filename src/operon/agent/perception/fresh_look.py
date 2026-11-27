@@ -74,15 +74,15 @@ def spot_changed(
     (x, y) are pixels of the images. The square is clamped to the image. None when either
     image can't be read, the sizes differ, or the point is outside the image. Never raises."""
     try:
-        a = _load(before).convert("L")
-        b = _load(fresh).convert("L")
+        a = _load(before)
+        b = _load(fresh)
         if a.size != b.size:
             return None
         width, height = a.size
         if not (0 <= x < width and 0 <= y < height):
             return None
         box = (max(0, x - radius), max(0, y - radius), min(width, x + radius), min(height, y + radius))
-        diff = ImageChops.difference(a.crop(box), b.crop(box))
+        diff = ImageChops.difference(a.crop(box).convert("L"), b.crop(box).convert("L"))
         data = diff.tobytes()
         if not data:
             return None

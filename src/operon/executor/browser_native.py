@@ -221,17 +221,13 @@ class NativeBrowserExecutor(Executor):
 
     async def peek_frame(self) -> CaptureFrame | None:
         """A fresh page screenshot for the fresh look (KAN-207). Never opens a browser: None when
-        the run has no session, and on any error."""
+        the run has no session. Other errors propagate: the loop counts them and fails open."""
         run_id = self._current_run_id
         if run_id is None or run_id not in self._sessions:
             return None
-        try:
-            page = await self._current_page(foreground=False)
-            filepath = self._artifact_dir / f"browser_{uuid4().hex[:8]}.png"
-            await page.screenshot(path=str(filepath))
-        except Exception as exc:  # noqa: BLE001 - the fresh look fails open
-            logger.debug("peek_frame failed: %s", exc)
-            return None
+        page = await self._current_page(foreground=False)
+        filepath = self._artifact_dir / f"browser_{uuid4().hex[:8]}.png"
+        await page.screenshot(path=str(filepath))
         return CaptureFrame(
             artifact_path=str(filepath),
             width=self._viewport_width,

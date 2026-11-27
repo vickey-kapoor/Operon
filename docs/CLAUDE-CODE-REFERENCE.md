@@ -74,10 +74,18 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
   once the issue has its outcome, or the thread is waiting on Vickey, stories go on, and the pickup closes the
   issue when that workflow is green again. Next it resumes any story thread stopped by a usage limit. It starts no
   new story while one is in progress. Otherwise it starts one thread for the next
-  story in board order whose latest Vickey comment approves it, or that is `pre-approved` (never "Run:" or paid stories). It posts one
-  line only when it did something. A run that hits Claude's usage limit just skips; the next run retries.
+  story in board order whose latest Vickey comment approves it, or that is `pre-approved` (never "Run:" or paid stories). It posts a
+  line only when something needs Vickey right away (see the weekly summary below). A run that hits Claude's usage limit just skips; the next run retries.
   The full prompt lives in the scheduled task itself (copy: project file `kan217/pickup-prompt.md`). Claude's Jira comments start with "(from Claude)"
   (they post through Vickey's own Jira connection, so they carry her account).
+- **One weekly summary instead of many pings (KAN-223).** Every Monday at 7:37 AM Chicago a scheduled task posts ONE
+  message to Vickey: what merged, what finished, what needs her OK, and what was spent, with a Substack draft of the
+  week's progress for her to edit and post (Claude never posts it). Between Mondays, Claude messages her only when
+  something needs her right away: main is broken and needs her, tonight's tests failed, a paid run waits on her OK,
+  work is stuck until she acts (a "merge", a decision, a question, a permission prompt), or something could cost money
+  or leak a secret. A merged PR, a finished story, a new inbox story or a tidy-up result waits for Monday. Claude
+  always answers her own messages. The 9:47 PM daily check posts only those urgent items. Rules: project files
+  `planning/right-away.md` and `planning/weekly-summary.md`.
 - **Plans and docs go in Confluence, space OPERON** (not Claude Docs). Add new pages
   to the OPERON home page table of contents (page 295140).
 - **Never drop or change a step of an approved plan without asking.** If a run or

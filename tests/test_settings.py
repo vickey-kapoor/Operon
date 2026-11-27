@@ -189,6 +189,7 @@ _EXPERIMENTAL_OFF = [
     ("claude_zoom", False),
     ("progress_revisit", False),
     ("settle_detect", False),
+    ("fresh_look", False),
     ("change_note", False),
     ("focus_guard", False),
     ("trust_categories", False),

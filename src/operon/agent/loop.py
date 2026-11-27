@@ -43,6 +43,11 @@ from operon.agent.perception.expect_check import (
     mismatch_note,
     parse_expectation,
 )
+from operon.agent.perception.fresh_look import (
+    CHANGED_THRESHOLD,
+    pointer_point,
+    spot_changed,
+)
 from operon.agent.planner import (
     PLANNER_DEADLINE_S,
     PLANNER_USAGE_FILE,
@@ -1315,13 +1320,17 @@ class AgentLoop:
         _t0 = time.perf_counter()
         self._install_batch_child_check(ctx.run_id, decision.action)
         try:
-            ctx.state, executed_action = await self._execute_action(
-                record=ctx.record,
-                state=ctx.state,
-                decision_action=decision.action,
-                step_index=ctx.step_index,
-                use_unified_executor=True,
-            )
+            stale = await self._fresh_look_stale(ctx)
+            if stale is not None:
+                executed_action = stale
+            else:
+                ctx.state, executed_action = await self._execute_action(
+                    record=ctx.record,
+                    state=ctx.state,
+                    decision_action=decision.action,
+                    step_index=ctx.step_index,
+                    use_unified_executor=True,
+                )
         finally:
             if hasattr(self.executor, "batch_child_check"):
                 self.executor.batch_child_check = None
@@ -1331,6 +1340,62 @@ class AgentLoop:
         # in its log (KAN-218, KAN-219).
         ctx.after_captured = executed_action.artifact_path is not None
         ctx.executed_action = self._relocate_after_artifact(executed_action, ctx.after_artifact_path)
+
+    async def _fresh_look_stale(self, ctx: StepContext) -> ExecutedAction | None:
+        """OPERON_FRESH_LOOK (KAN-207): a failed result when the target spot changed since the model saw it.
+
+        One fresh frame just before a pointer action; the square around the target is compared with
+        the same square of the step's screenshot. Changed: the action is not run, and the model is
+        told to look again. The action is never moved or retried. Any error fails open (the action runs).
+        """
+        if not get_settings().fresh_look:
+            return None
+        action = ctx.decision.action
+        point = pointer_point(action)
+        peek = getattr(self.executor, "peek_frame", None)
+        if point is None or not inspect.iscoroutinefunction(peek):
+            return None
+        fresh = None
+        try:
+            fresh = await peek()
+            if fresh is None:
+                return None
+            x = point[0] - int(getattr(ctx.frame, "monitor_left", 0) or 0)
+            y = point[1] - int(getattr(ctx.frame, "monitor_top", 0) or 0)
+            changed = spot_changed(ctx.frame.artifact_path, fresh.artifact_path, x, y)
+        except Exception as exc:  # noqa: BLE001 - the fresh look must never fail a step
+            self._recovered(ctx.run_id, "fresh_look", exc)
+            return None
+        finally:
+            if fresh is not None:
+                try:
+                    Path(fresh.artifact_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+        if changed is None or changed <= CHANGED_THRESHOLD:
+            return None
+        px, py = point
+        name = action.action_type.value
+        logger.info("fresh look: spot (%s, %s) changed (%.0f%%); %s not run", px, py, changed * 100, name)
+        executed = ExecutedAction(
+            action=action,
+            success=False,
+            detail=f"screen_changed: the screen at ({px}, {py}) changed while the model was deciding; nothing was clicked",
+            failure_category=FailureCategory.STALE_TARGET_BEFORE_ACTION,
+        )
+        executed = self._apply_no_progress_detection(ctx.state, executed)
+        executed = self._persist_execution_trace(ctx.run_id, ctx.step_index, executed)
+        add_hints = getattr(self.perception_service, "add_advisory_hints", None)
+        if callable(add_hints):
+            add_hints(
+                [
+                    f"Note from Operon: the screen changed at ({px}, {py}) while you were deciding, so your {name} "
+                    "was not done. This is the current screen: look again and decide."
+                ],
+                source="fresh_look",
+                run_id=ctx.run_id,
+            )
+        return executed
 
     def _add_secrets_hint(self, ctx: StepContext) -> None:
         """Tell the model which secret NAMES it may type (OPERON_SECRETS, KAN-103).

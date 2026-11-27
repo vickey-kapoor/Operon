@@ -63,7 +63,7 @@ methods over a `StepContext` (`agent/step_context.py`, KAN-155). Fields a stage 
 | 4 | `_perceive_stage` | Memory hints, then `perception_service.perceive` (with a liveness retry); stamps the monitor origin; saves the observation |
 | 5 | `_decide_stage` | `policy_service.choose_action`; `_attach_target_context` (monitor origin) |
 | 6 | `_gate_stage` | Cancel check, then `_gate_pause_decision`: the model asked for a human, coordinate thrash (3 failures at one point), confidence threshold, trust gate, file guard. A blocked action becomes WAIT_FOR_USER and the run pauses |
-| 7 | `_execute_and_verify_stage` | `_execute_action` once (no retry), then `verifier_service.verify` and the change note |
+| 7 | `_execute_and_verify_stage` | with `OPERON_FRESH_LOOK` on, a fresh look at the target spot first (changed: the action is not run, KAN-207); then `_execute_action` once (no retry), then `verifier_service.verify` and the change note |
 | 8 | `_recover_stage` | `recovery_manager.recover`, then `validate_benchmark_integrity`; progress tracking and `progress_trace.json` |
 | 9 | `_record_step_stage`, `_finish_step_stage` | Writes the `StepLog` to `run.jsonl`; sets SUCCEEDED, FAILED, RUNNING, CANCELLED or WAITING_FOR_USER; applies CONTEXT_RESET and SESSION_RESET side effects; writes `step_timing.json`; on a terminal status writes `efficiency.json` |
 
@@ -385,6 +385,7 @@ Experimental work ships behind an env flag that defaults to off. Defaults are fr
 |---|---|---|
 | `OPERON_PARALLEL_RUNS` | 1 | Batch browser runs that may step at once, each with its own Chromium |
 | `OPERON_SETTLE_DETECT` / `OPERON_SETTLE_MAX_S` | off / 3.0 | Wait for the screen to stop changing instead of a fixed sleep |
+| `OPERON_FRESH_LOOK` | off | Fresh screenshot just before a pointer action; skip it when the spot around the target changed (KAN-207) |
 | `OPERON_CHANGE_NOTE` | off | One text line about what changed while the screen settled |
 | `OPERON_FOCUS_GUARD` | off | Skip the first action after a capture if focus was stolen (Windows) |
 | `OPERON_DPI_AWARE` | off | Per-monitor-v2 DPI awareness before `pyautogui` loads (Windows) |

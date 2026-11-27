@@ -197,3 +197,18 @@ async def test_flag_off_never_reads_windows(monkeypatch) -> None:
         await executor.execute(AgentAction(action_type=ActionType.PRESS_KEY, key="enter"))
         executor._record_focus()
     owner.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_peek_frame_does_not_rerecord_focus(monkeypatch) -> None:
+    """KAN-207: a fresh look must not hide a focus steal that happened while the model decided."""
+    executor = _guarded(monkeypatch)
+    with (
+        patch.object(executor, "_capture_burst_sync", return_value=("frame", 0.0)),
+        patch.object(executor, "_record_focus") as record,
+    ):
+        assert await executor.peek_frame() == "frame"
+        record.assert_not_called()
+        assert executor._internal_capture is False
+        await executor.capture()
+        record.assert_called_once()

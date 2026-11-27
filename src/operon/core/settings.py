@@ -122,6 +122,8 @@ class Settings(BaseModel):
     parallel_runs: int = _env_field("OPERON_PARALLEL_RUNS", 1)
     # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
     settle_detect: bool = _env_field("OPERON_SETTLE_DETECT", False)
+    # Look at the screen again just before a pointer action; skip it if the spot changed (KAN-207).
+    fresh_look: bool = _env_field("OPERON_FRESH_LOOK", False)
     # Gemini's own content filter: "default" sends no safetySettings, "high_only" relaxes it to
     # BLOCK_ONLY_HIGH. Never touches Operon's safety gates or the safety_decision flow.
     gemini_safety: str = _env_field("OPERON_GEMINI_SAFETY", "default")
@@ -404,6 +406,7 @@ class _Parser:
             progress_revisit=self.flag("OPERON_PROGRESS_REVISIT", "off"),
             parallel_runs=max(1, self.number("OPERON_PARALLEL_RUNS", "1", int, fatal=False)),
             settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
+            fresh_look=self.flag("OPERON_FRESH_LOOK", "off"),
             gemini_safety=gemini_safety,
             auto_confirm=self.flag("OPERON_AUTO_CONFIRM", "off"),
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),

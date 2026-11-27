@@ -904,6 +904,18 @@ class DesktopExecutor(Executor):
             self._record_focus()
         return frame
 
+    async def peek_frame(self) -> CaptureFrame | None:
+        """A fresh screenshot with no side effects (KAN-207): the focus guard reference is not
+        re-recorded, so a focus steal during the model's think is still caught. None on error."""
+        self._internal_capture = True
+        try:
+            return await self.capture()
+        except Exception as exc:  # noqa: BLE001 - the fresh look fails open
+            logger.debug("peek_frame failed: %s", exc)
+            return None
+        finally:
+            self._internal_capture = False
+
     # Windows only: the Linux executor turns this off, and off Windows the window helpers return None.
     _focus_guard_platform = True
 

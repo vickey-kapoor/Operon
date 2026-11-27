@@ -170,6 +170,73 @@ async def test_warmup_navigation_runs_when_gate_allows(monkeypatch: pytest.Monke
     assert "https://www.google.com" in _navigations(execute)
 
 
+def _record_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr("operon.agent.loop.asyncio.sleep", fake_sleep)
+    return slept
+
+
+async def test_warmup_sleeps_fixed_time_with_settle_detect_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KAN-203: flag off, the first step waits exactly 2.5 s, as before, even if the executor can settle."""
+    monkeypatch.delenv("OPERON_SETTLE_DETECT", raising=False)
+    loop, execute = _first_step_loop(monkeypatch)
+    settle_now = AsyncMock()
+    loop.executor = SimpleNamespace(execute=execute, settle_now=settle_now)
+    slept = _record_sleeps(monkeypatch)
+
+    await loop._warmup_stage(SimpleNamespace(step_index=1, record=SimpleNamespace(start_url="https://example.com")))
+
+    assert slept == [2.5]
+    settle_now.assert_not_awaited()
+
+
+async def test_warmup_waits_for_still_screen_with_settle_detect_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KAN-203: flag on, the executor's settle wait replaces the fixed 2.5 s (2.5 s is its fallback),
+    and a change note from the start-up is dropped, since no action ran yet."""
+    monkeypatch.setenv("OPERON_SETTLE_DETECT", "on")
+    loop, execute = _first_step_loop(monkeypatch)
+    settle_now = AsyncMock()
+    pop = Mock(return_value="something flashed")
+    loop.executor = SimpleNamespace(execute=execute, settle_now=settle_now, pop_change_note=pop)
+    slept = _record_sleeps(monkeypatch)
+
+    await loop._warmup_stage(SimpleNamespace(step_index=1, record=SimpleNamespace(start_url="https://example.com")))
+
+    settle_now.assert_awaited_once_with(2.5)
+    assert 2.5 not in slept
+    pop.assert_called_once_with()
+
+
+async def test_warmup_falls_back_to_sleep_without_settle_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KAN-203: flag on but the executor can't settle (e.g. Linux desktop): the old 2.5 s sleep."""
+    monkeypatch.setenv("OPERON_SETTLE_DETECT", "on")
+    loop, execute = _first_step_loop(monkeypatch)
+    slept = _record_sleeps(monkeypatch)
+
+    await loop._warmup_stage(SimpleNamespace(step_index=1, record=SimpleNamespace(start_url="https://example.com")))
+
+    assert slept == [2.5]
+
+
+async def test_warmup_skips_after_first_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPERON_SETTLE_DETECT", "on")
+    loop, execute = _first_step_loop(monkeypatch)
+    settle_now = AsyncMock()
+    loop.executor = SimpleNamespace(execute=execute, settle_now=settle_now)
+    slept = _record_sleeps(monkeypatch)
+
+    await loop._warmup_stage(SimpleNamespace(step_index=2, record=SimpleNamespace(start_url="https://example.com")))
+
+    assert slept == []
+    settle_now.assert_not_awaited()
+
+
 # ── Pre-execution gates ──────────────────────────────────────────────────────
 
 

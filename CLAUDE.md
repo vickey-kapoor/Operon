@@ -178,6 +178,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A stop step's run.jsonl row named an after screenshot that was never written -> `after_artifact_path` and `executed_action.artifact_path` name only a screenshot the executor actually took; null otherwise (KAN-218, #368; KAN-219).
 - `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge (found during the #191 restructure).
 - The PR-gate label job runs main's copy of `scripts/pr_gate.py`, so a new flag failed the check -> pass new flags only when the base script supports them, until merged (#374).
+- A settle frame grab could launch the browser inside the wait's time limit, where a slow start is cancelled half-way -> a frame grab only reads a session that already exists; it never opens one (KAN-203, #380).
 - A changed default (no Win+D on your own PC) silently took the clean screen from the live desktop benchmarks -> when a default changes, find every caller that relied on the old one and make it ask explicitly (KAN-205, #379).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)

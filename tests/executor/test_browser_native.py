@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import io
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from PIL import Image
 
+from operon.agent.perception.settle import SIGNATURE_SIZE
 from operon.executor.browser_native import NativeBrowserExecutor, _BrowserSession
 from operon.models.common import FailureCategory
 from operon.models.execution import ExecutedAction
@@ -847,9 +850,7 @@ async def test_batch_child_check_stops_a_batch_before_a_blocked_child(tmp_path: 
 
 
 def _png(draw_menu: bool = False) -> bytes:
-    import io
-
-    from PIL import Image, ImageDraw
+    from PIL import ImageDraw
 
     image = Image.new("RGB", (400, 300), "white")
     if draw_menu:
@@ -937,3 +938,29 @@ async def test_a_right_click_hovers_before_its_first_screenshot(tmp_path: Path) 
     await executor.execute(AgentAction(action_type=ActionType.RIGHT_CLICK, x=120, y=45))
 
     assert order[:2] == ["move", "screenshot"]
+
+
+async def test_settle_grab_does_not_launch_a_browser(tmp_path) -> None:
+    """KAN-203: with no browser open for the run, a settle frame grab returns None
+    (the wait sleeps its fixed time) instead of starting the browser inside the wait."""
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_run_id = "run-1"
+    executor._ensure_session = AsyncMock(side_effect=AssertionError("must not launch a browser"))
+
+    assert await executor._grab_signature() is None
+    executor._ensure_session.assert_not_awaited()
+
+
+async def test_settle_grab_reads_the_open_page(tmp_path) -> None:
+    """With a browser open, the settle grab still reads a small frame of the page."""
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 30), "white").save(buf, format="JPEG")
+    page = SimpleNamespace(screenshot=AsyncMock(return_value=buf.getvalue()))
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._current_run_id = "run-1"
+    executor._sessions["run-1"] = SimpleNamespace(page=page)
+    executor._current_page = AsyncMock(return_value=page)
+
+    signature = await executor._grab_signature()
+
+    assert signature is not None and len(signature) == SIGNATURE_SIZE[0] * SIGNATURE_SIZE[1]

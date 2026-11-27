@@ -56,7 +56,7 @@ methods over a `StepContext` (`agent/step_context.py`, KAN-155). Fields a stage 
 | Order | Stage (`agent/loop.py`) | What it does |
 |---|---|---|
 | 0 | `_begin_step` | Refuses runs that are not PENDING or RUNNING; enforces `max_steps` (default 25, `models/common.py`); builds the `StepContext` |
-| 1 | `_warmup_stage` | Step 1 only: a browser run without a start URL navigates to google.com if the trust gate allows it; 2.5 s settle (skipped in test safe mode) |
+| 1 | `_warmup_stage` | Step 1 only: a browser run without a start URL navigates to google.com if the trust gate allows it; 2.5 s settle, or with `OPERON_SETTLE_DETECT` on a wait until the screen is still (at most the larger of `OPERON_SETTLE_MAX_S` and 2.5 s, KAN-203; `OPERON_CHANGE_NOTE` alone keeps the fixed wait); skipped in test safe mode |
 | 1b | `_consume_force_fresh_perception` | When the run record has `force_fresh_perception` set, waits for the UI to settle (1.0 s in a browser, 0.5 s on the desktop; `OPERON_SETTLE_DETECT` swaps the fixed sleep for settle detection), then clears the flag |
 | 2 | `_capture_stage` | `ScreenCaptureService.capture` (`agent/perception/capture.py`) asks the executor for a frame and moves it to `step_N/before.png` |
 | 3 | `_consume_override_hint`, `_add_task_note`, `_add_secrets_hint` | Queue advisory text hints for the model: a user correction, `OPERON_TASK_NOTE`, secret names |

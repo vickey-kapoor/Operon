@@ -735,7 +735,14 @@ class NativeBrowserExecutor(Executor):
         return self._change_notes.pop()
 
     async def _grab_signature(self) -> bytes | None:
-        """One small grayscale frame of the page, for settle detection."""
+        """One small grayscale frame of the page, for settle detection.
+
+        With no browser open for the run yet, there is nothing to watch: return None (the
+        settle wait then sleeps its fixed time) instead of launching the browser inside the
+        wait's time limit, where a slow start would be cancelled half-way (KAN-203).
+        """
+        if self._current_run_id is None or self._current_run_id not in self._sessions:
+            return None
         try:
             page = await self._current_page(foreground=False)
             shot = await page.screenshot(type="jpeg", quality=40)

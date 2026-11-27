@@ -9,13 +9,14 @@ lists which modules were red and which passed on base. Stdlib only, $0.
 Code means a changed (or deleted) file under src/, scripts/, evals/ or .github/. Exit 0: at least one changed test module
 fails on the base (good), or the check is skipped (no code change, nothing collected, no changed test with
 changes only under scripts/, evals/ or .github/, or ``--opt-out`` for a PR labelled ``no-red-test``). A PR that
-changes anything under src/ (deleted files too) but adds or edits no tests/**/test_*.py module fails (exit 1). A module whose tests are all skipped on the base counts as
+changes a Python file under src/ (src/**/*.py, deleted or moved out too: the diff runs with --no-renames) but adds or edits no tests/**/test_*.py module fails (exit 1). A src change with no Python file (prompt text, yaml, data) is skipped. A module whose tests are all skipped on the base counts as
 "not run" (like nothing collected), not as passed. A changed ``tests/conftest.py`` that fails to import (it uses
 something only the PR adds) counts as red. Exit 1: every module that ran passes on the base, or pytest failed in
 some other way. The reasons go to stderr and, when set, to
 ``$GITHUB_STEP_SUMMARY``.
 
 CI runs main's copy of this file, so a change here takes effect for other PRs only after merge.
+A new flag must be supported by main's copy before the workflow passes it (see the #374 lesson).
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ def _git(repo: Path, *args: str) -> bytes:
 
 def changed_files(repo: Path, base: str, head: str, filt: str = "ACMRD") -> list[str]:
     """Changed paths, deleted ones included by default (deleting production code is a code change)."""
-    out = _git(repo, "-c", "core.quotePath=false", "diff", "--name-only", f"--diff-filter={filt}", f"{base}...{head}")
+    out = _git(repo, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", f"--diff-filter={filt}", f"{base}...{head}")
     return [line.strip() for line in out.decode("utf-8", "replace").splitlines() if line.strip()]
 
 
@@ -151,17 +152,19 @@ def main(argv: list[str] | None = None) -> int:
     # A deleted test file has nothing to copy to the base worktree and nothing to run: only code counts for it.
     tests = [f for f in tests if f not in deleted]
     test_modules = [f for f in test_modules if f not in deleted]
-    if not test_modules and any(PurePosixPath(f).parts[0] == "src" for f in code):
+    src_py = any(PurePosixPath(f).parts[0] == "src" and f.endswith(".py") for f in code)
+    if not test_modules and src_py:
         _report(
             "FAIL",
             [
-                "This PR changes src/ but no test. Add a test that fails without the change, or, for a refactor "
+                "This PR changes Python code under src/ but no test. Add a test that fails without the change, or, for a refactor "
                 "that keeps behaviour the same, add label no-red-test, say why in the PR body, and re-run this check."
             ],
         )
         return 1
     if not test_modules:
-        _report("skipped", ["no changed tests/**/test_*.py file"])
+        has_src = any(PurePosixPath(f).parts[0] == "src" for f in code)
+        _report("skipped", ["src change has no Python code" if has_src else "no changed tests/**/test_*.py file"])
         return 0
     if not code:
         _report("skipped", ["no changed code file under src/, scripts/, evals/ or .github/"])

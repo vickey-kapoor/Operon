@@ -150,7 +150,7 @@ def test_skips_when_not_both_tests_and_code(repo: Path, files: dict[str, str], c
 def test_src_change_without_test_fails(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     base = _pr(repo, {"src/toy/mod.py": FIXED})
     assert _run(repo, base) == 1
-    assert "changes src/ but no test" in capsys.readouterr().err
+    assert "changes Python code under src/ but no test" in capsys.readouterr().err
     assert _run(repo, base, "--opt-out") == 0
     assert _worktrees(repo) == 1
 
@@ -263,6 +263,11 @@ def test_workflow_runs_base_copy_of_script() -> None:
     assert '--base "$BASE_SHA"' in raw
 
 
+def test_workflow_runs_script_isolated() -> None:
+    raw = (ROOT / ".github" / "workflows" / "red-test.yml").read_text(encoding="utf-8")
+    assert 'uv run python -P "$CHECK"' in raw
+
+
 def test_workflow_reads_labels_before_installing() -> None:
     wf = yaml.safe_load((ROOT / ".github" / "workflows" / "red-test.yml").read_text(encoding="utf-8"))
     steps = wf["jobs"]["red-test"]["steps"]
@@ -309,3 +314,25 @@ def test_timeout_on_base_counts_as_red(repo: Path, monkeypatch: pytest.MonkeyPat
 
 def test_timeout_default_is_five_minutes() -> None:
     assert rtc.TIMEOUT_S == 5 * 60
+
+
+@needs_git
+@pytest.mark.parametrize("name", ["src/toy/prompt.txt", "src/toy/models.yaml"])
+def test_data_only_src_change_without_test_is_skipped(repo: Path, capsys: pytest.CaptureFixture[str], name: str) -> None:
+    base = _pr(repo, {name: "new: value\n"})
+    assert _run(repo, base) == 0
+    assert "src change has no Python code" in capsys.readouterr().err
+    assert _worktrees(repo) == 1
+
+
+@needs_git
+def test_py_moved_out_of_src_without_test_fails(repo: Path) -> None:
+    _write(repo, {"src/toy/x.py": "def x():\n    return 1\n"})
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add x")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-b", "pr")
+    (repo / "docs").mkdir()
+    _git(repo, "mv", "src/toy/x.py", "docs/x.py")
+    _git(repo, "commit", "-m", "move")
+    assert _run(repo, base) == 1

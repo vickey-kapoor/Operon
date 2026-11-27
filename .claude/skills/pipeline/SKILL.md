@@ -24,6 +24,7 @@ integrates. It does not write the code itself.
   same file go to the same coder.
 - Coder worktrees branch from `main`. For work on an unmerged branch, tell the coder to check that branch out first.
 - Every fix ships with a test that fails without it.
+  CI checks this (`Tests fail without the fix`, KAN-280). Label `no-red-test` only for a refactor that keeps behaviour the same, and say why in the PR body; the verifier checks that reason.
 - If a coder fails its tests twice, or the fix needs a design decision across modules, hand it to an Opus helper
   subagent and say so on the checklist.
 

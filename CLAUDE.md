@@ -65,6 +65,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 # Lint (exactly what CI runs)
 .venv\Scripts\ruff check src tests evals --select E,F,W,I --ignore E501
 
+# Red test (KAN-280; CI "Tests fail without the fix"): the PR's changed tests must fail on main's code
+.venv\Scripts\python scripts/red_test_check.py --base origin/main
+
 # Type check (KAN-159; CI "Type check" job). Baseline modules are listed in [tool.mypy] in
 # pyproject.toml: fix one, delete it from the list. Coverage: add --cov to the pytest command.
 .venv\Scripts\mypy

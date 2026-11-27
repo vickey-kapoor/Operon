@@ -1,8 +1,8 @@
 name: Red test
 
 # KAN-280: the PR's changed tests must fail on the base branch's code, so each fix's test is proven to catch
-# its bug. Free: no model key, GitHub's runner. Not triggered by `labeled`: the PR gate reads every check run,
-# so an old failed run from another event would still block. After adding label `no-red-test`, re-run this job.
+# its bug. Free: no model key, GitHub's runner. `labeled` is left out to keep one run per push. After adding
+# label `no-red-test`, re-run this job (it reads the labels when it runs).
 on:
   pull_request:
     branches: ["main", "master"]
@@ -55,11 +55,12 @@ jobs:
 
       - name: Run the PR's tests on the base code
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           OPT_OUT: ${{ steps.labels.outputs.opt_out }}
           GEMINI_API_KEY: fake-test-key
           OPERON_TEST_SAFE_MODE: "true"
         run: |
+          # The checkout is the PR merge commit; its first parent is the base branch tip the merge was built on.
+          BASE_SHA="$(git rev-parse HEAD^1)"
           OPT_OUT_FLAG=""
           if [ "$OPT_OUT" = "true" ]; then OPT_OUT_FLAG="--opt-out"; fi
           uv run python scripts/red_test_check.py --base "$BASE_SHA" ${OPT_OUT_FLAG}

@@ -174,6 +174,7 @@ REQUIRED_CHECKS: tuple[str, ...] = (
     "Type check",
     "Browser end to end (Chromium)",
     "Desktop (Linux container)",
+    "Tests fail without the fix",
 )
 
 # KAN-229: while an open issue carries this label, the gate merges nothing and posts no would-merge notes.

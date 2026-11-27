@@ -107,8 +107,9 @@ def test_new_function_pr_counts_collection_error_as_red(repo: Path) -> None:
         {"docs/notes.md": "x\n", "README.md": "y\n"},
         {"tests/test_new.py": "def test_x():\n    assert True\n"},
         {"src/toy/mod.py": FIXED},
+        {"uv.lock": "x\n", ".gitignore": "y\n", "data/cfg.json": "{}\n", "tests/test_new.py": "def test_x():\n    assert True\n"},
     ],
-    ids=["docs-only", "tests-only", "src-only"],
+    ids=["docs-only", "tests-only", "src-only", "non-code-and-test"],
 )
 def test_skips_when_not_both_tests_and_code(repo: Path, files: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     base = _pr(repo, files)
@@ -127,6 +128,55 @@ def test_opt_out_skips_without_running_pytest(repo: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(rtc, "run_on_base", boom)
     assert _run(repo, base, "--opt-out") == 0
     assert "label no-red-test" in capsys.readouterr().err
+
+
+@needs_git
+def test_head_code_on_pythonpath_does_not_leak_into_base_run(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Mimics an editable install: the head checkout's src/ is importable. The base run must still use base code.
+    base = _pr(repo, {"src/toy/mod.py": FIXED, "tests/test_add.py": TEST_ADD})
+    monkeypatch.setenv("PYTHONPATH", str(repo / "src"))
+    assert _run(repo, base) == 0
+
+
+@needs_git
+def test_reports_red_and_passing_modules(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    base = _pr(
+        repo,
+        {
+            "src/toy/mod.py": FIXED,
+            "tests/test_add.py": TEST_ADD,
+            "tests/sub/test_weak.py": "def test_trivial():\n    assert True\n",
+        },
+    )
+    assert _run(repo, base) == 0
+    err = capsys.readouterr().err
+    assert "at least one changed test fails without the fix" in err
+    assert "red on base (fail without the fix): tests/test_add.py" in err
+    assert "passed on base (prove nothing alone): tests/sub/test_weak.py" in err
+
+
+def test_split_files_rules() -> None:
+    files = [
+        "tests/test_a.py",
+        "tests/sub/test_b.py",
+        "tests/conftest.py",
+        "src/x.py",
+        "uv.lock",
+        "docs/a.json",
+        "scripts/s.py",
+        ".github/w.yml",
+        "pkg/tests/test_c.py",
+    ]
+    tests, modules, code = rtc.split_files(files)
+    assert tests == ["tests/test_a.py", "tests/sub/test_b.py", "tests/conftest.py"]
+    assert modules == ["tests/test_a.py", "tests/sub/test_b.py"]
+    assert code == ["src/x.py", "scripts/s.py", ".github/w.yml"]
+
+
+def test_workflow_uses_merge_parent_as_base() -> None:
+    raw = (ROOT / ".github" / "workflows" / "red-test.yml").read_text(encoding="utf-8")
+    assert "git rev-parse HEAD^1" in raw
+    assert "base.sha" not in raw
 
 
 def test_workflow_safety_rails() -> None:

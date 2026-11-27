@@ -1,13 +1,15 @@
 """Red test check (KAN-280): a PR's new tests must fail on the base branch's code.
 
-Every fix PR adds a test, but nothing proved the test would have caught the bug. This runs the PR's
-changed tests against the base commit's ``src/`` and expects them to fail there. Stdlib only, $0.
+Every fix PR adds a test, but nothing proved the test would have caught the bug. This runs each changed
+test module against the base commit's code. It passes if at least one changed test fails without the fix, and it
+lists which modules were red and which passed on base. Stdlib only, $0.
 
     python scripts/red_test_check.py --base SHA [--head REF] [--repo PATH] [--opt-out]
 
-Exit 0: the tests fail on the base (good), or the check is skipped (no changed test, no code change,
-nothing collected, or ``--opt-out`` for a PR labelled ``no-red-test``). Exit 1: the tests pass on the
-base too, or pytest failed in some other way. The reasons go to stderr and, when set, to
+Code means a changed file under src/, scripts/, evals/ or .github/. Exit 0: at least one changed test module
+fails on the base (good), or the check is skipped (no changed test, no code change, nothing collected, or
+``--opt-out`` for a PR labelled ``no-red-test``). Exit 1: every module passes on the base, or pytest failed in
+some other way. The reasons go to stderr and, when set, to
 ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -19,10 +21,11 @@ import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 TIMEOUT_S = 15 * 60
 TAIL_LINES = 40
+CODE_DIRS = ("src", "scripts", "evals", ".github")
 
 
 def _report(verdict: str, reasons: list[str], title: str = "Red test") -> None:
@@ -39,15 +42,16 @@ def _git(repo: Path, *args: str) -> bytes:
 
 
 def changed_files(repo: Path, base: str, head: str) -> list[str]:
-    out = _git(repo, "diff", "--name-only", "--diff-filter=AMR", f"{base}...{head}").decode("utf-8", "replace")
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    out = _git(repo, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=ACMR", f"{base}...{head}")
+    return [line.strip() for line in out.decode("utf-8", "replace").splitlines() if line.strip()]
 
 
 def split_files(files: list[str]) -> tuple[list[str], list[str], list[str]]:
-    """Return (changed files under tests/, changed test_*.py files, code files)."""
-    tests = [f for f in files if f.startswith("tests/")]
-    test_modules = [f for f in tests if fnmatch.fnmatch(f, "tests/**/test_*.py") or fnmatch.fnmatch(f, "tests/test_*.py")]
-    code = [f for f in files if not f.startswith("tests/") and not f.startswith("docs/") and not f.endswith(".md")]
+    """Return (changed files under tests/, changed tests/**/test_*.py files, code files)."""
+    parts = [(f, PurePosixPath(f).parts) for f in files]
+    tests = [f for f, p in parts if p[0] == "tests"]
+    test_modules = [f for f, p in parts if p[0] == "tests" and fnmatch.fnmatchcase(p[-1], "test_*.py")]
+    code = [f for f, p in parts if p[0] in CODE_DIRS]
     return tests, test_modules, code
 
 
@@ -55,9 +59,10 @@ def _tail(text: str) -> str:
     return "\n".join(text.splitlines()[-TAIL_LINES:])
 
 
-def run_on_base(repo: Path, base: str, head: str, tests: list[str], test_modules: list[str]) -> tuple[int | None, str]:
-    """Run the changed tests on the base code. Returns (exit code or None on timeout, output)."""
-    with tempfile.TemporaryDirectory(prefix="red-test-") as tmp:
+def run_on_base(repo: Path, base: str, head: str, tests: list[str], test_modules: list[str]) -> list[tuple[str, int | None, str]]:
+    """Run each changed test module on the base code. Returns (module, exit code or None on timeout, output)."""
+    results: list[tuple[str, int | None, str]] = []
+    with tempfile.TemporaryDirectory(prefix="red-test-", ignore_cleanup_errors=True) as tmp:
         wt = Path(tmp) / "wt"
         _git(repo, "worktree", "add", "--detach", str(wt), base)
         try:
@@ -66,16 +71,24 @@ def run_on_base(repo: Path, base: str, head: str, tests: list[str], test_modules
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(_git(repo, "show", f"{head}:{rel}"))
             env = dict(os.environ)
+            # The base code must win over an editable install that points at another checkout.
             env["PYTHONPATH"] = os.pathsep.join(p for p in (str(wt / "src"), env.get("PYTHONPATH", "")) if p)
-            cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *test_modules]
-            try:
-                proc = subprocess.run(cmd, cwd=wt, env=env, capture_output=True, text=True, timeout=TIMEOUT_S)
-            except subprocess.TimeoutExpired as exc:
-                out = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
-                return None, out
-            return proc.returncode, proc.stdout + proc.stderr
+            for module in test_modules:
+                cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", module]
+                try:
+                    proc = subprocess.run(cmd, cwd=wt, env=env, capture_output=True, text=True, timeout=TIMEOUT_S)
+                except subprocess.TimeoutExpired as exc:
+                    out = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
+                    results.append((module, None, out))
+                    continue
+                results.append((module, proc.returncode, proc.stdout + proc.stderr))
         finally:
             subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=repo, capture_output=True)
+    return results
+
+
+def _describe(code: int | None) -> str:
+    return "timed out" if code is None else f"pytest exited {code}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -95,30 +108,38 @@ def main(argv: list[str] | None = None) -> int:
         _report("skipped", ["no changed tests/**/test_*.py file"])
         return 0
     if not code:
-        _report("skipped", ["no changed code file outside tests/ and docs/"])
+        _report("skipped", ["no changed code file under src/, scripts/, evals/ or .github/"])
         return 0
 
-    code_exit, output = run_on_base(repo, a.base, a.head, tests, test_modules)
-    tail = _tail(output)
-    if code_exit in (1, 2):
-        _report("pass", ["the new tests fail without the fix, good", f"base pytest output (tail):\n{tail}"])
-        return 0
-    if code_exit == 5:
+    results = run_on_base(repo, a.base, a.head, tests, test_modules)
+    red = [m for m, c, _ in results if c in (1, 2)]
+    other = [(m, c, o) for m, c, o in results if c not in (1, 2, 5)]
+    passed = [m for m, c, _ in other if c == 0]
+    lines = []
+    if red:
+        lines.append("red on base (fail without the fix): " + ", ".join(red))
+    if passed:
+        lines.append("passed on base (prove nothing alone): " + ", ".join(passed))
+    if not red and not other:
         _report("skipped", ["pytest collected no tests (deselected by markers?)"])
         return 0
-    if code_exit == 0:
-        _report(
-            "FAIL",
-            [
-                "the PR's tests pass on the base code too, so they don't prove the fix",
-                "make a test that fails without the fix; for a refactor that keeps behaviour the same, add label "
-                "`no-red-test`, say why in the PR body, and re-run this check",
-                f"base pytest output (tail):\n{tail}",
-            ],
-        )
-        return 1
-    why = "timed out" if code_exit is None else f"pytest exited {code_exit}"
-    _report("FAIL", [f"base run {why}", f"base pytest output (tail):\n{tail}"])
+    if red:
+        first = next(o for _, c, o in results if c in (1, 2))
+        _report("pass", ["at least one changed test fails without the fix, good", *lines, f"base pytest output of {red[0]} (tail):\n{_tail(first)}"])
+        return 0
+    errors = [f"{m}: {_describe(c)}" for m, c, _ in other if c != 0]
+    detail = [f"base pytest output of {m} (tail):\n{_tail(o)}" for m, _, o in other]
+    _report(
+        "FAIL",
+        [
+            "no changed test fails without the fix, so they don't prove it",
+            *lines,
+            *errors,
+            "make a test that fails without the fix; for a refactor that keeps behaviour the same, add label "
+            "`no-red-test`, say why in the PR body, and re-run this job",
+            *detail,
+        ],
+    )
     return 1
 
 

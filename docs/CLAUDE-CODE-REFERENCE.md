@@ -42,10 +42,26 @@ Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
 ### Planning and scope
 - **Only work on Jira stories Vickey approved in a Jira comment.** No approval comment,
   don't start. Story discussion goes in Jira comments.
+- **Except small safe fixes with the `pre-approved` label (KAN-220).** Claude may add this label to a story
+  only when all of these hold: it is a bug fix, a test or a docs fix; it is small (about one or two files);
+  it is free (no model calls, no paid run); it has no `decision` or `paid-run` label; and the fix touches no
+  file that the PR gate labels `needs-vickey` or `risky` (see "Merging" in `CLAUDE.md`). Never add it to a
+  story Vickey has commented on, or back after she removed it (check the story's change history). When
+  unsure, don't add it. Such a story counts as approved without Vickey's comment. Vickey stops one by
+  removing the label; if her latest comment on it is anything but "Approved" (a question, "no", "wait"),
+  that stops it too. Before starting one, the pickup re-checks every rule above; if any fails, it removes the
+  label and passes the story over. The thread building it checks the label and her comments before each
+  stage, and again right before marking the PR ready and before posting the verifier marker; on a stop it
+  turns the PR back to a draft first (the gate never merges a draft), then waits. It also stops and asks if
+  the fix grows past about two files, needs a gated file or needs a model call. Once the marker is posted,
+  Vickey stops the PR by closing it or writing "pause". If
+  its PR comes out anything but `low-risk`, hold it (this overrides the normal risky flow): Codex reviews
+  it as usual, but post no top-review marker (the gate can't merge a `risky` PR without one, and never merges
+  a `needs-vickey` one) until Vickey writes "merge" for that PR.
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It first resumes any story thread stopped by a
   usage limit. It starts no new story while one is in progress. Otherwise it starts one thread for the next
-  story in board order whose latest Vickey comment approves it (never "Run:" or paid stories). It posts one
+  story in board order whose latest Vickey comment approves it, or that is `pre-approved` (never "Run:" or paid stories). It posts one
   line only when it did something. A run that hits Claude's usage limit just skips; the next run retries.
   The full prompt lives in the scheduled task itself. Claude's Jira comments start with "(from Claude)"
   (they post through Vickey's own Jira connection, so they carry her account).

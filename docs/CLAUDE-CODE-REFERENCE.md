@@ -61,14 +61,15 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It looks at main first (KAN-222): the free
   workflows `ci.yml` and `security.yml` each look red when their newest finished run on main (schedule, push or
-  hand start together) failed, and `ci.yml` also when a `nightly-failure` issue is open. Each break gets exactly
+  hand start together) failed, and `ci.yml` also when a `nightly-failure` issue is open. Security runs on main only weekly, so the pickup starts a
+  fresh free Security run when its newest one is a day old or older than main's head. Each break gets exactly
   one try, recorded on that workflow's own open `main-broken` issue, which the pickup opens before starting a
   "Fix broken main: <file>" thread (the nightly never closes it). That thread starts a fresh free run on main to
   confirm the break, fixes the real cause in a normal PR (never by skipping, disabling, ignoring or weakening a
   test or check; its verifier and Fable 5.2 reviewer are told to fail any PR that does), and closes the issue
   once a fresh run is green. If it was only flaky or the try fails (or stalls for 2 days), it writes or adds to
-  a "Main broken: <file>" story under KAN-210 and tells Vickey; a known flaky nightly test just gets a note on its story,
-  with no new thread. While a try is running no new story starts;
+  a "Main broken: <file>" story under KAN-210 and tells Vickey; a known flaky nightly test just gets a note on its story
+  and a fresh run, with no new thread. While a try is running no new story starts;
   once the issue has its outcome, or the thread is waiting on Vickey, stories go on, and the pickup closes the
   issue when that workflow is green again. Next it resumes any story thread stopped by a usage limit. It starts no
   new story while one is in progress. Otherwise it starts one thread for the next

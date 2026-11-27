@@ -33,3 +33,20 @@ async def test_a_new_session_waits_for_the_previous_one_to_close(tmp_path) -> No
     await closing
 
     assert events == ["close:start", "close:end", "open:B"]
+
+
+async def test_peek_frame_without_a_session_returns_none_and_launches_nothing(tmp_path) -> None:
+    """KAN-207: the fresh look only reads a session that already exists."""
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True, record_video=False)
+    opened: list[str] = []
+
+    async def fake_open(*args, **kwargs):
+        opened.append("open")
+
+    executor._ensure_session = fake_open
+    executor._ensure_session_batch = fake_open
+    executor._current_run_id = "r1"
+
+    assert await executor.peek_frame() is None
+    assert opened == []
+    assert list(tmp_path.iterdir()) == []

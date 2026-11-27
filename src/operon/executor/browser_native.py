@@ -219,6 +219,22 @@ class NativeBrowserExecutor(Executor):
             mime_type="image/png",
         )
 
+    async def peek_frame(self) -> CaptureFrame | None:
+        """A fresh page screenshot for the fresh look (KAN-207). Never opens a browser: None when
+        the run has no session. Other errors propagate: the loop counts them and fails open."""
+        run_id = self._current_run_id
+        if run_id is None or run_id not in self._sessions:
+            return None
+        page = await self._current_page(foreground=False)
+        filepath = self._artifact_dir / f"browser_{uuid4().hex[:8]}.png"
+        await page.screenshot(path=str(filepath))
+        return CaptureFrame(
+            artifact_path=str(filepath),
+            width=self._viewport_width,
+            height=self._viewport_height,
+            mime_type="image/png",
+        )
+
     async def live_frame_png(self, run_id: str) -> bytes | None:
         session = self._sessions.get(run_id)
         if session is None:

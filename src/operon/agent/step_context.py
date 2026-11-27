@@ -71,6 +71,14 @@ class StepContext:
     decision: PolicyDecision = field(init=False)
     policy_debug: ModelDebugArtifacts = field(init=False)
 
+    # Gates a person approved for this action, captured before the gate stage uses the approval up (KAN-207).
+    approved_gates: frozenset[str] = frozenset()
+
+    # Fresh look (KAN-207), taken in the gate stage: whether a screenshot was grabbed, and the failed
+    # result that replaces the action when its target spot changed.
+    fresh_look_ran: bool = False
+    fresh_look_stale: ExecutedAction | None = None
+
     # Execute / verify.
     executed_action: ExecutedAction | None = None
     verification: VerificationResult = field(init=False)

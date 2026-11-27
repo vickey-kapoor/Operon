@@ -899,10 +899,25 @@ class DesktopExecutor(Executor):
             # Screen is still animating — wait and re-capture once before perceiving
             logger.debug("High visual velocity (%.3f) detected; waiting 300ms before re-capture", velocity)
             await asyncio.sleep(0.3)
+            discarded = frame.artifact_path
             frame, _ = await asyncio.to_thread(self._capture_burst_sync)
+            try:
+                Path(discarded).unlink(missing_ok=True)
+            except OSError:
+                pass
         if not self._internal_capture:
             self._record_focus()
         return frame
+
+    async def peek_frame(self) -> CaptureFrame | None:
+        """A fresh screenshot with no side effects (KAN-207): the focus guard reference is not
+        re-recorded, so a focus steal during the model's think is still caught. Errors propagate:
+        the loop counts them and fails open."""
+        self._internal_capture = True
+        try:
+            return await self.capture()
+        finally:
+            self._internal_capture = False
 
     # Windows only: the Linux executor turns this off, and off Windows the window helpers return None.
     _focus_guard_platform = True

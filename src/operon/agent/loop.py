@@ -121,8 +121,9 @@ logger = logging.getLogger(__name__)
 
 _LIVENESS_RETRY_MAX = 3
 # First step: the fixed wait for the OS and browser window to finish drawing. With
-# OPERON_SETTLE_DETECT on it becomes the most the wait falls back to; the wait ends as soon
-# as the screen is still, capped at OPERON_SETTLE_MAX_S (KAN-203).
+# OPERON_SETTLE_DETECT on, the wait ends as soon as the screen is still and lasts at most
+# max(OPERON_SETTLE_MAX_S, 2.5 s); if no frame can be grabbed it is this fixed wait (KAN-203).
+# OPERON_CHANGE_NOTE alone keeps the fixed wait.
 _WARMUP_DELAY_S = 2.5
 _LIVENESS_RETRY_FIRST_SLEEP_S = 0.5   # fast recovery for brief UI transitions (e.g. search overlay animating in)
 _LIVENESS_RETRY_SLEEP_S = 1.5         # subsequent retries give slower loads more time

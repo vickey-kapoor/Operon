@@ -5,18 +5,27 @@ OSWorld-Verified (`evals/osworld_subset.json`) and scores it with OSWorld's own 
 It is manual only: it spends Gemini credits (about $0.06 a task; the 5-task pilot cost
 $0.31), so you pick how many tasks and the cost cap each time.
 
+It runs on the Google Cloud VM `operon-osworld` (KAN-224; project `propane-cubist-479515-c5`, zone
+`us-central1-a`), made with Terraform in `infra/gcp` (see `infra/gcp/README.md`). It used to run on the Azure
+VM `operon-linux`, which was deleted.
+
 ```
-start-vm   az vm start operon-linux            (ubuntu-latest, Azure OIDC sign-in)
-bench      self-hosted runner on operon-linux  scripts/osworld-vm/setup.sh, then python -m evals.osworld
-stop-vm    az vm deallocate operon-linux       (always, even when the run fails), then delete the run's runner if it is still registered
+start-vm   gcloud compute instances start operon-osworld   (ubuntu-latest, Google Cloud OIDC sign-in)
+bench      one-job runner on operon-osworld                 scripts/osworld-vm/setup.sh, then python -m evals.osworld
+stop-vm    gcloud compute instances stop operon-osworld    (always, even when the run fails), then delete the run's runner if it is still registered
 ```
 
 The `bench` job runs on a one-job (just-in-time) runner (KAN-195). `start-vm` mints it through the GitHub API
-under a label unique to the run (`operon-osworld-<run id>-<attempt>-<random>`), hands its config to the VM with
-`az vm run-command`, and the runner takes that one job and is gone. The label carries a random suffix, so cells of one batch
-do not clash and it cannot be guessed from the public run id. No lasting runner stays registered, so another
-workflow, such as an approved fork PR's, has no standing runner to target on the VM. The logic is `scripts/bench-runners/jit-runner.sh`
-(`start` and `remove`) and `scripts/bench-runners/vm-linux.sh` (runs on the VM).
+under a label unique to the run (`operon-osworld-<run id>-<attempt>-<random>`) and puts the VM script that starts
+it on the VM's metadata key `operon-jit-script` (`gcloud compute instances add-metadata --metadata-from-file`, so
+the config is never in a command line). The VM's `operon-jit-watch` service runs that script once; the runner
+takes that one job and is gone. As soon as the runner is online, or when it never comes online, `start-vm` takes
+the key off the metadata again (a failed removal fails the job), and `stop-vm` clears it once more. The label
+carries a random suffix, so cells of one batch do not clash and it cannot be guessed from the public run id. No
+lasting runner stays registered, so another workflow, such as an approved fork PR's, has no standing runner to
+target on the VM. The logic is `scripts/bench-runners/jit-runner.sh` (`start` with `VM_CLOUD=gcp`, and `remove`)
+and `scripts/bench-runners/vm-linux.sh` (runs on the VM; it hands the config to the runner in the
+`ACTIONS_RUNNER_INPUT_JITCONFIG` variable, never on its command line).
 
 Inputs: `limit` (first N tasks; 5 = the pilot, 25 or 0 = all), `only` (one task id prefix),
 `max_cost_usd` (stop starting tasks past this; use 8 for all 25), `max_steps`. The report
@@ -43,42 +52,41 @@ OSWorld app catalog. Report scores as run with those.
 
 ## One-time setup
 
-The VM `operon-linux` (Standard_D2s_v4, `operon-bench` resource group) needs KVM, Docker and a
-128 GB disk (the task image is about 11 GB and is downloaded once into `~/osworld-data`).
+1. Create the VM and the sign-in with Terraform and set the repo variables `GCP_WORKLOAD_IDENTITY_PROVIDER`
+   and `GCP_SERVICE_ACCOUNT` from its outputs: `infra/gcp/README.md` has the steps. Nothing has to be done on
+   the VM by hand: its startup script installs Docker, Python, git and the Actions runner binaries (unpacked
+   only, never configured) on its first start.
 
-1. On the VM, install Docker and let the login user use it and KVM, then log in again:
+2. The repo secret `RUNNER_ADMIN_TOKEN`: a fine-grained personal access token for this repository only,
+   permission Administration: read and write, nothing else. The `start-vm` and `stop-vm` jobs use it to mint
+   and delete the one-job runner; the `bench` job never sees it.
 
-   ```bash
-   sudo apt-get install -y docker.io python3-venv python3-pip git
-   sudo usermod -aG docker,kvm "$USER"
-   ```
-
-2. Unpack the GitHub Actions runner binaries on the VM, as the login user, into `~/actions-runner`
-   (Settings > Actions > Runners > New self-hosted runner > Linux, x64 shows the download and unpack
-   commands). Do not run `config.sh` or `svc.sh`: the workflow registers a one-job runner for each run.
-   A runner registered the old way is retired on the next run (its service is removed and its registration deleted),
-   but do this once before the first run: delete the old persistent runners under Settings > Actions > Runners.
-
-   Then create the repo secret `RUNNER_ADMIN_TOKEN`: a fine-grained personal access token for this
-   repository only, permission Administration: read and write, nothing else. The `start-vm` and
-   `stop-vm` jobs use it to mint and delete the one-job runner; the `bench` job never sees it.
-
-3. Azure sign-in is the one the desktop benchmark already uses (`AZURE_CLIENT_ID`,
-   `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`; see `docs/azure-desktop-runner.md`). Its role is
-   assigned on the whole `operon-bench` resource group, so it can already start and deallocate
-   `operon-linux`. It is trusted for the `main` branch only, so the workflow can only be run
-   from `main`. If the VM has another name, set the repo variable `OSWORLD_VM_NAME`. Delivering the
-   runner config needs one more permission in the role, `Microsoft.Compute/virtualMachines/runCommand/action`
-   (the role JSON is in `docs/azure-desktop-runner.md`; update the role with `az role definition update`).
+3. The sign-in is trusted for this repository's `main` branch and for jobs of `osworld-bench.yml` only (also
+   when `benchmark.yml` calls it), so the workflow can only be run from `main`. Its service account
+   `operon-osworld-ci` can only get, start, stop, change the metadata of and read the serial console of
+   `operon-osworld`. If the VM has another name or zone, set the repo variables `OSWORLD_VM_NAME` and
+   `OSWORLD_GCP_ZONE` (and `GCP_PROJECT_ID` for another project).
 
 4. The repo secret `GEMINI_API_KEY` is the one the other benchmarks use. The key reaches the run
    as an environment variable of the job; it is not written to the VM's disk by the workflow.
    A `model` run also uses the repo secret `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY` (GPT); each reaches
    only a run of that provider's model, never a Gemini or grounding run.
 
-The first run also creates the two Python environments (`~/osw-venv`, Python 3.11 with OSWorld's
-requirements, which pin `torch` below Python 3.14; `~/operon-venv`, Python 3.14 with Operon) and
-downloads the image, so it takes a few minutes longer.
+The first run also installs everything on the VM (`start-vm` waits up to 15 minutes for the runner), creates the
+two Python environments (`~/osw-venv`, Python 3.11 with OSWorld's requirements, which pin `torch` below Python 3.14;
+`~/operon-venv`, Python 3.14 with Operon) and downloads the image, so it takes a few minutes longer.
+
+The task VM OSWorld starts inside `operon-osworld` keeps OSWorld's default size (4 GB, 4 cores), so scores stay
+comparable with earlier runs. `operon-osworld` has 16 GB and an 8 GB swap file.
+
+## When a run fails
+
+- `stop-vm` prints the last 60 lines of the VM's memory log (`free -m` and the five biggest processes, every
+  30 s) on the run's summary page when the `bench` job did not succeed: a run that froze or was killed for memory
+  shows it there. The same log is on the serial console:
+  `gcloud compute instances get-serial-port-output operon-osworld --zone us-central1-a | grep operon-memlog`.
+- If a run never reaches `stop-vm`, the VM still stops: it powers itself off after 20 minutes with no runner, and
+  Google Cloud stops it after 17 hours running whatever happens.
 
 ## Notes
 
@@ -86,7 +94,7 @@ downloads the image, so it takes a few minutes longer.
   `operon-osworld` runner and no label for another workflow to ask for.
 - A self-hosted runner trusts the code it runs: never point a workflow that runs on pull requests at the VM.
 - Never approve a fork PR's workflow runs while the "Fork PR workflow check" is red (it lists changes under `.github/`).
-- The VM keeps its disk (about $10 a month for 128 GB) while deallocated; compute bills only
-  while a run is going.
-- Backstop, as for the desktop VM: `az vm auto-shutdown --resource-group operon-bench --name operon-linux --time 0700`
-  deallocates it daily in case a run never reaches its `stop-vm` job.
+- Cost: about $0.20 an hour while a run is going (n2-standard-4 and its address); the 150 GB disk about $15 a
+  month while the VM is stopped. A stopped VM bills nothing else.
+- The VM has no Google identity of its own and its firewall lets nothing in; it reaches out only (GitHub, Docker
+  Hub, PyPI, the model APIs).

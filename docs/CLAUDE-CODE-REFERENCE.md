@@ -49,10 +49,15 @@ Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
   story Vickey has commented on, or back after she removed it (check the story's change history). When
   unsure, don't add it. Such a story counts as approved without Vickey's comment. Vickey stops one by
   removing the label; if her latest comment on it is anything but "Approved" (a question, "no", "wait"),
-  that stops it too. The thread building it checks both before each stage and stops if either changed; it
-  also stops and asks if the fix grows past about two files, needs a gated file or needs a model call. If
-  its PR comes out anything but `low-risk`, hold it (this overrides the normal risky flow): keep it as a
-  draft and post no top-review marker until Vickey writes "merge" for that PR.
+  that stops it too. Before starting one, the pickup re-checks every rule above; if any fails, it removes the
+  label and passes the story over. The thread building it checks the label and her comments before each
+  stage, and again right before marking the PR ready and before posting the verifier marker; on a stop it
+  turns the PR back to a draft first (the gate never merges a draft), then waits. It also stops and asks if
+  the fix grows past about two files, needs a gated file or needs a model call. Once the marker is posted,
+  Vickey stops the PR by closing it or writing "pause". If
+  its PR comes out anything but `low-risk`, hold it (this overrides the normal risky flow): Codex reviews
+  it as usual, but post no top-review marker (the gate can't merge a `risky` PR without one, and never merges
+  a `needs-vickey` one) until Vickey writes "merge" for that PR.
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It first resumes any story thread stopped by a
   usage limit. It starts no new story while one is in progress. Otherwise it starts one thread for the next

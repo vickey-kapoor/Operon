@@ -158,7 +158,9 @@ jobs:
 
   daily:
     name: Daily note
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '17 6 * * *')
+    # KAN-223: once a day on the schedule only (hand-started sweeps report nothing), and no Slack post:
+    # what merged reaches Vickey in the Monday summary.
+    if: github.event_name == 'schedule' && github.event.schedule == '17 6 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -169,7 +171,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       AUTO_MERGE: ${{ vars.OPERON_AUTO_MERGE }}
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -195,6 +196,3 @@ jobs:
           note=$(printf 'PR gate (auto-merge: %s), last 24 h\nPause: %s\nAuto-merged:\n%s\nWould have merged (trial):\n%s\n' \
             "$mode" "$pause" "${merged:-none}" "${would:-none}")
           printf '%s\n' "$note" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            jq -n --arg text "$note" '{text: $text}' | curl -fsS -X POST -H 'Content-type: application/json' --data @- "$SLACK_WEBHOOK_URL"
-          fi

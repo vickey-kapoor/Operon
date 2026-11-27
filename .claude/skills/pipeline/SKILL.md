@@ -11,7 +11,8 @@ integrates. It does not write the code itself.
 ## 1. Plan (main session, Opus)
 - Read the story and the code it touches. Write a short step-by-step plan: what to change, where, and the exact
   search patterns the scanners should use.
-- On a large change, show the plan to Vickey and wait for her OK before going on.
+- Post the plan in the thread and carry on. Stop for Vickey only where "Merging" in `CLAUDE.md` says she decides (paid
+  runs, `needs-vickey` merges).
 
 ## 2. Scan (Haiku)
 - Start `scanner` subagents (`.claude/agents/scanner.md`, Haiku) in parallel, one per area of the plan.
@@ -23,16 +24,22 @@ integrates. It does not write the code itself.
   same file go to the same coder.
 - Coder worktrees branch from `main`. For work on an unmerged branch, tell the coder to check that branch out first.
 - Every fix ships with a test that fails without it.
-- If a fix fails its tests twice or spans several files, hand it to an Opus helper and say so on the checklist.
+- If a coder fails its tests twice, or the fix needs a design decision across modules, hand it to an Opus helper
+  subagent and say so on the checklist.
 
 ## 4. Integrate (main session)
 - Merge the coders' commits onto the story branch. Run lint, type check and the tests (commands in `CLAUDE.md`) on the
-  combined result, and fix anything that breaks before going on. Never open a PR with failing tests.
+  combined result. The main session does not fix code itself: it sends any breakage back to a coder. It may only
+  resolve merge conflicts. Never open a PR with failing tests.
 
 ## 5. Verify (Opus)
 - Start a fresh `verifier` subagent (`.claude/agents/verifier.md`, Opus) that did not write the change. It checks every
-  finding and every fix, and reruns lint, types and tests. Fix what it finds and verify again on the new head.
-- Risky and `needs-vickey` PRs also get a Fable 5.2 review in a fresh session (see "Merging" in `CLAUDE.md`).
+  finding and every fix, and reruns lint, types and tests. Send what it finds back to a coder, then verify again on the
+  new head.
+- After APPROVE on the head commit, the main session posts `<!-- operon-verifier: PASS <full head sha> -->` on the PR.
+- A Fable 5.2 review in a fresh session is required for `risky` PRs. It is also done for `needs-vickey` PRs, which
+  then still wait for Vickey's own "merge".
+- See "Merging" in `CLAUDE.md` for the markers, the no-paid-run rule and the rule that agents never merge by hand.
 
 ## Record who did what
 - Show each stage on the progress checklist with the model that ran it.

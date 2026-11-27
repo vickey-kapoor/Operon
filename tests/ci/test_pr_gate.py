@@ -799,6 +799,14 @@ def test_a_rename_into_agents_reads_the_new_content() -> None:
     assert gate.classify([f], False, _read(BAD_AGENTS["hooks"]))[0] == "needs-vickey"
 
 
+PIPELINE_SKILL = ".claude/skills/pipeline/SKILL.md"
+
+
+def test_the_pipeline_skill_still_needs_vickey() -> None:
+    f = CF(PIPELINE_SKILL, "modified")
+    assert gate.classify([f], False, _read(SAFE_AGENT))[0] == "needs-vickey"
+
+
 def test_every_tracked_claude_file_is_a_safe_plain_agent_definition() -> None:
     import subprocess
 
@@ -811,6 +819,8 @@ def test_every_tracked_claude_file_is_a_safe_plain_agent_definition() -> None:
         assert meta.split()[0] == "100644", f"{name}: a tracked .claude file must be an ordinary file (mode 100644)"
     tracked = [p for p in out.stdout.decode().split("\0") if p and (".claude" in p.split("/") or p.endswith(".mcp.json"))]
     for p in tracked:
+        if p == PIPELINE_SKILL:
+            continue
         assert gate.is_plain_agent_path(p), f"{p}: only plain agent definitions may be tracked under .claude/"
         text = (ROOT / p).read_text(encoding="utf-8")
         assert gate.agent_file_is_safe(text), p

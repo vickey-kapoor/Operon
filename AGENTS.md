@@ -231,7 +231,7 @@ Review the following before sharing artifacts:
 
 These directories may contain screenshots, prompts, execution traces, or other sensitive information.
 
-Only `.claude/agents/` may be committed from `.claude/`. Other contents are personal or generated and should remain untracked.
+Only `.claude/agents/` and `.claude/skills/pipeline/` (the pipeline skill) may be committed from `.claude/`. Other contents are personal or generated and should remain untracked.
 
 ## 9. Git and Pull Requests
 

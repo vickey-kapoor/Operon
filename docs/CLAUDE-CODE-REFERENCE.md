@@ -14,7 +14,7 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
 ### Merging and PRs
 - **Every PR can merge itself, but no paid run without Vickey's explicit OK** (Vickey, 2026-11-26). The full rule
   is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short: checks green, Codex
-  answered and the verifier marker on the head; `risky` PRs also need a top-model (today Fable 5.2) review in a fresh
+  answered and the `operon-verifier` app's "Operon verifier" check run on the head (posted only by the verifier-only session, which never runs PR-branch code and posts with main's copy of the script); `risky` PRs also need a top-model (today Fable 5.2) review in a fresh
   session that is not the coordinator or the author; PRs labelled `needs-vickey` (every workflow or action file, evals
   except JSON recordings, scripts, the gate's tests, price tables, model defaults and ids, model clients, settings;
   exact list in `CLAUDE.md`) wait for Vickey's "merge" for that PR; the rules files are only `risky`. The gate does the
@@ -50,13 +50,13 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
   removing the label; if her latest comment on it is anything but "Approved" (a question, "no", "wait"),
   that stops it too. Before starting one, the pickup re-checks every rule above; if any fails, it removes the
   label and passes the story over. The thread building it checks the label and her comments before each
-  stage, and again right before marking the PR ready and before posting the verifier marker; on a stop it
-  turns the PR back to a draft first (the gate never merges a draft), then waits. It also stops and asks if
-  the fix grows past about two files, needs a gated file or needs a model call. Once the marker is posted,
-  Vickey stops the PR by closing it or writing "pause". If
+  stage, and again right before marking the PR ready; on a stop it
+  turns the PR back to a draft first (the keyed verifier session and the gate both skip drafts), then waits. It also stops and asks if
+  the fix grows past about two files, needs a gated file or needs a model call. Once the PR is ready,
+  Vickey stops it by closing it or writing "pause". If
   its PR comes out anything but `low-risk`, hold it (this overrides the normal risky flow): Codex reviews
-  it as usual, but post no top-review marker (the gate can't merge a `risky` PR without one, and never merges
-  a `needs-vickey` one) until Vickey writes "merge" for that PR.
+  it as usual, but keep the PR a draft (the keyed verifier session and the gate skip drafts, and the gate never merges
+  a `needs-vickey` one) until Vickey writes "merge" for that PR or the approval is restored.
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It looks at main first (KAN-222): the free
   workflows `ci.yml` and `security.yml` each look red when their newest finished run on main (schedule, push or

@@ -42,10 +42,17 @@ Last updated: 2026-11-26. Contains no secrets: keys live in GitHub repo secrets,
 ### Planning and scope
 - **Only work on Jira stories Vickey approved in a Jira comment.** No approval comment,
   don't start. Story discussion goes in Jira comments.
+- **Except small safe fixes with the `pre-approved` label (KAN-220).** Claude may add this label to a story
+  only when all of these hold: it is a bug fix, a test or a docs fix; it is small (about one or two files);
+  it is free (no model calls, no paid run); it has no `decision` or `paid-run` label; and the fix touches no
+  file that the PR gate labels `needs-vickey` or `risky` (see "Merging" in `CLAUDE.md`). Such a story counts
+  as approved without Vickey's comment. Vickey stops one by removing the label; any comment from her on it
+  that isn't "Approved" (a question, "no", "wait") also stops it. If its PR comes out anything but
+  `low-risk`, it does not merge on its own: it waits for Vickey's "merge".
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It first resumes any story thread stopped by a
   usage limit. It starts no new story while one is in progress. Otherwise it starts one thread for the next
-  story in board order whose latest Vickey comment approves it (never "Run:" or paid stories). It posts one
+  story in board order whose latest Vickey comment approves it, or that is `pre-approved` (never "Run:" or paid stories). It posts one
   line only when it did something. A run that hits Claude's usage limit just skips; the next run retries.
   The full prompt lives in the scheduled task itself. Claude's Jira comments start with "(from Claude)"
   (they post through Vickey's own Jira connection, so they carry her account).

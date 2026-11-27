@@ -27,7 +27,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
-TIMEOUT_S = 15 * 60
+TIMEOUT_S = 5 * 60
 TAIL_LINES = 40
 CODE_DIRS = ("src", "scripts", "evals", ".github")
 
@@ -83,7 +83,7 @@ CONFTEST_IMPORT = re.compile(r"while loading conftest[\s\S]*?(ImportError|Module
 def classify(code: int | None, output: str, counts: tuple[int, int] | None) -> str:
     """One of red, passed, notrun, other for a module's base run."""
     if code is None:
-        return "other"
+        return "red"  # timed out on base: a hang the fix removes is proof too
     if code in (1, 2):
         return "red"
     if code == 5:
@@ -158,7 +158,9 @@ def main(argv: list[str] | None = None) -> int:
     passed = [m for m, _, _, k in kinds if k == "passed"]
     lines = []
     if red:
-        lines.append("red on base (fail without the fix): " + ", ".join(red))
+        timed_out = {m for m, c, _, k in kinds if k == "red" and c is None}
+        names = [f"{m} (timed out on base (counted as red))" if m in timed_out else m for m in red]
+        lines.append("red on base (fail without the fix): " + ", ".join(names))
     if passed:
         lines.append("passed on base (prove nothing alone): " + ", ".join(passed))
     if notrun:
@@ -178,7 +180,8 @@ def main(argv: list[str] | None = None) -> int:
             "no changed test fails without the fix, so they don't prove it",
             *lines,
             *errors,
-            "make a test that fails without the fix; for a refactor that keeps behaviour the same, add label "
+            "make a test that fails without the fix; for a refactor that keeps behaviour the same, or when the "
+            "changed tests pass on base by design (e.g. a new guard in tests/test_invariants.py), add label "
             "`no-red-test`, say why in the PR body, and re-run this job",
             *detail,
         ],

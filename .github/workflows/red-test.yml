@@ -51,7 +51,7 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Install dependencies (exact versions from uv.lock)
-        run: uv sync --locked --extra dev
+        run: uv sync --locked --extra dev --extra dashboard
 
       - name: Run the PR's tests on the base code
         env:

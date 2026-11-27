@@ -234,3 +234,23 @@ def test_workflow_safety_rails() -> None:
                 assert step["with"]["persist-credentials"] is False
             if "run" in step:
                 assert "${{" not in step["run"], step["run"]
+
+
+@needs_git
+def test_timeout_on_base_counts_as_red(repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    hang = (
+        "import time\n"
+        "from toy.mod import add\n\n\n"
+        "def test_hang():\n"
+        "    if add(2, 2) != 4:\n"
+        "        time.sleep(60)\n"
+    )
+    base = _pr(repo, {"src/toy/mod.py": FIXED, "tests/test_hang.py": hang})
+    monkeypatch.setattr(rtc, "TIMEOUT_S", 3)
+    assert _run(repo, base) == 0
+    assert "timed out on base (counted as red)" in capsys.readouterr().err
+    assert _worktrees(repo) == 1
+
+
+def test_timeout_default_is_five_minutes() -> None:
+    assert rtc.TIMEOUT_S == 5 * 60

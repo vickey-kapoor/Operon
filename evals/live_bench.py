@@ -508,6 +508,8 @@ async def run_task(
     run_id, status, steps, pauses = None, "error", 0, 0
     error: str | None = reset_error[:300] if reset_error else None
     payload: dict = {"intent": task.intent, "max_steps": task.max_steps}
+    if mode in DESKTOP_MODES:
+        payload["clear_desktop"] = True  # KAN-205: a benchmark task starts from a clean screen
     local = isinstance(task, LOCAL_TASKS)
     hybrid = isinstance(task, HybridTask)
     if hybrid:

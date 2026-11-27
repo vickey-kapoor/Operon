@@ -428,6 +428,7 @@ async def test_run_task_runs_a_hybrid_task_on_the_desktop_and_grades_it_from_sta
     # The agent is told the site's real address, and starts from the desktop (no start page).
     assert f"{site.base_url}/apps/mail/" in bodies[0]["intent"] and "{site}" not in bodies[0]["intent"]
     assert "start_url" not in bodies[0]
+    assert bodies[0]["clear_desktop"] is True  # KAN-205: benchmark tasks still start from a clean screen
     assert fake.prepared == [task.name]
     assert result.outcome == "success" and result.tags == ["short"]
     saved = (tmp_path / "run-h" / "desktop_state.json").read_text(encoding="utf-8")

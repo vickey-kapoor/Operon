@@ -25,6 +25,14 @@ Code: `src/operon/environments/` (`base.py` is the interface, `registry.py` the 
 An unknown name is refused at startup, and a provider whose `check()` fails stops the
 desktop loop from being built, with the missing pieces in the error.
 
+## Your open windows (KAN-205)
+
+A desktop run on your own PC (`live`) leaves your open windows alone. A run hides every window
+first (Win+D on Windows, ctrl+alt+d on the Linux desktop) only when it runs on a throwaway machine
+(any environment but `live`), or when its request sets a `benchmark` name or `"clear_desktop": true`.
+The live desktop and hybrid benchmarks send `"clear_desktop": true`. A request with
+`"clear_desktop": false` never hides them.
+
 ## Environments
 
 | Name | Status | What it is |

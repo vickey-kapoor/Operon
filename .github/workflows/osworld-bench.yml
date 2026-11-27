@@ -2,15 +2,17 @@
 #
 # Started by hand (Actions > Run OSWorld test tasks (own VM) > Run workflow) or as a cell of the paid-run
 # batch (benchmark.yml, KAN-184); it always runs the default branch. It spends model credits, so nothing starts it for you: you pick how many
-# tasks and the cost cap. Steps: start the Linux VM
-# operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
-# docs/osworld-runner.md), upload the report, deallocate the VM. The runner is a one-job (JIT) runner
+# tasks and the cost cap. Steps: start the Google Cloud VM
+# operon-osworld (KAN-224, made by infra/gcp), run `python -m evals.osworld` on it (a self-hosted runner; setup is in
+# docs/osworld-runner.md), upload the report, stop the VM. The runner is a one-job (JIT) runner
 # minted by start-vm under a label unique to this run (KAN-195), so no lasting runner on the VM can pick up any other job. The bench job's timeout is sized to the
 # tasks chosen (`python -m evals.osworld --job-minutes`, computed in start-vm: 30 min + 35 min a task), not a flat number.
 #
 # Needs repo secret RUNNER_ADMIN_TOKEN (fine-grained token, this repo only, Administration read+write: it mints and deletes
-# the one-job runner) and repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the Azure OIDC variables the desktop bench already uses.
+# the one-job runner) and repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the
+# repo variables GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT (Terraform outputs of infra/gcp).
 # Cost: Gemini about $0.12 a task (the last full 25-task run was $3.11); Claude or GPT about $0.12-0.24 a task.
+# The VM (n2-standard-4 and its address) is about $0.20 an hour while a run is going; its 150 GB disk about $15 a month.
 # The cap is checked between tasks, so a run can overshoot by one task.
 name: Run OSWorld test tasks (own VM)
 
@@ -64,22 +66,24 @@ on:
 permissions:
   contents: read
 
-# One run on the VM at a time: a finished run deallocates it.
+# One run on the VM at a time: a finished run stops it.
 concurrency:
-  group: azure-osworld-vm
+  group: gcp-osworld-vm
   cancel-in-progress: false
 
 jobs:
   start-vm:
-    name: Start the Azure VM
+    name: Start the Google Cloud VM
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A VM's first start installs Docker and the runner before it takes the runner (RUNNER_ONLINE_TIMEOUT below).
+    timeout-minutes: 25
     permissions:
       contents: read
       id-token: write
     env:
-      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
-      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-linux' }}
+      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-osworld' }}
+      GCP_ZONE: ${{ vars.OSWORLD_GCP_ZONE || 'us-central1-a' }}
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID || 'propane-cubist-479515-c5' }}
       LIMIT: ${{ inputs.limit }}
       ONLY: ${{ inputs.only }}
     outputs:
@@ -105,19 +109,26 @@ jobs:
       - name: Pick this run's runner label
         id: label
         run: echo "label=operon-osworld-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(openssl rand -hex 6)" >> "$GITHUB_OUTPUT"
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+      # OIDC sign-in to Google Cloud (workload identity federation, infra/gcp): no key exists. The identity may only
+      # start, stop and hand a runner script to this one VM, and only jobs of this file on main get it.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
-      # Mint a runner that takes exactly this run's bench job and hand it to the VM; retire the old lasting one.
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      # A runner script a cancelled run left on the VM must not run when it boots.
+      - name: Clear a runner script left from an earlier run
+        run: gcloud compute instances remove-metadata "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" --keys operon-jit-script
+      - name: Start the VM
+        run: gcloud compute instances start "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT"
+      # Mint a runner that takes exactly this run's bench job and hand it to the VM through its metadata; retire the old lasting one.
       - name: Start a one-job runner on the VM
-        # The token is on this step only, not on the checkout and login actions.
+        # The token is on this step only, not on the checkout and sign-in actions.
         env:
           RUNNER_LABEL: ${{ steps.label.outputs.label }}
           GH_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          VM_CLOUD: gcp
+          RUNNER_ONLINE_TIMEOUT: "900"
         run: |
           if [ -z "$GH_ADMIN_TOKEN" ]; then
             echo "::error::Missing repository secret RUNNER_ADMIN_TOKEN (see docs/osworld-runner.md)."
@@ -129,7 +140,7 @@ jobs:
     name: Run the OSWorld tasks
     needs: start-vm
     if: ${{ !cancelled() && needs.start-vm.result == 'success' }}
-    # The one-job runner start-vm put on operon-linux (docs/osworld-runner.md), under this run's own label.
+    # The one-job runner start-vm put on operon-osworld (docs/osworld-runner.md), under this run's own label.
     runs-on: ${{ needs.start-vm.outputs.runner_label }}
     # 30 min setup + 35 min a task (start-vm sizes it); the fallback is the 25-task worst case.
     timeout-minutes: ${{ fromJSON(needs.start-vm.outputs.bench_minutes || '905') }}
@@ -209,7 +220,7 @@ jobs:
         run: docker ps -q --filter "ancestor=happysixd/osworld-docker" | xargs -r docker rm -f
 
   stop-vm:
-    name: Stop the Azure VM
+    name: Stop the Google Cloud VM
     needs: [start-vm, bench]
     # Also after a failed start-vm: it can fail once the VM is already up (the runner step) and the VM must not keep billing.
     if: ${{ always() && needs.start-vm.result != 'skipped' }}
@@ -219,17 +230,39 @@ jobs:
       contents: read
       id-token: write
     env:
-      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
-      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-linux' }}
+      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-osworld' }}
+      GCP_ZONE: ${{ vars.OSWORLD_GCP_ZONE || 'us-central1-a' }}
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID || 'propane-cubist-479515-c5' }}
       RUNNER_LABEL: ${{ needs.start-vm.outputs.runner_label }}
+      BENCH_RESULT: ${{ needs.bench.result }}
     steps:
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+      # OIDC sign-in to Google Cloud (workload identity federation, infra/gcp): no key exists. The identity may only
+      # start, stop and hand a runner script to this one VM, and only jobs of this file on main get it.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      # Deallocated, not just stopped: a stopped VM still bills for compute.
-      - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      # When the bench job did not succeed, the VM's memory log (infra/gcp/startup.sh writes it to the serial console
+      # every 30 s) shows whether it ran out of memory. Read before the stop, while the console still holds it. Best effort.
+      - name: Show the VM's memory log
+        if: ${{ needs.bench.result != 'success' }}
+        continue-on-error: true
+        run: |
+          {
+            echo "### OSWorld VM memory log (bench: $BENCH_RESULT)"
+            echo
+            echo '```'
+            timeout 90 gcloud compute instances get-serial-port-output "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" 2>/dev/null \
+              | grep -o 'operon-memlog: .*' | tr -d '`' | tail -n 60 || echo "no memory log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Stopped, not suspended: a stopped VM bills only for its disk.
+      - name: Stop the VM
+        run: gcloud compute instances stop "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT"
+      - name: Clear the runner script from the VM
+        run: |
+          gcloud compute instances remove-metadata "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" --keys operon-jit-script \
+            || echo "::warning::could not clear the runner script from the VM's metadata"
       # The default branch's script, not anything a run produced. A one-job runner deletes itself when its job
       # ends; this removes it when the bench job never started. Best effort.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

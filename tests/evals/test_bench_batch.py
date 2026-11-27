@@ -249,7 +249,7 @@ def test_the_osworld_workflow_can_be_called_and_keeps_its_vm_lock() -> None:
     wf = _workflow("osworld-bench.yml")
     assert set(wf[True]) == {"workflow_dispatch", "workflow_call"}
     assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps", "model", "done_check", "artifact_suffix", "publish_videos"}
-    assert wf["concurrency"]["group"] == "azure-osworld-vm"
+    assert wf["concurrency"]["group"] == "gcp-osworld-vm"
 
 
 @pytest.mark.parametrize("name", ["live-bench.yml", "live-desktop-bench.yml"])

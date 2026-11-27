@@ -69,15 +69,27 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
   confirm the break, fixes the real cause in a normal PR (never by skipping, disabling, ignoring or weakening a
   test or check; its verifier and Fable 5.2 reviewer are told to fail any PR that does), and closes the issue
   once a fresh run is green. If it was only flaky or the try fails (or stalls for 2 days), it writes or adds to
-  a "Main broken: <file>" story under KAN-210 and tells Vickey; a known flaky nightly test just gets a note on its story
+  a "Main broken: <file>" story under KAN-210 (a flaky one ends ", flaky") and tells Vickey only if the try failed or
+  stalled; a flaky result waits for the Monday summary. A known flaky nightly test just gets a note on its story
   and a fresh run, with no new thread. While a try is running no new story starts;
   once the issue has its outcome, or the thread is waiting on Vickey, stories go on, and the pickup closes the
   issue when that workflow is green again. Next it resumes any story thread stopped by a usage limit. It starts no
   new story while one is in progress. Otherwise it starts one thread for the next
-  story in board order whose latest Vickey comment approves it, or that is `pre-approved` (never "Run:" or paid stories). It posts one
-  line only when it did something. A run that hits Claude's usage limit just skips; the next run retries.
+  story in board order whose latest Vickey comment approves it, or that is `pre-approved` (never "Run:" or paid stories). It posts a
+  line only when something needs Vickey right away (see the weekly summary below). A run that hits Claude's usage limit just skips; the next run retries.
   The full prompt lives in the scheduled task itself (copy: project file `kan217/pickup-prompt.md`). Claude's Jira comments start with "(from Claude)"
   (they post through Vickey's own Jira connection, so they carry her account).
+- **One weekly summary instead of many pings (KAN-223).** Every Monday at 7:37 AM Chicago a scheduled task posts ONE
+  message to Vickey: what merged, what finished, what needs her OK, and what was spent, with a Substack draft of the
+  week's progress for her to edit and post (Claude never posts it). Between Mondays, Claude messages her only when
+  something needs her right away: main is broken and needs her, tonight's tests failed while no fix try can run on its own (pickup off or paused; never a known flaky test), a paid run waits on her OK,
+  work is stuck until she acts (a "merge", a decision, a question, a permission prompt), or something could cost money,
+  leak a secret or open a security hole. A merged PR, a finished story, a new inbox story or a tidy-up result waits for Monday. Claude
+  always answers her own messages. The 9:47 PM daily check posts only those urgent items, and the PR gate's daily
+  note no longer posts to Slack (it stays in the run summary, once a day). Three things stay: the
+  Saturday brief (one link, then a brainstorm thread), the one-line start of each new thread, and Jira "(from Claude)"
+  comments (the record; they post as her own account, so they notify no one). Rules: project files
+  `planning/right-away.md` and `planning/weekly-summary.md`.
 - **Plans and docs go in Confluence, space OPERON** (not Claude Docs). Add new pages
   to the OPERON home page table of contents (page 295140).
 - **Never drop or change a step of an approved plan without asking.** If a run or

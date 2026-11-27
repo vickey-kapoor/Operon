@@ -1284,6 +1284,12 @@ class AgentLoop:
             if getattr(self, "_click_reader", None) is not None and await self._run_cancelled(ctx.run_id):
                 _trace("  3 POLICY -> CANCELLED", "run was stopped while the gate read the click text")
                 return self._cancelled_response(ctx.record)
+            # The fresh look (KAN-207) takes a screenshot, so a stop that came in meanwhile
+            # must keep the action from running too.
+            ctx.fresh_look_stale = await self._fresh_look_stale(ctx)
+            if ctx.fresh_look_ran and await self._run_cancelled(ctx.run_id):
+                _trace("  3 POLICY -> CANCELLED", "run was stopped during the fresh look")
+                return self._cancelled_response(ctx.record)
             return None
         self._disarm_dialog_accept(ctx.run_id)  # a gate pause never leaves an accept armed
         return await self._pause_for_user(
@@ -1324,7 +1330,7 @@ class AgentLoop:
         _t0 = time.perf_counter()
         self._install_batch_child_check(ctx.run_id, decision.action)
         try:
-            stale = await self._fresh_look_stale(ctx)
+            stale = ctx.fresh_look_stale
             if stale is not None:
                 executed_action = stale
             else:
@@ -1363,6 +1369,7 @@ class AgentLoop:
             # A person approved this action at a pause: it runs as approved, never skipped again.
             return None
         fresh = None
+        ctx.fresh_look_ran = True
         try:
             fresh = await peek()
             if fresh is None:

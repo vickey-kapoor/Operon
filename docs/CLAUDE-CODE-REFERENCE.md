@@ -67,7 +67,8 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
   confirm the break, fixes the real cause in a normal PR (never by skipping, disabling, ignoring or weakening a
   test or check; its verifier and Fable 5.2 reviewer are told to fail any PR that does), and closes the issue
   once a fresh run is green. If it was only flaky or the try fails (or stalls for 2 days), it writes or adds to
-  a "Main broken: <check>" story under KAN-210 and tells Vickey. While a try is running no new story starts;
+  a "Main broken: <file>" story under KAN-210 and tells Vickey; a known flaky nightly test just gets a note on its story,
+  with no new thread. While a try is running no new story starts;
   once the issue has its outcome, or the thread is waiting on Vickey, stories go on, and the pickup closes the
   issue when that workflow is green again. Next it resumes any story thread stopped by a usage limit. It starts no
   new story while one is in progress. Otherwise it starts one thread for the next

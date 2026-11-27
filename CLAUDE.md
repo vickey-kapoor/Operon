@@ -65,6 +65,9 @@ $env:GEMINI_API_KEY = "fake-test-key"; .venv\Scripts\python -m evals
 # Lint (exactly what CI runs)
 .venv\Scripts\ruff check src tests evals --select E,F,W,I --ignore E501
 
+# Red test (KAN-280; CI "Tests fail without the fix"): the PR's changed tests must fail on main's code
+.venv\Scripts\python scripts/red_test_check.py --base origin/main
+
 # Type check (KAN-159; CI "Type check" job). Baseline modules are listed in [tool.mypy] in
 # pyproject.toml: fix one, delete it from the list. Coverage: add --cov to the pytest command.
 .venv\Scripts\mypy
@@ -183,12 +186,13 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A settle frame grab could launch the browser inside the wait's time limit, where a slow start is cancelled half-way -> a frame grab only reads a session that already exists; it never opens one (KAN-203, #380).
 - A changed default (no Win+D on your own PC) silently took the clean screen from the live desktop benchmarks -> when a default changes, find every caller that relied on the old one and make it ask explicitly (KAN-205, #379).
 - A Google workload identity mapping read an OIDC claim (`job_workflow_ref`) that a directly started run may not carry -> map an optional claim as `"claim" in assertion ? assertion.claim : <fallback>`, and check a direct start and a called run both sign in at apply (KAN-224, #386).
+- The pipeline skill was named here but never committed, so cloud story threads planned and coded everything in one Opus session (PRs 369-386) -> the skill lives in `.claude/skills/pipeline/` and every PR body records who did each step (#387, 2026-11-27).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 
-For any code change, follow the `pipeline` skill (`/pipeline <task>`): Opus plans, Haiku
-scanners find, Sonnet coders fix in isolated worktrees, a fresh Opus verifier checks.
-The main session does not edit code.
+For any code change, small ones too, follow the `pipeline` skill (`.claude/skills/pipeline/SKILL.md`, `/pipeline <task>`):
+Opus plans, Haiku scanners find, Sonnet coders fix in isolated worktrees, a fresh Opus verifier checks.
+The main session does not edit code. Each PR body names who did each step ("Who did what").
 
 **Merging (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval").** This is the
 full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
@@ -246,7 +250,7 @@ execution traces, logs) — gitignored, and **screenshots capture the whole scre
 so review before sharing. Legacy `runs/`, `.browser-artifacts/`, `.desktop-artifacts/`
 paths still appear in old logs and tests.
 
-Never commit anything under `.claude/` except `.claude/agents/` (the shared subagent definitions, see Dev workflow) —
+Never commit anything under `.claude/` except `.claude/agents/` and `.claude/skills/pipeline/` (the shared subagent definitions and the pipeline skill, see Dev workflow) —
 the rest is gitignored and personal.
 
 ## Testing conventions

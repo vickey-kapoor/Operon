@@ -21,7 +21,8 @@ failure and its fix. It is not a consumer product.
 
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
   pages, native Windows apps and a Linux desktop.
-- **Gemini computer use.** Every run uses Gemini 3.5 Flash, which has computer use built in.
+- **Gemini computer use.** Runs use Gemini 3.5 Flash by default, which has computer use built in.
+  Claude, OpenAI and open-weight models can be switched on instead ([configuration](docs/configuration.md)).
 - **One thin harness.** The model makes every decision and its own "done" ends the run; no rules,
   guards or retries replace its action (the earlier Full harness was removed, KAN-183).
 - **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on

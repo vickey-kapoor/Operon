@@ -20,15 +20,15 @@ failure and its fix. It is not a consumer product.
 ## Highlights
 
 - **Pixels only.** Every action targets screen coordinates, so the same agent drives web
-  pages and native Windows apps.
+  pages, native Windows apps and a Linux desktop.
 - **Gemini computer use.** Every run uses Gemini 3.5 Flash, which has computer use built in.
 - **One thin harness.** The model makes every decision and its own "done" ends the run; no rules,
   guards or retries replace its action (the earlier Full harness was removed, KAN-183).
 - **Safety around the loop.** A file guard and step budget on every run, and a trust gate (on
   by default) that blocks or asks a human before risky actions.
-- **Measured.** Browser, Desktop and Hybrid benchmarks graded from app and machine state, each
-  in both harnesses, on a frozen task set (Season 1), plus safety, grounding and cost tracking
-  on an [eval dashboard](https://operon-evals.vercel.app).
+- **Measured.** A public OSWorld-Verified subset scored by OSWorld's own checkers (below), and
+  Browser, Desktop and Hybrid task sets graded from app and machine state (Season 1), plus safety,
+  grounding and cost tracking on an [eval dashboard](https://operon-evals.vercel.app).
 
 ## How it works
 
@@ -52,7 +52,9 @@ flowchart LR
 ```
 
 - **What exists today.** The engine, the benchmark suites with their own pass/fail checks, a
-  per-step record of every run (screenshot, model answer, action, verification), free replay of
+  per-step record of every run (screenshots before and after, the model's prompt and answer, the
+  action, the verification result, and each step's start and end time; see
+  [logging](docs/logging.md)), free replay of
   a recorded run through the current code with no model calls ([`evals/replay.py`](evals/replay.py)),
   and the [eval dashboard](https://operon-evals.vercel.app).
 - **What is planned.** A test bench on top of those: pick benchmark tasks, watch them run, see
@@ -100,7 +102,8 @@ short report of what it did.
 That run took 2 model steps and 23 seconds. A task like this costs a few cents of Gemini calls on your key.
 
 **Next:** `operon serve` starts the API, which `operon run --request` and other clients drive. Add `--desktop` to `operon run` to drive
-Windows apps instead of the browser (it moves your real mouse and keyboard). More in the
+desktop apps instead of the browser (it moves your real mouse and keyboard); `operon envs` lists the
+machines a desktop run can use ([environments](docs/environments.md)). More in the
 [API guide](docs/api.md#operon-run-and-the-run-api).
 
 Or, with `operon serve` running, give it a task over HTTP:
@@ -151,8 +154,9 @@ model credits.
 ## Status
 
 Operon runs browser, desktop and hybrid (desktop plus browser) tasks with Gemini computer use.
-On the Season 1 core sets Gemini scores 9 or 10 of 10 in most cells, and it completed 21 of 25
-on the OSWorld-Verified subset above.
+On the Season 1 core sets Gemini scored 9 or 10 of 10 in most cells (graded in November 2026,
+before the Full harness was removed, so the grid has Thin and Full columns), and it completed
+21 of 25 on the OSWorld-Verified subset above.
 
 What stays: the engine, the environments, the run API and live view, the safety gates (trust
 gate, approvals, takeover, secrets vault), evals, replay, the dashboard and CI.
@@ -165,7 +169,10 @@ releases). They remain in the git history.
 
 | Topic | |
 |---|---|
-| [Configuration](docs/configuration.md) | Model keys, backends, harness profiles, every setting |
+| [Configuration](docs/configuration.md) | Model keys, backends, every setting |
+| [Environments](docs/environments.md) | Where a desktop run happens (your PC, a container, a VM) and `operon envs` |
+| [Secrets](docs/secrets.md) | Model keys in Credential Manager and the secrets vault |
+| [Logging](docs/logging.md) | What each run records and where |
 | [HTTP API](docs/api.md) | Routes for browser and desktop runs, the live stream, auth |
 | [Evaluation](docs/evaluation.md) | Latest results, benchmark suites, `/bench grounding` and batch commands (paid runs are OSWorld and grounding only), cost caps, dashboard |
 | [Architecture](docs/architecture.md) | The control loop, backends, policy, verification and recovery |

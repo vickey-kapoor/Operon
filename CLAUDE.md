@@ -172,6 +172,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - Model clients gave up on 429 and 5xx, and a failed turn stayed in the conversation -> honor `Retry-After`, back off, roll the failed turn back (KAN-173, #348).
 - Browser confirm dialogs skipped the trust gate -> a dialog is an action: gate it, and bind the approval to that one dialog (KAN-172, #350).
 - Run-cost readers counted a step with no usage file as $0 -> report missing usage as a gap; readers of run files accept null fields (KAN-177, #358).
+- A new pre-execution skip ignored a person's gate approval, which the gate stage had already used up -> any check that can stop an action reads the approval the gate stage captured (KAN-207, #381).
 - A timing test had no margin and failed by 0.03 s on CI -> size test delays at several times the worst measured sample, and note the measurement next to the constant (KAN-211, #364).
 - A workflow checkout kept its token in `.git/config` -> `persist-credentials: false` on every `actions/checkout`; run zizmor before pushing workflow edits (#351).
 - A test that shells out to bash failed on Windows, where bash may be WSL with no distro -> skip such tests on Windows; offline checks must pass there too (KAN-195, #360).

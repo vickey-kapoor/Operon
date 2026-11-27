@@ -1273,6 +1273,8 @@ class AgentLoop:
 
         # Human-in-the-loop, coordinate thrash and pre-execution gates: a blocked
         # action never runs; the run pauses for a human instead.
+        # The gate stage uses a person's approval up, so later checks read this copy.
+        ctx.approved_gates = self._approved_gates(ctx.run_id, ctx.decision.action)
         pause_decision = await self._gate_pause_decision(ctx.record, ctx.state, ctx.decision, frame=ctx.frame)
         if pause_decision is None:
             # Reading the click text (KAN-163) waits on OCR: a stop that came in
@@ -1355,7 +1357,7 @@ class AgentLoop:
         peek = getattr(self.executor, "peek_frame", None)
         if point is None or not inspect.iscoroutinefunction(peek):
             return None
-        if self._approved_gates(ctx.run_id, action):
+        if ctx.approved_gates:
             # A person approved this action at a pause: it runs as approved, never skipped again.
             return None
         fresh = None
@@ -1363,9 +1365,15 @@ class AgentLoop:
             fresh = await peek()
             if fresh is None:
                 return None
-            x = point[0] - int(getattr(ctx.frame, "monitor_left", 0) or 0)
-            y = point[1] - int(getattr(ctx.frame, "monitor_top", 0) or 0)
-            changed = await asyncio.to_thread(spot_changed, ctx.frame.artifact_path, fresh.artifact_path, x, y)
+            left = int(getattr(ctx.frame, "monitor_left", 0) or 0)
+            top = int(getattr(ctx.frame, "monitor_top", 0) or 0)
+            if (fresh.monitor_left, fresh.monitor_top) != (left, top):
+                # The fresh frame is another monitor: the model's coordinates belong to the old one.
+                changed: float | None = 1.0
+            else:
+                changed = await asyncio.to_thread(
+                    spot_changed, ctx.frame.artifact_path, fresh.artifact_path, point[0] - left, point[1] - top
+                )
         except Exception as exc:  # noqa: BLE001 - the fresh look must never fail a step
             self._recovered(ctx.run_id, "fresh_look", exc)
             return None

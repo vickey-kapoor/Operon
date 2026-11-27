@@ -53,6 +53,7 @@ def _setup(tmp_path, monkeypatch, *, flag: bool, action: AgentAction, peek, left
         state=SimpleNamespace(),
         frame=_frame(before, left),
         record_stage=lambda name, t0: 0.0,
+        approved_gates=frozenset(),
         after_artifact_path=str(tmp_path / "after.png"),
         decision=PolicyDecision(action=action, rationale="r", confidence=0.9, active_subgoal="s"),
         executed_action=None,
@@ -128,13 +129,32 @@ async def test_peek_error_is_counted_and_the_action_runs(tmp_path, monkeypatch) 
 
 
 async def test_an_approved_action_runs_without_a_peek(tmp_path, monkeypatch) -> None:
-    """A person approved this action at a pause (e.g. coordinate thrash): the fresh look must not skip it again."""
+    """Real flow: a person's approval (as resume_run leaves it) is used up by the gate stage; the
+    fresh look must still honor it, or an animated target could never be clicked."""
     peek, _ = _peek_returning(tmp_path, popup=True)
     loop, ctx, execute, _ = _setup(tmp_path, monkeypatch, flag=True, action=CLICK, peek=peek)
     loop._approved_gate_actions["r1"] = (loop._gate_fingerprint(CLICK), frozenset({"coordinate_thrash"}))
+    loop._run_cancelled = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    loop._current_url_for_trust_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    loop._click_text_for_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    loop.run_store = SimpleNamespace(root_dir=str(tmp_path))
+    ctx.state = SimpleNamespace(intent="x", target_failure_counts={}, permission_mode=None)
+
+    assert await loop._gate_stage(ctx) is None
+    assert "r1" not in loop._approved_gate_actions  # the gate stage used the approval up
     await loop._execute_attempt(ctx)
+
     peek.assert_not_awaited()
     execute.assert_awaited_once()
+
+
+async def test_a_peek_from_another_monitor_counts_as_changed(tmp_path, monkeypatch) -> None:
+    path = _save(tmp_path / "peek.png", popup=False)
+    peek = AsyncMock(return_value=_frame(path, left=1920))
+    loop, ctx, execute, _ = _setup(tmp_path, monkeypatch, flag=True, action=CLICK, peek=peek)
+    await loop._execute_attempt(ctx)
+    execute.assert_not_awaited()
+    assert ctx.executed_action.failure_category is FailureCategory.STALE_TARGET_BEFORE_ACTION
 
 
 async def test_non_pointer_action_does_not_peek(tmp_path, monkeypatch) -> None:

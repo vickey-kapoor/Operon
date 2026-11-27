@@ -258,7 +258,8 @@ def test_gate_stage_rechecks_a_stop_that_came_in_during_ocr(tmp_path: Path) -> N
     loop._run_cancelled = AsyncMock(side_effect=[False, True])  # stopped while OCR ran
     loop._gate_pause_decision = AsyncMock(return_value=None)
     ctx = SimpleNamespace(
-        run_id="r", record=SimpleNamespace(run_id="r", intent="x", step_count=1), state=None, decision=None, frame=None
+        run_id="r", record=SimpleNamespace(run_id="r", intent="x", step_count=1), state=None,
+        decision=SimpleNamespace(action=AgentAction(action_type=ActionType.WAIT, wait_ms=10)), frame=None
     )
     response = asyncio.run(loop._gate_stage(ctx))
     assert response is not None and response.status is RunStatus.CANCELLED

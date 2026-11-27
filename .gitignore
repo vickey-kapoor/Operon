@@ -66,9 +66,12 @@ src-tauri/binaries/
 *.swp
 *.swo
 *~
-# .claude/ is personal, except the shared subagent definitions
+# .claude/ is personal, except the shared subagent definitions and the shared pipeline skill
 .claude/*
 !.claude/agents/
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/pipeline/
 .agents/
 .codex/
 ${APPDATA}/

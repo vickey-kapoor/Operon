@@ -181,14 +181,15 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - `/bench` PR comments run `main`'s copy of the workflow file, not the PR's -> a workflow change takes effect for `/bench` only after merge (found during the #191 restructure).
 - The PR-gate label job runs main's copy of `scripts/pr_gate.py`, so a new flag failed the check -> pass new flags only when the base script supports them, until merged (#374).
 - A settle frame grab could launch the browser inside the wait's time limit, where a slow start is cancelled half-way -> a frame grab only reads a session that already exists; it never opens one (KAN-203, #380).
+- The pipeline skill was named here but never committed, so cloud story threads planned and coded everything in one Opus session (PRs 369-386) -> the skill lives in `.claude/skills/pipeline/` and every PR body records who did each step (2026-11-27).
 - A changed default (no Win+D on your own PC) silently took the clean screen from the live desktop benchmarks -> when a default changes, find every caller that relied on the old one and make it ask explicitly (KAN-205, #379).
 - A Google workload identity mapping read an OIDC claim (`job_workflow_ref`) that a directly started run may not carry -> map an optional claim as `"claim" in assertion ? assertion.claim : <fallback>`, and check a direct start and a called run both sign in at apply (KAN-224, #386).
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 
-For any code change, follow the `pipeline` skill (`/pipeline <task>`): Opus plans, Haiku
-scanners find, Sonnet coders fix in isolated worktrees, a fresh Opus verifier checks.
-The main session does not edit code.
+For any code change, small ones too, follow the `pipeline` skill (`.claude/skills/pipeline/SKILL.md`, `/pipeline <task>`):
+Opus plans, Haiku scanners find, Sonnet coders fix in isolated worktrees, a fresh Opus verifier checks.
+The main session does not edit code. Each PR body names who did each step ("Who did what").
 
 **Merging (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval").** This is the
 full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
@@ -246,7 +247,7 @@ execution traces, logs) — gitignored, and **screenshots capture the whole scre
 so review before sharing. Legacy `runs/`, `.browser-artifacts/`, `.desktop-artifacts/`
 paths still appear in old logs and tests.
 
-Never commit anything under `.claude/` except `.claude/agents/` (the shared subagent definitions, see Dev workflow) —
+Never commit anything under `.claude/` except `.claude/agents/` and `.claude/skills/pipeline/` (the shared subagent definitions and the pipeline skill, see Dev workflow) —
 the rest is gitignored and personal.
 
 ## Testing conventions

@@ -850,7 +850,6 @@ async def test_batch_child_check_stops_a_batch_before_a_blocked_child(tmp_path: 
 
 
 def _png(draw_menu: bool = False) -> bytes:
-
     from PIL import ImageDraw
 
     image = Image.new("RGB", (400, 300), "white")
@@ -954,9 +953,8 @@ async def test_settle_grab_does_not_launch_a_browser(tmp_path) -> None:
 
 async def test_settle_grab_reads_the_open_page(tmp_path) -> None:
     """With a browser open, the settle grab still reads a small frame of the page."""
-
-    buf = __import__("io").BytesIO()
-    __import__("PIL.Image", fromlist=["Image"]).new("RGB", (40, 30), "white").save(buf, format="JPEG")
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 30), "white").save(buf, format="JPEG")
     page = SimpleNamespace(screenshot=AsyncMock(return_value=buf.getvalue()))
     executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
     executor._current_run_id = "run-1"

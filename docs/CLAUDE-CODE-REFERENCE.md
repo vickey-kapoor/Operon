@@ -61,8 +61,9 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It looks at main first (KAN-222): the free
   workflows `ci.yml` and `security.yml` each look red when their newest finished run on main (schedule, push or
-  hand start together) failed, and `ci.yml` also when a `nightly-failure` issue is open. Security runs on main only weekly, so the pickup starts a
-  fresh free Security run when its newest one is a day old or older than main's head. Each break gets exactly
+  hand start together) failed, and `ci.yml` also when a `nightly-failure` issue is open. Gate merges start no push run and GitHub's schedules can
+  lag, so the pickup starts a fresh free run of either workflow when its newest one is on an older commit than
+  main's head (and of Security also when it is a day old). Each break gets exactly
   one try, recorded on that workflow's own open `main-broken` issue, which the pickup opens before starting a
   "Fix broken main: <file>" thread (the nightly never closes it). That thread starts a fresh free run on main to
   confirm the break, fixes the real cause in a normal PR (never by skipping, disabling, ignoring or weakening a

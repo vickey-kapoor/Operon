@@ -63,4 +63,12 @@ jobs:
           BASE_SHA="$(git rev-parse HEAD^1)"
           OPT_OUT_FLAG=""
           if [ "$OPT_OUT" = "true" ]; then OPT_OUT_FLAG="--opt-out"; fi
-          uv run python scripts/red_test_check.py --base "$BASE_SHA" ${OPT_OUT_FLAG}
+          # Judge with the base branch's copy of the script, so a PR cannot weaken the check that judges it.
+          CHECK="scripts/red_test_check.py"
+          if git cat-file -e "$BASE_SHA:scripts/red_test_check.py" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/red_test_check.py" > "$RUNNER_TEMP/red_test_check.py"
+            CHECK="$RUNNER_TEMP/red_test_check.py"
+          else
+            echo "Note: scripts/red_test_check.py is not on the base branch yet (first rollout); running the PR's copy."
+          fi
+          uv run python "$CHECK" --base "$BASE_SHA" ${OPT_OUT_FLAG}

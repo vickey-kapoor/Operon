@@ -7,12 +7,15 @@ lists which modules were red and which passed on base. Stdlib only, $0.
     python scripts/red_test_check.py --base SHA [--head REF] [--repo PATH] [--opt-out]
 
 Code means a changed (or deleted) file under src/, scripts/, evals/ or .github/. Exit 0: at least one changed test module
-fails on the base (good), or the check is skipped (no changed test, no code change, nothing collected, or
-``--opt-out`` for a PR labelled ``no-red-test``). A module whose tests are all skipped on the base counts as
+fails on the base (good), or the check is skipped (no code change, nothing collected, no changed test with
+changes only under scripts/, evals/ or .github/, or ``--opt-out`` for a PR labelled ``no-red-test``). A PR that
+changes anything under src/ (deleted files too) but adds or edits no tests/**/test_*.py module fails (exit 1). A module whose tests are all skipped on the base counts as
 "not run" (like nothing collected), not as passed. A changed ``tests/conftest.py`` that fails to import (it uses
 something only the PR adds) counts as red. Exit 1: every module that ran passes on the base, or pytest failed in
 some other way. The reasons go to stderr and, when set, to
 ``$GITHUB_STEP_SUMMARY``.
+
+CI runs main's copy of this file, so a change here takes effect for other PRs only after merge.
 """
 
 from __future__ import annotations
@@ -148,6 +151,15 @@ def main(argv: list[str] | None = None) -> int:
     # A deleted test file has nothing to copy to the base worktree and nothing to run: only code counts for it.
     tests = [f for f in tests if f not in deleted]
     test_modules = [f for f in test_modules if f not in deleted]
+    if not test_modules and any(PurePosixPath(f).parts[0] == "src" for f in code):
+        _report(
+            "FAIL",
+            [
+                "This PR changes src/ but no test. Add a test that fails without the change, or, for a refactor "
+                "that keeps behaviour the same, add label no-red-test, say why in the PR body, and re-run this check."
+            ],
+        )
+        return 1
     if not test_modules:
         _report("skipped", ["no changed tests/**/test_*.py file"])
         return 0

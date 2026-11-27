@@ -108,7 +108,7 @@ def test_deleted_test_file_is_not_copied_or_run(repo: Path) -> None:
     base = _git(repo, "rev-parse", "HEAD")
     _git(repo, "checkout", "-b", "pr")
     (repo / "tests/test_toy.py").unlink()
-    _write(repo, {"src/toy/mod.py": FIXED})
+    _write(repo, {"scripts/tool.py": "x = 1\n"})
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "pr")
     assert _run(repo, base) == 0  # skipped: the only changed test was deleted
@@ -133,16 +133,36 @@ def test_new_function_pr_counts_collection_error_as_red(repo: Path) -> None:
     [
         {"docs/notes.md": "x\n", "README.md": "y\n"},
         {"tests/test_new.py": "def test_x():\n    assert True\n"},
-        {"src/toy/mod.py": FIXED},
+        {"scripts/tool.py": "x = 1\n"},
+        {".github/workflows/w.yml": "name: w\n"},
         {"uv.lock": "x\n", ".gitignore": "y\n", "data/cfg.json": "{}\n", "tests/test_new.py": "def test_x():\n    assert True\n"},
     ],
-    ids=["docs-only", "tests-only", "src-only", "non-code-and-test"],
+    ids=["docs-only", "tests-only", "scripts-only", "github-only", "non-code-and-test"],
 )
 def test_skips_when_not_both_tests_and_code(repo: Path, files: dict[str, str], capsys: pytest.CaptureFixture[str]) -> None:
     base = _pr(repo, files)
     assert _run(repo, base) == 0
     assert "skipped" in capsys.readouterr().err
     assert _worktrees(repo) == 1
+
+
+@needs_git
+def test_src_change_without_test_fails(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    base = _pr(repo, {"src/toy/mod.py": FIXED})
+    assert _run(repo, base) == 1
+    assert "changes src/ but no test" in capsys.readouterr().err
+    assert _run(repo, base, "--opt-out") == 0
+    assert _worktrees(repo) == 1
+
+
+@needs_git
+def test_src_delete_without_test_fails(repo: Path) -> None:
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-b", "pr")
+    (repo / "src" / "toy" / "mod.py").unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "pr")
+    assert _run(repo, base) == 1
 
 
 @needs_git
@@ -233,6 +253,14 @@ def test_workflow_uses_merge_parent_as_base() -> None:
     raw = (ROOT / ".github" / "workflows" / "red-test.yml").read_text(encoding="utf-8")
     assert "git rev-parse HEAD^1" in raw
     assert "base.sha" not in raw
+
+
+def test_workflow_runs_base_copy_of_script() -> None:
+    raw = (ROOT / ".github" / "workflows" / "red-test.yml").read_text(encoding="utf-8")
+    assert 'git show "$BASE_SHA:scripts/red_test_check.py"' in raw
+    assert 'git cat-file -e "$BASE_SHA:scripts/red_test_check.py"' in raw
+    assert "first rollout" in raw
+    assert '--base "$BASE_SHA"' in raw
 
 
 def test_workflow_reads_labels_before_installing() -> None:

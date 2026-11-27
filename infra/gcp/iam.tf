@@ -32,7 +32,10 @@ resource "google_iam_workload_identity_pool_provider" "operon_repo" {
     "google.subject"          = "assertion.sub"
     "attribute.repository_id" = "assertion.repository_id"
     "attribute.ref"           = "assertion.ref"
-    "attribute.workflow_ref"  = "assertion.job_workflow_ref"
+    # A job of a called workflow (benchmark.yml -> osworld-bench.yml) carries job_workflow_ref; fall back to
+    # workflow_ref so a run started directly still maps, in case GitHub leaves job_workflow_ref out there.
+    # Both are "<owner>/<repo>/.github/workflows/<file>@<ref>".
+    "attribute.workflow_ref" = "\"job_workflow_ref\" in assertion ? assertion.job_workflow_ref : assertion.workflow_ref"
   }
 
   # Only this repository (by its numeric id, which a rename or a new repo with the same name cannot take)

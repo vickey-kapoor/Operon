@@ -136,6 +136,8 @@ def test_only_the_osworld_workflow_on_main_of_this_repo_can_sign_in() -> None:
     assert '"1177308224"' in variables
     assert '"vickey-kapoor/Operon/.github/workflows/osworld-bench.yml@refs/heads/main"' in variables
     assert "attribute.workflow_ref/${var.github_workflow_ref}" in iam
+    # A called run (benchmark.yml) maps job_workflow_ref; a run started directly falls back to workflow_ref.
+    assert '"attribute.workflow_ref" = "\\"job_workflow_ref\\" in assertion ? assertion.job_workflow_ref : assertion.workflow_ref"' in iam
     # The CI identity gets the VM operator role on the instance only, never a project-wide compute role.
     assert 'resource "google_compute_instance_iam_member" "osworld_ci_operator"' in iam
     assert "roles/compute." not in iam and "roles/owner" not in iam and "roles/editor" not in iam

@@ -214,6 +214,36 @@ jobs:
       - name: Run ruff
         run: uv run ruff check src tests evals --select E,F,W,I --ignore E501
 
+  terraform:
+    # KAN-224: the OSWorld runner's Google Cloud setup. Formatting and a validate of both roots; no
+    # backend and no credentials, so nothing here reads or changes the real project.
+    name: Terraform (infra/gcp)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Validate the state bucket bootstrap
+        run: |
+          terraform -chdir=infra/gcp/bootstrap init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/gcp/bootstrap validate
+
+      - name: Validate the runner VM setup
+        run: |
+          terraform -chdir=infra/gcp init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/gcp validate
+
   typecheck:
     # KAN-159. mypy over src/operon; settings and the starting baseline (modules
     # still allowed to have errors) are in [tool.mypy] in pyproject.toml.
@@ -317,7 +347,7 @@ jobs:
   nightly-report:
     # KAN-228: only on the nightly run. Opens (or comments on) one issue when a job failed, closes it when all pass.
     name: Nightly report
-    needs: [test, test-windows, desktop, lint, typecheck, browser-e2e, evals]
+    needs: [test, test-windows, desktop, lint, terraform, typecheck, browser-e2e, evals]
     if: always() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5

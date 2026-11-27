@@ -69,7 +69,8 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
   confirm the break, fixes the real cause in a normal PR (never by skipping, disabling, ignoring or weakening a
   test or check; its verifier and Fable 5.2 reviewer are told to fail any PR that does), and closes the issue
   once a fresh run is green. If it was only flaky or the try fails (or stalls for 2 days), it writes or adds to
-  a "Main broken: <file>" story under KAN-210 and tells Vickey; a known flaky nightly test just gets a note on its story
+  a "Main broken: <file>" story under KAN-210 (a flaky one ends ", flaky") and tells Vickey only if the try failed or
+  stalled; a flaky result waits for the Monday summary. A known flaky nightly test just gets a note on its story
   and a fresh run, with no new thread. While a try is running no new story starts;
   once the issue has its outcome, or the thread is waiting on Vickey, stories go on, and the pickup closes the
   issue when that workflow is green again. Next it resumes any story thread stopped by a usage limit. It starts no
@@ -81,7 +82,7 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
 - **One weekly summary instead of many pings (KAN-223).** Every Monday at 7:37 AM Chicago a scheduled task posts ONE
   message to Vickey: what merged, what finished, what needs her OK, and what was spent, with a Substack draft of the
   week's progress for her to edit and post (Claude never posts it). Between Mondays, Claude messages her only when
-  something needs her right away: main is broken and needs her, tonight's tests failed, a paid run waits on her OK,
+  something needs her right away: main is broken and needs her, tonight's tests failed (not a known flaky test), a paid run waits on her OK,
   work is stuck until she acts (a "merge", a decision, a question, a permission prompt), or something could cost money
   or leak a secret. A merged PR, a finished story, a new inbox story or a tidy-up result waits for Monday. Claude
   always answers her own messages. The 9:47 PM daily check posts only those urgent items. Three things stay: the

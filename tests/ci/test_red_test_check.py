@@ -89,6 +89,33 @@ def test_weak_test_pr_fails(repo: Path) -> None:
 
 
 @needs_git
+def test_deleting_code_file_with_weak_test_fails(repo: Path) -> None:
+    _write(repo, {"src/toy/unsafe.py": "def danger():\n    return 1\n"})
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add unsafe")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-b", "pr")
+    (repo / "src/toy/unsafe.py").unlink()
+    _write(repo, {"tests/test_toy.py": "def test_ok():\n    assert True\n\n\ndef test_gone():\n    assert True\n"})
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "pr")
+    assert _run(repo, base) == 1
+    assert _worktrees(repo) == 1
+
+
+@needs_git
+def test_deleted_test_file_is_not_copied_or_run(repo: Path) -> None:
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-b", "pr")
+    (repo / "tests/test_toy.py").unlink()
+    _write(repo, {"src/toy/mod.py": FIXED})
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "pr")
+    assert _run(repo, base) == 0  # skipped: the only changed test was deleted
+    assert _worktrees(repo) == 1
+
+
+@needs_git
 def test_new_function_pr_counts_collection_error_as_red(repo: Path) -> None:
     base = _pr(
         repo,

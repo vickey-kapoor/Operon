@@ -6,7 +6,7 @@ lists which modules were red and which passed on base. Stdlib only, $0.
 
     python scripts/red_test_check.py --base SHA [--head REF] [--repo PATH] [--opt-out]
 
-Code means a changed file under src/, scripts/, evals/ or .github/. Exit 0: at least one changed test module
+Code means a changed (or deleted) file under src/, scripts/, evals/ or .github/. Exit 0: at least one changed test module
 fails on the base (good), or the check is skipped (no changed test, no code change, nothing collected, or
 ``--opt-out`` for a PR labelled ``no-red-test``). A module whose tests are all skipped on the base counts as
 "not run" (like nothing collected), not as passed. A changed ``tests/conftest.py`` that fails to import (it uses
@@ -45,8 +45,9 @@ def _git(repo: Path, *args: str) -> bytes:
     return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True).stdout
 
 
-def changed_files(repo: Path, base: str, head: str) -> list[str]:
-    out = _git(repo, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=ACMR", f"{base}...{head}")
+def changed_files(repo: Path, base: str, head: str, filt: str = "ACMRD") -> list[str]:
+    """Changed paths, deleted ones included by default (deleting production code is a code change)."""
+    out = _git(repo, "-c", "core.quotePath=false", "diff", "--name-only", f"--diff-filter={filt}", f"{base}...{head}")
     return [line.strip() for line in out.decode("utf-8", "replace").splitlines() if line.strip()]
 
 
@@ -142,7 +143,11 @@ def main(argv: list[str] | None = None) -> int:
         _report("skipped", ["skipped: label no-red-test"])
         return 0
     repo = Path(a.repo).resolve()
+    deleted = set(changed_files(repo, a.base, a.head, "D"))
     tests, test_modules, code = split_files(changed_files(repo, a.base, a.head))
+    # A deleted test file has nothing to copy to the base worktree and nothing to run: only code counts for it.
+    tests = [f for f in tests if f not in deleted]
+    test_modules = [f for f in test_modules if f not in deleted]
     if not test_modules:
         _report("skipped", ["no changed tests/**/test_*.py file"])
         return 0

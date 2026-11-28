@@ -195,8 +195,11 @@ jobs:
       per_set: ${{ matrix.per_set }}
       max_cost_usd: ${{ matrix.cap }}
       artifact_suffix: ${{ matrix.suffix }}
-    # No secrets passed: the called job takes its model key from the paid-runs environment (KAN-282), and the
-    # benchmarked code never sees the dashboard, Blob, Slack or Azure secrets.
+    # Named, never inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets. The key is
+    # passed by name (a reusable workflow gets an empty one otherwise); its value comes from the paid-runs environment
+    # of the called job (KAN-282).
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
   # OSWorld runs the default branch on its own VM, one cell at a time (max-parallel: 1);
   # osworld-bench.yml starts the Google Cloud VM, runs, and stops it.
@@ -224,8 +227,12 @@ jobs:
       model: ${{ matrix.model }}
       done_check: ${{ matrix.done_check }}
       publish_videos: "false"  # publish-videos below keeps every cell's videos in one release
-    # The model keys are not passed: the called bench job takes them from the paid-runs environment (KAN-282).
+    # Passed by name; the values come from the paid-runs environment of the called jobs (KAN-282). Only the called
+    # bench job decides which key reaches a cell (by its model).
     secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       # Only the osworld cell: the called workflow mints a one-job runner on the VM with it (KAN-195). The benchmarked code never gets it.
       RUNNER_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
 
@@ -237,6 +244,9 @@ jobs:
     with:
       ref: ${{ needs.parse.outputs.sha }}
       zoom: ${{ needs.parse.outputs.zoom }}
+    # By name; the value comes from the paid-runs environment of the called job (KAN-282).
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
   # Keeps the run videos for good: workflow artifacts expire after 14 days, a prerelease does not.
   # It only downloads files and uploads them to a release; it never checks out or runs benchmarked code.

@@ -59,6 +59,11 @@ on:
       # benchmark.yml keeps the videos of all its cells in one release itself, so it passes "false".
       publish_videos: {type: string, default: "true"}
     secrets:
+      # The caller passes the model keys by name; the values come from the paid-runs environment of the jobs below
+      # (empty for a job without that environment once the repo secrets are deleted).
+      GEMINI_API_KEY: {required: false}
+      ANTHROPIC_API_KEY: {required: false}
+      OPENAI_API_KEY: {required: false}
       # Mints the one-job runner. Only benchmark.yml's osworld cell passes it; it never reaches the bench job.
       RUNNER_ADMIN_TOKEN: {required: false}
 
@@ -92,6 +97,14 @@ jobs:
       bench_minutes: ${{ steps.minutes.outputs.minutes }}
       runner_label: ${{ steps.label.outputs.label }}
     steps:
+      # An empty key fails here, before the VM starts and bills. The key is in this step's env only.
+      - name: Check the model key
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY is missing from the paid-runs environment."; exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}

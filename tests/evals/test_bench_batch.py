@@ -205,9 +205,10 @@ def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() ->
     for job, called in (("batch-grounding", "grounding.yml"), ("batch-osworld", "osworld-bench.yml")):
         inputs = _workflow(called)[True]["workflow_call"]["inputs"]
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
-        # The model keys are not passed (KAN-282): the called job takes them from the paid-runs environment.
-        assert not {"GEMINI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"} & set(jobs[job].get("secrets", {}))
-        assert set(jobs[job].get("secrets", {})) <= set(_workflow(called)[True]["workflow_call"].get("secrets", {}))
+        # The model keys are passed by name (KAN-282; a reusable workflow gets an empty one otherwise) and the
+        # callee declares each of them; their values come from the paid-runs environment of the called job.
+        assert jobs[job]["secrets"] != "inherit"
+        assert {"GEMINI_API_KEY"} <= set(jobs[job]["secrets"]) <= set(_workflow(called)[True]["workflow_call"]["secrets"])
         # Each cell's artifact gets its own name; a manual run (empty suffix) keeps today's name.
         assert jobs[job]["with"]["artifact_suffix"] == "${{ matrix.suffix }}"
         assert inputs["artifact_suffix"]["default"] == ""
@@ -333,7 +334,12 @@ def test_osworld_bench_workflow_takes_a_model_and_gates_the_keys() -> None:
     dispatch = wf[True]["workflow_dispatch"]["inputs"]["model"]
     assert dispatch["type"] == "choice" and dispatch["options"] == ["", "claude-sonnet-5-5", "openai-computer-use"]
     assert wf[True]["workflow_call"]["inputs"]["model"] == {"type": "string", "default": ""}
-    assert set(wf[True]["workflow_call"]["secrets"]) == {"RUNNER_ADMIN_TOKEN"}  # the model keys come from paid-runs
+    assert set(wf[True]["workflow_call"]["secrets"]) == {
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "RUNNER_ADMIN_TOKEN",
+    }
     bench = wf["jobs"]["bench"]
     env = bench["env"]
     assert env["ANTHROPIC_API_KEY"] == "${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}"
@@ -343,8 +349,14 @@ def test_osworld_bench_workflow_takes_a_model_and_gates_the_keys() -> None:
     assert "claude-sonnet-5-5 | openai-computer-use" in steps["Check the inputs"]
     jobs = _workflow("benchmark.yml")["jobs"]
     assert jobs["batch-osworld"]["with"]["model"] == "${{ matrix.model }}"
-    assert set(jobs["batch-osworld"]["secrets"]) == {"RUNNER_ADMIN_TOKEN"}
-    assert "secrets" not in jobs["batch-grounding"]
+    assert set(jobs["batch-osworld"]["secrets"]) == {
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "RUNNER_ADMIN_TOKEN",
+    }
+    assert set(jobs["batch-grounding"]["secrets"]) == {"GEMINI_API_KEY"}  # grounding never gets the other keys
+    assert set(jobs["grounding"]["secrets"]) == {"GEMINI_API_KEY"}
 
 
 def test_the_donecheck_word_turns_the_done_check_on_for_an_osworld_cell() -> None:

@@ -49,6 +49,7 @@ def _jobs_without_the_environment(name: str, wf: dict) -> list[str]:
         f"{name}:{job_id}"
         for job_id, job in wf["jobs"].items()
         if (name, job_id) not in EXEMPT_JOBS
+        and not _is_caller(job)
         and (workflow_wide or _uses_a_model_key(job))
         and _environment_name(job) != "paid-runs"
     ]
@@ -94,16 +95,40 @@ def test_the_key_pattern_catches_every_spelling() -> None:
     assert not _uses_a_model_key({"env": {"X": "${{ secrets.RUNNER_ADMIN_TOKEN }}"}})
 
 
-def test_no_caller_passes_a_model_key_or_inherits() -> None:
-    bad = []
-    for name, wf in _workflows().items():
+def _is_caller(job: dict) -> bool:
+    return "uses" in job
+
+
+def test_no_caller_inherits_secrets() -> None:
+    bad = [
+        f"{name}:{job_id}"
+        for name, wf in _workflows().items()
+        for job_id, job in wf["jobs"].items()
+        if _is_caller(job) and job.get("secrets") == "inherit"
+    ]
+    assert not bad, f"callers that use secrets: inherit (pass keys by name): {bad}"
+
+
+def test_a_caller_passes_model_keys_by_name_to_a_callee_that_declares_them_and_gates_them() -> None:
+    # A reusable workflow gets an empty value for a secret its caller does not pass, even when the called job
+    # has the environment that holds it. So the caller names the key, the callee declares it, and every job
+    # of the callee that reads a model key runs in paid-runs.
+    workflows = _workflows()
+    problems = []
+    for name, wf in workflows.items():
         for job_id, job in wf["jobs"].items():
-            if "uses" not in job:
+            passed = set(job.get("secrets") or {}) & set(KEYS) if _is_caller(job) and isinstance(job.get("secrets"), dict) else set()
+            if not passed:
                 continue
-            secrets = job.get("secrets")
-            if secrets == "inherit" or (isinstance(secrets, dict) and set(secrets) & set(KEYS)):
-                bad.append(f"{name}:{job_id}")
-    assert not bad, f"callers that pass model keys (they come from the environment): {bad}"
+            uses = str(job["uses"])
+            assert uses.startswith("./.github/workflows/"), f"{name}:{job_id} calls {uses}, not a local workflow"
+            callee_name = uses.rsplit("/", 1)[-1]
+            callee = workflows[callee_name]
+            declared = set(callee[True]["workflow_call"].get("secrets") or {})
+            if not passed <= declared:
+                problems.append(f"{name}:{job_id} passes {sorted(passed - declared)} that {callee_name} does not declare")
+            problems += _jobs_without_the_environment(callee_name, callee)
+    assert not problems, problems
 
 
 @pytest.mark.parametrize(

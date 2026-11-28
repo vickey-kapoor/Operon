@@ -68,7 +68,8 @@ OSWorld app catalog. Report scores as run with those.
    `OSWORLD_GCP_ZONE` (and `GCP_PROJECT_ID` for another project).
 
 4. The model keys `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are secrets of the `paid-runs`
-   GitHub environment (KAN-282), not repo secrets. The jobs `start-vm` and `bench` both wait for Vickey's Approve
+   GitHub environment (KAN-282), not repo secrets. `benchmark.yml` passes each key to the called workflow by name (a
+   reusable workflow gets an empty value otherwise); the value comes from the environment of the called job. The jobs `start-vm` and `bench` both wait for Vickey's Approve
    on that environment, so a run needs two Approve clicks: machine start, then tasks. After the first click the
    VM is up and its runner is registered, so the 20-minute idle power-off in `infra/gcp/startup.sh` does not fire:
    it bills about $0.20 an hour until the second click (worst case the VM's 17 h `max_run_duration`, about $3.40).
@@ -100,7 +101,11 @@ merge, then step 7.
 8. Check it once: start one small click-accuracy (grounding) run by hand, see it show "Waiting for review" and the GitHub
    email arrive, then press Reject (nothing is spent when rejected).
 
-A hand start of `grounding.yml` now works only from `main` (the environment accepts `main` only). To test a branch, use
+The first real approved run (with Vickey's OK for its cost) should go through the paid-run workflow (`benchmark.yml`)
+and confirm the "Check the secrets" step passes, which shows the keys arrive. A run left waiting holds its queue for
+up to 30 days, so Reject the runs you do not want.
+
+A hand start of `grounding.yml`, `benchmark.yml` or `osworld-bench.yml` from a branch is now blocked (the environment accepts `main` only). To test a branch, use
 a batch cell `grounding ref=<branch>` or `/bench grounding` on the PR. A batch needs two Approve clicks per OSWorld cell,
 and its cells run one after another.
 

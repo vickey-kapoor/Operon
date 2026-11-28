@@ -237,7 +237,8 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   Vickey's Approve in GitHub (KAN-282); an agent never approves a waiting `paid-runs` run (no pending_deployments call, no
   bypass), even with her OK for the run. Agents act as Vickey's account, so the Approve button is a hard stop against a
   run starting by accident and a notification to her, but an agent's token could still approve through the API; the
-  no-approve rule is what stops that.
+  no-approve rule is what stops that. An agent never changes the `paid-runs` environment (reviewers, branch rule, bypass,
+  secrets) and never adds a model key as a repo secret.
 - Marker comments come from the same account that opens PRs, so they are only as trustworthy as the review behind them.
   Gate merges use `GITHUB_TOKEN`, so push-triggered CI on `main` does not run for them.
 

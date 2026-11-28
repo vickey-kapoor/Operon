@@ -36,6 +36,10 @@ on:
         description: "Git ref to evaluate (empty: the triggering ref)"
         type: string
         default: ""
+    secrets:
+      # The caller passes the key by name; the value comes from the paid-runs environment of the job below
+      # (empty for a job without that environment once the repo secrets are deleted).
+      GEMINI_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -45,8 +49,8 @@ jobs:
     name: Run the click-accuracy test
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # Every run waits for Vickey's Approve (KAN-282). GEMINI_API_KEY is a secret of this environment; a job-level
-    # environment secret wins over a secret a caller passes.
+    # Every run waits for Vickey's Approve (KAN-282). GEMINI_API_KEY is a secret of this environment; the caller
+    # passes it by name (reusable workflows need that), and the environment's value is what the job reads.
     environment: paid-runs
     env:
       UV_PYTHON: "3.14"

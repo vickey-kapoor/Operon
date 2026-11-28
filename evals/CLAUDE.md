@@ -69,7 +69,7 @@ checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are 
 #   python -m evals.replay check [evals/recordings/*.json]
 # Gemini runs only (Claude/GPT refused); hybrid replays via the desktop path. Scripted desktop/hybrid recordings ($0, KAN-178): python -m evals.scripted_recordings [--check]
 # Model keys GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY are secrets of the `paid-runs` GitHub Environment (every job
-# using them waits for Vickey's Approve, KAN-282). Repo secrets: DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
+# using them waits for Vickey's Approve, KAN-282; callers pass them by name, the values come from the environment). Repo secrets: DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard.
 

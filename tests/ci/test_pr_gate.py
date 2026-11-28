@@ -1249,3 +1249,14 @@ def test_real_check_stops_at_html_quotes_and_open_code_spans() -> None:
     assert gate.has_real_check(f"{line} <!-- trailing note -->")
     assert gate.has_real_check(f"{line}\n<pre>")  # after the line, anything goes
 
+
+
+def test_real_check_stops_at_any_unmatched_code_span() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert not gate.has_real_check(f"``example\n{line}\nexample``")  # an even-length run with no partner on its line
+    assert not gate.has_real_check(f"x ``` y\n{line}")  # a mid-line triple run is not a fence but is unmatched
+    assert not gate.has_real_check(f"`a``b\n{line}")  # runs of different lengths do not close each other
+    assert not gate.has_real_check(f"`a` `b\n{line}")
+    assert gate.has_real_check(f"Uses ``a`b`` here\n{line}")  # a matched double-backtick span holding a backtick
+    assert gate.has_real_check(f"Uses `code` and ```x``` spans\n{line}")
+    assert gate.has_real_check(f"Fixes `has_real_check`: see `tests/ci/test_pr_gate.py`.\n\n{line} showed X")

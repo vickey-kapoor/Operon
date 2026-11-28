@@ -511,6 +511,19 @@ _HTML_TAG_RE = re.compile(r"<(?:/|(?![A-Za-z][A-Za-z0-9+.-]{1,31}:)[A-Za-z])")
 _QUOTE_START_RE = re.compile(r"^(?:[ \t]|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))*>")
 
 
+def _has_unmatched_code_span(line: str) -> bool:
+    """CommonMark run matching on one line: a backtick run of length n is closed by the next run of exactly n;
+    runs of other lengths between them are literal. True if any run is left unmatched."""
+    runs = [len(m.group()) for m in re.finditer(r"`+", line)]
+    i = 0
+    while i < len(runs):
+        j = next((k for k in range(i + 1, len(runs)) if runs[k] == runs[i]), None)
+        if j is None:
+            return True
+        i = j + 1
+    return False
+
+
 def has_real_check(body: str | None) -> bool:
     """Whether a PR description has a "Real check:" line with a link on the same line (KAN-298).
 
@@ -519,8 +532,8 @@ def has_real_check(body: str | None) -> bool:
     quote or HTML. Fail closed by construction: lines are split on CR, LF or CRLF only, HTML comments (may span lines,
     an unclosed one runs to the end) never count, and the scan stops, so that line and everything after it cannot
     count, at the first line that is fence-like (``` or ~~~ after any spaces, quote marks and list markers, even inside
-    a comment) or, outside comments, has a raw HTML tag, starts with a quote mark, or leaves an inline code span open
-    (an odd number of backticks). This is not a Markdown parser.
+    a comment) or, outside comments, has a raw HTML tag, starts with a quote mark, or leaves a backtick run unmatched
+    (CommonMark run matching on the line). This is not a Markdown parser.
     """
     if not isinstance(body, str):
         return False
@@ -529,7 +542,7 @@ def has_real_check(body: str | None) -> bool:
         if _FENCE_LIKE_RE.match(raw):
             return False
         line, in_comment = _strip_comments(raw, in_comment)
-        if _FENCE_LIKE_RE.match(line) or _HTML_TAG_RE.search(line) or _QUOTE_START_RE.match(line) or line.count("`") % 2:
+        if _FENCE_LIKE_RE.match(line) or _HTML_TAG_RE.search(line) or _QUOTE_START_RE.match(line) or _has_unmatched_code_span(line):
             return False
         m_raw = _REAL_CHECK_LINE_RE.match(raw)
         m = _REAL_CHECK_LINE_RE.match(line)

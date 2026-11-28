@@ -6,6 +6,9 @@ Offline: the workflow files are parsed as YAML; nothing calls GitHub.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -97,7 +100,7 @@ def test_a_report_proves_an_approve_happened_and_lists_the_jobs(job: str, enviro
     script = wf_job["steps"][0]["run"]
     assert 'actions/runs/$RUN_ID/approvals' in script and 'actions/runs/$RUN_ID/jobs' in script
     assert 'select(.state == "approved")' in script and "index($e)" in script  # an approval of that environment
-    assert "Approved by:" in script and ".user.login" in script and ".updated_at" in script
+    assert "Approved by:" in script and ".user.login" in script and r"(\(.state))" in script and ".updated_at" not in script
     assert "No approval of the $APPROVAL_ENV environment is recorded" in script  # else the check fails
     assert ".started_at" in script and ".completed_at" in script  # the job table
     assert "exit 1" in script
@@ -205,3 +208,112 @@ def test_the_dry_run_summary_never_prints_a_key(file: str) -> None:
     text = (WORKFLOWS / file).read_text(encoding="utf-8")
     line = next(ln for ln in text.splitlines() if "Dry run: " in ln and "GITHUB_STEP_SUMMARY" in ln)
     assert "$GEMINI" not in line and "secrets." not in line
+
+
+# ---- the report script itself, run against a fake `gh` ----
+
+MAIN_ONLY_JOB = "Main-only environment (must be refused from a branch)"
+GOOD_APPROVALS = [{"state": "approved", "user": {"login": "vickey"}, "environments": [{"name": "dryrun-gate"}]}]
+
+
+def _job(name: str, steps: int = 0) -> dict:
+    return {
+        "name": name,
+        "status": "completed",
+        "conclusion": "failure",
+        "started_at": "t0",
+        "completed_at": "t1",
+        "steps": [{"name": f"s{i}", "status": "completed"} for i in range(steps)],
+    }
+
+
+def _run_test_report(
+    tmp_path: Path,
+    *,
+    approvals: list,
+    jobs: list,
+    ref: str = "refs/pull/1/merge",
+    main_only: str = "failure",
+    direct: str = "success",
+) -> subprocess.CompletedProcess[str]:
+    if sys.platform == "win32" or not shutil.which("bash") or not shutil.which("jq"):
+        pytest.skip("needs bash and jq")
+    (tmp_path / "approvals.json").write_text(json.dumps(approvals), encoding="utf-8")
+    (tmp_path / "jobs.json").write_text(json.dumps({"jobs": jobs}), encoding="utf-8")
+    gh = tmp_path / "gh"
+    gh.write_text(
+        '#!/bin/sh\ncase "$2" in *approvals*) cat "$FIXTURES/approvals.json";; *jobs*) cat "$FIXTURES/jobs.json";; esac\n',
+        encoding="utf-8",
+    )
+    gh.chmod(0o755)
+    wf_env = _wf("gate-dryrun.yml")["jobs"]["report"]["env"]
+    env = {
+        "PATH": f"{tmp_path}:/usr/bin:/bin:/usr/local/bin",
+        "FIXTURES": str(tmp_path),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+        "GH_TOKEN": "x",
+        "REPO": "o/r",
+        "RUN_ID": "1",
+        "REF": ref,
+        "APPROVAL_ENV": wf_env["APPROVAL_ENV"],
+        "MAIN_ONLY_JOB": wf_env["MAIN_ONLY_JOB"],
+        "DIRECT": direct,
+        "BY_NAME": "success",
+        "NOT_PASSED": "success",
+        "NO_ENV": "success",
+        "MAIN_ONLY": main_only,
+    }
+    return subprocess.run(  # noqa: S603
+        ["bash", "-eo", "pipefail", "-c", _report_script("report")],  # noqa: S607
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def test_the_report_passes_when_the_gate_held(tmp_path: Path) -> None:
+    result = _run_test_report(tmp_path, approvals=GOOD_APPROVALS, jobs=[_job(MAIN_ONLY_JOB), _job("Direct")])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Approved by: vickey (approved)" in result.stdout
+    assert "| Direct | failure | t0 | t1 |" in (tmp_path / "summary.md").read_text(encoding="utf-8")
+
+
+def test_the_report_passes_on_main_when_main_only_is_skipped(tmp_path: Path) -> None:
+    result = _run_test_report(
+        tmp_path, approvals=GOOD_APPROVALS, jobs=[_job("Direct")], ref="refs/heads/main", main_only="skipped"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_report_fails_when_main_only_was_reviewed_even_if_rejected(tmp_path: Path) -> None:
+    # A Reject of main-only also ends as failure with no steps; only the review entry tells it from a refusal.
+    rejected = {"state": "rejected", "user": {"login": "vickey"}, "environments": [{"name": "dryrun-main-only"}]}
+    result = _run_test_report(tmp_path, approvals=[*GOOD_APPROVALS, rejected], jobs=[_job(MAIN_ONLY_JOB)])
+    assert result.returncode != 0
+    assert "branch rule is missing" in result.stdout
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_the_report_fails_unless_exactly_one_main_only_job_is_found(tmp_path: Path, count: int) -> None:
+    result = _run_test_report(tmp_path, approvals=GOOD_APPROVALS, jobs=[_job(MAIN_ONLY_JOB)] * count)
+    assert result.returncode != 0
+    assert "exactly one job" in result.stdout
+
+
+def test_the_report_fails_when_main_only_ran_steps(tmp_path: Path) -> None:
+    result = _run_test_report(tmp_path, approvals=GOOD_APPROVALS, jobs=[_job(MAIN_ONLY_JOB, steps=2)])
+    assert result.returncode != 0
+
+
+def test_the_report_fails_without_an_approval_of_the_environment(tmp_path: Path) -> None:
+    other = [{"state": "approved", "user": {"login": "vickey"}, "environments": [{"name": "paid-runs"}]}]
+    result = _run_test_report(tmp_path, approvals=other, jobs=[_job(MAIN_ONLY_JOB)])
+    assert result.returncode != 0
+    assert "nothing waited for Approve" in result.stdout
+
+
+def test_the_report_fails_when_a_gated_job_did_not_succeed(tmp_path: Path) -> None:
+    result = _run_test_report(tmp_path, approvals=GOOD_APPROVALS, jobs=[_job(MAIN_ONLY_JOB)], direct="failure")
+    assert result.returncode != 0

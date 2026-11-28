@@ -132,11 +132,17 @@ jobs:
             [ "$MAIN_ONLY" = "skipped" ] || fail "main-only should be skipped on main."
           else
             [ "$MAIN_ONLY" = "failure" ] || fail "main-only was not refused (result $MAIN_ONLY): the branch rule did not hold."
+            found="$(jq -r --arg n "$MAIN_ONLY_JOB" '[.jobs[] | select(.name == $n)] | length' <<<"$jobs_json")"
+            [ "$found" = "1" ] || fail "Expected exactly one job named '$MAIN_ONLY_JOB', found $found."
             done_steps="$(jq -r --arg n "$MAIN_ONLY_JOB" '[.jobs[] | select(.name == $n) | .steps[]? | select(.status == "completed")] | length' <<<"$jobs_json")"
-            [ "$done_steps" = "0" ] || fail "main-only ran $done_steps steps: it was not refused before it started. If it asked for your Approve, Reject it."
+            [ "$done_steps" = "0" ] || fail "main-only ran $done_steps steps: it was not refused before it started. If it asked for your Approve, the branch rule is missing."
           fi
+          # A refusal by the branch rule never creates a review. Any review of dryrun-main-only (a Reject too) means the
+          # job waited for a person, so the branch rule is missing.
+          reviewed="$(jq -r '[.[] | select([.environments[]?.name] | index("dryrun-main-only"))] | length' <<<"$approvals")"
+          [ "$reviewed" = "0" ] || fail "dryrun-main-only was reviewed ($reviewed entries): the branch rule is missing, a refusal asks nobody. Fix the environment and re-run."
           # An Approve really happened for the environment the jobs waited on.
-          who="$(jq -r --arg e "$APPROVAL_ENV" '.[] | select(.state == "approved") | select([.environments[]?.name] | index($e)) | "\(.user.login) at \((.environments | map(select(.name == $e)) | first | .updated_at) // "unknown time")"' <<<"$approvals")"
+          who="$(jq -r --arg e "$APPROVAL_ENV" '.[] | select(.state == "approved") | select([.environments[]?.name] | index($e)) | "\(.user.login) (\(.state))"' <<<"$approvals")"
           if [ -z "$who" ]; then
             fail "No approval of the $APPROVAL_ENV environment is recorded for this run: nothing waited for Approve."
           else
@@ -247,7 +253,7 @@ jobs:
           for r in "$GROUNDING" "$OSWORLD" "$NO_ENV"; do
             [ "$r" = "success" ] || fail "A job did not succeed, see the summary."
           done
-          who="$(jq -r --arg e "$APPROVAL_ENV" '.[] | select(.state == "approved") | select([.environments[]?.name] | index($e)) | "\(.user.login) at \((.environments | map(select(.name == $e)) | first | .updated_at) // "unknown time")"' <<<"$approvals")"
+          who="$(jq -r --arg e "$APPROVAL_ENV" '.[] | select(.state == "approved") | select([.environments[]?.name] | index($e)) | "\(.user.login) (\(.state))"' <<<"$approvals")"
           if [ -z "$who" ]; then
             fail "No approval of the $APPROVAL_ENV environment is recorded for this run: nothing waited for Approve."
           else

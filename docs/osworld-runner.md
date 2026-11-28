@@ -106,20 +106,28 @@ merge, then step 7.
      branches `main` only, secret `DRYRUN_KEY`. Then add the label `gate-dryrun` to the PR and Approve `direct`,
      `by-name` and `not-passed`.
    - `main-only` must be refused by its branch rule, so the PR run ends with a red `main-only` job by design. Read
-     the `report` job: it is green when everything held, and its summary names who approved and when, with a table of
-     every job. If `main-only` asks for your Approve, that is a fail: Reject it.
+     the `report` job: it is green when everything held, and its summary names who approved, with a table of every job
+     and when it started and finished. If `main-only` asks for your Approve, the branch rule is missing: Reject it, and
+     the report will fail (expected); fix the environment and re-run.
    - After the merge and step 7: start "Approve gate check" by hand with target `real`, from main, and Approve the
-     waiting jobs. It runs the real grounding and OSWorld workflows with `dry_run` true (they check their keys, then
-     stop) and checks that a job outside `paid-runs` has none of the three model keys, which shows the repo secrets
+     waiting jobs. It runs the OSWorld workflow's `start-vm` job with `dry_run` true (it checks the keys, then stops
+     before any sign-in or VM start) and `grounding.yml`'s separate `dry-run` job (it checks the key and stops), and checks that a job outside `paid-runs` has none of the three model keys, which shows the repo secrets
      are gone.
 
    What this does not prove:
+   - That the paid grounding job has the environment: real mode runs `grounding.yml`'s separate `dry-run` job, not the
+     paid `grounding` job. Only the offline test shows the paid job has `paid-runs`.
+   - How `paid-runs` itself is set up: test mode proves GitHub's mechanism on the throwaway environments.
+   - That a key is valid: the checks show it is non-empty, not that it works.
    - The main-only rule on `paid-runs` itself (real mode runs on main, so it never meets the rule).
    - The admin-bypass and self-review settings.
    - The `benchmark.yml` and `/bench` paths.
    - OSWorld's second Approve (`bench`, `stop-vm`) and the Google sign-in: a dry run stops before them.
    - The Anthropic and OpenAI keys inside `paid-runs` (a dry run uses the default model).
    - That an agent's token could not approve through the API: the no-approve rule covers that.
+
+   Do not start real mode while a paid OSWorld run is queued: both use the shared VM lock, which can cancel the queued
+   one. If `main-only` is left waiting, the report never runs, so Approve or Reject every waiting job.
 
 The first real approved run (with Vickey's OK for its cost) should go through the paid-run workflow (`benchmark.yml`)
 and confirm the "Check the secrets" step passes, which shows the keys arrive. A run left waiting holds its queue for

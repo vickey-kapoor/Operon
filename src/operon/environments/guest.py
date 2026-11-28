@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -135,6 +136,20 @@ def create_guest_app(executor: Any, token: str) -> FastAPI:
     @app.post("/capture", dependencies=guarded)
     async def capture() -> dict[str, Any]:
         frame = await executor.capture()
+        png = _read_b64(frame.artifact_path)
+        _remove(frame.artifact_path)
+        return {"frame": frame.model_dump(mode="json"), "png": png}
+
+    @app.post("/peek", dependencies=guarded, response_model=None)
+    async def peek() -> Response | dict[str, Any]:
+        """The fresh look's extra screenshot (KAN-267): the executor's own ``peek_frame``,
+        or 204 when it has none."""
+        hook = getattr(executor, "peek_frame", None)
+        if hook is None or not inspect.iscoroutinefunction(hook):
+            return Response(status_code=204)
+        frame = await hook()
+        if frame is None:
+            return Response(status_code=204)
         png = _read_b64(frame.artifact_path)
         _remove(frame.artifact_path)
         return {"frame": frame.model_dump(mode="json"), "png": png}

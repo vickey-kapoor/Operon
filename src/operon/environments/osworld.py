@@ -167,6 +167,11 @@ class OSWorldExecutor:
             width, height = image.size
         return CaptureFrame(artifact_path=str(path), width=width, height=height)
 
+    async def peek_frame(self) -> CaptureFrame | None:
+        """The fresh look's extra screenshot (KAN-267): one GET /screenshot, which OSWorld
+        answers with no side effects, so it is the same as capture()."""
+        return await self.capture()
+
     async def execute(self, action: AgentAction) -> ExecutedAction:
         result, did_input = await self._execute_one(action)
         if did_input and self._post_action_wait_s > 0:

@@ -99,15 +99,27 @@ merge, then step 7.
 6. Add `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as environment secrets.
 7. After the merge, delete the three repo secrets: while they exist, any job without the environment can read them.
 8. Check the gate at $0 with `gate-dryrun.yml` ("Approve gate check"). No model call, no machine start, no checkout.
-   - Before the merge: create the test environments `dryrun-gate` (required reviewer Vickey, no branch rule, secret
-     `DRYRUN_KEY` with any dummy value) and `dryrun-main-only` (required reviewer Vickey, deployment branches `main`
-     only, secret `DRYRUN_KEY`). Add the label `gate-dryrun` to the PR. Approve the jobs `direct`, `by-name` and
-     `not-passed`; `main-only` must be refused by its branch rule. The report job turns green when all of that held.
-   - After the merge and step 7: start "Approve gate check" by hand with target `real`. Approve the waiting jobs. It
-     runs the real grounding and OSWorld workflows with `dry_run` true (they check their keys, then stop) and checks that
-     a job outside `paid-runs` gets no model key, which shows the repo secrets are gone.
+   Only Vickey adds the label and starts the real check; agents do not.
+   - Before the merge: create both test environments first, then add the label (if a job names an environment that
+     does not exist yet, GitHub creates it without protection). `dryrun-gate`: required reviewer Vickey, no branch
+     rule, secret `DRYRUN_KEY` with any dummy value. `dryrun-main-only`: required reviewer Vickey, deployment
+     branches `main` only, secret `DRYRUN_KEY`. Then add the label `gate-dryrun` to the PR and Approve `direct`,
+     `by-name` and `not-passed`.
+   - `main-only` must be refused by its branch rule, so the PR run ends with a red `main-only` job by design. Read
+     the `report` job: it is green when everything held, and its summary names who approved and when, with a table of
+     every job. If `main-only` asks for your Approve, that is a fail: Reject it.
+   - After the merge and step 7: start "Approve gate check" by hand with target `real`, from main, and Approve the
+     waiting jobs. It runs the real grounding and OSWorld workflows with `dry_run` true (they check their keys, then
+     stop) and checks that a job outside `paid-runs` has none of the three model keys, which shows the repo secrets
+     are gone.
 
-   Rejecting a waiting run ends it as failed, so the "benchmark run failed" Slack alert may fire; that is expected.
+   What this does not prove:
+   - The main-only rule on `paid-runs` itself (real mode runs on main, so it never meets the rule).
+   - The admin-bypass and self-review settings.
+   - The `benchmark.yml` and `/bench` paths.
+   - OSWorld's second Approve (`bench`, `stop-vm`) and the Google sign-in: a dry run stops before them.
+   - The Anthropic and OpenAI keys inside `paid-runs` (a dry run uses the default model).
+   - That an agent's token could not approve through the API: the no-approve rule covers that.
 
 The first real approved run (with Vickey's OK for its cost) should go through the paid-run workflow (`benchmark.yml`)
 and confirm the "Check the secrets" step passes, which shows the keys arrive. A run left waiting holds its queue for

@@ -57,9 +57,12 @@ def test_test_mode_jobs_use_the_throwaway_environments_and_refuse_forks() -> Non
         cond = jobs[name]["if"]
         assert "github.event.label.name == 'gate-dryrun'" in cond
         assert "github.event.pull_request.head.repo.full_name == github.repository" in cond
-    # On main the branch rule lets main-only through, so it runs only from a branch, and it fails if it ever runs.
+    # On main the branch rule lets main-only through, so it runs only from a branch. If it ever starts it
+    # SUCCEEDS, so "refused" (failure, no steps) can be told from "ran" in the report.
     assert "github.ref != 'refs/heads/main'" in jobs["main-only"]["if"]
-    assert "exit 1" in json.dumps(jobs["main-only"]["steps"])
+    steps = jobs["main-only"]["steps"]
+    assert "exit" not in json.dumps(steps)
+    assert "did NOT refuse" in steps[0]["run"]
 
 
 def test_test_mode_jobs_never_read_a_model_key() -> None:
@@ -68,13 +71,35 @@ def test_test_mode_jobs_never_read_a_model_key() -> None:
         assert not any(key in json.dumps(jobs[name]) for key in MODEL_KEYS), name
 
 
+def _report_script(job: str) -> str:
+    return _wf("gate-dryrun.yml")["jobs"][job]["steps"][0]["run"]
+
+
 def test_the_report_waits_for_every_test_job_and_checks_each_result() -> None:
     report = _wf("gate-dryrun.yml")["jobs"]["report"]
     assert set(report["needs"]) == set(TEST_JOBS)
     assert "always()" in report["if"]
-    script = report["steps"][0]["run"]
+    script = _report_script("report")
     assert 'for r in "$DIRECT" "$BY_NAME" "$NOT_PASSED" "$NO_ENV"' in script
-    assert '[ "$MAIN_ONLY" != "success" ]' in script  # refused from a branch means not success
+    assert 'x = "success"' not in script and "exit 1" in script
+    # main-only: skipped on main; from a branch it must be a failure (refused) with no completed steps.
+    assert '[ "$MAIN_ONLY" = "skipped" ]' in script
+    assert '[ "$MAIN_ONLY" = "failure" ]' in script
+    assert '.steps[]? | select(.status == "completed")' in script and '[ "$done_steps" = "0" ]' in script
+
+
+@pytest.mark.parametrize(("job", "environment"), [("report", "dryrun-gate"), ("real-report", "paid-runs")])
+def test_a_report_proves_an_approve_happened_and_lists_the_jobs(job: str, environment: str) -> None:
+    wf_job = _wf("gate-dryrun.yml")["jobs"][job]
+    assert wf_job["permissions"] == {"actions": "read"}
+    assert wf_job["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert wf_job["env"]["APPROVAL_ENV"] == environment
+    script = wf_job["steps"][0]["run"]
+    assert 'actions/runs/$RUN_ID/approvals' in script and 'actions/runs/$RUN_ID/jobs' in script
+    assert 'select(.state == "approved")' in script and "index($e)" in script  # an approval of that environment
+    assert "Approved by:" in script and ".user.login" in script and ".updated_at" in script
+    assert "No approval of the $APPROVAL_ENV environment is recorded" in script  # else the check fails
+    assert ".started_at" in script and ".completed_at" in script  # the job table
     assert "exit 1" in script
 
 
@@ -98,21 +123,30 @@ def test_real_mode_runs_only_on_main_and_passes_keys_by_name() -> None:
     for name in REAL_JOBS:
         assert "github.ref == 'refs/heads/main'" in jobs[name]["if"]
         assert "inputs.target == 'real'" in jobs[name]["if"]
+    # A real start from another ref fails loudly instead of doing nothing.
+    off_main = jobs["real-needs-main"]
+    assert "inputs.target == 'real'" in off_main["if"] and "github.ref != 'refs/heads/main'" in off_main["if"]
+    assert "real mode runs on main only" in off_main["steps"][0]["run"] and "exit 1" in off_main["steps"][0]["run"]
     grounding, osworld = jobs["real-grounding"], jobs["real-osworld"]
     assert grounding["uses"] == "./.github/workflows/grounding.yml"
     assert grounding["with"]["dry_run"] == "true"
     assert grounding["secrets"] == {"GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}"}
     assert osworld["uses"] == "./.github/workflows/osworld-bench.yml"
     assert osworld["with"]["dry_run"] == "true" and osworld["with"]["limit"] == "1"
-    assert set(osworld["secrets"]) == {*MODEL_KEYS, "RUNNER_ADMIN_TOKEN"}
+    assert set(osworld["secrets"]) == set(MODEL_KEYS)  # the runner token is only used by a step a dry run skips
     assert all(v == f"${{{{ secrets.{k} }}}}" for k, v in osworld["secrets"].items())
     batch = _wf("benchmark.yml")["jobs"]["batch-osworld"]
     assert osworld["permissions"] == batch["permissions"]  # what the called workflow's jobs ask for
-    # Only the model-key check lives outside the environment, and it only fails when the key is non-empty.
+    # Only the model-key check lives outside the environment: all three keys, failing when any is non-empty,
+    # printing only the names.
     no_env = jobs["real-no-env"]
     assert "environment" not in no_env and "uses" not in no_env
-    assert [s["env"] for s in no_env["steps"]] == [{"GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}"}]
-    assert '[ -n "$GEMINI_API_KEY" ]' in no_env["steps"][0]["run"]
+    assert len(no_env["steps"]) == 1
+    assert no_env["steps"][0]["env"] == {key: f"${{{{ secrets.{key} }}}}" for key in MODEL_KEYS}
+    run = no_env["steps"][0]["run"]
+    assert all(f'[ -n "${key}" ]' in run for key in MODEL_KEYS)
+    assert 'echo "$' not in run and "echo $" not in run  # never echoes a value
+    assert "exit 1" in run
     assert set(jobs["real-report"]["needs"]) == set(REAL_JOBS)
 
 

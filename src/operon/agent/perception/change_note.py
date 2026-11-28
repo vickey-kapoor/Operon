@@ -166,12 +166,16 @@ class ChangeNoteBuffer:
     def __init__(self) -> None:
         self._notes: list[str] = []
 
-    async def settle(self, grab: Grab, fallback_delay: float) -> SettleResult | None:
+    async def settle(
+        self, grab: Grab, fallback_delay: float, *, min_s: float | None = None
+    ) -> SettleResult | None:
         """The executor's post-action wait; with OPERON_CHANGE_NOTE on, it also writes a note."""
         if not get_settings().change_note:
-            return await settle_after_action(grab, fallback_delay)
+            return await settle_after_action(grab, fallback_delay, min_s=min_s)
         watcher = ChangeWatcher()
-        result = await settle_after_action(grab, fallback_delay, observers=(watcher,))
+        result = await settle_after_action(
+            grab, fallback_delay, observers=(watcher,), min_s=min_s
+        )
         note = watcher.note()
         if note:
             self._notes.append(note)

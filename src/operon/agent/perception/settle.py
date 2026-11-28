@@ -51,6 +51,9 @@ QUIET_FRAMES = 2
 # Never return sooner than this: an action's effect can start a moment after it ran, so
 # the very first frames can look still when nothing has happened yet.
 MIN_WAIT_S = 0.15
+# The first-step wait keeps at least this long: a new window may not have started drawing
+# yet, so a still screen after 0.15 s proves little (KAN-264).
+FIRST_STEP_MIN_WAIT_S = 1.0
 
 FrameGrab = Callable[[], Awaitable["bytes | None"]]
 
@@ -192,13 +195,14 @@ async def settle_after_action(
     fallback_delay: float,
     *,
     observers: Sequence[FrameObserver] = (),
+    min_s: float | None = None,
 ) -> SettleResult | None:
     """The post-action wait: settle detection when it is on, else the old fixed sleep.
 
     ``fallback_delay`` is what the executor slept before. With the flag off that is all
     this does. With it on, the wait ends as soon as the screen is quiet (but not before
-    ``MIN_WAIT_S``, or ``fallback_delay`` if that is shorter) and runs for up to
-    ``OPERON_SETTLE_MAX_S``.
+    ``min_s`` (default ``MIN_WAIT_S``), or ``fallback_delay`` if that is shorter) and
+    runs for up to ``OPERON_SETTLE_MAX_S``.
     """
     settings = get_settings()
     if not (settings.settle_detect or settings.change_note):
@@ -206,7 +210,7 @@ async def settle_after_action(
         return None
     result = await wait_until_settled(
         grab,
-        min_s=min(fallback_delay, MIN_WAIT_S),
+        min_s=min(fallback_delay, MIN_WAIT_S if min_s is None else min_s),
         max_s=max(settings.settle_max_s, fallback_delay),
         fail_wait_s=fallback_delay,
         observers=observers,

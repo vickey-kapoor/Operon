@@ -48,6 +48,7 @@ from operon.agent.perception.fresh_look import (
     pointer_point,
     spot_changed,
 )
+from operon.agent.perception.settle import FIRST_STEP_MIN_WAIT_S
 from operon.agent.planner import (
     PLANNER_DEADLINE_S,
     PLANNER_USAGE_FILE,
@@ -126,7 +127,8 @@ logger = logging.getLogger(__name__)
 
 _LIVENESS_RETRY_MAX = 3
 # First step: the fixed wait for the OS and browser window to finish drawing. With
-# OPERON_SETTLE_DETECT on, the wait ends as soon as the screen is still and lasts at most
+# OPERON_SETTLE_DETECT on, the wait ends once the screen is still, but lasts at least 1 s
+# (KAN-264: a new window may not have started drawing) and at most
 # max(OPERON_SETTLE_MAX_S, 2.5 s); if no frame can be grabbed it is this fixed wait (KAN-203).
 # OPERON_CHANGE_NOTE alone keeps the fixed wait.
 _WARMUP_DELAY_S = 2.5
@@ -1181,7 +1183,7 @@ class AgentLoop:
         if not (get_settings().settle_detect and inspect.iscoroutinefunction(settle_now)):
             await asyncio.sleep(_WARMUP_DELAY_S)
             return
-        await settle_now(_WARMUP_DELAY_S)
+        await settle_now(_WARMUP_DELAY_S, min_s=FIRST_STEP_MIN_WAIT_S)
         # No action ran before step 1, so a change note from this wait (OPERON_CHANGE_NOTE)
         # would describe the start-up, not the model's action: drop it.
         pop = getattr(self.executor, "pop_change_note", None)

@@ -1191,3 +1191,11 @@ async def test_hotkey_with_an_unknown_key_name_fails_instead_of_pressing_nothing
     assert result.success is False
     assert "fn_lock" in result.detail
     mock_hotkey.assert_not_called()
+
+
+async def test_settle_now_forwards_min_s_to_the_change_note_buffer() -> None:
+    """KAN-264: the first-step minimum reaches the settle wait."""
+    executor = _make_executor()
+    executor._change_notes = SimpleNamespace(settle=AsyncMock())
+    await executor.settle_now(2.5, min_s=1.0)
+    executor._change_notes.settle.assert_awaited_once_with(executor._grab_signature, 2.5, min_s=1.0)

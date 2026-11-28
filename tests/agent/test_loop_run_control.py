@@ -208,7 +208,7 @@ async def test_warmup_waits_for_still_screen_with_settle_detect_on(monkeypatch: 
 
     await loop._warmup_stage(SimpleNamespace(step_index=1, record=SimpleNamespace(start_url="https://example.com")))
 
-    settle_now.assert_awaited_once_with(2.5)
+    settle_now.assert_awaited_once_with(2.5, min_s=1.0)
     assert 2.5 not in slept
     pop.assert_called_once_with()
 
